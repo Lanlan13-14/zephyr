@@ -19,19 +19,24 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchBrowser, closeBrowser, collectPageDiagnostics, findBrowser } from './helpers/cdp-harness.mjs';
+import { createSecureTestDataDir, removeSecureTestDataDir } from './helpers/secure-data-dir.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CORE = join(ROOT, 'zephyr_one', 'zephyr-core');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const browserBin = findBrowser();
-const coreStaged = existsSync(join(CORE, 'server.js')) && existsSync(join(CORE, 'node_modules'));
+/* A source-tree stage can resolve dependencies from the repository's parent
+ * node_modules; release staging installs its own copy. Accept both layouts so
+ * the browser test does not skip after a dependency-free local restage. */
+const coreDependencies = existsSync(join(CORE, 'node_modules')) || existsSync(join(ROOT, 'node_modules'));
+const coreStaged = existsSync(join(CORE, 'server.js')) && coreDependencies;
 
 /* Both preconditions are environmental, so they skip rather than fail: a
  * developer without a staged core should not see a red suite for it. */
@@ -40,8 +45,13 @@ const skip = !browserBin
     : (!coreStaged ? 'zephyr_one/zephyr-core is not staged (run scripts/stage-zephyr-core.sh)' : false);
 
 test('the packaged Zephyr One shell boots without a load failure', { skip }, async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'zephyr-boot-data-'));
+    const dataFixture = createSecureTestDataDir('zephyr-boot-data-');
+    const dataDir = dataFixture.dataDir;
     const port = 39000 + Math.floor(Math.random() * 2000);
+    const startupChallenge = crypto.randomBytes(32).toString('hex');
+    const encryptionKey = crypto.randomBytes(32).toString('base64url');
+    const webDavBackupKey = crypto.randomBytes(32).toString('base64url');
+    const webDavCredentialKey = crypto.randomBytes(32).toString('base64url');
 
     const core = spawn(process.execPath, ['server.js'], {
         cwd: CORE,
@@ -53,7 +63,11 @@ test('the packaged Zephyr One shell boots without a load failure', { skip }, asy
             PORT: String(port),
             PUBLIC_ORIGIN: `http://127.0.0.1:${port}`,
             ZEPHYR_ONE_EMBEDDED: '1',
+            ZEPHYR_ONE_STARTUP_CHALLENGE: startupChallenge,
             ZEPHYR_ONE_USE_BUILTIN_SQLITE: '1',
+            ENCRYPTION_KEY: encryptionKey,
+            WEBDAV_BACKUP_KEY: webDavBackupKey,
+            WEBDAV_CREDENTIAL_KEY: webDavCredentialKey,
             /* The AI tool host binds a FIXED loopback port (127.0.0.1:3080 by
              * default), so two cores in one test run collide with EADDRINUSE and
              * the second never becomes healthy. Observed directly: running this
@@ -82,14 +96,38 @@ test('the packaged Zephyr One shell boots without a load failure', { skip }, asy
         }
         assert.ok(up, 'the staged core must start\n' + coreLog.slice(-1500));
 
+        const bootstrap = await fetch(`http://127.0.0.1:${port}/__zephyr_one/bootstrap`, {
+            method: 'POST',
+            headers: { 'x-zephyr-one-bootstrap-challenge': startupChallenge },
+        });
+        assert.equal(bootstrap.status, 204);
+        const sid = (bootstrap.headers.get('set-cookie') || '').split(';')[0].split('=')[1];
+        assert.match(sid, /^[A-Za-z0-9_-]{43,128}$/);
+
         browser = await launchBrowser({ port: port + 1 });
-        page = await collectPageDiagnostics(browser.wsUrl, `http://127.0.0.1:${port}/app.html`, { settleMs: 6000 });
+        page = await collectPageDiagnostics(
+            browser.wsUrl,
+            `http://127.0.0.1:${port}/app.html?zephyrOne=1`,
+            {
+                settleMs: 6000,
+                cookies: [{
+                    name: 'zephyr_sid',
+                    value: sid,
+                    url: `http://127.0.0.1:${port}/`,
+                    path: '/',
+                    httpOnly: true,
+                    sameSite: 'Strict',
+                }],
+            },
+        );
 
         /* The assertion that would have caught the shipped defect. */
         assert.deepEqual(
             page.exceptions,
             [],
-            'the page must not throw:\n' + page.exceptions.join('\n'),
+            'the page must not throw:\n' + page.exceptions.join('\n')
+                + '\nfailed requests: ' + JSON.stringify(page.failedRequests)
+                + '\nscript responses: ' + JSON.stringify(page.scriptResponses),
         );
         assert.deepEqual(
             page.consoleErrors,
@@ -128,6 +166,6 @@ test('the packaged Zephyr One shell boots without a load failure', { skip }, asy
         if (page) page.close();
         if (browser) closeBrowser(browser);
         core.kill();
-        try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ }
+        try { removeSecureTestDataDir(dataFixture); } catch { /* best effort */ }
     }
 });

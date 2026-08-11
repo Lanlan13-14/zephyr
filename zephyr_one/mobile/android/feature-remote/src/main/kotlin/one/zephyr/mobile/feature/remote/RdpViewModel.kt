@@ -465,17 +465,44 @@ class RdpViewModel(
 
     fun minimise() = registry.setMinimised(sessionId, true)
 
-    /** The host reports a system permission result. Never re-prompts a permanent denial. */
+    /**
+     * Synchronises an already-existing OS grant without presenting it as a new user action.
+     *
+     * The host calls this when the route appears so a permission granted in an earlier session is
+     * reflected before connect. It deliberately emits no message: merely opening a screen must not
+     * claim the user just changed a channel.
+     */
+    fun onPermissionStateObserved(
+        channel: RdpChannel,
+        state: PermissionState,
+        permanentlyDenied: Boolean,
+    ) {
+        updatePermission(channel, state, permanentlyDenied)
+    }
+
+    /** The host reports one user-initiated system permission result. */
     fun onPermissionResult(channel: RdpChannel, state: PermissionState, permanentlyDenied: Boolean) {
+        updatePermission(channel, state, permanentlyDenied)
+        messages.tryEmit(
+            if (state == PermissionState.GRANTED) {
+                CHANNEL_ENABLED + RemoteChannels.labelOf(channel)
+            } else {
+                // One channel closes; the session continues. Section 8 makes this explicit.
+                CHANNEL_CLOSED + RemoteChannels.labelOf(channel)
+            },
+        )
+    }
+
+    private fun updatePermission(
+        channel: RdpChannel,
+        state: PermissionState,
+        permanentlyDenied: Boolean,
+    ) {
         permissionsState.value = permissionsState.value + (channel to state)
         permanentlyDeniedState.value = if (permanentlyDenied) {
             permanentlyDeniedState.value + channel
         } else {
             permanentlyDeniedState.value - channel
-        }
-        if (state != PermissionState.GRANTED) {
-            // One channel closes; the session continues. Section 8 makes this explicit.
-            messages.tryEmit(CHANNEL_CLOSED + RemoteChannels.labelOf(channel))
         }
     }
 
@@ -578,6 +605,7 @@ class RdpViewModel(
         const val CERTIFICATE_CHANGED_ACCEPTED = "已接受变更后的服务器证书"
         const val SERVER_KEPT_ITS_SIZE = "服务器未接受动态分辨率，画面按远端尺寸缩放显示"
         const val CHANNELS_UNAVAILABLE = "以下通道未启用："
+        const val CHANNEL_ENABLED = "已启用该通道："
         const val CHANNEL_CLOSED = "已关闭该通道，会话继续："
         const val CLIPBOARD_BLOCKED = "该连接未开启剪贴板通道，或授权不包含控制权限"
         const val DISCLOSURE_RELAY = "主端 relay：凭据保留在主端"

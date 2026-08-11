@@ -27,9 +27,12 @@ use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use zeroize::{Zeroize, Zeroizing};
 
 use super::ffi;
 use super::{AudioMode, Config, Error, Security};
+
+const MAX_CLIPBOARD_UTF16_BYTES: usize = 4 * 1024 * 1024;
 
 /// A changed rectangle of the framebuffer.
 ///
@@ -51,14 +54,20 @@ pub enum SessionEvent {
     Connected,
     Disconnected,
     Error(String),
-    Resize { width: i32, height: i32 },
+    Resize {
+        width: i32,
+        height: i32,
+    },
     /// Text arriving from the remote clipboard.
     Clipboard(String),
     /// The TLS certificate fingerprint this session trusted. The only record of
     /// which certificate was accepted, so it is its own variant rather than a log
     /// line an operator has to grep for.
     Certificate(String),
-    CursorMoved { x: i32, y: i32 },
+    CursorMoved {
+        x: i32,
+        y: i32,
+    },
     /// A virtual channel came up. `rdpdr` is the wire-level proof that folder
     /// redirection negotiated, which is otherwise unobservable from the host.
     Channel(String),
@@ -146,12 +155,13 @@ unsafe impl Sync for Shared {}
 /// to reclaim the `Arc` after `zephyr_rdp_free`. Wrapping is the honest fix: the
 /// pointer *is* safe to move here, and the wrapper documents exactly why rather
 /// than leaving a bare `unsafe impl` on something broader.
-#[cfg(zephyr_native_rdp)]
-#[derive(Copy, Clone)]
-struct UserPtr(*mut c_void);
+struct UserPtr(*const Shared);
 
-#[cfg(zephyr_native_rdp)]
 impl UserPtr {
+    fn new(shared: Arc<Shared>) -> Self {
+        Self(Arc::into_raw(shared))
+    }
+
     /// The wrapped pointer, taken by value so that naming it names the wrapper.
     ///
     /// This accessor exists for the capture rules, not for tidiness. Since the
@@ -162,8 +172,16 @@ impl UserPtr {
     /// with "`*mut c_void` cannot be sent between threads safely". Going through
     /// a method makes the mentioned place the whole `UserPtr`, which is the type
     /// the promise is attached to.
-    fn as_raw(self) -> *mut c_void {
-        self.0
+    fn as_raw(&self) -> *mut c_void {
+        self.0.cast_mut().cast()
+    }
+}
+
+impl Drop for UserPtr {
+    fn drop(&mut self) {
+        // SAFETY: `new` creates exactly one raw Arc strong reference and this
+        // non-Copy owner is dropped exactly once.
+        unsafe { Arc::decrement_strong_count(self.0) };
     }
 }
 
@@ -171,19 +189,80 @@ impl UserPtr {
  * `Arc::into_raw` in `start_impl`, and `Shared` is itself `Send + Sync`, so the
  * loop thread may both dereference the referent and drop that reference.
  *
- * Moving the wrapper hands that one reference to the loop thread. The wrapper is
- * `Copy`, so the compiler will not enforce single ownership for us; what does is
- * that the two `decrement_strong_count` calls sit on mutually exclusive paths.
- * The starting thread only decrements when `zephyr_rdp_new` returned NULL, which
- * returns before any thread exists, and past a successful spawn it never names
- * `user` again. The loop thread decrements exactly once as its final act, after
- * `zephyr_rdp_free` has returned and therefore after the last callback that
- * could dereference the referent. One decrement per path, and no second thread
- * holding this raw reference, so there is nothing to race the strong count
- * with -- a future `user` use added after the spawn would break that, which is
- * why the reclaim stays the last statement in the closure. */
-#[cfg(zephyr_native_rdp)]
+ * The wrapper is deliberately non-Copy. Moving it into `RunOwnership` gives one
+ * path responsibility for both native free and Arc reclamation, including when
+ * `Builder::spawn` rejects and drops the unstarted closure. */
 unsafe impl Send for UserPtr {}
+
+type RunFn = unsafe fn(*mut ffi::zephyr_rdp_session) -> i32;
+type FreeFn = unsafe fn(*mut ffi::zephyr_rdp_session);
+
+#[cfg(zephyr_native_rdp)]
+unsafe fn run_native(session: *mut ffi::zephyr_rdp_session) -> i32 {
+    ffi::zephyr_rdp_run(session)
+}
+
+#[cfg(zephyr_native_rdp)]
+unsafe fn free_native(session: *mut ffi::zephyr_rdp_session) {
+    ffi::zephyr_rdp_free(session)
+}
+
+/// Sole owner of the native pointer after `zephyr_rdp_new` succeeds.
+/// Dropping a rejected thread closure runs the same cleanup as loop exit.
+struct RunOwnership {
+    shared: Arc<Shared>,
+    _user: UserPtr,
+    run: RunFn,
+    free: FreeFn,
+}
+
+impl RunOwnership {
+    fn execute(self) {
+        let raw = self
+            .shared
+            .session
+            .lock()
+            .expect("session mutex poisoned")
+            .expect("session pointer set before the thread starts");
+
+        // SAFETY: this value solely owns run/free and the pointer is live.
+        let code = unsafe { (self.run)(raw) };
+        let stop_requested = self.shared.stopping.load(Ordering::SeqCst);
+        {
+            let mut slot = self.shared.session.lock().expect("session mutex poisoned");
+            let owned = slot.take();
+            debug_assert_eq!(owned, Some(raw));
+            // SAFETY: run returned and no input can observe the cleared slot
+            // while this mutex is held.
+            unsafe { (self.free)(raw) };
+        }
+
+        self.shared.stopping.store(true, Ordering::SeqCst);
+        if code != 0 && !stop_requested {
+            self.shared
+                .sink
+                .event(SessionEvent::Error(format!("RDP session ended: {code}")));
+        }
+        // Drop sees an empty slot, so it cannot free twice. `_user` then
+        // releases the callback Arc after the last possible callback.
+    }
+}
+
+impl Drop for RunOwnership {
+    fn drop(&mut self) {
+        let raw = self
+            .shared
+            .session
+            .lock()
+            .expect("session mutex poisoned")
+            .take();
+        if let Some(raw) = raw {
+            // SAFETY: execute did not consume this pointer. On failed spawn no
+            // run loop or callback can race this cleanup.
+            unsafe { (self.free)(raw) };
+        }
+    }
+}
 
 impl Shared {
     /// Run `f` with the live session pointer, or do nothing if it is gone.
@@ -307,6 +386,9 @@ impl SessionHandle {
     /// Rejects interior NULs rather than truncating: a silently shortened paste is
     /// a data-loss bug the user cannot see.
     pub fn set_clipboard(&self, text: &str) -> Result<(), Error> {
+        if clipboard_utf16_wire_len(text).is_none() {
+            return Err(Error::ClipboardTooLarge);
+        }
         let c_text = CString::new(text).map_err(|_| Error::InteriorNul("clipboard"))?;
         #[cfg(zephyr_native_rdp)]
         {
@@ -358,7 +440,9 @@ unsafe extern "C" fn on_frame(
     pixels: *const u8,
     len: usize,
 ) {
-    let Some(shared) = shared_from(user) else { return };
+    let Some(shared) = shared_from(user) else {
+        return;
+    };
     if pixels.is_null() || len == 0 {
         return;
     }
@@ -372,34 +456,133 @@ unsafe extern "C" fn on_frame(
     // SAFETY: `pixels` points to `len` initialised bytes for the duration of this
     // call, which is exactly the lifetime `FrameRect` borrows for.
     let bytes = std::slice::from_raw_parts(pixels, len);
-    shared.sink.frame(FrameRect { x, y, w, h, pixels: bytes });
+    shared.sink.frame(FrameRect {
+        x,
+        y,
+        w,
+        h,
+        pixels: bytes,
+    });
 }
 
 #[cfg(zephyr_native_rdp)]
 unsafe extern "C" fn on_event(user: *mut c_void, code: i32, a: i32, b: i32, text: *const c_char) {
-    let Some(shared) = shared_from(user) else { return };
-
-    // SAFETY: the shim documents `text` as NUL-terminated UTF-8 or NULL.
-    let message = if text.is_null() {
-        String::new()
-    } else {
-        CStr::from_ptr(text).to_string_lossy().into_owned()
+    let Some(shared) = shared_from(user) else {
+        return;
     };
 
     let event = match code {
         ffi::ZEPHYR_RDP_EV_CONNECTED => SessionEvent::Connected,
         ffi::ZEPHYR_RDP_EV_DISCONNECTED => SessionEvent::Disconnected,
-        ffi::ZEPHYR_RDP_EV_ERROR => SessionEvent::Error(message),
-        ffi::ZEPHYR_RDP_EV_RESIZE => SessionEvent::Resize { width: a, height: b },
-        ffi::ZEPHYR_RDP_EV_CLIPBOARD => SessionEvent::Clipboard(message),
-        ffi::ZEPHYR_RDP_EV_LOG => SessionEvent::Certificate(message),
+        ffi::ZEPHYR_RDP_EV_CLIPBOARD => {
+            let Ok(bytes_len) = usize::try_from(a) else {
+                return;
+            };
+            if text.is_null() || bytes_len > MAX_CLIPBOARD_UTF16_BYTES {
+                return;
+            }
+            // SAFETY: the C shim lends exactly `a` validated bytes for this
+            // synchronous callback. The hard limit is checked before making a
+            // slice or allocating the owned String.
+            let bytes = std::slice::from_raw_parts(text.cast::<u8>(), bytes_len);
+            let Some(message) = decode_clipboard_utf16le(bytes) else {
+                return;
+            };
+            SessionEvent::Clipboard(message)
+        }
+        ffi::ZEPHYR_RDP_EV_RESIZE => SessionEvent::Resize {
+            width: a,
+            height: b,
+        },
         ffi::ZEPHYR_RDP_EV_CURSOR => SessionEvent::CursorMoved { x: a, y: b },
-        ffi::ZEPHYR_RDP_EV_CHANNEL => SessionEvent::Channel(message),
-        /* An unknown code is reported rather than dropped: silently ignoring it
-         * would hide a shim that has grown an event this build does not know. */
-        other => SessionEvent::Error(format!("unknown RDP event {other}: {message}")),
+        other => {
+            // SAFETY: non-clipboard event text remains NUL-terminated UTF-8 or
+            // NULL. Clipboard deliberately uses the bounded byte path above.
+            let message = if text.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(text).to_string_lossy().into_owned()
+            };
+            match other {
+                ffi::ZEPHYR_RDP_EV_ERROR => SessionEvent::Error(message),
+                ffi::ZEPHYR_RDP_EV_LOG => SessionEvent::Certificate(message),
+                ffi::ZEPHYR_RDP_EV_CHANNEL => SessionEvent::Channel(message),
+                /* An unknown code is reported rather than dropped: silently
+                 * ignoring it would hide a shim that has grown an event this
+                 * build does not know. */
+                code => SessionEvent::Error(format!("unknown RDP event {code}: {message}")),
+            }
+        }
     };
     shared.sink.event(event);
+}
+
+fn clipboard_utf8_len(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 2
+        || bytes.len() > MAX_CLIPBOARD_UTF16_BYTES
+        || bytes.len() % 2 != 0
+        || bytes[bytes.len() - 2..] != [0, 0]
+    {
+        return None;
+    }
+
+    let text_end = bytes.len() - 2;
+    let mut offset = 0usize;
+    let mut utf8_len = 0usize;
+    while offset < text_end {
+        let high = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        if high == 0 {
+            return None;
+        }
+        let scalar = if (0xD800..=0xDBFF).contains(&high) {
+            if text_end - offset < 4 {
+                return None;
+            }
+            let low = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
+            if !(0xDC00..=0xDFFF).contains(&low) {
+                return None;
+            }
+            offset += 4;
+            0x1_0000 + (((high as u32 - 0xD800) << 10) | (low as u32 - 0xDC00))
+        } else {
+            if (0xDC00..=0xDFFF).contains(&high) {
+                return None;
+            }
+            offset += 2;
+            high as u32
+        };
+        utf8_len = utf8_len.checked_add(char::from_u32(scalar)?.len_utf8())?;
+    }
+    Some(utf8_len)
+}
+
+fn clipboard_utf16_wire_len(text: &str) -> Option<usize> {
+    let units = text
+        .encode_utf16()
+        .try_fold(1usize, |count, _| count.checked_add(1))?;
+    let bytes = units.checked_mul(std::mem::size_of::<u16>())?;
+    (bytes <= MAX_CLIPBOARD_UTF16_BYTES).then_some(bytes)
+}
+
+fn decode_clipboard_utf16le(bytes: &[u8]) -> Option<String> {
+    let utf8_len = clipboard_utf8_len(bytes)?;
+    let mut text = String::with_capacity(utf8_len);
+    let mut offset = 0usize;
+    let text_end = bytes.len() - 2;
+    while offset < text_end {
+        let high = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        let scalar = if (0xD800..=0xDBFF).contains(&high) {
+            let low = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
+            offset += 4;
+            0x1_0000 + (((high as u32 - 0xD800) << 10) | (low as u32 - 0xDC00))
+        } else {
+            offset += 2;
+            high as u32
+        };
+        text.push(char::from_u32(scalar)?);
+    }
+    debug_assert_eq!(text.len(), utf8_len);
+    Some(text)
 }
 
 /* ---- config translation -------------------------------------------------- */
@@ -418,6 +601,20 @@ struct ConfigStrings {
     drive_path: CString,
 }
 
+fn zeroized_cstring_bytes(value: CString) -> Zeroizing<Box<[u8]>> {
+    let mut bytes = Zeroizing::new(value.into_bytes_with_nul().into_boxed_slice());
+    bytes.zeroize();
+    bytes
+}
+
+impl Drop for ConfigStrings {
+    fn drop(&mut self) {
+        let empty = CString::new(Vec::<u8>::new()).expect("empty CString is valid");
+        let password = std::mem::replace(&mut self.password, empty);
+        drop(zeroized_cstring_bytes(password));
+    }
+}
+
 impl ConfigStrings {
     fn new(config: &Config) -> Result<Self, Error> {
         Ok(Self {
@@ -426,7 +623,8 @@ impl ConfigStrings {
                 .map_err(|_| Error::InteriorNul("username"))?,
             password: CString::new(config.password.as_str())
                 .map_err(|_| Error::InteriorNul("password"))?,
-            domain: CString::new(config.domain.as_str()).map_err(|_| Error::InteriorNul("domain"))?,
+            domain: CString::new(config.domain.as_str())
+                .map_err(|_| Error::InteriorNul("domain"))?,
             drive_name: CString::new(config.drive_name.as_str())
                 .map_err(|_| Error::InteriorNul("driveName"))?,
             drive_path: CString::new(config.drive_path.as_str())
@@ -558,7 +756,7 @@ impl SessionRegistry {
             /* Handed to C as the callback `user` pointer. Reclaimed on the loop
              * thread after `zephyr_rdp_free`, so the referent outlives every
              * callback the session can make. */
-            let user = UserPtr(Arc::into_raw(Arc::clone(&shared)) as *mut c_void);
+            let user = UserPtr::new(Arc::clone(&shared));
 
             let created = with_config(&config, |raw| {
                 // SAFETY: `raw` and its strings are alive for this call, and the
@@ -567,62 +765,25 @@ impl SessionRegistry {
             })?;
 
             if created.is_null() {
-                // SAFETY: reclaim the leaked Arc; nothing else observed it,
-                // because `zephyr_rdp_new` failed before storing the pointer.
-                unsafe { Arc::decrement_strong_count(user.as_raw() as *const Shared) };
                 return Err(Error::SessionCreate);
             }
 
             *shared.session.lock().expect("session mutex poisoned") = Some(created);
 
-            let handle = SessionHandle { shared: Arc::clone(&shared) };
-            let thread_shared = Arc::clone(&shared);
+            let handle = SessionHandle {
+                shared: Arc::clone(&shared),
+            };
             let thread_id = id.to_string();
+            let run_ownership = RunOwnership {
+                shared: Arc::clone(&shared),
+                _user: user,
+                run: run_native,
+                free: free_native,
+            };
 
             std::thread::Builder::new()
                 .name(format!("zephyr-rdp-{thread_id}"))
-                .spawn(move || {
-                    /* Copied out without holding the lock: `run` blocks for the
-                     * whole session, and holding the mutex across it would make
-                     * every input call wait forever. */
-                    let raw = thread_shared
-                        .session
-                        .lock()
-                        .expect("session mutex poisoned")
-                        .expect("session pointer set before the thread starts");
-
-                    // SAFETY: `raw` is live; only this thread calls run/free, and
-                    // free happens below after run returns.
-                    let code = unsafe { ffi::zephyr_rdp_run(raw) };
-
-                    /* Clear then free, under the lock. An input call that
-                     * observes `Some` therefore always holds a live pointer. */
-                    {
-                        let mut slot =
-                            thread_shared.session.lock().expect("session mutex poisoned");
-                        *slot = None;
-                        // SAFETY: run has returned, so freeing is now legal, and
-                        // no other thread can reach the pointer once the slot is
-                        // cleared while we hold the lock.
-                        unsafe { ffi::zephyr_rdp_free(raw) };
-                    }
-
-                    thread_shared.stopping.store(true, Ordering::SeqCst);
-
-                    /* A non-zero exit is only an error if a stop was not asked
-                     * for: a user closing a tab produces a non-zero code from a
-                     * deliberate teardown, and reporting that as a failure would
-                     * put an error toast on every normal close. */
-                    if code != 0 && !thread_shared.stopping.load(Ordering::SeqCst) {
-                        thread_shared
-                            .sink
-                            .event(SessionEvent::Error(format!("RDP session ended: {code}")));
-                    }
-
-                    // SAFETY: matches the `Arc::into_raw` above. Last thing the
-                    // thread does, so no callback can run after it.
-                    unsafe { Arc::decrement_strong_count(user.as_raw() as *const Shared) };
-                })
+                .spawn(move || run_ownership.execute())
                 .map_err(|_| Error::SessionCreate)?;
 
             self.sessions
@@ -635,7 +796,11 @@ impl SessionRegistry {
     }
 
     pub fn get(&self, id: &str) -> Option<SessionHandle> {
-        self.sessions.lock().expect("registry poisoned").get(id).cloned()
+        self.sessions
+            .lock()
+            .expect("registry poisoned")
+            .get(id)
+            .cloned()
     }
 
     /// Stop and deregister a session. Idempotent: closing an already-ended tab is
@@ -653,8 +818,13 @@ impl SessionRegistry {
 
     /// Ids of sessions still registered.
     pub fn ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> =
-            self.sessions.lock().expect("registry poisoned").keys().cloned().collect();
+        let mut ids: Vec<String> = self
+            .sessions
+            .lock()
+            .expect("registry poisoned")
+            .keys()
+            .cloned()
+            .collect();
         ids.sort_unstable();
         ids
     }
@@ -674,14 +844,13 @@ mod tests {
     use super::*;
 
     fn sample_config() -> Config {
-        Config {
-            host: "host.example".into(),
-            username: "user".into(),
-            password: "pw".into(),
-            security: Security::Nla,
-            audio: AudioMode::Off,
-            ..Config::default()
-        }
+        let mut config = Config::default();
+        config.host = "host.example".into();
+        config.username = "user".into();
+        config.password = "pw".into();
+        config.security = Security::Nla;
+        config.audio = AudioMode::Off;
+        config
     }
 
     #[test]
@@ -690,11 +859,109 @@ mod tests {
          * which is worse than refusing the field. */
         let mut config = sample_config();
         config.host = "host\0evil".into();
-        assert_eq!(ConfigStrings::new(&config).err(), Some(Error::InteriorNul("host")));
+        assert_eq!(
+            ConfigStrings::new(&config).err(),
+            Some(Error::InteriorNul("host"))
+        );
 
         config = sample_config();
         config.password = "pw\0extra".into();
-        assert_eq!(ConfigStrings::new(&config).err(), Some(Error::InteriorNul("password")));
+        assert_eq!(
+            ConfigStrings::new(&config).err(),
+            Some(Error::InteriorNul("password"))
+        );
+    }
+
+    #[test]
+    fn ffi_password_cstring_bytes_are_zeroized_before_deallocation() {
+        let wiped = zeroized_cstring_bytes(CString::new("ffi-password-secret").unwrap());
+        assert_eq!(wiped.len(), "ffi-password-secret".len() + 1);
+        assert!(wiped.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn remote_clipboard_decoder_enforces_wire_bounds_before_allocating() {
+        let valid = [b'A', 0, 0x3d, 0xd8, 0xc1, 0xdc, 0, 0];
+        assert_eq!(
+            decode_clipboard_utf16le(&valid).as_deref(),
+            Some("A\u{1f4c1}")
+        );
+
+        assert_eq!(decode_clipboard_utf16le(&[b'A', 0, 0]), None, "odd length");
+        assert_eq!(decode_clipboard_utf16le(&[b'A', 0]), None, "missing NUL");
+        assert_eq!(
+            decode_clipboard_utf16le(&[b'A', 0, 0, 0, b'B', 0, 0, 0]),
+            None,
+            "embedded NUL"
+        );
+        assert_eq!(
+            decode_clipboard_utf16le(&[0x3d, 0xd8, 0, 0]),
+            None,
+            "lone high surrogate"
+        );
+        assert_eq!(
+            decode_clipboard_utf16le(&[0xc1, 0xdc, 0, 0]),
+            None,
+            "lone low surrogate"
+        );
+    }
+
+    #[cfg(zephyr_native_rdp)]
+    #[test]
+    fn c_clipboard_validator_rejects_lengths_before_reading_or_allocating() {
+        let valid = [b'A', 0, 0, 0];
+        let odd = [b'A', 0, 0];
+        // SAFETY: the first two calls lend their exact arrays. The oversized
+        // calls intentionally lend only a tiny buffer: C must reject the length
+        // before it dereferences based on that length.
+        unsafe {
+            assert_eq!(
+                ffi::zephyr_rdp_test_clipboard_payload(valid.as_ptr(), valid.len()),
+                1
+            );
+            assert_eq!(
+                ffi::zephyr_rdp_test_clipboard_payload(odd.as_ptr(), odd.len()),
+                0
+            );
+            assert_eq!(
+                ffi::zephyr_rdp_test_clipboard_payload(
+                    valid.as_ptr(),
+                    MAX_CLIPBOARD_UTF16_BYTES + 2,
+                ),
+                0
+            );
+            assert_eq!(
+                ffi::zephyr_rdp_test_clipboard_payload(valid.as_ptr(), usize::MAX),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn remote_clipboard_decoder_accepts_exact_limit_and_rejects_one_unit_over() {
+        let mut boundary = vec![0u8; MAX_CLIPBOARD_UTF16_BYTES];
+        for pair in boundary[..MAX_CLIPBOARD_UTF16_BYTES - 2].chunks_exact_mut(2) {
+            pair[0] = b'x';
+        }
+        let decoded = decode_clipboard_utf16le(&boundary).expect("exact wire limit is valid");
+        assert_eq!(decoded.len(), MAX_CLIPBOARD_UTF16_BYTES / 2 - 1);
+
+        let mut oversized = boundary;
+        oversized.splice(oversized.len() - 2.., [b'x', 0, 0, 0]);
+        assert_eq!(oversized.len(), MAX_CLIPBOARD_UTF16_BYTES + 2);
+        assert_eq!(decode_clipboard_utf16le(&oversized), None);
+    }
+
+    #[test]
+    fn local_clipboard_wire_measure_uses_utf16_bytes_including_nul() {
+        assert_eq!(clipboard_utf16_wire_len("A"), Some(4));
+        assert_eq!(clipboard_utf16_wire_len("\u{1f4c1}"), Some(6));
+        let boundary = "x".repeat(MAX_CLIPBOARD_UTF16_BYTES / 2 - 1);
+        assert_eq!(
+            clipboard_utf16_wire_len(&boundary),
+            Some(MAX_CLIPBOARD_UTF16_BYTES)
+        );
+        assert_eq!(clipboard_utf16_wire_len(&(boundary + "x")), None);
     }
 
     #[test]
@@ -767,8 +1034,61 @@ mod tests {
             registry.start("tab-1", sample_config(), sink).err(),
             Some(Error::Unavailable),
         );
-        assert!(registry.ids().is_empty(), "a refused start must not register");
-        assert!(!registry.close("tab-1"), "closing an unknown session is false, not a panic");
+        assert!(
+            registry.ids().is_empty(),
+            "a refused start must not register"
+        );
+        assert!(
+            !registry.close("tab-1"),
+            "closing an unknown session is false, not a panic"
+        );
+    }
+
+    #[test]
+    fn rejected_thread_spawn_frees_session_and_callback_owner_exactly_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static FREES: AtomicUsize = AtomicUsize::new(0);
+
+        unsafe fn fake_run(_session: *mut ffi::zephyr_rdp_session) -> i32 {
+            panic!("a rejected thread must never run")
+        }
+
+        unsafe fn fake_free(session: *mut ffi::zephyr_rdp_session) {
+            FREES.fetch_add(1, Ordering::SeqCst);
+            drop(Box::from_raw(session.cast::<u8>()));
+        }
+
+        fn reject_spawn(task: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+            drop(task);
+            Err(std::io::Error::other("injected thread creation failure"))
+        }
+
+        FREES.store(0, Ordering::SeqCst);
+        let sink: Arc<dyn FrameSink> = Arc::new(RecordingSink::default());
+        let shared = Arc::new(Shared {
+            sink,
+            session: Mutex::new(None),
+            stopping: AtomicBool::new(false),
+        });
+        let raw = Box::into_raw(Box::new(0_u8)).cast::<ffi::zephyr_rdp_session>();
+        *shared.session.lock().unwrap() = Some(raw);
+        let ownership = RunOwnership {
+            shared: Arc::clone(&shared),
+            _user: UserPtr::new(Arc::clone(&shared)),
+            run: fake_run,
+            free: fake_free,
+        };
+        assert_eq!(Arc::strong_count(&shared), 3);
+
+        let rejected = reject_spawn(move || ownership.execute());
+        assert!(rejected.is_err());
+        assert_eq!(FREES.load(Ordering::SeqCst), 1);
+        assert!(shared.session.lock().unwrap().is_none());
+        assert_eq!(Arc::strong_count(&shared), 1);
+
+        drop(shared);
+        assert_eq!(FREES.load(Ordering::SeqCst), 1, "no double free on drop");
     }
 
     #[test]
@@ -786,7 +1106,13 @@ mod tests {
     fn recording_sink_counts_frame_bytes() {
         let sink = RecordingSink::default();
         let pixels = vec![0u8; 4 * 2 * 2];
-        sink.frame(FrameRect { x: 0, y: 0, w: 2, h: 2, pixels: &pixels });
+        sink.frame(FrameRect {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 2,
+            pixels: &pixels,
+        });
         let snap = sink.snapshot();
         assert_eq!(snap.frames, 1);
         assert_eq!(snap.bytes, 16);

@@ -1,5 +1,64 @@
+/// Owns every decision about leaving the editor. Explicit controls call
+/// `requestDismiss`, while system navigation reads `allowsSystemDismissal`.
+/// Keeping both paths on the same value prevents a new exit from bypassing
+/// dirty-draft protection.
+struct ConnectionEditorDismissCoordinator {
+
+    enum Decision: Equatable {
+        case dismiss
+        case confirmDiscard
+    }
+
+    let hasUnsavedChanges: Bool
+
+    var decision: Decision {
+        hasUnsavedChanges ? .confirmDiscard : .dismiss
+    }
+
+    var allowsSystemDismissal: Bool {
+        decision == .dismiss
+    }
+
+    func requestDismiss(
+        confirmDiscard: () -> Void,
+        dismiss: () -> Void
+    ) {
+        switch decision {
+        case .dismiss:
+            dismiss()
+        case .confirmDiscard:
+            confirmDiscard()
+        }
+    }
+}
+
+/// Plaintext copies owned by SwiftUI's SecureField bindings. Keeping them in
+/// one value makes every lifecycle clear atomic from the view's perspective.
+struct ConnectionEditorSensitiveTextBuffers: Equatable {
+    var password = ""
+    var privateKey = ""
+
+    mutating func clear() {
+        clearPassword()
+        clearPrivateKey()
+    }
+
+    mutating func clearPassword() {
+        password.removeAll(keepingCapacity: false)
+    }
+
+    mutating func clearPrivateKey() {
+        privateKey.removeAll(keepingCapacity: false)
+    }
+}
+
 #if canImport(SwiftUI)
 import SwiftUI
+
+private enum ConnectionEditorSensitiveField: Hashable {
+    case password
+    case privateKey
+}
 
 /// The masked-secret tri-state as the form presents it (SCREEN_CATALOG.md 6:
 /// 保持不变/替换/清除). A masked placeholder is never a new secret.
@@ -22,6 +81,7 @@ enum SecretEditChoice: String, CaseIterable {
 /// Renders ``ConnectionEditorViewModel/page`` and nothing more: section order
 /// and visibility, the field mask, the secret tri-state and the validation
 /// rules all live in ``ConnectionDraft`` so XCTest covers them on the host.
+@MainActor
 public struct ConnectionEditorView: View {
 
     @ObservedObject var viewModel: ConnectionEditorViewModel
@@ -30,9 +90,9 @@ public struct ConnectionEditorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var showDiscardConfirmation = false
-    @State private var passwordText = ""
-    @State private var privateKeyText = ""
+    @State private var sensitiveText = ConnectionEditorSensitiveTextBuffers()
     @State private var jumpHostToAdd = ""
+    @FocusState private var focusedSensitiveField: ConnectionEditorSensitiveField?
 
     public init(
         viewModel: ConnectionEditorViewModel,
@@ -46,17 +106,27 @@ public struct ConnectionEditorView: View {
         content
             .navigationTitle(viewModel.draft?.isCreate == false ? "编辑连接" : "新建连接")
             .zephyrInlineTitle()
+            .zephyrNavigationBackButtonHidden(!dismissCoordinator.allowsSystemDismissal)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                if !dismissCoordinator.allowsSystemDismissal {
+                    ToolbarItem(placement: .zephyrNavLeading) {
+                        Button(action: requestClose) {
+                            Label("返回", systemImage: "chevron.backward")
+                        }
+                    }
+                }
+                ToolbarItem(placement: .zephyrNavTrailing) {
                     Button("取消") { requestClose() }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
+            .accessibilityAction(.escape) { requestClose() }
             .confirmationDialog(
                 "放弃未保存的修改？",
                 isPresented: $showDiscardConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("放弃修改", role: .destructive) { dismiss() }
+                Button("放弃修改", role: .destructive) { finishDismiss() }
                 Button("继续编辑", role: .cancel) {}
             }
             .alert(
@@ -74,15 +144,35 @@ public struct ConnectionEditorView: View {
                 guard let event else { return }
                 switch event {
                 case .dismissed:
+                    clearSensitiveCopies()
                     viewModel.consumeEvent()
                     dismiss()
                 case let .connect(connection, persisted):
+                    clearSensitiveCopies()
                     viewModel.consumeEvent()
                     onConnect(connection, persisted)
                 }
             }
+            .onChange(of: viewModel.sensitiveClearGeneration) { _ in
+                clearSensitiveCopies()
+            }
+            .onChange(of: viewModel.draft?.privateKey) { state in
+                guard case .replace? = state else {
+                    sensitiveText.clearPrivateKey()
+                    if focusedSensitiveField == .privateKey {
+                        focusedSensitiveField = nil
+                    }
+                    return
+                }
+            }
             .onAppear { viewModel.load() }
-            .zephyrInteractivePopGesture()
+            .onDisappear {
+                clearSensitiveCopies()
+                viewModel.clearSensitiveMaterial()
+            }
+            .zephyrInteractivePopGesture(
+                isEnabled: dismissCoordinator.allowsSystemDismissal
+            )
     }
 
     @ViewBuilder private var content: some View {
@@ -141,12 +231,27 @@ public struct ConnectionEditorView: View {
             (ui.draft.isDirty || ui.draft.isCreate)
     }
 
+    private var dismissCoordinator: ConnectionEditorDismissCoordinator {
+        ConnectionEditorDismissCoordinator(
+            hasUnsavedChanges: viewModel.draft?.isDirty == true
+        )
+    }
+
     private func requestClose() {
-        if viewModel.draft?.isDirty == true {
-            showDiscardConfirmation = true
-        } else {
-            dismiss()
-        }
+        dismissCoordinator.requestDismiss(
+            confirmDiscard: { showDiscardConfirmation = true },
+            dismiss: { finishDismiss() }
+        )
+    }
+
+    private func finishDismiss() {
+        clearSensitiveCopies()
+        viewModel.dismiss()
+    }
+
+    private func clearSensitiveCopies() {
+        sensitiveText.clear()
+        focusedSensitiveField = nil
     }
 
     @ViewBuilder
@@ -209,7 +314,8 @@ public struct ConnectionEditorView: View {
                     title: "密码",
                     stored: ui.draft.current.password,
                     state: ui.draft.password,
-                    text: $passwordText,
+                    text: $sensitiveText.password,
+                    focusedField: .password,
                     onState: { viewModel.setPassword($0) }
                 )
                 if ui.draft.showsSshKeyField {
@@ -230,7 +336,8 @@ public struct ConnectionEditorView: View {
                         title: "内联私钥",
                         stored: ui.draft.current.privateKey,
                         state: ui.draft.privateKey,
-                        text: $privateKeyText,
+                        text: $sensitiveText.privateKey,
+                        focusedField: .privateKey,
                         onState: { viewModel.setPrivateKey($0) }
                     )
                 }
@@ -386,6 +493,7 @@ public struct ConnectionEditorView: View {
         stored: SecretPresence,
         state: SecretState,
         text: Binding<String>,
+        focusedField: ConnectionEditorSensitiveField,
         onState: @escaping (SecretState) -> Void
     ) -> some View {
         VStack(alignment: .leading) {
@@ -404,10 +512,12 @@ public struct ConnectionEditorView: View {
                     set: { choice in
                         switch choice {
                         case .unchanged:
+                            text.wrappedValue = ""
                             onState(.unchanged)
                         case .replace:
                             onState(.replace(text.wrappedValue))
                         case .clear:
+                            text.wrappedValue = ""
                             onState(.clear)
                         }
                     }
@@ -428,6 +538,7 @@ public struct ConnectionEditorView: View {
                         }
                     )
                 )
+                .focused($focusedSensitiveField, equals: focusedField)
             }
         }
     }

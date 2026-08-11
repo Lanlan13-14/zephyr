@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAssetVersion, cacheNameVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const css = readFileSync(join(root, 'public/style.css'), 'utf8');
@@ -364,12 +365,16 @@ test('the settle morph is gated so a single-window open stays interactive', () =
 test('app shell assets are cache-busted for the split-grid change', () => {
     const appHtml = readFileSync(join(root, 'public/app.html'), 'utf8');
     const sw = readFileSync(join(root, 'public/sw.js'), 'utf8');
-    // The service worker returns any cached ?v= URL without revalidating, so a
-    // returning browser would keep the old app.js/style.css forever.
-    assert.match(sw, /caches\.match\(request\)/);
-    assert.match(appHtml, /app\.js\?v=[^"']*splitgrid1/);
-    assert.match(appHtml, /style\.css\?v=[^"']*splitgrid1/);
-    const scriptTags = appHtml.match(/app\.js\?v=([^"']+)/g) || [];
-    assert.ok(scriptTags.length >= 2, 'modulepreload and script tag must both be busted');
-    assert.equal(new Set(scriptTags).size, 1, 'every app.js reference must use the same revision');
+    const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js references');
+    assertAssetVersion(appHtml, 'style.css', appVersion, 'app shell style');
+    assert.equal(cacheNameVersion(sw), appVersion);
+    assertAssetVersion(sw, 'app.js', appVersion, 'service worker app.js');
+    assertAssetVersion(sw, 'style.css', appVersion, 'service worker style.css');
+
+    // Versioned URLs are immutable and cache-first. Bare module dependencies
+    // are network-first so a previously cached unversioned file cannot live
+    // forever after its parent entry point changes.
+    assert.match(sw, /if \(isVersionedAsset\) \{\s*const cached = await caches\.match\(request\)/);
+    assert.match(sw, /const response = await fetch\(request\)/);
+    assert.match(sw, /if \(!isVersionedAsset\) \{\s*const cached = await caches\.match\(request\)/);
 });

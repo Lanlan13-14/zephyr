@@ -55,6 +55,13 @@ async function withRuntime(handler, fn) {
 test('runtime bridge preserves binary upload and capture asset binding', { concurrency: false }, async () => {
   const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('pixels')]);
   await withRuntime((req, res, body) => {
+    if (req.url === '/admin/runs') {
+      const payload = JSON.parse(body.toString('utf8'));
+      assert.equal(payload.userId, 'u1');
+      assert.ok(payload.databaseGeneration);
+      assert.ok(payload.runNonce);
+      return json(res, 200, { ok: true, runId: 'run-1', ticket: 'ticket-1' });
+    }
     if (req.url === '/admin/runs/run-1/capture-image?userId=u1&callId=call-1') {
       assert.equal(req.headers['content-type'], 'image/png');
       assert.deepEqual(body, png);
@@ -70,14 +77,15 @@ test('runtime bridge preserves binary upload and capture asset binding', { concu
     }
     throw new Error(`unexpected request ${req.method} ${req.url}`);
   }, async (bridge, requests) => {
+    await bridge.startRun({ userId: 'u1' }, { sessionId: 'session-1' });
     const uploaded = await bridge.uploadCaptureImage({ userId: 'u1' }, 'run-1', 'call-1', png, 'image/png');
     assert.equal(uploaded.captureAssetId, 'asset-1');
-    await bridge.submitCapture('run-1', {
+    await bridge.submitCapture({ userId: 'u1' }, 'run-1', {
       userId: 'u1',
       callId: 'call-1',
       captureAssetId: uploaded.captureAssetId,
       result: { captureId: 'frame-1' },
     });
-    assert.equal(requests.length, 2);
+    assert.equal(requests.length, 3);
   });
 });

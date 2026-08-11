@@ -48,15 +48,6 @@
     "windows": {
       "digestAlgorithm": "sha256",
       "certificateThumbprint": null
-    },
-    "linux": {
-      "deb": {
-        "depends": [
-          "libfreerdp3-3 | libfreerdp2-2",
-          "libfreerdp-client3-3 | libfreerdp-client2-2",
-          "libwinpr3-3 | libwinpr2-2"
-        ]
-      }
     }
   },
   "plugins": {}

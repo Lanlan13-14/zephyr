@@ -63,10 +63,7 @@ impl TokenState {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let tokens = self.cache.lock().clone();
-        let file = TokenFile {
-            version: 2,
-            tokens,
-        };
+        let file = TokenFile { version: 2, tokens };
         let raw = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
         fs::write(path, raw).map_err(|e| e.to_string())
     }
@@ -77,7 +74,12 @@ impl TokenState {
         items
     }
 
-    pub fn add(&self, token: String, name: String, owner_id: Option<String>) -> Result<TokenRecord, String> {
+    pub fn add(
+        &self,
+        token: String,
+        name: String,
+        owner_id: Option<String>,
+    ) -> Result<TokenRecord, String> {
         let token = token.trim().to_string();
         if token.is_empty() {
             return Err("empty token".into());
@@ -136,7 +138,8 @@ impl TokenState {
     pub fn import_json(&self, raw: &str) -> Result<usize, String> {
         let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| e.to_string())?;
         let items: Vec<TokenRecord> = if let Some(arr) = value.as_array() {
-            serde_json::from_value(serde_json::Value::Array(arr.clone())).map_err(|e| e.to_string())?
+            serde_json::from_value(serde_json::Value::Array(arr.clone()))
+                .map_err(|e| e.to_string())?
         } else if let Some(tokens) = value.get("tokens") {
             serde_json::from_value(tokens.clone()).map_err(|e| e.to_string())?
         } else if value.get("token").is_some() {

@@ -1,6 +1,10 @@
 package one.zephyr.mobile.security
 
+import android.system.Os
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import one.zephyr.mobile.model.Base64Codec
 import one.zephyr.mobile.model.SecretRef
 
@@ -26,39 +30,76 @@ interface SecretBlobStore {
  * adb backup, and the wrapped blobs are useless off-device anyway because the unwrapping key is
  * non-exportable Keystore material.
  */
-class FileSecretBlobStore(private val root: File) : SecretBlobStore {
+class FileSecretBlobStore internal constructor(
+    private val root: File,
+    private val deleteFile: (File) -> Boolean,
+) : SecretBlobStore {
+
+    constructor(root: File) : this(root, deleteFile = { file -> file.delete() })
+
+    private val unreadableRefs = ConcurrentHashMap.newKeySet<String>()
+    private val ioLock = Any()
 
     init {
         if (!root.exists()) root.mkdirs()
     }
 
-    override fun read(ref: SecretRef): ByteArray? {
+    override fun read(ref: SecretRef): ByteArray? = synchronized(ioLock) {
+        if (isDenied(ref)) return@synchronized null
         val file = fileFor(ref)
-        return if (file.isFile) file.readBytes() else null
+        if (file.isFile) file.readBytes() else null
     }
 
     override fun write(ref: SecretRef, blob: ByteArray) {
-        val file = fileFor(ref)
-        file.parentFile?.mkdirs()
-        // Write-then-rename so a crash cannot leave a half-written envelope that would decrypt
-        // to garbage and be reported as tampering.
-        val temp = File(file.parentFile, file.name + ".tmp")
-        temp.writeBytes(blob)
-        if (!temp.renameTo(file)) {
-            file.writeBytes(blob)
-            temp.delete()
+        synchronized(ioLock) {
+            val file = fileFor(ref)
+            file.parentFile?.mkdirs()
+            // rename(2) is the commit point and replaces an existing destination atomically. Sync the
+            // temporary file first so a completed rotation cannot point at a half-durable envelope.
+            val temp = File(file.parentFile, file.name + ".tmp-" + Thread.currentThread().id + "-" + System.nanoTime())
+            try {
+                FileOutputStream(temp).use { output ->
+                    output.write(blob)
+                    output.fd.sync()
+                }
+                Os.rename(temp.absolutePath, file.absolutePath)
+                clearDeleteMarker(ref)
+                unreadableRefs.remove(ref.value)
+            } finally {
+                temp.delete()
+            }
         }
     }
 
     override fun delete(ref: SecretRef) {
-        fileFor(ref).delete()
+        synchronized(ioLock) {
+            val file = fileFor(ref)
+            unreadableRefs.add(ref.value)
+            if (!file.exists()) {
+                clearDeleteMarker(ref)
+                return@synchronized
+            }
+
+            // Persist the deny marker before touching the blob. If deletion fails, the exception must
+            // abort the surrounding mirror transaction while this process and a restarted one both
+            // refuse to read the old ciphertext.
+            persistDeleteMarker(ref)
+            val deleted = deleteFile(file)
+            if (!deleted) {
+                throw IOException("failed to delete secret blob")
+            }
+            clearDeleteMarker(ref)
+            unreadableRefs.remove(ref.value)
+        }
     }
 
-    override fun listRefs(): List<SecretRef> =
+    override fun listRefs(): List<SecretRef> = synchronized(ioLock) {
         root.walkTopDown()
             .filter { it.isFile && it.extension == "bin" }
             .mapNotNull { file -> decodeName(file.nameWithoutExtension)?.let(::SecretRef) }
+            .filterNot(::isDenied)
             .toList()
+    }
 
     override fun deleteAll() {
         root.deleteRecursively()
@@ -66,6 +107,27 @@ class FileSecretBlobStore(private val root: File) : SecretBlobStore {
     }
 
     private fun fileFor(ref: SecretRef): File = File(root, encodeName(ref.value) + ".bin")
+
+    private fun markerFor(ref: SecretRef): File = File(root, encodeName(ref.value) + ".deny")
+
+    private fun isDenied(ref: SecretRef): Boolean =
+        unreadableRefs.contains(ref.value) || markerFor(ref).isFile
+
+    private fun persistDeleteMarker(ref: SecretRef) {
+        val marker = markerFor(ref)
+        try {
+            FileOutputStream(marker).use { output -> output.fd.sync() }
+        } catch (error: Exception) {
+            throw IOException("failed to deny reads for secret blob deletion", error)
+        }
+    }
+
+    private fun clearDeleteMarker(ref: SecretRef) {
+        val marker = markerFor(ref)
+        if (marker.exists() && !marker.delete()) {
+            throw IOException("failed to clear secret blob deletion marker")
+        }
+    }
 
     /**
      * Refs contain '/' separators and arbitrary entity ids, so they are encoded rather than used

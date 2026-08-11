@@ -1,6 +1,11 @@
 import XCTest
 @testable import ZephyrUI
 
+private final class EditorAuthenticator: DeviceAuthenticator {
+    func availability() -> BiometricAvailability { .available }
+    func authenticate(title: String, subtitle: String) async -> AuthResult { .success }
+}
+
 /// In-memory ConnectionStore fake recording every write.
 private final class FakeConnectionStore: ConnectionStore {
     var rows: [String: Connection] = [:]
@@ -43,6 +48,7 @@ private final class FakeConnectionStore: ConnectionStore {
 }
 
 /// The S11 view model: load branches, save gating and the mask-skip rule.
+@MainActor
 final class ConnectionEditorViewModelTests: XCTestCase {
 
     private func makeViewModel(
@@ -125,11 +131,16 @@ final class ConnectionEditorViewModelTests: XCTestCase {
         viewModel.load()
         viewModel.setName("renamed")
         viewModel.setPassword(.replace("hunter2"))
+        viewModel.setPrivateKey(.replace("private-key"))
         await viewModel.save()
         XCTAssertEqual([["name"]], store.savedMasks)
         XCTAssertEqual(.replace("hunter2"), store.savedSecrets.first?["password"])
+        XCTAssertEqual(.replace("private-key"), store.savedSecrets.first?["privateKey"])
         XCTAssertEqual([false], store.savedCreatedLocally)
         XCTAssertEqual(ConnectionEditorViewModel.msgSaved, viewModel.message)
+        XCTAssertEqual(.unchanged, content(of: viewModel)?.draft.password)
+        XCTAssertEqual(.unchanged, content(of: viewModel)?.draft.privateKey)
+        XCTAssertEqual(1, viewModel.sensitiveClearGeneration)
     }
 
     func testSaveValidationFailureNeverWrites() async {
@@ -163,6 +174,8 @@ final class ConnectionEditorViewModelTests: XCTestCase {
         viewModel.setName("quick")
         viewModel.setHost("example.org")
         viewModel.setUsername("root")
+        viewModel.setPassword(.replace("secret"))
+        viewModel.setPrivateKey(.replace("private-key"))
         viewModel.connectWithoutSaving()
         guard case let .connect(connection, persisted) = viewModel.event else {
             return XCTFail("expected connect event")
@@ -170,6 +183,8 @@ final class ConnectionEditorViewModelTests: XCTestCase {
         XCTAssertFalse(persisted)
         XCTAssertTrue(connection.ephemeral)
         XCTAssertTrue(store.savedMasks.isEmpty)
+        XCTAssertEqual(.unchanged, content(of: viewModel)?.draft.password)
+        XCTAssertEqual(.unchanged, content(of: viewModel)?.draft.privateKey)
     }
 
     func testSaveAndConnectEmitsPersistedConnect() async {
@@ -217,5 +232,48 @@ final class ConnectionEditorViewModelTests: XCTestCase {
         viewModel.setPort("2222")
         XCTAssertEqual(2222, content(of: viewModel)?.draft.current.port)
         XCTAssertEqual(true, content(of: viewModel)?.draft.portWasEdited)
+    }
+
+    func testDismissClearsBothSecretDrafts() {
+        let viewModel = makeViewModel(store: FakeConnectionStore())
+        viewModel.load()
+        viewModel.setPassword(.replace("secret"))
+        viewModel.setPrivateKey(.replace("private-key"))
+
+        viewModel.dismiss()
+
+        XCTAssertEqual(.dismissed, viewModel.event)
+        XCTAssertEqual(.unchanged, content(of: viewModel)?.draft.password)
+        XCTAssertEqual(.unchanged, content(of: viewModel)?.draft.privateKey)
+        XCTAssertEqual(1, viewModel.sensitiveClearGeneration)
+    }
+
+    func testLockRegistrationClearsAndDetachRemovesOwnership() {
+        let lock = AppLock(authenticator: EditorAuthenticator(), clock: { 0 })
+        let viewModel = makeViewModel(store: FakeConnectionStore())
+        viewModel.load()
+        viewModel.attachSensitiveLifecycle(to: lock)
+        viewModel.setPassword(.replace("secret"))
+        viewModel.setPrivateKey(.replace("private-key"))
+        XCTAssertEqual(1, lock.registeredSensitiveSinkCount)
+
+        lock.lockNow()
+
+        XCTAssertEqual(.unchanged, content(of: viewModel)?.draft.password)
+        XCTAssertEqual(.unchanged, content(of: viewModel)?.draft.privateKey)
+        viewModel.detachSensitiveLifecycle()
+        XCTAssertEqual(0, lock.registeredSensitiveSinkCount)
+    }
+
+    func testSwiftUILocalSecretBuffersClearTogether() {
+        var buffers = ConnectionEditorSensitiveTextBuffers(
+            password: "secret",
+            privateKey: "private-key"
+        )
+
+        buffers.clear()
+
+        XCTAssertTrue(buffers.password.isEmpty)
+        XCTAssertTrue(buffers.privateKey.isEmpty)
     }
 }

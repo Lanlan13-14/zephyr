@@ -21,7 +21,7 @@ func TestListTools(t *testing.T) {
 	}))
 	defer srv.Close()
 	h := NewHost(srv.URL, "")
-	tools, err := h.ListTools(context.Background(), nil)
+	tools, err := h.ListTools(context.Background(), nil, "u", "run", "generation", "nonce")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestListToolsCarriesRemoteDesktopContext(t *testing.T) {
 	defer srv.Close()
 	h := NewHost(srv.URL, "")
 	contextJSON := json.RawMessage(`{"activeSurface":{"kind":"remote-desktop","tabId":"rdp-1"}}`)
-	if _, err := h.ListTools(context.Background(), contextJSON); err != nil {
+	if _, err := h.ListTools(context.Background(), contextJSON, "u", "run", "generation", "nonce"); err != nil {
 		t.Fatal(err)
 	}
 	if gotContext != string(contextJSON) {
@@ -135,7 +135,7 @@ func TestRegisterFromHostInjectsIdentityForToolDiscovery(t *testing.T) {
 	h := NewHost(srv.URL, "")
 	reg := tool.NewRegistry()
 	browserContext := json.RawMessage(`{"aiChatSessionId":"chat-1"}`)
-	if err := RegisterFromHost(context.Background(), reg, h, "user-1", "runtime-1", "run-1", browserContext); err != nil {
+	if err := RegisterFromHost(context.Background(), reg, h, "user-1", "runtime-1", "run-1", "generation-1", "nonce-1", browserContext); err != nil {
 		t.Fatal(err)
 	}
 	var got map[string]any

@@ -11,7 +11,11 @@ import androidx.work.OneTimeWorkRequest
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
+import androidx.work.workDataOf
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import one.zephyr.mobile.contracts.SyncContract
 import one.zephyr.mobile.model.NetworkPolicy
 
@@ -33,9 +37,20 @@ import one.zephyr.mobile.model.NetworkPolicy
 class SyncScheduler(
     private val context: Context,
     private val workerClass: Class<out ListenableWorker>,
+    val bindingKey: String,
+    val generation: String,
 ) {
 
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
+
+    private val scopeId: String = scopeId(bindingKey, generation)
+
+    private val workerInput = workDataOf(
+        INPUT_BINDING_KEY to bindingKey,
+        INPUT_BINDING_GENERATION to generation,
+    )
+
+    val workTag: String = TAG_SYNC + "-" + scopeId
 
     fun schedulePeriodic(intervalSec: Int, policy: NetworkPolicy) {
         val effective = effectivePeriodicIntervalSec(intervalSec)
@@ -50,13 +65,15 @@ class SyncScheduler(
                 SyncContract.retryBackoffMs.first(),
                 TimeUnit.MILLISECONDS,
             )
+            .setInputData(workerInput)
             .addTag(TAG_SYNC)
+            .addTag(workTag)
             .build()
 
         // UPDATE rather than REPLACE: replacing would reset the period and drop the pending run
         // every time the user reopened the settings screen.
         workManager.enqueueUniquePeriodicWork(
-            PERIODIC_WORK_NAME,
+            scopedName(PERIODIC_WORK_NAME),
             ExistingPeriodicWorkPolicy.UPDATE,
             request,
         )
@@ -72,9 +89,32 @@ class SyncScheduler(
     fun requestBackgroundRound(policy: NetworkPolicy, expedited: Boolean = false) {
         val builder = OneTimeWorkRequest.Builder(workerClass)
             .setConstraints(constraintsFor(policy))
+            .setInputData(workerInput)
             .addTag(TAG_SYNC)
+            .addTag(workTag)
         if (expedited) builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-        workManager.enqueueUniqueWork(ONE_SHOT_WORK_NAME, ExistingWorkPolicy.KEEP, builder.build())
+        workManager.enqueueUniqueWork(scopedName(ONE_SHOT_WORK_NAME), ExistingWorkPolicy.KEEP, builder.build())
+    }
+
+    /**
+     * Recovery lane for a push result that requires bootstrap.
+     *
+     * This deliberately has its own unique name. If the current worker is the normal one-shot,
+     * enqueuing that same KEEP name would be ignored while it is still RUNNING and the durable
+     * bootstrap transition could remain parked until the next interval.
+     */
+    fun requestBootstrapRound(policy: NetworkPolicy) {
+        val request = OneTimeWorkRequest.Builder(workerClass)
+            .setConstraints(constraintsFor(policy))
+            .setInputData(workerInput)
+            .addTag(TAG_SYNC)
+            .addTag(workTag)
+            .build()
+        workManager.enqueueUniqueWork(
+            scopedName(BOOTSTRAP_WORK_NAME),
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
     }
 
     /**
@@ -87,17 +127,43 @@ class SyncScheduler(
         val request = OneTimeWorkRequest.Builder(workerClass)
             .setInitialDelay(delayMs.coerceAtLeast(0L), TimeUnit.MILLISECONDS)
             .setConstraints(constraintsFor(policy))
+            .setInputData(workerInput)
             .addTag(TAG_SYNC)
+            .addTag(workTag)
             .build()
-        workManager.enqueueUniqueWork(RETRY_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+        workManager.enqueueUniqueWork(scopedName(RETRY_WORK_NAME), ExistingWorkPolicy.REPLACE, request)
     }
 
     /** Called on unbind, revoke and fatal incompatibility: no further automatic rounds. */
     fun cancelAll() {
-        workManager.cancelUniqueWork(PERIODIC_WORK_NAME)
-        workManager.cancelUniqueWork(ONE_SHOT_WORK_NAME)
-        workManager.cancelUniqueWork(RETRY_WORK_NAME)
+        cancellationOperations().forEach { /* Requesting cancellation is sufficient for UI toggles. */ }
     }
+
+    /**
+     * Account replacement needs a stronger guarantee than a settings toggle: wait until WorkManager
+     * has accepted every cancellation before the old graph and its credentials are wiped.
+     */
+    suspend fun cancelAllAndAwait() {
+        val operations = cancellationOperations()
+        withContext(Dispatchers.IO) {
+            operations.forEach { it.result.get() }
+        }
+    }
+
+    private fun cancellationOperations(): List<androidx.work.Operation> = listOf(
+        workManager.cancelUniqueWork(scopedName(PERIODIC_WORK_NAME)),
+        workManager.cancelUniqueWork(scopedName(ONE_SHOT_WORK_NAME)),
+        workManager.cancelUniqueWork(scopedName(BOOTSTRAP_WORK_NAME)),
+        workManager.cancelUniqueWork(scopedName(RETRY_WORK_NAME)),
+        /* Upgrade cleanup for requests created before work became binding-scoped. There is only one
+         * active account, so these legacy global names can never belong to another live graph. */
+        workManager.cancelUniqueWork(PERIODIC_WORK_NAME),
+        workManager.cancelUniqueWork(ONE_SHOT_WORK_NAME),
+        workManager.cancelUniqueWork(BOOTSTRAP_WORK_NAME),
+        workManager.cancelUniqueWork(RETRY_WORK_NAME),
+    )
+
+    private fun scopedName(base: String): String = base + "-" + scopeId
 
     /**
      * wifiOnly maps to UNMETERED rather than to a wifi transport check, so a metered hotspot is
@@ -112,8 +178,18 @@ class SyncScheduler(
     companion object {
         const val PERIODIC_WORK_NAME = "zephyr-one-sync-periodic"
         const val ONE_SHOT_WORK_NAME = "zephyr-one-sync-oneshot"
+        const val BOOTSTRAP_WORK_NAME = "zephyr-one-sync-bootstrap"
         const val RETRY_WORK_NAME = "zephyr-one-sync-retry"
         const val TAG_SYNC = "zephyr-one-sync"
+        const val INPUT_BINDING_KEY = "zephyr-one-binding-key"
+        const val INPUT_BINDING_GENERATION = "zephyr-one-binding-generation"
+
+        /** Stable across process recreation, opaque in WorkManager diagnostics and filesystem-safe. */
+        fun scopeId(bindingKey: String, generation: String): String {
+            val bytes = MessageDigest.getInstance("SHA-256")
+                .digest((bindingKey + "\u0000" + generation).toByteArray(Charsets.UTF_8))
+            return bytes.take(12).joinToString("") { "%02x".format(it) }
+        }
 
         fun effectivePeriodicIntervalSec(targetSec: Int): Int =
             SyncContract.clampIntervalSec(targetSec)

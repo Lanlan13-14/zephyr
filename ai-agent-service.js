@@ -295,6 +295,28 @@ async function fetchJsonWithUnsupportedParamRetry(url, requestOptions = {}, payl
 function throwIfAborted(signal) {
     if (signal?.aborted) throw aiAbortError();
 }
+function assertHostCallLive(ctx) {
+    if (typeof ctx?.hostCallGuard === 'function') ctx.hostCallGuard();
+    throwIfAborted(ctx?.signal);
+}
+function guardHostDependencies(value, assertLive, seen = new WeakMap()) {
+    if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
+    if (seen.has(value)) return seen.get(value);
+    const proxy = new Proxy(value, {
+        get(target, property) {
+            const member = Reflect.get(target, property, target);
+            if (typeof member === 'function') {
+                return (...args) => {
+                    assertLive();
+                    return member.apply(target, args);
+                };
+            }
+            return guardHostDependencies(member, assertLive, seen);
+        },
+    });
+    seen.set(value, proxy);
+    return proxy;
+}
 function normalizeRole(role) {
     const value = String(role || '').toLowerCase();
     if (value === 'ai') return 'assistant';
@@ -1427,6 +1449,10 @@ function getSshConnections(deps, ctx) {
 function aiEnvList(ai = {}) {
     return (Array.isArray(ai.envVars) ? ai.envVars : []).filter((item) => item?.enabled !== false && item.name && item.visibleToAi === true);
 }
+function accountAiSettings(deps = {}, user) {
+    if (deps.userSettingsService && user?.userId) return deps.userSettingsService.runtimeAi(user);
+    return deps.storage?.getSettings?.().ai || {};
+}
 function publicEnvVar(item = {}) {
     return {
         name: item.name,
@@ -1907,7 +1933,7 @@ function createPendingConfirmation(toolName, args, ctx, deps) {
     return { confirmationRequired: true, confirmation };
 }
 async function maybeRequireConfirmation(toolName, args, ctx, run, deps) {
-    const ai = deps.storage.getSettings().ai || {};
+    const ai = accountAiSettings(deps, ctx?.user);
     const sensitive = ai.sensitive || {};
     if (!isSensitiveTool(toolName, args) || ctx.confirmed || ctx.confirmedToolId === toolName || sensitive.requireConfirmation === false) return run();
     if (sensitive.autoConfirm) {
@@ -1963,12 +1989,21 @@ function executeCanonicalAiTool(toolName, args, ctx, deps, execute) {
         schema: CANONICAL_TOOL_SCHEMAS[toolName],
         args,
         ctx: { ...ctx, requireConfirmation: () => requireCanonicalConfirmation(toolName, args, ctx, deps) },
-        authorize: () => canonicalToolAuthorization(toolName, args, ctx, deps),
-        execute,
+        authorize: () => {
+            assertHostCallLive(ctx);
+            return canonicalToolAuthorization(toolName, args, ctx, deps);
+        },
+        execute: async () => {
+            assertHostCallLive(ctx);
+            const result = await execute();
+            assertHostCallLive(ctx);
+            return result;
+        },
     });
 }
 
 async function executeAiTool(toolName, args = {}, ctx, deps) {
+    assertHostCallLive(ctx);
     if (ctx?.context?.activeSurface?.kind === 'remote-desktop' && String(toolName || '').startsWith('browser_')) {
         const err = new Error('当前目标是 RDP/VNC 远程桌面；请使用 remote_desktop_cert_status_v1 / remote_desktop_cert_decide_v1 / remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1');
         err.code = 'wrong_surface';
@@ -1987,7 +2022,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             policy: extendedPolicy,
         });
     }
-    const ai = deps.storage.getSettings().ai || {};
+    const ai = accountAiSettings(deps, ctx?.user);
     const p = ai.permissions || {};
     if (String(toolName || '').startsWith('note_') && deps.userSettingsService && ctx?.user) {
         const effective = deps.userSettingsService.effective(ctx.user);
@@ -2683,7 +2718,6 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             });
         case 'memory_save': {
             if (p.memory === false || ai.memory?.enabled === false) throw new Error('长期 Memory 权限未开启');
-            const memories = Array.isArray(ai.memories) ? ai.memories.slice(0, 1000) : [];
             const context = normalizeAiContext(ctx.context || {});
             const connectionIds = uniqueStrings([...context.activeConnectionIds, ...stringList(args.connectionIds)]);
             const projects = uniqueStrings([...(context.projects || []), args.project, ...stringList(args.projects)]);
@@ -2697,15 +2731,13 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 projects: projects.slice(0, 20),
                 tags: tags.slice(0, 30),
                 connectionIds: connectionIds.slice(0, 50),
-                enabled: true,
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
             };
             if (!item.content.trim()) throw new Error('Memory 内容不能为空');
-            memories.unshift(item);
-            deps.storage.updateSettings({ ai: { memories: memories.slice(0, clampNumber(ai.memory?.maxItems, 1, 2000, 500)) } });
+            const knowledge = deps.userSettingsService?.aiKnowledgeService;
+            if (!knowledge || !ctx.user?.userId) throw new Error('AI Memory canonical service is unavailable');
+            const memory = knowledge.writeFromWeb(ctx.user, 'aiMemory', item.id, item);
             deps.addActivity?.(`AI 保存 Memory：${item.title}`);
-            return { memory: item };
+            return { memory };
         }
         case 'list_env_vars':
             if (p.env === false) throw new Error('AI 环境变量权限未开启');
@@ -2723,9 +2755,10 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 if (p.env === false) throw new Error('AI 环境变量权限未开启');
                 const name = String(args.name || '').trim().replace(/[^A-Za-z0-9_]/g, '_').slice(0, 80);
                 if (!name) throw new Error('环境变量名无效');
-                const current = Array.isArray(ai.envVars) ? ai.envVars.slice(0, 200) : [];
-                const idx = current.findIndex((item) => item.name === name);
-                const prev = idx >= 0 ? current[idx] : {};
+                const knowledge = deps.userSettingsService?.aiKnowledgeService;
+                if (!knowledge || !ctx.user?.userId) throw new Error('AI environment canonical service is unavailable');
+                const prev = knowledge.listForUser(ctx.user, 'aiEnv', { forRuntime: true })
+                    .find((item) => item.name === name) || {};
                 const nextItem = {
                     id: String(prev.id || crypto.randomUUID()).slice(0, 120),
                     name,
@@ -2736,19 +2769,21 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                     enabled: args.enabled === undefined ? (prev.enabled !== false) : args.enabled !== false,
                     updatedAt: Date.now(),
                 };
-                if (idx >= 0) current[idx] = nextItem; else current.unshift(nextItem);
-                deps.storage.updateSettings({ ai: { envVars: current.slice(0, 200) } });
+                const envVar = knowledge.writeFromWeb(ctx.user, 'aiEnv', nextItem.id, nextItem, {
+                    expectedRevision: prev.revision,
+                });
                 deps.addActivity?.(`AI 设置环境变量：${name}`, ctx.user?.userId);
-                return { envVar: publicEnvVar(nextItem) };
+                return { envVar: publicEnvVar(envVar) };
             });
         case 'env_delete_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (p.env === false) throw new Error('AI 环境变量权限未开启');
                 const name = String(args.name || '').trim();
-                const current = Array.isArray(ai.envVars) ? ai.envVars.slice(0, 200) : [];
-                const next = current.filter((item) => item.name !== name);
-                if (next.length === current.length) throw new Error('环境变量不存在');
-                deps.storage.updateSettings({ ai: { envVars: next } });
+                const knowledge = deps.userSettingsService?.aiKnowledgeService;
+                if (!knowledge || !ctx.user?.userId) throw new Error('AI environment canonical service is unavailable');
+                const current = knowledge.listForUser(ctx.user, 'aiEnv').find((item) => item.name === name);
+                if (!current) throw new Error('环境变量不存在');
+                knowledge.removeFromWeb(ctx.user, 'aiEnv', current.id, { expectedRevision: current.revision });
                 deps.addActivity?.(`AI 删除环境变量：${name}`, ctx.user?.userId);
                 return { deleted: true, name };
             });
@@ -3728,8 +3763,10 @@ function safeAiSettings(ai = {}) {
     const copy = JSON.parse(JSON.stringify(ai || {}));
     if (Array.isArray(copy.providers)) copy.providers.forEach((p) => { if (p.apiKey) p.apiKey = '******'; });
     if (Array.isArray(copy.envVars)) copy.envVars.forEach((item) => {
-        item.hasValue = !!item.value;
-        item.valuePreview = item.valueVisibleToAi ? String(item.value || '') : '';
+        item.hasValue = item.hasValue === true || !!item.value;
+        // A settings response is not a secret reveal path. Value visibility
+        // controls runtime prompt behavior only; plaintext stays server-side.
+        item.valuePreview = '';
         if (item.value) item.value = '******';
     });
     return copy;
@@ -3763,7 +3800,7 @@ function registerAiRoutes(app, deps) {
         const providers = deps.aiProviderService
             ? deps.aiProviderService.listVisible(req.user)
             : (safeAiSettings(rawAi).providers || []);
-        const ai = safeAiSettings(rawAi);
+        const ai = safeAiSettings(deps.userSettingsService?.effective(req.user)?.ai || rawAi);
         // Expose the immutable unified built-in Skill for inspection in UI;
         // normalizeAiSettingsInput strips it before persisting user settings.
         ai.skills = mergeZephyrDefaultSkills(ai.skills || []);
@@ -3834,14 +3871,22 @@ function registerAiRoutes(app, deps) {
     app.post('/api/ai/providers', requireUser, (req, res) => {
         try {
             if (!deps.aiProviderService) throw new Error('AI Provider 服务不可用');
-            res.json({ provider: deps.aiProviderService.create(req.user, req.body || {}) });
+            const input = req.body || {};
+            res.json({ provider: deps.aiProviderService.create(req.user, input, {
+                changedSecretFields: Object.prototype.hasOwnProperty.call(input, 'apiKey')
+                    ? ['apiKey'] : [],
+            }) });
         } catch (err) { handleServiceError(res, err, 400); }
     });
 
     app.patch('/api/ai/providers/:id', requireUser, (req, res) => {
         try {
             if (!deps.aiProviderService) throw new Error('AI Provider 服务不可用');
-            res.json({ provider: deps.aiProviderService.update(req.user, req.params.id, req.body || {}) });
+            const patch = req.body || {};
+            res.json({ provider: deps.aiProviderService.update(req.user, req.params.id, patch, {
+                changedSecretFields: Object.prototype.hasOwnProperty.call(patch, 'apiKey')
+                    && patch.apiKey !== '******' ? ['apiKey'] : [],
+            }) });
         } catch (err) { handleServiceError(res, err, 400); }
     });
 
@@ -4096,7 +4141,7 @@ function registerAiRoutes(app, deps) {
         req.on('aborted', abortRequest);
         res.on('close', abortRequest);
         try {
-            const ai = deps.storage.getSettings().ai || {};
+            const ai = accountAiSettings(deps, req.user);
             if (!ai.enabled) return res.status(403).json({ error: 'AI 助理未启用，请先到设置中开启' });
             // Policy gate: disabled users cannot chat
             if (aiPolicy) {
@@ -4166,7 +4211,12 @@ function registerAiRoutes(app, deps) {
                     deps.addActivity?.(`AI 助理对话：${provider.name || provider.type}/${model}`, req.user?.userId);
                     const durationMs = Date.now() - requestStartedAt;
                     recordAiPerf({ status: 'ok', durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, model, provider: provider.name || provider.type, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 });
-                    return res.json({ ok: true, message: { role: 'assistant', content: message.content || '' }, toolResults, provider: { id: provider.id, name: provider.name, type: provider.type }, model, metrics: { durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 } });
+                    const responsePayload = { ok: true, message: { role: 'assistant', content: message.content || '' }, toolResults, provider: { id: provider.id, name: provider.name, type: provider.type }, model, metrics: { durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 } };
+                    if (deps.aiHistoryRuntime && req.body?.historyCommit) {
+                        deps.aiHistoryRuntime.commitLegacyResult(req.user, req.body, responsePayload);
+                        responsePayload.historyPersisted = true;
+                    }
+                    return res.json(responsePayload);
                 }
                 messages = [...messages, { role: 'assistant', content: message.content || '', tool_calls: message.tool_calls, response_id: message.response_id || '', parts: Array.isArray(message.parts) ? message.parts : undefined }];
                 const followupToolMessages = [];
@@ -4204,7 +4254,12 @@ function registerAiRoutes(app, deps) {
             }
             const durationMs = Date.now() - requestStartedAt;
             recordAiPerf({ status: 'tool_limit', durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, model, provider: provider.name || provider.type, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 });
-            res.json({ ok: true, message: { role: 'assistant', content: '已达到工具调用轮次上限，请根据上方工具结果继续。' }, toolResults, metrics: { durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 } });
+            const responsePayload = { ok: true, message: { role: 'assistant', content: '已达到工具调用轮次上限，请根据上方工具结果继续。' }, toolResults, provider: { id: provider.id, name: provider.name, type: provider.type }, model, metrics: { durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 } };
+            if (deps.aiHistoryRuntime && req.body?.historyCommit) {
+                deps.aiHistoryRuntime.commitLegacyResult(req.user, req.body, responsePayload);
+                responsePayload.historyPersisted = true;
+            }
+            res.json(responsePayload);
         } catch (err) {
             if (err?.name === 'AbortError' || abortController.signal.aborted) {
                 console.info('[ai-agent] chat aborted by client');
@@ -4243,7 +4298,7 @@ function registerAiRoutes(app, deps) {
 
     app.post('/api/ai/tools/run', requireUser, async (req, res) => {
         try {
-            const ai = deps.storage.getSettings().ai || {};
+            const ai = accountAiSettings(deps, req.user);
             if (!ai.enabled) return res.status(403).json({ error: 'AI 助理未启用' });
             const result = await executeAiTool(String(req.body?.tool || ''), req.body?.args || {}, { req, user: req.user, context: req.body?.context || {}, authz, resourceService, aiPolicy }, deps);
             res.json({ ok: true, result });
@@ -4286,7 +4341,7 @@ function registerAiRoutes(app, deps) {
 
     app.post('/api/ai/complete', requireUser, async (req, res) => {
         try {
-            const ai = deps.storage.getSettings().ai || {};
+            const ai = accountAiSettings(deps, req.user);
             if (!ai.enabled || ai.codeCompletionEnabled === false || ai.permissions?.codeEdit === false) return res.json({ suggestions: [] });
             res.json(await completeWithProvider(ai, req.body || {}));
         } catch (err) {
@@ -4303,6 +4358,12 @@ function registerAiRoutes(app, deps) {
 async function executeAiToolForHost(toolName, args = {}, hostCtx = {}) {
     const deps = hostCtx.deps;
     if (!deps) throw new Error('executeAiToolForHost: deps required');
+    const hostCallGuard = typeof hostCtx.hostCallGuard === 'function' ? hostCtx.hostCallGuard : null;
+    const assertLive = () => {
+        hostCallGuard?.();
+        throwIfAborted(hostCtx.signal);
+    };
+    const hostDeps = hostCallGuard ? guardHostDependencies(deps, assertLive) : deps;
     if (hostCtx?.context?.activeSurface?.kind === 'remote-desktop' && String(toolName || '').startsWith('browser_')) {
         const err = new Error('当前目标是 RDP/VNC 远程桌面；请使用 remote_desktop_cert_status_v1 / remote_desktop_cert_decide_v1 / remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1');
         err.code = 'wrong_surface';
@@ -4315,14 +4376,15 @@ async function executeAiToolForHost(toolName, args = {}, hostCtx = {}) {
         context: hostCtx.context || {},
         confirmedToolId: hostCtx.confirmedToolId || '',
         signal: hostCtx.signal || null,
-        authz: deps.authz,
-        resourceService: deps.resourceService || deps.resources,
-        aiPolicy: deps.aiPolicyService || deps.aiPolicy,
+        hostCallGuard,
+        authz: hostDeps.authz,
+        resourceService: hostDeps.resourceService || hostDeps.resources,
+        aiPolicy: hostDeps.aiPolicyService || hostDeps.aiPolicy,
         responseMode: hostCtx.responseMode || 'chat',
         sessionId: hostCtx.sessionId,
         runId: hostCtx.runId,
     };
-    return executeAiTool(toolName, args, ctx, deps);
+    return executeAiTool(toolName, args, ctx, hostDeps);
 }
 
 /** Dynamic tool catalog for platform host (schemas + risk flags). */

@@ -17,11 +17,33 @@ class UserService {
      * @param {import('./authz').Authz} authz
      * @param {(password:string)=>string} hashPassword
      */
-    constructor(storage, sessionStoreProvider, authz, hashPassword) {
+    constructor(storage, sessionStoreProvider, authz, hashPassword, lifecycle = {}) {
         this.storage = storage;
         this.getSessionStore = sessionStoreProvider;
         this.authz = authz;
         this.hashPassword = hashPassword;
+        this.lifecycle = lifecycle && typeof lifecycle === 'object' ? lifecycle : {};
+        this.lifecycleUsers = new Set();
+    }
+
+    _lifecycle(name, context) {
+        const configured = this.lifecycle[name];
+        const hooks = Array.isArray(configured) ? configured : [configured];
+        for (const hook of hooks) {
+            if (typeof hook !== 'function') continue;
+            const result = hook(context);
+            if (result && typeof result.then === 'function') {
+                throw new TypeError(`UserService lifecycle hook ${name} must be synchronous`);
+            }
+        }
+    }
+
+    async _asyncLifecycle(name, context) {
+        const configured = this.lifecycle[name];
+        const hooks = Array.isArray(configured) ? configured : [configured];
+        for (const hook of hooks) {
+            if (typeof hook === 'function') await hook(context);
+        }
     }
 
     _publicUser(u) {
@@ -64,32 +86,43 @@ class UserService {
         if (!ROLES.has(role)) throw new HttpError(400, 'invalid_role', '角色不合法');
         // Only super admin can create new admins (§19.3)
         if (role === 'admin' && !actor.isSuperAdmin) throw new HttpError(403, 'super_admin_required', '只有超级管理员可以创建管理员账号');
-        // Soft-deleted row still occupies the unique username — recycle it
-        // instead of failing create after a successful admin delete.
+        // The legacy schema uses username as its primary key. Tombstone the
+        // deleted row before inserting so the replacement receives a new,
+        // immutable userId and cannot inherit user-scoped data from its name.
         if (existing && existing.status === 'deleted') {
             if (existing.isSuperAdmin) throw new HttpError(403, 'cannot_recreate_super_admin', '不能复用超级管理员用户名');
-            const recycled = this.storage.updateUserById(existing.userId, {
-                passwordHash: this.hashPassword(String(password)),
-                email: String(email || ''),
-                role,
-                status: 'active',
-                defaultPassword: !!mustChangePassword,
-                isSuperAdmin: false,
-                failedLoginCount: 0,
-                lockedUntil: null,
-                totpEnabled: false,
-                totpSecret: null,
+            const db = this.storage.rawDb();
+            const recreate = db.transaction(() => {
+                this._lifecycle('beforeRecreateUser', {
+                    db,
+                    actor: this._publicUser(actor),
+                    target: this._publicUser(existing),
+                    userId: existing.userId,
+                });
+                db.prepare('UPDATE auth_sessions SET revoked_at = ?, revoke_reason = ? WHERE user_id = ? AND revoked_at IS NULL')
+                    .run(Date.now(), 'user-recreated', existing.userId);
+                const archived = this.storage.archiveDeletedUsername(existing.userId);
+                if (!archived) throw new Error('Deleted user changed during recreation');
+                const recreated = this.storage.createUser({
+                    username,
+                    passwordHash: this.hashPassword(String(password)),
+                    email: String(email || ''),
+                    role,
+                    status: 'active',
+                    defaultPassword: !!mustChangePassword,
+                });
+                this.getSessionStore().revokeAllForUser(existing.userId, 'user-recreated');
+                return recreated;
             });
-            this.getSessionStore().revokeAllForUser(existing.userId, 'user-recreated');
-            this.getSessionStore().setMustChangePassword?.(existing.userId, !!mustChangePassword);
+            const recreated = recreate();
             this.authz.audit({
                 actorUserId: actor.userId,
-                targetUserId: existing.userId,
+                targetUserId: recreated.userId,
                 action: 'user.create',
                 outcome: 'success',
-                metadata: { username, role, recycled: true },
+                metadata: { username, role, recycled: true, previousUserId: existing.userId },
             });
-            return this._publicUser(recycled);
+            return this._publicUser(recreated);
         }
         const user = this.storage.createUser({
             username,
@@ -101,6 +134,42 @@ class UserService {
         });
         this.authz.audit({ actorUserId: actor.userId, targetUserId: user.userId, action: 'user.create', outcome: 'success', metadata: { username, role } });
         return this._publicUser(user);
+    }
+
+    /** Drain account-scoped runtimes before a deleted identity is recycled. */
+    async createUserWithLifecycle(actor, input = {}) {
+        const username = String(input.username || '').trim();
+        const password = input.password;
+        const role = input.role || 'user';
+        if (!USERNAME_RE.test(username)) throw new HttpError(400, 'invalid_username', 'invalid username');
+        const existing = this.storage.getUser(username);
+        if (existing && existing.status !== 'deleted') throw new HttpError(409, 'username_taken', 'username is already in use');
+        if (!password || String(password).length < 4) throw new HttpError(400, 'weak_password', 'password is too short');
+        if (!ROLES.has(role)) throw new HttpError(400, 'invalid_role', 'invalid role');
+        if (role === 'admin' && !actor.isSuperAdmin) {
+            throw new HttpError(403, 'super_admin_required', 'super admin is required');
+        }
+        if (existing?.status === 'deleted') {
+            if (existing.isSuperAdmin) {
+                throw new HttpError(403, 'cannot_recreate_super_admin', 'super admin username cannot be recycled');
+            }
+            const context = { actor: this._publicUser(actor), target: this._publicUser(existing), userId: existing.userId };
+            this._beginAccountLifecycle(existing.userId);
+            let committed = false;
+            try {
+                await this._asyncLifecycle('prepareRecreateUser', context);
+                const recreated = this.createUser(actor, input);
+                committed = true;
+                await this._asyncLifecycle('afterRecreateUser', { ...context, recreated });
+                return recreated;
+            } catch (error) {
+                if (!committed) await this._abortAccountLifecycle('abortRecreateUser', context, error);
+                throw error;
+            } finally {
+                this.lifecycleUsers.delete(String(existing.userId));
+            }
+        }
+        return this.createUser(actor, input);
     }
 
     updateUser(actor, userId, { email, role, status } = {}) {
@@ -186,17 +255,22 @@ class UserService {
         const db = this.storage.rawDb();
         const admin = actor;
         const tx = db.transaction(() => {
+            this._lifecycle('beforeDeleteUser', {
+                db,
+                actor: this._publicUser(actor),
+                target: this._publicUser(target),
+                userId,
+                resourcePolicy,
+            });
             if (resourcePolicy === 'delete-resources') {
                 for (const table of ['connections', 'proxies', 'ssh_keys', 'jump_hosts']) {
                     db.prepare(`DELETE FROM ${table} WHERE ownerUserId = ?`).run(userId);
                 }
-                db.prepare('DELETE FROM resource_acl WHERE subject_id = ?').run(userId);
             } else {
                 /* transfer-to-admin: resources must not stay ownerless (§11.2) */
                 for (const table of ['connections', 'proxies', 'ssh_keys', 'jump_hosts']) {
                     db.prepare(`UPDATE ${table} SET ownerUserId = ? WHERE ownerUserId = ?`).run(admin.userId, userId);
                 }
-                db.prepare('DELETE FROM resource_acl WHERE subject_id = ?').run(userId);
             }
             db.prepare('UPDATE auth_sessions SET revoked_at = ?, revoke_reason = ? WHERE user_id = ? AND revoked_at IS NULL').run(Date.now(), 'user-deleted', userId);
             this.storage.updateUserById(userId, { status: 'deleted' });
@@ -204,6 +278,50 @@ class UserService {
         tx();
         this.authz.audit({ actorUserId: actor.userId, targetUserId: userId, action: 'user.delete', outcome: 'success', metadata: { resourcePolicy } });
         return true;
+    }
+
+    async deleteUserWithLifecycle(actor, userId, { resourcePolicy = 'transfer-to-admin' } = {}) {
+        const target = this._assertDeleteAllowed(actor, userId);
+        const context = { actor: this._publicUser(actor), target: this._publicUser(target), userId, resourcePolicy };
+        this._beginAccountLifecycle(userId);
+        let committed = false;
+        try {
+            await this._asyncLifecycle('prepareDeleteUser', context);
+            const deleted = this.deleteUser(actor, userId, { resourcePolicy });
+            committed = true;
+            await this._asyncLifecycle('afterDeleteUser', context);
+            return deleted;
+        } catch (error) {
+            if (!committed) await this._abortAccountLifecycle('abortDeleteUser', context, error);
+            throw error;
+        } finally {
+            this.lifecycleUsers.delete(String(userId));
+        }
+    }
+
+    _beginAccountLifecycle(userId) {
+        const key = String(userId || '');
+        if (this.lifecycleUsers.has(key)) {
+            throw new HttpError(409, 'account_lifecycle_in_progress', 'account lifecycle operation is already in progress');
+        }
+        this.lifecycleUsers.add(key);
+    }
+
+    async _abortAccountLifecycle(name, context, originalError) {
+        try {
+            await this._asyncLifecycle(name, context);
+        } catch (abortError) {
+            throw new AggregateError([originalError, abortError], 'account lifecycle rollback failed');
+        }
+    }
+
+    _assertDeleteAllowed(actor, userId) {
+        const target = this.storage.getUserById(userId);
+        if (!target) throw new HttpError(404, 'user_not_found', 'user does not exist');
+        if (target.userId === actor.userId) throw new HttpError(400, 'cannot_delete_self', 'cannot delete own account');
+        if (target.isSuperAdmin) throw new HttpError(403, 'cannot_delete_super_admin', 'cannot delete super admin');
+        if (target.role === 'admin') this._assertNotLastAdmin(target, 'delete');
+        return target;
     }
 
     _assertNotLastAdmin(target, actionLabel) {

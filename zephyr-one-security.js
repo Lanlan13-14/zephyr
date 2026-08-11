@@ -70,9 +70,95 @@ const GRANT_TTL_MS = 2 * 60 * 1000;
 const UNLOCK_TTL_MS = 90 * 1000;
 
 const GRANT_NAMESPACE = 'one-reveal-unlock-v1';
+const SHELL_AUTH_NAMESPACE = 'one-shell-unlock-v1';
+const SHELL_AUTH_MAX_SKEW_MS = 30 * 1000;
 
 function b64url(buf) {
     return Buffer.from(buf).toString('base64url');
+}
+
+function signedShellMessage(action, timestamp, nonce, shellInstance, fields = []) {
+    return [
+        SHELL_AUTH_NAMESPACE,
+        String(action || ''),
+        String(timestamp || ''),
+        String(nonce || ''),
+        String(shellInstance || ''),
+        ...fields.map((value) => {
+            const text = String(value == null ? '' : value);
+            return Buffer.byteLength(text, 'utf8') + ':' + text;
+        }),
+    ].join('\n');
+}
+
+/**
+ * Authenticates the private loopback API used by the Tauri shell.
+ *
+ * A normal One request is automatically adopted as the local user, so the web
+ * session is deliberately not an authority here. The shell and its Node child
+ * instead share a high-entropy, per-shell-process key through the child's
+ * environment. Every request is MAC'd, instance-bound, short-lived and carries
+ * a one-use nonce. Neither the key nor a derived credential is returned by any
+ * HTTP route.
+ */
+class ShellRequestAuthenticator {
+    constructor({ secret, shellInstance, now = () => Date.now(), maxSkewMs = SHELL_AUTH_MAX_SKEW_MS } = {}) {
+        this.secret = String(secret || '');
+        this.shellInstance = String(shellInstance || '');
+        this.now = now;
+        this.maxSkewMs = maxSkewMs;
+        this.seenNonces = new Map();
+        this.configured = Buffer.byteLength(this.secret, 'utf8') >= 32
+            && this.shellInstance.length >= 16;
+    }
+
+    verify(req, action, fields = []) {
+        if (!this.configured) return { ok: false, reason: 'unconfigured' };
+
+        const header = (name) => String(req.get?.(name) || req.headers?.[name.toLowerCase()] || '');
+        const instance = header('x-zephyr-one-shell-instance');
+        const timestamp = header('x-zephyr-one-shell-timestamp');
+        const nonce = header('x-zephyr-one-shell-nonce');
+        const givenHex = header('x-zephyr-one-shell-mac');
+
+        if (!/^\d{10,16}$/.test(timestamp) || !/^[a-f0-9]{32,128}$/i.test(nonce)
+            || !/^[a-f0-9]{64}$/i.test(givenHex)) {
+            return { ok: false, reason: 'malformed' };
+        }
+        const requestTime = Number(timestamp);
+        if (!Number.isSafeInteger(requestTime) || Math.abs(this.now() - requestTime) > this.maxSkewMs) {
+            return { ok: false, reason: 'stale' };
+        }
+
+        const expectedInstance = Buffer.from(this.shellInstance, 'utf8');
+        const givenInstance = Buffer.from(instance, 'utf8');
+        if (givenInstance.length !== expectedInstance.length
+            || !crypto.timingSafeEqual(givenInstance, expectedInstance)) {
+            return { ok: false, reason: 'wrong_instance' };
+        }
+
+        const message = signedShellMessage(action, timestamp, nonce, instance, fields);
+        const expected = crypto.createHmac('sha256', this.secret).update(message, 'utf8').digest();
+        const given = Buffer.from(givenHex, 'hex');
+        if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+            return { ok: false, reason: 'bad_mac' };
+        }
+
+        this.sweep();
+        if (this.seenNonces.has(nonce)) return { ok: false, reason: 'replayed' };
+        /* A timestamp may be up to maxSkewMs in the future. Keep its nonce for
+         * that request's full acceptance window, not merely one window from
+         * arrival, or the same signed request could become replayable later. */
+        this.seenNonces.set(nonce, requestTime + this.maxSkewMs);
+        return { ok: true, shellInstance: this.shellInstance };
+    }
+
+    sweep() {
+        const now = this.now();
+        for (const [nonce, expiresAt] of this.seenNonces) {
+            if (expiresAt < now) this.seenNonces.delete(nonce);
+        }
+    }
 }
 
 /**
@@ -161,27 +247,29 @@ class CapabilityCache {
  * Page-to-shell unlock handoff.
  *
  * Same request/claim/resolve/poll shape as `PickerQueue` in
- * zephyr-one-rdp-storage.js. `claim` marks an entry so two shell instances
- * cannot both prompt for the same request.
+ * zephyr-one-rdp-storage.js, with a stricter lease: a claim is bound to one
+ * authenticated shell instance and resolve must repeat the request's account
+ * and purpose. That prevents a second shell or a stale verdict from completing
+ * a prompt it did not claim.
  */
 class UnlockQueue {
     constructor({ ttlMs = UNLOCK_TTL_MS, now = () => Date.now() } = {}) {
         this.ttlMs = ttlMs;
         this.now = now;
         this.pending = new Map();
-        this.seq = 0;
     }
 
-    request({ username, reason }) {
+    request({ username, purpose, reason }) {
         this.sweep();
-        this.seq += 1;
-        const id = 'unlock-' + this.now() + '-' + this.seq;
+        const id = 'unlock-' + b64url(crypto.randomBytes(24));
         this.pending.set(id, {
             id,
             username: String(username || ''),
+            purpose: String(purpose || 'reveal_secret').slice(0, 80),
             reason: String(reason || '').slice(0, 200),
             createdAt: this.now(),
             state: 'pending',
+            claimedBy: '',
             ok: false,
             method: '',
             error: '',
@@ -189,20 +277,31 @@ class UnlockQueue {
         return id;
     }
 
-    claim() {
+    claim({ shellInstance } = {}) {
         this.sweep();
+        const claimant = String(shellInstance || '');
+        if (!claimant) return null;
         for (const entry of this.pending.values()) {
             if (entry.state === 'pending') {
                 entry.state = 'claimed';
-                return { id: entry.id, username: entry.username, reason: entry.reason };
+                entry.claimedBy = claimant;
+                return {
+                    id: entry.id,
+                    username: entry.username,
+                    purpose: entry.purpose,
+                    reason: entry.reason,
+                };
             }
         }
         return null;
     }
 
-    resolve(id, { ok, method, error }) {
+    resolve(id, { username, purpose, ok, method, error }, { shellInstance } = {}) {
         const entry = this.pending.get(String(id));
-        if (!entry) return false;
+        if (!entry || entry.state !== 'claimed') return false;
+        if (entry.claimedBy !== String(shellInstance || '')) return false;
+        if (entry.username !== String(username || '')) return false;
+        if (entry.purpose !== String(purpose || '')) return false;
         entry.state = 'done';
         entry.ok = ok === true;
         entry.method = String(method || '');
@@ -210,10 +309,13 @@ class UnlockQueue {
         return true;
     }
 
-    poll(id) {
+    poll(id, { username } = {}) {
         this.sweep();
         const entry = this.pending.get(String(id));
         if (!entry) return { status: 'unknown', ok: false, method: '', error: '', username: '' };
+        if (entry.username !== String(username || '')) {
+            return { status: 'forbidden', ok: false, method: '', error: '', username: '' };
+        }
         if (entry.state !== 'done') {
             return { status: 'pending', ok: false, method: '', error: '', username: entry.username };
         }
@@ -295,18 +397,26 @@ class GrantStore {
 /**
  * Mounts One's security routes and returns the pieces server.js needs.
  *
- * `requireUser` is applied to every route, including the two the shell calls:
- * the shell rides the same adopted local session as the WebView because
- * `adoptEmbeddedLocalSession` is global middleware, so a cookieless loopback
- * request authenticates as the local account.
+ * `requireUser` is applied to every route. The shell rides the same adopted
+ * local session as the WebView because `adoptEmbeddedLocalSession` is global
+ * middleware, but that identity is intentionally insufficient for the three
+ * shell routes: they additionally require the private per-process MAC.
  */
-function mountRoutes(app, { requireUser, getSessionUser, dataDir, logger = console } = {}) {
+function mountRoutes(app, {
+    requireUser,
+    getSessionUser,
+    dataDir,
+    logger = console,
+    shellSecret,
+    shellInstance,
+} = {}) {
     const prefs = new SecurityPrefStore({
         filePath: path.join(dataDir, 'one-security.json'),
     });
     const capabilities = new CapabilityCache();
     const unlocks = new UnlockQueue();
     const grants = new GrantStore();
+    const shellAuth = new ShellRequestAuthenticator({ secret: shellSecret, shellInstance });
 
     const nameOf = (req) => {
         const user = getSessionUser ? getSessionUser(req) : null;
@@ -369,12 +479,19 @@ function mountRoutes(app, { requireUser, getSessionUser, dataDir, logger = conso
                 error: caps.reason || '\u5f53\u524d\u5e73\u53f0\u6ca1\u6709\u53ef\u7528\u7684\u7cfb\u7edf\u89e3\u9501',
             });
         }
-        const id = unlocks.request({ username: nameOf(req), reason: body.reason });
+        const id = unlocks.request({
+            username: nameOf(req),
+            purpose: body.purpose || 'reveal_secret',
+            reason: body.reason,
+        });
         return res.json({ ok: true, id });
     });
 
     app.get('/api/one/security/unlock/:id', requireUser, (req, res) => {
-        const result = unlocks.poll(req.params.id);
+        const result = unlocks.poll(req.params.id, { username: nameOf(req) });
+        if (result.status === 'forbidden') {
+            return res.status(403).json({ ok: false, code: 'unlock_request_forbidden' });
+        }
         if (result.status !== 'done') {
             return res.json({ ok: true, status: result.status });
         }
@@ -401,8 +518,18 @@ function mountRoutes(app, { requireUser, getSessionUser, dataDir, logger = conso
 
     /* -- shell side ------------------------------------------------------- */
 
+    const requireShell = (req, res, action, fields) => {
+        const result = shellAuth.verify(req, action, fields);
+        if (result.ok) return result;
+        const status = result.reason === 'unconfigured' ? 503 : 403;
+        res.status(status).json({ ok: false, code: 'shell_auth_required' });
+        return null;
+    };
+
     app.post('/api/one/security/capabilities', requireUser, (req, res) => {
         const body = req.body && typeof req.body === 'object' ? req.body : {};
+        const fields = [body.available === true ? '1' : '0', body.biometry === true ? '1' : '0', body.reason];
+        if (!requireShell(req, res, 'capabilities', fields)) return;
         const published = capabilities.publish({
             available: body.available,
             biometry: body.biometry,
@@ -412,17 +539,31 @@ function mountRoutes(app, { requireUser, getSessionUser, dataDir, logger = conso
     });
 
     app.get('/api/one/security/unlock-queue', requireUser, (req, res) => {
-        res.json(unlocks.claim() || { id: '', username: '', reason: '' });
+        const shell = requireShell(req, res, 'unlock.claim', []);
+        if (!shell) return;
+        res.json(unlocks.claim(shell) || { id: '', username: '', purpose: '', reason: '' });
     });
 
     app.post('/api/one/security/unlock-queue/:id', requireUser, (req, res) => {
         const body = req.body && typeof req.body === 'object' ? req.body : {};
+        const fields = [
+            req.params.id,
+            body.username,
+            body.purpose,
+            body.ok === true ? '1' : '0',
+            body.method,
+            body.error,
+        ];
+        const shell = requireShell(req, res, 'unlock.resolve', fields);
+        if (!shell) return;
         const ok = unlocks.resolve(req.params.id, {
+            username: body.username,
+            purpose: body.purpose,
             ok: body.ok,
             method: body.method,
             error: body.error,
-        });
-        if (!ok) logger.warn?.('[one-security] unlock result for unknown id', { id: req.params.id });
+        }, shell);
+        if (!ok) logger.warn?.('[one-security] rejected invalid unlock result');
         res.json({ ok });
     });
 
@@ -459,7 +600,14 @@ function mountRoutes(app, { requireUser, getSessionUser, dataDir, logger = conso
         return { method: 'system_unlock:' + proof.method };
     }
 
-    return { prefs, capabilities, unlocks, grants, assertRevealAllowed };
+    return {
+        prefs,
+        capabilities,
+        unlocks,
+        grants,
+        assertRevealAllowed,
+        verifyShellRequest: (req, action, fields) => shellAuth.verify(req, action, fields),
+    };
 }
 
 module.exports = {
@@ -468,7 +616,11 @@ module.exports = {
     CapabilityCache,
     UnlockQueue,
     GrantStore,
+    ShellRequestAuthenticator,
+    signedShellMessage,
     GRANT_TTL_MS,
     UNLOCK_TTL_MS,
     GRANT_NAMESPACE,
+    SHELL_AUTH_NAMESPACE,
+    SHELL_AUTH_MAX_SKEW_MS,
 };

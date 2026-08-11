@@ -1,9 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { createSecureTestDataDir, removeSecureTestDataDir } from './helpers/secure-data-dir.mjs';
 
 /* Stage 1 acceptance (FREEZE plan §4.7): after a Node process restart, a valid
  * cookie must keep working for both plain API calls and /ssh upgrade auth.
@@ -11,6 +10,7 @@ import path from 'node:path';
 
 const REPO = path.resolve(import.meta.dirname, '..');
 let tmpDir;
+let dataFixture;
 let child = null;
 let port = 39100 + Math.floor(Math.random() * 500);
 let aiHostPort = port + 1000;
@@ -70,12 +70,13 @@ function cookieFrom(res) {
 }
 
 before(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-srv-restart-'));
+    dataFixture = createSecureTestDataDir('zephyr-srv-restart-');
+    tmpDir = dataFixture.dataDir;
 });
 
 after(async () => {
     await stopServer(child);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    removeSecureTestDataDir(dataFixture);
 });
 
 test('login → restart → same cookie still authenticated; instanceId changes', async (t) => {

@@ -1,5 +1,10 @@
 #if canImport(SwiftUI)
+import Combine
+import Foundation
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// The root view, and the app's only navigation authority.
 ///
@@ -15,9 +20,11 @@ import SwiftUI
 ///    NavigationView, which on iOS drives a UINavigationController whose
 ///    interactive pop gesture the platform bridge keeps enabled
 ///    (MOBILE_EXPERIENCE.md: 优先使用原生 interactive pop).
+@MainActor
 public struct ZephyrOneRootView: View {
 
     @ObservedObject var appLock: AppLock
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var navigation: RootNavigationModel
     @StateObject private var listViewModel: ConnectionListViewModel
 
@@ -49,6 +56,19 @@ public struct ZephyrOneRootView: View {
                 rootTabs
             }
         }
+        .onChange(of: scenePhase) { phase in
+            switch phase {
+            case .background:
+                appLock.onEnterBackground()
+            case .active:
+                appLock.onEnterForeground()
+            case .inactive:
+                break
+            @unknown default:
+                appLock.clearSensitiveMaterial()
+            }
+        }
+        .zephyrProtectedDataLifecycle(appLock)
     }
 
     private var rootTabs: some View {
@@ -95,6 +115,7 @@ public struct ZephyrOneRootView: View {
             EditorContainerView(
                 connectionId: navigation.editorTarget?.connectionId,
                 makeViewModel: makeEditorViewModel,
+                appLock: appLock,
                 onConnect: onConnect
             )
             /* A new target must produce a new view identity, or the
@@ -113,7 +134,10 @@ public struct ZephyrOneRootView: View {
                 set: { if !$0 { navigation.closeServerBinding() } }
             )
         ) {
-            ServerBindingView(viewModel: makeBindingViewModel())
+            ServerBindingContainerView(
+                makeViewModel: makeBindingViewModel,
+                appLock: appLock
+            )
         } label: {
             EmptyView()
         }
@@ -136,10 +160,12 @@ public struct ZephyrOneRootView: View {
 /// StateObject rather than a let: the destination closure of a NavigationLink
 /// re-runs on every parent render, and a plain `let` would drop the in-flight
 /// draft each time.
+@MainActor
 struct EditorContainerView: View {
 
     let connectionId: String?
     let makeViewModel: (String?) -> ConnectionEditorViewModel
+    let appLock: AppLock
     let onConnect: (Connection, Bool) -> Void
 
     @StateObject private var viewModel: ConnectionEditorViewModel
@@ -147,20 +173,63 @@ struct EditorContainerView: View {
     init(
         connectionId: String?,
         makeViewModel: @escaping (String?) -> ConnectionEditorViewModel,
+        appLock: AppLock,
         onConnect: @escaping (Connection, Bool) -> Void
     ) {
         self.connectionId = connectionId
         self.makeViewModel = makeViewModel
+        self.appLock = appLock
         self.onConnect = onConnect
         _viewModel = StateObject(wrappedValue: makeViewModel(connectionId))
     }
 
     var body: some View {
         ConnectionEditorView(viewModel: viewModel, onConnect: onConnect)
+            .onAppear { viewModel.attachSensitiveLifecycle(to: appLock) }
+            .onDisappear { viewModel.detachSensitiveLifecycle() }
+    }
+}
+
+/// Keeps the binding draft and its lock registration scoped to one pushed
+/// destination, matching the editor container's ownership.
+@MainActor
+struct ServerBindingContainerView: View {
+
+    let makeViewModel: () -> ServerBindingViewModel
+    let appLock: AppLock
+
+    @StateObject private var viewModel: ServerBindingViewModel
+
+    init(makeViewModel: @escaping () -> ServerBindingViewModel, appLock: AppLock) {
+        self.makeViewModel = makeViewModel
+        self.appLock = appLock
+        _viewModel = StateObject(wrappedValue: makeViewModel())
+    }
+
+    var body: some View {
+        ServerBindingView(viewModel: viewModel)
+            .onAppear { viewModel.attachSensitiveLifecycle(to: appLock) }
+            .onDisappear { viewModel.detachSensitiveLifecycle() }
     }
 }
 
 extension View {
+
+    @MainActor
+    @ViewBuilder
+    func zephyrProtectedDataLifecycle(_ appLock: AppLock) -> some View {
+        #if canImport(UIKit)
+        onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.protectedDataWillBecomeUnavailableNotification
+            )
+        ) { _ in
+            appLock.onProtectedDataUnavailable()
+        }
+        #else
+        self
+        #endif
+    }
 
     /// Single-column navigation on iOS so the compact-column interactive pop
     /// gesture applies; a no-op on the macOS host build.

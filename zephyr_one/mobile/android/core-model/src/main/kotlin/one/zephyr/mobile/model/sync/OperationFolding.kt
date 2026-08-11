@@ -64,6 +64,7 @@ object OperationFolding {
                         fieldMask = emptyList(),
                         payload = JsonObject(emptyMap()),
                         secretFields = emptyList(),
+                        clearSecretFields = emptyList(),
                     ),
                 )
                 continue
@@ -75,15 +76,27 @@ object OperationFolding {
                 continue
             }
 
+            // The wire deliberately makes replace envelopes and clears mutually exclusive. Keep
+            // mixed secret operations in their original order instead of coalescing them into an
+            // operation the server must reject. Their stable opIds retain retry idempotency.
+            if (upserts.any { it.secretFields.isNotEmpty() } &&
+                upserts.any { it.clearSecretFields.isNotEmpty() }
+            ) {
+                folded.addAll(upserts)
+                continue
+            }
+
             val mergedMask = mutableListOf<String>()
             val mergedPayload = mutableMapOf<String, kotlinx.serialization.json.JsonElement>()
             val mergedSecrets = mutableListOf<String>()
+            val mergedClears = mutableListOf<String>()
             for (op in upserts) {
                 for (field in op.fieldMask) if (!mergedMask.contains(field)) mergedMask.add(field)
                 mergedPayload.putAll(op.payload)
                 // Last write wins per secret field, and the SecretStore already holds that value, so
                 // the union of names is enough to re-seal exactly once.
                 for (field in op.secretFields) if (!mergedSecrets.contains(field)) mergedSecrets.add(field)
+                for (field in op.clearSecretFields) if (!mergedClears.contains(field)) mergedClears.add(field)
             }
             folded.add(
                 upserts.last().copy(
@@ -94,6 +107,7 @@ object OperationFolding {
                     fieldMask = mergedMask.toList(),
                     payload = JsonObject(mergedPayload),
                     secretFields = mergedSecrets.toList(),
+                    clearSecretFields = mergedClears.toList(),
                 ),
             )
         }

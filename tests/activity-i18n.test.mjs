@@ -13,7 +13,7 @@ const t = (key, vars) => interpolate(en[key] || key, vars);
 function loadLocalizer() {
     let source = fs.readFileSync(path.join(root, 'public/activity-i18n.js'), 'utf8');
     source = source
-        .replace(/^import .*\n/, '')
+        .replace(/^import .*?\r?\n/, '')
         .replace('export function localizeActivityMessage', 'function localizeActivityMessage')
         .concat('\nmodule.exports = { localizeActivityMessage };');
     const sandbox = { module: { exports: {} }, exports: {}, t };
@@ -27,6 +27,7 @@ test('persisted Chinese activity messages render in the selected locale', () => 
     assert.equal(localizeActivityMessage('用户登录：admin'), 'User signed in: admin');
     assert.equal(localizeActivityMessage('新增连接：prod-1'), 'Added connection: prod-1');
     assert.equal(localizeActivityMessage('测试连接：prod-1 - 成功'), 'Tested connection: prod-1 - 成功');
+    assert.equal(localizeActivityMessage('远程执行：3 台服务器'), 'Remote execution: 3 server(s)');
     assert.equal(localizeActivityMessage('自定义消息'), '自定义消息');
 });
 

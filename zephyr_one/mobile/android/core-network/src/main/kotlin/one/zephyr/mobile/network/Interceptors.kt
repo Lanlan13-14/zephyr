@@ -1,9 +1,16 @@
 package one.zephyr.mobile.network
 
+import java.io.IOException
 import java.util.UUID
 import okhttp3.Interceptor
+import okhttp3.MediaType
 import okhttp3.Response
+import okhttp3.ResponseBody
 import one.zephyr.mobile.contracts.MobileApiPaths
+import okio.Buffer
+import okio.BufferedSource
+import okio.ForwardingSource
+import okio.buffer
 
 /**
  * Request identity.
@@ -72,70 +79,110 @@ class AuthInterceptor(
     companion object {
         const val HEADER_SKIP_AUTH = "X-Zephyr-Skip-Auth"
 
-        /** The bind and account endpoints are SID-authenticated; everything else uses device access. */
+        /** Account, bind and sensitive-verification endpoints use SID; data-plane paths use access. */
         val DEFAULT_MANAGEMENT_PATHS: Set<String> = setOf(
             "/api/auth/",
             MobileApiPaths.POST_MOBILE_V1_DEVICES_BIND,
+            MobileApiPaths.POST_MOBILE_V1_SENSITIVE_VERIFY,
         )
     }
 }
 
-/**
- * Signs the request with the ES256 device key.
- *
- * The proof covers method, path, a digest of the body and a timestamp (DATA_AND_MIGRATION.md 5.6),
- * so a captured request cannot be replayed against a different route or with a mutated body even if
- * the access credential leaks.
- */
-class DeviceProofInterceptor(private val signer: DeviceProofSigner) : Interceptor {
-
-    override fun intercept(chain: Interceptor.Chain): Response {
-        val request = chain.request()
-        val bodyBytes = request.body?.let { body ->
-            val buffer = okio.Buffer()
-            body.writeTo(buffer)
-            buffer.readByteArray()
-        } ?: ByteArray(0)
-
-        val proof = signer.sign(
-            method = request.method,
-            path = request.url.encodedPath,
-            body = bodyBytes,
-            nonce = request.header(HEADER_SERVER_NONCE),
-        ) ?: return chain.proceed(request)
-
-        return chain.proceed(request.newBuilder().header("X-Zephyr-Device-Proof", proof).build())
-    }
-
-    companion object {
-        const val HEADER_SERVER_NONCE = "X-Zephyr-Server-Nonce"
-    }
-}
-
-/** Implemented by core-security's DeviceIdentity; null means the device has no signing key yet. */
-fun interface DeviceProofSigner {
-    fun sign(method: String, path: String, body: ByteArray, nonce: String?): String?
-}
+/** Raised without including any response bytes so an error body cannot enter diagnostics. */
+internal class ResponseSizeLimitExceededException(val limitBytes: Long) :
+    IOException("response exceeds the " + limitBytes + " byte limit")
 
 /**
- * Refuses an oversized response before it is buffered.
+ * Refuses an oversized response before or while it is buffered.
  *
- * A change page or bootstrap page is bounded by the server, but a compromised or misconfigured
- * endpoint must not be able to drive One out of memory on a low-end device.
+ * Content-Length is only a fast rejection path. Chunked, decompressed, missing-length and falsely
+ * declared bodies are all bounded by [LimitedResponseBody] as the caller consumes their source.
  */
 class ResponseSizeLimitInterceptor(private val maxBytes: Long = DEFAULT_MAX_BYTES) : Interceptor {
+
+    init {
+        require(maxBytes >= 0L) { "response size limit must not be negative" }
+    }
+
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
-        val declared = response.header("Content-Length")?.toLongOrNull()
-        if (declared != null && declared > maxBytes) {
+        val body = response.body ?: return response
+        val declared = body.contentLength()
+        if (declared > maxBytes) {
+            chain.call().cancel()
             response.close()
-            throw java.io.IOException("response exceeds the " + maxBytes + " byte limit")
+            throw ResponseSizeLimitExceededException(maxBytes)
         }
-        return response
+        return response.newBuilder()
+            .body(body.withResponseSizeLimit(maxBytes) { chain.call().cancel() })
+            .build()
     }
 
     companion object {
         /** Generous enough for a full bootstrap page, far below an OOM on a 2 GB device. */
         const val DEFAULT_MAX_BYTES: Long = 32L * 1024 * 1024
+    }
+}
+
+internal fun ResponseBody.withResponseSizeLimit(
+    maxBytes: Long,
+    onLimitExceeded: () -> Unit,
+): ResponseBody {
+    require(maxBytes >= 0L) { "response size limit must not be negative" }
+    return LimitedResponseBody(this, maxBytes, onLimitExceeded)
+}
+
+private class LimitedResponseBody(
+    private val delegate: ResponseBody,
+    maxBytes: Long,
+    onLimitExceeded: () -> Unit,
+) : ResponseBody() {
+
+    private val limitedSource: BufferedSource by lazy {
+        LimitedSource(delegate.source(), maxBytes, onLimitExceeded).buffer()
+    }
+
+    override fun contentType(): MediaType? = delegate.contentType()
+
+    override fun contentLength(): Long = delegate.contentLength()
+
+    override fun source(): BufferedSource = limitedSource
+}
+
+private class LimitedSource(
+    delegate: BufferedSource,
+    private val maxBytes: Long,
+    private val onLimitExceeded: () -> Unit,
+) : ForwardingSource(delegate) {
+
+    private val probe = Buffer()
+    private var totalBytesRead = 0L
+    private var failure: ResponseSizeLimitExceededException? = null
+
+    override fun read(sink: Buffer, byteCount: Long): Long {
+        failure?.let { throw it }
+        if (byteCount == 0L) return 0L
+
+        val remaining = maxBytes - totalBytesRead
+        val probeByteCount = if (remaining == Long.MAX_VALUE) {
+            byteCount
+        } else {
+            minOf(byteCount, remaining + 1L)
+        }
+        val read = super.read(probe, probeByteCount)
+        if (read == -1L) return -1L
+        if (read > remaining) failLimit()
+
+        totalBytesRead += read
+        sink.write(probe, read)
+        return read
+    }
+
+    private fun failLimit(): Nothing {
+        val exception = ResponseSizeLimitExceededException(maxBytes)
+        failure = exception
+        runCatching { onLimitExceeded() }
+        runCatching { super.close() }
+        throw exception
     }
 }

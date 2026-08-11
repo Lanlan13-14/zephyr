@@ -2437,6 +2437,260 @@ body.terminal-custom-fullscreen-open.terminal-fullscreen-exiting .main-nav {
     min-height: 46px;
     margin: 0 !important;
 }
+.data-settings-stack {
+    display: grid;
+    width: min(100%, 860px);
+}
+.data-settings-section {
+    min-width: 0;
+    padding: 4px 0 26px;
+}
+.data-settings-section + .data-settings-section {
+    padding-top: 26px;
+    border-top: 1px solid var(--border);
+}
+.data-settings-section > h2,
+.webdav-heading h2 {
+    margin: 0 0 8px;
+}
+.data-settings-section > .muted {
+    max-width: 720px;
+    margin-bottom: 16px;
+    line-height: 1.55;
+}
+.data-import-form {
+    margin-top: 14px;
+}
+.webdav-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 18px;
+    margin-bottom: 18px;
+}
+.webdav-heading .muted {
+    max-width: 640px;
+    margin: 0;
+    line-height: 1.55;
+}
+.webdav-config-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    max-width: 180px;
+    padding: 4px 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+.webdav-config-badge[data-state="configured"] {
+    border-color: color-mix(in srgb, var(--success) 36%, var(--border));
+    color: var(--success);
+}
+.webdav-config-badge[data-state="error"] {
+    border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+    color: var(--danger);
+}
+.webdav-settings-form {
+    max-width: none;
+    margin-bottom: 16px;
+}
+.webdav-settings-form > .settings-switch-option {
+    margin: 0 0 6px;
+}
+.webdav-field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 14px;
+}
+.webdav-field-grid .form-group {
+    min-width: 0;
+}
+.webdav-field-grid label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+}
+.webdav-field-grid input {
+    width: 100%;
+}
+.webdav-field-wide {
+    grid-column: 1 / -1;
+}
+.webdav-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 8px;
+}
+.webdav-actions .btn,
+.webdav-retry {
+    min-height: 42px;
+    margin: 0;
+    transition: transform 120ms cubic-bezier(.23, 1, .32, 1), border-color 160ms ease, background-color 160ms ease;
+}
+.webdav-actions .btn:active,
+.webdav-retry:active {
+    transform: scale(.97);
+}
+@media (hover: hover) and (pointer: fine) {
+    .webdav-actions .btn:not(:disabled):hover,
+    .webdav-retry:not(:disabled):hover {
+        border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    }
+}
+.webdav-actions .btn:focus-visible,
+.webdav-retry:focus-visible,
+.webdav-status-band:focus-visible,
+.webdav-error:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+.webdav-actions #webDavCancelBtn:not(.force-hidden) {
+    grid-column: 1 / -1;
+}
+.webdav-status-band {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    padding: 13px 14px;
+    border-left: 3px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 76%, transparent);
+    color: var(--text);
+}
+.webdav-status-band[data-state="success"] {
+    border-left-color: var(--success);
+}
+.webdav-status-band[data-state="busy"] {
+    border-left-color: var(--accent);
+}
+.webdav-status-band[data-state="warning"] {
+    border-left-color: var(--warning);
+}
+.webdav-status-band strong {
+    font-size: 13px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+.webdav-status-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 18px;
+    margin: 0;
+}
+.webdav-status-meta > div {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    min-width: 0;
+}
+.webdav-status-meta dt,
+.webdav-status-meta dd {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+}
+.webdav-status-meta dt {
+    color: var(--text-secondary);
+}
+.webdav-status-meta dd {
+    min-width: 0;
+    color: var(--text);
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+.webdav-error {
+    margin-top: 10px;
+    padding: 11px 13px;
+    border-left: 3px solid var(--danger);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+    color: var(--danger);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.webdav-retry {
+    width: auto;
+    margin-top: 10px;
+}
+.webdav-danger-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    min-width: 0;
+    margin: 12px 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.webdav-danger-actions .field-hint {
+    min-width: 0;
+    margin: 0;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+.webdav-danger-actions .btn {
+    flex: 0 0 auto;
+    min-height: 38px;
+    margin: 0;
+    transition: transform 120ms cubic-bezier(.23, 1, .32, 1), border-color 160ms ease, background-color 160ms ease;
+}
+.webdav-danger-actions .btn:active:not(:disabled) {
+    transform: scale(.97);
+}
+.webdav-settings-section[aria-busy="true"] .webdav-status-band {
+    border-left-color: var(--accent);
+}
+@media (max-width: 640px) {
+    .webdav-heading,
+    .webdav-field-grid,
+    .webdav-status-meta {
+        grid-template-columns: 1fr;
+    }
+    .webdav-config-badge {
+        justify-self: start;
+    }
+    .webdav-field-wide {
+        grid-column: auto;
+    }
+    .webdav-actions {
+        grid-template-columns: 1fr;
+    }
+    .webdav-actions #webDavCancelBtn:not(.force-hidden) {
+        grid-column: auto;
+    }
+    .webdav-status-meta > div {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .webdav-danger-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .webdav-danger-actions .btn {
+        width: 100%;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .webdav-actions .btn,
+    .webdav-retry,
+    .webdav-danger-actions .btn {
+        transition: border-color 120ms ease, background-color 120ms ease;
+    }
+    .webdav-actions .btn:active,
+    .webdav-retry:active,
+    .webdav-danger-actions .btn:active {
+        transform: none;
+    }
+}
 .brand-upload-row { display: grid; grid-template-columns: 58px 1fr; gap: 10px; align-items: center; }
 .brand-icon-preview { width: 58px; height: 58px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg); display: grid; place-items: center; font-size: 30px; overflow: hidden; }
 .brand-icon-preview img { width: 100%; height: 100%; object-fit: contain; display: block; }

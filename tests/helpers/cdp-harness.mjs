@@ -122,7 +122,7 @@ export class Cdp {
  * Open one page and collect everything that would tell a user "load failed":
  * console errors, uncaught exceptions, and failed network requests.
  */
-export async function collectPageDiagnostics(wsUrl, url, { settleMs = 3500 } = {}) {
+export async function collectPageDiagnostics(wsUrl, url, { settleMs = 3500, cookies = [] } = {}) {
   const cdp = await Cdp.connect(wsUrl);
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
@@ -131,6 +131,7 @@ export async function collectPageDiagnostics(wsUrl, url, { settleMs = 3500 } = {
   const consoleWarnings = [];
   const exceptions = [];
   const failedRequests = [];
+  const scriptResponses = [];
   const requestUrls = new Map();
 
   cdp.on('Runtime.consoleAPICalled', (p) => {
@@ -157,6 +158,13 @@ export async function collectPageDiagnostics(wsUrl, url, { settleMs = 3500 } = {
     });
   });
   cdp.on('Network.responseReceived', (p) => {
+    if (p.type === 'Script') {
+      scriptResponses.push({
+        url: p.response.url,
+        status: p.response.status,
+        mimeType: p.response.mimeType,
+      });
+    }
     if (p.response.status >= 400) {
       failedRequests.push({
         url: p.response.url,
@@ -170,6 +178,11 @@ export async function collectPageDiagnostics(wsUrl, url, { settleMs = 3500 } = {
   await cdp.send('Network.enable', {}, sessionId);
   await cdp.send('Page.enable', {}, sessionId);
   await cdp.send('Log.enable', {}, sessionId);
+
+  for (const cookie of cookies) {
+    const result = await cdp.send('Network.setCookie', cookie, sessionId);
+    if (!result.success) throw new Error(`CDP rejected cookie ${cookie.name}`);
+  }
 
   await cdp.send('Page.navigate', { url }, sessionId);
 
@@ -191,7 +204,7 @@ export async function collectPageDiagnostics(wsUrl, url, { settleMs = 3500 } = {
 
   return {
     cdp, sessionId, evaluate,
-    consoleErrors, consoleWarnings, exceptions, failedRequests,
+    consoleErrors, consoleWarnings, exceptions, failedRequests, scriptResponses,
     async screenshot() {
       const r = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
       return Buffer.from(r.data, 'base64');

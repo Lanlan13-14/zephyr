@@ -90,14 +90,16 @@ func NewHost(baseURL, adminToken string) *Host {
 }
 
 type CallRequest struct {
-	V         int             `json:"v"`
-	Tool      string          `json:"tool"`
-	Args      json.RawMessage `json:"args"`
-	UserID    string          `json:"userId"`
-	SessionID string          `json:"sessionId,omitempty"`
-	RunID     string          `json:"runId,omitempty"`
-	Context   json.RawMessage `json:"context,omitempty"`
-	Confirmed bool            `json:"confirmed,omitempty"`
+	V                  int             `json:"v"`
+	Tool               string          `json:"tool"`
+	Args               json.RawMessage `json:"args"`
+	UserID             string          `json:"userId"`
+	SessionID          string          `json:"sessionId,omitempty"`
+	RunID              string          `json:"runId,omitempty"`
+	DatabaseGeneration string          `json:"databaseGeneration"`
+	RunNonce           string          `json:"runNonce"`
+	Context            json.RawMessage `json:"context,omitempty"`
+	Confirmed          bool            `json:"confirmed,omitempty"`
 }
 
 type CallResponse struct {
@@ -182,7 +184,7 @@ type ToolDef struct {
 }
 
 // ListTools fetches tool catalog from Node (optional; can use static catalog).
-func (h *Host) ListTools(ctx context.Context, contextJSON json.RawMessage) ([]ToolDef, error) {
+func (h *Host) ListTools(ctx context.Context, contextJSON json.RawMessage, userID, runID, databaseGeneration, runNonce string) ([]ToolDef, error) {
 	if h == nil || h.BaseURL == "" {
 		return nil, fmt.Errorf("platform host not configured")
 	}
@@ -190,6 +192,16 @@ func (h *Host) ListTools(ctx context.Context, contextJSON json.RawMessage) ([]To
 	if len(contextJSON) > 0 && string(contextJSON) != "null" && string(contextJSON) != "{}" {
 		endpoint += "?context=" + url.QueryEscape(string(contextJSON))
 	}
+	querySeparator := "?"
+	if strings.Contains(endpoint, "?") {
+		querySeparator = "&"
+	}
+	endpoint += querySeparator + url.Values{
+		"userId":             []string{userID},
+		"runId":              []string{runID},
+		"databaseGeneration": []string{databaseGeneration},
+		"runNonce":           []string{runNonce},
+	}.Encode()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -217,12 +229,12 @@ func (h *Host) ListTools(ctx context.Context, contextJSON json.RawMessage) ([]To
 }
 
 // RegisterFromHost pulls catalog and registers proxy tools.
-func RegisterFromHost(ctx context.Context, reg *tool.Registry, h *Host, userID, sessionID, runID string, contextJSON json.RawMessage) error {
+func RegisterFromHost(ctx context.Context, reg *tool.Registry, h *Host, userID, sessionID, runID, databaseGeneration, runNonce string, contextJSON json.RawMessage) error {
 	// The browser context does not carry an authoritative user id. Inject the
 	// control-plane identity before discovery so Node can apply per-user gates
 	// (notably notes.enabled) consistently with the later tool-call path.
 	catalogContext := injectCatalogIdentity(contextJSON, userID, sessionID)
-	defs, err := h.ListTools(ctx, catalogContext)
+	defs, err := h.ListTools(ctx, catalogContext, userID, runID, databaseGeneration, runNonce)
 	if err != nil {
 		return err
 	}
@@ -253,6 +265,8 @@ func RegisterFromHost(ctx context.Context, reg *tool.Registry, h *Host, userID, 
 					UserID:    userID,
 					SessionID: sessionID,
 					RunID:     runID,
+					DatabaseGeneration: databaseGeneration,
+					RunNonce:           runNonce,
 					Context:   contextJSON,
 					Confirmed: confirmedCallFromContext(ctx, d.Name),
 				})

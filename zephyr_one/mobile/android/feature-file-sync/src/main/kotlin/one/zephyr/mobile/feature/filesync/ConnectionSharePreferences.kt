@@ -15,14 +15,24 @@ package one.zephyr.mobile.feature.filesync
  */
 class ConnectionSharePreferences(
     private val store: KeyValueStore,
+    ownerId: String = DEFAULT_OWNER_ID,
 ) {
+
+    private val prefix = "$SCOPED_PREFIX$ownerId."
+
+    init {
+        require(ownerId.matches(OWNER_ID_PATTERN)) { "invalid connection share owner id" }
+        discardLegacyChoices()
+    }
 
     /** The profile chosen for [connectionId], or null when the user has not chosen one. */
     fun profileFor(connectionId: String): String? =
         store.string(key(connectionId))?.takeIf { it.isNotEmpty() }
 
     fun choose(connectionId: String, profileId: String) {
-        store.edit { putString(key(connectionId), profileId) }
+        check(store.edit { putString(key(connectionId), profileId) }) {
+            "connection share choice could not be persisted"
+        }
     }
 
     /**
@@ -33,7 +43,9 @@ class ConnectionSharePreferences(
      * pointing at it.
      */
     fun forget(connectionId: String) {
-        store.edit { remove(key(connectionId)) }
+        check(store.edit { remove(key(connectionId)) }) {
+            "connection share choice could not be removed"
+        }
     }
 
     /**
@@ -47,26 +59,59 @@ class ConnectionSharePreferences(
      */
     fun pruneMissing(knownProfileIds: Set<String>): List<String> {
         val dropped = store.keys()
-            .filter { it.startsWith(PREFIX) }
+            .filter { it.startsWith(prefix) }
             .mapNotNull { storedKey ->
                 val profileId = store.string(storedKey)
                 if (profileId != null && profileId in knownProfileIds) {
                     null
                 } else {
-                    storedKey.removePrefix(PREFIX)
+                    storedKey.removePrefix(prefix)
                 }
             }
             .sorted()
         if (dropped.isEmpty()) return emptyList()
-        store.edit {
-            for (connectionId in dropped) remove(key(connectionId))
+        check(
+            store.edit {
+                for (connectionId in dropped) remove(key(connectionId))
+            },
+        ) {
+            "stale connection share choices could not be removed"
         }
         return dropped
     }
 
-    private fun key(connectionId: String) = PREFIX + connectionId
+    /** Clears choices belonging to this exact binding generation. */
+    fun clearAll(): Boolean {
+        val keys = store.keys().filter { it.startsWith(prefix) }
+        if (keys.isEmpty()) return true
+        return store.edit {
+            for (key in keys) remove(key)
+        }
+    }
+
+    /**
+     * Ownerless choices cannot be attributed to the account that happens to initialize first.
+     *
+     * One atomic deletion is enough for this metadata: if it fails, the legacy keys remain as a
+     * retry marker, while [profileFor] still reads only this owner's namespace and therefore fails
+     * closed. A later construction retries the deletion.
+     */
+    private fun discardLegacyChoices() {
+        val legacyKeys = store.keys().filter {
+            it.startsWith(LEGACY_PREFIX) && !it.startsWith(SCOPED_PREFIX)
+        }
+        if (legacyKeys.isEmpty()) return
+        store.edit {
+            for (legacyKey in legacyKeys) remove(legacyKey)
+        }
+    }
+
+    private fun key(connectionId: String) = prefix + connectionId
 
     private companion object {
-        const val PREFIX = "connection.share."
+        const val LEGACY_PREFIX = "connection.share."
+        const val SCOPED_PREFIX = "connection.share.owner."
+        const val DEFAULT_OWNER_ID = "local-test-owner"
+        val OWNER_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,128}")
     }
 }

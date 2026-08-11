@@ -6,6 +6,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import one.zephyr.mobile.contracts.SyncContract
+import one.zephyr.mobile.contracts.SyncAction
+import one.zephyr.mobile.model.PendingOperation
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -63,5 +65,39 @@ class OperationFoldingFixtureTest {
         assertEquals(3, batches.size)
         assertEquals(true, batches.all { it.size <= SyncContract.MAX_OPS_PER_BATCH })
         assertEquals(451, batches.sumOf { it.size })
+    }
+
+    @Test
+    fun `mixed clear and replacement stay distinct wire operations`() {
+        val operations = listOf(
+            PendingOperation(
+                opId = "replace",
+                entityType = "connection",
+                entityId = "c-1",
+                action = SyncAction.UPSERT,
+                baseRevision = 1,
+                fieldMask = emptyList(),
+                payload = JsonObject(emptyMap()),
+                createdAt = 1,
+                secretFields = listOf("password"),
+            ),
+            PendingOperation(
+                opId = "clear",
+                entityType = "connection",
+                entityId = "c-1",
+                action = SyncAction.UPSERT,
+                baseRevision = 1,
+                fieldMask = emptyList(),
+                payload = JsonObject(emptyMap()),
+                createdAt = 2,
+                clearSecretFields = listOf("privateKey"),
+            ),
+        )
+
+        val folded = OperationFolding.fold(operations)
+
+        assertEquals(listOf("replace", "clear"), folded.map { it.opId })
+        assertEquals(listOf("password"), folded[0].secretFields)
+        assertEquals(listOf("privateKey"), folded[1].clearSecretFields)
     }
 }

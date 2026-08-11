@@ -1,0 +1,47 @@
+diff --git a/include/freerdp/client/channels.h b/include/freerdp/client/channels.h
+--- a/include/freerdp/client/channels.h
++++ b/include/freerdp/client/channels.h
+@@ -28,0 +28,8 @@
++/* Zephyr One security contract: cliprdr static-channel messages are rejected
++ * before the generic reassembler allocates its server-controlled totalLength. */
++#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1
++#define FREERDP_ZEPHYR_CLIPRDR_MAX_PAYLOAD_BYTES (4U * 1024U * 1024U)
++#define FREERDP_ZEPHYR_CLIPRDR_HEADER_BYTES 8U
++#define FREERDP_ZEPHYR_CLIPRDR_MAX_MESSAGE_BYTES \
++	(FREERDP_ZEPHYR_CLIPRDR_MAX_PAYLOAD_BYTES + FREERDP_ZEPHYR_CLIPRDR_HEADER_BYTES)
++
+diff --git a/channels/client/addin.c b/channels/client/addin.c
+--- a/channels/client/addin.c
++++ b/channels/client/addin.c
+@@ -670,0 +670,16 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLen
++	const BOOL boundedCliprdr =
++	    internals->channel_name && (strcmp(internals->channel_name, "cliprdr") == 0);
++	if (boundedCliprdr &&
++	    ((totalLength > FREERDP_ZEPHYR_CLIPRDR_MAX_MESSAGE_BYTES) ||
++	     (dataLength > totalLength)))
++	{
++		/* This branch must stay before Stream_New/EnsureCapacity: totalLength is
++		 * controlled by the RDP server and can otherwise cause a large allocation
++		 * before the cliprdr PDU parser or application callback sees the bytes. */
++		WLog_ERR(TAG, "refusing oversized cliprdr message: chunk=%" PRIu32
++		              ", total=%" PRIu32, dataLength, totalLength);
++		Stream_Free(internals->data_in, TRUE);
++		internals->data_in = nullptr;
++		return ERROR_INVALID_DATA;
++	}
++
+@@ -687,0 +703,14 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLen
++	if (boundedCliprdr)
++	{
++		const size_t position = Stream_GetPosition(data_in);
++		if ((position > totalLength) || (dataLength > totalLength - position))
++		{
++			/* Subtraction is reached only after position <= totalLength, so the
++			 * cumulative fragment check cannot wrap size_t. */
++			WLog_ERR(TAG, "refusing inconsistent cliprdr fragments");
++			Stream_Free(internals->data_in, TRUE);
++			internals->data_in = nullptr;
++			return ERROR_INVALID_DATA;
++		}
++	}
++

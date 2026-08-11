@@ -1,29 +1,84 @@
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
+import net from 'node:net';
 import path from 'node:path';
+import { createSecureTestDataDir, removeSecureTestDataDir } from './helpers/secure-data-dir.mjs';
 
 /* Shared helper: boot the real Zephyr server against an isolated temp data
  * dir for HTTP-level integration tests. */
 
 const REPO = path.resolve(import.meta.dirname, '..');
-let nextPort = 30000 + ((process.pid * 977 + Date.now()) % 20000);
+const MAX_BIND_ATTEMPTS = 3;
+
+async function closeReservation(server) {
+    if (!server.listening) return;
+    await new Promise((resolve) => server.close(resolve));
+}
+
+async function reserveLoopbackPorts(count) {
+    const reservations = [];
+    try {
+        for (let i = 0; i < count; i += 1) {
+            const reservation = net.createServer();
+            reservation.unref();
+            await new Promise((resolve, reject) => {
+                reservation.once('error', reject);
+                reservation.listen({ host: '127.0.0.1', port: 0, exclusive: true }, resolve);
+            });
+            reservations.push(reservation);
+        }
+        const ports = reservations.map((reservation) => {
+            const address = reservation.address();
+            if (!address || typeof address === 'string') throw new Error('loopback port reservation has no TCP address');
+            return address.port;
+        });
+        return {
+            ports,
+            release: () => Promise.all(reservations.map(closeReservation)),
+        };
+    } catch (error) {
+        await Promise.all(reservations.map(closeReservation));
+        throw error;
+    }
+}
+
+function isRetryableBindFailure(error) {
+    return /listen E(?:ADDRINUSE|ACCES)\b/.test(String(error?.message || ''));
+}
 
 export class TestServer {
     constructor() {
-        this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-test-'));
-        this.port = nextPort++;
-        this.aiHostPort = nextPort++;
+        this.dataFixture = createSecureTestDataDir('zephyr-test-');
+        this.dir = this.dataFixture.dataDir;
+        this.port = null;
+        this.aiHostPort = null;
         this.proc = null;
         this.instanceId = null;
     }
 
     async start() {
+        let lastBindError = null;
+        for (let attempt = 1; attempt <= MAX_BIND_ATTEMPTS; attempt += 1) {
+            const reservation = await reserveLoopbackPorts(2);
+            [this.port, this.aiHostPort] = reservation.ports;
+            await reservation.release();
+            try {
+                return await this.startOnce();
+            } catch (error) {
+                await this.stop();
+                if (!isRetryableBindFailure(error) || attempt === MAX_BIND_ATTEMPTS) throw error;
+                lastBindError = error;
+            }
+        }
+        throw lastBindError;
+    }
+
+    async startOnce() {
         const env = {
             ...process.env,
             HTTP_ENABLED: 'true',
             HTTPS_ENABLED: 'false',
             PORT: String(this.port),
+            ZEPHYR_BIND_HOST: '127.0.0.1',
             ZEPHYR_AI_HOST_LISTEN: `127.0.0.1:${this.aiHostPort}`,
             ZEPHYR_AI_PLATFORM_HOST_URL: `http://127.0.0.1:${this.aiHostPort}`,
             ZEPHYR_DATA_DIR: this.dir,
@@ -37,8 +92,14 @@ export class TestServer {
         // holding the port. Register on the process and on common fatal signals.
         const procRef = this.proc;
         const killHard = () => { try { procRef.kill('SIGKILL'); } catch {} };
+        const fatalSignals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+        const removeParentHooks = () => {
+            process.removeListener('exit', killHard);
+            for (const sig of fatalSignals) process.removeListener(sig, killHard);
+        };
         process.once('exit', killHard);
-        for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sig, killHard);
+        for (const sig of fatalSignals) process.once(sig, killHard);
+        procRef.once('exit', removeParentHooks);
         let log = '';
         this.proc.stdout.on('data', (d) => { log += d; });
         this.proc.stderr.on('data', (d) => {
@@ -55,7 +116,9 @@ export class TestServer {
         });
         const deadline = Date.now() + 45000;
         while (true) {
-            if (this.proc.exitCode !== null) throw new Error(`server exited (${this.proc.exitCode}):\n${log.slice(-2000)}`);
+            if (this.proc.exitCode !== null || this.proc.signalCode !== null) {
+                throw new Error(`server exited (${this.proc.exitCode ?? this.proc.signalCode}):\n${log.slice(-2000)}`);
+            }
             try {
                 const r = await fetch(this.url('/healthz'));
                 if (r.ok) {
@@ -74,17 +137,18 @@ export class TestServer {
     url(p) { return `http://127.0.0.1:${this.port}${p}`; }
 
     async stop() {
-        if (!this.proc || this.proc.exitCode !== null) return;
-        this.proc.kill('SIGTERM');
+        const proc = this.proc;
+        if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+        proc.kill('SIGTERM');
         await new Promise((resolve) => {
-            const t = setTimeout(() => { try { this.proc.kill('SIGKILL'); } catch {}; resolve(); }, 8000);
-            this.proc.once('exit', () => { clearTimeout(t); resolve(); });
+            const t = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {}; resolve(); }, 8000);
+            proc.once('exit', () => { clearTimeout(t); resolve(); });
         });
     }
 
     async cleanup() {
         await this.stop();
-        fs.rmSync(this.dir, { recursive: true, force: true });
+        removeSecureTestDataDir(this.dataFixture);
     }
 
     /* login helper: returns a cookie header value */

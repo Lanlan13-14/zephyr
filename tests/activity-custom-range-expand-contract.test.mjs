@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAssetVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const motionJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/motion.js'), 'utf8');
@@ -10,7 +11,6 @@ const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const CACHE = '20260731-sftp-multi-close1';
 
 test('Motion.expand provides Apple-style height+opacity expand/collapse', () => {
   assert.match(motionJs, /async expand\(el, opts = \{\}\)/);
@@ -43,8 +43,8 @@ test('activity custom range uses Motion.expand instead of instant force-hidden t
 });
 
 test('cache revision covers activity custom expand', () => {
-  assert.match(appHtml, new RegExp(`app\\.js\\?v=${CACHE}`));
-  assert.match(appHtml, new RegExp(`style\\.css\\?v=${CACHE}`));
-  assert.match(swJs, new RegExp(`app\\.js\\?v=${CACHE}`));
+  const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
+  assertAssetVersion(appHtml, 'style.css', appVersion, 'app shell style.css');
+  assertAssetVersion(swJs, 'app.js', appVersion, 'service worker app.js');
   assert.match(appHtml, /zephyr-motion\/index\.js\?v=20260731-motion-mobile-fix2/);
 });

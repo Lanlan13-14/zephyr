@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAssetVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -24,9 +25,11 @@ test('source: cross-row linkifyViewport exists and is used in render', () => {
   const terminalJs = fs.readFileSync(join(ROOT, 'public/terminal.js'), 'utf8');
   const telnetJs = fs.readFileSync(join(ROOT, 'public/telnet-terminal.js'), 'utf8');
   const wtermJs = fs.readFileSync(join(ROOT, 'public/vendor/wterm-fork/wterm.js'), 'utf8');
-  assert.match(terminalJs, /wterm-fork\/index\.js\?v=20260726-url-wrap1/);
-  assert.match(telnetJs, /wterm-fork\/index\.js\?v=20260726-url-wrap1/);
-  assert.match(wtermJs, /renderer\.js\?v=20260726-url-wrap1/);
+  const sw = fs.readFileSync(join(ROOT, 'public/sw.js'), 'utf8');
+  const wtermVersion = singleAssetVersion(terminalJs, 'vendor/wterm-fork/index.js', 'SSH wterm import');
+  assertAssetVersion(telnetJs, 'vendor/wterm-fork/index.js', wtermVersion, 'Telnet wterm import');
+  assertAssetVersion(sw, 'vendor/wterm-fork/index.js', wtermVersion, 'service worker wterm entry');
+  singleAssetVersion(wtermJs, 'renderer.js', 'wterm renderer import');
   // Per-row linkify after paint is removed (viewport path owns auto-links).
   assert.equal(
     /rowEl\.innerHTML = html;\s*linkifyRow\(rowEl\)/.test(rendererSrc),

@@ -10,6 +10,10 @@
  */
 const crypto = require('crypto');
 const { HttpError } = require('./authz');
+const {
+    PORTABLE_CLIENT_ID,
+    WorkspacePortableSyncService,
+} = require('./workspace-portable-sync-service');
 
 const MAX_STATE_BYTES = 256 * 1024;
 const MAX_WORKSPACES_PER_USER = 20;
@@ -60,15 +64,29 @@ class WorkspaceService {
             VALUES (@workspaceId, @userId, @clientId, @name, @stateJson, @revision, @updatedAt)
             ON CONFLICT(user_id, client_id, workspace_id) DO UPDATE SET
               name = @name, state_json = @stateJson, revision = @revision, updated_at = @updatedAt`);
-        this.stmtDelete = db.prepare('DELETE FROM workspaces WHERE workspace_id = ? AND user_id = ?');
+        this.stmtDeleteScoped = db.prepare('DELETE FROM workspaces WHERE workspace_id = ? AND user_id = ? AND client_id = ?');
         this.stmtCountUser = db.prepare('SELECT COUNT(*) AS count FROM workspaces WHERE user_id = ?');
-        this.stmtPruneUser = db.prepare(`DELETE FROM workspaces WHERE rowid IN (
-            SELECT rowid FROM workspaces
-            WHERE user_id = ? AND workspace_id != ?
+        this.stmtPruneUser = db.prepare(`SELECT * FROM workspaces
+            WHERE user_id = ? AND NOT (client_id = ? AND workspace_id = ?)
             ORDER BY updated_at ASC
-            LIMIT ?
-        )`);
-        this.stmtGcStale = db.prepare('DELETE FROM workspaces WHERE updated_at < ?');
+            LIMIT ?`);
+        this.stmtGcStale = db.prepare('SELECT * FROM workspaces WHERE updated_at < ? ORDER BY updated_at ASC');
+        this.portableSyncService = deps?.portableSyncService === false
+            ? null
+            : (deps?.portableSyncService || new WorkspacePortableSyncService({
+                db,
+                now: this.now,
+                mobileChangeBridge: deps?.mobileChangeBridge,
+            }));
+        if (this.portableSyncService) {
+            this.portableSyncService.attachCanonical({
+                put: (user, data, mutationContext) => this._put(user, data, true, mutationContext),
+                delete: (userId, workspaceId, options, mutationContext) => (
+                    this._delete(userId, workspaceId, options, mutationContext)
+                ),
+            });
+            this.portableSyncService.adoptExistingRows();
+        }
     }
 
     list(userId, { clientId = null } = {}) {
@@ -103,9 +121,23 @@ class WorkspaceService {
      * Create or update. Optimistic concurrency via expectedRevision.
      * Returns the saved workspace.
      */
-    put(user, { workspaceId, clientId, name, state, expectedRevision = null } = {}) {
+    put(user, data = {}, mutationContext = {}) {
+        return this.db.transaction(() => this._put(user, data, false, mutationContext))();
+    }
+
+    _put(user, {
+        workspaceId,
+        clientId,
+        name,
+        state,
+        expectedRevision = null,
+        preferredPortableId = null,
+    } = {}, portableInternal = false, mutationContext = {}) {
         if (!clientId || typeof clientId !== 'string' || clientId.length > 80) {
             throw new HttpError(400, 'invalid_client_id', 'clientId 无效');
+        }
+        if (clientId === PORTABLE_CLIENT_ID && !portableInternal) {
+            throw new HttpError(400, 'invalid_client_id', 'clientId is reserved for portable workspace sync.');
         }
         const id = String(workspaceId || crypto.randomUUID());
         /* Scoped to this client, because the primary key is
@@ -136,22 +168,61 @@ class WorkspaceService {
             updatedAt: this.now(),
         };
         this.stmtUpsert.run(record);
+        const savedRow = this.stmtGetScoped.get(id, user.userId, String(clientId));
+        if (this.portableSyncService) {
+            this.portableSyncService.captureUpsert(savedRow, {
+                preferredPortableId,
+                mutationContext,
+            });
+        }
         const count = Number(this.stmtCountUser.get(String(user.userId))?.count || 0);
         if (count > MAX_WORKSPACES_PER_USER) {
-            this.stmtPruneUser.run(String(user.userId), id, count - MAX_WORKSPACES_PER_USER);
+            const pruned = this.stmtPruneUser.all(
+                String(user.userId),
+                String(clientId),
+                id,
+                count - MAX_WORKSPACES_PER_USER,
+            );
+            for (const row of pruned) {
+                if (this.portableSyncService) this.portableSyncService.captureDelete(row);
+                this.stmtDeleteScoped.run(row.workspace_id, row.user_id, row.client_id);
+            }
         }
-        return this.get(user.userId, id);
+        return this.get(user.userId, id, { clientId: String(clientId) });
     }
 
-    delete(userId, workspaceId) {
-        const changed = this.stmtDelete.run(String(workspaceId), String(userId)).changes;
-        if (!changed) throw new HttpError(404, 'workspace_not_found', '工作区不存在');
+    delete(userId, workspaceId, options = {}, mutationContext = {}) {
+        return this.db.transaction(() => this._delete(
+            userId, workspaceId, options, mutationContext,
+        ))();
+    }
+
+    _delete(userId, workspaceId, { clientId = null } = {}, mutationContext = {}) {
+        const owner = String(userId);
+        const id = String(workspaceId);
+        const rows = clientId
+            ? [this.stmtGetScoped.get(id, owner, String(clientId))].filter(Boolean)
+            : this.stmtGet.all(id, owner);
+        if (!rows.length) throw new HttpError(404, 'workspace_not_found', '工作区不存在');
+        for (const row of rows) {
+            if (this.portableSyncService) {
+                this.portableSyncService.captureDelete(row, { mutationContext });
+            }
+            this.stmtDeleteScoped.run(row.workspace_id, row.user_id, row.client_id);
+        }
         return true;
     }
 
     gcStale(maxAgeMs = DEFAULT_WORKSPACE_MAX_AGE_MS) {
         const age = Math.max(24 * 60 * 60 * 1000, Number(maxAgeMs) || DEFAULT_WORKSPACE_MAX_AGE_MS);
-        return this.stmtGcStale.run(this.now() - age).changes;
+        return this.db.transaction(() => {
+            const rows = this.stmtGcStale.all(this.now() - age);
+            for (const row of rows) {
+                if (this.portableSyncService) this.portableSyncService.captureDelete(row);
+                this.stmtDeleteScoped.run(row.workspace_id, row.user_id, row.client_id);
+            }
+            return rows.length;
+        })();
     }
 
     /**

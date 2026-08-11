@@ -1,9 +1,4 @@
-﻿// Store-level blob transfer tests (SYNC_STATE_MACHINE.md section 11).
-//
-// HTTP mounting is covered by mobile-v1-blob-http.test.mjs; this file pins the
-// store semantics the endpoints rely on: resume by stable uploadId, idempotent
-// chunk indices, per-chunk and whole-blob hash verification, and owner/device
-// isolation.
+// Blob store/worker semantics (SYNC_STATE_MACHINE.md sections 11-12).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -16,259 +11,187 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
-
 const { createDatabase } = require(path.join(repoRoot, 'sqlite-driver.js'));
 const { MobileV1Store } = require(path.join(repoRoot, 'mobile-v1-store.js'));
+const { MobileV1BlobManager } = require(path.join(repoRoot, 'mobile-v1-blob-manager.js'));
 
-const registry = JSON.parse(
-  fs.readFileSync(path.join(repoRoot, 'zephyr_one', 'mobile', 'contracts', 'registries', 'entity-registry.json'), 'utf8'),
-);
+const registry = JSON.parse(fs.readFileSync(
+  path.join(repoRoot, 'zephyr_one', 'mobile', 'contracts', 'registries', 'entity-registry.json'),
+  'utf8',
+));
+const CHUNK = 8;
+const OWNER = 'user-1';
+const DEVICE = 'dev-1';
 
-const CHUNK = 8; // tiny chunk size so a "two chunk" blob is 12 bytes
-
-function freshStore() {
+function freshContext(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-mv1-blob-'));
   const db = createDatabase(path.join(dir, 'test.db'), { forceBuiltin: true });
   const store = new MobileV1Store({ db, entityRegistry: registry, blobRoot: path.join(dir, 'blobs') });
-  return { db, store, dir, cleanup: () => { try { db.close(); } catch {} fs.rmSync(dir, { recursive: true, force: true }); } };
+  const manager = new MobileV1BlobManager({
+    store,
+    availableDiskBytes: options.availableDiskBytes || (() => Number.MAX_SAFE_INTEGER),
+    limits: { minFreeDiskBytes: 1, gcIntervalMs: 60_000, ...options.limits },
+    now: options.now,
+  });
+  return {
+    db, store, manager, dir,
+    async cleanup() {
+      manager.close();
+      await manager.waitForIdle(null, 2000).catch(() => {});
+      try { db.close(); } catch {}
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+  };
 }
 
 function manifestFor(body, chunkBytes = CHUNK) {
-  const chunks = [];
+  const chunkHashes = [];
   for (let offset = 0; offset < body.length; offset += chunkBytes) {
-    chunks.push(crypto.createHash('sha256').update(body.subarray(offset, offset + chunkBytes)).digest('hex'));
+    chunkHashes.push(crypto.createHash('sha256').update(body.subarray(offset, offset + chunkBytes)).digest('hex'));
   }
   return {
     sha256: crypto.createHash('sha256').update(body).digest('hex'),
     size: body.length,
     mime: 'application/octet-stream',
     chunkBytes,
-    chunkHashes: chunks,
+    chunkHashes,
     encrypted: false,
   };
 }
 
-const OWNER = 'user-1';
-const DEVICE = 'dev-1';
+async function uploadAll(ctx, body, manifest = manifestFor(body), identity = {}) {
+  const ownerUserId = identity.ownerUserId || OWNER;
+  const deviceId = identity.deviceId || DEVICE;
+  const created = await ctx.manager.createUpload({ ownerUserId, deviceId, ...manifest });
+  for (let index = 0; index < manifest.chunkHashes.length; index += 1) {
+    await ctx.manager.uploadChunk({
+      ownerUserId,
+      deviceId,
+      uploadId: created.uploadId,
+      index,
+      bytes: body.subarray(index * manifest.chunkBytes, (index + 1) * manifest.chunkBytes),
+    });
+  }
+  await ctx.manager.waitForIdle(created.uploadId);
+  return { created, status: ctx.store.blobUploadStatus(ctx.store.getBlobUpload(created.uploadId)) };
+}
 
-test('a full upload assembles, verifies and stores the blob', () => {
-  const ctx = freshStore();
+test('streaming worker verifies and atomically publishes a complete blob', async () => {
+  const ctx = freshContext();
   try {
-    const body = Buffer.from('hello world!'); // 12 bytes -> 2 chunks of 8
+    const body = Buffer.from('hello world!');
     const manifest = manifestFor(body);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    assert.equal(created.state, 'receiving');
+    const { created, status } = await uploadAll(ctx, body, manifest);
     assert.deepEqual(created.missing, [0, 1]);
-    assert.ok(created.uploadId);
-
-    const afterFirst = ctx.store.recordBlobChunk({
-      ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId,
-      index: 0, bytes: body.subarray(0, 8),
-    });
-    assert.equal(afterFirst.state, 'receiving');
-    assert.deepEqual(afterFirst.received, [0]);
-    assert.deepEqual(afterFirst.missing, [1]);
-
-    const done = ctx.store.recordBlobChunk({
-      ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId,
-      index: 1, bytes: body.subarray(8),
-    });
-    assert.equal(done.state, 'complete');
-    assert.deepEqual(done.missing, []);
-
-    const row = ctx.store.getBlob(OWNER, manifest.sha256);
-    assert.ok(row, 'completed blob must be addressable by digest');
-    assert.equal(Number(row.size), body.length);
-    assert.deepEqual(fs.readFileSync(ctx.store.blobFilePath(row)), body);
-  } finally { ctx.cleanup(); }
-});
-
-test('re-opening an upload with the same manifest resumes it', () => {
-  const ctx = freshStore();
-  try {
-    const body = Buffer.from('resume-me-please!!');
-    const manifest = manifestFor(body);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    ctx.store.recordBlobChunk({
-      ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 8),
-    });
-    const resumed = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    assert.equal(resumed.uploadId, created.uploadId, 'stable uploadId for (owner, device, sha256)');
-    assert.deepEqual(resumed.received, [0]);
-    assert.equal(resumed.state, 'receiving');
-  } finally { ctx.cleanup(); }
-});
-
-test('a conflicting manifest for an in-flight digest is a hash error, not a new upload', () => {
-  const ctx = freshStore();
-  try {
-    const body = Buffer.from('conflict-body-01');
-    const manifest = manifestFor(body);
-    ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    const tampered = { ...manifest, chunkHashes: manifest.chunkHashes.slice().reverse() };
-    assert.throws(
-      () => ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...tampered }),
-      (err) => err.code === 'blob_hash_mismatch' && err.status === 422,
-    );
-  } finally { ctx.cleanup(); }
-});
-
-test('a chunk whose bytes do not hash to the manifest entry is rejected before disk', () => {
-  const ctx = freshStore();
-  try {
-    const body = Buffer.from('hash-check-body');
-    const manifest = manifestFor(body);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    assert.throws(
-      () => ctx.store.recordBlobChunk({
-        ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId,
-        index: 0, bytes: Buffer.from('EVILBYTE'),
-      }),
-      (err) => err.code === 'blob_hash_mismatch' && err.status === 422,
-    );
-    const status = ctx.store.blobUploadStatus(ctx.store.getBlobUpload(created.uploadId));
-    assert.deepEqual(status.received, [], 'a rejected chunk must not be recorded');
-    assert.equal(fs.existsSync(path.join(ctx.store.blobRoot, '_uploads', created.uploadId, '0.part')), false);
-  } finally { ctx.cleanup(); }
-});
-
-test('re-sending an already-acked chunk is accepted without corruption', () => {
-  const ctx = freshStore();
-  try {
-    const body = Buffer.from('idem-chunk-test');
-    const manifest = manifestFor(body);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    const first = ctx.store.recordBlobChunk({
-      ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 8),
-    });
-    const again = ctx.store.recordBlobChunk({
-      ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 8),
-    });
-    assert.deepEqual(again.received, first.received);
-    assert.equal(again.state, 'receiving');
-  } finally { ctx.cleanup(); }
-});
-
-test('wrong chunk length and out-of-range index are invalid requests', () => {
-  const ctx = freshStore();
-  try {
-    const body = Buffer.from('len-index-checks');
-    const manifest = manifestFor(body);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    assert.throws(
-      () => ctx.store.recordBlobChunk({
-        ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 4),
-      }),
-      (err) => err.code === 'invalid_request' && err.status === 400,
-    );
-    assert.throws(
-      () => ctx.store.recordBlobChunk({
-        ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 99, bytes: body.subarray(0, 8),
-      }),
-      (err) => err.code === 'invalid_request' && err.status === 400,
-    );
-  } finally { ctx.cleanup(); }
-});
-
-test('internally inconsistent manifest fails the whole-blob check and drops the upload', () => {
-  const ctx = freshStore();
-  try {
-    const body = Buffer.from('whole-hash-fail');
-    const manifest = manifestFor(body);
-    // Chunks hash correctly but the total digest is wrong: a client bug the
-    // server must catch at assembly time, not after persisting a bad blob.
-    manifest.sha256 = '0'.repeat(64);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    ctx.store.recordBlobChunk({
-      ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 8),
-    });
-    assert.throws(
-      () => ctx.store.recordBlobChunk({
-        ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 1, bytes: body.subarray(8),
-      }),
-      (err) => err.code === 'blob_hash_mismatch' && err.status === 422,
-    );
-    assert.equal(ctx.store.getBlobUpload(created.uploadId), null, 'poisoned upload state must be dropped');
-    assert.equal(ctx.store.getBlob(OWNER, manifest.sha256), null, 'no blob may persist under a bad digest');
-  } finally { ctx.cleanup(); }
-});
-
-test('a zero-length blob completes at manifest time', () => {
-  const ctx = freshStore();
-  try {
-    const manifest = manifestFor(Buffer.alloc(0));
-    const status = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
     assert.equal(status.state, 'complete');
     const row = ctx.store.getBlob(OWNER, manifest.sha256);
     assert.ok(row);
-    assert.equal(Number(row.size), 0);
-  } finally { ctx.cleanup(); }
+    assert.deepEqual(fs.readFileSync(ctx.store.blobFilePath(row)), body);
+    assert.equal(fs.existsSync(ctx.store.uploadChunkDir(created.uploadId)), false);
+  } finally { await ctx.cleanup(); }
 });
 
-test('uploads and blobs are invisible across owners and devices', () => {
-  const ctx = freshStore();
+test('matching manifests resume by stable upload id and chunks are idempotent', async () => {
+  const ctx = freshContext();
   try {
-    const body = Buffer.from('isolation-check');
+    const body = Buffer.from('idem-chunk-test');
     const manifest = manifestFor(body);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    assert.throws(
-      () => ctx.store.recordBlobChunk({
-        ownerUserId: 'user-2', deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 8),
-      }),
-      (err) => err.code === 'resource_not_found_or_inaccessible' && err.status === 404,
-    );
-    assert.throws(
-      () => ctx.store.recordBlobChunk({
-        ownerUserId: OWNER, deviceId: 'dev-2', uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 8),
-      }),
-      (err) => err.code === 'resource_not_found_or_inaccessible' && err.status === 404,
-    );
-    assert.equal(ctx.store.getBlob('user-2', manifest.sha256), null);
-  } finally { ctx.cleanup(); }
+    const created = await ctx.manager.createUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
+    const first = await ctx.manager.uploadChunk({
+      ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId,
+      index: 0, bytes: body.subarray(0, CHUNK),
+    });
+    const resumed = await ctx.manager.createUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
+    const replay = await ctx.manager.uploadChunk({
+      ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId,
+      index: 0, bytes: body.subarray(0, CHUNK),
+    });
+    assert.equal(resumed.uploadId, created.uploadId);
+    assert.deepEqual(first.received, [0]);
+    assert.deepEqual(replay.received, [0]);
+  } finally { await ctx.cleanup(); }
 });
 
-test('readBlobRange serves exactly the requested window', () => {
-  const ctx = freshStore();
+test('conflicting manifests and bad chunk bytes are rejected before persistence', async () => {
+  const ctx = freshContext();
   try {
-    const body = Buffer.from('range-read-body!');
+    const body = Buffer.from('hash-check-body');
     const manifest = manifestFor(body);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    ctx.store.recordBlobChunk({ ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 8) });
-    ctx.store.recordBlobChunk({ ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 1, bytes: body.subarray(8) });
+    const created = await ctx.manager.createUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
+    const conflicting = { ...manifest, chunkHashes: manifest.chunkHashes.slice().reverse() };
+    await assert.rejects(
+      ctx.manager.createUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...conflicting }),
+      (error) => error.code === 'blob_hash_mismatch' && error.status === 422,
+    );
+    await assert.rejects(
+      ctx.manager.uploadChunk({
+        ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId,
+        index: 0, bytes: Buffer.alloc(CHUNK, 7),
+      }),
+      (error) => error.code === 'blob_hash_mismatch' && error.status === 422,
+    );
+    assert.deepEqual(ctx.store.blobUploadStatus(ctx.store.getBlobUpload(created.uploadId)).received, []);
+    assert.equal(fs.existsSync(path.join(ctx.store.uploadChunkDir(created.uploadId), '0.part')), false);
+  } finally { await ctx.cleanup(); }
+});
+
+test('wrong chunk length, index and cross-device access use safe typed errors', async () => {
+  const ctx = freshContext();
+  try {
+    const body = Buffer.from('length-and-owner');
+    const manifest = manifestFor(body);
+    const created = await ctx.manager.createUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
+    await assert.rejects(
+      ctx.manager.uploadChunk({ ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 4) }),
+      (error) => error.code === 'invalid_request' && error.status === 400,
+    );
+    await assert.rejects(
+      ctx.manager.uploadChunk({ ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 99, bytes: body.subarray(0, 8) }),
+      (error) => error.code === 'invalid_request' && error.status === 400,
+    );
+    await assert.rejects(
+      ctx.manager.getUploadStatus({ ownerUserId: OWNER, deviceId: 'other-device', uploadId: created.uploadId }),
+      (error) => error.code === 'resource_not_found_or_inaccessible' && error.status === 404,
+    );
+  } finally { await ctx.cleanup(); }
+});
+
+test('whole-blob hash mismatch removes all temporary bytes and exposes no blob', async () => {
+  const ctx = freshContext();
+  try {
+    const body = Buffer.from('whole-hash-fail');
+    const manifest = { ...manifestFor(body), sha256: '0'.repeat(64) };
+    const { created, status } = await uploadAll(ctx, body, manifest);
+    assert.equal(status.state, 'failed');
+    assert.equal(status.error.code, 'blob_hash_mismatch');
+    assert.equal(ctx.store.getBlob(OWNER, manifest.sha256), null);
+    assert.equal(fs.existsSync(ctx.store.uploadChunkDir(created.uploadId)), false);
+    assert.equal(fs.existsSync(ctx.store._blobFile(OWNER, manifest.sha256) + '.tmp-' + created.uploadId), false);
+  } finally { await ctx.cleanup(); }
+});
+
+test('zero-byte blobs follow the same recoverable finalization path', async () => {
+  const ctx = freshContext();
+  try {
+    const manifest = manifestFor(Buffer.alloc(0));
+    const created = await ctx.manager.createUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
+    assert.ok(['finalizing', 'complete'].includes(created.state));
+    await ctx.manager.waitForIdle(created.uploadId);
     const row = ctx.store.getBlob(OWNER, manifest.sha256);
-    assert.deepEqual(ctx.store.readBlobRange(row, 0, 8), body.subarray(0, 8));
-    assert.deepEqual(ctx.store.readBlobRange(row, 8, 8), body.subarray(8, 16));
-    assert.deepEqual(ctx.store.readBlobRange(row, 8, 64), body.subarray(8), 'short final window reads to EOF');
-  } finally { ctx.cleanup(); }
+    assert.ok(row);
+    assert.equal(Number(row.size), 0);
+    assert.equal(fs.statSync(ctx.store.blobFilePath(row)).size, 0);
+  } finally { await ctx.cleanup(); }
 });
 
-test('gc drops stale in-flight uploads and their part files', () => {
-  const ctx = freshStore();
+test('re-posting a completed manifest does not reserve a second upload', async () => {
+  const ctx = freshContext();
   try {
-    const body = Buffer.from('gc-me-eventually');
+    const body = Buffer.from('already-complete');
     const manifest = manifestFor(body);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    ctx.store.recordBlobChunk({ ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 8) });
-    // Age the row beyond the GC horizon.
-    ctx.db.prepare('UPDATE mobile_blob_uploads SET updated_at = ? WHERE upload_id = ?')
-      .run(Date.now() - 48 * 3600 * 1000, created.uploadId);
-    assert.equal(ctx.store.gcBlobUploads(), 1);
-    assert.equal(ctx.store.getBlobUpload(created.uploadId), null);
-    assert.equal(fs.existsSync(path.join(ctx.store.blobRoot, '_uploads', created.uploadId)), false);
-  } finally { ctx.cleanup(); }
-});
-
-test('a completed blob survives upload GC', () => {
-  const ctx = freshStore();
-  try {
-    const body = Buffer.from('gc-keep-me-1234');
-    const manifest = manifestFor(body);
-    const created = ctx.store.createBlobUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
-    ctx.store.recordBlobChunk({ ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 0, bytes: body.subarray(0, 8) });
-    ctx.store.recordBlobChunk({ ownerUserId: OWNER, deviceId: DEVICE, uploadId: created.uploadId, index: 1, bytes: body.subarray(8) });
-    ctx.db.prepare('UPDATE mobile_blob_uploads SET updated_at = ? WHERE upload_id = ?')
-      .run(Date.now() - 48 * 3600 * 1000, created.uploadId);
-    assert.equal(ctx.store.gcBlobUploads(), 0, 'complete uploads are history, not garbage');
-    assert.ok(ctx.store.getBlob(OWNER, manifest.sha256));
-  } finally { ctx.cleanup(); }
+    await uploadAll(ctx, body, manifest);
+    const repeated = await ctx.manager.createUpload({ ownerUserId: OWNER, deviceId: DEVICE, ...manifest });
+    assert.equal(repeated.state, 'complete');
+    assert.equal(repeated.uploadId, null);
+  } finally { await ctx.cleanup(); }
 });

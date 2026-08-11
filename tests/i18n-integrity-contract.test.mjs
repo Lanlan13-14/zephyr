@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+    missingI18nPythonReason,
+    resolveI18nPython,
+    runI18nPython,
+} from './helpers/i18n-python-runtime.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
+const python = resolveI18nPython(root);
+const pythonTestOptions = { skip: python ? false : missingI18nPythonReason };
 
 function duplicateI18nAttributes(html) {
     const duplicate = [];
@@ -47,10 +53,9 @@ test('terminal and telnet pages retain distinct single-source controls', () => {
     }
 });
 
-test('terminal, telnet, RDP, login, and deep-link static audit batches are clean', () => {
-    const python = process.platform === 'win32' ? 'python' : 'python3';
+test('terminal, telnet, RDP, login, and deep-link static audit batches are clean', pythonTestOptions, () => {
     for (const page of ['public/terminal.html', 'public/telnet-terminal.html', 'public/rdp.html', 'public/index.html', 'public/open.html']) {
-        const output = execFileSync(python, ['scripts/i18n-page-audit.py', page], { cwd: root, encoding: 'utf8' });
+        const output = runI18nPython(python, ['scripts/i18n-page-audit.py', page], { cwd: root, encoding: 'utf8' });
         assert.match(output, /findings=0/, page);
     }
 });

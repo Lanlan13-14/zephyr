@@ -3,16 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import Database from 'better-sqlite3';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { OneClientManager, OneClientError } = require('../one-client-manager.js');
 const { FileAgentManager } = require('../file-agent-manager.js');
+const { createDatabase } = require('../sqlite-driver.js');
 
 function makeDb() {
-  const db = new Database(':memory:');
-  return db;
+  return createDatabase(':memory:', { forceBuiltin: true });
 }
 
 function makeFileAgent(tmpDir) {

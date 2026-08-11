@@ -5,7 +5,7 @@
  */
 
 import { renderMarkdown as renderMarkdownFull, escapeHtml as mdEscapeHtml } from './markdown.js?v=20260720-notes-md1';
-import { t } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
+import { t } from './i18n/runtime.js?v=20260811-webdav1';
 
 const NOTES_DEBOUNCE_MS = 800;
 const NOTES_SEARCH_MS = 180;
@@ -247,9 +247,14 @@ export function createNotesController({
         trash: false,
         dirty: false,
         saving: false,
+        savePromise: null,
         saveTimer: null,
         searchTimer: null,
         generation: 0,
+        selectionGeneration: 0,
+        remoteRefreshGeneration: 0,
+        remoteUpdatePending: false,
+        active: false,
         loaded: false,
         connectionFilter: '',
         sortBy: 'updated',
@@ -582,7 +587,7 @@ export function createNotesController({
         }
     }
 
-    async function loadList() {
+    async function loadList({ accept = () => true } = {}) {
         const gen = ++state.generation;
         const params = new URLSearchParams();
         if (state.query) params.set('q', state.query);
@@ -593,12 +598,12 @@ export function createNotesController({
         if (state.tagFilter && state.tagFilter !== 'all') params.set('tag', state.tagFilter);
         if (state.connectionFilter) params.set('connectionId', state.connectionFilter);
         const data = await api(`/api/notes?${params.toString()}`);
-        if (gen !== state.generation) return;
+        if (gen !== state.generation || !accept()) return false;
         state.notes = data.notes || [];
         renderList();
         try {
             const groups = await api('/api/notes/groups');
-            if (gen !== state.generation) return;
+            if (gen !== state.generation || !accept()) return false;
             state.groups = groups.groups || [];
             renderGroups();
         } catch {
@@ -619,6 +624,7 @@ export function createNotesController({
         }
         renderConnectionFilterBar();
         state.loaded = true;
+        return true;
     }
 
     function renderTagMenu() {
@@ -658,6 +664,40 @@ export function createNotesController({
         });
     }
 
+    async function refreshRemote() {
+        if (!state.active || state.dirty || state.saving) return false;
+        const refreshGeneration = ++state.remoteRefreshGeneration;
+        const selectedId = state.selectedId;
+        const canApply = () => refreshGeneration === state.remoteRefreshGeneration
+            && state.active
+            && !state.dirty
+            && !state.saving
+            && state.selectedId === selectedId;
+        const detailPromise = selectedId
+            ? api(`/api/notes/${encodeURIComponent(selectedId)}`).catch((error) => {
+                if (error?.status === 404) return { note: null };
+                throw error;
+            })
+            : Promise.resolve({ note: null });
+        const listApplied = await loadList({ accept: canApply });
+        const detail = await detailPromise;
+        if (!listApplied || !canApply()) return false;
+        if (selectedId) {
+            state.current = detail.note || null;
+            if (!detail.note) state.selectedId = null;
+            fillEditor(detail.note || null);
+            updateTrashButtons();
+        }
+        state.remoteUpdatePending = false;
+        return true;
+    }
+
+    function notifyRemoteUpdate() {
+        state.remoteUpdatePending = true;
+        if (!state.active || state.dirty || state.saving) return Promise.resolve(false);
+        return refreshRemote();
+    }
+
     async function selectNote(noteId) {
         if (state.dirty && state.current) {
             try { await flushSave(); } catch (err) {
@@ -665,6 +705,8 @@ export function createNotesController({
                 return;
             }
         }
+        const selectionGeneration = ++state.selectionGeneration;
+        state.remoteRefreshGeneration += 1;
         state.selectedId = noteId;
         renderList();
         if (!noteId) {
@@ -673,6 +715,7 @@ export function createNotesController({
             return;
         }
         const note = await api(`/api/notes/${encodeURIComponent(noteId)}`);
+        if (selectionGeneration !== state.selectionGeneration || state.selectedId !== noteId) return;
         state.current = note.note;
         fillEditor(note.note);
         updateTrashButtons();
@@ -699,8 +742,24 @@ export function createNotesController({
     }
 
     async function flushSave() {
-        if (!state.current || !state.dirty || state.saving) return state.current;
+        if (!state.current || !state.dirty) return state.saving ? (state.savePromise || state.current) : state.current;
+        if (state.saving) return state.savePromise || state.current;
         state.saving = true;
+        state.savePromise = performSave();
+        try {
+            return await state.savePromise;
+        } finally {
+            state.saving = false;
+            state.savePromise = null;
+            if (state.remoteUpdatePending && state.active && !state.dirty) {
+                window.setTimeout(() => refreshRemote().catch((error) => {
+                    console.warn('[notes] deferred remote refresh failed', error);
+                }), 0);
+            }
+        }
+    }
+
+    async function performSave() {
         setSaveState('saving', t('保存中…'));
         try {
             const tags = String($('#notesTagsInput')?.value || '')
@@ -757,8 +816,6 @@ export function createNotesController({
                 setSaveState('error', t('保存失败'));
             }
             throw err;
-        } finally {
-            state.saving = false;
         }
     }
 
@@ -1840,10 +1897,20 @@ export function createNotesController({
     }
 
     async function activate() {
-        await loadList();
+        state.active = true;
+        if (state.remoteUpdatePending) await refreshRemote();
+        else if (!state.dirty && !state.saving) {
+            await loadList({ accept: () => state.active && !state.dirty && !state.saving });
+        }
         setMode(state.mode);
         updateTrashButtons();
         if (!state.selectedId) setMobileDetail(false);
+    }
+
+    async function leave() {
+        state.active = false;
+        state.remoteRefreshGeneration += 1;
+        if (state.dirty || state.saving) await flushSave();
     }
 
     async function filterByConnection(connectionId) {
@@ -1857,7 +1924,9 @@ export function createNotesController({
 
     return {
         activate,
+        leave,
         flushSave,
+        notifyRemoteUpdate,
         state,
         selectNote,
         createNote,

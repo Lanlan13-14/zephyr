@@ -1,134 +1,95 @@
 package one.zephyr.mobile.feature.tools
 
+import java.security.MessageDigest
+import one.zephyr.mobile.contracts.ErrorRegistry
+
 /**
  * What a finished batch run is allowed to leave behind.
  *
- * SCREEN_CATALOG.md 16 is explicit: the command audit keeps truncated metadata only, and neither
- * secrets nor whole stdout may be pushed into core sync. Two consequences are encoded here rather
- * than left to a caller's discretion.
+ * A command may contain credentials in forms no redactor can reliably recognise. The audit record
+ * therefore has no command text field, including a shortened or redacted one. It keeps a
+ * domain-separated SHA-256 digest and the UTF-8 byte count so an operator can correlate runs
+ * without making command content available to persistence, sync, serialization, or logging.
  *
- * First, [BatchAuditRecord] carries no stdout or stderr at all. Truncating output does not sanitise
- * it - a token printed in the first line of `env` survives any prefix cut - so the only safe rule is
- * exclusion, with [BatchTargetAudit.outputBytes] recording that output existed and how much.
+ * The feature exposes only [BatchAuditSink]. The app must bind it to a device-local store: audit
+ * records are not sync operations. This module has no legacy audit store or reader, so removing
+ * the old preview field also leaves no in-module migration path that could display or
+ * rewrite historical command text.
  *
- * Second, there is deliberately no repository write here. `activityEvent` is append-only with no
- * editable fields in the frozen registry, so [LocalWriteGateway] rejects an attempt to queue one; the
- * audit therefore travels through [BatchAuditSink], which the app module binds to a device-local
- * store. That is the structural version of "never into core sync".
- *
- * [BatchAudit.exportText] is the separate, explicit export DEVELOPMENT.md 14.5 permits. It does
- * include output, because the user asked for it by name and chose the destination themselves; that is
- * a different act from an audit trail written behind their back.
+ * [BatchAudit.exportText] remains an explicit user-requested export. It is not an audit record and
+ * may include command output because the operator selected its destination.
  */
 data class BatchAuditRecord(
-    /** Truncated command. The user authored it and it is already on screen, so a prefix is enough. */
-    val commandPreview: String,
-    val commandLength: Int,
-    val timeoutSeconds: Int,
-    val concurrency: Int,
-    val failFast: Boolean,
-    val startedAt: Long?,
-    val finishedAt: Long?,
-    val summary: BatchSummary,
-    val targets: List<BatchTargetAudit>,
-) {
-    val durationMs: Long?
-        get() = if (startedAt != null && finishedAt != null) finishedAt - startedAt else null
+    /** SHA-256 of a versioned domain tag followed by the command's UTF-8 bytes. */
+    val commandDigest: String,
+    /** Command size in UTF-8 bytes, not UTF-16 code units. */
+    val commandUtf8ByteLength: Int,
+    /** Number of selected targets represented by [results]. */
+    val targetCount: Int,
+    /** Result metadata only. There is no target identity, output, duration, or error message. */
+    val results: List<BatchTargetAudit>,
+)
 
-    val commandWasTruncated: Boolean get() = commandLength > commandPreview.length
-}
-
-/** Per-host metadata. Status, code and timing only: enough to audit, not enough to leak. */
+/** Stable per-target outcome metadata that is safe to retain. */
 data class BatchTargetAudit(
-    val connectionId: String,
     val status: BatchTargetStatus,
     val exitCode: Int?,
-    val durationMs: Long?,
-    /** Byte count only. Records that output happened without recording what it said. */
-    val outputBytes: Int,
-    /** Stable error code, never the message: a message can quote the offending command. */
+    /** A registry or local stable code, never an arbitrary remote string or display message. */
     val errorCode: String?,
 )
 
 /**
  * Where an audit record goes.
  *
- * A port because the destination is a device-local store the app module owns, and because a feature
- * module must not be able to reach the sync queue by accident.
+ * A port keeps the feature module unable to reach the sync queue by accident. Implementations must
+ * treat every [BatchAuditRecord] field as the complete persistence contract and must not retain a
+ * [BatchRunState] or command alongside it.
  */
 interface BatchAuditSink {
     suspend fun record(record: BatchAuditRecord)
 }
 
-/** Drops the record. Used where no audit store is wired yet, so the run itself still works. */
+/** Drops the record. Used where no device-local audit store is wired yet. */
 object NoopBatchAuditSink : BatchAuditSink {
     override suspend fun record(record: BatchAuditRecord) = Unit
 }
 
 object BatchAudit {
 
-    /** Command prefix kept in the audit. Long enough to identify the run, short enough to stay metadata. */
-    const val COMMAND_PREVIEW_CHARS = 120
+    /** Versioned domain separator so this digest cannot be confused with another SHA-256 use. */
+    const val COMMAND_DIGEST_DOMAIN = "zephyr-one/mobile/batch-audit/command/v1"
+
+    private const val HASH_ALGORITHM = "SHA-256"
+    private const val UNKNOWN_ERROR_CODE = "unknown_error"
 
     /**
-     * The persisted preview.
+     * Produces the only command-derived value permitted in an audit record.
      *
-     * Redacts first, then truncates: truncating first could cut a secret in half and keep the
-     * readable half. The patterns are best-effort and deliberately conservative - a command line is
-     * not parseable without a shell grammar - so this stays a second line of defence behind the
-     * structural rule that stdout and stderr never enter the record at all.
+     * The NUL separator makes the domain framing unambiguous. `command` is never returned, stored,
+     * or sent to an audit sink by this method.
      */
-    fun preview(command: String): String {
-        val redacted = redact(command)
-        return if (redacted.length <= COMMAND_PREVIEW_CHARS) {
-            redacted
-        } else {
-            redacted.take(COMMAND_PREVIEW_CHARS)
-        }
+    fun commandDigest(command: String): String = MessageDigest.getInstance(HASH_ALGORITHM).run {
+        update(COMMAND_DIGEST_DOMAIN.toByteArray(Charsets.UTF_8))
+        update(0)
+        update(command.toByteArray(Charsets.UTF_8))
+        digest().toLowerHex()
     }
 
-    /** Best-effort secret removal for the audit preview. */
-    fun redact(command: String): String {
-        var result = command
-        for (pattern in SECRET_PATTERNS) {
-            result = pattern.replace(result) { match ->
-                match.groupValues[1] + REDACTED
-            }
-        }
-        return result
+    fun recordOf(state: BatchRunState): BatchAuditRecord {
+        val commandBytes = state.plan.command.toByteArray(Charsets.UTF_8)
+        return BatchAuditRecord(
+            commandDigest = commandDigest(state.plan.command),
+            commandUtf8ByteLength = commandBytes.size,
+            targetCount = state.targets.size,
+            results = state.targets.map { row ->
+                BatchTargetAudit(
+                    status = row.status,
+                    exitCode = row.exitCode,
+                    errorCode = row.error?.code?.let(::stableErrorCode),
+                )
+            },
+        )
     }
-
-    const val REDACTED = "***"
-
-    private val SECRET_PATTERNS: List<Regex> = listOf(
-        // key=value and key: value forms, e.g. PASSWORD=hunter2, api_key: abc
-        Regex("""(?i)((?:password|passwd|pwd|secret|token|api[-_]?key|access[-_]?key)\s*[=:]\s*)\S+"""),
-        // long-option forms, e.g. --password hunter2, --token=abc
-        Regex("""(?i)(--(?:password|passwd|token|secret|api-key)[=\s]+)\S+"""),
-        // short password option, e.g. mysql -phunter2
-        Regex("""(\s-p)(?!\s)\S+"""),
-    )
-
-    fun recordOf(state: BatchRunState): BatchAuditRecord = BatchAuditRecord(
-        commandPreview = preview(state.plan.command),
-        commandLength = state.plan.command.length,
-        timeoutSeconds = state.plan.timeoutSeconds,
-        concurrency = state.plan.concurrency,
-        failFast = state.plan.failFast,
-        startedAt = state.startedAt,
-        finishedAt = state.finishedAt,
-        summary = state.summary,
-        targets = state.targets.map { row ->
-            BatchTargetAudit(
-                connectionId = row.target.connectionId,
-                status = row.status,
-                exitCode = row.exitCode,
-                durationMs = row.durationMs,
-                outputBytes = row.stdout.length + row.stderr.length,
-                errorCode = row.error?.code,
-            )
-        },
-    )
 
     /**
      * The user's explicit export.
@@ -164,4 +125,22 @@ object BatchAudit {
             appendLine()
         }
     }
+
+    private fun stableErrorCode(code: String): String = when (code) {
+        BatchScheduler.CODE_CAPABILITY_DENIED,
+        BatchScheduler.CODE_TIMED_OUT,
+        UnavailableRemotePorts.CODE_ENGINE_UNAVAILABLE,
+        in ErrorRegistry.byCode -> code
+        else -> UNKNOWN_ERROR_CODE
+    }
+
+    private fun ByteArray.toLowerHex(): String = buildString(size * 2) {
+        for (byte in this@toLowerHex) {
+            val value = byte.toInt() and 0xff
+            append(HEX[value ushr 4])
+            append(HEX[value and 0x0f])
+        }
+    }
+
+    private val HEX = "0123456789abcdef".toCharArray()
 }

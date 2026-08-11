@@ -1,6 +1,7 @@
 package one.zephyr.mobile.data.db
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -37,6 +38,9 @@ data class PendingOperationRow(
      * on the operation is what makes that survive a process death.
      */
     val secretFieldsJson: String = "[]",
+    /** Secret fields explicitly cleared; unlike replacements these must never be sealed. */
+    @ColumnInfo(defaultValue = "'[]'")
+    val clearedSecretFieldsJson: String = "[]",
     /**
      * Set when the op is handed to the network. A retry after an unknown outcome must replay the
      * same opId so the server can deduplicate rather than apply the edit twice.

@@ -8,6 +8,7 @@ import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.ServerCapabilities
 import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.network.MobileApi
+import one.zephyr.mobile.network.ValidatedAck
 
 /**
  * [SyncTransport] over the real HTTP client.
@@ -43,6 +44,6 @@ class MobileApiTransport(
         envelopes = envelopes,
     )
 
-    override suspend fun ack(cursor: Long, appliedOpIds: List<String>): ApiResult<Boolean> =
+    override suspend fun ack(cursor: Long, appliedOpIds: List<String>): ApiResult<ValidatedAck> =
         api.ack(deviceId = deviceId, cursor = cursor, appliedOpIds = appliedOpIds)
 }

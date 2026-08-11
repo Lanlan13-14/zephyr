@@ -75,11 +75,15 @@ function decimalAscii(value, field) {
 function joinNul(parts) {
     const buffers = [];
     parts.forEach((part, index) => {
-        if (index > 0) buffers.push(Buffer.from([0x00]));
         if (part === undefined || part === null || part === '') {
             throw new TypeError('AAD parts must be non-empty');
         }
-        buffers.push(Buffer.from(String(part), 'utf8'));
+        const text = String(part);
+        if (!text || text.includes('\u0000')) {
+            throw new TypeError('AAD parts must be non-empty and must not contain NUL');
+        }
+        if (index > 0) buffers.push(Buffer.from([0x00]));
+        buffers.push(Buffer.from(text, 'utf8'));
     });
     return Buffer.concat(buffers);
 }

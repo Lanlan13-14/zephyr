@@ -12,9 +12,10 @@
 'use strict';
 
 const crypto = require('crypto');
-const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const ipaddr = require('ipaddr.js');
+const { AgentTokenStore } = require('./file-agent-token-store');
 const {
     OP: ZFT2_OP,
     FLAG_ERROR: ZFT2_FLAG_ERROR,
@@ -29,10 +30,289 @@ const RPC_DEFAULT_TIMEOUT_MS = 30000;
 const RPC_READ_TIMEOUT_MS = 60000;
 const BINARY_READ_PREFETCH_CHUNKS = 1;
 const BINARY_READ_MAX_CACHE_BYTES = 64 * 1024 * 1024;
+const FILE_AGENT_PREAUTH_MAX_MESSAGE_BYTES = 16 * 1024;
+const FILE_AGENT_AUTHENTICATED_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
+const FILE_AGENT_AUTH_TIMEOUT_MS = 3000;
 const DEFAULT_TOKEN_FILE = path.join(
     process.env.ZEPHYR_DATA_DIR ? path.resolve(process.env.ZEPHYR_DATA_DIR) : path.join(__dirname, 'data'),
     'agent-tokens.json',
 );
+
+const DEFAULT_ADMISSION_LIMITS = Object.freeze({
+    preAuthGlobal: 64,
+    preAuthPerIp: 8,
+    authenticatedGlobal: 512,
+    authenticatedPerIp: 64,
+    globalRateBurst: 120,
+    globalRatePerSecond: 5,
+    perIpRateBurst: 12,
+    perIpRatePerSecond: 0.5,
+    maxPendingBytes: 1024 * 1024,
+    rateEntryTtlMs: 5 * 60 * 1000,
+});
+
+function positiveLimit(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function canonicalRemoteIp(socket) {
+    // The TCP peer is authoritative here; forwarded headers are intentionally ignored.
+    let address = String(socket?.remoteAddress || '').trim();
+    if (!address) return 'unknown';
+    if (address.startsWith('[') && address.includes(']')) address = address.slice(1, address.indexOf(']'));
+    const zoneAt = address.indexOf('%');
+    if (zoneAt >= 0) address = address.slice(0, zoneAt);
+    try {
+        const parsed = ipaddr.parse(address);
+        if (parsed.kind() === 'ipv6' && parsed.isIPv4MappedAddress()) {
+            return parsed.toIPv4Address().toString();
+        }
+        return parsed.kind() === 'ipv6' ? parsed.toNormalizedString() : parsed.toString();
+    } catch {
+        return 'unknown';
+    }
+}
+
+class FileAgentAdmissionGate {
+    constructor(options = {}, log = console.log) {
+        this.log = log;
+        this.now = typeof options.now === 'function' ? options.now : Date.now;
+        this.limits = {
+            preAuthGlobal: positiveLimit(options.preAuthGlobal, DEFAULT_ADMISSION_LIMITS.preAuthGlobal),
+            preAuthPerIp: positiveLimit(options.preAuthPerIp, DEFAULT_ADMISSION_LIMITS.preAuthPerIp),
+            authenticatedGlobal: positiveLimit(options.authenticatedGlobal, DEFAULT_ADMISSION_LIMITS.authenticatedGlobal),
+            authenticatedPerIp: positiveLimit(options.authenticatedPerIp, DEFAULT_ADMISSION_LIMITS.authenticatedPerIp),
+            globalRateBurst: positiveLimit(options.globalRateBurst, DEFAULT_ADMISSION_LIMITS.globalRateBurst),
+            globalRatePerSecond: positiveLimit(options.globalRatePerSecond, DEFAULT_ADMISSION_LIMITS.globalRatePerSecond),
+            perIpRateBurst: positiveLimit(options.perIpRateBurst, DEFAULT_ADMISSION_LIMITS.perIpRateBurst),
+            perIpRatePerSecond: positiveLimit(options.perIpRatePerSecond, DEFAULT_ADMISSION_LIMITS.perIpRatePerSecond),
+            maxPendingBytes: positiveLimit(options.maxPendingBytes, DEFAULT_ADMISSION_LIMITS.maxPendingBytes),
+            rateEntryTtlMs: positiveLimit(options.rateEntryTtlMs, DEFAULT_ADMISSION_LIMITS.rateEntryTtlMs),
+        };
+        this.preAuthCount = 0;
+        this.authenticatedCount = 0;
+        this.preAuthByIp = new Map();
+        this.authenticatedByIp = new Map();
+        this.pendingBytes = 0;
+        this.nextLeaseId = 1;
+        this.leases = new Set();
+        const now = this.now();
+        this.globalRate = { tokens: this.limits.globalRateBurst, updatedAt: now, seenAt: now };
+        this.ipRates = new Map();
+        this.admissionAttempts = 0;
+    }
+
+    _count(map, ip) {
+        return map.get(ip) || 0;
+    }
+
+    _increment(map, ip) {
+        map.set(ip, this._count(map, ip) + 1);
+    }
+
+    _decrement(map, ip) {
+        const count = this._count(map, ip);
+        if (count <= 1) map.delete(ip);
+        else map.set(ip, count - 1);
+    }
+
+    _refill(bucket, burst, perSecond, now) {
+        const elapsed = Math.max(0, now - bucket.updatedAt);
+        bucket.tokens = Math.min(burst, bucket.tokens + (elapsed / 1000) * perSecond);
+        bucket.updatedAt = now;
+        bucket.seenAt = now;
+    }
+
+    _ipBucket(ip, now) {
+        let bucket = this.ipRates.get(ip);
+        if (!bucket) {
+            bucket = { tokens: this.limits.perIpRateBurst, updatedAt: now, seenAt: now };
+            this.ipRates.set(ip, bucket);
+        }
+        return bucket;
+    }
+
+    _pruneRateEntries(now) {
+        if ((++this.admissionAttempts & 0xff) !== 0) return;
+        for (const [ip, bucket] of this.ipRates) {
+            if (now - bucket.seenAt >= this.limits.rateEntryTtlMs
+                && !this.preAuthByIp.has(ip)
+                && !this.authenticatedByIp.has(ip)) {
+                this.ipRates.delete(ip);
+            }
+        }
+    }
+
+    admit(socket) {
+        const ip = canonicalRemoteIp(socket);
+        if (this.preAuthCount >= this.limits.preAuthGlobal) {
+            return { ok: false, code: 'preauth_global_limit' };
+        }
+        if (this._count(this.preAuthByIp, ip) >= this.limits.preAuthPerIp) {
+            return { ok: false, code: 'preauth_ip_limit' };
+        }
+
+        const now = this.now();
+        this._pruneRateEntries(now);
+        const ipBucket = this._ipBucket(ip, now);
+        this._refill(this.globalRate, this.limits.globalRateBurst, this.limits.globalRatePerSecond, now);
+        this._refill(ipBucket, this.limits.perIpRateBurst, this.limits.perIpRatePerSecond, now);
+        if (this.globalRate.tokens < 1) return { ok: false, code: 'upgrade_global_rate' };
+        if (ipBucket.tokens < 1) return { ok: false, code: 'upgrade_ip_rate' };
+
+        this.globalRate.tokens -= 1;
+        ipBucket.tokens -= 1;
+        this.preAuthCount += 1;
+        this._increment(this.preAuthByIp, ip);
+        const lease = {
+            id: this.nextLeaseId++,
+            ip,
+            phase: 'preauth',
+            pendingBytes: 0,
+            released: false,
+            socket,
+            rawListeners: null,
+            wsListeners: null,
+        };
+        this.leases.add(lease);
+        if (socket?.once) {
+            const release = () => this.release(lease);
+            socket.once('close', release);
+            socket.once('error', release);
+            lease.rawListeners = { release };
+        }
+        return { ok: true, lease };
+    }
+
+    attachWebSocket(lease, ws) {
+        if (!lease || lease.released) return false;
+        if (lease.wsListeners || !ws?.once) return true;
+        const release = () => this.release(lease);
+        ws.once('close', release);
+        ws.once('error', release);
+        lease.wsListeners = { ws, release };
+        return true;
+    }
+
+    reservePendingBytes(lease, bytes) {
+        const amount = Math.max(0, Number(bytes) || 0);
+        if (!lease || lease.released || lease.phase !== 'preauth') return false;
+        if (this.pendingBytes + amount > this.limits.maxPendingBytes) return false;
+        lease.pendingBytes += amount;
+        this.pendingBytes += amount;
+        return true;
+    }
+
+    releasePendingBytes(lease) {
+        if (!lease || lease.pendingBytes <= 0) return;
+        this.pendingBytes = Math.max(0, this.pendingBytes - lease.pendingBytes);
+        lease.pendingBytes = 0;
+    }
+
+    promote(lease) {
+        if (!lease || lease.released || lease.phase !== 'preauth') return false;
+        if (this.authenticatedCount >= this.limits.authenticatedGlobal
+            || this._count(this.authenticatedByIp, lease.ip) >= this.limits.authenticatedPerIp) {
+            return false;
+        }
+        this.releasePendingBytes(lease);
+        this.preAuthCount = Math.max(0, this.preAuthCount - 1);
+        this._decrement(this.preAuthByIp, lease.ip);
+        this.authenticatedCount += 1;
+        this._increment(this.authenticatedByIp, lease.ip);
+        lease.phase = 'authenticated';
+        return true;
+    }
+
+    release(lease) {
+        if (!lease || lease.released) return false;
+        lease.released = true;
+        this.leases.delete(lease);
+        this.releasePendingBytes(lease);
+        if (lease.phase === 'authenticated') {
+            this.authenticatedCount = Math.max(0, this.authenticatedCount - 1);
+            this._decrement(this.authenticatedByIp, lease.ip);
+        } else {
+            this.preAuthCount = Math.max(0, this.preAuthCount - 1);
+            this._decrement(this.preAuthByIp, lease.ip);
+        }
+        if (lease.rawListeners && lease.socket?.removeListener) {
+            lease.socket.removeListener('close', lease.rawListeners.release);
+            lease.socket.removeListener('error', lease.rawListeners.release);
+        }
+        if (lease.wsListeners?.ws?.removeListener) {
+            lease.wsListeners.ws.removeListener('close', lease.wsListeners.release);
+            lease.wsListeners.ws.removeListener('error', lease.wsListeners.release);
+        }
+        return true;
+    }
+
+    snapshot() {
+        return {
+            preAuth: this.preAuthCount,
+            authenticated: this.authenticatedCount,
+            pendingBytes: this.pendingBytes,
+            preAuthByIp: Object.fromEntries(this.preAuthByIp),
+            authenticatedByIp: Object.fromEntries(this.authenticatedByIp),
+        };
+    }
+
+    shutdown() {
+        for (const lease of [...this.leases]) this.release(lease);
+    }
+}
+
+function isPlainObject(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+}
+
+function validateBoundedString(value, maxLength, { required = false } = {}) {
+    if (value == null && !required) return true;
+    return typeof value === 'string'
+        && (!required || value.length > 0)
+        && value.length <= maxLength;
+}
+
+function validateHelloMessage(hello) {
+    if (!isPlainObject(hello)) return false;
+    const allowed = new Set([
+        'type', 'protocolVersion', 'token', 'deviceId', 'deviceName',
+        'platform', 'appVersion', 'capabilities', 'share',
+    ]);
+    if (Object.keys(hello).some((key) => !allowed.has(key))) return false;
+    if (hello.type !== 'hello' || ![1, 2].includes(hello.protocolVersion)) return false;
+    if (!validateBoundedString(hello.token, 512, { required: true })) return false;
+    if (!validateBoundedString(hello.deviceId, 256)) return false;
+    if (!validateBoundedString(hello.deviceName, 256)) return false;
+    if (!validateBoundedString(hello.platform, 64)) return false;
+    if (!validateBoundedString(hello.appVersion, 64)) return false;
+    if (hello.capabilities != null) {
+        if (!isPlainObject(hello.capabilities)) return false;
+        const booleanCapabilities = new Set([
+            'read', 'write', 'delete', 'rename', 'mkdir', 'truncate', 'binary',
+            'binaryRead', 'binaryWrite', 'cancel', 'creditFlow',
+        ]);
+        for (const [key, value] of Object.entries(hello.capabilities)) {
+            if (booleanCapabilities.has(key)) {
+                if (typeof value !== 'boolean') return false;
+            } else if (key === 'maxInflight' || key === 'maxChunkSize') {
+                if (!Number.isSafeInteger(value) || value <= 0) return false;
+            } else {
+                return false;
+            }
+        }
+    }
+    if (hello.share != null) {
+        if (!isPlainObject(hello.share)) return false;
+        if (Object.keys(hello.share).some((key) => key !== 'name' && key !== 'readOnly')) return false;
+        if (!validateBoundedString(hello.share.name, 256)) return false;
+        if (hello.share.readOnly != null && typeof hello.share.readOnly !== 'boolean') return false;
+    }
+    return true;
+}
 
 class FileAgentConnection {
     constructor(ws, agentId, hello) {
@@ -45,6 +325,7 @@ class FileAgentConnection {
         this.capabilities = hello.capabilities || { read: true };
         this.share = hello.share || { name: 'Agent', readOnly: true };
         this.ownerId = null; // set after token validation
+        this.ownerUsername = '';
         this.tokenId = null;
         this.tokenName = '';
         this.lastSeenAt = Date.now();
@@ -307,7 +588,6 @@ class FileAgentManager {
         /** @type {Set<import('http').ServerResponse>} SSE subscribers */
         this.sseClients = new Set();
         /** @type {Map<string, object>} token → token record */
-        this.tokenRecords = new Map();
         /** @type {Map<string, {promise?: Promise<Buffer>, data?: Buffer, ts: number, size: number}>} */
         this.binaryReadCache = new Map();
         this.binaryReadCacheBytes = 0;
@@ -316,7 +596,31 @@ class FileAgentManager {
         this.resolveSession = options.resolveSession || (() => null);
         /** @type {Function} logger */
         this.log = options.log || console.log;
+        this.admissionGate = new FileAgentAdmissionGate(options.admission || {}, this.log);
+        this.authTimeoutMs = positiveLimit(options.authTimeoutMs, FILE_AGENT_AUTH_TIMEOUT_MS);
+        this.preAuthMaxMessageBytes = positiveLimit(
+            options.preAuthMaxMessageBytes,
+            FILE_AGENT_PREAUTH_MAX_MESSAGE_BYTES,
+        );
+        this.authenticatedMaxMessageBytes = positiveLimit(
+            options.authenticatedMaxMessageBytes,
+            FILE_AGENT_AUTHENTICATED_MAX_MESSAGE_BYTES,
+        );
+        this.preAuthCloseGraceMs = positiveLimit(options.preAuthCloseGraceMs, 250);
+        this.resolveOwner = typeof options.resolveOwner === 'function' ? options.resolveOwner : null;
         this.tokenFile = path.resolve(options.tokenFile || DEFAULT_TOKEN_FILE);
+        this.tokenStore = options.tokenStore || new AgentTokenStore(this.tokenFile, {
+            db: options.db,
+            getDb: options.getDb,
+            keyring: options.tokenKeyring,
+            keyFile: options.tokenKeyFile,
+            databaseFile: options.databaseFile,
+            resolveOwner: this.resolveOwner,
+        });
+        this.metadataSyncContract = this.tokenStore.metadataSyncContract;
+        this.boundTokenDb = null;
+        this.teardownTimeoutMs = Math.max(10, Number(options.teardownTimeoutMs || 2000));
+        this.blockedOwnerIds = new Set();
 
         this._loadTokens();
     }
@@ -325,59 +629,153 @@ class FileAgentManager {
 
     _loadTokens() {
         try {
-            if (!fs.existsSync(this.tokenFile)) return;
-            const data = JSON.parse(fs.readFileSync(this.tokenFile, 'utf8'));
-            if (data && Array.isArray(data.tokens)) {
-                for (const item of data.tokens) {
-                    if (!item || !item.token || !item.ownerId) continue;
-                    this.tokenRecords.set(item.token, {
-                        id: item.id || `tok_${crypto.randomBytes(6).toString('hex')}`,
-                        ownerId: item.ownerId,
-                        name: item.name || '默认 Token',
-                        token: item.token,
-                        createdAt: Number(item.createdAt || Date.now()),
-                        updatedAt: Number(item.updatedAt || item.createdAt || Date.now()),
-                        lastUsedAt: item.lastUsedAt ? Number(item.lastUsedAt) : null,
-                    });
-                }
-                return;
-            }
-            // Backward compatibility: old format was { token: ownerId }.
-            if (data && typeof data === 'object') {
-                for (const [token, ownerId] of Object.entries(data)) {
-                    if (!token || !ownerId || typeof ownerId !== 'string') continue;
-                    this.tokenRecords.set(token, {
-                        id: `tok_${crypto.createHash('sha256').update(token).digest('hex').slice(0, 12)}`,
-                        ownerId,
-                        name: '默认 Token',
-                        token,
-                        createdAt: Date.now(),
-                        updatedAt: Date.now(),
-                        lastUsedAt: null,
-                    });
-                }
-                this._saveTokens();
-            }
+            this.tokenStore.ensureReady({ resolveOwner: this.resolveOwner });
         } catch (err) {
-            this.log('[file-agent] failed to load tokens:', err.message);
+            if (err?.code !== 'token_store_unavailable') {
+                this.log('[file-agent] encrypted Client Token store is unavailable');
+            }
         }
     }
 
-    _saveTokens() {
+    get db() {
+        return this.tokenStore.db;
+    }
+
+    _ensureTokenStore() {
         try {
-            const tokens = [...this.tokenRecords.values()].map((t) => ({
-                id: t.id,
-                ownerId: t.ownerId,
-                name: t.name,
-                token: t.token,
-                createdAt: t.createdAt,
-                updatedAt: t.updatedAt,
-                lastUsedAt: t.lastUsedAt || null,
-            }));
-            fs.mkdirSync(path.dirname(this.tokenFile), { recursive: true });
-            fs.writeFileSync(this.tokenFile, JSON.stringify({ version: 2, tokens }, null, 2));
+            this.tokenStore.ensureReady({ resolveOwner: this.resolveOwner });
+            const currentDb = this.tokenStore.db;
+            if (this.boundTokenDb && currentDb && this.boundTokenDb !== currentDb) {
+                for (const [agentId] of [...this.agents]) this.unregisterAgent(agentId, 'token_store_rebound');
+            }
+            this.boundTokenDb = currentDb;
+            this.metadataSyncContract = this.tokenStore.metadataSyncContract;
+            return this.tokenStore;
         } catch (err) {
-            this.log('[file-agent] failed to save tokens:', err.message);
+            const wrapped = new AgentError(err?.code || 'token_store_unavailable', 'Encrypted Client Token storage is unavailable');
+            wrapped.cause = err;
+            throw wrapped;
+        }
+    }
+
+    _storeOwnerId(ownerId, ownerUsername = '') {
+        const owner = this._ownerIdentity(ownerId, ownerUsername);
+        if (owner.strict) return owner.userId || '';
+        if (!this.resolveOwner) return owner.userId || owner.username;
+        return this._resolveOwnerReference(owner)?.userId || '';
+    }
+
+    /** Resolve a route/session owner to the immutable identity used by token storage. */
+    resolveTokenOwner(ownerId, ownerUsername = '') {
+        const identity = this._ownerIdentity(ownerId, ownerUsername);
+        const userId = this._storeOwnerId(ownerId, ownerUsername);
+        if (!userId) return null;
+        const resolved = this.resolveOwner ? this._resolveOwnerReference(identity) : null;
+        return {
+            userId,
+            username: String(resolved?.username || identity.username || ''),
+        };
+    }
+
+    _ownerIdentity(ownerId, ownerUsername = '') {
+        if (ownerId && typeof ownerId === 'object') {
+            return {
+                userId: String(ownerId.userId || ''),
+                username: String(ownerId.username || ''),
+                strict: true,
+            };
+        }
+        const reference = String(ownerId || '');
+        return {
+            userId: reference,
+            username: String(ownerUsername || reference),
+            strict: false,
+        };
+    }
+
+    _recordOwnedBy(record, ownerId, ownerUsername = '') {
+        if (!record) return false;
+        const owner = this._ownerIdentity(ownerId, ownerUsername);
+        if (!owner.strict && this.resolveOwner) {
+            const resolved = this._resolveOwnerReference(owner);
+            if (!resolved) return false;
+            return record.ownerId === resolved.userId
+                || (
+                    resolved.legacyOwnerAllowed !== false
+                    && !record.ownerUsername
+                    && record.ownerId === resolved.username
+                );
+        }
+        if (owner.userId && record.ownerId === owner.userId) return true;
+        if (!owner.username) return false;
+        if (record.ownerUsername) return !owner.strict && record.ownerUsername === owner.username;
+        if (record.ownerId !== owner.username) return false;
+        if (!owner.strict || !this.resolveOwner) return true;
+        try {
+            const resolved = this.resolveOwner({
+                userId: record.ownerId,
+                username: owner.username,
+                legacy: true,
+            });
+            return resolved?.status === 'active'
+                && resolved.legacyOwnerAllowed !== false
+                && resolved.userId === owner.userId;
+        } catch {
+            return false;
+        }
+    }
+
+    _connectionOwnedBy(connection, ownerId, ownerUsername = '') {
+        if (!connection) return false;
+        const owner = this._ownerIdentity(ownerId, ownerUsername);
+        if (!owner.strict && this.resolveOwner) {
+            const resolved = this._resolveOwnerReference(owner);
+            if (!resolved) return false;
+            return connection.ownerId === resolved.userId
+                || (
+                    resolved.legacyOwnerAllowed !== false
+                    && !connection.ownerUsername
+                    && connection.ownerId === resolved.username
+                );
+        }
+        if (owner.userId && connection.ownerId === owner.userId) return true;
+        if (!owner.username) return false;
+        if (connection.ownerUsername) return !owner.strict && connection.ownerUsername === owner.username;
+        return connection.ownerId === owner.username;
+    }
+
+    _resolveOwnerReference(owner) {
+        try {
+            const resolved = this.resolveOwner({
+                userId: owner.userId,
+                username: owner.username,
+                legacy: true,
+            });
+            return resolved?.status === 'active' && resolved.userId && resolved.username
+                ? { ...resolved }
+                : null;
+        } catch {
+            return null;
+        }
+    }
+
+    _recordInAccountNamespace(record, ownerId) {
+        if (!record) return false;
+        const owner = this._ownerIdentity(ownerId);
+        if (owner.userId && record.ownerId === owner.userId) return true;
+        return !!owner.username && !record.ownerUsername && record.ownerId === owner.username;
+    }
+
+    _ownerBlocked(recordOrOwner) {
+        const values = typeof recordOrOwner === 'object'
+            ? [recordOrOwner.ownerId, recordOrOwner.ownerUsername, recordOrOwner.userId, recordOrOwner.username]
+            : [recordOrOwner];
+        return values.some((value) => value && this.blockedOwnerIds.has(String(value)));
+    }
+
+    _assertOwnerAvailable(ownerId, ownerUsername = '') {
+        if (this._ownerBlocked(this._ownerIdentity(ownerId, ownerUsername))) {
+            throw new AgentError('account_cleanup_in_progress', 'Account cleanup is in progress');
         }
     }
 
@@ -386,31 +784,30 @@ class FileAgentManager {
         return crypto.randomBytes(Math.ceil(n * 3 / 4) + 4).toString('base64url').slice(0, n);
     }
 
-    _newTokenRecord(ownerId, name, length = 50) {
-        const now = Date.now();
+    _newTokenRecord(ownerId, name, length = 50, ownerUsername = '') {
+        const owner = this._ownerIdentity(ownerId, ownerUsername);
+        const primaryOwnerId = this._storeOwnerId(ownerId, ownerUsername);
+        if (!primaryOwnerId) throw new AgentError('invalid_owner', 'Token owner is required');
+        this._assertOwnerAvailable(owner);
         const token = this._generateToken(length);
-        const record = {
-            id: `tok_${crypto.randomBytes(8).toString('hex')}`,
-            ownerId,
-            name: String(name || 'Zephyr Agent Token').trim().slice(0, 80) || 'Zephyr Agent Token',
-            token,
-            createdAt: now,
-            updatedAt: now,
-            lastUsedAt: null,
-        };
-        this.tokenRecords.set(token, record);
-        this._saveTokens();
-        return record;
+        const record = this._ensureTokenStore().create({
+            ownerUserId: primaryOwnerId,
+            name,
+            secret: token,
+        });
+        return { ...record, ownerUsername: owner.username || '' };
     }
 
     listTokens(ownerId, { includeToken = false } = {}) {
-        return [...this.tokenRecords.values()]
-            .filter((t) => t.ownerId === ownerId)
-            .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+        if (this._ownerBlocked(this._ownerIdentity(ownerId))) return [];
+        const ownerUserId = this._storeOwnerId(ownerId);
+        if (!ownerUserId) return [];
+        return this._ensureTokenStore().list(ownerUserId, { includeSecret: includeToken })
             .map((t) => ({
                 id: t.id,
                 name: t.name,
                 token: includeToken ? t.token : undefined,
+                revision: t.revision,
                 createdAt: t.createdAt,
                 updatedAt: t.updatedAt,
                 lastUsedAt: t.lastUsedAt || null,
@@ -423,84 +820,112 @@ class FileAgentManager {
             id: record.id,
             name: record.name,
             token: includeToken ? record.token : undefined,
+            revision: record.revision,
             createdAt: record.createdAt,
             updatedAt: record.updatedAt,
             lastUsedAt: record.lastUsedAt || null,
         };
     }
 
-    createToken(ownerId, name, length = 50) {
-        return this._newTokenRecord(ownerId, name, length);
+    createToken(ownerId, name, length = 50, ownerUsername = '') {
+        return this._newTokenRecord(ownerId, name, length, ownerUsername);
     }
 
     findTokenRecord(ownerId, tokenId) {
-        return [...this.tokenRecords.values()].find((t) => t.ownerId === ownerId && t.id === tokenId) || null;
+        if (this._ownerBlocked(this._ownerIdentity(ownerId))) return null;
+        const ownerUserId = this._storeOwnerId(ownerId);
+        if (!ownerUserId) return null;
+        return this._ensureTokenStore().read(ownerUserId, tokenId, { includeSecret: true });
     }
 
     updateToken(ownerId, tokenId, patch = {}) {
+        this._assertOwnerAvailable(ownerId);
         const record = this.findTokenRecord(ownerId, tokenId);
         if (!record) throw new AgentError('not_found', 'Token not found');
-        if (patch.name != null) {
-            record.name = String(patch.name || '').trim().slice(0, 80) || record.name;
-        }
-        record.updatedAt = Date.now();
-        this._saveTokens();
-        return record;
+        if (patch.name == null) return record;
+        return this._ensureTokenStore().rename(
+            record.ownerId,
+            record.id,
+            String(patch.name || '').trim().slice(0, 80) || record.name,
+            { expectedRevision: record.revision },
+        );
     }
 
     deleteToken(ownerId, tokenId) {
+        this._assertOwnerAvailable(ownerId);
         const record = this.findTokenRecord(ownerId, tokenId);
         if (!record) throw new AgentError('not_found', 'Token not found');
-        this.tokenRecords.delete(record.token);
+        this._ensureTokenStore().revoke(record.ownerId, record.id, { expectedRevision: record.revision });
         this._disconnectAgentsForToken(ownerId, record.id, 'token_deleted');
-        this._saveTokens();
+        return true;
     }
 
     regenerateTokenRecord(ownerId, tokenId, length = 50) {
+        this._assertOwnerAvailable(ownerId);
         const record = this.findTokenRecord(ownerId, tokenId);
         if (!record) throw new AgentError('not_found', 'Token not found');
-        this.tokenRecords.delete(record.token);
+        const updated = this._ensureTokenStore().rotateSecret(
+            record.ownerId,
+            record.id,
+            this._generateToken(length),
+            { expectedRevision: record.revision },
+        );
         this._disconnectAgentsForToken(ownerId, record.id, 'token_regenerated');
-        record.token = this._generateToken(length);
-        record.updatedAt = Date.now();
-        record.lastUsedAt = null;
-        this.tokenRecords.set(record.token, record);
-        this._saveTokens();
-        return record;
+        return updated;
     }
 
     _disconnectAgentsForToken(ownerId, tokenId, reason) {
-        const agentIds = this.ownerAgents.get(ownerId);
-        if (!agentIds) return;
-        for (const agentId of [...agentIds]) {
-            const conn = this.agents.get(agentId);
-            if (conn && conn.tokenId === tokenId) this.unregisterAgent(agentId, reason);
+        for (const [agentId, conn] of [...this.agents]) {
+            if (conn.tokenId === tokenId && this._connectionOwnedBy(conn, ownerId)) {
+                this.unregisterAgent(agentId, reason);
+            }
         }
     }
 
     /** Generate or retrieve a default file-agent token for legacy callers. */
     getOrCreateToken(ownerId) {
         const existing = this.listTokens(ownerId, { includeToken: true })[0];
-        return existing?.token || this._newTokenRecord(ownerId, '默认 Token').token;
+        return existing?.token || this.createToken(ownerId, '默认 Token').token;
     }
 
     /** Legacy regenerate: reset all tokens for this user and return a new default token. */
-    regenerateToken(ownerId) {
-        for (const record of [...this.tokenRecords.values()]) {
-            if (record.ownerId === ownerId) this.tokenRecords.delete(record.token);
+    regenerateToken(ownerId, length = 50, name = 'Default Token') {
+        this._assertOwnerAvailable(ownerId);
+        const ownerUserId = this._storeOwnerId(ownerId);
+        if (!ownerUserId) throw new AgentError('invalid_owner', 'Token owner is required');
+        const record = this._ensureTokenStore().replaceOwnerTokens({
+            ownerUserId,
+            name,
+            secret: this._generateToken(length),
+        });
+        for (const [agentId, conn] of [...this.agents]) {
+            if (this._connectionOwnedBy(conn, ownerId)) this.unregisterAgent(agentId, 'token_regenerated');
         }
-        const agentIds = this.ownerAgents.get(ownerId);
-        if (agentIds) {
-            for (const agentId of [...agentIds]) this.unregisterAgent(agentId, 'token_regenerated');
-        }
-        return this._newTokenRecord(ownerId, '默认 Token').token;
+        return record.token;
     }
 
     validateTokenRecord(token) {
-        const record = this.tokenRecords.get(token) || null;
-        if (record) {
-            record.lastUsedAt = Date.now();
-            this._saveTokens();
+        let record;
+        try {
+            record = this._ensureTokenStore().validate(token);
+        } catch {
+            return null;
+        }
+        if (!record || this._ownerBlocked(record)) return null;
+        if (this.resolveOwner) {
+            let owner;
+            try {
+                owner = this.resolveOwner({
+                    userId: record.ownerId,
+                    username: record.ownerId,
+                    legacy: false,
+                });
+            } catch {
+                return null;
+            }
+            if (!owner || owner.status !== 'active' || !owner.userId || !owner.username) return null;
+            if (record.ownerId !== owner.userId) return null;
+            record = { ...record, ownerUsername: owner.username };
         }
         return record;
     }
@@ -510,50 +935,271 @@ class FileAgentManager {
         return this.validateTokenRecord(token)?.ownerId || null;
     }
 
+    listTokenMetadata(ownerUserId) {
+        return this._ensureTokenStore().listTokenMetadata(String(ownerUserId || ''));
+    }
+
+    readTokenMetadata(ownerUserId, tokenId, options = {}) {
+        return this._ensureTokenStore().readTokenMetadata(String(ownerUserId || ''), tokenId, options);
+    }
+
+    renameTokenMetadata(ownerUserId, tokenId, name, options = {}) {
+        return this._ensureTokenStore().renameTokenMetadata(String(ownerUserId || ''), tokenId, name, options);
+    }
+
+    revokeTokenMetadata(ownerUserId, tokenId, options = {}) {
+        const revoked = this._ensureTokenStore().revokeTokenMetadata(String(ownerUserId || ''), tokenId, options);
+        if (revoked) this._disconnectAgentsForToken({ userId: String(ownerUserId || '') }, tokenId, 'token_deleted');
+        return revoked;
+    }
+
+    rotateTokenEncryptionKey() {
+        return this._ensureTokenStore().rotateEncryptionKey();
+    }
+
+    rebindTokenDatabase() {
+        const previous = this.boundTokenDb;
+        const store = this._ensureTokenStore();
+        return { changed: !!previous && previous !== store.db, db: store.db };
+    }
+
+    async deleteUserState({ userId, username } = {}) {
+        const owner = this._ownerIdentity({ userId, username });
+        const identities = new Set([owner.userId, owner.username].filter(Boolean));
+        if (!identities.size) throw new AgentError('invalid_owner', 'Account identity is required');
+        if ([...identities].some((identity) => this.blockedOwnerIds.has(identity))) {
+            throw new AgentError('account_cleanup_in_progress', 'Account cleanup is already in progress');
+        }
+        for (const identity of identities) this.blockedOwnerIds.add(identity);
+
+        try {
+            const agentIds = [...this.agents]
+                .filter(([, connection]) => this._connectionOwnedBy(connection, owner))
+                .map(([agentId]) => agentId);
+            const queuePromises = [...this.binaryReadQueues]
+                .filter(([key]) => agentIds.some((agentId) => key.startsWith(`${agentId}:`)))
+                .map(([, promise]) => promise);
+            const sseClients = [...this.sseClients]
+                .filter((response) => this._sseOwnedBy(response, owner));
+
+            await Promise.all([
+                ...agentIds.map((agentId) => this._drainAgent(agentId, 'account_deleted')),
+                ...sseClients.map((response) => this._drainSse(response)),
+            ]);
+            await this._settleWithin(queuePromises, this.teardownTimeoutMs);
+            for (const agentId of agentIds) this._dropBinaryReadStateForAgent(agentId);
+
+            const deletedTokens = this._ensureTokenStore().revokeOwners([...identities]);
+            return {
+                deletedTokens,
+                disconnectedAgents: agentIds.length,
+                closedSubscriptions: sseClients.length,
+            };
+        } finally {
+            for (const identity of identities) this.blockedOwnerIds.delete(identity);
+        }
+    }
+
+    async _drainAgent(agentId, reason) {
+        const connection = this.agents.get(agentId);
+        if (!connection) return;
+        const closed = this._waitForStreamEnd(connection.ws);
+        this.unregisterAgent(agentId, reason);
+        const ended = await closed;
+        if (!ended) {
+            const terminated = this._waitForStreamEnd(connection.ws);
+            try { connection.ws.terminate?.(); } catch {}
+            await terminated;
+        }
+    }
+
+    async _drainSse(response) {
+        if (!this.sseClients.has(response)) return;
+        this.sseClients.delete(response);
+        const ended = this._waitForStreamEnd(response);
+        try { response.end(); } catch {}
+        if (!await ended) {
+            const destroyed = this._waitForStreamEnd(response);
+            try { response.destroy?.(); } catch {}
+            await destroyed;
+        }
+    }
+
+    _waitForStreamEnd(stream) {
+        if (!stream || stream.destroyed || stream.writableEnded || stream.readyState === WebSocket.CLOSED) {
+            return Promise.resolve(true);
+        }
+        return new Promise((resolve) => {
+            let settled = false;
+            let timer = null;
+            const finish = (ended) => {
+                if (settled) return;
+                settled = true;
+                if (timer) clearTimeout(timer);
+                stream.removeListener?.('close', onEnd);
+                stream.removeListener?.('finish', onEnd);
+                resolve(ended);
+            };
+            const onEnd = () => finish(true);
+            stream.once?.('close', onEnd);
+            stream.once?.('finish', onEnd);
+            timer = setTimeout(() => finish(false), this.teardownTimeoutMs);
+            timer.unref?.();
+        });
+    }
+
+    async _settleWithin(promises, timeoutMs) {
+        if (!promises.length) return;
+        let timer = null;
+        await Promise.race([
+            Promise.allSettled(promises),
+            new Promise((resolve) => {
+                timer = setTimeout(resolve, timeoutMs);
+                timer.unref?.();
+            }),
+        ]);
+        if (timer) clearTimeout(timer);
+    }
+
     // ─── Agent Registration ──────────────────────────────────────────
 
-    /** Handle a new Agent WebSocket connection. */
-    handleConnection(ws) {
-        let authenticated = false;
-        let agentId = null;
-        const authTimeout = setTimeout(() => {
-            if (!authenticated) {
-                try { ws.close(1008, 'Authentication timeout'); } catch {}
-            }
-        }, 10000);
+    admitUpgrade(socket) {
+        return this.admissionGate.admit(socket);
+    }
 
-        ws.on('message', (raw) => {
-            if (authenticated && agentId) {
+    releaseUpgradeAdmission(lease) {
+        return this.admissionGate.release(lease);
+    }
+
+    getAdmissionSnapshot() {
+        return this.admissionGate.snapshot();
+    }
+
+    /** Handle a new Agent WebSocket connection. */
+    handleConnection(ws, req = null) {
+        let admission = req?.fileAgentAdmission || null;
+        if (!admission) {
+            const admitted = this.admitUpgrade(ws?._socket || { remoteAddress: 'unknown' });
+            if (!admitted.ok) {
+                try { ws.close(1013, 'Connection limit exceeded'); } catch {}
+                return false;
+            }
+            admission = admitted.lease;
+        }
+        if (!this.admissionGate.attachWebSocket(admission, ws)) {
+            try { ws.close(1008, 'Connection no longer admissible'); } catch {}
+            return false;
+        }
+
+        let state = 'preauth';
+        let agentId = null;
+        let preAuthMessages = 0;
+        let terminationTimer = null;
+        const clearTerminationTimer = () => {
+            if (terminationTimer) clearTimeout(terminationTimer);
+            terminationTimer = null;
+        };
+        const scheduleTermination = () => {
+            if (terminationTimer) return;
+            terminationTimer = setTimeout(() => {
+                if (ws.readyState !== WebSocket.CLOSED) {
+                    try { ws.terminate(); } catch {}
+                }
+            }, this.preAuthCloseGraceMs);
+            terminationTimer.unref?.();
+        };
+        let authTimeout = null;
+        const rejectPreAuth = (code, reason, error = null) => {
+            if (state === 'closed' || state === 'rejected') return;
+            state = 'rejected';
+            if (authTimeout) clearTimeout(authTimeout);
+            if (error && ws.readyState === WebSocket.OPEN) {
+                try {
+                    ws.send(JSON.stringify({
+                        type: 'hello_ack',
+                        ok: false,
+                        error: { code: error.code, message: error.message },
+                    }));
+                } catch {}
+            }
+            try { ws.close(code, String(reason || '').slice(0, 120)); } catch {}
+            scheduleTermination();
+        };
+        authTimeout = setTimeout(() => {
+            if (state === 'preauth' || state === 'authenticating') {
+                rejectPreAuth(1008, 'Authentication timeout');
+            }
+        }, this.authTimeoutMs);
+        authTimeout.unref?.();
+
+        ws.on('message', (raw, isBinary) => {
+            if (state === 'authenticated' && agentId) {
                 const conn = this.agents.get(agentId);
                 if (conn && conn.handleBinaryResponse(raw)) return;
+            }
+
+            if (state !== 'authenticated') {
+                preAuthMessages += 1;
+                if (preAuthMessages !== 1 || state !== 'preauth') {
+                    rejectPreAuth(1008, 'hello must be the first and only pre-auth message');
+                    return;
+                }
+                state = 'authenticating';
+                if (isBinary === true) {
+                    rejectPreAuth(1008, 'hello must be a text message');
+                    return;
+                }
+                const rawBytes = typeof raw === 'string'
+                    ? Buffer.byteLength(raw, 'utf8')
+                    : Number(raw?.byteLength ?? raw?.length ?? 0);
+                if (!Number.isSafeInteger(rawBytes) || rawBytes <= 0 || rawBytes > this.preAuthMaxMessageBytes) {
+                    rejectPreAuth(1009, 'hello message too large');
+                    return;
+                }
+                if (!this.admissionGate.reservePendingBytes(admission, rawBytes)) {
+                    rejectPreAuth(1009, 'pre-auth buffer budget exceeded');
+                    return;
+                }
+
+                let hello;
+                try {
+                    hello = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf8'));
+                } catch {
+                    this.admissionGate.releasePendingBytes(admission);
+                    rejectPreAuth(1008, 'invalid hello JSON');
+                    return;
+                }
+                if (!validateHelloMessage(hello)) {
+                    this.admissionGate.releasePendingBytes(admission);
+                    rejectPreAuth(1008, 'invalid hello structure');
+                    return;
+                }
+
+                try {
+                    agentId = this._handleHello(ws, hello, () => {
+                        if (!this.admissionGate.promote(admission)) return false;
+                        if (ws?._receiver && '_maxPayload' in ws._receiver) {
+                            ws._receiver._maxPayload = this.authenticatedMaxMessageBytes;
+                        }
+                        return true;
+                    }, admission);
+                    state = 'authenticated';
+                    clearTimeout(authTimeout);
+                } catch (err) {
+                    this.admissionGate.releasePendingBytes(admission);
+                    if (agentId) this.unregisterAgent(agentId, 'authentication_failed', ws);
+                    const failure = err instanceof AgentError
+                        ? err
+                        : new AgentError('internal_error', 'Agent authentication failed');
+                    rejectPreAuth(1008, failure.message, failure);
+                }
+                return;
             }
 
             let msg;
             try {
                 msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf8'));
             } catch {
-                return;
-            }
-
-            if (!authenticated) {
-                if (msg.type === 'hello') {
-                    clearTimeout(authTimeout);
-                    this._handleHello(ws, msg, (err, aid) => {
-                        if (err) {
-                            try {
-                                ws.send(JSON.stringify({
-                                    type: 'hello_ack',
-                                    ok: false,
-                                    error: { code: err.code, message: err.message },
-                                }));
-                                ws.close(1008, err.message);
-                            } catch {}
-                            return;
-                        }
-                        authenticated = true;
-                        agentId = aid;
-                    });
-                }
                 return;
             }
 
@@ -574,42 +1220,70 @@ class FileAgentManager {
         });
 
         ws.on('close', () => {
+            state = 'closed';
             clearTimeout(authTimeout);
+            clearTerminationTimer();
             if (agentId) {
-                this.unregisterAgent(agentId, 'connection_closed');
+                this.unregisterAgent(agentId, 'connection_closed', ws);
             }
         });
 
         ws.on('error', (err) => {
             this.log('[file-agent] ws error:', err.message);
             clearTimeout(authTimeout);
+            scheduleTermination();
             if (agentId) {
-                this.unregisterAgent(agentId, 'ws_error');
+                this.unregisterAgent(agentId, 'ws_error', ws);
             }
         });
+        return true;
     }
 
-    _handleHello(ws, hello, callback) {
+    _handleHello(ws, hello, authorizeRegistration = () => true, admission = null) {
         // Validate protocol version
         if (hello.protocolVersion !== 1 && hello.protocolVersion !== 2) {
-            callback(new AgentError('unsupported', `Unsupported protocol version: ${hello.protocolVersion}`));
-            return;
+            throw new AgentError('unsupported', `Unsupported protocol version: ${hello.protocolVersion}`);
         }
 
         // Validate token
         const tokenRecord = this.validateTokenRecord(hello.token);
         if (!tokenRecord) {
-            callback(new AgentError('unauthorized', 'Invalid token'));
-            return;
+            throw new AgentError('unauthorized', 'Invalid token');
         }
         const ownerId = tokenRecord.ownerId;
+        if (!authorizeRegistration()) {
+            throw new AgentError('resource_exhausted', 'Authenticated connection limit exceeded');
+        }
 
         // Generate agentId from deviceId (stable) or random
         const agentId = hello.deviceId
             ? `agent_${crypto.createHash('sha256').update(hello.deviceId + ownerId).digest('hex').slice(0, 12)}`
             : `agent_${crypto.randomBytes(6).toString('hex')}`;
 
-        // If this device is already connected, disconnect the old one
+        const conn = new FileAgentConnection(ws, agentId, hello);
+        conn.ownerId = ownerId;
+        conn.ownerUsername = tokenRecord.ownerUsername || '';
+        conn.tokenId = tokenRecord.id;
+        conn.tokenName = tokenRecord.name;
+
+        // Send hello_ack
+        try {
+            ws.send(JSON.stringify({
+                type: 'hello_ack',
+                ok: true,
+                agentId,
+                serverTime: Date.now(),
+                heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+            }));
+        } catch (err) {
+            this.log('[file-agent] failed to send hello_ack:', err.message);
+            throw new AgentError('io_error', 'Failed to send hello acknowledgement');
+        }
+        if (ws.readyState !== WebSocket.OPEN || admission?.released) {
+            throw new AgentError('io_error', 'Connection closed during authentication');
+        }
+
+        // Replace the old device only after the new acknowledgement was queued.
         if (this.agents.has(agentId)) {
             const old = this.agents.get(agentId);
             old.cleanup();
@@ -617,12 +1291,6 @@ class FileAgentManager {
             this.agents.delete(agentId);
         }
 
-        const conn = new FileAgentConnection(ws, agentId, hello);
-        conn.ownerId = ownerId;
-        conn.tokenId = tokenRecord.id;
-        conn.tokenName = tokenRecord.name;
-
-        // Register
         this.agents.set(agentId, conn);
         if (!this.ownerAgents.has(ownerId)) {
             this.ownerAgents.set(ownerId, new Set());
@@ -638,34 +1306,19 @@ class FileAgentManager {
             }
         }, HEARTBEAT_INTERVAL_MS);
 
-        // Send hello_ack
-        try {
-            ws.send(JSON.stringify({
-                type: 'hello_ack',
-                ok: true,
-                agentId,
-                serverTime: Date.now(),
-                heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
-            }));
-        } catch (err) {
-            this.log('[file-agent] failed to send hello_ack:', err.message);
-            callback(new AgentError('io_error', err.message));
-            return;
-        }
-
         this.log(`[file-agent] registered: ${conn.deviceName} (${agentId}) for owner ${ownerId}`);
         this._broadcastEvent({
             type: 'file_agent_online',
             agent: conn.toPublicInfo(),
         }, ownerId);
 
-        callback(null, agentId);
+        return agentId;
     }
 
     /** Unregister an Agent and broadcast offline event. */
-    unregisterAgent(agentId, reason) {
+    unregisterAgent(agentId, reason, expectedWs = null) {
         const conn = this.agents.get(agentId);
-        if (!conn) return;
+        if (!conn || (expectedWs && conn.ws !== expectedWs)) return;
 
         const ownerId = conn.ownerId;
         conn.cleanup();
@@ -676,6 +1329,7 @@ class FileAgentManager {
         } catch {}
 
         this.agents.delete(agentId);
+        this._dropBinaryReadStateForAgent(agentId);
         const ownerSet = this.ownerAgents.get(ownerId);
         if (ownerSet) {
             ownerSet.delete(agentId);
@@ -789,6 +1443,19 @@ class FileAgentManager {
         }
     }
 
+    _dropBinaryReadStateForAgent(agentId) {
+        const prefix = `${agentId}:`;
+        for (const [key, entry] of [...this.binaryReadCache]) {
+            if (!key.startsWith(prefix)) continue;
+            this.binaryReadCache.delete(key);
+            if (entry.data) this.binaryReadCacheBytes -= entry.size || entry.data.length || 0;
+        }
+        for (const key of [...this.binaryReadQueues.keys()]) {
+            if (key.startsWith(prefix)) this.binaryReadQueues.delete(key);
+        }
+        this.binaryReadCacheBytes = Math.max(0, this.binaryReadCacheBytes);
+    }
+
     _scheduleBinaryReadPrefetch(agentId, handle, offset, length) {
         if (!handle || !Number.isFinite(offset) || !Number.isFinite(length) || length <= 0) return;
         for (let i = 1; i <= BINARY_READ_PREFETCH_CHUNKS; i++) {
@@ -798,6 +1465,7 @@ class FileAgentManager {
             const entry = { ts: Date.now(), size: 0 };
             entry.promise = this._callAgentBinaryReadQueued(agentId, { handle, offset: nextOffset, length })
                 .then((buf) => {
+                    if (!this.agents.has(agentId) || this.binaryReadCache.get(key) !== entry) return buf;
                     entry.data = buf;
                     entry.size = buf.length;
                     entry.ts = Date.now();
@@ -841,13 +1509,8 @@ class FileAgentManager {
     /** List online agents for a specific user. */
     listAgentsForUser(ownerId) {
         const result = [];
-        const agentIds = this.ownerAgents.get(ownerId);
-        if (!agentIds) return result;
-        for (const agentId of agentIds) {
-            const conn = this.agents.get(agentId);
-            if (conn && conn.online) {
-                result.push(conn.toPublicInfo());
-            }
+        for (const conn of this.agents.values()) {
+            if (conn.online && this._connectionOwnedBy(conn, ownerId)) result.push(conn.toPublicInfo());
         }
         return result;
     }
@@ -872,14 +1535,14 @@ class FileAgentManager {
     /** Check if an agent belongs to a user. */
     isAgentOwnedBy(agentId, ownerId) {
         const conn = this.agents.get(agentId);
-        return conn ? conn.ownerId === ownerId : false;
+        return this._connectionOwnedBy(conn, ownerId);
     }
 
     /** Accept immutable userId ownership with username fallback for migrated tokens. */
     isAgentOwnedByUser(agentId, user) {
         const conn = this.agents.get(agentId);
         if (!conn || !user) return false;
-        return conn.ownerId === user.userId || conn.ownerId === user.username;
+        return this._connectionOwnedBy(conn, user);
     }
 
     /** Protocol-v2 operation with explicit cancellation. */
@@ -916,13 +1579,30 @@ class FileAgentManager {
 
     /** Subscribe an SSE client (HTTP response) for agent events. */
     subscribeSse(res, ownerId) {
-        res._sseOwnerId = ownerId;
+        const owner = this._ownerIdentity(ownerId);
+        if (this._ownerBlocked(owner)) {
+            try { res.end(); } catch {}
+            return false;
+        }
+        res._sseOwnerId = owner.userId;
+        res._sseOwnerUsername = owner.username;
+        res._sseOwnerStrict = owner.strict;
         this.sseClients.add(res);
         res.on('close', () => this.sseClients.delete(res));
 
         // Send current agent list as initial event
         const agents = this.listAgentsForUser(ownerId);
         this._sendSse(res, 'agent_list', { agents });
+        return true;
+    }
+
+    _sseOwnedBy(response, ownerId) {
+        const owner = this._ownerIdentity(ownerId);
+        if (owner.userId && response._sseOwnerId === owner.userId) return true;
+        if (!owner.username) return false;
+        if (response._sseOwnerStrict && owner.strict) return false;
+        return response._sseOwnerId === owner.username
+            || response._sseOwnerUsername === owner.username;
     }
 
     _sendSse(res, eventType, data) {
@@ -933,7 +1613,7 @@ class FileAgentManager {
 
     _broadcastEvent(event, ownerId) {
         for (const res of this.sseClients) {
-            if (res._sseOwnerId === ownerId) {
+            if (this._sseOwnedBy(res, ownerId)) {
                 this._sendSse(res, event.type, event);
             }
         }
@@ -952,21 +1632,21 @@ class FileAgentManager {
         app.get('/api/rdp/file-agents', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
-            res.json({ ok: true, agents: this.listAgentsForUser(user.username) });
+            res.json({ ok: true, agents: this.listAgentsForUser(user) });
         });
 
         // GET /api/rdp/file-agent-tokens — list named agent tokens
         app.get('/api/rdp/file-agent-tokens', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
-            res.json({ ok: true, tokens: this.listTokens(user.username) });
+            res.json({ ok: true, tokens: this.listTokens(user) });
         });
 
         // POST /api/rdp/file-agent-tokens — create named token
         app.post('/api/rdp/file-agent-tokens', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
-            const record = this.createToken(user.username, req.body?.name || 'Zephyr Agent Token', req.body?.length || 50);
+            const record = this.createToken(user, req.body?.name || 'Zephyr Agent Token', req.body?.length || 50);
             res.json({ ok: true, token: this.publicTokenRecord(record, true) });
         });
 
@@ -975,10 +1655,11 @@ class FileAgentManager {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
-                const record = this.updateToken(user.username, req.params.tokenId, { name: req.body?.name });
-                res.json({ ok: true, token: this.listTokens(user.username).find((t) => t.id === record.id) });
+                const record = this.updateToken(user, req.params.tokenId, { name: req.body?.name });
+                res.json({ ok: true, token: this.listTokens(user).find((t) => t.id === record.id) });
             } catch (err) {
-                res.status(err.code === 'not_found' ? 404 : 500).json({ ok: false, error: { code: err.code || 'internal_error', message: err.message } });
+                const status = ['not_found', 'client_token_not_found'].includes(err.code) ? 404 : 500;
+                res.status(status).json({ ok: false, error: { code: err.code || 'internal_error', message: err.message } });
             }
         });
 
@@ -989,10 +1670,10 @@ class FileAgentManager {
             try {
                 if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
                 verifySensitiveAccess(req, req.body?.secret);
-                const record = this.regenerateTokenRecord(user.username, req.params.tokenId, req.body?.length || 50);
+                const record = this.regenerateTokenRecord(user, req.params.tokenId, req.body?.length || 50);
                 res.json({ ok: true, token: this.publicTokenRecord(record, true) });
             } catch (err) {
-                const status = err.code === 'not_found' ? 404 : 400;
+                const status = ['not_found', 'client_token_not_found'].includes(err.code) ? 404 : 400;
                 res.status(status).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
             }
         });
@@ -1004,7 +1685,7 @@ class FileAgentManager {
             try {
                 if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
                 verifySensitiveAccess(req, req.body?.secret);
-                const record = this.findTokenRecord(user.username, req.params.tokenId);
+                const record = this.findTokenRecord(user, req.params.tokenId);
                 if (!record) throw new AgentError('not_found', 'Token not found');
                 res.json({ ok: true, token: this.publicTokenRecord(record, true) });
             } catch (err) {
@@ -1019,12 +1700,13 @@ class FileAgentManager {
             try {
                 if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
                 verifySensitiveAccess(req, req.body?.secret);
-                for (const record of [...this.tokenRecords.values()]) {
-                    if (record.ownerId === user.username) this.tokenRecords.delete(record.token);
-                }
-                const agentIds = this.ownerAgents.get(user.username);
-                if (agentIds) for (const agentId of [...agentIds]) this.unregisterAgent(agentId, 'tokens_reset');
-                const record = this.createToken(user.username, req.body?.name || '默认 Token', req.body?.length || 50);
+                const token = this.regenerateToken(
+                    user,
+                    req.body?.length || 50,
+                    req.body?.name || 'Default Token',
+                );
+                const record = this.listTokens(user, { includeToken: true })
+                    .find((candidate) => candidate.token === token);
                 res.json({ ok: true, token: this.publicTokenRecord(record, true) });
             } catch (err) {
                 res.status(400).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
@@ -1039,10 +1721,12 @@ class FileAgentManager {
                 if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
                 // Express DELETE body may be empty; also accept query.secret for clients that cannot send body.
                 verifySensitiveAccess(req, req.body?.secret ?? req.query?.secret);
-                this.deleteToken(user.username, req.params.tokenId);
+                this.deleteToken(user, req.params.tokenId);
                 res.json({ ok: true });
             } catch (err) {
-                const status = err.code === 'not_found' ? 404 : (err.code === 'unsupported' ? 500 : 400);
+                const status = ['not_found', 'client_token_not_found'].includes(err.code)
+                    ? 404
+                    : (err.code === 'unsupported' ? 500 : 400);
                 res.status(status).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
             }
         });
@@ -1054,10 +1738,10 @@ class FileAgentManager {
             try {
                 if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
                 verifySensitiveAccess(req, req.body?.secret);
-                this.deleteToken(user.username, req.params.tokenId);
+                this.deleteToken(user, req.params.tokenId);
                 res.json({ ok: true });
             } catch (err) {
-                const status = err.code === 'not_found' ? 404 : 400;
+                const status = ['not_found', 'client_token_not_found'].includes(err.code) ? 404 : 400;
                 res.status(status).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
             }
         });
@@ -1066,7 +1750,7 @@ class FileAgentManager {
         app.get('/api/rdp/file-agent-token', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
-            this.getOrCreateToken(user.username);
+            this.getOrCreateToken(user);
             res.json({ ok: true, token: null, deprecated: true, message: 'Use Settings → Zephyr Client to reveal tokens after password/TOTP verification.' });
         });
 
@@ -1077,7 +1761,7 @@ class FileAgentManager {
             try {
                 if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
                 verifySensitiveAccess(req, req.body?.secret);
-                const token = this.regenerateToken(user.username);
+                const token = this.regenerateToken(user);
                 res.json({ ok: true, token });
             } catch (err) {
                 res.status(400).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
@@ -1095,7 +1779,7 @@ class FileAgentManager {
                 'X-Accel-Buffering': 'no',
             });
             res.write('\n');
-            this.subscribeSse(res, user.username);
+            this.subscribeSse(res, user);
         });
 
         // POST /api/rdp/file-agents/:agentId/rpc/read-binary — binary fast path for reads
@@ -1104,7 +1788,7 @@ class FileAgentManager {
             if (!user) return res.status(401).end();
 
             const { agentId } = req.params;
-            if (!this.isAgentOwnedBy(agentId, user.username)) {
+            if (!this.isAgentOwnedByUser(agentId, user)) {
                 return res.status(403).end();
             }
 
@@ -1135,7 +1819,7 @@ class FileAgentManager {
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
 
             const { agentId } = req.params;
-            if (!this.isAgentOwnedBy(agentId, user.username)) {
+            if (!this.isAgentOwnedByUser(agentId, user)) {
                 return res.status(403).json({ ok: false, error: { code: 'forbidden', message: 'Agent not owned by user' } });
             }
 
@@ -1162,6 +1846,7 @@ class FileAgentManager {
     // ─── Cleanup ─────────────────────────────────────────────────────
 
     shutdown() {
+        this.admissionGate.shutdown();
         for (const [agentId] of this.agents) {
             this.unregisterAgent(agentId, 'server_shutdown');
         }
@@ -1169,7 +1854,17 @@ class FileAgentManager {
             try { res.end(); } catch {}
         }
         this.sseClients.clear();
+        this.tokenStore.close?.();
+        this.boundTokenDb = null;
     }
 }
 
-module.exports = { FileAgentManager, AgentError, FileAgentConnection };
+module.exports = {
+    FileAgentManager,
+    AgentError,
+    FileAgentConnection,
+    FileAgentAdmissionGate,
+    canonicalRemoteIp,
+    FILE_AGENT_PREAUTH_MAX_MESSAGE_BYTES,
+    FILE_AGENT_AUTHENTICATED_MAX_MESSAGE_BYTES,
+};

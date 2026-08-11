@@ -70,14 +70,56 @@ data class PushResponse(
     val changesAvailable: Boolean,
 )
 
-/** Server-declared limits and feature flags from /capabilities. */
+data class MobileAuthCapabilities(
+    val sidHeader: String = "",
+    val accessScheme: String = "",
+    val proofHeader: String = "",
+    val nonceHeader: String = "",
+    val timestampHeader: String = "",
+    val challengePath: String = "",
+    val proofVersion: String = "",
+    val proofSkewSec: Int = 0,
+    val challengeTtlSec: Int = 0,
+    val challengeMaxActivePerDevice: Int = 0,
+    val challengeMaxIssuesPerMinute: Int = 0,
+    val signatureFormat: String = "",
+    val encryptionAlg: String = "",
+    val signingAlg: String = "",
+)
+
+data class ServerEncryptionCapabilities(
+    val alg: String,
+    val keyVersion: Int,
+    val publicKey: String,
+)
+
+data class WakeTransportCapabilities(
+    val enabled: Boolean = false,
+    val transport: String = "",
+    val path: String = "",
+    val event: String = "",
+    val payloadFields: List<String> = emptyList(),
+    val heartbeatSec: Int = 0,
+    val retryMs: Long = 0L,
+    val supportsLastEventId: Boolean = false,
+    val requiresDeviceAccess: Boolean = false,
+    val requiresDeviceProof: Boolean = false,
+    val maxConnections: Int = 0,
+    val maxConnectionsPerOwner: Int = 0,
+    val maxBufferedBytes: Long = 0L,
+)
+
+/** Server-declared protocol, crypto, proof, wake, limit and feature capabilities. */
 data class ServerCapabilities(
     val protocolVersions: List<Int>,
     val registryHash: String,
     val minimumAppVersions: Map<String, String> = emptyMap(),
     val limits: Map<String, Long> = emptyMap(),
-    val authModes: List<String> = emptyList(),
+    val serverId: String = "",
+    val auth: MobileAuthCapabilities = MobileAuthCapabilities(),
+    val serverEncryption: ServerEncryptionCapabilities? = null,
     val features: Map<String, Boolean> = emptyMap(),
+    val wake: WakeTransportCapabilities = WakeTransportCapabilities(),
 ) {
     fun supports(protocolVersion: Int): Boolean = protocolVersions.contains(protocolVersion)
 

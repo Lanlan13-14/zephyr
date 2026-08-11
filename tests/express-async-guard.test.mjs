@@ -246,7 +246,15 @@ test('server.js keeps process-level guards so no single request can kill the cor
     assert.match(src, /process\.on\('uncaughtException'/);
     // They must be armed only after a successful listen, so a genuine startup
     // failure still exits non-zero instead of hanging forever.
-    const thenAt = src.indexOf('startServer()\n    .then(');
+    const thenAt = src.search(/^startServer\(\)\r?\n[ \t]*\.then\(\(\) => \{/m);
+    const catchAt = src.indexOf('.catch(', thenAt);
     const rejectionAt = src.indexOf("process.on('unhandledRejection'");
-    assert.ok(thenAt > 0 && rejectionAt > thenAt, 'guards arm after listen succeeds');
+    const exceptionAt = src.indexOf("process.on('uncaughtException'");
+    assert.ok(thenAt > 0, 'server startup must have a success callback');
+    assert.ok(catchAt > thenAt, 'server startup must retain its failure callback');
+    assert.ok(
+        rejectionAt > thenAt && rejectionAt < catchAt
+        && exceptionAt > thenAt && exceptionAt < catchAt,
+        'guards arm inside the success callback after listen succeeds',
+    );
 });

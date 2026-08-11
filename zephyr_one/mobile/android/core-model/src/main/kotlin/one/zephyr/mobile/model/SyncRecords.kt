@@ -31,6 +31,11 @@ data class PendingOperation(
      * names live here; the plaintext stays in the SecretStore.
      */
     val secretFields: List<String> = emptyList(),
+    /**
+     * Registry secret names to clear remotely. This is deliberately separate from [secretFields]:
+     * an absent envelope means nothing, while an explicit entry is an idempotent remote clear.
+     */
+    val clearSecretFields: List<String> = emptyList(),
     /** Set once the op has been transmitted: retries must reuse the same opId, never a new one. */
     val dispatchedAt: Long? = null,
 ) {

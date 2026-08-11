@@ -21,6 +21,8 @@ dependencies {
     api(project(":core-security"))
     api(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.sqlite)
+    implementation(libs.sqlcipher.android)
     ksp(libs.androidx.room.compiler)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)

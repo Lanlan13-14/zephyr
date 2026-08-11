@@ -19,6 +19,7 @@ private final class FakeAuthenticator: DeviceAuthenticator {
     }
 }
 
+@MainActor
 private final class RecordingSink: LockSensitiveSink {
     var lockCount = 0
 
@@ -28,6 +29,7 @@ private final class RecordingSink: LockSensitiveSink {
 }
 
 /// The S01 lock policy, mirrored from the Kotlin core-security behaviour.
+@MainActor
 final class AppLockTests: XCTestCase {
 
     private func makeLock(
@@ -62,9 +64,12 @@ final class AppLockTests: XCTestCase {
     func testOneMinuteDelayLocksOnlyAfterTheWindow() {
         var now: Int64 = 1_000
         let lock = makeLock(authenticator: FakeAuthenticator(), clock: { now })
+        let sink = RecordingSink()
+        lock.register(sink)
         lock.enable(.oneMinute)
         lock.onEnterBackground()
         XCTAssertEqual(.unlocked, lock.state)
+        XCTAssertEqual(1, sink.lockCount)
 
         now += 59_000
         lock.onEnterForeground()
@@ -104,13 +109,51 @@ final class AppLockTests: XCTestCase {
         XCTAssertEqual(1, sink.lockCount)
     }
 
-    func testLockNowOnADisabledLockIsANoOp() {
+    func testLockNowOnADisabledLockStillClearsSensitiveMaterial() {
         let lock = makeLock(authenticator: FakeAuthenticator())
         let sink = RecordingSink()
         lock.register(sink)
         lock.lockNow()
         XCTAssertEqual(.disabled, lock.state)
-        XCTAssertEqual(0, sink.lockCount)
+        XCTAssertEqual(1, sink.lockCount)
+    }
+
+    func testProtectedDataUnavailableLocksAndClears() {
+        let lock = makeLock(authenticator: FakeAuthenticator())
+        let sink = RecordingSink()
+        lock.register(sink)
+        lock.enable(.fiveMinutes)
+
+        lock.onProtectedDataUnavailable()
+
+        XCTAssertEqual(.locked, lock.state)
+        XCTAssertEqual(1, sink.lockCount)
+    }
+
+    func testUnbindClearsRegardlessOfLockConfiguration() {
+        let lock = makeLock(authenticator: FakeAuthenticator())
+        let sink = RecordingSink()
+        lock.register(sink)
+
+        lock.onUnbind()
+
+        XCTAssertEqual(.disabled, lock.state)
+        XCTAssertEqual(1, sink.lockCount)
+    }
+
+    func testRegistrationIsUniqueAndDoesNotRetainItsOwner() {
+        let lock = makeLock(authenticator: FakeAuthenticator())
+        weak var releasedSink: RecordingSink?
+        do {
+            let sink = RecordingSink()
+            releasedSink = sink
+            lock.register(sink)
+            lock.register(sink)
+            XCTAssertEqual(1, lock.registeredSensitiveSinkCount)
+        }
+
+        XCTAssertNil(releasedSink)
+        XCTAssertEqual(0, lock.registeredSensitiveSinkCount)
     }
 
     func testUnlockSuccessUnlocks() async {

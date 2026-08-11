@@ -126,6 +126,25 @@ class TelnetSessionTest {
         assertEquals(TelnetAutoLogin.State.COMPLETE, session.autoLoginState.value)
     }
 
+    @Test
+    fun autoLoginMatchesAFullWidthColonSplitInsideItsUtf8Sequence() = runTest {
+        val socket = FakeSocket()
+        val session = TelnetSession(
+            socket,
+            TelnetConfig(autoLoginUsername = "alice", keepaliveMs = 0L),
+            backgroundScope,
+        )
+        val prompt = "\u7528\u6237\u540D\uFF1A".toByteArray(Charsets.UTF_8)
+        val split = prompt.size - 2
+
+        session.onBytes(prompt.copyOfRange(0, split))
+        assertTrue(socket.writes.isEmpty())
+        session.onBytes(prompt.copyOfRange(split, prompt.size))
+
+        assertEquals("alice\r\n", String(socket.writes.single(), Charsets.UTF_8))
+        assertEquals(TelnetAutoLogin.State.COMPLETE, session.autoLoginState.value)
+    }
+
     /** Telnet is plaintext by definition; the flag is never softened. */
     @Test
     fun theSessionAlwaysReportsCleartext() = runTest {

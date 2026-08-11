@@ -64,11 +64,13 @@ public enum ConnectionEditorEvent: Equatable, Sendable {
 /// All editing rules live in ``ConnectionDraft``; this class only owns loading,
 /// the route inventory and the save/test side effects. Keeping the rules out
 /// of the view model is what makes them testable without a run loop.
-public final class ConnectionEditorViewModel: ObservableObject {
+@MainActor
+public final class ConnectionEditorViewModel: ObservableObject, LockSensitiveSink {
 
     @Published public private(set) var page: PageState<ConnectionEditorUiState> = .initialLoading
     @Published public private(set) var event: ConnectionEditorEvent?
     @Published public private(set) var message: String?
+    @Published public private(set) var sensitiveClearGeneration: UInt64 = 0
 
     private let connections: ConnectionStore
     private let ownerUserId: String
@@ -76,6 +78,7 @@ public final class ConnectionEditorViewModel: ObservableObject {
     private let newId: () -> String
     private let tester: ConnectionTester
     private let clock: () -> Int64
+    private weak var appLock: AppLock?
 
     public init(
         connections: ConnectionStore,
@@ -91,6 +94,35 @@ public final class ConnectionEditorViewModel: ObservableObject {
         self.newId = newId
         self.tester = tester
         self.clock = clock
+    }
+
+    public func attachSensitiveLifecycle(to appLock: AppLock) {
+        guard self.appLock !== appLock else { return }
+        self.appLock?.unregister(self)
+        self.appLock = appLock
+        appLock.register(self)
+    }
+
+    public func detachSensitiveLifecycle() {
+        clearSensitiveMaterial()
+        appLock?.unregister(self)
+        appLock = nil
+    }
+
+    public func onLocked() {
+        clearSensitiveMaterial()
+    }
+
+    public func clearSensitiveMaterial() {
+        mutate {
+            var copy = $0
+            copy.draft.password = .unchanged
+            copy.draft.privateKey = .unchanged
+            return copy
+        }
+        // The view observes this even when the draft was not loaded, ensuring
+        // its independent SecureField String copies are dropped as well.
+        sensitiveClearGeneration &+= 1
     }
 
     public func load() {
@@ -260,6 +292,7 @@ public final class ConnectionEditorViewModel: ObservableObject {
                 copy.draft = ConnectionDraft.edit(row)
                 return copy
             }
+            clearSensitiveMaterial()
             message = ConnectionEditorViewModel.msgSaved
             event = thenConnect ? .connect(connection: row, persisted: true) : .dismissed
         } catch {
@@ -305,6 +338,7 @@ public final class ConnectionEditorViewModel: ObservableObject {
         var row = ui.draft.normalized()
         row.ephemeral = true
         event = .connect(connection: row, persisted: false)
+        clearSensitiveMaterial()
     }
 
     public func test() async {
@@ -346,6 +380,7 @@ public final class ConnectionEditorViewModel: ObservableObject {
     }
 
     public func dismiss() {
+        clearSensitiveMaterial()
         event = .dismissed
     }
 

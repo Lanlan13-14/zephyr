@@ -14,9 +14,9 @@ import one.zephyr.mobile.security.MobileAad
  * (core-security) and the binding identity needed to rebuild the AAD. core-data deliberately only
  * sees the [EnvelopeOpener] port, so the mirror writer cannot reach key material.
  *
- * A rejection is *not* fatal to the page. The AAD binds the envelope to an exact entityRevision, so
- * an envelope that arrives alongside a newer revision legitimately fails to verify; the field keeps
- * its previous value and the next round retries with matching revisions.
+ * A rejection returns null to the mirror writer, which aborts the complete page without advancing
+ * its revision or cursor. Keeping a previous plaintext under a new server presence/revision would
+ * pair the wrong secret with the row and make the next round skip the only chance to repair it.
  */
 class DeviceEnvelopeOpener(
     private val identity: DeviceIdentity,

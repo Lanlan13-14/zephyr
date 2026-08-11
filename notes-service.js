@@ -5,6 +5,7 @@
  */
 const crypto = require('crypto');
 const { CAP, HttpError } = require('./authz');
+const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 
 const TITLE_MAX = 200;
 const CONTENT_MAX = 1024 * 1024;
@@ -21,10 +22,27 @@ class NotesService {
      * @param {import('./authz').Authz} authz
      * @param {() => number} [now]
      */
-    constructor(db, authz, now = () => Date.now()) {
+    constructor(db, authz, now = () => Date.now(), options = {}) {
+        if (now && typeof now === 'object') {
+            options = now;
+            now = () => Date.now();
+        }
         this.db = db;
         this.authz = authz;
         this.now = now;
+        this.getUserById = typeof authz?.getUserById === 'function'
+            ? authz.getUserById.bind(authz)
+            : null;
+        if (!this.getUserById) {
+            const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map((column) => column.name));
+            if (userColumns.has('userId') && userColumns.has('status')) {
+                const lookupUser = db.prepare('SELECT userId, status FROM users WHERE userId = ?');
+                this.getUserById = (userId) => lookupUser.get(String(userId || '')) || null;
+            }
+        }
+        this.mobileChangeBridge = options.mobileChangeBridge === false
+            ? null
+            : (options.mobileChangeBridge || getMobileV1ChangeBridge(db));
         this.stmtInsert = db.prepare(`INSERT INTO notes
             (note_id, owner_user_id, title, content, group_path, tags_json, linked_connection_ids_json, sort_order, revision, created_at, updated_at, deleted_at, visibility, share_with_users, share_with_admins, allow_ai, allow_ai_read, allow_ai_write)
             VALUES (@noteId, @ownerUserId, @title, @content, @groupPath, @tagsJson, @linkedJson, @sortOrder, 1, @createdAt, @updatedAt, NULL, @visibility, @shareWithUsers, @shareWithAdmins, @allowAi, @allowAiRead, @allowAiWrite)`);
@@ -34,7 +52,7 @@ class NotesService {
             visibility=@visibility, share_with_users=@shareWithUsers, share_with_admins=@shareWithAdmins,
             allow_ai=@allowAi, allow_ai_read=@allowAiRead, allow_ai_write=@allowAiWrite
             WHERE note_id=@noteId AND revision=@expectedRevision AND deleted_at IS NULL`);
-        this.stmtSoftDelete = db.prepare('UPDATE notes SET deleted_at = ?, updated_at = ? WHERE note_id = ? AND deleted_at IS NULL');
+        this.stmtSoftDelete = db.prepare('UPDATE notes SET deleted_at = ?, updated_at = ?, revision = revision + 1 WHERE note_id = ? AND deleted_at IS NULL');
         this.stmtRestore = db.prepare('UPDATE notes SET deleted_at = NULL, updated_at = ?, revision = revision + 1 WHERE note_id = ? AND deleted_at IS NOT NULL');
         this.stmtListOwner = db.prepare('SELECT * FROM notes WHERE owner_user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ? OFFSET ?');
         this.stmtListTrash = db.prepare('SELECT * FROM notes WHERE owner_user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ?');
@@ -43,6 +61,67 @@ class NotesService {
         this.stmtCountOwner = db.prepare('SELECT COUNT(*) AS c FROM notes WHERE owner_user_id = ? AND deleted_at IS NULL');
         this.stmtGroups = db.prepare(`SELECT group_path AS groupPath, COUNT(*) AS count FROM notes
             WHERE owner_user_id = ? AND deleted_at IS NULL GROUP BY group_path ORDER BY group_path`);
+        this.stmtListUserState = db.prepare('SELECT * FROM notes WHERE owner_user_id = ? ORDER BY created_at ASC, note_id ASC');
+        this.stmtScrubUserNote = db.prepare(`UPDATE notes SET
+            title = '', content = '', group_path = '', tags_json = '[]', linked_connection_ids_json = '[]',
+            sort_order = NULL, revision = ?, updated_at = ?, visibility = 'private',
+            share_with_users = 0, share_with_admins = 0,
+            allow_ai = 0, allow_ai_read = 0, allow_ai_write = 0
+            WHERE note_id = ? AND owner_user_id = ?`);
+        this.stmtDeleteUserNote = db.prepare('DELETE FROM notes WHERE note_id = ? AND owner_user_id = ?');
+    }
+
+    _runMobileMutation(meta, write) {
+        return this.mobileChangeBridge ? this.mobileChangeBridge.runMutation(meta, write) : write();
+    }
+
+    _isActiveUserId(userId) {
+        if (!userId) return false;
+        // Lightweight isolated consumers may not have a users table. The
+        // production database always resolves status through canonical Authz.
+        if (!this.getUserById) return true;
+        try {
+            return this.getUserById(String(userId))?.status === 'active';
+        } catch {
+            return false;
+        }
+    }
+
+    _assertActiveUser(user) {
+        if (!user?.userId || !this._isActiveUserId(user.userId)) {
+            throw new HttpError(403, 'account_suspended', 'Account is not active');
+        }
+    }
+
+    _ownerIsActive(row) {
+        return !!row && this._isActiveUserId(row.owner_user_id);
+    }
+
+    /** Securely destroy every note owned by an account in the caller's tx. */
+    deleteUserState(userId) {
+        const ownerUserId = String(userId || '');
+        if (!ownerUserId) throw new TypeError('deleteUserState requires a user id');
+        return this.db.transaction(() => {
+            const rows = this.stmtListUserState.all(ownerUserId);
+            for (const row of rows) {
+                const revision = Math.max(1, Number(row.revision) || 1) + 1;
+                this.stmtScrubUserNote.run(revision, Number(this.now()), row.note_id, ownerUserId);
+                const scrubbed = this.stmtGet.get(row.note_id);
+                if (this.mobileChangeBridge) {
+                    this.mobileChangeBridge.recordMutation({
+                        entityType: 'note',
+                        entityId: row.note_id,
+                        action: 'delete',
+                        user: { userId: ownerUserId },
+                        before: this._row(scrubbed, { includeContent: true }),
+                        after: null,
+                        revision,
+                    });
+                }
+                this.stmtDeleteUserNote.run(row.note_id, ownerUserId);
+            }
+            return { deleted: rows.length };
+        })();
     }
 
     _row(row, { includeContent = true } = {}) {
@@ -80,7 +159,8 @@ class NotesService {
     }
 
     _canRead(user, row) {
-        if (!row) return false;
+        if (!row || row.deleted_at || !this._ownerIsActive(row)) return false;
+        if (!this._isActiveUserId(user?.userId)) return false;
         if (row.owner_user_id === user.userId) return true;
         // shareWithAdmins: only admins can see
         if (row.share_with_admins && user.role === 'admin') return true;
@@ -90,7 +170,8 @@ class NotesService {
     }
 
     _canWrite(user, row) {
-        if (!row) return false;
+        if (!row || row.deleted_at || !this._ownerIsActive(row)) return false;
+        if (!this._isActiveUserId(user?.userId)) return false;
         if (row.owner_user_id === user.userId) return true;
         return this.authz.can(user, CAP.EDIT, 'note', row.note_id, { ownerUserId: row.owner_user_id });
     }
@@ -104,6 +185,9 @@ class NotesService {
     /** AI may only touch notes the owner explicitly allowed (read and/or write). */
     assertAiAccess(user, noteId, { write = false } = {}) {
         const row = this.stmtGet.get(String(noteId || ''));
+        if (row && !row.deleted_at && !this._ownerIsActive(row)) {
+            throw new HttpError(404, 'resource_not_found_or_inaccessible', 'Note does not exist or is inaccessible');
+        }
         if (!row || row.deleted_at) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不存在或无权访问');
         if (write && !this._canWrite(user, row)) throw new HttpError(403, 'forbidden_resource_edit', '当前账号没有编辑此笔记的权限');
         if (!write && !this._canRead(user, row)) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不存在或无权访问');
@@ -123,7 +207,17 @@ class NotesService {
         return { ...result, notes, total: notes.length };
     }
 
-    create(user, {
+    create(user, data = {}, mutationContext = {}) {
+        this._assertActiveUser(user);
+        return this._runMobileMutation({
+            entityType: 'note', entityId: data.id, action: 'upsert', user, before: null,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+        }, () => this._create(user, data));
+    }
+
+    _create(user, {
+        id,
         title, content = '', groupPath = '', tags = [], linkedConnectionIds = [],
         shareWithUsers = false, shareWithAdmins = false,
         allowAi, allowAiRead, allowAiWrite,
@@ -135,7 +229,7 @@ class NotesService {
         linkedConnectionIds = Array.isArray(linkedConnectionIds) ? linkedConnectionIds.map(String).filter(Boolean).slice(0, LINKS_MAX) : [];
         this._assertSize({ title, content, tags, linkedConnectionIds });
         const nowTs = this.now();
-        const noteId = crypto.randomUUID();
+        const noteId = String(id || '').trim() || crypto.randomUUID();
         const shareWithUsersVal = shareWithUsers ? 1 : 0;
         const shareWithAdminsVal = shareWithAdmins ? 1 : 0;
         // allowAi is a legacy alias that sets both when specific flags are omitted.
@@ -180,8 +274,21 @@ class NotesService {
         return this._row(row, { includeContent });
     }
 
-    update(user, noteId, patch = {}) {
+    update(user, noteId, patch = {}, mutationContext = {}) {
+        const beforeRow = this.stmtGet.get(String(noteId));
+        const before = beforeRow ? this._row(beforeRow, { includeContent: true }) : null;
+        return this._runMobileMutation({
+            entityType: 'note', entityId: noteId, action: 'upsert', user, before,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+        }, () => this._update(user, noteId, patch));
+    }
+
+    _update(user, noteId, patch = {}) {
         const row = this.stmtGet.get(String(noteId));
+        if (row && !row.deleted_at && !this._ownerIsActive(row)) {
+            throw new HttpError(404, 'resource_not_found_or_inaccessible', 'Note does not exist or is inaccessible');
+        }
         if (!row || row.deleted_at) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不存在或无权访问');
         if (!this._canWrite(user, row)) throw new HttpError(403, 'forbidden_resource_edit', '当前账号没有编辑此笔记的权限');
         const expectedRevision = Number(patch.expectedRevision);
@@ -230,8 +337,21 @@ class NotesService {
         return this.get(user, noteId);
     }
 
-    delete(user, noteId) {
+    delete(user, noteId, mutationContext = {}) {
+        const beforeRow = this.stmtGet.get(String(noteId));
+        const before = beforeRow ? this._row(beforeRow, { includeContent: true }) : null;
+        return this._runMobileMutation({
+            entityType: 'note', entityId: noteId, action: 'delete', user, before,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+        }, () => this._delete(user, noteId));
+    }
+
+    _delete(user, noteId) {
         const row = this.stmtGet.get(String(noteId));
+        if (row && !row.deleted_at && !this._ownerIsActive(row)) {
+            throw new HttpError(404, 'resource_not_found_or_inaccessible', 'Note does not exist or is inaccessible');
+        }
         if (!row || row.deleted_at) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不存在或无权访问');
         if (row.owner_user_id !== user.userId && !this.authz.can(user, CAP.DELETE, 'note', noteId, { ownerUserId: row.owner_user_id })) {
             throw new HttpError(403, 'forbidden_resource_delete', '当前账号没有删除此笔记的权限');
@@ -245,7 +365,22 @@ class NotesService {
      * Default: only notes already in trash (FREEZE §6.3 second step).
      * force/allowActive: skip trash and hard-delete an active note (user-confirmed). */
     purge(user, noteId, { allowActive = false } = {}) {
+        const beforeRow = this.stmtGet.get(String(noteId));
+        const write = () => this._purge(user, noteId, { allowActive });
+        if (beforeRow && !beforeRow.deleted_at) {
+            return this._runMobileMutation({
+                entityType: 'note', entityId: noteId, action: 'delete', user,
+                before: this._row(beforeRow, { includeContent: true }),
+            }, write);
+        }
+        return this.db.transaction(write)();
+    }
+
+    _purge(user, noteId, { allowActive = false } = {}) {
         const row = this.stmtGet.get(String(noteId));
+        if (row && !this._ownerIsActive(row)) {
+            throw new HttpError(404, 'resource_not_found_or_inaccessible', 'Note does not exist or is inaccessible');
+        }
         if (!row) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不存在');
         if (!row.deleted_at && !allowActive) {
             throw new HttpError(409, 'note_not_in_trash', '笔记不在回收站，无法彻底删除');
@@ -266,6 +401,7 @@ class NotesService {
 
     /** Soft-delete or permanent-purge many notes (owner-scoped). */
     bulk(user, { noteIds = [], action = 'trash' } = {}) {
+        this._assertActiveUser(user);
         const ids = [...new Set((noteIds || []).map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 200);
         if (!ids.length) return { ok: true, affected: 0, action };
         let affected = 0;
@@ -303,6 +439,7 @@ class NotesService {
     /* Empty the trash for the calling user (permanently destroy all their
      * soft-deleted notes). */
     emptyTrash(user) {
+        this._assertActiveUser(user);
         const rows = this.db.prepare('SELECT note_id FROM notes WHERE owner_user_id = ? AND deleted_at IS NOT NULL').all(user.userId);
         if (!rows.length) return { purged: 0 };
         const stmt = this.db.prepare('DELETE FROM notes WHERE note_id = ? AND owner_user_id = ?');
@@ -314,8 +451,21 @@ class NotesService {
         return { purged: rows.length };
     }
 
-    restore(user, noteId) {
+    restore(user, noteId, mutationContext = {}) {
+        const beforeRow = this.stmtGet.get(String(noteId));
+        const before = beforeRow ? this._row(beforeRow, { includeContent: true }) : null;
+        return this._runMobileMutation({
+            entityType: 'note', entityId: noteId, action: 'upsert', user, before,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+        }, () => this._restore(user, noteId));
+    }
+
+    _restore(user, noteId) {
         const row = this.stmtGet.get(String(noteId));
+        if (row && !this._ownerIsActive(row)) {
+            throw new HttpError(404, 'resource_not_found_or_inaccessible', 'Note does not exist or is inaccessible');
+        }
         if (!row || !row.deleted_at) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不在回收站');
         if (row.owner_user_id !== user.userId) throw new HttpError(403, 'forbidden_resource_edit', '只能恢复自己的笔记');
         this.stmtRestore.run(this.now(), String(noteId));
@@ -323,6 +473,7 @@ class NotesService {
     }
 
     list(user, { q = '', group = null, tag = null, connectionId = null, limit = 50, offset = 0, trash = false } = {}) {
+        this._assertActiveUser(user);
         limit = Math.min(Math.max(Number(limit) || 50, 1), 200);
         offset = Math.max(Number(offset) || 0, 0);
         let rows;
@@ -352,6 +503,7 @@ class NotesService {
                 if (!rows.some((r) => r.note_id === row.note_id)) rows.push(row);
             }
         }
+        rows = rows.filter((row) => this._ownerIsActive(row));
         if (group != null) {
             const g = String(group);
             rows = rows.filter((r) => (r.group_path || '') === g);
@@ -371,6 +523,7 @@ class NotesService {
     }
 
     groups(user) {
+        this._assertActiveUser(user);
         return this.stmtGroups.all(user.userId).map((r) => ({ groupPath: r.groupPath || '', count: Number(r.count) }));
     }
 
@@ -378,23 +531,35 @@ class NotesService {
      * Sub-paths are NOT rewritten (e.g. ops/runbooks -> dev/runbooks only
      * affects notes whose group_path === 'ops/runbooks', not 'ops/runbooks/old'). */
     renameGroup(user, oldPath, newPath) {
+        this._assertActiveUser(user);
         const oldSafe = String(oldPath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
         const newSafe = String(newPath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
         if (!oldSafe) throw new HttpError(400, 'invalid_group', '分组路径不能为空');
-        const result = this.db.prepare('UPDATE notes SET group_path = ?, updated_at = ? WHERE owner_user_id = ? AND group_path = ? AND deleted_at IS NULL')
-            .run(newSafe, this.now(), user.userId, oldSafe);
-        this.authz.audit({ actorUserId: user.userId, action: 'note.rename_group', outcome: 'success', metadata: { from: oldSafe, to: newSafe, affected: result.changes } });
-        return { renamed: result.changes };
+        const rows = this.db.prepare('SELECT note_id, revision FROM notes WHERE owner_user_id = ? AND group_path = ? AND deleted_at IS NULL')
+            .all(user.userId, oldSafe);
+        this.db.transaction(() => {
+            for (const row of rows) {
+                this.update(user, row.note_id, { groupPath: newSafe, expectedRevision: Number(row.revision) });
+            }
+        })();
+        this.authz.audit({ actorUserId: user.userId, action: 'note.rename_group', outcome: 'success', metadata: { from: oldSafe, to: newSafe, affected: rows.length } });
+        return { renamed: rows.length };
     }
 
     /* Delete a group: move all its notes to ungrouped (§6.4.2). */
     deleteGroup(user, groupPath) {
+        this._assertActiveUser(user);
         const safe = String(groupPath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
         if (!safe) throw new HttpError(400, 'invalid_group', '分组路径不能为空');
-        const result = this.db.prepare('UPDATE notes SET group_path = ?, updated_at = ? WHERE owner_user_id = ? AND group_path = ? AND deleted_at IS NULL')
-            .run('', this.now(), user.userId, safe);
-        this.authz.audit({ actorUserId: user.userId, action: 'note.delete_group', outcome: 'success', metadata: { group: safe, affected: result.changes } });
-        return { moved: result.changes };
+        const rows = this.db.prepare('SELECT note_id, revision FROM notes WHERE owner_user_id = ? AND group_path = ? AND deleted_at IS NULL')
+            .all(user.userId, safe);
+        this.db.transaction(() => {
+            for (const row of rows) {
+                this.update(user, row.note_id, { groupPath: '', expectedRevision: Number(row.revision) });
+            }
+        })();
+        this.authz.audit({ actorUserId: user.userId, action: 'note.delete_group', outcome: 'success', metadata: { group: safe, affected: rows.length } });
+        return { moved: rows.length };
     }
 
     /** Import a single markdown file. Filename → title, optional directory → group. */

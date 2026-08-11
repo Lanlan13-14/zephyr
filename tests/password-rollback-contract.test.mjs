@@ -59,10 +59,14 @@ test('password-rollback API is public, rate-limited, single-use and kills all se
 
 test('rollback landing page is served publicly with no-store', () => {
     const server = read('server.js');
-    assert.match(server, /app\.get\('\/password-rollback', \(req, res\) => sendNoStorePage\(res, 'password-rollback\.html'\)\);/);
-    assert.match(server, /app\.get\('\/password-rollback\.html', \(req, res\) => sendNoStorePage\(res, 'password-rollback\.html'\)\);/);
+    assert.match(server, /function sendNoStorePage\(req, res, next, file\) \{\s*res\.setHeader\('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'\);\s*res\.setHeader\('Pragma', 'no-cache'\);\s*res\.setHeader\('Expires', '0'\);\s*return sendPublicFile\(req, res, next, file\);\s*\}/);
+    /* The fixed filename keeps request-controlled path data out of the file helper,
+     * while next preserves embedded-asset fallthrough and error propagation. */
+    assert.match(server, /app\.get\('\/password-rollback', \(req, res, next\) => sendNoStorePage\(req, res, next, 'password-rollback\.html'\)\);/);
+    assert.match(server, /app\.get\('\/password-rollback\.html', \(req, res, next\) => sendNoStorePage\(req, res, next, 'password-rollback\.html'\)\);/);
     /* Must be reachable while logged out: no requirePageAuth on these routes. */
     assert.doesNotMatch(server, /app\.get\('\/password-rollback', requirePageAuth/);
+    assert.doesNotMatch(server, /app\.get\('\/password-rollback\.html', requirePageAuth/);
 });
 
 test('rollback landing page markup and client follow i18n and post the token', () => {

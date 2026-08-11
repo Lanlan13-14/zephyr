@@ -43,6 +43,12 @@ const PROVIDER = read(MAIN, 'SafZft2FileProvider.kt');
 const TREE = read(MAIN, 'SafDocumentTree.kt');
 const RESOLVER = read(MAIN, 'ContentResolverDocumentTree.kt');
 const GRANTS = read(MAIN, 'SafShareGrants.kt');
+const PERSISTENT_STORE = read(MAIN, 'PersistentShareStore.kt');
+const KEY_VALUE_STORE = read(MAIN, 'KeyValueStore.kt');
+const SHARED_PREFERENCES_STORE = read(MAIN, 'SharedPreferencesKeyValueStore.kt');
+const URI_PERMISSIONS = read(MAIN, 'ContentResolverUriPermissions.kt');
+const ACCOUNT_CONTAINER = read(path.join(APP, 'di'), 'AccountContainer.kt');
+const APP_CONTAINER = read(path.join(APP, 'di'), 'AppContainer.kt');
 
 test('the module is no longer an empty declared dependency', () => {
   /* :app depends on :feature-file-sync, so an empty module is a dependency that contributes
@@ -242,10 +248,17 @@ test('the grant chain re-derives validity instead of trusting stored state', () 
     'a downgraded grant must narrow the share and never widen it');
   assert.match(GRANTS, /fun pruneRevoked\(\): List<String>/);
 
-  /* Releasing on revoke, but only when no other profile still uses the tree: multiple profiles over
-   * one directory is legal, and releasing on the first removal would break the second. */
-  assert.match(GRANTS, /if \(store\.values\.none \{ it\.treeUri == stored\.treeUri \}\)/);
-  assert.match(GRANTS, /permissions\.releasePersistable\(stored\.treeUri\)/);
+  /* Revoke recomputes URI-scoped requirements after removing the row. This retains read for a
+   * second read-only profile while shedding write authority only the removed profile needed. */
+  const revokeBody = codeOf(GRANTS).slice(
+    codeOf(GRANTS).indexOf('fun revoke(profileId: String): Boolean'),
+    codeOf(GRANTS).indexOf('fun pruneRevoked(): List<String>'),
+  );
+  assert.match(revokeBody, /val stored = store\.remove\(profileId\)/);
+  assert.match(revokeBody, /reconcilePersistedPermissions\(\)/);
+  assert.match(revokeBody, /currentRequirements\(\)\[stored\.treeUri\]/);
+  assert.match(GRANTS, /val releaseWrite = live\.canWrite && required\?\.canWrite != true/,
+    'a removed writable profile must not leave ambient write permission behind');
 });
 
 test('the platform seam keeps the provider logic testable off-device', () => {
@@ -283,7 +296,7 @@ test('the Kotlin unit tests cover the attacks DEVELOPMENT.md 19.6 names', () => 
   for (const name of [
     'aReadOnlyGrantNarrowsTheShareEvenWhenTheConfigAskedForWrite',
     'revokedOutsideTheAppTheShareIsReportedInvalidRatherThanMissing',
-    'revokingOneOfTwoSharesOverTheSameTreeKeepsTheGrant',
+    'revokingOneOfTwoSharesOverTheSameTreeKeepsOnlyTheModesStillNeeded',
     'pruningDropsRevokedSharesAndNamesThem',
   ]) {
     assert.match(grantsTest, new RegExp('fun ' + name + '\\('), 'missing coverage: ' + name);
@@ -361,11 +374,11 @@ test('the picker asks for no more authority than the connection can use', () => 
   assert.match(root, /profileIdFactory = \{ UUID\.randomUUID\(\)\.toString\(\) \}/);
 });
 
-test('an authorised directory survives a relaunch', () => {
+test('an authorised directory and its acquisition journal survive a relaunch', () => {
   /* SafShareGrants was written against a plain MutableMap, so without this the app would forget the
    * directory on the next launch while still holding the SAF permission: access the user granted
    * that the UI can no longer show or revoke. */
-  const store = read(MAIN, 'PersistentShareStore.kt');
+  const store = PERSISTENT_STORE;
   assert.match(store, /class PersistentShareStore\([\s\S]*?\) : MutableMap<String, SafShareGrant> by backing \{/);
   for (const mutator of ['put', 'putAll', 'remove', 'clear']) {
     assert.match(store, new RegExp('override fun ' + mutator + '\\('),
@@ -378,14 +391,30 @@ test('an authorised directory survives a relaunch', () => {
   assert.doesNotMatch(codeOf(store), /grantValid = false/);
 
   /* A row that lost its write flag is assumed read-only: the strictest reading is the safe one. */
-  assert.match(store, /store\.boolean\(readOnlyKey\(profileId\), true\)/);
+  assert.match(store, /store\.boolean\(readOnlyKey\(owner, profileId\), true\)/);
 
-  /* One batch per row. Written key by key, a process death mid-row would leave an id in the index
-   * with no URI behind it. */
-  assert.match(store, /store\.edit \{/);
+  /* Intent is committed before the system capability is taken. The complete row and journal removal
+   * then share one durable preferences transaction. */
+  assert.match(store, /internal fun prepareAuthorization\(/);
+  const prepareBody = codeOf(store).slice(
+    codeOf(store).indexOf('internal fun prepareAuthorization('),
+    codeOf(store).indexOf('internal fun pendingAuthorizations()'),
+  );
+  assert.match(prepareBody, /return store\.edit \{/,
+    'pending intent must be durably committed, not only staged in memory');
+  assert.match(store, /putString\(pendingUriKey\(ownerId, profileId\), treeUri\)/);
+  const putBody = codeOf(store).slice(
+    codeOf(store).indexOf('override fun put(key: String, value: SafShareGrant)'),
+    codeOf(store).indexOf('override fun putAll('),
+  );
+  assert.match(putBody, /store\.edit \{/);
+  assert.match(putBody, /check\(\s*store\.edit \{/,
+    'a false row commit must throw into SafShareGrants rollback');
+  assert.match(putBody, /putString\(uriKey\(ownerId, key\), value\.treeUri\)/);
+  assert.match(putBody, /removePending\(ownerId, key\)/,
+    'the row and pending-intent removal must commit atomically');
 
-  const container = read(path.join(APP, 'di'), 'AccountContainer.kt');
-  assert.match(container, /store = PersistentShareStore\(fileSyncStore\)/,
+  assert.match(ACCOUNT_CONTAINER, /store = PersistentShareStore\(fileSyncStore, ownerId = fileSyncOwnerId\)/,
     'the grants must be constructed with the persistent store, not the default in-memory map');
 });
 
@@ -396,11 +425,155 @@ test('persistence sits behind a seam so its rules are testable off-device', () =
   assert.doesNotMatch(codeOf(read(MAIN, 'PersistentShareStore.kt')), /import android\./);
   assert.doesNotMatch(codeOf(read(MAIN, 'ConnectionSharePreferences.kt')), /import android\./);
   assert.doesNotMatch(codeOf(read(MAIN, 'KeyValueStore.kt')), /import android\./);
-  assert.match(read(MAIN, 'SharedPreferencesKeyValueStore.kt'), /import android\.content\.SharedPreferences/);
+  assert.match(SHARED_PREFERENCES_STORE, /import android\.content\.SharedPreferences/);
 
-  /* apply(), not commit(): this runs on whatever thread a picker callback lands on. */
-  assert.match(read(MAIN, 'SharedPreferencesKeyValueStore.kt'), /editor\.apply\(\)/);
-  assert.doesNotMatch(codeOf(read(MAIN, 'SharedPreferencesKeyValueStore.kt')), /\.commit\(\)/);
+  /* This return is the capability commit point. apply() could lose the row after ContentResolver
+   * persisted access, so commit false must be observable by the rollback path. */
+  assert.match(KEY_VALUE_STORE, /fun edit\(block: KeyValueEditor\.\(\) -> Unit\): Boolean/);
+  assert.match(SHARED_PREFERENCES_STORE,
+    /override fun edit\(block: KeyValueEditor\.\(\) -> Unit\): Boolean/);
+  assert.match(SHARED_PREFERENCES_STORE, /return editor\.commit\(\)/);
+  assert.doesNotMatch(codeOf(SHARED_PREFERENCES_STORE), /editor\.apply\(\)/);
+
+  const preferencesTest = read(TEST, 'SharedPreferencesKeyValueStoreTest.kt');
+  assert.match(preferencesTest, /fun editUsesSynchronousCommitAndPropagatesFalse\(\)/);
+  assert.match(preferencesTest, /assertFalse\(store\.edit/);
+});
+
+test('permission acquisition is ordered around a durable pending journal', () => {
+  const authorize = codeOf(GRANTS).slice(
+    codeOf(GRANTS).indexOf('fun authorize('),
+    codeOf(GRANTS).indexOf('fun grant(profileId: String)'),
+  );
+  const prepare = authorize.indexOf('prepareAuthorization(profileId, treeUri, previousPermission)');
+  const take = authorize.indexOf('permissions.takePersistable(treeUri, allowWrite = requestWrite)');
+  const row = authorize.indexOf('store[profileId] = grant');
+  assert.ok(prepare >= 0 && take > prepare && row > take,
+    'pending intent must commit before take, and the row only after take is verified');
+  assert.match(authorize, /catch \(_: RuntimeException\) \{\s*rollbackAuthorization\(profileId\)/,
+    'a failed row commit must immediately enter rollback');
+
+  const suite = read(TEST, 'PersistentShareStoreTest.kt');
+  for (const name of [
+    'aFailedPrepareCommitNeverTakesAPlatformPermission',
+    'aFailedRowCommitImmediatelyRollsBackTheTakenPermission',
+    'crashBeforeTakeClearsIntentWithoutReleasingAnything',
+    'crashAfterTakeReleasesFromDurableIntentOnRestart',
+    'releaseFailureKeepsJournalAndForegroundRecoveryRetries',
+    'unresolvedRollbackCannotBeOverwrittenByASecondPickerResult',
+  ]) {
+    assert.match(suite, new RegExp('fun ' + name + '\\('), 'missing journal coverage: ' + name);
+  }
+});
+
+test('binding generation owns grants and teardown is target scoped', () => {
+  assert.match(ACCOUNT_CONTAINER,
+    /fileSyncOwnerId = PersistentShareStore\.ownerId\([\s\S]*?binding\.serverProfileId,[\s\S]*?binding\.userId,[\s\S]*?binding\.deviceId,[\s\S]*?generation,/,
+    'SAF provenance must derive from the verified binding and its generation');
+  assert.match(ACCOUNT_CONTAINER,
+    /ConnectionSharePreferences\([\s\S]*?ownerId = fileSyncOwnerId,[\s\S]*?\)/,
+    'device-local connection choices must share the same generation boundary');
+  assert.match(PERSISTENT_STORE, /private const val PREFIX = "saf\.v2\.owner\."/);
+  assert.match(PERSISTENT_STORE, /fun ownerId\(vararg scopeSegments: String\): String/);
+  assert.match(PERSISTENT_STORE, /MessageDigest\.getInstance\("SHA-256"\)/);
+
+  const teardown = codeOf(APP_CONTAINER).slice(
+    codeOf(APP_CONTAINER).indexOf('internal fun wipeBindingScope('),
+    codeOf(APP_CONTAINER).indexOf('fun clearPendingBindingAuthentication()'),
+  );
+  assert.match(teardown, /PersistentShareStore\.ownerId\([\s\S]*?scope\.generation,/);
+  assert.match(teardown, /reconcileOnInit = false/,
+    'an old-generation teardown must not run the active-account startup sweep');
+  assert.match(teardown, /grants\.revokeAllOwned\(\)/);
+  assert.doesNotMatch(teardown, /\.edit\(\)\.clear\(\)/,
+    'teardown must never erase another generation by clearing the whole preference file');
+  assert.match(GRANTS, /val otherRequirements = durable\?\.requirementsForOtherOwners\(\)\.orEmpty\(\)/);
+
+  const suite = read(TEST, 'PersistentShareStoreTest.kt');
+  for (const name of [
+    'aReplacementGenerationCannotInheritOldRowsOrPermissions',
+    'oldGenerationTeardownDoesNotReleaseReplacementAccountGrant',
+    'sharedUriTeardownPreservesModesRequiredByAnotherGeneration',
+    'ownerIdentityIsGenerationAndBoundarySensitive',
+  ]) {
+    assert.match(suite, new RegExp('fun ' + name + '\\('), 'missing owner coverage: ' + name);
+  }
+});
+
+test('ownerless legacy SAF state is quarantined and never assigned to the first account', () => {
+  assert.match(PERSISTENT_STORE, /require\(ownerId != LEGACY_QUARANTINE_OWNER_ID\)/,
+    'the reserved cleanup owner must never be constructible as an account owner');
+  assert.match(PERSISTENT_STORE, /quarantineLegacyRowsIfNeeded\(\)/);
+  assert.match(PERSISTENT_STORE,
+    /putString\(uriKey\(LEGACY_QUARANTINE_OWNER_ID, journalId\), uri\)/,
+    'ownerless URI metadata must move only into the non-account quarantine journal');
+  assert.match(PERSISTENT_STORE,
+    /putStringSet\(KEY_OWNER_IDS, ownerIds\(\) \+ LEGACY_QUARANTINE_OWNER_ID\)/,
+    'the quarantine must remain indexed until platform revocation succeeds');
+
+  const quarantine = codeOf(PERSISTENT_STORE).slice(
+    codeOf(PERSISTENT_STORE).indexOf('private fun quarantineLegacyRowsIfNeeded()'),
+    codeOf(PERSISTENT_STORE).indexOf('private fun legacyProfileIdFromUriKey('),
+  );
+  assert.doesNotMatch(quarantine, /uriKey\(ownerId, legacyId\)/,
+    'the account that initializes first must never inherit an ownerless directory');
+
+  const suite = read(TEST, 'PersistentShareStoreTest.kt');
+  for (const name of [
+    'ownerlessLegacyGrantsAreRevokedInsteadOfAssignedToTheFirstAccount',
+    'ownerlessLegacyMetadataWithoutAPlatformPermissionIsCleared',
+    'failedLegacyRevokeStaysQuarantinedAndRetriesAfterRestart',
+    'ownerlessLegacyChoiceIsDiscardedInsteadOfAssignedToTheFirstAccount',
+    'failedLegacyChoiceCleanupRemainsHiddenAndRetriesAfterRestart',
+  ]) {
+    assert.match(suite, new RegExp('fun ' + name + '\\('), 'missing quarantine coverage: ' + name);
+  }
+});
+
+test('global teardown releases quarantine without weakening generation-scoped teardown', () => {
+  const globalSweep = codeOf(GRANTS).slice(
+    codeOf(GRANTS).indexOf('fun revokeAllPersistedForGlobalTeardown(): Boolean'),
+    codeOf(GRANTS).indexOf('private fun rollbackAuthorization('),
+  );
+  assert.ok(globalSweep.length > 0, 'the no-account teardown API must remain explicit');
+  assert.match(globalSweep, /for \(live in permissions\.persisted\(\)\) releaseExcessModes\(live, required = null\)/,
+    'global teardown must preserve no owner or quarantine requirement');
+  assert.match(globalSweep, /permissions\.persisted\(\)\.any \{ it\.canRead \|\| it\.canWrite \}/,
+    'metadata cannot be cleared before ContentResolver confirms every live mode is gone');
+  assert.match(globalSweep, /if \(capabilityRemains\) return false/,
+    'a failed release must retain its durable retry journal');
+  assert.match(globalSweep, /durable\?\.clearAllOwnerState\(\)/);
+
+  const clearAll = codeOf(PERSISTENT_STORE).slice(
+    codeOf(PERSISTENT_STORE).indexOf('internal fun clearAllOwnerState(): Boolean'),
+    codeOf(PERSISTENT_STORE).indexOf('internal fun recordedUrisFor('),
+  );
+  assert.match(clearAll, /if \(key\.startsWith\(PREFIX\) \|\| key\.startsWith\(LEGACY_PREFIX\)\) remove\(key\)/);
+  assert.match(clearAll, /remove\(KEY_OWNER_IDS\)/);
+
+  const suite = read(TEST, 'PersistentShareStoreTest.kt');
+  for (const name of [
+    'noAccountGlobalTeardownRevokesAQuarantinedLegacyGrant',
+    'failedGlobalLegacyTeardownKeepsJournalAndRetriesAfterRestart',
+    'globalTeardownReleasesEachLegacyGrantWithItsExactLiveModes',
+    'generationTeardownPreservesAnotherActiveOwnerWhenQuarantineAlsoExists',
+  ]) {
+    assert.match(suite, new RegExp('fun ' + name + '\\('), 'missing global teardown coverage: ' + name);
+  }
+});
+
+test('startup and foreground recovery sweep orphaned platform permissions', () => {
+  assert.match(GRANTS, /if \(reconcileOnInit\) reconcilePersistedPermissions\(\)/);
+  assert.match(GRANTS, /val before = permissions\.persisted\(\)/);
+  assert.match(GRANTS, /for \(live in before\) releaseExcessModes\(live, required\[live\.uri\]\)/);
+  assert.match(GRANTS, /fun pruneRevoked\(\): List<String> \{\s*reconcilePersistedPermissions\(\)/);
+  assert.match(URI_PERMISSIONS,
+    /override fun releasePersistable\([\s\S]*?\): Boolean \{[\s\S]*?return runCatching/,
+    'release errors must be reported so persisted permissions remain retryable');
+
+  const suite = read(TEST, 'PersistentShareStoreTest.kt');
+  assert.match(suite, /fun startupSweepsAnUnindexedAmbientGrant\(\)/);
+  assert.match(suite, /fun soleOwnerTeardownAlsoReleasesUnknownLegacyOrphans\(\)/);
 });
 
 test('the per-connection choice is device-local and never syncs', () => {
@@ -463,7 +636,8 @@ test('the wiring has JVM coverage of its own', () => {
     'validityIsNeverPersistedAsFalse',
     'aRowWhoseUriWasLostIsDroppedRatherThanRepaired',
     'aRowMissingItsWriteFlagIsAssumedReadOnly',
-    'aGrantRowIsWrittenAsOneBatch',
+    'aGrantAuthorizationUsesOneIntentAndOneAtomicRowCommit',
+    'ownerlessLegacyGrantsAreRevokedInsteadOfAssignedToTheFirstAccount',
     'pruningDropsChoicesNamingAProfileThatIsGone',
     'severalDirectoriesWithNoChoiceResolvesToNothing',
     'aDeadGrantStillReturnsAProfileSoTheUserCanBeTold',

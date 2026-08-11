@@ -907,7 +907,7 @@ async function loadOneMappedFolder(connectionId) {
     } catch {
         return null;
     }
-    if (!listing || !listing.ok || !listing.folder) return null;
+    if (!listing || !listing.ok || listing.configured !== true) return null;
 
     const shareable = (listing.files || []).filter((f) => f && !f.isDir);
     const loaded = [];
@@ -936,7 +936,7 @@ async function loadOneMappedFolder(connectionId) {
             console.warn('[one-rdp] setLocalFiles failed', err);
         }
     }
-    console.info('[one-rdp] mapped folder shared:', listing.folder,
+    console.info('[one-rdp] mapped folder shared:', listing.folderLabel || 'Selected folder',
         loaded.length + '/' + shareable.length, 'files',
         listing.truncated ? '(truncated)' : '');
     return {

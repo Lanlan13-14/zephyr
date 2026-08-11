@@ -60,6 +60,10 @@ interface BootstrapDao {
     @Query("SELECT * FROM bootstrap_staging WHERE generation = :generation ORDER BY entityType, entityId")
     suspend fun staged(generation: Long): List<BootstrapStagingRow>
 
+    /** Every staged row, used to remove generation-scoped temporary secret refs on restart. */
+    @Query("SELECT * FROM bootstrap_staging ORDER BY generation, entityType, entityId")
+    suspend fun allStaged(): List<BootstrapStagingRow>
+
     @Query("SELECT COUNT(*) FROM bootstrap_staging WHERE generation = :generation")
     suspend fun stagedCount(generation: Long): Int
 

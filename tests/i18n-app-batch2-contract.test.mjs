@@ -24,7 +24,7 @@ test('app.html marks navigation, dashboard, settings tabs with data-i18n', () =>
 
 test('app.js imports i18n runtime and bootstraps in init()', () => {
     const js = read('public/app.js');
-    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=20260728-ai-handle-only-drag1'/);
+    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=[^']+'/);
     assert.match(js, /await initI18n\(\{ applyDom: true \}\);/);
     assert.match(js, /onLocaleChange\(/);
     assert.match(js, /function bindLocaleSelects\(\)/);

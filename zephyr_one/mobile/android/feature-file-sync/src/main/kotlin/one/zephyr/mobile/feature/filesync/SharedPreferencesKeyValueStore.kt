@@ -22,7 +22,7 @@ class SharedPreferencesKeyValueStore(
 
     override fun keys(): Set<String> = preferences.all.keys
 
-    override fun edit(block: KeyValueEditor.() -> Unit) {
+    override fun edit(block: KeyValueEditor.() -> Unit): Boolean {
         val editor = preferences.edit()
         object : KeyValueEditor {
             override fun putString(key: String, value: String) {
@@ -41,9 +41,9 @@ class SharedPreferencesKeyValueStore(
                 editor.remove(key)
             }
         }.block()
-        /* apply(), not commit(): this runs on whatever thread a picker callback or a resume lands on,
-         * and commit() writes to disk synchronously. apply() still updates the in-memory map before
-         * returning, so a read that follows a write sees it. */
-        editor.apply()
+        /* The caller uses the return as the commit point for a system permission. apply() would let
+         * the process die after ContentResolver persisted access but before the row reached disk,
+         * leaving an ambient grant with no owner record. These batches are tiny and user-driven. */
+        return editor.commit()
     }
 }

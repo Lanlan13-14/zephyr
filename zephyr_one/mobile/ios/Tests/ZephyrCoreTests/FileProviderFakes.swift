@@ -9,7 +9,10 @@ import XCTest
 /// unreadable, and names the virtual-path layer must refuse. The symlink support is
 /// the point of the whole fake -- it is the hazard the Android seam does not have,
 /// and it cannot be exercised without a filesystem that has links.
-final class FakeSecurityScopedFileSystem: SecurityScopedFileSystem {
+final class FakeSecurityScopedFileSystem:
+    SecurityScopedFileSystem,
+    DescriptorRelativeSecurityScopedFileSystem
+{
 
     final class Node {
         var isDirectory: Bool
@@ -59,6 +62,17 @@ final class FakeSecurityScopedFileSystem: SecurityScopedFileSystem {
 
     /// Set to make `move` report a cross-volume failure.
     var refuseMove = false
+
+    /// The bound passed by LIST. Proves the provider pushes the memory ceiling
+    /// into the filesystem instead of truncating an already-materialised array.
+    var lastDescriptorListLimit: Int?
+
+    /// One-shot suspension point used to interleave closeAll with an open that has
+    /// entered the provider but has not returned a descriptor yet.
+    var pauseNextDescriptorOpen: (() async -> Void)?
+
+    /// Lengths that reached the random-access layer after provider clamping.
+    var readLengths: [Int] = []
 
     init(rootPath: String = "/granted") {
         self.rootPath = rootPath
@@ -136,7 +150,8 @@ final class FakeSecurityScopedFileSystem: SecurityScopedFileSystem {
             let tail = String(path.dropFirst(prefix.count))
             // Direct children only.
             if tail.isEmpty || tail.contains("/") { continue }
-            if let info = try await info(at: path) { out.append(info) }
+            let childInfo = try await info(at: path)
+            if let childInfo { out.append(childInfo) }
         }
         return out
     }
@@ -195,6 +210,141 @@ final class FakeSecurityScopedFileSystem: SecurityScopedFileSystem {
         return FakeRandomAccess(node: node, path: absolutePath, owner: self)
     }
 
+    // MARK: - Descriptor-relative seam
+
+    func descriptorInfo(components: [String]) async throws -> FileNodeInfo? {
+        let resolved = try securePath(components, finalMayBeMissing: true)
+        guard let node = resolved.node else { return nil }
+        return nodeInfo(node, path: resolved.path)
+    }
+
+    func descriptorChildren(components: [String], limit: Int) async throws -> [FileNodeInfo] {
+        lastDescriptorListLimit = limit
+        if limit <= 0 { return [] }
+        let resolved = try securePath(components, finalMayBeMissing: false)
+        guard let directory = resolved.node, directory.isDirectory else {
+            throw Zft2Error(code: "not_a_directory", message: "not a directory")
+        }
+
+        let prefix = resolved.path == "/" ? "/" : resolved.path + "/"
+        var output: [FileNodeInfo] = []
+        for path in nodes.keys.sorted() where path.hasPrefix(prefix) {
+            let tail = String(path.dropFirst(prefix.count))
+            if tail.isEmpty || tail.contains("/") { continue }
+            guard let node = nodes[path], node.linkTarget == nil else { continue }
+            output.append(nodeInfo(node, path: path))
+            if output.count >= limit { break }
+        }
+        return output
+    }
+
+    func descriptorOpen(
+        components: [String],
+        write: Bool,
+        createIfMissing: Bool,
+        truncate: Bool
+    ) async throws -> DescriptorRelativeOpen {
+        if let pause = pauseNextDescriptorOpen {
+            pauseNextDescriptorOpen = nil
+            await pause()
+        }
+
+        var resolved = try securePath(components, finalMayBeMissing: createIfMissing)
+        if resolved.node == nil {
+            guard createIfMissing else {
+                throw Zft2Error(code: "not_found", message: "absent")
+            }
+            let created = Node(isDirectory: false)
+            nodes[resolved.path] = created
+            resolved = (path: resolved.path, node: created)
+        }
+        guard let node = resolved.node else {
+            throw Zft2Error(code: "not_found", message: "absent")
+        }
+        guard !node.isDirectory else {
+            throw Zft2Error(code: "is_a_directory", message: "directory")
+        }
+        guard node.canRead else {
+            throw Zft2Error(code: "permission_denied", message: "not readable")
+        }
+        if write && !node.canWrite {
+            throw Zft2Error(code: "permission_denied", message: "not writable")
+        }
+        if truncate { node.bytes = Data() }
+
+        opened.append(resolved.path + ":" + (write ? "rw" : "r"))
+        liveAccess.append(resolved.path)
+        return DescriptorRelativeOpen(
+            info: nodeInfo(node, path: resolved.path),
+            access: FakeRandomAccess(node: node, path: resolved.path, owner: self)
+        )
+    }
+
+    func descriptorCreateDirectory(components: [String]) async throws {
+        let resolved = try securePath(components, finalMayBeMissing: true)
+        guard resolved.node == nil else {
+            throw Zft2Error(code: "already_exists", message: "exists")
+        }
+        nodes[resolved.path] = Node(isDirectory: true)
+    }
+
+    func descriptorDelete(components: [String], recursive: Bool) async throws {
+        let resolved = try securePath(components, finalMayBeMissing: false)
+        guard let node = resolved.node else {
+            throw Zft2Error(code: "not_found", message: "absent")
+        }
+        if node.isDirectory {
+            let prefix = resolved.path + "/"
+            let descendants = nodes.keys.filter { $0.hasPrefix(prefix) }
+            if !descendants.isEmpty && !recursive {
+                throw Zft2Error(code: "not_empty", message: "not empty")
+            }
+            if descendants.contains(where: { nodes[$0]?.linkTarget != nil }) {
+                throw Zft2Error(code: "invalid_path", message: "symlink")
+            }
+            for path in descendants { nodes.removeValue(forKey: path) }
+        }
+        nodes.removeValue(forKey: resolved.path)
+    }
+
+    func descriptorMove(from: [String], to: [String]) async throws {
+        if refuseMove {
+            throw Zft2Error(code: "unsupported", message: "Cannot move between volumes")
+        }
+        let source = try securePath(from, finalMayBeMissing: false)
+        guard let node = source.node else {
+            throw Zft2Error(code: "not_found", message: "absent")
+        }
+        let destination = try securePath(to, finalMayBeMissing: true)
+        guard destination.node == nil else {
+            throw Zft2Error(code: "already_exists", message: "exists")
+        }
+        nodes.removeValue(forKey: source.path)
+        nodes[destination.path] = node
+
+        let prefix = source.path + "/"
+        for path in nodes.keys.filter({ $0.hasPrefix(prefix) }) {
+            let moved = destination.path + "/" + String(path.dropFirst(prefix.count))
+            nodes[moved] = nodes.removeValue(forKey: path)
+        }
+    }
+
+    func descriptorTruncate(components: [String], size: Int64) async throws {
+        let opened = try await descriptorOpen(
+            components: components,
+            write: true,
+            createIfMissing: false,
+            truncate: false
+        )
+        do {
+            try await opened.access.truncate(size: size)
+        } catch {
+            await opened.access.close()
+            throw error
+        }
+        await opened.access.close()
+    }
+
     func beginAccess() -> Bool {
         if refuseAccess { return false }
         accessBalance += 1
@@ -209,6 +359,52 @@ final class FakeSecurityScopedFileSystem: SecurityScopedFileSystem {
         if let index = liveAccess.firstIndex(of: path) {
             liveAccess.remove(at: index)
         }
+    }
+
+    func recordRead(length: Int) {
+        readLengths.append(length)
+    }
+
+    private func securePath(
+        _ components: [String],
+        finalMayBeMissing: Bool
+    ) throws -> (path: String, node: Node?) {
+        guard let root = nodes[rootPath], root.linkTarget == nil, root.isDirectory else {
+            throw Zft2Error(code: "not_found", message: "root absent")
+        }
+        if components.isEmpty { return (rootPath, root) }
+
+        var current = rootPath
+        for (index, component) in components.enumerated() {
+            try SecurityScopedFileProvider.requireAddressableName(component)
+            let next = current + "/" + component
+            guard let node = nodes[next] else {
+                if finalMayBeMissing && index == components.count - 1 {
+                    return (next, nil)
+                }
+                throw Zft2Error(code: "not_found", message: "absent")
+            }
+            if node.linkTarget != nil {
+                throw Zft2Error(code: "invalid_path", message: "symlink")
+            }
+            if index < components.count - 1 && !node.isDirectory {
+                throw Zft2Error(code: "not_a_directory", message: "not a directory")
+            }
+            current = next
+        }
+        return (current, nodes[current])
+    }
+
+    private func nodeInfo(_ node: Node, path: String) -> FileNodeInfo {
+        FileNodeInfo(
+            name: (path as NSString).lastPathComponent,
+            isDirectory: node.isDirectory,
+            isSymlink: false,
+            size: Int64(node.bytes.count),
+            mtime: node.mtime,
+            canRead: node.canRead,
+            canWrite: node.canWrite
+        )
     }
 }
 
@@ -226,6 +422,7 @@ final class FakeRandomAccess: Zft2RandomAccess, @unchecked Sendable {
     }
 
     func readAt(offset: Int64, length: Int) async throws -> Data {
+        owner?.recordRead(length: length)
         if offset >= Int64(node.bytes.count) { return Data() }
         let start = Int(offset)
         let end = min(node.bytes.count, start + length)

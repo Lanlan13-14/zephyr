@@ -47,9 +47,20 @@ import PackageDescription
  on, and it would go stale silently -- exactly what the generated-manifest
  drift gate exists to prevent.
 
- No external dependencies. The Node contract suite is deliberately stdlib-only
- so nothing can drift between a local run and CI; the same reasoning applies
- here, and SHA-256 comes from CryptoKit, which ships with the OS.
+ Both native dependencies are exact-revision pins:
+
+   - OpenSSL-Package supplies OpenSSL 3.6.3 for ML-KEM. Its binary target is
+     checksum-pinned to
+     6c4b064d12b8de2ae77ac59fbcbbd1c20b4fecfb7fc50b8ab326347c52ecbf0c.
+   - SQLiteCipher supplies SQLCipher 4.10.0 / SQLite 3.50.4. Its 0.16.0
+     SQLCipher and SQLite wrapper XCFrameworks are checksum-pinned by the
+     dependency manifest to
+     cb13b28fecf0d651a451d29545f4904af7c2781e9774c1d4da2cd442126f420b and
+     f0b61023394fbcf3c52877f4bef371c32f4098704668a5986992bcad8ce31c03.
+
+ OpenSSL supplies the audited FIPS 203 primitive. SQLCipher supplies mature
+ page encryption; ZephyrCore owns account scoping, ThisDeviceOnly key
+ persistence, owner-proven plaintext migration and lifecycle erasure.
 */
 let package = Package(
     name: "ZephyrOne",
@@ -64,11 +75,35 @@ let package = Package(
          .library(name: "ZephyrCore", targets: ["ZephyrCore"]),
          .library(name: "ZephyrUI", targets: ["ZephyrUI"]),
      ],
+     dependencies: [
+         .package(
+             url: "https://github.com/krzyzanowskim/OpenSSL-Package.git",
+             revision: "0b0cc7392a4ff6a798c9ed8f4981f1c1bbcb4722"
+         ),
+         .package(
+             url: "https://github.com/zhuorantan/SQLiteCipher.git",
+             revision: "70589046bd800e3db5c0155a558a9bc7a9f260ef"
+         ),
+     ],
      targets: [
          .target(name: "ZephyrContracts"),
-         .target(name: "ZephyrCore", dependencies: ["ZephyrContracts"]),
+         .target(
+             name: "ZephyrCore",
+             dependencies: [
+                 "ZephyrContracts",
+                 .product(name: "OpenSSL", package: "OpenSSL-Package"),
+                 .product(name: "SQLiteCipher", package: "SQLiteCipher"),
+             ]
+         ),
          .target(name: "ZephyrUI", dependencies: ["ZephyrCore", "ZephyrContracts"]),
-         .testTarget(name: "ZephyrCoreTests", dependencies: ["ZephyrCore", "ZephyrContracts"]),
+         .testTarget(
+             name: "ZephyrCoreTests",
+             dependencies: [
+                 "ZephyrCore",
+                 "ZephyrContracts",
+                 .product(name: "SQLiteCipher", package: "SQLiteCipher"),
+             ]
+         ),
          .testTarget(name: "ZephyrUITests", dependencies: ["ZephyrUI", "ZephyrCore", "ZephyrContracts"]),
      ]
  )

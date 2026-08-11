@@ -45,8 +45,20 @@ const {
 } = require('@simplewebauthn/server');
 const { getRemoteStats } = require('./stats');
 const storage = require('./storage');
+const { createDatabase } = require('./sqlite-driver');
+const {
+    JOURNAL_NAME,
+    acquireImportCleanupLease,
+    beginImportInstall,
+    cleanupImportOrphans,
+    commitImportInstall,
+    installPreparedImport,
+    recoverImportInstall,
+    rollbackImportInstall,
+} = require('./database-import-install-journal');
 const { SessionStore, sha256: sessionTokenHash } = require('./session-store');
 const { Authz, CAP, HttpError } = require('./authz');
+const { summarizeRemoteCommand } = require('./remote-command-audit');
 const { ResourceService } = require('./resource-service');
 const { SharingService } = require('./sharing-service');
 const { UserService } = require('./user-service');
@@ -59,11 +71,18 @@ const { TerminalHistoryService } = require('./terminal-history-service');
 const { createTerminalSnapshot } = require('./terminal-snapshot');
 const { AiPolicyService } = require('./ai-policy');
 const { AiProviderService } = require('./ai-provider-service');
+const { AiHistoryService } = require('./ai-history-service');
+const {
+    AiHistoryRuntimeController,
+    AiHistoryWakeHub,
+    registerAiHistoryRoutes,
+} = require('./ai-history-runtime');
 const secretCrypto = require('./secret-crypto');
+const backupEncryption = require('./backup-encryption');
 const { handleEditorLspConnection } = require('./editor-lsp-server');
 const { getAppVersion, getAgentRelease } = require('./version');
 const {
-    dialTelnet,
+    negotiate: negotiateTelnet,
     filterIac,
     sendNaws,
     attachIacEngine,
@@ -115,12 +134,14 @@ function normalizeOptionsForRuntime(provider = {}, model = '', merged = {}) {
 }
 const { parseLoopbackListen } = require('./ai-host-listener');
 const {
+    PREVIEW_IMAGE_LIMITS,
     getImageExt,
-    isBrowserImageExt,
     isPreviewImageExt,
-    getBrowserImageContentType,
+    assertPreviewSourceSize,
+    writePreviewSourceFile,
     ensurePreviewCacheFile,
     cleanupPreviewCache,
+    previewErrorResponse,
 } = require('./preview/image/preview-service');
 const {
     extname: getMediaExt,
@@ -136,11 +157,37 @@ const {
     subtitleToVttArgs,
     cleanupMediaProbeCache,
 } = require('./preview/media/media-service');
-const { FileAgentManager } = require('./file-agent-manager');
+const {
+    FileAgentManager,
+    FILE_AGENT_PREAUTH_MAX_MESSAGE_BYTES,
+} = require('./file-agent-manager');
 const { OneClientManager } = require('./one-client-manager');
-const { MobileV1Api } = require('./mobile-v1-routes');
+const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
+const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
+const { MobileV1OutboxDispatcher } = require('./mobile-v1-outbox-dispatcher');
+const { AppChangeWakeHub, registerAppChangeWakeRoute } = require('./app-change-wake-hub');
+const { AppChangeWakeRuntime } = require('./app-change-wake-runtime');
+const {
+    ClientTokenMetadataService,
+    ResourceAclMetadataService,
+} = require('./acl-token-metadata-service');
+const {
+    CAPABILITIES: SERVER_METADATA_CAPABILITIES,
+    createServerMetadataServices,
+} = require('./mobile-v1-server-metadata-entities');
+const { createWebDavSyncRouter } = require('./webdav-sync-routes');
+const { createWebDavSyncJsonBodyLimit } = require('./webdav-sync-body-limit');
+const { createWebDavProductionManager } = require('./webdav-production');
+const { createWebDavSensitiveRateLimiter } = require('./webdav-sensitive-rate-limiter');
+const { validateDatabaseCandidate } = require('./database-import-validator');
+const {
+    MAX_ARCHIVE_BYTES: MAX_IMPORT_ARCHIVE_BYTES,
+    createBackupArchiveBuffer,
+    extractBackupArchive,
+} = require('./backup-archive');
 const { applyEmbeddedSurface } = require('./zephyr-one-embed-surface');
 const { mountRoutes: mountOneRdpFolderMapping } = require('./zephyr-one-rdp-storage');
+const { mountRoutes: mountOneRdpNativeBroker } = require('./zephyr-one-rdp-native-broker');
 const { mountRoutes: mountOneSecurity } = require('./zephyr-one-security');
 const { installAsyncHandlerGuard, jsonErrorMiddleware } = require('./express-async-guard');
 const terminalSessionTools = require('./ai-terminal-session-tools');
@@ -148,11 +195,21 @@ const { FileTransferGateway } = require('./file-transfer-ws');
 const { attachRdpProxyBridge } = require('./server/rdp-proxy-bridge');
 const { negotiateRdpTls } = require('./server/rdp-cert-probe');
 
+let mobileV1OutboxDispatcher = null;
+let mobileV1Api = null;
+let webDavProduction = null;
+let webDavSensitiveRateLimiter = null;
+let backupImportSensitiveRateLimiter = null;
+
 const HTTP_ENABLED = process.env.HTTP_ENABLED === 'true';
 const PORT = process.env.PORT || 3000;
 const HTTPS_ENABLED = process.env.HTTPS_ENABLED !== 'false';
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.ZEPHYR_HTTPS_PORT || 3443);
 const SSH_STATS_ENABLED = process.env.SSH_STATS_ENABLED !== 'false';
+const TELNET_LIVE_ROUTE_TIMEOUT_MS = Math.min(
+    60 * 1000,
+    Math.max(250, Number(process.env.ZEPHYR_TELNET_ROUTE_TIMEOUT_MS) || 10000),
+);
 const APP_VERSION = getAppVersion();
 const AGENT_RELEASE = getAgentRelease();
 const app = express();
@@ -169,10 +226,24 @@ let aiHostServer = null;
  * there: it asks the user to authenticate a second time and gates the whole
  * product behind a web flow the native shell cannot drive.
  *
- * EMBEDDED_LISTEN_HOST pins the listener to loopback in the same mode. That
- * pin is what makes automatic local-account adoption sound; without it,
- * auto-adoption would hand a live session to anything on the LAN. */
+ * EMBEDDED_LISTEN_HOST pins the listener to loopback in the same mode. The
+ * listener still requires a one-time nonce inherited from the Tauri parent;
+ * loopback reachability by itself never grants an account session. */
 const ZEPHYR_ONE_EMBEDDED = process.env.ZEPHYR_ONE_EMBEDDED === '1';
+const EMBEDDED_BOOTSTRAP_PATH = '/__zephyr_one/bootstrap';
+const EMBEDDED_BOOTSTRAP_HEADER = 'x-zephyr-one-bootstrap-challenge';
+const EMBEDDED_READY_PROBE_HEADER = 'x-zephyr-one-ready-probe';
+const EMBEDDED_READY_PROOF_HEADER = 'X-Zephyr-One-Ready-Proof';
+const EMBEDDED_READY_CONTEXT = Buffer.from('zephyr-one-ready-v1\0', 'utf8');
+let embeddedStartupChallengeHex = String(process.env.ZEPHYR_ONE_STARTUP_CHALLENGE || '');
+if (ZEPHYR_ONE_EMBEDDED && !/^[a-f0-9]{64}$/.test(embeddedStartupChallengeHex)) {
+    throw new Error('ZEPHYR_ONE_STARTUP_CHALLENGE is required in embedded mode');
+}
+let embeddedStartupChallenge = ZEPHYR_ONE_EMBEDDED
+    ? Buffer.from(embeddedStartupChallengeHex, 'hex')
+    : null;
+embeddedStartupChallengeHex = '';
+delete process.env.ZEPHYR_ONE_STARTUP_CHALLENGE;
 
 /* One's own security surface, assigned when the routes are mounted below.
  *
@@ -202,45 +273,166 @@ function applyCrossOriginIsolationHeaders(req, res, next) {
 }
 app.use(applyCrossOriginIsolationHeaders);
 
-/* Adopt the local account automatically when running inside Zephyr One.
- * Safe only because EMBEDDED_LISTEN_HOST pins the listener to loopback in
- * exactly this mode. The minted session carries mustChangePassword=false so
- * the forced default-password rotation never fires: the shell's OS unlock is
- * the gate, and that browser-era flow is what crashed the core and left the
- * WebView on "Failed to fetch". */
-let embeddedSessionSid = '';
-function adoptEmbeddedLocalSession(req, res, next) {
-    if (!ZEPHYR_ONE_EMBEDDED) return next();
-    try {
-        if (currentSession(req)) return next();
-        if (!(embeddedSessionSid && sessionStore.peek(embeddedSessionSid))) {
-            const user = storage.getFirstUser();
-            if (!user) return next();
-            const { sid } = sessionStore.create({
-                userId: user.userId,
-                username: user.username,
-                remember: true,
-                mustChangePassword: false,
-                userAgent: req.headers['user-agent'] || '',
-                ip: clientIp(req),
-            });
-            embeddedSessionSid = sid;
-        }
-        /* Drop any stale zephyr_sid before appending the live one, otherwise
-         * currentSession() keeps resolving the dead cookie value. */
-        const kept = String(req.headers.cookie || '')
-            .split(';')
-            .map((part) => part.trim())
-            .filter((part) => part && !/^zephyr_sid=/.test(part));
-        kept.push(`zephyr_sid=${encodeURIComponent(embeddedSessionSid)}`);
-        req.headers.cookie = kept.join('; ');
-        res.setHeader('Set-Cookie', `zephyr_sid=${encodeURIComponent(embeddedSessionSid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(REMEMBER_ABSOLUTE_TTL_MS / 1000)}`);
-    } catch (error) {
-        console.error('[zephyr-one] 本地会话接管失败:', error);
+function embeddedLoopbackHostAllowed(req) {
+    if (!ZEPHYR_ONE_EMBEDDED) return true;
+    const localPort = Number(req.socket?.localPort);
+    if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) return false;
+    return String(req.headers.host || '') === `127.0.0.1:${localPort}`;
+}
+
+function requireEmbeddedLoopbackHost(req, res, next) {
+    if (embeddedLoopbackHostAllowed(req)) return next();
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(421).json({ error: 'Misdirected Request' });
+}
+app.use(requireEmbeddedLoopbackHost);
+
+/* Database replacement is a process-wide maintenance operation. Track every
+ * request that entered before the gate so import can drain it before closing
+ * SQLite; all later HTTP and WebSocket work receives a retryable 503. */
+const databaseMaintenance = {
+    active: false,
+    fatal: false,
+    activeRequests: 0,
+    drainWaiters: new Set(),
+    aiDrain: null,
+};
+
+function notifyDatabaseDrainWaiters() {
+    for (const waiter of [...databaseMaintenance.drainWaiters]) waiter();
+}
+
+function databaseMaintenanceGate(req, res, next) {
+    if (databaseMaintenance.active || databaseMaintenance.fatal) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '1');
+        return res.status(503).json({
+            error: 'Service temporarily unavailable',
+            code: databaseMaintenance.fatal ? 'database_unavailable' : 'database_maintenance',
+            retryable: !databaseMaintenance.fatal,
+        });
     }
+    databaseMaintenance.activeRequests += 1;
+    let finished = false;
+    const release = () => {
+        if (finished) return;
+        finished = true;
+        databaseMaintenance.activeRequests = Math.max(0, databaseMaintenance.activeRequests - 1);
+        notifyDatabaseDrainWaiters();
+    };
+    res.once('finish', release);
+    res.once('close', release);
     return next();
 }
-app.use(adoptEmbeddedLocalSession);
+app.use(databaseMaintenanceGate);
+
+function beginDatabaseMaintenance() {
+    if (databaseMaintenance.active || databaseMaintenance.fatal) {
+        const error = new Error('database maintenance is already active');
+        error.code = 'database_maintenance';
+        throw error;
+    }
+    databaseMaintenance.active = true;
+    databaseMaintenance.aiDrain = aiRuntimeBridge.beginMaintenance();
+}
+
+function endDatabaseMaintenance() {
+    if (!databaseMaintenance.fatal) {
+        aiRuntimeBridge.endMaintenance();
+        databaseMaintenance.aiDrain = null;
+        databaseMaintenance.active = false;
+    }
+}
+
+function waitForDatabaseRequestDrain(maxActive = 1, timeoutMs = 30_000) {
+    if (databaseMaintenance.activeRequests <= maxActive) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+        let timer = null;
+        const check = () => {
+            if (databaseMaintenance.activeRequests > maxActive) return;
+            cleanup();
+            resolve();
+        };
+        const cleanup = () => {
+            if (timer) clearTimeout(timer);
+            databaseMaintenance.drainWaiters.delete(check);
+        };
+        timer = setTimeout(() => {
+            cleanup();
+            reject(new Error('timed out draining requests for database maintenance'));
+        }, timeoutMs);
+        timer.unref?.();
+        databaseMaintenance.drainWaiters.add(check);
+        check();
+    });
+}
+
+function setBootstrapResponseHeaders(res) {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+}
+
+function decodeEmbeddedChallenge(value) {
+    const encoded = String(value || '');
+    return /^[a-f0-9]{64}$/.test(encoded) ? Buffer.from(encoded, 'hex') : null;
+}
+
+function embeddedStartupChallengeMatches(value) {
+    const supplied = decodeEmbeddedChallenge(value);
+    const candidate = supplied || Buffer.alloc(32);
+    const expected = embeddedStartupChallenge || Buffer.alloc(32);
+    return supplied !== null
+        && embeddedStartupChallenge !== null
+        && crypto.timingSafeEqual(candidate, expected);
+}
+
+function embeddedReadinessProof(req) {
+    if (!ZEPHYR_ONE_EMBEDDED || embeddedStartupChallenge === null) return '';
+    const probe = decodeEmbeddedChallenge(req.headers[EMBEDDED_READY_PROBE_HEADER]);
+    if (!probe) return '';
+    return crypto.createHmac('sha256', embeddedStartupChallenge)
+        .update(EMBEDDED_READY_CONTEXT)
+        .update(probe)
+        .update('\0', 'utf8')
+        .update(String(req.socket.localPort), 'utf8')
+        .digest('hex');
+}
+
+function consumeEmbeddedStartupChallenge() {
+    if (embeddedStartupChallenge) embeddedStartupChallenge.fill(0);
+    embeddedStartupChallenge = null;
+}
+
+/* The shell's OS unlock grants one browser session through a native request.
+ * The 256-bit challenge stays in the parent/child environment and this header;
+ * it never enters a URL, renderer state, browser storage, or diagnostics. */
+function exchangeEmbeddedBootstrap(req, res, next) {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    setBootstrapResponseHeaders(res);
+    if (!embeddedStartupChallengeMatches(req.headers[EMBEDDED_BOOTSTRAP_HEADER])) {
+        return res.status(403).type('text/plain').send('Forbidden');
+    }
+    consumeEmbeddedStartupChallenge();
+    try {
+        const user = storage.getFirstUser();
+        if (!user) return res.status(503).type('text/plain').send('Local account unavailable');
+        const { sid } = sessionStore.create({
+            userId: user.userId,
+            username: user.username,
+            remember: true,
+            mustChangePassword: false,
+            userAgent: req.headers['user-agent'] || '',
+            ip: clientIp(req),
+        });
+        sessionStore.revokeAllForUser(user.userId, 'embedded-session-replaced', { exceptSid: sid });
+        res.setHeader('Set-Cookie', `zephyr_sid=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(REMEMBER_ABSOLUTE_TTL_MS / 1000)}`);
+        return res.status(204).end();
+    } catch (error) {
+        return next(error);
+    }
+}
+app.post(EMBEDDED_BOOTSTRAP_PATH, exchangeEmbeddedBootstrap);
 
 const DATA_DIR = process.env.ZEPHYR_DATA_DIR
     ? path.resolve(process.env.ZEPHYR_DATA_DIR)
@@ -287,6 +479,7 @@ const sftpClipboardByUser = new Map();
 const sftpClipboardTransfers = new Map();
 const sftpArchiveTransfers = new Map();
 const previewCache = new Map();
+const previewInFlight = new Map();
 const mediaProbeCache = new Map();
 const PREVIEW_TOKEN_TTL = 10 * 60 * 1000;
 const PREVIEW_CACHE_TTL = 30 * 60 * 1000;
@@ -296,17 +489,30 @@ const MEDIA_CACHE_TTL = 30 * 60 * 1000;
 const MEDIA_CACHE_DIR = path.join(os.tmpdir(), 'zephyr-media-cache');
 
 /* ─── File Agent Manager ─── */
-const fileAgentManager = new FileAgentManager({
-    log: console.log,
-    tokenFile: path.join(DATA_DIR, 'agent-tokens.json'),
-});
+let fileAgentManager = null;
+
+function createFileAgentManager() {
+    return new FileAgentManager({
+        log: console.log,
+        tokenFile: path.join(DATA_DIR, 'agent-tokens.json'),
+        getDb: () => storage.rawDb(),
+        resolveOwner: ({ userId, username, legacy }) => {
+            const immutable = storage.getUserById(userId);
+            if (immutable) return immutable;
+            if (!legacy) return null;
+            const candidate = storage.getUser(username);
+            if (!candidate) return null;
+            const archivedPrefix = `${username}#deleted:`;
+            const usernameWasRecycled = storage.listUsers().some((user) => (
+                user.status === 'deleted' && String(user.username || '').startsWith(archivedPrefix)
+            ));
+            return { ...candidate, legacyOwnerAllowed: !usernameWasRecycled };
+        },
+    });
+}
 let fileTransferGateway = null;
 
 const BROWSER_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif']);
-const BROWSER_IMAGE_CONTENT_TYPES = new Map([
-    ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['png', 'image/png'], ['webp', 'image/webp'],
-    ['gif', 'image/gif'], ['svg', 'image/svg+xml'], ['avif', 'image/avif'],
-]);
 const PREVIEW_IMAGE_EXTENSIONS = new Set([
     ...BROWSER_IMAGE_EXTENSIONS,
     'tif', 'tiff', 'heic', 'heif', 'jxl', 'jp2', 'j2k', 'bmp', 'dib', 'ico', 'cur', 'icns',
@@ -314,6 +520,18 @@ const PREVIEW_IMAGE_EXTENSIONS = new Set([
     'pcx', 'sgi', 'ras', 'sun', 'fits', 'fit', 'dng', 'cr2', 'cr3', 'nef', 'arw', 'orf',
     'rw2', 'raf', 'pef', 'srw', 'x3f', 'mrw', 'erf', 'kdc', 'dcr', 'mos'
 ]);
+
+function sftpPreviewCacheIdentity({ ownerUserId, connectionId, connectionConfig } = {}) {
+    const host = String(connectionConfig?.host || '').trim().toLowerCase();
+    const port = Number(connectionConfig?.port) || 22;
+    const username = String(connectionConfig?.username || '').trim();
+    const protocol = String(connectionConfig?.protocol || 'SSH').trim().toUpperCase();
+    const stableOwnerUserId = String(ownerUserId || '').trim();
+    if (!stableOwnerUserId || !host || !username || !protocol) return null;
+    const serverIdentity = `${protocol}|${host}|${port}|${username}`;
+    const stableConnectionId = String(connectionId || connectionConfig?.id || '').trim() || `remote:${serverIdentity}`;
+    return { ownerUserId: stableOwnerUserId, connectionId: stableConnectionId, serverIdentity };
+}
 const SFTP_DOWNLOAD_TOKEN_TTL = 24 * 60 * 60 * 1000;
 const SFTP_UPLOAD_TOKEN_TTL = 24 * 60 * 60 * 1000;
 const SFTP_DOWNLOAD_KEEPALIVE_INTERVAL = 30 * 1000;
@@ -373,6 +591,9 @@ function hasEphemeralRdpTargetGrant(userId, host, port) {
     const cleanPort = Number(port) || 3389;
     return pruneEphemeralRdpGrants(userId).some((g) => g.host === cleanHost && g.port === cleanPort);
 }
+/* This legacy memory uploader is still provided to the AI host routes. The
+ * destructive database import deliberately uses its own disk-backed uploader
+ * below so a stolen session cannot force a large allocation before step-up. */
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 function wsSendJSON(targetWs, obj) {
@@ -397,7 +618,10 @@ function flushAllSshSessionHistory() {
 }
 process.once('exit', flushAllSshSessionHistory);
 for (const signal of ['SIGTERM', 'SIGINT']) {
-    process.once(signal, () => {
+    process.once(signal, async () => {
+        try { mobileV1OutboxDispatcher?.close(); } catch {}
+        try { appChangeWakeRuntime?.close(); } catch {}
+        try { await webDavProduction?.close(); } catch {}
         flushAllSshSessionHistory();
         process.exit(signal === 'SIGTERM' ? 0 : 130);
     });
@@ -596,16 +820,50 @@ function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
 
 
 function loadDataEnv() {
-    const envFile = path.join(DATA_DIR, '.env');
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    if (!fs.existsSync(envFile)) fs.writeFileSync(envFile, 'ENCRYPTION_KEY=please-change-this-key\nPUBLIC_ORIGIN=http://localhost:3000\n');
-    const raw = fs.readFileSync(envFile, 'utf8');
+    const backupKeyWasExternal = typeof process.env.ENCRYPTION_KEY === 'string'
+        && process.env.ENCRYPTION_KEY.length > 0;
+    const externalBackupKey = backupKeyWasExternal ? process.env.ENCRYPTION_KEY : '';
+    const externalProvenance = process.env.ZEPHYR_BACKUP_KEY_PROVENANCE;
+    const { contents: raw } = backupEncryption.provisionDataEnv({
+        dataDir: DATA_DIR,
+        env: process.env,
+        readContents: true,
+    });
+    const fileValues = new Map();
     raw.split(/\r?\n/).forEach((line) => {
         const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-        if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+        if (!m) return;
+        if (fileValues.has(m[1])
+            && (m[1] === 'ENCRYPTION_KEY' || m[1] === 'ZEPHYR_BACKUP_KEY_PROVENANCE')) {
+            throw new Error('duplicate backup key configuration in data environment');
+        }
+        if (!fileValues.has(m[1])) fileValues.set(m[1], m[2].replace(/^['"]|['"]$/g, ''));
     });
+    for (const [name, value] of fileValues) {
+        if (name !== 'ENCRYPTION_KEY' && name !== 'ZEPHYR_BACKUP_KEY_PROVENANCE' && !process.env[name]) {
+            process.env[name] = value;
+        }
+    }
+    if (backupKeyWasExternal) {
+        process.env.ENCRYPTION_KEY = externalBackupKey;
+        if (externalProvenance === backupEncryption.OPERATOR_ATTESTED_KEY_PROVENANCE) {
+            process.env.ZEPHYR_BACKUP_KEY_PROVENANCE = externalProvenance;
+        } else {
+            delete process.env.ZEPHYR_BACKUP_KEY_PROVENANCE;
+        }
+        return;
+    }
+    if (fileValues.has('ENCRYPTION_KEY')) process.env.ENCRYPTION_KEY = fileValues.get('ENCRYPTION_KEY');
+    else delete process.env.ENCRYPTION_KEY;
+    if (fileValues.has('ZEPHYR_BACKUP_KEY_PROVENANCE')) {
+        process.env.ZEPHYR_BACKUP_KEY_PROVENANCE = fileValues.get('ZEPHYR_BACKUP_KEY_PROVENANCE');
+    } else {
+        delete process.env.ZEPHYR_BACKUP_KEY_PROVENANCE;
+    }
 }
 loadDataEnv();
+const ALLOW_LEGACY_BACKUP_IMPORT = process.env.ZEPHYR_ALLOW_LEGACY_BACKUP_IMPORT === 'true';
+delete process.env.ZEPHYR_ALLOW_LEGACY_BACKUP_IMPORT;
 
 function ensureDataFile(file, fallback) {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -647,11 +905,122 @@ function initData() {
     ensureDataFile(SETTINGS_FILE, { version: APP_VERSION, icp: '', policeBeian: '' });
 }
 
+/* Import recovery is deliberately synchronous and precedes every database
+ * consumer. A process killed between the key and SQLite replaces can only
+ * reach Storage, SessionStore, FileAgent, Mobile, WebDAV or a listener after
+ * the journal has restored one complete generation. */
+const importStartupRecovery = recoverImportInstall({
+    dataDir: DATA_DIR,
+    databaseFile: DB_FILE,
+    keyFile: secretCrypto.currentKeyFile(),
+    installKeyBuffer: (buffer, options) => secretCrypto.restoreKeyBackupAtomically(buffer, options),
+});
+if (importStartupRecovery.recovered) {
+    console.warn(`[DB] recovered interrupted database import to ${importStartupRecovery.generation} generation`);
+}
+
 storage.init({ hashPassword });
+fileAgentManager = createFileAgentManager();
+fileAgentManager.rebindTokenDatabase();
 
 /* Unique per-process identifier; lets clients distinguish "service restarted"
  * from "my session is invalid" (FREEZE plan §4.6). */
 const INSTANCE_ID = crypto.randomUUID();
+
+/* WebDAV is an optional production surface. Both keys are dedicated to this
+ * subsystem and are removed from process.env by the manager before any child
+ * process can inherit them. A missing/invalid/reused key leaves an authenticated
+ * 503 surface in place but never prevents the main service from starting. */
+webDavProduction = createWebDavProductionManager({
+    storage,
+    env: process.env,
+    serviceOptions: {
+        allowHttpLoopback: process.env.NODE_ENV === 'test' && process.env.WEBDAV_ALLOW_HTTP_LOOPBACK === 'true',
+        allowLoopback: process.env.NODE_ENV === 'test' && process.env.WEBDAV_ALLOW_HTTP_LOOPBACK === 'true',
+        timeoutMs: 10_000,
+        maxRetries: 2,
+        maxResponseBytes: 1024 * 1024,
+        maxBackupBytes: 40 * 1024 * 1024,
+        operationDeadlineMs: 120_000,
+        operationLimits: {
+            maxConcurrentGlobal: 4,
+            maxConcurrentPerUser: 1,
+            rateWindowMs: 60_000,
+            maxOperationsGlobal: 60,
+            maxOperationsPerUser: 6,
+        },
+    },
+    providerOptions: {
+        maxRecords: 100_000,
+        maxSnapshotBytes: 32 * 1024 * 1024,
+        maxBackupBytes: 40 * 1024 * 1024,
+    },
+});
+const webDavUserLifecycle = {
+    prepareDeleteUser: [
+        ({ userId, target }) => fileAgentManager.deleteUserState({ userId, username: target?.username }),
+        ({ userId }) => aiHistoryRuntime.deleteUserState(userId),
+        ({ userId }) => prepareMobileUserStateDeletion(userId),
+    ],
+    prepareRecreateUser: [
+        ({ userId, target }) => fileAgentManager.deleteUserState({ userId, username: target?.username }),
+        ({ userId }) => aiHistoryRuntime.deleteUserState(userId),
+        ({ userId }) => prepareMobileUserStateDeletion(userId),
+    ],
+    beforeDeleteUser: ({ db, actor, userId }) => {
+        resourceAclMetadataService.deleteUserState(userId, { revokedByUserId: actor?.userId });
+        notesService.deleteUserState(userId);
+        webDavProduction.deleteUserState({ db, userId });
+        webDavSensitiveRateLimiter.deleteUserState(userId, { database: db });
+        aiProviderService.deleteUserState(userId);
+        aiHistoryService.deleteUserState(userId);
+        if (!mobileV1Api?.store) throw new Error('mobile account cleanup is unavailable');
+        mobileV1Api.store.deleteUserState(userId);
+    },
+    beforeRecreateUser: ({ db, actor, userId }) => {
+        resourceAclMetadataService.deleteUserState(userId, { revokedByUserId: actor?.userId });
+        notesService.deleteUserState(userId);
+        webDavProduction.deleteUserState({ db, userId });
+        webDavSensitiveRateLimiter.deleteUserState(userId, { database: db });
+        aiProviderService.deleteUserState(userId);
+        aiHistoryService.deleteUserState(userId);
+        if (!mobileV1Api?.store) throw new Error('mobile account cleanup is unavailable');
+        mobileV1Api.store.deleteUserState(userId);
+    },
+    afterDeleteUser: ({ userId }) => finishMobileUserStateDeletion(userId),
+    afterRecreateUser: ({ userId }) => finishMobileUserStateDeletion(userId),
+    abortDeleteUser: ({ userId }) => restoreMobileUserState(userId),
+    abortRecreateUser: ({ userId }) => restoreMobileUserState(userId),
+};
+
+async function prepareMobileUserStateDeletion(userId) {
+    const api = mobileV1Api;
+    const dispatcher = mobileV1OutboxDispatcher;
+    if (!api?.store || !api?.blobs || !api?.wake || !dispatcher) {
+        throw new Error('mobile account cleanup is unavailable');
+    }
+    appChangeWakeRuntime.deleteUserState(userId);
+    api.wake.deleteUserState(userId);
+    await Promise.all([
+        dispatcher.deleteUserState(userId),
+        api.blobs.prepareDeleteUserState(userId),
+    ]);
+}
+
+async function finishMobileUserStateDeletion(userId) {
+    const complete = await mobileV1Api?.blobs?.deleteUserState(userId);
+    if (complete === false) {
+        /* The durable cleanup row is the retry signal; never log identity,
+         * descriptors, digests or filesystem paths here. */
+        console.warn('[mobile-v1] account blob cleanup deferred');
+    }
+}
+
+function restoreMobileUserState(userId) {
+    mobileV1Api?.blobs?.restoreUserState(userId);
+    mobileV1Api?.wake?.restoreUserState(userId);
+    mobileV1OutboxDispatcher?.restoreUserState(userId);
+}
 
 /* Persistent auth sessions (FREEZE plan §4.6/§18.1): cookie carries a random
  * SID, SQLite stores only SHA-256(SID). Sliding idle TTL + absolute TTL.
@@ -667,6 +1036,10 @@ let sessionStore = new SessionStore(storage.rawDb(), {
     rememberIdleTtlMs: REMEMBER_IDLE_TTL_MS,
     rememberAbsoluteTtlMs: REMEMBER_ABSOLUTE_TTL_MS,
 });
+if (ZEPHYR_ONE_EMBEDDED) {
+    const embeddedUser = storage.getFirstUser();
+    if (embeddedUser) sessionStore.revokeAllForUser(embeddedUser.userId, 'embedded-core-restarted');
+}
 setInterval(() => { try { sessionStore.gc(); } catch {} }, 10 * 60 * 1000).unref();
 
 /* Unified authorization (FREEZE plan §19.1) — every route/WS/tool goes through
@@ -674,10 +1047,65 @@ setInterval(() => { try { sessionStore.gc(); } catch {} }, 10 * 60 * 1000).unref
 const authz = new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserBrief(id) });
 const resourceService = new ResourceService(storage, authz);
 const sharingService = new SharingService(authz, storage, resourceService);
-const userService = new UserService(storage, () => sessionStore, authz, hashPassword);
+let resourceAclMetadataService = new ResourceAclMetadataService({
+    db: storage.rawDb(),
+    authz,
+    resources: resourceService,
+    changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+});
+sharingService.setAclMetadataService(resourceAclMetadataService);
+let clientTokenMetadataService = new ClientTokenMetadataService({
+    db: storage.rawDb(),
+    source: fileAgentManager,
+    changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+});
+const userService = new UserService(storage, () => sessionStore, authz, hashPassword, webDavUserLifecycle);
 const workspaceService = new WorkspaceService(storage.rawDb(), { resources: resourceService });
-const userSettingsService = new UserSettingsService(storage.rawDb(), storage);
+const userSettingsService = new UserSettingsService(storage.rawDb(), storage, {
+    mobileChangeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+});
 const notesService = new NotesService(storage.rawDb(), authz);
+const appChangeWakeBridge = getMobileV1ChangeBridge(storage.rawDb());
+const appChangeWakeHub = new AppChangeWakeHub({
+    allowedEntityTypes: appChangeWakeBridge.registry.entities.map((entity) => entity.type),
+});
+
+/* SSE requests authenticate once, then remain open. Mirror SessionStore's
+ * durable revocation operations into the hub so a revoked cookie cannot keep
+ * receiving owner-scoped wake hints between ordinary HTTP requests. The hub
+ * stores only the session hash already present in SQLite, never the raw SID. */
+const appChangeWakeSessionStores = new WeakSet();
+function bindAppChangeWakeSessionStore(store) {
+    if (!store || appChangeWakeSessionStores.has(store)) return store;
+    appChangeWakeSessionStores.add(store);
+    const revoke = store.revoke.bind(store);
+    store.revoke = (sid, reason) => {
+        const session = store.peek(sid);
+        const revoked = revoke(sid, reason);
+        if (revoked && session) appChangeWakeHub.invalidateSession(session.userId, session.tokenHash);
+        return revoked;
+    };
+    const revokeForUser = store.revokeForUser.bind(store);
+    store.revokeForUser = (userId, tokenHash, reason) => {
+        const revoked = revokeForUser(userId, tokenHash, reason);
+        if (revoked) appChangeWakeHub.invalidateSession(userId, tokenHash);
+        return revoked;
+    };
+    const revokeAllForUser = store.revokeAllForUser.bind(store);
+    store.revokeAllForUser = (userId, reason, options = {}) => {
+        const revoked = revokeAllForUser(userId, reason, options);
+        if (revoked) {
+            appChangeWakeHub.invalidateOwnerSessions(userId, {
+                exceptSessionIdentity: options?.exceptSid ? sessionTokenHash(options.exceptSid) : '',
+            });
+        }
+        return revoked;
+    };
+    return store;
+}
+bindAppChangeWakeSessionStore(sessionStore);
+const appChangeWakeRuntime = new AppChangeWakeRuntime({ hub: appChangeWakeHub });
+appChangeWakeRuntime.bind(storage.rawDb(), { bridge: appChangeWakeBridge });
 const oneClientManager = new OneClientManager({
     db: storage.rawDb(),
     fileAgentManager,
@@ -700,34 +1128,165 @@ const aiRuntimeBridge = new AiRuntimeBridge({
     authz,
 });
 const aiPolicyService = new AiPolicyService(storage.rawDb(), { storage, userSettings: userSettingsService });
-const aiProviderService = new AiProviderService(storage.rawDb(), { storage, secretCrypto });
+const aiProviderService = new AiProviderService(storage.rawDb(), {
+    storage,
+    secretCrypto,
+    mobileChangeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+});
+const serverMetadataServices = createServerMetadataServices({
+    db: storage.rawDb(),
+    storage,
+    changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+});
+
+function authorizeServerMetadata(user, capability) {
+    if (!user || user.status !== 'active') return false;
+    if (capability === SERVER_METADATA_CAPABILITIES.SETTINGS_READ
+        || capability === SERVER_METADATA_CAPABILITIES.ACTIVITY_READ) return true;
+    if (capability === SERVER_METADATA_CAPABILITIES.SETTINGS_UPDATE) return user.role === 'admin';
+    if (capability === SERVER_METADATA_CAPABILITIES.SETTINGS_AI_UPDATE
+        || capability === SERVER_METADATA_CAPABILITIES.BACKUP_READ
+        || capability === SERVER_METADATA_CAPABILITIES.BACKUP_UPDATE) {
+        return user.role === 'admin' && user.isSuperAdmin === true;
+    }
+    return false;
+}
 const { AiSessionFs } = require('./ai-session-fs');
 const aiSessionFs = new AiSessionFs({ dataDir: DATA_DIR });
+const aiHistoryWakeHub = new AiHistoryWakeHub();
+const aiHistoryAttachmentTurnIndexes = new Map();
+
+function aiHistoryAttachmentTurnIndex(ownerUserId) {
+    const cached = aiHistoryAttachmentTurnIndexes.get(ownerUserId);
+    if (cached) return cached;
+    const byId = new Map();
+    const ownerRoot = path.dirname(aiSessionFs.root(ownerUserId, 'probe'));
+    let totalIndexBytes = 0;
+    try {
+        const sessionIds = [];
+        let directory;
+        try {
+            directory = fs.opendirSync(ownerRoot);
+            for (let inspected = 0; inspected < 200; inspected += 1) {
+                const entry = directory.readSync();
+                if (!entry) break;
+                if (entry.isDirectory()) sessionIds.push(entry.name);
+            }
+        } finally {
+            try { directory?.closeSync(); } catch {}
+        }
+        for (const sessionId of sessionIds) {
+            let indexPath;
+            try { indexPath = aiSessionFs.metaPath(ownerUserId, sessionId); } catch { continue; }
+            try {
+                const stat = fs.statSync(indexPath);
+                if (!stat.isFile() || stat.size > 1024 * 1024) continue;
+                totalIndexBytes += stat.size;
+                if (totalIndexBytes > 8 * 1024 * 1024) break;
+                const list = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+                if (!Array.isArray(list)) continue;
+                for (const item of list) {
+                    const id = String(item?.id || '').trim();
+                    if (!id || id.length > 160) continue;
+                    const proof = {
+                        id,
+                        sessionId,
+                        ownerUserId,
+                        shared: false,
+                        residency: 'private-owned',
+                        mobileSyncAllowed: true,
+                        name: String(item.name || ''),
+                        mime: String(item.mime || ''),
+                        size: Math.max(0, Number(item.size) || 0),
+                    };
+                    if (!byId.has(id)) {
+                        byId.set(id, proof);
+                    } else {
+                        const prior = byId.get(id);
+                        if (!prior || prior.sessionId !== sessionId) byId.set(id, null);
+                    }
+                }
+            } catch {}
+        }
+    } catch {}
+    aiHistoryAttachmentTurnIndexes.set(ownerUserId, byId);
+    setImmediate(() => {
+        if (aiHistoryAttachmentTurnIndexes.get(ownerUserId) === byId) {
+            aiHistoryAttachmentTurnIndexes.delete(ownerUserId);
+        }
+    });
+    return byId;
+}
+
+function resolveAiHistoryAttachment(user, ref = {}) {
+    const ownerUserId = String(user?.userId || '').trim();
+    const attachmentId = String(ref?.id || '').trim();
+    if (!ownerUserId || !attachmentId || attachmentId.length > 160) return null;
+    const requestedSession = String(ref?.sessionId || '').trim();
+    const proof = aiHistoryAttachmentTurnIndex(ownerUserId).get(attachmentId);
+    if (!proof || (requestedSession && proof.sessionId !== requestedSession)) return null;
+    return { ...proof };
+}
+
+function aiHistoryServiceOptions() {
+    return {
+        mobileChangeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+        attachmentResolver: resolveAiHistoryAttachment,
+        // Legacy browser caches predating owner binding are deliberately not
+        // accepted. A future signed migration may inject stronger evidence.
+        legacyOwnershipVerifier: () => false,
+        onMutation: ({ ownerUserId }) => aiHistoryWakeHub.publish(ownerUserId),
+    };
+}
+
+const aiHistoryService = new AiHistoryService(storage.rawDb(), aiHistoryServiceOptions());
+const aiHistoryRuntime = new AiHistoryRuntimeController({ service: aiHistoryService });
+aiRuntimeBridge.setHistoryController(aiHistoryRuntime);
+registerAiHistoryRoutes(app, {
+    requireUser,
+    service: aiHistoryService,
+    controller: aiHistoryRuntime,
+    wakeHub: aiHistoryWakeHub,
+});
 fileTransferGateway = new FileTransferGateway({ fileAgentManager, authz, storage, log: console.log });
 setInterval(() => { try { deepLinkService.gc(); } catch {} }, 5 * 60 * 1000).unref();
 setInterval(() => { try { workspaceService.gcStale(); } catch {} }, 60 * 60 * 1000).unref();
 
-function reopenStorage() {
-    storage.close();
-    storage.init({ hashPassword });
-    // Prepared statements inside the session store / authz reference the old
-    // Database handle; rebuild every service against the reopened one.
-    sessionStore = new SessionStore(storage.rawDb(), {
+function createSessionStore() {
+    return bindAppChangeWakeSessionStore(new SessionStore(storage.rawDb(), {
         idleTtlMs: SESSION_IDLE_TTL_MS,
         absoluteTtlMs: SESSION_ABSOLUTE_TTL_MS,
         rememberIdleTtlMs: REMEMBER_IDLE_TTL_MS,
         rememberAbsoluteTtlMs: REMEMBER_ABSOLUTE_TTL_MS,
-    });
-    rebuildAuthServices();
+    }));
 }
 
 function rebuildAuthServices() {
+    // Late runtime completion events belong to the database generation in
+    // which their run started. Drop all pending plaintext before swapping the
+    // stable service object's prepared statements to the imported database.
+    aiHistoryRuntime.reset();
+    resourceAclMetadataService?.uninstall();
     Object.assign(authz, new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserBrief(id) }));
     Object.assign(resourceService, new ResourceService(storage, authz));
     Object.assign(sharingService, new SharingService(authz, storage, resourceService));
-    Object.assign(userService, new UserService(storage, () => sessionStore, authz, hashPassword));
+    resourceAclMetadataService = new ResourceAclMetadataService({
+        db: storage.rawDb(),
+        authz,
+        resources: resourceService,
+        changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+    });
+    sharingService.setAclMetadataService(resourceAclMetadataService);
+    clientTokenMetadataService = new ClientTokenMetadataService({
+        db: storage.rawDb(),
+        source: fileAgentManager,
+        changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+    });
+    Object.assign(userService, new UserService(storage, () => sessionStore, authz, hashPassword, webDavUserLifecycle));
     Object.assign(workspaceService, new WorkspaceService(storage.rawDb(), { resources: resourceService }));
-    Object.assign(userSettingsService, new UserSettingsService(storage.rawDb(), storage));
+    Object.assign(userSettingsService, new UserSettingsService(storage.rawDb(), storage, {
+        mobileChangeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+    }));
     Object.assign(notesService, new NotesService(storage.rawDb(), authz));
     Object.assign(oneClientManager, new OneClientManager({
         db: storage.rawDb(),
@@ -741,12 +1300,399 @@ function rebuildAuthServices() {
     Object.assign(deepLinkService, new DeepLinkService(storage.rawDb()));
     Object.assign(workerBridge, new WorkerBridge({ storage, resources: resourceService, deepLink: deepLinkService, authz }));
     Object.assign(aiPolicyService, new AiPolicyService(storage.rawDb(), { storage, userSettings: userSettingsService }));
-    Object.assign(aiProviderService, new AiProviderService(storage.rawDb(), { storage, secretCrypto }));
+    Object.assign(aiProviderService, new AiProviderService(storage.rawDb(), {
+        storage,
+        secretCrypto,
+        mobileChangeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+    }));
+    Object.assign(aiHistoryService, new AiHistoryService(storage.rawDb(), aiHistoryServiceOptions()));
+    const rebuiltServerMetadata = createServerMetadataServices({
+        db: storage.rawDb(),
+        storage,
+        changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+    });
+    Object.assign(serverMetadataServices.serverSettings, rebuiltServerMetadata.serverSettings);
+    Object.assign(serverMetadataServices.activityEvents, rebuiltServerMetadata.activityEvents);
+}
+
+const MAX_IMPORT_DATABASE_BYTES = 40 * 1024 * 1024;
+const MAX_IMPORT_KEY_BYTES = 128 * 1024;
+const BACKUP_IMPORT_GRANT_HEADER = 'x-zephyr-backup-import-grant';
+const BACKUP_IMPORT_GRANT_TTL_MS = 90 * 1000;
+const BACKUP_IMPORT_MAX_PENDING_GRANTS = 32;
+const BACKUP_IMPORT_MAX_CONCURRENT_GLOBAL = 1;
+const BACKUP_IMPORT_MAX_CONCURRENT_PER_ACCOUNT = 1;
+const BACKUP_IMPORT_UPLOAD_DIRECTORY_PREFIX = '.zephyr-import-upload-';
+const BACKUP_IMPORT_UPLOAD_STATE = Symbol('backupImportUploadState');
+const backupImportGrants = new Map();
+const backupImportActiveByAccount = new Map();
+let backupImportActiveGlobal = 0;
+
+function backupImportGrantDigest(value) {
+    return crypto.createHash('sha256')
+        .update('zephyr-backup-import-grant-v1\0')
+        .update(String(value))
+        .digest('base64url');
+}
+
+function pruneBackupImportGrants(now = Date.now()) {
+    for (const [tokenHash, grant] of backupImportGrants) {
+        if (!grant || grant.expiresAt <= now) backupImportGrants.delete(tokenHash);
+    }
+}
+
+function issueBackupImportGrant(req) {
+    const now = Date.now();
+    pruneBackupImportGrants(now);
+    for (const [tokenHash, grant] of backupImportGrants) {
+        if (grant.userId === req.user.userId && grant.sessionTokenHash === req.session.tokenHash) {
+            backupImportGrants.delete(tokenHash);
+        }
+    }
+    if (backupImportGrants.size >= BACKUP_IMPORT_MAX_PENDING_GRANTS) return null;
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = now + BACKUP_IMPORT_GRANT_TTL_MS;
+    backupImportGrants.set(backupImportGrantDigest(token), Object.freeze({
+        purpose: 'database-import',
+        userId: req.user.userId,
+        sessionTokenHash: req.session.tokenHash,
+        expiresAt,
+    }));
+    return { token, expiresAt };
+}
+
+function sendBackupImportGrantFailure(res) {
+    return res.status(403).json({
+        error: 'Backup import authorization is invalid or expired.',
+        code: 'backup_import_grant_invalid',
+        retryable: false,
+    });
+}
+
+function sendBackupImportStepUpFailure(res) {
+    return res.status(403).json({
+        error: 'Sensitive verification failed.',
+        code: 'backup_import_step_up_failed',
+        retryable: false,
+    });
+}
+
+function backupImportNoStore(_req, res, next) {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+}
+
+function requireBackupImportGrant(req, res, next) {
+    const token = String(req.headers[BACKUP_IMPORT_GRANT_HEADER] || '').trim();
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return sendBackupImportGrantFailure(res);
+
+    const tokenHash = backupImportGrantDigest(token);
+    const grant = backupImportGrants.get(tokenHash);
+    const now = Date.now();
+    if (!grant || grant.expiresAt <= now
+        || grant.purpose !== 'database-import'
+        || grant.userId !== req.user.userId
+        || grant.sessionTokenHash !== req.session.tokenHash) {
+        if (grant?.expiresAt <= now) backupImportGrants.delete(tokenHash);
+        return sendBackupImportGrantFailure(res);
+    }
+
+    const activeForAccount = backupImportActiveByAccount.get(grant.userId) || 0;
+    if (backupImportActiveGlobal >= BACKUP_IMPORT_MAX_CONCURRENT_GLOBAL
+        || activeForAccount >= BACKUP_IMPORT_MAX_CONCURRENT_PER_ACCOUNT) {
+        return res.status(429).json({
+            error: 'A backup import is already in progress.',
+            code: 'backup_import_busy',
+            retryable: true,
+        });
+    }
+
+    /* The map deletion and slot reservation execute together on Node's event
+     * loop before Multer receives a byte, making this grant single-use even
+     * when two requests race with the same session. */
+    backupImportGrants.delete(tokenHash);
+    backupImportActiveGlobal += 1;
+    backupImportActiveByAccount.set(grant.userId, activeForAccount + 1);
+    req.backupImportSlot = { userId: grant.userId, released: false };
+    next();
+}
+
+function releaseBackupImportSlot(req) {
+    const slot = req?.backupImportSlot;
+    if (!slot || slot.released) return;
+    slot.released = true;
+    backupImportActiveGlobal = Math.max(0, backupImportActiveGlobal - 1);
+    const remaining = Math.max(0, (backupImportActiveByAccount.get(slot.userId) || 1) - 1);
+    if (remaining) backupImportActiveByAccount.set(slot.userId, remaining);
+    else backupImportActiveByAccount.delete(slot.userId);
+}
+
+function importUploadDirectoryFor(file) {
+    const directory = String(file?.destination || '');
+    if (!directory) return null;
+    const root = path.resolve(DATA_DIR);
+    const resolved = path.resolve(directory);
+    if (path.dirname(resolved) !== root
+        || !path.basename(resolved).startsWith(BACKUP_IMPORT_UPLOAD_DIRECTORY_PREFIX)) return null;
+    return resolved;
+}
+
+function removeBackupImportUpload(file) {
+    const directory = importUploadDirectoryFor(file);
+    if (!directory) return;
+    const stat = fs.lstatSync(directory, { throwIfNoEntry: false });
+    if (!stat?.isDirectory() || stat.isSymbolicLink()) return;
+    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+}
+
+function cleanupBackupImportUploadForRequest(req) {
+    const failures = [];
+    for (const file of [req?.file, req?.backupImportUpload]) {
+        try { removeBackupImportUpload(file); } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw new AggregateError(failures, 'backup upload cleanup failed');
+}
+
+function cleanupStaleBackupImportUploads() {
+    let entries = [];
+    try { entries = fs.readdirSync(DATA_DIR, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+        if (!entry.name.startsWith(BACKUP_IMPORT_UPLOAD_DIRECTORY_PREFIX) || !entry.isDirectory()) continue;
+        try { removeBackupImportUpload({ destination: path.join(DATA_DIR, entry.name) }); }
+        catch (error) { console.warn('[DB] failed to remove stale backup upload', { error: error.message }); }
+    }
+}
+
+function createBackupImportStorage() {
+    return {
+        _handleFile(_req, file, callback) {
+            let directory = null;
+            let archiveFile = null;
+            let output = null;
+            try {
+                directory = fs.mkdtempSync(path.join(DATA_DIR, BACKUP_IMPORT_UPLOAD_DIRECTORY_PREFIX));
+                fs.chmodSync(directory, 0o700);
+                archiveFile = path.join(directory, 'archive.enc');
+                const fd = fs.openSync(archiveFile, 'wx', 0o600);
+                output = fs.createWriteStream(archiveFile, { fd, autoClose: true });
+            } catch (error) {
+                try { if (directory) removeBackupImportUpload({ destination: directory }); } catch {}
+                callback(error);
+                return;
+            }
+
+            const state = {
+                output,
+                failure: null,
+                handleCompleted: false,
+                removalRequested: false,
+                removalCompleted: false,
+                removalCallbacks: [],
+            };
+            file.destination = directory;
+            file.filename = 'archive.enc';
+            file.path = archiveFile;
+            file[BACKUP_IMPORT_UPLOAD_STATE] = state;
+            _req.backupImportUpload = file;
+
+            const completeHandle = (error) => {
+                if (state.handleCompleted) return;
+                state.handleCompleted = true;
+                callback(error || null, error ? undefined : {
+                    destination: directory,
+                    filename: 'archive.enc',
+                    path: archiveFile,
+                    size: output.bytesWritten,
+                    [BACKUP_IMPORT_UPLOAD_STATE]: state,
+                });
+            };
+            const completeRemoval = () => {
+                if (!state.removalRequested || state.removalCompleted) return;
+                let removalError = null;
+                try { removeBackupImportUpload(file); } catch (error) { removalError = error; }
+                state.removalCompleted = true;
+                for (const removalCallback of state.removalCallbacks.splice(0)) removalCallback(removalError);
+            };
+            const fail = (error) => {
+                if (!state.failure) state.failure = error;
+                file.stream.unpipe(output);
+                if (!output.closed) output.destroy();
+            };
+            file.stream.once('error', fail);
+            output.once('error', fail);
+            // `finish` fires before the file descriptor is closed. Waiting for
+            // `close` lets the route's finally cleanup remove the directory on
+            // Windows as well as POSIX.
+            output.once('close', () => {
+                const interrupted = state.removalRequested
+                    ? new Error('Backup import upload was interrupted.')
+                    : null;
+                completeHandle(state.failure || interrupted);
+                completeRemoval();
+            });
+            file.stream.pipe(output);
+        },
+        _removeFile(_req, file, callback) {
+            const state = file?.[BACKUP_IMPORT_UPLOAD_STATE];
+            if (!state || state.output.closed) {
+                try {
+                    removeBackupImportUpload(file);
+                    callback(null);
+                } catch (error) {
+                    callback(error);
+                }
+                return;
+            }
+            state.removalCallbacks.push(callback);
+            if (state.removalRequested) return;
+            state.removalRequested = true;
+            file.stream?.unpipe(state.output);
+            state.output.destroy();
+        },
+    };
+}
+
+const backupImportUpload = multer({
+    storage: createBackupImportStorage(),
+    limits: {
+        files: 1,
+        fields: 1,
+        // Busboy emits `partsLimit` when it reaches the configured value, so
+        // allow its sentinel third part while accepting at most one file plus
+        // the optional backupPassword field.
+        parts: 3,
+        fileSize: MAX_IMPORT_ARCHIVE_BYTES,
+        fieldNameSize: 32,
+        fieldNestingDepth: 0,
+        fieldSize: 4 * 1024,
+        headerPairs: 16,
+    },
+});
+
+function sendBackupImportMultipartError(res, error) {
+    const overLimit = new Set([
+        'LIMIT_FILE_SIZE',
+        'LIMIT_FIELD_COUNT',
+        'LIMIT_PART_COUNT',
+        'LIMIT_FIELD_VALUE',
+    ]);
+    const status = overLimit.has(error?.code) ? 413 : 400;
+    return res.status(status).json({
+        error: status === 413 ? 'Backup import upload exceeds configured limits.' : 'Invalid backup import upload.',
+        code: status === 413 ? 'backup_import_payload_too_large' : 'invalid_backup_import_multipart',
+        retryable: false,
+    });
+}
+
+function parseBackupImportMultipart(req, res, next) {
+    backupImportUpload.single('backup')(req, res, (error) => {
+        if (error) {
+            try { cleanupBackupImportUploadForRequest(req); } catch {}
+            releaseBackupImportSlot(req);
+            if (!res.destroyed) return sendBackupImportMultipartError(res, error);
+            return;
+        }
+        next();
+    });
+}
+
+const backupImportGrantJsonParser = express.json({ limit: '4kb', strict: true });
+
+function parseBackupImportGrantJson(req, res, next) {
+    backupImportGrantJsonParser(req, res, (error) => {
+        if (!error) return next();
+        const status = error?.type === 'entity.too.large' ? 413 : 400;
+        return res.status(status).json({
+            error: status === 413 ? 'Backup import request is too large.' : 'Invalid backup import request.',
+            code: status === 413 ? 'backup_import_payload_too_large' : 'invalid_backup_import_request',
+            retryable: false,
+        });
+    });
+}
+
+function limitBackupImportStepUp(req, res, next) {
+    if (typeof backupImportSensitiveRateLimiter !== 'function') {
+        return res.status(429).json({
+            error: 'Sensitive verification is temporarily unavailable.',
+            code: 'backup_import_step_up_limited',
+            retryable: true,
+        });
+    }
+    return backupImportSensitiveRateLimiter(req, res, next);
+}
+
+function issueVerifiedBackupImportGrant(req, res) {
+    const body = req.body;
+    const isObject = !!body && typeof body === 'object' && !Array.isArray(body)
+        && (Object.getPrototypeOf(body) === Object.prototype || Object.getPrototypeOf(body) === null);
+    const keys = isObject ? Object.keys(body) : [];
+    const password = isObject && keys.length === 1 && keys[0] === 'password' ? body.password : null;
+    const user = storage.getUser(req.session?.username);
+    if (typeof password !== 'string' || password.length < 1 || password.length > 2048
+        || !user || !verifyPassword(password, user.passwordHash)) {
+        return sendBackupImportStepUpFailure(res);
+    }
+    const grant = issueBackupImportGrant(req);
+    if (!grant) {
+        return res.status(429).json({
+            error: 'Too many pending backup imports.',
+            code: 'backup_import_busy',
+            retryable: true,
+        });
+    }
+    return res.json({ ok: true, grant: grant.token, expiresAt: grant.expiresAt });
+}
+
+function readBackupImportPassword(body) {
+    const isObject = !!body && typeof body === 'object' && !Array.isArray(body)
+        && (Object.getPrototypeOf(body) === Object.prototype || Object.getPrototypeOf(body) === null);
+    const keys = isObject ? Object.keys(body) : [];
+    if (keys.length === 0) return '';
+    if (keys.length !== 1 || keys[0] !== 'backupPassword' || typeof body.backupPassword !== 'string') {
+        const error = new Error('Invalid backup import request.');
+        error.code = 'invalid_backup_import_multipart';
+        throw error;
+    }
+    return body.backupPassword;
+}
+const importTestFaults = process.env.NODE_ENV === 'test'
+    ? new Set(String(process.env.ZEPHYR_IMPORT_TEST_FAULTS || '').split(',').map((value) => value.trim()).filter(Boolean))
+    : new Set();
+const importHardKillStage = process.env.NODE_ENV === 'test'
+    ? String(process.env.ZEPHYR_IMPORT_HARD_KILL_STAGE || '').trim()
+    : '';
+
+function injectImportTestFault(stage) {
+    if (importTestFaults.has(stage)) throw new Error(`injected import failure: ${stage}`);
+}
+
+function injectImportHardKill(stage) {
+    if (importHardKillStage !== stage) return;
+    process.kill(process.pid, 'SIGKILL');
 }
 
 function parseBackupKeyFile(buffer) {
-    if (!buffer?.length) return null;
+    if (!buffer?.length || buffer.length > MAX_IMPORT_KEY_BYTES) return null;
     try { return JSON.parse(buffer.toString('utf8')); } catch { return null; }
+}
+
+function decodeCanonicalBackupKey(value, expectedBytes) {
+    if (typeof value !== 'string' || value.length < 4 || value.length > 32 * 1024
+        || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null;
+    const decoded = Buffer.from(value, 'base64');
+    if (decoded.length !== expectedBytes || decoded.toString('base64') !== value) return null;
+    return decoded;
+}
+
+function validateBackupKeyBuffer(buffer, label = 'backup key') {
+    const parsed = parseBackupKeyFile(buffer);
+    if (!parsed || typeof parsed.publicKey !== 'string' || typeof parsed.secretKey !== 'string'
+        || !decodeCanonicalBackupKey(parsed.publicKey, 1184)
+        || !decodeCanonicalBackupKey(parsed.secretKey, 2400)) {
+        throw new Error(`${label} is invalid`);
+    }
+    return parsed;
 }
 
 function restoredKeyMatchesCurrent(currentBuffer, incomingBuffer) {
@@ -754,6 +1700,418 @@ function restoredKeyMatchesCurrent(currentBuffer, incomingBuffer) {
     const current = parseBackupKeyFile(currentBuffer);
     const incoming = parseBackupKeyFile(incomingBuffer);
     return Boolean(current?.publicKey && current?.secretKey && incoming?.publicKey && incoming?.secretKey && current.publicKey === incoming.publicKey && current.secretKey === incoming.secretKey);
+}
+
+const mobileBlobOperations = new WeakMap();
+
+function trackMobileBlobOperations(blobs) {
+    if (!blobs || mobileBlobOperations.has(blobs) || typeof blobs.gc !== 'function') return;
+    const active = new Set();
+    const originalGc = blobs.gc.bind(blobs);
+    blobs.gc = (...args) => {
+        const operation = Promise.resolve().then(() => originalGc(...args));
+        active.add(operation);
+        operation.then(
+            () => active.delete(operation),
+            () => active.delete(operation),
+        );
+        return operation;
+    };
+    mobileBlobOperations.set(blobs, active);
+}
+
+async function waitForMobileBlobIdle(blobs) {
+    if (!blobs) return;
+    await blobs.ready;
+    const active = mobileBlobOperations.get(blobs);
+    while (active?.size) await Promise.allSettled([...active]);
+    await blobs.waitForIdle?.(null, 30_000);
+}
+
+async function closeMobileV1Api(api) {
+    if (!api) return;
+    const failures = [];
+    try { api.wake?.close?.(); } catch (error) { failures.push(error); }
+    if (api.blobs) {
+        try {
+            await waitForMobileBlobIdle(api.blobs);
+        } catch (error) {
+            failures.push(error);
+        } finally {
+            try { api.blobs.close?.(); } catch (error) { failures.push(error); }
+        }
+    }
+    try { await api.close?.(); } catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError(failures, 'failed to close mobile runtime');
+}
+
+function terminateSessionBoundRuntimes(reason = 'database-import') {
+    const failures = [];
+    for (const session of [...sshTerminalSessions.values()]) {
+        try { destroySshTerminalSession(session, reason); } catch (error) { failures.push(error); }
+    }
+    for (const token of [...sftpUploadSessions.keys()]) {
+        try { destroyUploadSession(token); } catch (error) { failures.push(error); }
+    }
+    for (const id of [...sftpClipboardTransfers.keys()]) {
+        try { cancelSftpClipboardTransfer(id, reason); } catch (error) { failures.push(error); }
+    }
+    for (const id of [...sftpArchiveTransfers.keys()]) {
+        try { cancelSftpArchiveTransfer(id, reason); } catch (error) { failures.push(error); }
+    }
+
+    for (const socketServer of [
+        wss,
+        rdpProxyWss,
+        noVncWss,
+        editorLspWss,
+        agentFilesWss,
+        fileTransferWss,
+        sharedRelayWss,
+    ]) {
+        for (const socket of [...socketServer.clients]) {
+            try { socket.terminate(); } catch (error) { failures.push(error); }
+        }
+    }
+
+    for (const entry of clipboardTransitTokens.values()) {
+        try { if (entry?.path) fs.unlinkSync(entry.path); } catch (error) {
+            if (error?.code !== 'ENOENT') failures.push(error);
+        }
+    }
+    for (const state of [
+        sftpDownloadTokens,
+        sftpUploadTokens,
+        sftpPreviewTokens,
+        sftpMediaTokens,
+        sftpClipboardByUser,
+        sftpClipboardTransfers,
+        sftpArchiveTransfers,
+        previewCache,
+        previewInFlight,
+        mediaProbeCache,
+        clipboardTransitTokens,
+        ephemeralRdpTargetGrants,
+        tempTotpTokens,
+        webauthnChallenges,
+    ]) state.clear();
+
+    if (failures.length) throw new AggregateError(failures, 'failed to terminate session-bound runtime');
+}
+
+async function createMobileV1Runtime({ injectFaults = false } = {}) {
+    if (!mobileV1Api) return null;
+    let api = null;
+    let dispatcher = null;
+    try {
+        api = new MobileV1Api({
+            sharingService,
+            relayMount: '/api/mobile/v1/shared/relay',
+            db: storage.rawDb(),
+            storage,
+            sessionStore,
+            resourceService,
+            notesService,
+            userSettingsService,
+            aiProviderService,
+            aiHistoryService,
+            aiKnowledgeService: userSettingsService.aiKnowledgeService,
+            workspacePortableSyncService: workspaceService.portableSyncService,
+            serverMetadataServices,
+            serverMetadataAuthorize: authorizeServerMetadata,
+            fileAgentManager,
+            authz,
+            resourceAclService: resourceAclMetadataService,
+            clientTokenService: clientTokenMetadataService,
+            changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+            entityRegistry: JSON.parse(fs.readFileSync(resolveMobileContract('registries/entity-registry.json'), 'utf8')),
+            verifySensitive: (user, secret) => verifySensitiveAccess({ session: { username: user.username } }, secret),
+            log: (...args) => console.log('[mobile-v1]', ...args),
+        });
+        trackMobileBlobOperations(api.blobs);
+        await api.blobs?.ready;
+        if (injectFaults) injectImportTestFault('mobile_runtime_rebuild');
+        dispatcher = new MobileV1OutboxDispatcher({
+            changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+            wake: api.wake,
+            log: (...args) => console.warn(...args),
+        });
+        if (!dispatcher.start()) throw new Error('mobile outbox dispatcher leader is still active');
+        return { api, dispatcher };
+    } catch (error) {
+        try { dispatcher?.close(); } catch {}
+        await closeMobileV1Api(api);
+        throw error;
+    }
+}
+
+async function stopDatabaseRuntime({ flushOutbox = true } = {}) {
+    const failures = [];
+    try { await databaseMaintenance.aiDrain; } catch (error) { failures.push(error); }
+    const dispatcher = mobileV1OutboxDispatcher;
+    mobileV1OutboxDispatcher = null;
+    if (dispatcher) {
+        if (flushOutbox) {
+            try { await dispatcher.flush(); } catch (error) { failures.push(error); }
+        }
+        try { dispatcher.close(); } catch (error) { failures.push(error); }
+    }
+    try { appChangeWakeRuntime.unbind({ disconnect: true }); } catch (error) { failures.push(error); }
+    /* Wake streams and WebDAV operations are intentionally closed before the
+     * HTTP drain: both can otherwise keep a request open indefinitely. Blob
+     * finalizers are joined by closeMobileV1Api before SQLite is closed. */
+    try { mobileV1Api?.wake?.close?.(); } catch (error) { failures.push(error); }
+    try { terminateSessionBoundRuntimes(); } catch (error) { failures.push(error); }
+    try { await webDavProduction.beforeStorageClose(); } catch (error) { failures.push(error); }
+    try { await waitForDatabaseRequestDrain(1); } catch (error) { failures.push(error); }
+    try { await closeMobileV1Api(mobileV1Api); } catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError(failures, 'failed to drain database runtime');
+}
+
+async function rebuildDatabaseRuntime({ expectWebDav = false, injectFaults = false } = {}) {
+    fileAgentManager.rebindTokenDatabase();
+    sessionStore = createSessionStore();
+    rebuildAuthServices();
+    appChangeWakeRuntime.bind(storage.rawDb(), {
+        bridge: getMobileV1ChangeBridge(storage.rawDb()),
+    });
+    if (injectFaults) injectImportTestFault('auth_runtime_rebuild');
+    const mobileRuntime = await createMobileV1Runtime({ injectFaults });
+    if (mobileRuntime) {
+        Object.assign(mobileV1Api, mobileRuntime.api);
+        mobileV1OutboxDispatcher = mobileRuntime.dispatcher;
+    }
+    const rebuiltWebDav = webDavProduction.rebuild();
+    if (expectWebDav && !rebuiltWebDav) throw new Error('WebDAV runtime failed to rebuild');
+}
+
+function fsyncFile(file) {
+    const fd = fs.openSync(file, 'r+');
+    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
+function removeSqliteSidecars(databaseFile) {
+    for (const suffix of ['-wal', '-shm']) {
+        try { fs.unlinkSync(`${databaseFile}${suffix}`); } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+        }
+    }
+}
+
+function assertCheckpointComplete() {
+    const result = storage.rawDb().pragma('wal_checkpoint(TRUNCATE)');
+    const row = Array.isArray(result) ? result[0] : null;
+    if (row && Number(row.busy || 0) !== 0) throw new Error('SQLite WAL checkpoint remained busy');
+}
+
+function backupExportCheckpointError() {
+    const error = new Error('Backup export is temporarily unavailable.');
+    error.code = 'backup_export_checkpoint_incomplete';
+    error.status = 503;
+    error.retryable = true;
+    return error;
+}
+
+function assertBackupExportCheckpointComplete() {
+    let result;
+    try {
+        result = storage.rawDb().pragma('wal_checkpoint(FULL)');
+    } catch (error) {
+        // SQLite error strings can include filesystem paths; keep them out of HTTP and logs.
+        console.warn('[DB] backup export checkpoint unavailable', {
+            error: String(error?.code || error?.name || 'checkpoint_failed'),
+        });
+        throw backupExportCheckpointError();
+    }
+
+    const row = Array.isArray(result) && result.length === 1 ? result[0] : null;
+    const busy = row?.busy;
+    const log = row?.log;
+    const checkpointed = row?.checkpointed;
+    if (!Number.isSafeInteger(busy) || !Number.isSafeInteger(log) || !Number.isSafeInteger(checkpointed)
+        || busy !== 0 || log < 0 || checkpointed < 0 || checkpointed !== log) {
+        console.warn('[DB] backup export checkpoint incomplete');
+        throw backupExportCheckpointError();
+    }
+}
+
+function validateDatabaseFileLayout(databaseFile) {
+    const stat = fs.statSync(databaseFile, { throwIfNoEntry: false });
+    if (!stat?.isFile() || stat.size < 100 || stat.size > MAX_IMPORT_DATABASE_BYTES) {
+        throw new Error('backup database size is invalid');
+    }
+    const header = Buffer.alloc(100);
+    const fd = fs.openSync(databaseFile, 'r');
+    try {
+        if (fs.readSync(fd, header, 0, header.length, 0) !== header.length) {
+            throw new Error('backup database header is truncated');
+        }
+    } finally {
+        fs.closeSync(fd);
+    }
+    if (!header.subarray(0, 16).equals(Buffer.from('SQLite format 3\0', 'binary'))) {
+        throw new Error('backup database header is invalid');
+    }
+    const encodedPageSize = header.readUInt16BE(16);
+    const pageSize = encodedPageSize === 1 ? 65536 : encodedPageSize;
+    if (pageSize < 512 || pageSize > 65536 || (pageSize & (pageSize - 1)) !== 0 || stat.size % pageSize !== 0) {
+        throw new Error('backup database page layout is invalid');
+    }
+}
+
+function validateStagedDatabase(databaseFile) {
+    let candidate = null;
+    let validationError = null;
+    try {
+        candidate = createDatabase(databaseFile);
+        const result = candidate.pragma('quick_check(1)');
+        const row = Array.isArray(result) ? result[0] : null;
+        const value = row && Object.values(row)[0];
+        if (String(value || '').toLowerCase() !== 'ok') throw new Error('backup database integrity check failed');
+        const users = candidate.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get();
+        if (!users) throw new Error('backup database is missing required schema');
+    } catch (error) {
+        validationError = error;
+        throw error;
+    } finally {
+        const cleanupErrors = [];
+        try { candidate?.close(); } catch (error) { cleanupErrors.push(error); }
+        try { removeSqliteSidecars(databaseFile); } catch (error) { cleanupErrors.push(error); }
+        if (cleanupErrors.length) {
+            throw new AggregateError(
+                validationError ? [validationError, ...cleanupErrors] : cleanupErrors,
+                'candidate SQLite cleanup failed',
+            );
+        }
+    }
+}
+
+function fatalImportRollback(importError, rollbackError) {
+    databaseMaintenance.fatal = true;
+    databaseMaintenance.active = true;
+    console.error('[DB] import rollback failed; terminating process', {
+        importError: importError?.message || String(importError),
+        rollbackError: rollbackError?.message || String(rollbackError),
+    });
+    process.exit(70);
+}
+
+function finishDeferredImportFinalization({
+    transaction,
+    cleanupLease,
+    finalized,
+    retryFinalization,
+}) {
+    let result = finalized;
+    let cleanupError = result?.cleanupError || null;
+    for (let attempt = 0; cleanupError && attempt < 3; attempt += 1) {
+        if (!fs.existsSync(path.join(DATA_DIR, JOURNAL_NAME))) {
+            try {
+                /* The terminal journal was already removed. Only this exact
+                 * request's lease may complete the remaining orphan cleanup. */
+                cleanupImportOrphans({
+                    dataDir: DATA_DIR,
+                    databaseFile: DB_FILE,
+                    keyFile: secretCrypto.currentKeyFile(),
+                    cleanupLease,
+                });
+                return { cleanupError: null };
+            } catch (error) {
+                cleanupError = error;
+                continue;
+            }
+        }
+        try {
+            result = retryFinalization(transaction);
+            cleanupError = result?.cleanupError || null;
+        } catch (error) {
+            cleanupError = error;
+        }
+    }
+    if (cleanupError) throw cleanupError;
+    return result;
+}
+
+async function importDatabaseAtomically({ databaseFile, incomingKeyBuffer, keyState, cleanupLease }) {
+    const expectWebDav = webDavProduction.available;
+    const keyChanged = Boolean(
+        incomingKeyBuffer && !restoredKeyMatchesCurrent(keyState.buffer, incomingKeyBuffer),
+    );
+    let transaction = null;
+    let committed = false;
+    let storageClosed = false;
+    const finalizationFaultInjector = (stage) => {
+        injectImportHardKill(stage);
+        injectImportTestFault(stage);
+    };
+    beginDatabaseMaintenance();
+    try {
+        await stopDatabaseRuntime();
+        assertCheckpointComplete();
+        storage.close();
+        storageClosed = true;
+
+        transaction = beginImportInstall({
+            dataDir: DATA_DIR,
+            databaseFile: DB_FILE,
+            candidateDatabaseFile: databaseFile,
+            keyFile: keyState.filePath,
+            incomingKeyBuffer,
+            keyChanged,
+            cleanupLease,
+            faultInjector: injectImportHardKill,
+        });
+        installPreparedImport(transaction, {
+            faultInjector: injectImportHardKill,
+            installKeyBuffer: (buffer, options) => secretCrypto.restoreKeyBackupAtomically(buffer, options),
+        });
+        injectImportTestFault('after_database_install');
+        storage.init({ hashPassword });
+        injectImportTestFault('after_new_storage_init');
+        await rebuildDatabaseRuntime({ expectWebDav, injectFaults: true });
+        injectImportTestFault('after_runtime_rebuild');
+        let finalized = commitImportInstall(transaction, { faultInjector: finalizationFaultInjector });
+        committed = true;
+        finalized = finishDeferredImportFinalization({
+            transaction,
+            cleanupLease,
+            finalized,
+            retryFinalization: (pending) => commitImportInstall(pending, {
+                faultInjector: finalizationFaultInjector,
+            }),
+        });
+        endDatabaseMaintenance();
+    } catch (importError) {
+        if (committed) fatalImportRollback(importError, new Error('committed import failed after its durable commit point'));
+        try {
+            try { await stopDatabaseRuntime({ flushOutbox: false }); } catch {}
+            if (storageClosed) {
+                try { storage.close(); } catch {}
+            }
+            if (transaction) {
+                let finalized = rollbackImportInstall(transaction, {
+                    faultInjector: finalizationFaultInjector,
+                    installKeyBuffer: (buffer, options) => secretCrypto.restoreKeyBackupAtomically(buffer, options),
+                });
+                finalized = finishDeferredImportFinalization({
+                    transaction,
+                    cleanupLease,
+                    finalized,
+                    retryFinalization: (pending) => rollbackImportInstall(pending, {
+                        faultInjector: finalizationFaultInjector,
+                        installKeyBuffer: (buffer, options) => secretCrypto.restoreKeyBackupAtomically(buffer, options),
+                    }),
+                });
+            }
+            injectImportTestFault('rollback_reopen');
+            if (storageClosed) storage.init({ hashPassword });
+            await rebuildDatabaseRuntime({ expectWebDav });
+            endDatabaseMaintenance();
+        } catch (rollbackError) {
+            fatalImportRollback(importError, rollbackError);
+        }
+        throw importError;
+    }
 }
 
 function parseCookies(req) {
@@ -974,7 +2332,7 @@ function applyConnectionRouteFields(conn, body) {
  * Hosted Zephyr asks for the account password or a TOTP code. That is the
  * credential the user actually chose, so it stays exactly as it was.
  *
- * Zephyr One has neither. The local account is auto-adopted by the shell, its
+ * Zephyr One has neither. The local account session is bootstrapped by the shell, its
  * password is a generated value the user never picked and cannot be asked to
  * remember, and there is no second factor. Prompting for it would be theatre:
  * anybody who can reach this page is already inside the desktop session that
@@ -1054,7 +2412,17 @@ function buildSSHConfig(conn, timeout = 10000) {
     return cfg;
 }
 
-function waitForSocket(socket, timeout, label = 'TCP 连接') {
+function createRouteAbortError(label = 'TCP route') {
+    const error = new Error(`${label} aborted`);
+    error.code = 'ABORT_ERR';
+    return error;
+}
+
+function throwIfRouteAborted(signal, label) {
+    if (signal?.aborted) throw createRouteAbortError(label);
+}
+
+function waitForSocket(socket, timeout, label = 'TCP 连接', signal = null) {
     return new Promise((resolve, reject) => {
         let done = false;
         const finish = (err) => {
@@ -1063,36 +2431,123 @@ function waitForSocket(socket, timeout, label = 'TCP 连接') {
             clearTimeout(timer);
             socket.off('connect', onConnect);
             socket.off('error', onError);
+            signal?.removeEventListener?.('abort', onAbort);
             if (err) reject(err); else resolve(socket);
         };
         const onConnect = () => finish();
         const onError = (err) => finish(err);
+        const onAbort = () => {
+            try { socket.destroy(); } catch {}
+            finish(createRouteAbortError(label));
+        };
         const timer = setTimeout(() => {
             socket.destroy();
             finish(new Error(`${label}超时`));
         }, timeout);
+        if (signal?.aborted) return onAbort();
+        signal?.addEventListener?.('abort', onAbort, { once: true });
         socket.once('connect', onConnect);
         socket.once('error', onError);
     });
 }
 
-function readSocketChunk(socket, timeout) {
-    return new Promise((resolve, reject) => {
-        let done = false;
-        const finish = (err, data) => {
-            if (done) return;
-            done = true;
-            clearTimeout(timer);
-            socket.off('data', onData);
-            socket.off('error', onError);
-            if (err) reject(err); else resolve(data);
-        };
-        const onData = (data) => finish(null, data);
-        const onError = (err) => finish(err);
-        const timer = setTimeout(() => finish(new Error('SOCKS5 握手超时')), timeout);
-        socket.once('data', onData);
-        socket.once('error', onError);
-    });
+function createSocketHandshakeReader(socket, timeout, signal = null, maxBufferedBytes = 64 * 1024) {
+    let buffered = Buffer.alloc(0);
+    let pending = null;
+    let released = false;
+    let terminalError = null;
+    const deadline = Date.now() + Math.max(1, Number(timeout) || 1);
+
+    const cleanup = () => {
+        socket.off('data', onData);
+        socket.off('error', onError);
+        socket.off('close', onClose);
+        signal?.removeEventListener?.('abort', onAbort);
+    };
+    const fail = (error) => {
+        if (released) return;
+        terminalError = error;
+        const active = pending;
+        pending = null;
+        cleanup();
+        if (active) {
+            clearTimeout(active.timer);
+            active.reject(error);
+        }
+    };
+    const pump = () => {
+        if (!pending || released) return;
+        let frame;
+        try { frame = pending.extract(buffered); } catch (error) { fail(error); return; }
+        if (!frame) return;
+        const active = pending;
+        pending = null;
+        clearTimeout(active.timer);
+        buffered = buffered.subarray(frame.bytesConsumed);
+        active.resolve(frame.value);
+    };
+    const onData = (chunk) => {
+        if (released) return;
+        buffered = buffered.length ? Buffer.concat([buffered, chunk]) : Buffer.from(chunk);
+        if (buffered.length > maxBufferedBytes) {
+            fail(new Error('Proxy handshake response is too large'));
+            return;
+        }
+        pump();
+    };
+    const onError = (error) => fail(error);
+    const onClose = () => fail(new Error('Proxy closed during handshake'));
+    const onAbort = () => {
+        const error = createRouteAbortError('Proxy handshake');
+        try { socket.destroy(); } catch {}
+        fail(error);
+    };
+
+    socket.on('data', onData);
+    socket.once('error', onError);
+    socket.once('close', onClose);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener?.('abort', onAbort, { once: true });
+
+    const read = (extract, label) => {
+        if (released) return Promise.reject(new Error('Proxy handshake reader is released'));
+        if (terminalError) return Promise.reject(terminalError);
+        if (pending) return Promise.reject(new Error('Concurrent proxy handshake reads are not supported'));
+        return new Promise((resolve, reject) => {
+            const remaining = Math.max(1, deadline - Date.now());
+            const timer = setTimeout(() => fail(new Error(`${label}超时`)), remaining);
+            pending = { extract, resolve, reject, timer };
+            pump();
+        });
+    };
+
+    return {
+        readExact(size, label) {
+            return read((data) => data.length >= size
+                ? { bytesConsumed: size, value: Buffer.from(data.subarray(0, size)) }
+                : null, label);
+        },
+        readUntil(marker, label) {
+            const delimiter = Buffer.from(marker);
+            return read((data) => {
+                const index = data.indexOf(delimiter);
+                if (index < 0) return null;
+                const end = index + delimiter.length;
+                return { bytesConsumed: end, value: Buffer.from(data.subarray(0, end)) };
+            }, label);
+        },
+        release() {
+            if (released) return;
+            if (pending) throw new Error('Cannot release proxy handshake reader during a read');
+            released = true;
+            cleanup();
+            if (buffered.length) {
+                socket.pause();
+                socket.unshift(buffered);
+                buffered = Buffer.alloc(0);
+            }
+        },
+    };
 }
 
 function normalizeProxyType(type) {
@@ -1100,73 +2555,111 @@ function normalizeProxyType(type) {
     return ['socks5', 'http'].includes(value) ? value : 'socks5';
 }
 
-async function openSocks5Connection(proxy, targetHost, targetPort, timeout = 10000) {
+async function openSocks5Connection(proxy, targetHost, targetPort, timeout = 10000, signal = null) {
     if (!proxy?.host || !proxy?.port) throw new Error('代理配置不完整');
     console.debug('[proxy]', 'open SOCKS5 tunnel', { proxyId: proxy.id, proxy: proxy.name || proxy.host, targetHost, targetPort });
     const socket = net.createConnection(Number(proxy.port) || 1080, proxy.host);
-    await waitForSocket(socket, timeout, 'SOCKS5 代理');
+    let reader = null;
+    try {
+        await waitForSocket(socket, timeout, 'SOCKS5 代理', signal);
+        reader = createSocketHandshakeReader(socket, timeout, signal);
 
-    const hasAuth = Boolean(proxy.username || proxy.password);
-    socket.write(hasAuth ? Buffer.from([0x05, 0x02, 0x00, 0x02]) : Buffer.from([0x05, 0x01, 0x00]));
-    let chunk = await readSocketChunk(socket, timeout);
-    if (chunk[0] !== 0x05 || chunk[1] === 0xff) throw new Error('SOCKS5 代理不支持可用认证方式');
+        const hasAuth = Boolean(proxy.username || proxy.password);
+        socket.write(hasAuth ? Buffer.from([0x05, 0x02, 0x00, 0x02]) : Buffer.from([0x05, 0x01, 0x00]));
+        let chunk = await reader.readExact(2, 'SOCKS5 握手');
+        if (chunk[0] !== 0x05 || chunk[1] === 0xff) throw new Error('SOCKS5 代理不支持可用认证方式');
 
-    if (chunk[1] === 0x02) {
-        const user = Buffer.from(String(proxy.username || ''));
-        const pass = Buffer.from(String(proxy.password || ''));
-        if (user.length > 255 || pass.length > 255) throw new Error('SOCKS5 用户名或密码过长');
-        socket.write(Buffer.concat([Buffer.from([0x01, user.length]), user, Buffer.from([pass.length]), pass]));
-        chunk = await readSocketChunk(socket, timeout);
-        if (chunk[1] !== 0x00) throw new Error('SOCKS5 代理认证失败');
+        if (chunk[1] === 0x02) {
+            const user = Buffer.from(String(proxy.username || ''));
+            const pass = Buffer.from(String(proxy.password || ''));
+            if (user.length > 255 || pass.length > 255) throw new Error('SOCKS5 用户名或密码过长');
+            socket.write(Buffer.concat([Buffer.from([0x01, user.length]), user, Buffer.from([pass.length]), pass]));
+            chunk = await reader.readExact(2, 'SOCKS5 认证');
+            if (chunk[0] !== 0x01 || chunk[1] !== 0x00) throw new Error('SOCKS5 代理认证失败');
+        }
+
+        const host = String(targetHost || '');
+        const port = Number(targetPort) || 22;
+        let addr;
+        const ipType = net.isIP(host);
+        if (ipType === 4) addr = Buffer.from([0x01, ...host.split('.').map((n) => Number(n))]);
+        else {
+            const hostBuf = Buffer.from(host);
+            if (!hostBuf.length || hostBuf.length > 255) throw new Error('目标主机名无效');
+            addr = Buffer.concat([Buffer.from([0x03, hostBuf.length]), hostBuf]);
+        }
+        const portBuf = Buffer.alloc(2);
+        portBuf.writeUInt16BE(port, 0);
+        socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00]), addr, portBuf]));
+        const reply = await reader.readExact(4, 'SOCKS5 CONNECT');
+        if (reply[0] !== 0x05 || reply[2] !== 0x00) throw new Error('SOCKS5 代理返回了无效 CONNECT 响应');
+        if (reply[3] === 0x01) await reader.readExact(6, 'SOCKS5 IPv4 CONNECT');
+        else if (reply[3] === 0x04) await reader.readExact(18, 'SOCKS5 IPv6 CONNECT');
+        else if (reply[3] === 0x03) {
+            const length = (await reader.readExact(1, 'SOCKS5 domain CONNECT'))[0];
+            await reader.readExact(length + 2, 'SOCKS5 domain CONNECT');
+        } else throw new Error('SOCKS5 代理返回了无效地址类型');
+        if (reply[1] !== 0x00) throw new Error(`SOCKS5 代理连接目标失败（状态 ${reply[1]}）`);
+        throwIfRouteAborted(signal, 'SOCKS5 route');
+        reader.release();
+        return socket;
+    } catch (err) {
+        try { socket.destroy(); } catch {}
+        throw err;
     }
-
-    const host = String(targetHost || '');
-    const port = Number(targetPort) || 22;
-    let addr;
-    const ipType = net.isIP(host);
-    if (ipType === 4) addr = Buffer.from([0x01, ...host.split('.').map((n) => Number(n))]);
-    else {
-        const hostBuf = Buffer.from(host);
-        if (!hostBuf.length || hostBuf.length > 255) throw new Error('目标主机名无效');
-        addr = Buffer.concat([Buffer.from([0x03, hostBuf.length]), hostBuf]);
-    }
-    const portBuf = Buffer.alloc(2);
-    portBuf.writeUInt16BE(port, 0);
-    socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00]), addr, portBuf]));
-    chunk = await readSocketChunk(socket, timeout);
-    if (chunk[1] !== 0x00) throw new Error(`SOCKS5 代理连接目标失败（状态 ${chunk[1]}）`);
-    return socket;
 }
 
-async function openHttpProxyConnection(proxy, targetHost, targetPort, timeout = 10000) {
+async function openHttpProxyConnection(proxy, targetHost, targetPort, timeout = 10000, signal = null) {
     if (!proxy?.host || !proxy?.port) throw new Error('代理配置不完整');
     console.debug('[proxy]', 'open HTTP CONNECT tunnel', { proxyId: proxy.id, proxy: proxy.name || proxy.host, targetHost, targetPort });
     const socket = net.createConnection(Number(proxy.port) || 8080, proxy.host);
-    await waitForSocket(socket, timeout, 'HTTP 代理');
-    const target = `${targetHost}:${Number(targetPort) || 22}`;
-    const headers = [`CONNECT ${target} HTTP/1.1`, `Host: ${target}`, 'Proxy-Connection: Keep-Alive'];
-    if (proxy.username || proxy.password) {
-        const token = Buffer.from(`${proxy.username || ''}:${proxy.password || ''}`).toString('base64');
-        headers.push(`Proxy-Authorization: Basic ${token}`);
+    let reader = null;
+    try {
+        await waitForSocket(socket, timeout, 'HTTP 代理', signal);
+        reader = createSocketHandshakeReader(socket, timeout, signal);
+        const target = `${targetHost}:${Number(targetPort) || 22}`;
+        const headers = [`CONNECT ${target} HTTP/1.1`, `Host: ${target}`, 'Proxy-Connection: Keep-Alive'];
+        if (proxy.username || proxy.password) {
+            const token = Buffer.from(`${proxy.username || ''}:${proxy.password || ''}`).toString('base64');
+            headers.push(`Proxy-Authorization: Basic ${token}`);
+        }
+        socket.write(`${headers.join('\r\n')}\r\n\r\n`);
+        const chunk = await reader.readUntil('\r\n\r\n', 'HTTP CONNECT');
+        const head = chunk.toString('latin1');
+        const status = head.match(/^HTTP\/\d(?:\.\d)?\s+(\d+)/i)?.[1];
+        if (status !== '200') throw new Error(`HTTP 代理 CONNECT 失败（状态 ${status || 'unknown'}）`);
+        throwIfRouteAborted(signal, 'HTTP CONNECT route');
+        reader.release();
+        return socket;
+    } catch (err) {
+        try { socket.destroy(); } catch {}
+        throw err;
     }
-    socket.write(`${headers.join('\r\n')}\r\n\r\n`);
-    const chunk = await readSocketChunk(socket, timeout);
-    const head = chunk.toString('latin1');
-    const status = head.match(/^HTTP\/\d(?:\.\d)?\s+(\d+)/i)?.[1];
-    if (status !== '200') {
-        socket.destroy();
-        throw new Error(`HTTP 代理 CONNECT 失败（状态 ${status || 'unknown'}）`);
-    }
-    return socket;
 }
 
-function openProxyConnection(proxy, targetHost, targetPort, timeout = 10000) {
+function openProxyConnection(proxy, targetHost, targetPort, timeout = 10000, signal = null) {
     const type = normalizeProxyType(proxy?.type);
-    if (type === 'http') return openHttpProxyConnection(proxy, targetHost, targetPort, timeout);
-    return openSocks5Connection(proxy, targetHost, targetPort, timeout);
+    if (type === 'http') return openHttpProxyConnection(proxy, targetHost, targetPort, timeout, signal);
+    return openSocks5Connection(proxy, targetHost, targetPort, timeout, signal);
 }
 
-function connectSSHClient(conn, { timeout = 10000, sock = undefined } = {}) {
+async function dialLiveTelnet(conn, { timeout = 10000, cols = 80, rows = 24, signal = null } = {}) {
+    const host = String(conn?.host || '');
+    const port = Number(conn?.port) || 23;
+    if (!host) throw new Error('主机不能为空');
+    const socket = net.createConnection(port, host);
+    try {
+        await waitForSocket(socket, timeout, 'Telnet 连接', signal);
+        throwIfRouteAborted(signal, 'Telnet connect');
+        negotiateTelnet(socket, cols, rows);
+        return socket;
+    } catch (error) {
+        try { socket.destroy(); } catch {}
+        throw error;
+    }
+}
+
+function connectSSHClient(conn, { timeout = 10000, sock = undefined, signal = null } = {}) {
     return new Promise((resolve, reject) => {
         const client = new Client();
         const label = `${conn?.name || conn?.host || 'unknown'}@${conn?.host || '-'}:${Number(conn?.port) || 22}`;
@@ -1176,6 +2669,7 @@ function connectSSHClient(conn, { timeout = 10000, sock = undefined } = {}) {
             settled = true;
             client.off('ready', onReady);
             client.off('error', onError);
+            signal?.removeEventListener?.('abort', onAbort);
             if (err) {
                 console.warn('[SSH-DIAG] ssh client connect failed', {
                     connectionId: conn?.id || '',
@@ -1186,6 +2680,9 @@ function connectSSHClient(conn, { timeout = 10000, sock = undefined } = {}) {
                     message: err.message,
                 });
                 try { client.end(); } catch {}
+                // Until ready, connectSSHClient owns the supplied transport.
+                // Validation can fail before ssh2 receives cfg.sock.
+                try { sock?.destroy?.(); } catch {}
                 reject(err);
             } else {
                 console.info('[SSH-DIAG] ssh client ready', { connectionId: conn?.id || '', label, viaSocket: !!sock });
@@ -1194,6 +2691,7 @@ function connectSSHClient(conn, { timeout = 10000, sock = undefined } = {}) {
         };
         const onReady = () => finish();
         const onError = (err) => finish(err);
+        const onAbort = () => finish(createRouteAbortError('SSH connect'));
         client.once('ready', onReady);
         client.once('error', onError);
         // After ready fires, onError is removed. But ssh2 can still emit
@@ -1213,6 +2711,11 @@ function connectSSHClient(conn, { timeout = 10000, sock = undefined } = {}) {
         });
         client.once('end', () => console.info('[SSH-DIAG] ssh client end', { connectionId: conn?.id || '', label }));
         client.once('close', () => console.info('[SSH-DIAG] ssh client close', { connectionId: conn?.id || '', label, settled }));
+        if (signal?.aborted) {
+            onAbort();
+            return;
+        }
+        signal?.addEventListener?.('abort', onAbort, { once: true });
         try {
             const cfg = buildSSHConfig(conn, timeout);
             if (sock) cfg.sock = sock;
@@ -1223,13 +2726,38 @@ function connectSSHClient(conn, { timeout = 10000, sock = undefined } = {}) {
     });
 }
 
-function forwardOut(client, host, port) {
+function forwardOut(client, host, port, timeout = 0, signal = null) {
     return new Promise((resolve, reject) => {
-        client.forwardOut('127.0.0.1', 0, host, Number(port) || 22, (err, stream) => err ? reject(err) : resolve(stream));
+        let settled = false;
+        const finish = (err, stream) => {
+            if (settled) {
+                try { stream?.destroy?.(); } catch {}
+                return;
+            }
+            settled = true;
+            if (timer) clearTimeout(timer);
+            signal?.removeEventListener?.('abort', onAbort);
+            if (err) reject(err);
+            else resolve(stream);
+        };
+        const onAbort = () => finish(createRouteAbortError('SSH TCP forward'));
+        const timer = timeout > 0
+            ? setTimeout(() => finish(new Error('SSH TCP forward timeout')), timeout)
+            : null;
+        if (signal?.aborted) return onAbort();
+        signal?.addEventListener?.('abort', onAbort, { once: true });
+        try {
+            client.forwardOut('127.0.0.1', 0, host, Number(port) || 22, (err, stream) => finish(err, stream));
+        } catch (err) {
+            finish(err);
+        }
     });
 }
 
+const AUTHORIZED_CONNECTION_TEST_ROUTE = Symbol('authorizedConnectionTestRoute');
+
 function resolveRoutePlan(conn) {
+    if (conn?.[AUTHORIZED_CONNECTION_TEST_ROUTE]) return conn[AUTHORIZED_CONNECTION_TEST_ROUTE];
     const connections = storage.listAllConnectionRows();
     const mode = conn.connectionMode || 'direct';
     if (mode === 'proxy') {
@@ -1289,52 +2817,118 @@ async function createRoutedSSHConnection(conn, timeout = 10000) {
     }
 }
 
-function listenLocalTcpForward({ route, targetLabel, openTargetStream, onClose }) {
+function listenLocalTcpForward({ route, targetLabel, openTargetStream, onClose, signal = null }) {
     return new Promise((resolve, reject) => {
         const sockets = new Set();
-        const server = net.createServer(async (localSocket) => {
-            let remoteSocket = null;
+        const inflight = new Set();
+        const abortController = new AbortController();
+        let closed = false;
+        let listenerSettled = false;
+        let closePromise = Promise.resolve();
+        let readySettled = false;
+        let resolveReady;
+        let rejectReady;
+        const readyPromise = new Promise((readyResolve, readyReject) => {
+            resolveReady = readyResolve;
+            rejectReady = readyReject;
+        });
+        // Some callers only need the listener. Live callers can still observe
+        // the original promise through waitForReady().
+        readyPromise.catch(() => {});
+
+        const settleReady = (err, value) => {
+            if (readySettled) return;
+            readySettled = true;
+            if (err) rejectReady(err);
+            else resolveReady(value);
+        };
+
+        let externalAbortHandler = null;
+        const server = net.createServer((localSocket) => {
+            if (closed) {
+                try { localSocket.destroy(); } catch {}
+                return;
+            }
             sockets.add(localSocket);
             localSocket.on('close', () => sockets.delete(localSocket));
             localSocket.on('error', (err) => console.warn('[tcp-forward]', 'local socket error', { route, target: targetLabel, error: err.message }));
 
-            try {
-                remoteSocket = await openTargetStream();
-                sockets.add(remoteSocket);
-                remoteSocket.on('close', () => sockets.delete(remoteSocket));
-                remoteSocket.on('error', (err) => console.warn('[tcp-forward]', 'remote socket error', { route, target: targetLabel, error: err.message }));
-                localSocket.pipe(remoteSocket);
-                remoteSocket.pipe(localSocket);
-            } catch (err) {
-                console.warn('[tcp-forward]', 'failed to open target stream', { route, target: targetLabel, error: err.message });
-                try { localSocket.destroy(err); } catch {}
-                try { remoteSocket?.destroy?.(); } catch {}
-            }
+            const task = (async () => {
+                let remoteSocket = null;
+                try {
+                    remoteSocket = await openTargetStream(abortController.signal);
+                    if (closed || abortController.signal.aborted || localSocket.destroyed) {
+                        try { remoteSocket?.destroy?.(); } catch {}
+                        throw createRouteAbortError('TCP forward');
+                    }
+                    if (!remoteSocket) throw new Error('TCP forward returned no target stream');
+                    sockets.add(remoteSocket);
+                    remoteSocket.on('close', () => sockets.delete(remoteSocket));
+                    remoteSocket.on('error', (err) => console.warn('[tcp-forward]', 'remote socket error', { route, target: targetLabel, error: err.message }));
+                    localSocket.pipe(remoteSocket);
+                    remoteSocket.pipe(localSocket);
+                    settleReady(null, { localSocket, remoteSocket });
+                } catch (err) {
+                    console.warn('[tcp-forward]', 'failed to open target stream', { route, target: targetLabel, error: err.message });
+                    try { localSocket.destroy(err); } catch {}
+                    try { remoteSocket?.destroy?.(); } catch {}
+                    settleReady(err);
+                }
+            })();
+            inflight.add(task);
+            task.finally(() => inflight.delete(task));
         });
 
-        const close = () => {
+        const close = (reason = createRouteAbortError('TCP forward')) => {
+            if (closed) return closePromise;
+            closed = true;
             console.info('[tcp-forward]', 'closing local forward', { route, target: targetLabel });
+            try { abortController.abort(reason); } catch { abortController.abort(); }
+            settleReady(reason instanceof Error ? reason : createRouteAbortError('TCP forward'));
             try { server.close(); } catch {}
             sockets.forEach((socket) => {
                 try { socket.destroy(); } catch {}
             });
+            if (externalAbortHandler) signal?.removeEventListener?.('abort', externalAbortHandler);
             try { onClose?.(); } catch {}
+            closePromise = Promise.allSettled([...inflight]).then(() => undefined);
+            if (!listenerSettled) {
+                listenerSettled = true;
+                reject(reason instanceof Error ? reason : createRouteAbortError('TCP forward'));
+            }
+            return closePromise;
         };
 
-        server.once('error', (err) => {
-            close();
-            reject(err);
-        });
+        server.once('error', (err) => close(err));
+
+        if (signal) {
+            externalAbortHandler = () => close(createRouteAbortError('TCP forward'));
+            if (signal.aborted) {
+                externalAbortHandler();
+                return;
+            }
+            signal.addEventListener('abort', externalAbortHandler, { once: true });
+        }
 
         server.listen(0, '127.0.0.1', () => {
+            if (closed) return;
             const address = server.address();
             console.info('[tcp-forward]', 'local forward ready', { local: `127.0.0.1:${address.port}`, route, target: targetLabel });
-            resolve({ host: '127.0.0.1', port: address.port, route, close });
+            listenerSettled = true;
+            resolve({
+                host: '127.0.0.1',
+                port: address.port,
+                route,
+                close,
+                waitForReady: () => readyPromise,
+                get closed() { return closed; },
+            });
         });
     });
 }
 
-async function createRoutedTcpForward(conn, targetPort, timeout = 10000) {
+async function createRoutedTcpForward(conn, targetPort, timeout = 10000, { signal = null } = {}) {
+    throwIfRouteAborted(signal, 'TCP route');
     const plan = resolveRoutePlan(conn);
     const targetHost = String(conn.host || '');
     const port = Number(targetPort) || Number(conn.port) || 0;
@@ -1351,29 +2945,34 @@ async function createRoutedTcpForward(conn, targetPort, timeout = 10000) {
             return await listenLocalTcpForward({
                 route,
                 targetLabel,
-                openTargetStream: () => openProxyConnection(plan.firstProxy, targetHost, port, timeout),
+                signal,
+                openTargetStream: (forwardSignal) => openProxyConnection(plan.firstProxy, targetHost, port, timeout, forwardSignal),
             });
         }
 
-        const firstSock = plan.firstProxy ? await openProxyConnection(plan.firstProxy, plan.hops[0].host, plan.hops[0].port, timeout) : undefined;
-        let currentClient = await connectSSHClient(plan.hops[0], { timeout, sock: firstSock });
+        const firstSock = plan.firstProxy ? await openProxyConnection(plan.firstProxy, plan.hops[0].host, plan.hops[0].port, timeout, signal) : undefined;
+        throwIfRouteAborted(signal, 'TCP route');
+        let currentClient = await connectSSHClient(plan.hops[0], { timeout, sock: firstSock, signal });
         clients.push(currentClient);
+        throwIfRouteAborted(signal, 'TCP route');
 
         for (const hop of plan.hops.slice(1)) {
-            const tunnel = await forwardOut(currentClient, hop.host, hop.port);
-            currentClient = await connectSSHClient(hop, { timeout, sock: tunnel });
+            const tunnel = await forwardOut(currentClient, hop.host, hop.port, timeout, signal);
+            currentClient = await connectSSHClient(hop, { timeout, sock: tunnel, signal });
             clients.push(currentClient);
+            throwIfRouteAborted(signal, 'TCP route');
         }
 
         const route = [...plan.hops.map((h) => h.routeName || h.name || h.host), conn.name || targetLabel].join(' -> ');
         return await listenLocalTcpForward({
             route,
             targetLabel,
-            openTargetStream: () => forwardOut(currentClient, targetHost, port),
-            onClose: () => clients.reverse().forEach((client) => { try { client.end(); } catch {} }),
+            signal,
+            openTargetStream: (forwardSignal) => forwardOut(currentClient, targetHost, port, timeout, forwardSignal),
+            onClose: () => [...clients].reverse().forEach((client) => { try { client.end(); } catch {} }),
         });
     } catch (err) {
-        clients.reverse().forEach((client) => { try { client.end(); } catch {} });
+        [...clients].reverse().forEach((client) => { try { client.end(); } catch {} });
         throw err;
     }
 }
@@ -1546,11 +3145,11 @@ async function openRoutedTcpConnection(conn, targetPort, timeout = 10000) {
         let currentClient = await connectSSHClient(plan.hops[0], { timeout, sock: firstSock });
         clients.push(currentClient);
         for (const hop of plan.hops.slice(1)) {
-            const tunnel = await forwardOut(currentClient, hop.host, hop.port);
+            const tunnel = await forwardOut(currentClient, hop.host, hop.port, timeout);
             currentClient = await connectSSHClient(hop, { timeout, sock: tunnel });
             clients.push(currentClient);
         }
-        const socket = await forwardOut(currentClient, targetHost, port);
+        const socket = await forwardOut(currentClient, targetHost, port, timeout);
         return { socket, clients, route: [...plan.hops.map((h) => h.routeName || h.name || h.host), conn.name || `${targetHost}:${port}`].join(' -> ') };
     } catch (err) {
         clients.reverse().forEach((client) => { try { client.end(); } catch {} });
@@ -1676,17 +3275,18 @@ function classifySSHError(err) {
  * The probe closes immediately after reachability is confirmed. */
 async function testTelnetConnection(conn, timeout = 10000) {
     const started = Date.now();
-    let routedForward = null;
+    let routed = null;
     let socket = null;
     try {
-        routedForward = await createRoutedTcpForward(conn, Number(conn.port) || 23, timeout);
-        const effectiveHost = routedForward?.host || String(conn.host || '');
-        const effectivePort = routedForward?.port || Number(conn.port) || 23;
-        socket = await dialTelnet({ host: effectiveHost, port: effectivePort }, { timeout });
+        /* Wait for the real routed target stream. Connecting to the local
+         * forward listener alone can precede SOCKS CONNECT or SSH forwarding. */
+        routed = await openRoutedTcpConnection(conn, Number(conn.port) || 23, timeout);
+        socket = routed.socket;
+        negotiateTelnet(socket);
         return {
             ok: true,
             code: 'success',
-            message: routedForward?.route ? `Telnet 端口可达（${routedForward.route}）` : 'Telnet 端口可达',
+            message: routed?.route ? `Telnet 端口可达（${routed.route}）` : 'Telnet 端口可达',
             durationMs: Date.now() - started,
         };
     } catch (err) {
@@ -1698,7 +3298,7 @@ async function testTelnetConnection(conn, timeout = 10000) {
         };
     } finally {
         try { socket?.destroy?.(); } catch {}
-        try { routedForward?.close?.(); } catch {}
+        (routed?.clients || []).reverse().forEach((client) => { try { client.end(); } catch {} });
     }
 }
 
@@ -1778,7 +3378,7 @@ function runRemoteCommand(conn, command, timeoutSeconds = 30, options = {}) {
 function addActivity(message, userId = null, meta = {}) {
     const durationRaw = meta?.durationMs;
     const durationMs = Number.isFinite(Number(durationRaw)) ? Math.max(0, Math.round(Number(durationRaw))) : null;
-    storage.addActivity({
+    serverMetadataServices.activityEvents.appendActivityEvent({
         id: crypto.randomUUID(),
         time: Date.now(),
         message: String(message || ''),
@@ -1827,7 +3427,8 @@ function clientIp(req) {
 function configuredPublicOrigin(req) {
     const configured = String(process.env.PUBLIC_ORIGIN || '').trim().replace(/\/+$/, '');
     if (configured && configured !== 'http://localhost:3000') return configured;
-    return `${requestProto(req)}://${req.get('host')}`;
+    const requestHost = typeof req.get === 'function' ? req.get('host') : req.headers.host;
+    return `${requestProto(req)}://${requestHost}`;
 }
 
 function publicOrigin(req) { return configuredPublicOrigin(req); }
@@ -1835,7 +3436,7 @@ function rpIdFromOrigin(origin) { try { return new URL(origin).hostname; } catch
 function sameOriginAllowed(req) {
     const expected = configuredPublicOrigin(req);
     const values = [req.headers.origin, req.headers.referer].filter(Boolean);
-    if (!values.length) return true;
+    if (!values.length) return !ZEPHYR_ONE_EMBEDDED;
     return values.every((value) => {
         try {
             const got = new URL(String(value));
@@ -1865,7 +3466,11 @@ function safeSettings(s = storage.getSettings()) {
     if (copy.captcha?.aliyunAccessKeySecret) copy.captcha.aliyunAccessKeySecret = '******';
     if (copy.ai) {
         copy.ai = safeAiSettings(copy.ai);
-        copy.ai.skills = mergeZephyrDefaultSkills(copy.ai.skills || []);
+        /* User-owned knowledge is no longer read from the ownerless global
+         * bag. /api/me/settings and /api/ai/status compose it by account. */
+        copy.ai.memories = [];
+        copy.ai.envVars = [];
+        copy.ai.skills = mergeZephyrDefaultSkills([]);
     }
     return copy;
 }
@@ -1996,6 +3601,7 @@ function publicAppearanceSettings(settings = storage.getSettings()) {
 }
 
 function updateSettingsSection(req, res, section) {
+    if (section === 'ai') return updateAiSettingsSection(req, res);
     const value = req.body?.[section] ?? req.body ?? {};
     const normalized = normalizeSettingsInput({ [section]: value });
     if (section === 'security' && normalized.security?.ipWhitelistEnabled && !ipAllowed(clientIp(req), normalized.security.ipWhitelist)) {
@@ -2009,7 +3615,10 @@ function updateSettingsSection(req, res, section) {
         patch.policeBeianUrl = normalized.policeBeianUrl;
         patch.showBeian = normalized.showBeian;
     }
-    const settings = storage.updateSettings(patch);
+    const settings = serverMetadataServices.serverSettings.runExternalUpdate(
+        () => storage.updateSettings(patch),
+        { actorUserId: req.user.userId },
+    );
     addActivity(`更新系统设置：${section}`, req.user.userId, activityFromReq(req, { category: '系统', outcome: '成功' }));
     if (req.user.isSuperAdmin) return res.json(safeSettings(settings));
     if (section === 'appearance') return res.json({ appearance: settings.appearance || {} });
@@ -2444,19 +4053,40 @@ function defaultPasswordRemoteLoginAllowed(req, user) {
 }
 
 function sha256(v) { return crypto.createHash('sha256').update(String(v)).digest('hex'); }
-function encryptionKey(password = process.env.ENCRYPTION_KEY || 'please-change-this-key') { return crypto.createHash('sha256').update(String(password)).digest(); }
-function encryptBuffer(buffer, password) { const iv = crypto.randomBytes(12); const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey(password), iv); const enc = Buffer.concat([cipher.update(buffer), cipher.final()]); return Buffer.concat([Buffer.from('ZEPHYR3'), iv, cipher.getAuthTag(), enc]); }
-function decryptBuffer(buffer, password) { const b = Buffer.from(buffer); if (b.slice(0, 7).toString() !== 'ZEPHYR3') throw new Error('备份格式不正确'); const iv = b.slice(7, 19), tag = b.slice(19, 35), enc = b.slice(35); const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey(password), iv); decipher.setAuthTag(tag); return Buffer.concat([decipher.update(enc), decipher.final()]); }
-async function zipBuffer(files) {
-    const archiver = await loadArchiver();
-    return new Promise((resolve, reject) => {
-        const chunks = []; const archive = archiver('zip', { zlib: { level: 9 } });
-        archive.on('data', (c) => chunks.push(c)); archive.on('error', reject); archive.on('end', () => resolve(Buffer.concat(chunks)));
-        Object.entries(files).forEach(([name, content]) => archive.append(content, { name })); archive.finalize();
-    });
-}
 
 initData();
+cleanupStaleBackupImportUploads();
+backupImportSensitiveRateLimiter = createWebDavSensitiveRateLimiter({
+    getClientIp: clientIp,
+    getDatabase: () => storage.rawDb(),
+});
+/* Step-up is intentionally parsed before the process-wide JSON middleware:
+ * this endpoint needs only a short password body, while the following upload
+ * request is protected by its one-time header grant before multipart parsing. */
+app.post('/api/data/import/grant', requireSameOrigin, requireSuperAdmin,
+    backupImportNoStore, parseBackupImportGrantJson, limitBackupImportStepUp,
+    issueVerifiedBackupImportGrant);
+app.use('/api/webdav-sync', createWebDavSyncJsonBodyLimit());
+/* Push carries metadata only; large content belongs on the blob routes. Mount
+ * this exact route before the process-wide 24 MiB parser so both declared and
+ * chunked oversized bodies stop at 4 MiB before auth or sync persistence. */
+app.post('/api/mobile/v1/sync/push', createPushJsonBodyParser(), (_req, _res, next) => next());
+app.use((err, req, res, next) => {
+    if (req.method !== 'POST' || req.path !== '/api/mobile/v1/sync/push'
+        || err?.type !== 'entity.too.large') return next(err);
+    const requestId = String(req.headers['x-zephyr-request-id'] || '').trim() || crypto.randomUUID();
+    res.setHeader('X-Zephyr-Request-Id', requestId);
+    return res.status(413).json({
+        ok: false,
+        error: {
+            code: 'payload_too_large',
+            message: 'push request body is too large',
+            retryable: false,
+            details: null,
+            requestId,
+        },
+    });
+});
 /* rawBody is captured only for the mobile plane. The ES256 device proof in
  * /api/mobile/v1 signs a SHA-256 of the exact request bytes, and
  * JSON.stringify(req.body) is not byte-identical to what the client sent:
@@ -3352,9 +4982,9 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
     res.json({ users: userService.listUsers() });
 });
 
-app.post('/api/admin/users', requireAdmin, (req, res) => {
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
     try {
-        const user = userService.createUser(req.user, req.body || {});
+        const user = await userService.createUserWithLifecycle(req.user, req.body || {});
         res.json({ user });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -3425,9 +5055,9 @@ app.post('/api/admin/users/:userId/revoke-sessions', requireAdmin, (req, res) =>
     }
 });
 
-app.delete('/api/admin/users/:userId', requireAdmin, (req, res) => {
+app.delete('/api/admin/users/:userId', requireAdmin, async (req, res) => {
     try {
-        userService.deleteUser(req.user, req.params.userId, { resourcePolicy: String(req.body?.resourcePolicy || 'transfer-to-admin') });
+        await userService.deleteUserWithLifecycle(req.user, req.params.userId, { resourcePolicy: String(req.body?.resourcePolicy || 'transfer-to-admin') });
         res.json({ ok: true });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -3588,7 +5218,10 @@ app.post('/api/connections', requireUser, (req, res) => {
     if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
     else if (protocol === 'TELNET' && !conn.encoding) conn.encoding = 'utf-8';
     try {
-        const saved = resourceService.createConnection(req.user, conn);
+        const saved = resourceService.createConnection(req.user, conn, {
+            changedSecretFields: ['password', 'privateKey']
+                .filter((field) => Object.prototype.hasOwnProperty.call(body, field)),
+        });
         addActivity(`新增连接：${conn.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: conn.protocol, target: `${conn.host}:${conn.port}`, connectionId: conn.id }));
         res.json({ connection: saved });
     } catch (err) {
@@ -3599,6 +5232,15 @@ app.post('/api/connections', requireUser, (req, res) => {
 app.put('/api/connections/:id', requireUser, (req, res) => {
     const body = req.body || {};
     try {
+        const changedSecretFields = [];
+        if (Object.prototype.hasOwnProperty.call(body, 'password') && body.password !== '******') {
+            changedSecretFields.push('password');
+        }
+        if ((Object.prototype.hasOwnProperty.call(body, 'privateKey') && body.privateKey !== '******')
+            || (Object.prototype.hasOwnProperty.call(body, 'protocol')
+                && String(body.protocol || '').toUpperCase() === 'TELNET')) {
+            changedSecretFields.push('privateKey');
+        }
         const saved = resourceService.updateConnection(req.user, req.params.id, (conn) => {
             ['name', 'host', 'username', 'remark'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
             if (body.port !== undefined) conn.port = Number(body.port) || protocolDefaultPort(body.protocol || conn.protocol);
@@ -3634,7 +5276,7 @@ app.put('/api/connections/:id', requireUser, (req, res) => {
                 if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
             }
             return conn;
-        });
+        }, { changedSecretFields });
         addActivity(`编辑连接：${saved.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: saved.protocol, target: `${saved.host}:${saved.port}`, connectionId: saved.id }));
         res.json({ connection: saved });
     } catch (err) {
@@ -3698,6 +5340,9 @@ app.post('/api/rdp/ephemeral-grant', requireUser, (req, res) => {
 /* RDP WASM credential endpoint — returns credentials for browser-side RDP connections.
  * Only accessible to authenticated users.  Credentials are never cached on the client. */
 app.post('/api/rdp/credentials', requireUser, (req, res) => {
+    if (ZEPHYR_ONE_EMBEDDED) {
+        return res.status(404).json({ error: 'browser RDP credentials are unavailable in desktop mode' });
+    }
     const connectionId = String(req.body?.connectionId || '').trim();
     if (!connectionId) return res.status(400).json({ error: 'connectionId required' });
     /* RDP runs the protocol in the browser, so credentials must leave the
@@ -3870,9 +5515,28 @@ app.get('/api/settings', requireUser, (req, res) => {
 });
 
 app.put('/api/settings', requireSuperAdmin, (req, res) => {
-    const body = normalizeSettingsInput(req.body || {});
+    const rawBody = req.body || {};
+    if (rawBody.ai && typeof rawBody.ai === 'object' && !Array.isArray(rawBody.ai)) {
+        try { userSettingsService.replaceAiKnowledge(req.user, rawBody.ai); } catch (err) { return handleServiceError(res, err, 400); }
+    }
+    const bodyInput = { ...rawBody };
+    if (bodyInput.ai && typeof bodyInput.ai === 'object' && !Array.isArray(bodyInput.ai)) {
+        bodyInput.ai = { ...bodyInput.ai };
+        delete bodyInput.ai.memories;
+        delete bodyInput.ai.skills;
+        delete bodyInput.ai.envVars;
+    }
+    const body = normalizeSettingsInput(bodyInput);
+    if (body.ai) {
+        body.ai.memories = [];
+        body.ai.skills = [];
+        body.ai.envVars = [];
+    }
     if (body.security?.ipWhitelistEnabled && !ipAllowed(clientIp(req), body.security.ipWhitelist)) return res.status(400).json({ error: '当前 IP 不在白名单内，已阻止启用以避免误锁' });
-    const settings = storage.updateSettings(body);
+    const settings = serverMetadataServices.serverSettings.runExternalUpdate(
+        () => storage.updateSettings(body),
+        { actorUserId: req.user.userId },
+    );
     addActivity('更新系统设置', req.user.userId, activityFromReq(req, { category: '系统', outcome: '成功' }));
     res.json(safeSettings(settings));
 });
@@ -3940,6 +5604,7 @@ app.delete('/api/activities', requireSuperAdmin, (req, res) => { storage.clearAc
 /* Platform tool host for zephyr-ai (Go). Must stay on control plane.
  * deps must match registerAiRoutes so executeAiToolForHost can run the full tool surface. */
 const aiHostDeps = {
+    runtimeBridge: aiRuntimeBridge,
     storage,
     authz,
     resourceService,
@@ -3947,6 +5612,7 @@ const aiHostDeps = {
     sharingService,
     aiPolicyService,
     aiProviderService,
+    aiHistoryRuntime,
     userSettingsService,
     notesService,
     sessionFs: aiSessionFs,
@@ -4027,7 +5693,10 @@ app.get('/api/ai/runtime/sessions/:id/usage', requireUser, async (req, res) => {
 app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
     try {
         if (!aiRuntimeBridge.enabled) throw Object.assign(new Error('Go AI 运行时未启用'), { status: 503, code: 'ai_runtime_unavailable' });
-        const ai = storage.getSettings().ai || {};
+        // Runtime knowledge must be resolved at the authenticated account
+        // boundary. The legacy global arrays are ownerless and are never a
+        // valid prompt source.
+        const ai = userSettingsService.runtimeAi(req.user);
         if (!ai.enabled) return res.status(403).json({ error: 'AI 助理未启用', code: 'ai_disabled' });
         if (aiPolicyService) {
             const policy = aiPolicyService.policyFor(req.user);
@@ -4108,12 +5777,36 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
             sessionId = created.session?.id || created.sessionId;
         }
 
+        const canonicalConversationId = String(
+            req.body?.conversationId || req.body?.context?.aiChatSessionId || '',
+        ).trim() || `conversation-${crypto.randomUUID()}`;
+        const canonicalConversation = aiHistoryRuntime.ensureConversation(req.user, {
+            id: canonicalConversationId,
+            title: String(req.body?.title || '').slice(0, 200) || '新对话',
+            providerId: provider.id,
+            model,
+        });
+        const canonicalBootstrapMessages = aiHistoryRuntime.bootstrapMessages(req.user, canonicalConversation.id);
+
         const policy = aiPolicyService ? aiPolicyService.policyFor(req.user) : {};
         // S2: resolve attachment refs → multimodal Parts (no base64 in client history).
         let runMessages = Array.isArray(req.body?.messages) ? req.body.messages.slice() : undefined;
         const attachmentIds = Array.isArray(req.body?.attachments)
             ? req.body.attachments.map((a) => (typeof a === 'string' ? a : a?.id)).filter(Boolean)
             : [];
+        const canonicalAttachments = [];
+        for (const attachmentId of attachmentIds) {
+            // This read proves the ref is in the authenticated account and the
+            // exact runtime session before the completion monitor records it.
+            const item = await aiSessionFs.getAttachment(req.user.userId, sessionId, attachmentId);
+            canonicalAttachments.push({
+                id: item.id,
+                sessionId,
+                name: item.name,
+                mime: item.mime,
+                size: item.size,
+            });
+        }
         let modelEntry = null;
         try {
             const { findModelEntry, modelAcceptsImage } = require('./ai-model-catalog');
@@ -4181,6 +5874,19 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
         }
         const data = await aiRuntimeBridge.startRun(req.user, {
             sessionId,
+            bootstrapMessages: canonicalBootstrapMessages,
+            historyCommit: {
+                conversationId: canonicalConversation.id,
+                title: String(req.body?.title || canonicalConversation.title || '').slice(0, 200),
+                providerId: provider.id,
+                model,
+                userMessage: {
+                    id: String(req.body?.userMessageId || '').trim() || `message-${crypto.randomUUID()}`,
+                    content: String(req.body?.historyUserContent ?? req.body?.message ?? ''),
+                    attachments: canonicalAttachments,
+                },
+                assistantMessageId: String(req.body?.assistantMessageId || '').trim() || `message-${crypto.randomUUID()}`,
+            },
             provider: providerPayload,
             model,
             message: attachmentIds.length ? '' : (req.body?.message || ''),
@@ -4232,6 +5938,7 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
             ok: true,
             runId: data.runId,
             sessionId: data.sessionId || sessionId,
+            conversationId: canonicalConversation.id,
             ticket: data.ticket,
             ssePath: ssePath.startsWith('http') ? ssePath : ssePath,
             sseProxyPath: `/api/ai/runtime/runs/${encodeURIComponent(data.runId)}/events?ticket=${encodeURIComponent(data.ticket || '')}`,
@@ -4241,7 +5948,7 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
 
 app.post('/api/ai/runtime/runs/:id/abort', requireUser, async (req, res) => {
     try {
-        const data = await aiRuntimeBridge.abortRun(req.params.id);
+        const data = await aiRuntimeBridge.abortRun(req.user, req.params.id);
         res.json(data);
     } catch (err) { handleAiRuntimeError(res, err); }
 });
@@ -4267,7 +5974,7 @@ app.post('/api/ai/runtime/runs/:id/permission', requireUser, async (req, res) =>
                 };
             } catch (_) { /* resume state may still have enough non-secret fields */ }
         }
-        const data = await aiRuntimeBridge.decidePermission(req.params.id, {
+        const data = await aiRuntimeBridge.decidePermission(req.user, req.params.id, {
             userId: req.user.userId,
             sessionId: req.body?.sessionId || '',
             callId: req.body?.callId || '',
@@ -4311,7 +6018,7 @@ app.post('/api/ai/runtime/runs/:id/capture', requireUser, async (req, res) => {
                 };
             } catch (_) {}
         }
-        const data = await aiRuntimeBridge.submitCapture(req.params.id, {
+        const data = await aiRuntimeBridge.submitCapture(req.user, req.params.id, {
             userId: req.user.userId,
             callId: req.body?.callId || '',
             captureAssetId: req.body?.captureAssetId || '',
@@ -4339,6 +6046,7 @@ app.get('/api/ai/runtime/runs/:id/events', requireUser, async (req, res) => {
     const ticket = String(req.query.ticket || '');
     const url = `${process.env.ZEPHYR_AI_URL}/v1/runs/${encodeURIComponent(runId)}/events?ticket=${encodeURIComponent(ticket)}`;
     try {
+        aiRuntimeBridge.assertRunAccess(req.user, runId);
         const upstreamHeaders = { accept: 'text/event-stream' };
         if (req.headers['last-event-id']) upstreamHeaders['last-event-id'] = String(req.headers['last-event-id']);
         const upstream = await fetch(url, { headers: upstreamHeaders });
@@ -4379,6 +6087,7 @@ registerAiRoutes(app, {
     sharingService,
     aiPolicyService,
     aiProviderService,
+    aiHistoryRuntime,
     userSettingsService,
     notesService,
     sessionFs: aiSessionFs,
@@ -4579,64 +6288,273 @@ app.post('/api/passkeys/login/verify', async (req, res) => {
 });
 
 app.get('/api/data/export', requireSuperAdmin, async (req, res) => {
-    try { storage.rawDb().pragma('wal_checkpoint(FULL)'); } catch (err) { console.error('[DB] WAL checkpoint failed:', err.message); }
-    const files = { 'zephyr.db': fs.readFileSync(path.join(DATA_DIR, 'zephyr.db')), 'manifest.json': JSON.stringify({ app: 'Zephyr', version: APP_VERSION, exportedAt: Date.now(), dataEncryption: secretCrypto.ALG }, null, 2) };
-    const keyBackup = secretCrypto.getKeyBackupFile();
-    if (keyBackup) files[keyBackup.archivePath] = fs.readFileSync(keyBackup.filePath);
-    const encrypted = encryptBuffer(await zipBuffer(files), process.env.ENCRYPTION_KEY);
-    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
-    res.setHeader('Content-Type', 'application/octet-stream'); res.setHeader('Content-Disposition', `attachment; filename="zephyr-backup-${stamp}.zip.enc"`); res.end(encrypted);
-});
-app.post('/api/data/import', requireSuperAdmin, upload.single('backup'), async (req, res) => {
+    let maintenanceStarted = false;
     try {
-        const { loginPassword, backupPassword } = req.body || {}; const user = storage.getUser(req.session.username);
-        if (!verifyPassword(loginPassword, user.passwordHash)) return res.status(403).json({ error: '登录密码错误' });
-        if (!req.file?.buffer) return res.status(400).json({ error: '请上传备份文件' });
-        const zip = decryptBuffer(req.file.buffer, backupPassword || process.env.ENCRYPTION_KEY); const dir = await unzipper.Open.buffer(zip); const dbEntry = dir.files.find((f) => f.path === 'zephyr.db');
-        if (!dbEntry) return res.status(400).json({ error: '备份包缺少 zephyr.db' });
-        const keyEntry = dir.files.find((f) => f.path === 'crypto/ml-kem-768-keypair.json');
-        const incomingKeyBuffer = keyEntry ? await keyEntry.buffer() : null;
-        const oldKeyBackup = secretCrypto.getKeyBackupFile();
-        const oldKeyBackupBuffer = oldKeyBackup ? fs.readFileSync(oldKeyBackup.filePath) : null;
-        try { storage.rawDb().pragma('wal_checkpoint(FULL)'); } catch {}
-        const backupName = path.join(DATA_DIR, `zephyr-before-import-${Date.now()}.db`); fs.copyFileSync(path.join(DATA_DIR, 'zephyr.db'), backupName);
-        storage.close();
-        try {
-            if (incomingKeyBuffer && !restoredKeyMatchesCurrent(oldKeyBackupBuffer, incomingKeyBuffer)) secretCrypto.restoreKeyBackup(incomingKeyBuffer);
-            fs.writeFileSync(path.join(DATA_DIR, 'zephyr.db'), await dbEntry.buffer());
-            storage.init({ hashPassword });
-        } catch (err) {
-            if (oldKeyBackupBuffer) secretCrypto.restoreKeyBackup(oldKeyBackupBuffer);
-            fs.copyFileSync(backupName, path.join(DATA_DIR, 'zephyr.db'));
-            reopenStorage();
-            throw err;
+        const backupSecret = backupEncryption.requireConfiguredBackupSecret(
+            process.env.ENCRYPTION_KEY,
+            process.env.ZEPHYR_BACKUP_KEY_PROVENANCE,
+        );
+        beginDatabaseMaintenance();
+        maintenanceStarted = true;
+        await waitForDatabaseRequestDrain(1);
+        assertBackupExportCheckpointComplete();
+        const keyBackup = secretCrypto.getKeyBackupFile();
+        const archive = await createBackupArchiveBuffer({
+            database: fs.readFileSync(path.join(DATA_DIR, 'zephyr.db')),
+            key: keyBackup ? fs.readFileSync(keyBackup.filePath) : null,
+            metadata: {
+                app: 'Zephyr',
+                version: APP_VERSION,
+                exportedAt: Date.now(),
+                dataEncryption: secretCrypto.ALG,
+                backupEncryption: 'ZEPHYR4/scrypt/AES-256-GCM',
+            },
+        });
+        const encrypted = backupEncryption.encryptBackup(archive, backupSecret);
+        const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="zephyr-backup-${stamp}.zip.enc"`);
+        res.end(encrypted);
+    } catch (error) {
+        if (error instanceof backupEncryption.BackupEncryptionError) {
+            return res.status(503).json({ error: error.message, code: error.code });
         }
-        addActivity('导入数据备份', req.user?.userId || null, activityFromReq(req, { category: '系统', outcome: '成功' }));
+        if (error?.code === 'backup_export_checkpoint_incomplete') {
+            res.setHeader('Cache-Control', 'no-store');
+            return res.status(error.status).json({
+                error: 'Backup export is temporarily unavailable.',
+                code: error.code,
+                retryable: error.retryable,
+            });
+        }
+        throw error;
+    } finally {
+        if (maintenanceStarted) endDatabaseMaintenance();
+    }
+});
+
+registerAppChangeWakeRoute(app, {
+    requireUser,
+    hub: appChangeWakeHub,
+});
+
+/* The legacy Web form posts one full `ai` object to the platform settings
+ * route. Keep platform policy/provider settings there, but move user-owned
+ * Memory/Skill/env rows through UserSettingsService before writing the global
+ * bag. This is the owner-authenticated migration seam; no startup task ever
+ * claims the old ownerless arrays for every account. */
+function updateAiSettingsSection(req, res) {
+    try {
+        const incoming = req.body?.ai ?? req.body ?? {};
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+            throw new HttpError(400, 'invalid_ai_knowledge', 'AI settings must be an object.');
+        }
+        userSettingsService.replaceAiKnowledge(req.user, incoming);
+        const platformInput = { ...incoming };
+        delete platformInput.memories;
+        delete platformInput.skills;
+        delete platformInput.envVars;
+        const current = storage.getSettings();
+        const normalized = normalizeAiSettingsInput(current.ai || {}, platformInput);
+        /* Once this endpoint is used, the legacy global arrays no longer feed
+         * any account. Retaining only empty compatibility containers prevents
+         * an unrelated legacy reader from reintroducing cross-account data. */
+        normalized.memories = [];
+        normalized.skills = [];
+        normalized.envVars = [];
+        const settings = serverMetadataServices.serverSettings.runExternalUpdate(
+            () => storage.updateSettings({ ai: normalized }),
+            { actorUserId: req.user.userId },
+        );
+        addActivity('更新系统设置：ai', req.user.userId, activityFromReq(req, { category: '系统', outcome: '成功' }));
+        const response = safeSettings(settings);
+        response.ai = safeAiSettings(userSettingsService.effective(req.user).ai || {});
+        response.ai.skills = mergeZephyrDefaultSkills(response.ai.skills || []);
+        return res.json(response);
+    } catch (err) {
+        return handleServiceError(res, err, 400);
+    }
+}
+
+app.post('/api/data/import', requireSuperAdmin, backupImportNoStore, requireBackupImportGrant,
+    parseBackupImportMultipart, async (req, res) => {
+    let stagedDatabaseDir = null;
+    let stagedArchiveFile = null;
+    let encryptedArchive = null;
+    let decryptedArchive = null;
+    let incomingKeyBuffer = null;
+    let oldKeyBackupBuffer = null;
+    let importCleanupLease = null;
+    try {
+        if (!req.file?.path) return res.status(400).json({ error: '请上传备份文件', code: 'invalid_backup_import_multipart' });
+        const uploaded = fs.lstatSync(req.file.path, { throwIfNoEntry: false });
+        if (!uploaded?.isFile() || uploaded.isSymbolicLink() || uploaded.size < 1
+            || uploaded.size > MAX_IMPORT_ARCHIVE_BYTES) {
+            const error = new Error('Invalid backup import upload.');
+            error.code = 'invalid_backup_import_multipart';
+            throw error;
+        }
+        const backupPassword = readBackupImportPassword(req.body);
+
+        const hasExplicitBackupPassword = typeof backupPassword === 'string' && backupPassword.length > 0;
+        const archiveSecret = hasExplicitBackupPassword
+            ? backupPassword
+            : backupEncryption.requireConfiguredBackupSecret(
+                process.env.ENCRYPTION_KEY,
+                process.env.ZEPHYR_BACKUP_KEY_PROVENANCE,
+            );
+        encryptedArchive = fs.readFileSync(req.file.path);
+        cleanupBackupImportUploadForRequest(req);
+        decryptedArchive = backupEncryption.decryptBackup(
+            encryptedArchive,
+            archiveSecret,
+            { allowLegacyPassword: ALLOW_LEGACY_BACKUP_IMPORT && hasExplicitBackupPassword },
+        );
+        if (decryptedArchive.length < 22 || decryptedArchive.length > MAX_IMPORT_ARCHIVE_BYTES) {
+            throw new Error('backup archive size is invalid');
+        }
+        importCleanupLease = acquireImportCleanupLease({
+            dataDir: DATA_DIR,
+            databaseFile: DB_FILE,
+            keyFile: secretCrypto.currentKeyFile(),
+        });
+        stagedArchiveFile = path.join(DATA_DIR, `.zephyr-import-archive-${process.pid}-${crypto.randomUUID()}.zip`);
+        fs.writeFileSync(stagedArchiveFile, decryptedArchive, { flag: 'wx', mode: 0o600 });
+        decryptedArchive.fill(0);
+        decryptedArchive = null;
+
+        /* Central-directory policy, manifest hashes and all expanded sizes are
+         * verified before any SQLite handle is opened or maintenance begins.
+         * The database streams directly to the isolated validation directory;
+         * only the bounded optional key remains in memory. */
+        stagedDatabaseDir = fs.mkdtempSync(path.join(DATA_DIR, '.zephyr-import-validation-'));
+        const extracted = await extractBackupArchive({
+            archiveFile: stagedArchiveFile,
+            outputDirectory: stagedDatabaseDir,
+        });
+        const stagedDatabaseFile = extracted.databaseFile;
+        incomingKeyBuffer = extracted.keyBuffer;
+        validateDatabaseFileLayout(stagedDatabaseFile);
+        if (incomingKeyBuffer) validateBackupKeyBuffer(incomingKeyBuffer);
+
+        const oldKeyBackup = secretCrypto.getKeyBackupFile();
+        oldKeyBackupBuffer = oldKeyBackup ? fs.readFileSync(oldKeyBackup.filePath) : null;
+        if (oldKeyBackupBuffer) validateBackupKeyBuffer(oldKeyBackupBuffer, 'current data key');
+        if (incomingKeyBuffer && !oldKeyBackup) {
+            throw new Error('cannot restore an archive key while the data key is externally managed');
+        }
+
+        fsyncFile(stagedDatabaseFile);
+        validateStagedDatabase(stagedDatabaseFile);
+        const validation = await validateDatabaseCandidate({
+            candidateDir: stagedDatabaseDir,
+            keyBuffer: incomingKeyBuffer || oldKeyBackupBuffer,
+        });
+        injectImportHardKill('after_candidate_prepared');
+        injectImportTestFault('import_auth_state_revocation');
+
+        await importDatabaseAtomically({
+            databaseFile: validation.databaseFile,
+            incomingKeyBuffer,
+            keyState: {
+                filePath: oldKeyBackup?.filePath || secretCrypto.currentKeyFile(),
+                existed: !!oldKeyBackup,
+                buffer: oldKeyBackupBuffer,
+            },
+            cleanupLease: importCleanupLease,
+        });
+
+        if (ZEPHYR_ONE_EMBEDDED) {
+            /* Imported SIDs stay revoked. The already OS-unlocked local shell
+             * receives one newly generated post-import SID so a successful
+             * restore does not strand One behind its consumed bootstrap
+             * challenge. Hosted clients must authenticate again. */
+            const adoptedUser = storage.listUsers().find((candidate) => candidate.status === 'active');
+            if (adoptedUser) createSession(req, res, adoptedUser);
+            else res.setHeader('Set-Cookie', sessionClearCookie(req));
+        } else {
+            res.setHeader('Set-Cookie', sessionClearCookie(req));
+        }
+
+        /* The database exchange is already committed. Audit is best-effort and
+         * must never turn a successful restore into a reported failure. */
+        try {
+            injectImportTestFault('activity_audit');
+            addActivity('导入数据备份', req.user?.userId || null, activityFromReq(req, { category: '系统', outcome: '成功' }));
+        } catch (auditError) {
+            console.error('[DB] import committed but audit write failed:', auditError?.message || auditError);
+        }
         res.json({ ok: true, message: '导入完成，数据已重新加载' });
-    } catch (err) { res.status(400).json({ error: err.message || '导入失败' }); }
+    } catch (err) {
+        const status = err?.code === 'database_maintenance' ? 503 : 400;
+        try { cleanupBackupImportUploadForRequest(req); }
+        catch (cleanupError) { console.error('[DB] backup upload cleanup failed', cleanupError?.message || cleanupError); }
+        if (err?.code === 'invalid_backup_import_multipart') {
+            res.status(400).json({ error: 'Invalid backup import request.', code: err.code, retryable: false });
+        } else {
+            res.status(status).json({ error: err.message || '导入失败', code: err?.code || 'import_failed' });
+        }
+    } finally {
+        if (encryptedArchive) encryptedArchive.fill(0);
+        if (decryptedArchive) decryptedArchive.fill(0);
+        if (incomingKeyBuffer) incomingKeyBuffer.fill(0);
+        if (oldKeyBackupBuffer) oldKeyBackupBuffer.fill(0);
+        if (importCleanupLease) {
+            try {
+                cleanupImportOrphans({
+                    dataDir: DATA_DIR,
+                    databaseFile: DB_FILE,
+                    keyFile: secretCrypto.currentKeyFile(),
+                });
+            } catch (cleanupError) {
+                databaseMaintenance.fatal = true;
+                databaseMaintenance.active = true;
+                console.error('[DB] sensitive import cleanup failed; restart required', cleanupError?.message || cleanupError);
+            }
+        }
+        try { cleanupBackupImportUploadForRequest(req); }
+        catch (cleanupError) { console.error('[DB] backup upload cleanup failed', cleanupError?.message || cleanupError); }
+        releaseBackupImportSlot(req);
+    }
 });
 
 app.post('/api/connections/test', requireUser, async (req, res) => {
     const body = req.body || {};
     let conn = null;
-    if (body.connectionId) {
-        /* Testing a saved connection requires `use`; unsaved ad-hoc tests use
-         * the caller-provided credentials only. */
-        try {
-            conn = { ...resourceService.resolveForConnect(req.user, String(body.connectionId)) };
-        } catch (err) {
-            return handleServiceError(res, err, 403);
+    try {
+        if (body.connectionId) {
+            /* Load the raw saved row only after `use`; dependency secrets are
+             * resolved from the final, override-checked route below. */
+            conn = {
+                ...resourceService.getRawAuthorized(
+                    req.user,
+                    'connection',
+                    String(body.connectionId),
+                    CAP.USE,
+                ),
+            };
+            ['name', 'host', 'username', 'remark'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
+            if (body.port !== undefined) conn.port = Number(body.port) || 22;
+            if (body.protocol !== undefined) conn.protocol = String(body.protocol).toUpperCase();
+            if (body.sshKeyId !== undefined) conn.sshKeyId = String(body.sshKeyId || '');
+            if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
+            if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
+            applyConnectionRouteFields(conn, body);
+        } else {
+            conn = { ...body, port: Number(body.port) || protocolDefaultPort(body.protocol) };
+            applyConnectionRouteFields(conn, body);
         }
-        ['name', 'host', 'username', 'remark'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
-        if (body.port !== undefined) conn.port = Number(body.port) || 22;
-        if (body.protocol !== undefined) conn.protocol = String(body.protocol).toUpperCase();
-        if (body.sshKeyId !== undefined) conn.sshKeyId = String(body.sshKeyId || '');
-        if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
-        if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
-        applyConnectionRouteFields(conn, body);
-    } else {
-        conn = { ...body, port: Number(body.port) || protocolDefaultPort(body.protocol) };
-        applyConnectionRouteFields(conn, body);
+        const authorized = resourceService.resolveForConnectionTest(req.user, conn, {
+            savedConnectionId: body.connectionId ? String(body.connectionId) : null,
+        });
+        conn = authorized.connection;
+        Object.defineProperty(conn, AUTHORIZED_CONNECTION_TEST_ROUTE, {
+            value: authorized.routePlan,
+            enumerable: false,
+        });
+    } catch (err) {
+        return handleServiceError(res, err, 403);
     }
     const protocol = String(conn.protocol || 'SSH').toUpperCase();
     if (!conn.host || (protocol === 'SSH' && !conn.username)) return res.status(400).json({ error: protocol === 'SSH' ? '主机和用户名不能为空' : '主机不能为空' });
@@ -4658,6 +6576,7 @@ app.post('/api/remote-execute', requireUser, async (req, res) => {
     const { connectionIds, command, timeoutSeconds } = req.body || {};
     if (!Array.isArray(connectionIds) || !connectionIds.length) return res.status(400).json({ error: '请选择服务器' });
     if (!String(command || '').trim()) return res.status(400).json({ error: '请输入命令' });
+    const commandText = String(command);
     /* Batch remote execution requires the `execute` capability per target
      * (§12.3) — use/control alone never authorizes command execution. */
     const targets = [];
@@ -4674,10 +6593,21 @@ app.post('/api/remote-execute', requireUser, async (req, res) => {
     const started = Date.now();
     const results = await Promise.all(targets.map((conn) => {
         if (conn.__denied) return Promise.resolve({ connectionId: conn.connectionId, name: conn.name, host: conn.host, success: false, error: conn.error, denied: true });
-        return runRemoteCommand(conn, String(command), timeoutSeconds);
+        return runRemoteCommand(conn, commandText, timeoutSeconds);
     }));
-    authz.audit({ actorUserId: req.user.userId, action: 'resource.remote_execute', outcome: 'success', metadata: { targets: targets.length, command: String(command).slice(0, 120) } });
-    addActivity(`远程执行：${targets.length} 台服务器，命令 ${String(command).slice(0, 40)}`, req.user.userId, activityFromReq(req, { category: '操作', outcome: results.some((r) => r.success === false || r.denied) ? '失败' : '成功', durationMs: Date.now() - started }));
+    const auditSummary = summarizeRemoteCommand(commandText, results, targets.length);
+    authz.audit({
+        actorUserId: req.user.userId,
+        action: 'resource.remote_execute',
+        outcome: auditSummary.result,
+        metadata: auditSummary,
+    });
+    addActivity(`远程执行：${targets.length} 台服务器`, req.user.userId, activityFromReq(req, {
+        type: 'remote_command',
+        category: '操作',
+        outcome: auditSummary.result === 'success' ? '成功' : '失败',
+        durationMs: Date.now() - started,
+    }));
     res.json({ startedAt: started, durationMs: Date.now() - started, results });
 });
 
@@ -4685,7 +6615,9 @@ app.get('/api/proxies', requireUser, (req, res) => res.json({ proxies: resourceS
 app.post('/api/proxies', requireUser, (req, res) => {
     const b = req.body || {};
     if (!b.name || !b.host || !b.port) return res.status(400).json({ error: '名称、IP、端口不能为空' });
-    const proxy = resourceService.createOwned(req.user, 'proxy', { id: crypto.randomUUID(), name: String(b.name), host: String(b.host), port: Number(b.port) || 1080, type: normalizeProxyType(b.type), username: String(b.username || ''), password: String(b.password || ''), createdAt: Date.now(), updatedAt: Date.now() });
+    const proxy = resourceService.createOwned(req.user, 'proxy', { id: crypto.randomUUID(), name: String(b.name), host: String(b.host), port: Number(b.port) || 1080, type: normalizeProxyType(b.type), username: String(b.username || ''), password: String(b.password || ''), createdAt: Date.now(), updatedAt: Date.now() }, {
+        changedSecretFields: Object.prototype.hasOwnProperty.call(b, 'password') ? ['password'] : [],
+    });
     addActivity(`新增代理：${proxy.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: proxy.type, target: `${proxy.host}:${proxy.port}` }));
     res.json({ proxy });
 });
@@ -4693,7 +6625,10 @@ app.put('/api/proxies/:id', requireUser, (req, res) => {
     try {
         const old = resourceService.getRawAuthorized(req.user, 'proxy', req.params.id, CAP.EDIT);
         const b = req.body || {};
-        const proxy = resourceService.updateOwned(req.user, 'proxy', req.params.id, { name: String(b.name ?? old.name), host: String(b.host ?? old.host), port: Number(b.port ?? old.port) || 1080, type: normalizeProxyType(b.type ?? old.type), username: String(b.username ?? old.username ?? ''), password: b.password === '******' ? old.password : String(b.password ?? old.password ?? ''), updatedAt: Date.now() });
+        const proxy = resourceService.updateOwned(req.user, 'proxy', req.params.id, { name: String(b.name ?? old.name), host: String(b.host ?? old.host), port: Number(b.port ?? old.port) || 1080, type: normalizeProxyType(b.type ?? old.type), username: String(b.username ?? old.username ?? ''), password: b.password === '******' ? old.password : String(b.password ?? old.password ?? ''), updatedAt: Date.now() }, {
+            changedSecretFields: Object.prototype.hasOwnProperty.call(b, 'password') && b.password !== '******'
+                ? ['password'] : [],
+        });
         addActivity(`编辑代理：${proxy.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: proxy.type, target: `${proxy.host}:${proxy.port}` }));
         res.json({ proxy });
     } catch (err) {
@@ -4726,7 +6661,10 @@ app.post('/api/ssh-keys', requireUser, (req, res) => {
     const b = req.body || {};
     if (!String(b.name || '').trim()) return res.status(400).json({ error: '密钥名称不能为空' });
     if (!String(b.privateKey || '').includes('-----BEGIN')) return res.status(400).json({ error: '请填写有效的 SSH 私钥' });
-    const sshKey = resourceService.createOwned(req.user, 'sshKey', { id: crypto.randomUUID(), name: String(b.name).trim(), privateKey: String(b.privateKey), passphrase: String(b.passphrase || ''), remark: String(b.remark || ''), createdAt: Date.now(), updatedAt: Date.now() });
+    const sshKey = resourceService.createOwned(req.user, 'sshKey', { id: crypto.randomUUID(), name: String(b.name).trim(), privateKey: String(b.privateKey), passphrase: String(b.passphrase || ''), remark: String(b.remark || ''), createdAt: Date.now(), updatedAt: Date.now() }, {
+        changedSecretFields: ['privateKey', 'passphrase']
+            .filter((field) => Object.prototype.hasOwnProperty.call(b, field)),
+    });
     addActivity(`新增 SSH 密钥：${sshKey.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功' }));
     res.json({ sshKey });
 });
@@ -4738,7 +6676,11 @@ app.put('/api/ssh-keys/:id', requireUser, (req, res) => {
         const passphrase = b.passphrase === '******' || b.passphrase === undefined ? old.passphrase : String(b.passphrase || '');
         if (!String((b.name ?? old.name) || '').trim()) return res.status(400).json({ error: '密钥名称不能为空' });
         if (!privateKey.includes('-----BEGIN')) return res.status(400).json({ error: '请填写有效的 SSH 私钥' });
-        const sshKey = resourceService.updateOwned(req.user, 'sshKey', req.params.id, { name: String(b.name ?? old.name).trim(), privateKey, passphrase, remark: String(b.remark ?? old.remark ?? ''), updatedAt: Date.now() });
+        const sshKey = resourceService.updateOwned(req.user, 'sshKey', req.params.id, { name: String(b.name ?? old.name).trim(), privateKey, passphrase, remark: String(b.remark ?? old.remark ?? ''), updatedAt: Date.now() }, {
+            changedSecretFields: ['privateKey', 'passphrase'].filter((field) => (
+                Object.prototype.hasOwnProperty.call(b, field) && b[field] !== '******'
+            )),
+        });
         addActivity(`编辑 SSH 密钥：${sshKey.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功' }));
         res.json({ sshKey });
     } catch (err) {
@@ -5691,7 +7633,10 @@ function dockerServiceRestartCommand() {
 app.get('/api/sftp/preview/:token', requireUser, async (req, res) => {
     const token = String(req.params.token || '');
     const previewTask = sftpPreviewTokens.get(token);
-    if (!previewTask || previewTask.username !== req.session.username || previewTask.expiresAt < Date.now()) {
+    if (!previewTask
+        || previewTask.ownerUserId !== req.user?.userId
+        || previewTask.username !== req.session.username
+        || previewTask.expiresAt < Date.now()) {
         sftpPreviewTokens.delete(token);
         return res.status(404).json({ error: '预览链接已失效' });
     }
@@ -5721,59 +7666,44 @@ app.get('/api/sftp/preview/:token', requireUser, async (req, res) => {
         if (stats.isDirectory?.()) throw new Error('目录不支持图片预览');
         const size = Number(stats.size) || 0;
         const mtime = Number(stats.mtime) || Number(stats.modifyTime) || 0;
+        assertPreviewSourceSize(size, PREVIEW_IMAGE_LIMITS);
         res.setHeader('Cache-Control', 'private, max-age=300');
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(previewTask.path))}`);
         previewTask.expiresAt = Date.now() + PREVIEW_TOKEN_TTL;
 
-        if (isBrowserImageExt(ext, BROWSER_IMAGE_EXTENSIONS)) {
-            res.type(getBrowserImageContentType(ext, BROWSER_IMAGE_CONTENT_TYPES));
-            if (size) res.setHeader('Content-Length', String(size));
-            const readStream = sftp.createReadStream(previewTask.path);
-            readStream.on('error', (err) => {
-                closeConnection();
-                if (!res.headersSent) res.status(500).end(err.message || '图片预览读取失败');
-                else res.destroy(err);
-            });
-            res.on('close', closeConnection);
-            res.on('finish', closeConnection);
-            readStream.pipe(res);
-            return;
-        }
-
         const result = await ensurePreviewCacheFile({
             cache: { ttl: PREVIEW_CACHE_TTL },
             cacheMap: previewCache,
+            inFlightMap: previewInFlight,
             cacheDir: PREVIEW_CACHE_DIR,
             sourcePath: previewTask.path,
             sourceSize: size,
             sourceMtime: mtime,
             ext,
-            readSourceFile: (inputPath) => new Promise((resolve, reject) => {
-                let settled = false;
-                const done = (err) => {
-                    if (settled) return;
-                    settled = true;
-                    err ? reject(err) : resolve();
-                };
-                const readStream = sftp.createReadStream(previewTask.path);
-                const writeStream = fs.createWriteStream(inputPath);
-                readStream.on('error', done);
-                writeStream.on('error', done);
-                writeStream.on('finish', () => done());
-                readStream.pipe(writeStream);
+            cacheIdentity: {
+                ownerUserId: previewTask.ownerUserId,
+                connectionId: previewTask.connectionId,
+                serverIdentity: previewTask.serverIdentity,
+            },
+            limits: PREVIEW_IMAGE_LIMITS,
+            readSourceFile: (inputPath, readLimits) => writePreviewSourceFile({
+                createReadStream: () => sftp.createReadStream(previewTask.path),
+                inputPath,
+                ...readLimits,
             }),
         });
         res.type('image/webp');
         res.setHeader('X-Zephyr-Preview-Engine', result.engine || 'unknown');
         res.sendFile(result.outputPath, (err) => {
             closeConnection();
-            if (err) console.warn('[sftp-preview]', 'send failed', { path: previewTask.path, error: err.message });
+            if (err) console.warn('[sftp-preview]', 'send failed', { code: 'preview_send_failed' });
         });
     } catch (err) {
         closeConnection();
-        console.warn('[sftp-preview]', 'failed', { path: previewTask?.path || '', error: err.message });
-        if (!res.headersSent) res.status(500).json({ error: err.message || '图片预览失败' });
+        const safe = previewErrorResponse(err);
+        console.warn('[sftp-preview]', 'failed', { code: safe.body.code });
+        if (!res.headersSent) res.status(safe.statusCode).json(safe.body);
     }
 });
 
@@ -6769,6 +8699,38 @@ oneClientManager.mountRoutes(app, {
     resolveUserByUsername: (name) => storage.getUser(name),
 });
 
+function requireWebDavSensitiveVerification(req, res, next) {
+    try {
+        verifySensitiveAccess(req, req.body?.secret);
+        return next();
+    } catch (error) {
+        const oneUnlockRequired = error?.code === 'one_unlock_required';
+        return res.status(403).json({
+            ok: false,
+            error: {
+                code: oneUnlockRequired ? 'one_unlock_required' : 'sensitive_verification_failed',
+                message: oneUnlockRequired
+                    ? 'Unlock is required for this WebDAV operation.'
+                    : 'Sensitive verification failed.',
+                retryable: false,
+            },
+        });
+    }
+}
+
+webDavSensitiveRateLimiter = createWebDavSensitiveRateLimiter({
+    getClientIp: clientIp,
+    getDatabase: () => storage.rawDb(),
+});
+app.use('/api/webdav-sync', createWebDavSyncRouter({
+    service: webDavProduction.service,
+    authentication: requireUser,
+    sensitiveRateLimiter: webDavSensitiveRateLimiter,
+    sensitiveVerification: requireWebDavSensitiveVerification,
+}));
+if (webDavProduction.available) console.info('[webdav-sync] mounted');
+else console.warn('[webdav-sync] disabled:', webDavProduction.unavailableCode || 'webdav_keys_unavailable');
+
 /* Locate a frozen mobile contract file.
  *
  * Resolved against a candidate list rather than a single `__dirname` join,
@@ -6827,7 +8789,6 @@ function resolveMobileContract(relative) {
  * Failure to construct is logged and swallowed. A malformed contract file must
  * not stop the desktop product from booting, and every mobile route is a new
  * surface rather than a change to an existing one. */
-let mobileV1Api = null;
 try {
     mobileV1Api = new MobileV1Api({
         sharingService,
@@ -6842,8 +8803,17 @@ try {
         resourceService,
         notesService,
         userSettingsService,
+        aiProviderService,
+        aiHistoryService,
+        aiKnowledgeService: userSettingsService.aiKnowledgeService,
+        workspacePortableSyncService: workspaceService.portableSyncService,
+        serverMetadataServices,
+        serverMetadataAuthorize: authorizeServerMetadata,
         fileAgentManager,
         authz,
+        resourceAclService: resourceAclMetadataService,
+        clientTokenService: clientTokenMetadataService,
+        changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
         entityRegistry: JSON.parse(fs.readFileSync(resolveMobileContract('registries/entity-registry.json'), 'utf8')),
         /* Reuses the same password/TOTP check the web sensitive-operation gate
          * uses, so a mobile grant can never be easier to obtain than a browser
@@ -6852,9 +8822,18 @@ try {
         verifySensitive: (user, secret) => verifySensitiveAccess({ session: { username: user.username } }, secret),
         log: (...args) => console.log('[mobile-v1]', ...args),
     });
+    trackMobileBlobOperations(mobileV1Api.blobs);
     mobileV1Api.mountRoutes(app);
+    mobileV1OutboxDispatcher = new MobileV1OutboxDispatcher({
+        changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
+        wake: mobileV1Api.wake,
+        log: (...args) => console.warn(...args),
+    });
+    mobileV1OutboxDispatcher.start();
     console.log('[mobile-v1] mounted; registryHash=' + mobileV1Api.store.registryHash.slice(0, 12));
 } catch (err) {
+    try { mobileV1OutboxDispatcher?.close(); } catch {}
+    mobileV1OutboxDispatcher = null;
     console.error('[mobile-v1] not mounted:', err && err.message);
 }
 
@@ -6881,17 +8860,52 @@ if (ZEPHYR_ONE_EMBEDDED) {
         getSessionUser: (req) => req.user,
         dataDir: DATA_DIR,
         logger: console,
+        shellSecret: process.env.ZEPHYR_ONE_SHELL_SECRET,
+        shellInstance: process.env.ZEPHYR_ONE_SHELL_INSTANCE,
+    });
+    delete process.env.ZEPHYR_ONE_SHELL_SECRET;
+    delete process.env.ZEPHYR_ONE_SHELL_INSTANCE;
+
+    const authorizeOneRdpConnection = (user, connectionId, capability) => {
+        const connection = storage.getConnectionById(connectionId);
+        authz.assertCan(
+            user,
+            capability,
+            'connection',
+            connectionId,
+            connection || { ownerUserId: '' },
+            { resourceExists: !!connection },
+        );
+        return connection;
+    };
+
+    mountOneRdpNativeBroker(app, {
+        requireUser,
+        authorizeConnection: authorizeOneRdpConnection,
+        verifyShellRequest: oneSecurity.verifyShellRequest,
+        logger: console,
     });
 
     mountOneRdpFolderMapping(app, {
         requireUser,
         getSessionUser: (req) => req.user,
+        authorizeConnection: authorizeOneRdpConnection,
+        verifyNativePicker: (req, action, fields) => (
+            oneSecurity.verifyShellRequest(req, action, fields).ok === true
+        ),
         dataDir: DATA_DIR,
         logger: console,
     });
 }
 
-app.get('/healthz', (req, res) => res.status(200).json({ ok: true, instanceId: INSTANCE_ID, version: APP_VERSION }));
+app.get('/healthz', (req, res) => {
+    if (ZEPHYR_ONE_EMBEDDED) {
+        const proof = embeddedReadinessProof(req);
+        if (proof) res.setHeader(EMBEDDED_READY_PROOF_HEADER, proof);
+        res.setHeader('Cache-Control', 'no-store');
+    }
+    return res.status(200).json({ ok: true, instanceId: INSTANCE_ID, version: APP_VERSION });
+});
 
 // 兜底路由
 app.get('*', (req, res, next) => {
@@ -6919,7 +8933,10 @@ const wss = new WebSocketServer(wsServerOptions);
 const noVncWss = new WebSocketServer(wsServerOptions);
 const editorLspWss = new WebSocketServer(wsServerOptions);
 const rdpProxyWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 64 * 1024 * 1024 });
-const agentFilesWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 * 1024 * 1024 });
+const agentFilesWss = new WebSocketServer({
+    ...wsServerOptions,
+    maxPayload: FILE_AGENT_PREAUTH_MAX_MESSAGE_BYTES,
+});
 const fileTransferWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 * 1024 * 1024 });
 /* Shared-resource relay (SHARED_RESOURCE_RESIDENCY.md 3.3).
  *
@@ -6931,11 +8948,28 @@ const fileTransferWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 
 const sharedRelayWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 1024 * 1024 });
 
 function handleHttpUpgrade(req, socket, head) {
+    if (!embeddedLoopbackHostAllowed(req)) {
+        rejectSocket(socket, 421, 'Misdirected Request');
+        return;
+    }
+    if (databaseMaintenance.active || databaseMaintenance.fatal) {
+        rejectSocket(socket, 503, 'Service Unavailable');
+        return;
+    }
     let pathname = '';
     try {
         pathname = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).pathname;
     } catch {
         pathname = req.url || '';
+    }
+
+    /* Zephyr One presents RDP through the native FreeRDP surface. Exposing the
+     * browser/WASM proxy in embedded mode would silently reintroduce the
+     * retired fallback whenever native attachment failed. Hosted Zephyr keeps
+     * the existing proxy route for browser clients. */
+    if (ZEPHYR_ONE_EMBEDDED && pathname === '/rdp-proxy') {
+        rejectSocket(socket, 404, 'Not Found');
+        return;
     }
 
     const targetWss = pathname === '/ssh'
@@ -6958,6 +8992,16 @@ function handleHttpUpgrade(req, socket, head) {
         rejectSocket(socket, 404, 'Not Found');
         return;
     }
+    let fileAgentAdmission = null;
+    if (targetWss === agentFilesWss) {
+        const admitted = fileAgentManager.admitUpgrade(socket);
+        if (!admitted.ok) {
+            rejectSocket(socket, 429, 'Too Many Requests');
+            return;
+        }
+        fileAgentAdmission = admitted.lease;
+        req.fileAgentAdmission = fileAgentAdmission;
+    }
     /* /agent/files authenticates via protocol-level token (hello message),
      * not via HTTP session cookie — skip session check for this path. */
     /* Both of these authenticate at the protocol level rather than by cookie:
@@ -6965,6 +9009,10 @@ function handleHttpUpgrade(req, socket, head) {
      * credential minted by POST /shared/connections/{id}/sessions. Requiring a
      * browser session here would make the mobile relay unreachable. */
     if (targetWss !== agentFilesWss && targetWss !== sharedRelayWss) {
+        if (ZEPHYR_ONE_EMBEDDED && !sameOriginAllowed(req)) {
+            rejectSocket(socket, 403, 'Forbidden');
+            return;
+        }
         const session = currentSession(req);
         if (!session || session.mustChangePassword) {
             console.warn('[WS-DIAG] rejected websocket upgrade by session auth', {
@@ -6986,6 +9034,25 @@ function handleHttpUpgrade(req, socket, head) {
         }
     }
 
+    if (fileAgentAdmission) {
+        let upgradedWs = null;
+        try {
+            targetWss.handleUpgrade(req, socket, head, (ws) => {
+                upgradedWs = ws;
+                targetWss.emit('connection', ws, req);
+            });
+        } catch (err) {
+            fileAgentManager.releaseUpgradeAdmission(fileAgentAdmission);
+            try {
+                if (upgradedWs) upgradedWs.terminate();
+                else rejectSocket(socket, 400, 'Bad Request');
+            } catch {}
+            console.warn('[file-agent] websocket upgrade failed', {
+                error: String(err?.message || err).slice(0, 160),
+            });
+        }
+        return;
+    }
     targetWss.handleUpgrade(req, socket, head, (ws) => {
         targetWss.emit('connection', ws, req);
     });
@@ -6993,11 +9060,13 @@ function handleHttpUpgrade(req, socket, head) {
 server.on('upgrade', handleHttpUpgrade);
 if (httpsServer) httpsServer.on('upgrade', handleHttpUpgrade);
 
-editorLspWss.on('connection', handleEditorLspConnection);
+editorLspWss.on('connection', (ws, req) => {
+    handleEditorLspConnection(ws, req, { ownerId: req.authSession?.userId });
+});
 
 /* ─── File Agent WebSocket ─── */
-agentFilesWss.on('connection', (ws) => {
-    fileAgentManager.handleConnection(ws);
+agentFilesWss.on('connection', (ws, req) => {
+    fileAgentManager.handleConnection(ws, req);
 });
 fileTransferWss.on('connection', (ws, req) => {
     startSessionWatchdog(ws, req);
@@ -7036,14 +9105,24 @@ sharedRelayWss.on('connection', async (ws, req) => {
         return;
     }
     const sessionId = String(url.searchParams.get('sessionId') || '');
-    /* Credential in the Sec-WebSocket-Protocol header when the client can set
-     * it, query string otherwise. Browsers cannot set arbitrary headers on a
-     * WebSocket upgrade, and the native client uses the subprotocol slot. */
-    const credential = String(
-        url.searchParams.get('credential')
-        || req.headers['sec-websocket-protocol']
-        || '',
-    ).trim();
+    /* Attach credentials are header-only. Query strings are routinely copied
+     * into access logs, browser history and crash reports, so even a valid
+     * header must not make a credential-bearing URL acceptable. Native and
+     * browser WebSocket clients can both use the subprotocol slot. */
+    if (url.searchParams.has('credential')) {
+        closeWebSocketSafe(ws, 1008, 'query-credential-forbidden');
+        return;
+    }
+    const offeredProtocols = String(req.headers['sec-websocket-protocol'] || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+    const credentials = offeredProtocols.filter((value) => value !== 'zephyr-shared-relay-v1');
+    if (credentials.length !== 1) {
+        closeWebSocketSafe(ws, 1008, 'relay-credential-required');
+        return;
+    }
+    const credential = credentials[0];
 
     let authorized;
     try {
@@ -7055,10 +9134,12 @@ sharedRelayWss.on('connection', async (ws, req) => {
         return;
     }
 
-    const { session, resolved } = authorized;
+    const { session, resolved, attachId } = authorized;
     let upstream = null;
     let stream = null;
     let closed = false;
+    let unsubscribeRevocation = () => {};
+    let revokeWatch = null;
 
     const sendJson = (obj) => {
         if (ws.readyState === ws.OPEN) {
@@ -7069,6 +9150,9 @@ sharedRelayWss.on('connection', async (ws, req) => {
     const cleanup = (reason) => {
         if (closed) return;
         closed = true;
+        unsubscribeRevocation();
+        if (revokeWatch) clearInterval(revokeWatch);
+        shared.releaseRelayAttach(sessionId, attachId);
         try { stream?.end?.(); } catch {}
         for (const client of upstream?.clients || []) {
             try { client.end(); } catch {}
@@ -7078,19 +9162,24 @@ sharedRelayWss.on('connection', async (ws, req) => {
         closeWebSocketSafe(ws, 1000, reason);
     };
 
-    /* Revocation must land on live sessions, not just on the next mint. The
-     * session registry drops the entry on revoke, so a disappeared session is
-     * the signal to tear the relay down. */
-    const revokeWatch = setInterval(() => {
-        if (!shared.sessions.get(sessionId)) {
+    /* Canonical revoke operations drop the registry entry and notify this
+     * listener synchronously. The watchdog is still required for changes made
+     * by another process or directly in backing storage. */
+    unsubscribeRevocation = shared.subscribeSessionRevocation(sessionId, () => {
+        sendJson({ type: 'revoked' });
+        cleanup('shared-grant-revoked');
+    });
+    revokeWatch = setInterval(() => {
+        const live = shared.validateRelaySession(sessionId, attachId);
+        if (live && live.ok === false) {
             sendJson({ type: 'revoked' });
-            cleanup('shared-grant-revoked');
+            cleanup(String(live.error?.code || 'shared-grant-revoked'));
         }
-    }, 5000);
+    }, 2000);
     revokeWatch.unref?.();
 
-    ws.on('close', () => { clearInterval(revokeWatch); cleanup('client-close'); });
-    ws.on('error', () => { clearInterval(revokeWatch); cleanup('ws-error'); });
+    ws.on('close', () => cleanup('client-close'));
+    ws.on('error', () => cleanup('ws-error'));
 
     const pending = [];
     ws.on('message', (raw) => {
@@ -7146,12 +9235,22 @@ sharedRelayWss.on('connection', async (ws, req) => {
     try {
         upstream = await createRoutedSSHConnection(resolved, 15000);
     } catch (err) {
-        console.warn('[shared-relay] upstream connect failed', { sessionId, error: err.message });
+        /* Do not log an upstream message: transport libraries are not part of
+         * the secret-redaction boundary and may embed connect material. */
+        console.warn('[shared-relay] upstream connect failed', {
+            sessionId,
+            error: String(err?.code || err?.name || 'connect_failed'),
+        });
         sendJson({ type: 'error', code: 'shared_relay_unavailable', message: '\u4e0a\u6e38\u8fde\u63a5\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5' });
         cleanup('upstream-connect-failed');
         return;
     }
-    if (closed) { cleanup('closed-before-ready'); return; }
+    if (closed) {
+        for (const client of upstream?.clients || []) {
+            try { client.end(); } catch {}
+        }
+        return;
+    }
 
     upstream.client.on('error', () => cleanup('upstream-error'));
     upstream.client.on('close', () => { sendJson({ type: 'close' }); cleanup('upstream-close'); });
@@ -7561,6 +9660,9 @@ wss.on('connection', (ws, req) => {
     let sftpStream = null;
     let telnetSocket = null;
     let telnetProtocol = false;
+    let pendingTelnetRoute = null;
+    let pendingTelnetConnectController = null;
+    let terminalConnectGeneration = 0;
     let statsTimer = null;
     let statsRunning = false;
     let remoteStatsState = {};
@@ -7572,6 +9674,19 @@ wss.on('connection', (ws, req) => {
         console.info('[TELNET]', 'socket closed', { reason });
         telnetSocket = null;
         telnetProtocol = false;
+    };
+    const cancelPendingTelnetConnect = (reason = 'cleanup') => {
+        const controller = pendingTelnetConnectController;
+        const routed = pendingTelnetRoute;
+        pendingTelnetConnectController = null;
+        pendingTelnetRoute = null;
+        if (controller && !controller.signal.aborted) {
+            try { controller.abort(createRouteAbortError(`Telnet ${reason}`)); } catch { controller.abort(); }
+        }
+        if (routed) {
+            try { routed.close?.(createRouteAbortError(`Telnet ${reason}`))?.catch?.(() => {}); } catch {}
+        }
+        if (!attachedSshSession && telnetSocket) closeTelnetSocket(reason);
     };
 
     const sendJSON = (obj) => {
@@ -7690,6 +9805,7 @@ wss.on('connection', (ws, req) => {
         stopStatsPush();
         stopDockerLogStreams();
         stopSftpUploadStreams();
+        cancelPendingTelnetConnect(reason);
         if (sftpStream) {
             const closingSftp = sftpStream;
             try { closingSftp.end(); } catch {}
@@ -8052,6 +10168,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             }
             const { host, port, username, password, privateKey, init, connectionId, transientToken, transientOverrides } = msg;
             const requestedSessionId = String(msg.sessionId || msg.terminalSessionId || msg.tabId || connectionId || crypto.randomUUID());
+            const connectGeneration = ++terminalConnectGeneration;
             const existingSession = sshTerminalSessions.get(requestedSessionId);
             if (existingSession && !existingSession.closed) {
                 /* Ownership by immutable userId (renames must not orphan live
@@ -8187,18 +10304,47 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     // the socket in the same session object SSH uses so attach /
                     // detach / history / detached-TTL all work unchanged.
                     if (connectionId) console.log(`[TELNET] 使用已保存连接 ${conn.name || conn.host}`);
-                    const routedForward = await createRoutedTcpForward(conn, Number(conn.port) || 23, 10000);
+                    const connectController = new AbortController();
+                    pendingTelnetConnectController = connectController;
+                    let routedForward = null;
                     let socket;
                     try {
-                        socket = await dialTelnet({
+                        routedForward = await createRoutedTcpForward(
+                            conn,
+                            Number(conn.port) || 23,
+                            TELNET_LIVE_ROUTE_TIMEOUT_MS,
+                            { signal: connectController.signal },
+                        );
+                        throwIfRouteAborted(connectController.signal, 'Telnet connect');
+                        if (pendingTelnetConnectController !== connectController || ws.readyState !== ws.OPEN) {
+                            throw createRouteAbortError('Telnet connect');
+                        }
+                        pendingTelnetRoute = routedForward;
+                        socket = await dialLiveTelnet({
                             host: routedForward?.host || conn.host,
                             port: routedForward?.port || Number(conn.port) || 23,
-                        }, { timeout: 10000, cols: initialCols, rows: initialRows });
+                        }, {
+                            timeout: TELNET_LIVE_ROUTE_TIMEOUT_MS,
+                            cols: initialCols,
+                            rows: initialRows,
+                            signal: connectController.signal,
+                        });
+                        telnetSocket = socket;
+                        // Connecting to the loopback listener is not routed
+                        // readiness. Wait for SOCKS CONNECT / SSH direct-tcpip.
+                        await routedForward?.waitForReady?.();
+                        throwIfRouteAborted(connectController.signal, 'Telnet connect');
+                        if (pendingTelnetConnectController !== connectController || ws.readyState !== ws.OPEN) {
+                            throw createRouteAbortError('Telnet connect');
+                        }
                     } catch (err) {
-                        try { routedForward?.close?.(); } catch {}
+                        if (telnetSocket === socket) closeTelnetSocket('connect-failed');
+                        else try { socket?.destroy?.(); } catch {}
+                        try { routedForward?.close?.(err)?.catch?.(() => {}); } catch {}
+                        if (pendingTelnetRoute === routedForward) pendingTelnetRoute = null;
+                        if (pendingTelnetConnectController === connectController) pendingTelnetConnectController = null;
                         throw err;
                     }
-                    telnetSocket = socket;
                     telnetProtocol = true;
                     socket.setTimeout(0); // live session — no idle timeout kill
                     console.log(`[TELNET] 已连接: ${conn.host}:${Number(conn.port) || 23}${routedForward?.route ? ` (${routedForward.route})` : ''}`);
@@ -8258,6 +10404,10 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     ws._sshTerminalSession = session;
                     ws._sshOutputSequence = 0;
                     sshTerminalSessions.set(session.id, session);
+                    // Ownership has moved from the pre-ready attempt to the
+                    // detachable terminal session.
+                    pendingTelnetRoute = null;
+                    pendingTelnetConnectController = null;
                     try {
                         terminalHistory.open({
                             userId: session.userId,
@@ -8334,6 +10484,12 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
                 if (connectionId) console.log(`[SSH] 使用已保存路由连接 ${conn.name || conn.host}`);
                 const routed = await createRoutedSSHConnection(conn, 10000);
+                if (connectGeneration !== terminalConnectGeneration || ws.readyState !== ws.OPEN) {
+                    [...(routed.clients || [routed.client])].reverse().forEach((client) => {
+                        try { client.end?.(); } catch {}
+                    });
+                    return;
+                }
                 sshClient = routed.client;
                 sshClients = routed.clients || [routed.client];
                 console.log(`[SSH] 已连接: ${routed.route}`);
@@ -8367,6 +10523,11 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
                 // 打开 shell
                 sshClient.shell({ term: 'xterm-256color', rows: initialRows, cols: initialCols }, (err, stream) => {
+                    if (connectGeneration !== terminalConnectGeneration || ws.readyState !== ws.OPEN) {
+                        try { stream?.destroy?.(); } catch {}
+                        [...sshClients].reverse().forEach((client) => { try { client.end?.(); } catch {} });
+                        return;
+                    }
                     if (err) {
                         console.warn('[SSH-DIAG] shell open failed after ssh ready', {
                             connectionId: conn.id || connectionId || '',
@@ -8442,6 +10603,14 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     }
                 });
             } catch (err) {
+                if (connectGeneration !== terminalConnectGeneration) {
+                    console.info('[SSH-DIAG] ignored stale connect failure', {
+                        connectionId: connectionId || '',
+                        generation: connectGeneration,
+                        currentGeneration: terminalConnectGeneration,
+                    });
+                    return;
+                }
                 console.warn('[SSH-DIAG] ssh connection failed before shell', {
                     connectionId: connectionId || '',
                     error: err.message,
@@ -9052,6 +11221,14 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
         if (msg.type === 'sftp-preview') {
             const targetPath = String(msg.path || '').trim();
             const ext = path.extname(targetPath).slice(1).toLowerCase();
+            if (ext === 'tif' || ext === 'tiff') {
+                sendJSON({ type: 'sftp-preview', path: targetPath, error: 'TIFF previews are not supported.' });
+                return;
+            }
+            if (ext === 'svg') {
+                sendJSON({ type: 'sftp-preview', path: targetPath, error: 'SVG previews are not supported.' });
+                return;
+            }
             if (!targetPath) {
                 sendJSON({ type: 'sftp-preview', path: targetPath, error: '缺少预览路径' });
                 return;
@@ -9069,12 +11246,25 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     sendJSON({ type: 'sftp-preview', path: targetPath, error: '目录不支持图片预览' });
                     return;
                 }
+                const connectionConfig = attachedSshSession?.connectionConfig || conn;
+                const cacheIdentity = sftpPreviewCacheIdentity({
+                    ownerUserId: req.authSession?.userId || attachedSshSession?.userId,
+                    connectionId: attachedSshSession?.connectionId || conn?.id,
+                    connectionConfig,
+                });
+                if (!cacheIdentity) {
+                    sendJSON({ type: 'sftp-preview', path: targetPath, error: 'Image preview is temporarily unavailable.' });
+                    return;
+                }
                 const token = crypto.randomBytes(24).toString('hex');
                 sftpPreviewTokens.set(token, {
                     path: targetPath,
                     username: req.authSession?.username || '',
+                    ownerUserId: cacheIdentity.ownerUserId,
                     sessionId: attachedSshSession?.id || '',
-                    connectionConfig: attachedSshSession?.connectionConfig || conn,
+                    connectionId: cacheIdentity.connectionId,
+                    serverIdentity: cacheIdentity.serverIdentity,
+                    connectionConfig,
                     size: Number(stats.size) || 0,
                     mtime: Number(stats.mtime) || Number(stats.modifyTime) || 0,
                     expiresAt: Date.now() + PREVIEW_TOKEN_TTL,
@@ -9083,8 +11273,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     type: 'sftp-preview-ready',
                     path: targetPath,
                     url: `/api/sftp/preview/${token}`,
-                    contentType: isBrowserImageExt(ext, BROWSER_IMAGE_EXTENSIONS) ? getBrowserImageContentType(ext, BROWSER_IMAGE_CONTENT_TYPES) : 'image/webp',
-                    converted: !isBrowserImageExt(ext, BROWSER_IMAGE_EXTENSIONS),
+                    contentType: 'image/webp',
+                    converted: true,
                     size: Number(stats.size) || 0,
                 });
             });
@@ -9408,8 +11598,8 @@ async function startServer() {
     const aiHostListen = parseLoopbackListen(AI_HOST_LISTEN);
     aiHostServer = http.createServer(aiHostApp);
     /* Zephyr One pins both listeners to loopback: the core is a local child
-     * process of the shell, and automatic local-account adoption must never be
-     * reachable from the LAN. Plain web deployments keep the previous
+     * process of the shell, and its bootstrap endpoint must never be reachable
+     * from the LAN. Plain web deployments keep the previous
      * all-interfaces default unless ZEPHYR_BIND_HOST says otherwise. */
     const listenHost = EMBEDDED_LISTEN_HOST;
     await Promise.all([

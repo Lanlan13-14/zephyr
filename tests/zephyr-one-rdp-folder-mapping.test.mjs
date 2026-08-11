@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync as fsRealpath, closeSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,14 +25,46 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(path.join(root, rel), 'utf8');
+const crypto = require('node:crypto');
 
 const mod = require('../zephyr-one-rdp-storage.js');
-const { MappingStore, PickerQueue, listFolder, resolveInside, mountRoutes } = mod;
+const { ShellRequestAuthenticator, signedShellMessage } = require('../zephyr-one-security.js');
+const {
+    MappingStore,
+    PickerQueue,
+    listFolder,
+    resolveInside,
+    openFileInside,
+    mountRoutes,
+} = mod;
 
 const SERVER_JS = read('server.js');
 const OVERLAY_JS = read('zephyr-one-rdp-settings.js');
 const CLIENT_JS = read('public/rdp-wasm-client.js');
 const PICKER_RS = read('zephyr_one/src-tauri/src/rdp_picker/mod.rs');
+const SHELL_SECRET = '0123456789abcdef'.repeat(4);
+const SHELL_INSTANCE = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+
+function signedPickerRequest(action, fields, req = {}, {
+    secret = SHELL_SECRET,
+    shellInstance = SHELL_INSTANCE,
+    timestamp = String(Date.now()),
+    nonce = crypto.randomBytes(20).toString('hex'),
+} = {}) {
+    const message = signedShellMessage(action, timestamp, nonce, shellInstance, fields);
+    const mac = crypto.createHmac('sha256', secret).update(message, 'utf8').digest('hex');
+    const headers = {
+        'x-zephyr-one-shell-instance': shellInstance,
+        'x-zephyr-one-shell-timestamp': timestamp,
+        'x-zephyr-one-shell-nonce': nonce,
+        'x-zephyr-one-shell-mac': mac,
+    };
+    return {
+        ...req,
+        headers,
+        get(name) { return headers[String(name).toLowerCase()] || ''; },
+    };
+}
 
 /** Fresh temp dir per case; the store writes a real file. */
 function tmp() {
@@ -127,84 +159,115 @@ test('a whitespace-only folder counts as cleared', () => {
 
 test('a filed request is claimable exactly once', () => {
     const q = new PickerQueue();
-    const id = q.request('root');
-    assert.deepEqual(q.claim(), { id, username: 'root' });
+    const id = q.request({ userId: 'u1', username: 'root', connectionId: 'c1' });
+    assert.deepEqual(q.claim('u1'), { id, username: 'root' });
     // Two shells, or one shell polling twice before the dialog closes, must not
     // both open a chooser for the same request.
-    assert.equal(q.claim(), null);
+    assert.equal(q.claim('u1'), null);
 });
 
 test('an empty queue claims to nothing', () => {
-    assert.equal(new PickerQueue().claim(), null);
+    assert.equal(new PickerQueue().claim('u1'), null);
 });
 
-test('the picked path comes back through poll and is then forgotten', () => {
-    const q = new PickerQueue();
-    const id = q.request('root');
-    q.claim();
-    assert.equal(q.resolve(id, 'C:\\Users\\Test\\Shared'), true);
-    assert.deepEqual(q.poll(id), { status: 'done', path: 'C:\\Users\\Test\\Shared', error: '' });
-    // Terminal answers are read once. A stale id must not be answerable twice,
-    // or a second modal open would inherit the previous pick.
-    assert.equal(q.poll(id).status, 'unknown');
+test('a picked path is persisted by the core while poll returns only display metadata', () => {
+    const dir = tmp();
+    try {
+        let selected = null;
+        const q = new PickerQueue({
+            onSelected(entry, folder) {
+                selected = { connectionId: entry.connectionId, folder };
+                return true;
+            },
+        });
+        const id = q.request({ userId: 'u1', username: 'root', connectionId: 'c1' });
+        q.claim('u1');
+        assert.equal(q.resolve(id, dir, '', 'u1'), true);
+        const answer = q.poll(id, 'u1');
+        assert.equal(answer.status, 'done');
+        assert.equal(answer.selected, true);
+        assert.equal(answer.folderLabel, path.basename(fsRealpath(dir)));
+        assert.deepEqual(selected, { connectionId: 'c1', folder: fsRealpath(dir) });
+        assert.equal('path' in answer, false);
+        assert.equal('capability' in answer, false);
+        assert.equal(answer.error, '');
+        assert.equal(q.poll(id, 'u1').status, 'unknown');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a cancelled dialog is reported, not left to time out', () => {
     const q = new PickerQueue();
-    const id = q.request('root');
-    q.claim();
-    q.resolve(id, '', 'cancelled');
-    const answer = q.poll(id);
+    const id = q.request({ userId: 'u1', username: 'root', connectionId: 'c1' });
+    q.claim('u1');
+    q.resolve(id, '', 'cancelled', 'u1');
+    const answer = q.poll(id, 'u1');
     assert.equal(answer.status, 'done');
     assert.equal(answer.error, 'cancelled');
-    assert.equal(answer.path, '');
+    assert.equal(answer.selected, false);
+    assert.equal(answer.folderLabel, '');
 });
 
 test('a claimed but unanswered request still reads as pending', () => {
     const q = new PickerQueue();
-    const id = q.request('root');
-    q.claim();
+    const id = q.request({ userId: 'u1', username: 'root', connectionId: 'c1' });
+    q.claim('u1');
     // The page polls while the OS chooser is open; it must keep waiting rather
     // than treating claimed as an answer.
-    assert.deepEqual(q.poll(id), { status: 'pending', path: '', error: '' });
+    assert.deepEqual(q.poll(id, 'u1'), {
+        status: 'pending', selected: false, folderLabel: '', error: '',
+    });
 });
 
 test('an unknown id is refused rather than invented', () => {
     const q = new PickerQueue();
-    assert.equal(q.resolve('pick-nope', 'C:\\x'), false);
-    assert.equal(q.poll('pick-nope').status, 'unknown');
+    assert.equal(q.resolve('pick-nope', 'C:\\x', '', 'u1'), false);
+    assert.equal(q.poll('pick-nope', 'u1').status, 'unknown');
 });
 
 test('requests expire so a dismissed dialog cannot pin one forever', () => {
     let now = 1_000_000;
     const q = new PickerQueue({ ttlMs: 5_000, now: () => now });
-    const id = q.request('root');
+    const id = q.request({ userId: 'u1', username: 'root', connectionId: 'c1' });
     now += 5_001;
-    assert.equal(q.claim(), null, 'an expired request must not be claimable');
-    assert.equal(q.poll(id).status, 'unknown');
+    assert.equal(q.claim('u1'), null, 'an expired request must not be claimable');
+    assert.equal(q.poll(id, 'u1').status, 'unknown');
 });
 
 test('a request inside the TTL survives', () => {
     let now = 1_000_000;
     const q = new PickerQueue({ ttlMs: 5_000, now: () => now });
-    const id = q.request('root');
+    const id = q.request({ userId: 'u1', username: 'root', connectionId: 'c1' });
     now += 4_999;
-    assert.equal(q.claim().id, id);
+    assert.equal(q.claim('u1').id, id);
 });
 
 test('ids stay unique when two requests land in the same millisecond', () => {
     // now() is frozen, so only the sequence counter separates them. Colliding
     // ids would let one pick resolve the other request.
     const q = new PickerQueue({ now: () => 42 });
-    assert.notEqual(q.request('root'), q.request('root'));
+    assert.notEqual(
+        q.request({ userId: 'u1', username: 'root', connectionId: 'c1' }),
+        q.request({ userId: 'u1', username: 'root', connectionId: 'c1' }),
+    );
 });
 
 test('the oldest pending request is claimed first', () => {
     let now = 1_000;
     const q = new PickerQueue({ now: () => (now += 1) });
-    const first = q.request('a');
-    q.request('b');
-    assert.equal(q.claim().id, first);
+    const first = q.request({ userId: 'u1', username: 'a', connectionId: 'c1' });
+    q.request({ userId: 'u1', username: 'b', connectionId: 'c2' });
+    assert.equal(q.claim('u1').id, first);
+});
+
+test('picker requests cannot be claimed, resolved, or polled by another account', () => {
+    const q = new PickerQueue();
+    const id = q.request({ userId: 'alice-id', username: 'alice', connectionId: 'c1' });
+    assert.equal(q.claim('bob-id'), null);
+    assert.equal(q.inspect(id, 'bob-id'), null);
+    assert.equal(q.poll(id, 'bob-id').status, 'unknown');
+    assert.equal(q.claim('alice-id').id, id);
+    assert.equal(q.resolve(id, '', 'cancelled', 'bob-id'), false);
+    assert.equal(q.resolve(id, '', 'cancelled', 'alice-id'), true);
 });
 
 /* ── path containment ──────────────────────────────────────────────────── */
@@ -301,6 +364,57 @@ test('a symlink pointing out of the folder is refused', (t) => {
         // realpath is what catches it.
         assert.equal(resolveInside(share, 'link.txt'), null);
     } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+test('the opened-file path rejects a symlink escape and returns a verified handle', (t) => {
+    const base = tmp();
+    try {
+        const share = path.join(base, 'share');
+        const outside = path.join(base, 'outside');
+        mkdirSync(share);
+        mkdirSync(outside);
+        writeFileSync(path.join(share, 'safe.txt'), 'safe');
+        writeFileSync(path.join(outside, 'secret.txt'), 'secret');
+
+        const opened = openFileInside(share, 'safe.txt');
+        assert.ok(opened && Number.isInteger(opened.fd));
+        assert.equal(opened.size, 4);
+        closeSync(opened.fd);
+
+        try {
+            symlinkSync(path.join(outside, 'secret.txt'), path.join(share, 'escape.txt'));
+        } catch {
+            t.skip('symlink creation not permitted here');
+            return;
+        }
+        assert.equal(openFileInside(share, 'escape.txt'), null);
+    } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+test('the opened-file path rejects an escaping directory link', (t) => {
+    const base = tmp();
+    try {
+        const share = path.join(base, 'share');
+        const outside = path.join(base, 'outside');
+        mkdirSync(share);
+        mkdirSync(outside);
+        writeFileSync(path.join(outside, 'secret.txt'), 'secret');
+        try {
+            symlinkSync(outside, path.join(share, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+        } catch {
+            t.skip('directory link creation not permitted here');
+            return;
+        }
+        assert.equal(openFileInside(share, 'escape/secret.txt'), null);
+    } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+test('verified file opening enforces its byte ceiling before streaming', () => {
+    const dir = tmp();
+    try {
+        writeFileSync(path.join(dir, 'large.txt'), '12345');
+        assert.deepEqual(openFileInside(dir, 'large.txt', { maxBytes: 4 }), { tooLarge: true });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a folder that does not exist yields null rather than throwing', () => {
@@ -405,6 +519,287 @@ function fakeApp() {
     return { routes, get: record('GET'), post: record('POST'), delete: record('DELETE') };
 }
 
+function fakeResponse() {
+    return {
+        statusCode: 200,
+        body: null,
+        headers: {},
+        status(code) { this.statusCode = code; return this; },
+        json(body) { this.body = body; return this; },
+        setHeader(name, value) { this.headers[name] = value; },
+        end() { return this; },
+    };
+}
+
+function invokeRoute(app, method, routePath, req) {
+    const route = app.routes.find((candidate) => candidate.method === method && candidate.path === routePath);
+    assert.ok(route, `${method} ${routePath} must exist`);
+    const res = fakeResponse();
+    route.handlers.at(-1)(req, res);
+    return res;
+}
+
+function secureRouteHarness(dir, options = {}) {
+    const app = fakeApp();
+    const connections = new Map([
+        ['c-alice', { id: 'c-alice', ownerUserId: 'alice-id' }],
+        ['c-alice-2', { id: 'c-alice-2', ownerUserId: 'alice-id' }],
+    ]);
+    const authorizeConnection = options.authorizeConnection || ((user, id, capability) => {
+        const connection = connections.get(id);
+        if (!connection) throw Object.assign(new Error('connection not found'), { status: 404, code: 'not_found' });
+        const owner = connection.ownerUserId === user.userId;
+        const granted = Array.isArray(user.capabilities) && user.capabilities.includes(capability);
+        if (!owner && !granted) throw Object.assign(new Error('connection not found'), { status: 404, code: 'not_found' });
+        return connection;
+    });
+    const result = mountRoutes(app, {
+        requireUser: (req, res, next) => next(),
+        getSessionUser: (req) => req.user,
+        authorizeConnection,
+        verifyNativePicker: options.verifyNativePicker,
+        dataDir: dir,
+        logger: options.logger,
+    });
+    return { app, ...result };
+}
+
+test('mapping routes reject cross-account and unknown connections', () => {
+    const dir = tmp();
+    try {
+        const { app } = secureRouteHarness(dir);
+        const bob = { userId: 'bob-id', username: 'bob', capabilities: [] };
+        for (const [method, routePath] of [
+            ['GET', '/api/one/rdp/storage-mapping/:connectionId'],
+            ['POST', '/api/one/rdp/storage-mapping/:connectionId'],
+            ['DELETE', '/api/one/rdp/storage-mapping/:connectionId'],
+        ]) {
+            const denied = invokeRoute(app, method, routePath, {
+                user: bob,
+                params: { connectionId: 'c-alice' },
+                query: { name: 'safe.txt' },
+                body: {},
+            });
+            assert.equal(denied.statusCode, 404, `${method} ${routePath} cross-account`);
+
+            const missing = invokeRoute(app, method, routePath, {
+                user: { userId: 'alice-id', username: 'alice' },
+                params: { connectionId: 'missing' },
+                query: { name: 'safe.txt' },
+                body: {},
+            });
+            assert.equal(missing.statusCode, 404, `${method} ${routePath} unknown connection`);
+        }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an explicit connection capability preserves legitimate shared access', () => {
+    const dir = tmp();
+    try {
+        const { app } = secureRouteHarness(dir);
+        const bob = { userId: 'bob-id', username: 'bob', capabilities: ['view', 'use'] };
+        const mapping = invokeRoute(app, 'GET', '/api/one/rdp/storage-mapping/:connectionId', {
+            user: bob,
+            params: { connectionId: 'c-alice' },
+        });
+        assert.equal(mapping.statusCode, 200);
+        assert.deepEqual(mapping.body, {
+            ok: true, configured: false, folderLabel: '', deviceName: '',
+        });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('page mapping updates cannot submit an absolute folder path', () => {
+    const dir = tmp();
+    try {
+        const { app, mappings } = secureRouteHarness(dir);
+        const response = invokeRoute(app, 'POST', '/api/one/rdp/storage-mapping/:connectionId', {
+            user: { userId: 'alice-id', username: 'alice' },
+            params: { connectionId: 'c-alice' },
+            body: { enabled: true, folder: dir, deviceName: 'SHARE' },
+        });
+        assert.equal(response.statusCode, 400);
+        assert.equal(response.body.code, 'mapping_metadata_only');
+        assert.equal(mappings.get('c-alice').folder, '');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('native picker resolution atomically stores the path before page polling', () => {
+    const dir = tmp();
+    try {
+        const { app, mappings } = secureRouteHarness(dir, {
+            verifyNativePicker: () => true,
+        });
+        const alice = { userId: 'alice-id', username: 'alice' };
+        const request = invokeRoute(app, 'POST', '/api/one/rdp/pick-folder', {
+            user: alice,
+            params: {},
+            body: { connectionId: 'c-alice' },
+        });
+        const id = request.body.id;
+        invokeRoute(app, 'GET', '/api/one/rdp/picker-queue', { user: alice, params: {} });
+        const resolved = invokeRoute(app, 'POST', '/api/one/rdp/picker-queue/:id', {
+            user: alice,
+            params: { id },
+            body: { path: dir, error: '' },
+        });
+        assert.equal(resolved.statusCode, 200);
+        assert.equal(mappings.get('c-alice').folder, fsRealpath(dir));
+        const polled = invokeRoute(app, 'GET', '/api/one/rdp/pick-folder/:id', {
+            user: alice,
+            params: { id },
+        });
+        assert.equal(polled.body.selected, true);
+        assert.equal('path' in polled.body, false);
+        assert.equal('capability' in polled.body, false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('native picker queue endpoints fail closed without native request authentication', () => {
+    const dir = tmp();
+    try {
+        const { app, pickers } = secureRouteHarness(dir);
+        const user = { userId: 'alice-id', username: 'alice' };
+        const id = pickers.request({ userId: user.userId, username: user.username, connectionId: 'c-alice' });
+        const response = invokeRoute(app, 'GET', '/api/one/rdp/picker-queue', {
+            user,
+            params: {},
+        });
+        assert.equal(response.statusCode, 403);
+        assert.equal(response.body.code, 'native_picker_auth_required');
+
+        const resolve = invokeRoute(app, 'POST', '/api/one/rdp/picker-queue/:id', {
+            user,
+            params: { id },
+            body: { path: dir, error: '' },
+        });
+        assert.equal(resolve.statusCode, 403);
+        assert.equal(resolve.body.code, 'native_picker_auth_required');
+        assert.equal(pickers.inspect(id, user.userId).state, 'pending');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('native picker shell authentication binds action and resolve fields and rejects replay', () => {
+    const dir = tmp();
+    try {
+        const shellAuth = new ShellRequestAuthenticator({
+            secret: SHELL_SECRET,
+            shellInstance: SHELL_INSTANCE,
+        });
+        const { app, pickers, mappings } = secureRouteHarness(dir, {
+            verifyNativePicker: (req, action, fields) => shellAuth.verify(req, action, fields).ok === true,
+        });
+        const user = { userId: 'alice-id', username: 'alice' };
+        const id = pickers.request({ userId: user.userId, username: user.username, connectionId: 'c-alice' });
+
+        const wrongAction = signedPickerRequest('unlock.claim', [], { user, params: {} });
+        assert.equal(invokeRoute(app, 'GET', '/api/one/rdp/picker-queue', wrongAction).statusCode, 403);
+
+        const signedClaim = signedPickerRequest('rdp_picker.claim', [], { user, params: {} });
+        const claimed = invokeRoute(app, 'GET', '/api/one/rdp/picker-queue', signedClaim);
+        assert.equal(claimed.statusCode, 200);
+        assert.equal(claimed.body.id, id);
+        assert.equal(
+            invokeRoute(app, 'GET', '/api/one/rdp/picker-queue', signedClaim).statusCode,
+            403,
+            'claim nonce replay must be rejected',
+        );
+
+        const body = { path: dir, error: '' };
+        const signedResolve = signedPickerRequest(
+            'rdp_picker.resolve',
+            [id, body.path, body.error],
+            { user, params: { id }, body },
+        );
+        assert.equal(
+            invokeRoute(app, 'POST', '/api/one/rdp/picker-queue/:id', {
+                ...signedResolve,
+                params: { id: id + '-substituted' },
+            }).statusCode,
+            403,
+            'request id substitution must invalidate the MAC',
+        );
+        assert.equal(
+            invokeRoute(app, 'POST', '/api/one/rdp/picker-queue/:id', {
+                ...signedResolve,
+                body: { path: path.join(dir, 'substituted'), error: '' },
+            }).statusCode,
+            403,
+            'path substitution must invalidate the MAC',
+        );
+        assert.equal(
+            invokeRoute(app, 'POST', '/api/one/rdp/picker-queue/:id', {
+                ...signedResolve,
+                body: { path: dir, error: 'substituted' },
+            }).statusCode,
+            403,
+            'error substitution must invalidate the MAC',
+        );
+
+        assert.equal(
+            invokeRoute(app, 'POST', '/api/one/rdp/picker-queue/:id', signedResolve).statusCode,
+            200,
+        );
+        assert.equal(
+            invokeRoute(app, 'POST', '/api/one/rdp/picker-queue/:id', signedResolve).statusCode,
+            403,
+            'resolve nonce replay must be rejected before queue state is consulted',
+        );
+        const publicResult = pickers.poll(id, user.userId);
+        assert.equal(publicResult.selected, true);
+        assert.equal('path' in publicResult, false);
+        assert.equal(mappings.get('c-alice').folder, fsRealpath(dir));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('picker path and error values are not written to native resolve logs', () => {
+    const dir = tmp();
+    try {
+        const shellAuth = new ShellRequestAuthenticator({
+            secret: SHELL_SECRET,
+            shellInstance: SHELL_INSTANCE,
+        });
+        const logs = [];
+        const { app, pickers } = secureRouteHarness(dir, {
+            verifyNativePicker: (req, action, fields) => shellAuth.verify(req, action, fields).ok === true,
+            logger: { warn: (...values) => logs.push(values) },
+        });
+        const user = { userId: 'alice-id', username: 'alice' };
+        const id = pickers.request({ userId: user.userId, username: user.username, connectionId: 'c-alice' });
+        const pathMarker = 'C:\\PRIVATE_PICKER_PATH';
+        const errorMarker = 'PRIVATE_PICKER_ERROR';
+        const request = signedPickerRequest(
+            'rdp_picker.resolve',
+            [id, pathMarker, errorMarker],
+            { user, params: { id }, body: { path: pathMarker, error: errorMarker } },
+        );
+
+        assert.equal(invokeRoute(app, 'POST', '/api/one/rdp/picker-queue/:id', request).statusCode, 400);
+        const rendered = JSON.stringify(logs);
+        assert.equal(rendered.includes(pathMarker), false);
+        assert.equal(rendered.includes(errorMarker), false);
+        assert.doesNotMatch(PICKER_RS, /eprintln!\([^;]*\{(?:path|error)\}/s);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('connection routes fail closed when the authorization seam is not wired', () => {
+    const dir = tmp();
+    try {
+        const app = fakeApp();
+        mountRoutes(app, {
+            requireUser: (req, res, next) => next(),
+            getSessionUser: (req) => req.user,
+            dataDir: dir,
+        });
+        const response = invokeRoute(app, 'GET', '/api/one/rdp/storage-mapping/:connectionId', {
+            user: { userId: 'alice-id', username: 'alice' },
+            params: { connectionId: 'c-alice' },
+        });
+        assert.equal(response.statusCode, 503);
+        assert.equal(response.body.code, 'rdp_storage_authz_unavailable');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('every endpoint the page and the shell call is mounted', () => {
     const app = fakeApp();
     const dir = tmp();
@@ -419,8 +814,6 @@ test('every endpoint the page and the shell call is mounted', () => {
             'GET /api/one/rdp/storage-mapping/:connectionId',
             'POST /api/one/rdp/storage-mapping/:connectionId',
             'DELETE /api/one/rdp/storage-mapping/:connectionId',
-            'GET /api/one/rdp/storage-files/:connectionId',
-            'GET /api/one/rdp/storage-file/:connectionId',
             'POST /api/one/rdp/pick-folder',
             'GET /api/one/rdp/pick-folder/:id',
             'GET /api/one/rdp/picker-queue',
@@ -486,6 +879,10 @@ test('server.js mounts the module only in embedded mode', () => {
      * would make any logged-in account an arbitrary file reader. */
     const guard = SERVER_JS.lastIndexOf('if (ZEPHYR_ONE_EMBEDDED) {', at);
     assert.ok(guard > 0 && guard < at, 'the mount must sit inside an embedded-only guard');
+    const mount = SERVER_JS.slice(at, at + 1_500);
+    assert.match(mount, /authorizeConnection:\s*authorizeOneRdpConnection/);
+    assert.match(mount, /verifyNativePicker:/);
+    assert.match(mount, /oneSecurity\.verifyShellRequest\(/);
 });
 
 test('the overlay script is served only in embedded mode', () => {
@@ -531,12 +928,10 @@ test('the overlay wires the three controls app.js leaves alone', () => {
     assert.match(OVERLAY_JS, /addEventListener\('click'/);
 });
 
-test('the client loads the mapped folder at connect time', () => {
-    assert.match(CLIENT_JS, /async function loadOneMappedFolder\(connectionId\)/);
-    assert.match(CLIENT_JS, /await loadOneMappedFolder\(connectionId\)/);
-    // Without this the mapping would be stored and never advertised.
-    assert.match(CLIENT_JS, /storage-files\//);
-    assert.match(CLIENT_JS, /storage-file\//);
+test('embedded core does not mount the retired renderer file bridge', () => {
+    const storage = read('zephyr-one-rdp-storage.js');
+    assert.doesNotMatch(storage, /app\.get\('\/api\/one\/rdp\/storage-files/);
+    assert.doesNotMatch(storage, /app\.get\('\/api\/one\/rdp\/storage-file/);
 });
 
 test('the loader names nothing that is scoped inside initFilePanel', () => {
@@ -576,4 +971,3 @@ test('the overlay script is injected into the embedded page once', () => {
     const { html: again } = applyEmbeddedSurface(html);
     assert.equal(countOccurrences(again, EMBED_RDP_SETTINGS_SCRIPT), 1);
 });
-

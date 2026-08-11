@@ -1,17 +1,30 @@
 package one.zephyr.mobile.network.dto
 
-import kotlinx.serialization.SerialName
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.buildClassSerialDescriptor
+import kotlinx.serialization.descriptors.element
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
+import one.zephyr.mobile.model.Base64Codec
 import one.zephyr.mobile.model.SecretEnvelope
 
 /**
  * Wire DTOs for /api/mobile/v1.
  *
- * Field names and nullability track contracts/openapi-mobile-v1.json exactly. Anything the schema
- * marks optional is nullable here so a older/newer server cannot cause a parse crash, and unknown
- * keys are ignored by the Json configuration in [one.zephyr.mobile.network.MobileJson].
+ * Field names and nullability track the live routes and contracts/openapi-mobile-v1.json. Unknown
+ * additive keys remain forward-compatible, but authentication and credential-bearing success
+ * payloads deliberately reject missing fields rather than inventing security-critical defaults.
  */
 @Serializable
 data class ErrorEnvelopeDto(
@@ -32,21 +45,62 @@ data class ErrorBodyDto(
 data class LoginRequestDto(
     val username: String,
     val password: String,
+    val captchaToken: String? = null,
+    val remember: Boolean = false,
     /** Native clients must ask for the SID explicitly; the browser flow uses a cookie. */
-    val returnSid: Boolean = true,
-)
+    val returnSid: Boolean,
+) {
+    override fun toString(): String =
+        "LoginRequestDto(username=[redacted], password=[redacted], captchaToken=[redacted], " +
+            "remember=$remember, returnSid=$returnSid)"
+}
 
 @Serializable
 data class LoginResponseDto(
-    val ok: Boolean = false,
+    val ok: Boolean,
+    val requireTotp: Boolean? = null,
+    val tempToken: String? = null,
     val sid: String? = null,
-    val totpRequired: Boolean = false,
-    val userId: String? = null,
-    val username: String? = null,
+    val user: AuthUserDto? = null,
+    val mustChangePassword: Boolean? = null,
+) {
+    init {
+        require(ok) { "login response ok must be true" }
+        if (requireTotp == true) {
+            require(!tempToken.isNullOrBlank()) { "TOTP response is missing its continuation token" }
+            require(sid == null && user == null && mustChangePassword == null) {
+                "TOTP response mixes challenge and authenticated session fields"
+            }
+        } else {
+            require(tempToken == null) { "authenticated response carries an unexpected continuation token" }
+            require(!sid.isNullOrBlank()) { "authenticated response is missing its SID" }
+            requireNotNull(user) { "authenticated response is missing its user" }
+            requireNotNull(mustChangePassword) {
+                "authenticated response is missing mustChangePassword"
+            }
+        }
+    }
+
+    override fun toString(): String =
+        "LoginResponseDto(ok=$ok, requireTotp=$requireTotp, tempToken=[redacted], " +
+            "sid=[redacted], user=$user, mustChangePassword=$mustChangePassword)"
+}
+
+@Serializable
+data class AuthUserDto(
+    val userId: String,
+    val username: String,
 )
 
 @Serializable
-data class TotpRequestDto(val code: String, val returnSid: Boolean = true)
+data class TotpRequestDto(
+    val tempToken: String,
+    val code: String,
+    val returnSid: Boolean,
+) {
+    override fun toString(): String =
+        "TotpRequestDto(tempToken=[redacted], code=[redacted], returnSid=$returnSid)"
+}
 
 @Serializable
 data class DeviceEncryptionKeyDto(
@@ -96,14 +150,59 @@ data class DeviceDto(
 
 @Serializable
 data class BindResponseDto(
-    val ok: Boolean = false,
+    val ok: Boolean,
     val device: DeviceDto,
     val accessCredential: String,
-    val accessExpiresAt: Long? = null,
+    val accessExpiresAt: Long,
     val refreshCredential: String,
     val registryHash: String,
-    val bootstrapRequired: Boolean? = null,
-)
+    val bootstrapRequired: Boolean,
+) {
+    init {
+        require(ok) { "bind response ok must be true" }
+        require(accessCredential.isNotBlank()) { "bind response is missing its access credential" }
+        require(accessExpiresAt > 0L) { "bind response has an invalid access expiry" }
+        require(refreshCredential.isNotBlank()) { "bind response is missing its refresh credential" }
+        require(registryHash.isNotBlank()) { "bind response is missing its registry hash" }
+        require(bootstrapRequired) { "fresh binding must require bootstrap" }
+    }
+
+    override fun toString(): String =
+        "BindResponseDto(ok=$ok, device=$device, accessCredential=[redacted], " +
+            "accessExpiresAt=$accessExpiresAt, refreshCredential=[redacted], " +
+            "registryHash=$registryHash, bootstrapRequired=$bootstrapRequired)"
+}
+
+@Serializable
+data class RefreshRequestDto(
+    val deviceId: String,
+    val refreshCredential: String,
+) {
+    override fun toString(): String =
+        "RefreshRequestDto(deviceId=$deviceId, refreshCredential=[redacted])"
+}
+
+@Serializable
+data class RefreshResponseDto(
+    val ok: Boolean,
+    val device: DeviceDto,
+    val accessCredential: String,
+    val accessExpiresAt: Long,
+    val refreshCredential: String,
+    val registryHash: String,
+) {
+    init {
+        require(ok) { "refresh response ok must be true" }
+        require(accessCredential.isNotBlank()) { "refresh response is missing its access credential" }
+        require(accessExpiresAt > 0L) { "refresh response has an invalid access expiry" }
+        require(refreshCredential.isNotBlank()) { "refresh response is missing its refresh credential" }
+        require(registryHash.isNotBlank()) { "refresh response is missing its registry hash" }
+    }
+
+    override fun toString(): String =
+        "RefreshResponseDto(ok=$ok, device=$device, accessCredential=[redacted], " +
+            "accessExpiresAt=$accessExpiresAt, refreshCredential=[redacted], registryHash=$registryHash)"
+}
 
 @Serializable
 data class SyncOperationDto(
@@ -116,6 +215,7 @@ data class SyncOperationDto(
     val fieldMask: List<String> = emptyList(),
     val payload: JsonObject = JsonObject(emptyMap()),
     val secretEnvelopes: Map<String, SecretEnvelope>? = null,
+    val clearSecretFields: List<String>? = null,
 )
 
 @Serializable
@@ -183,15 +283,180 @@ data class BootstrapPageDto(
 )
 
 @Serializable
-data class CapabilitiesDto(
-    val ok: Boolean = false,
-    val protocolVersions: List<Int> = emptyList(),
-    val registryHash: String,
-    val minimumAppVersions: JsonObject? = null,
-    val limits: JsonObject = JsonObject(emptyMap()),
-    val auth: JsonObject = JsonObject(emptyMap()),
-    val features: JsonObject? = null,
+data class MinimumAppVersionsDto(
+    val android: String,
+    val ios: String,
 )
+
+@Serializable
+data class CapabilityLimitsDto(
+    val maxOpsPerBatch: Long,
+    val maxPageSize: Long,
+    val defaultPageSize: Long,
+    val minIntervalSec: Long,
+    val maxIntervalSec: Long,
+    val blobChunkBytes: Long,
+    val maxBlobBytes: Long,
+    val tombstoneRetentionDays: Long,
+    val appliedOpRetentionDays: Long,
+)
+
+@Serializable
+data class AuthCapabilitiesDto(
+    val sidHeader: String,
+    val accessScheme: String,
+    val proofHeader: String,
+    val nonceHeader: String,
+    val timestampHeader: String,
+    val challengePath: String,
+    val proofVersion: String,
+    val proofSkewSec: Int,
+    val challengeTtlSec: Int,
+    val challengeMaxActivePerDevice: Int,
+    val challengeMaxIssuesPerMinute: Int,
+    val signatureFormat: String,
+    val encryptionAlg: String,
+    val signingAlg: String,
+) {
+    init {
+        require(sidHeader == "X-Zephyr-Sid" && accessScheme == "Bearer") {
+            "capability auth scheme is unsupported"
+        }
+        require(
+            proofHeader == "X-Zephyr-Device-Proof" &&
+                nonceHeader == "X-Zephyr-Server-Nonce" &&
+                timestampHeader == "X-Zephyr-Proof-Timestamp",
+        ) { "capability proof headers are unsupported" }
+        require(challengePath == "/api/mobile/v1/devices/proof-challenge") {
+            "capability challenge path is unsupported"
+        }
+        require(proofVersion == "zephyr-one-device-proof-v2" && proofSkewSec > 0 && challengeTtlSec > 0) {
+            "capability proof timing is invalid"
+        }
+        require(challengeMaxActivePerDevice > 0 && challengeMaxIssuesPerMinute > 0) {
+            "capability challenge limits are invalid"
+        }
+        require(signatureFormat == "P1363" && encryptionAlg == "ML-KEM-768" && signingAlg == "ES256") {
+            "capability proof algorithms are unsupported"
+        }
+    }
+}
+
+@Serializable
+data class ServerEncryptionDto(
+    val alg: String,
+    val keyVersion: Int,
+    val publicKey: String,
+) {
+    init {
+        val decodedKeySize = runCatching { Base64Codec.decode(publicKey).size }.getOrDefault(-1)
+        require(alg == "ML-KEM-768" && keyVersion > 0 && decodedKeySize == 1184) {
+            "server encryption capability is invalid"
+        }
+    }
+}
+
+/**
+ * A non-null wrapper keeps an omitted key distinct from the server's explicit `null` value even
+ * though the shared JSON configuration uses explicitNulls=false for additive compatibility.
+ */
+@Serializable(with = ServerEncryptionCapabilityDto.Serializer::class)
+sealed interface ServerEncryptionCapabilityDto {
+    data object Unavailable : ServerEncryptionCapabilityDto
+
+    data class Available(val value: ServerEncryptionDto) : ServerEncryptionCapabilityDto
+
+    object Serializer : KSerializer<ServerEncryptionCapabilityDto> {
+        override val descriptor: SerialDescriptor =
+            buildClassSerialDescriptor("ServerEncryptionCapability")
+
+        override fun deserialize(decoder: Decoder): ServerEncryptionCapabilityDto {
+            val jsonDecoder = decoder as? JsonDecoder
+                ?: throw SerializationException("server encryption capability requires JSON")
+            return when (val element = jsonDecoder.decodeJsonElement()) {
+                JsonNull -> Unavailable
+                is JsonObject -> Available(
+                    jsonDecoder.json.decodeFromJsonElement(ServerEncryptionDto.serializer(), element),
+                )
+                else -> throw SerializationException("server encryption capability must be an object or null")
+            }
+        }
+
+        override fun serialize(encoder: Encoder, value: ServerEncryptionCapabilityDto) {
+            val jsonEncoder = encoder as? JsonEncoder
+                ?: throw SerializationException("server encryption capability requires JSON")
+            val element = when (value) {
+                Unavailable -> JsonNull
+                is Available -> jsonEncoder.json.encodeToJsonElement(ServerEncryptionDto.serializer(), value.value)
+            }
+            jsonEncoder.encodeJsonElement(element)
+        }
+    }
+}
+
+@Serializable
+data class FeatureCapabilitiesDto(
+    val bidirectionalSync: Boolean,
+    val sharedResources: Boolean,
+    val fileBridge: Boolean,
+    val blobTransfer: Boolean,
+    val nearRealtimeWake: Boolean,
+)
+
+@Serializable
+data class WakeCapabilitiesDto(
+    val enabled: Boolean,
+    val transport: String,
+    val path: String,
+    val event: String,
+    val payloadFields: List<String>,
+    val heartbeatSec: Int,
+    val retryMs: Long,
+    val supportsLastEventId: Boolean,
+    val requiresDeviceAccess: Boolean,
+    val requiresDeviceProof: Boolean,
+    val maxConnections: Int,
+    val maxConnectionsPerOwner: Int,
+    val maxBufferedBytes: Long,
+) {
+    init {
+        require(enabled) { "wake transport is disabled" }
+        require(transport == "sse" && path == "/api/mobile/v1/sync/wake" && event == "wake") {
+            "wake transport metadata is unsupported"
+        }
+        require(payloadFields == listOf("cursor", "epoch", "reason")) {
+            "wake transport payload is unsupported"
+        }
+        require(heartbeatSec > 0 && retryMs > 0L) { "wake transport timing is invalid" }
+        require(supportsLastEventId) { "wake transport must support Last-Event-ID" }
+        require(requiresDeviceAccess && requiresDeviceProof) { "wake transport authentication is incomplete" }
+        require(maxConnections > 0 && maxConnectionsPerOwner > 0 && maxBufferedBytes > 0L) {
+            "wake transport limits are invalid"
+        }
+    }
+}
+
+@Serializable
+data class CapabilitiesDto(
+    val ok: Boolean,
+    val protocolVersions: List<Int>,
+    val registryHash: String,
+    val minimumAppVersions: MinimumAppVersionsDto? = null,
+    val limits: CapabilityLimitsDto,
+    val serverId: String,
+    val auth: AuthCapabilitiesDto,
+    /** Required on the wire, but explicitly null when the server cannot publish its key. */
+    val serverEncryption: ServerEncryptionCapabilityDto,
+    val features: FeatureCapabilitiesDto,
+    val wake: WakeCapabilitiesDto,
+) {
+    init {
+        require(ok) { "capabilities response ok must be true" }
+        require(protocolVersions.isNotEmpty()) { "capabilities response has no protocol versions" }
+        require(registryHash.isNotBlank()) { "capabilities response is missing its registry hash" }
+        require(serverId.isNotBlank()) { "capabilities response is missing its server id" }
+    }
+}
 
 @Serializable
 data class SensitiveVerifyRequestDto(
@@ -227,6 +492,37 @@ data class AckRequestDto(
     val cursor: Long,
     val appliedOpIds: List<String> = emptyList(),
 )
+
+/**
+ * The ACK endpoint is a durability boundary, so its open-object schema is interpreted narrowly.
+ * A generic `ok` DTO would either default a missing field or let callers ignore `false`; this
+ * serializer accepts exactly the success receipt current servers issue and nothing else.
+ */
+@Serializable(with = AckResponseDto.Serializer::class)
+data object AckResponseDto {
+    object Serializer : KSerializer<AckResponseDto> {
+        override val descriptor: SerialDescriptor = buildClassSerialDescriptor("AckResponse") {
+            element<Boolean>("ok")
+        }
+
+        override fun deserialize(decoder: Decoder): AckResponseDto {
+            val jsonDecoder = decoder as? JsonDecoder
+                ?: throw SerializationException("ack response requires JSON")
+            val response = jsonDecoder.decodeJsonElement() as? JsonObject
+                ?: throw SerializationException("ack response must be an object")
+            if (response.size != 1 || response["ok"] != JsonPrimitive(true)) {
+                throw SerializationException("ack response must contain only literal ok true")
+            }
+            return AckResponseDto
+        }
+
+        override fun serialize(encoder: Encoder, value: AckResponseDto) {
+            val jsonEncoder = encoder as? JsonEncoder
+                ?: throw SerializationException("ack response requires JSON")
+            jsonEncoder.encodeJsonElement(JsonObject(mapOf("ok" to JsonPrimitive(true))))
+        }
+    }
+}
 
 @Serializable
 data class SharedResourceSummaryDto(

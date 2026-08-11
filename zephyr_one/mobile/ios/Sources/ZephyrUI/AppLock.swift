@@ -62,8 +62,18 @@ public enum LockState: String, Sendable, CaseIterable {
 /// Anything holding decrypted material must register here so a lock event
 /// drops it. Registered sinks are also cleared on unbind and on device
 /// revocation.
+@MainActor
 public protocol LockSensitiveSink: AnyObject {
     func onLocked()
+}
+
+@MainActor
+private final class WeakLockSensitiveSink {
+    weak var value: LockSensitiveSink?
+
+    init(_ value: LockSensitiveSink) {
+        self.value = value
+    }
 }
 
 /// The S01 lock policy, ported from the Kotlin core-security `AppLock`.
@@ -71,13 +81,16 @@ public protocol LockSensitiveSink: AnyObject {
 /// ObservableObject so the root view can gate the whole app on ``AppLock/state``;
 /// every rule still lives in plain methods so `swift test` drives them without
 /// a run loop.
+@MainActor
 public final class AppLock: ObservableObject {
 
     private let authenticator: DeviceAuthenticator
     private let clock: () -> Int64
 
-    private let sinkLock = NSLock()
-    private var sinks: [LockSensitiveSink] = []
+    /// Weak ownership lets a dismissed form deallocate even if a host misses
+    /// its explicit detach callback. Main-actor isolation serializes register,
+    /// unregister and notification with every ObservableObject mutation.
+    private var sinks: [WeakLockSensitiveSink] = []
 
     @Published public private(set) var state: LockState = .disabled
     private var delay: LockDelay = .standardDefault
@@ -92,15 +105,18 @@ public final class AppLock: ObservableObject {
     public var isEnabled: Bool { state != .disabled }
 
     public func register(_ sink: LockSensitiveSink) {
-        sinkLock.lock()
-        sinks.append(sink)
-        sinkLock.unlock()
+        compactSinks()
+        guard !sinks.contains(where: { $0.value === sink }) else { return }
+        sinks.append(WeakLockSensitiveSink(sink))
     }
 
     public func unregister(_ sink: LockSensitiveSink) {
-        sinkLock.lock()
-        sinks.removeAll { $0 === sink }
-        sinkLock.unlock()
+        sinks.removeAll { $0.value == nil || $0.value === sink }
+    }
+
+    var registeredSensitiveSinkCount: Int {
+        compactSinks()
+        return sinks.count
     }
 
     public func availability() -> BiometricAvailability {
@@ -132,12 +148,15 @@ public final class AppLock: ObservableObject {
     }
 
     public func onEnterBackground() {
-        guard state == .unlocked else { return }
-        if delay == .immediate {
+        // Draft credentials are never allowed to survive in an app-switcher
+        // snapshot, even when the user's lock delay has not elapsed.
+        if state == .unlocked && delay == .immediate {
             lockNow()
-        } else {
-            backgroundedAt = clock()
+            return
         }
+        notifySinks()
+        guard state == .unlocked else { return }
+        backgroundedAt = clock()
     }
 
     public func onEnterForeground() {
@@ -152,9 +171,16 @@ public final class AppLock: ObservableObject {
     /// subscribes to ``state`` and covers the window, which is UIKit and
     /// therefore lives above this target.
     public func lockNow() {
-        guard isEnabled else { return }
         backgroundedAt = nil
-        state = .locked
+        if isEnabled { state = .locked }
+        notifySinks()
+    }
+
+    /// iOS can withdraw access to protected files independently of a scene
+    /// transition. Treat that as an immediate security boundary.
+    public func onProtectedDataUnavailable() {
+        backgroundedAt = nil
+        if isEnabled { state = .locked }
         notifySinks()
     }
 
@@ -184,10 +210,17 @@ public final class AppLock: ObservableObject {
         notifySinks()
     }
 
+    public func onUnbind() {
+        clearSensitiveMaterial()
+    }
+
     private func notifySinks() {
-        sinkLock.lock()
-        let snapshot = sinks
-        sinkLock.unlock()
+        compactSinks()
+        let snapshot = sinks.compactMap(\.value)
         for sink in snapshot { sink.onLocked() }
+    }
+
+    private func compactSinks() {
+        sinks.removeAll { $0.value == nil }
     }
 }

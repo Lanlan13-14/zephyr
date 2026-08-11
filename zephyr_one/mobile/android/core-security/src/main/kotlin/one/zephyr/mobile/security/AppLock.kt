@@ -119,9 +119,14 @@ class AppLock(
     }
 
     fun onEnterBackground() {
+        // Backgrounding always drops plaintext, even when app lock is disabled or has a delay.
+        // The delay controls only when the UI becomes locked; it is not permission to keep a warm
+        // credential or form cache while this process is no longer visible.
+        notifySinks()
         if (stateFlow.value != LockState.UNLOCKED) return
         if (delay == LockDelay.IMMEDIATE) {
-            lockNow()
+            backgroundedAt = null
+            stateFlow.value = LockState.LOCKED
         } else {
             backgroundedAt = clock()
         }

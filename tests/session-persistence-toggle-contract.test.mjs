@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { assertAssetVersion, cacheNameVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const appJs = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const appHtml = fs.readFileSync(new URL('../public/app.html', import.meta.url), 'utf8');
@@ -56,8 +57,10 @@ test('terminal unload policy follows the setting so detached SSH sessions do not
 });
 
 test('updated app and terminal assets use the current cache revision', () => {
-    assert.match(appHtml, /app\.js\?v=20260801-dock-notes-fullscreen1/);
-    assert.match(terminalHtml, /terminal\.js\?v=20260801-terminal-grid-converge1/);
-    assert.match(telnetHtml, /telnet-terminal\.js\?v=20260801-terminal-grid-converge1/);
-    assert.match(sw, /zephyr-static-20260801-dock-notes-fullscreen1/);
+    const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
+    const terminalVersion = singleAssetVersion(terminalHtml, 'terminal.js', 'terminal page script');
+    const telnetVersion = singleAssetVersion(telnetHtml, 'telnet-terminal.js', 'telnet page script');
+    assert.equal(cacheNameVersion(sw), appVersion);
+    assertAssetVersion(sw, 'terminal.js', terminalVersion, 'service worker terminal.js');
+    assertAssetVersion(sw, 'telnet-terminal.js', telnetVersion, 'service worker telnet-terminal.js');
 });

@@ -14,11 +14,13 @@ public enum MobileApiPaths {
     public static let getMobileV1Capabilities = "/api/mobile/v1/capabilities"
     public static let postMobileV1DevicesBind = "/api/mobile/v1/devices/bind"
     public static let postMobileV1DevicesRefresh = "/api/mobile/v1/devices/refresh"
+    public static let postMobileV1DevicesProofChallenge = "/api/mobile/v1/devices/proof-challenge"
     public static let getMobileV1Devices = "/api/mobile/v1/devices"
     public static let patchMobileV1DevicesBy = "/api/mobile/v1/devices/{deviceId}"
     public static let deleteMobileV1DevicesBy = "/api/mobile/v1/devices/{deviceId}"
     public static let getMobileV1SyncBootstrap = "/api/mobile/v1/sync/bootstrap"
     public static let getMobileV1SyncChanges = "/api/mobile/v1/sync/changes"
+    public static let getMobileV1SyncWake = "/api/mobile/v1/sync/wake"
     public static let postMobileV1SyncPush = "/api/mobile/v1/sync/push"
     public static let postMobileV1SyncAck = "/api/mobile/v1/sync/ack"
     public static let postMobileV1SyncNow = "/api/mobile/v1/sync/now"
@@ -31,6 +33,11 @@ public enum MobileApiPaths {
     public static let postMobileV1SharedSessionsByRefresh = "/api/mobile/v1/shared/sessions/{sessionId}/refresh"
     public static let deleteMobileV1SharedSessionsBy = "/api/mobile/v1/shared/sessions/{sessionId}"
     public static let postMobileV1SharedConnectionsBySessions = "/api/mobile/v1/shared/connections/{connectionId}/sessions"
+    public static let postMobileV1BlobsUploads = "/api/mobile/v1/blobs/uploads"
+    public static let getMobileV1BlobsUploadsBy = "/api/mobile/v1/blobs/uploads/{uploadId}"
+    public static let putMobileV1BlobsUploadsByChunksBy = "/api/mobile/v1/blobs/uploads/{uploadId}/chunks/{index}"
+    public static let getMobileV1BlobsByChunksBy = "/api/mobile/v1/blobs/{sha256}/chunks/{index}"
+    public static let getMobileV1BlobsBy = "/api/mobile/v1/blobs/{sha256}"
 
     public static func deviceById(_ deviceId: String) -> String {
         "/api/mobile/v1/devices/" + deviceId

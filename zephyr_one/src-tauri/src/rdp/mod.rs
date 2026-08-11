@@ -32,7 +32,9 @@
 //! running the browser pipeline.
 
 use std::fmt;
+use zeroize::Zeroize;
 
+pub mod broker;
 pub mod ffi;
 mod session;
 
@@ -47,7 +49,7 @@ pub use session::{
 /// happens in one place (`ffi::with_config`) so no caller has to reason about
 /// pointer lifetimes; the C side copies everything it needs during
 /// `zephyr_rdp_new`, and the borrowed `CString`s outlive that call.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     pub host: String,
     pub port: u32,
@@ -116,12 +118,21 @@ impl Default for Config {
     }
 }
 
+impl Drop for Config {
+    fn drop(&mut self) {
+        self.password.zeroize();
+    }
+}
+
 /// Security negotiation, matching `ZEPHYR_RDP_SEC_*`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Security {
+    /// Negotiate NLA or TLS, never Standard RDP Security.
     Auto,
     Nla,
     Tls,
+    /// Legacy wire value retained only so old records can be rejected with a
+    /// precise error before the request reaches FreeRDP.
     Rdp,
 }
 
@@ -234,6 +245,8 @@ pub enum Error {
     /// string. Rejected rather than truncated: a silently shortened hostname
     /// would connect somewhere the user did not ask for.
     InteriorNul(&'static str),
+    /// Clipboard text would exceed the bounded CF_UNICODETEXT wire payload.
+    ClipboardTooLarge,
     /// `zephyr_rdp_new` returned NULL (allocation or settings assembly failed).
     SessionCreate,
     /// The folder mapping is unusable.
@@ -260,12 +273,16 @@ impl fmt::Display for Error {
                 "this build has no native RDP engine (built with ZEPHYR_ONE_SKIP_NATIVE_RDP=1)"
             ),
             Error::InteriorNul(field) => write!(f, "field {field} contains an interior NUL byte"),
+            Error::ClipboardTooLarge => write!(f, "clipboard text exceeds the native RDP limit"),
             Error::SessionCreate => write!(f, "FreeRDP session could not be created"),
             Error::Drive(problem) => write!(f, "folder mapping unusable: {}", problem.code()),
             Error::Run(code) => write!(f, "RDP session ended with code {code}"),
             Error::NoSuchSession => write!(f, "no such RDP session"),
             Error::AbiMismatch(detail) => {
-                write!(f, "FreeRDP shim ABI mismatch, refusing to connect: {detail}")
+                write!(
+                    f,
+                    "FreeRDP shim ABI mismatch, refusing to connect: {detail}"
+                )
             }
         }
     }
@@ -280,6 +297,7 @@ impl Error {
         match self {
             Error::Unavailable => "native_rdp_unavailable",
             Error::InteriorNul(_) => "invalid_field",
+            Error::ClipboardTooLarge => "rdp_clipboard_too_large",
             Error::SessionCreate => "rdp_session_create_failed",
             Error::Drive(problem) => problem.code(),
             Error::Run(_) => "rdp_session_failed",
@@ -309,6 +327,21 @@ pub fn freerdp_major() -> Option<i32> {
     #[cfg(not(zephyr_native_rdp))]
     {
         None
+    }
+}
+
+/// Whether cliprdr is protected by a pre-reassembly message bound in the linked
+/// FreeRDP. Unpatched system/vcpkg builds fail closed instead of exposing a
+/// server-controlled allocation before the application callback.
+pub fn clipboard_available() -> bool {
+    #[cfg(zephyr_native_rdp)]
+    {
+        // SAFETY: pure compile-time capability query with no pointers.
+        unsafe { ffi::zephyr_rdp_clipboard_available() == 1 }
+    }
+    #[cfg(not(zephyr_native_rdp))]
+    {
+        false
     }
 }
 
@@ -345,6 +378,31 @@ pub fn validate_drive(name: &str, path: &str) -> Result<(), Error> {
 mod tests {
     use super::*;
 
+    #[cfg(zephyr_native_rdp)]
+    fn native_security_flags(config: &Config) -> (i32, i32, i32, i32) {
+        session::with_config(config, |raw| {
+            let (mut nla, mut tls, mut rdp_security) = (0, 0, 0);
+            // SAFETY: `with_config` keeps every pointed-to CString alive, and
+            // all optional probe outputs are allowed to be null.
+            let result = unsafe {
+                ffi::zephyr_rdp_probe_settings(
+                    raw,
+                    &mut nla,
+                    &mut tls,
+                    &mut rdp_security,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            (result, nla, tls, rdp_security)
+        })
+        .unwrap()
+    }
+
     #[test]
     fn security_and_audio_parse_the_spellings_the_ui_stores() {
         // These strings come from the saved connection record, so a rename on
@@ -352,6 +410,7 @@ mod tests {
         assert_eq!(Security::parse("nla"), Some(Security::Nla));
         assert_eq!(Security::parse(" TLS "), Some(Security::Tls));
         assert_eq!(Security::parse(""), Some(Security::Auto));
+        assert_eq!(Security::parse("rdp"), Some(Security::Rdp));
         assert_eq!(Security::parse("plaintext"), None);
 
         assert_eq!(AudioMode::parse("remote"), Some(AudioMode::Remote));
@@ -370,6 +429,42 @@ mod tests {
         assert_eq!(AudioMode::Local.as_raw(), ffi::ZEPHYR_RDP_AUDIO_LOCAL);
         assert_eq!(AudioMode::Remote.as_raw(), ffi::ZEPHYR_RDP_AUDIO_REMOTE);
         assert_eq!(AudioMode::Off.as_raw(), ffi::ZEPHYR_RDP_AUDIO_OFF);
+    }
+
+    #[cfg(zephyr_native_rdp)]
+    #[test]
+    fn native_auto_compatibility_spelling_and_password_force_nla() {
+        let mut config = Config::default();
+        config.host = "rdp.example.test".to_string();
+        // The native shim accepts only HYBRID/HYBRID_EX after negotiation.
+        // `Auto` is retained for saved-record compatibility, not permission to
+        // fall back to TLS-only or Standard RDP Security.
+        assert_eq!(native_security_flags(&config), (0, 1, 0, 0));
+
+        config.password = "secret".to_string();
+        assert_eq!(native_security_flags(&config), (0, 1, 0, 0));
+    }
+
+    #[cfg(zephyr_native_rdp)]
+    #[test]
+    fn native_core_rejects_legacy_and_protocol_zero() {
+        let mut config = Config::default();
+        config.host = "rdp.example.test".to_string();
+        config.security = Security::Rdp;
+        assert_eq!(native_security_flags(&config).0, -1);
+
+        session::with_config(&config, |raw| {
+            // SAFETY: `with_config` owns all pointed-to values for this call.
+            assert_eq!(
+                unsafe { ffi::zephyr_rdp_security_protocol_allowed(raw, 0) },
+                0
+            );
+        })
+        .unwrap();
+
+        config.security = Security::Tls;
+        config.password = "secret".to_string();
+        assert_eq!(native_security_flags(&config).0, -1);
     }
 
     #[test]
@@ -406,7 +501,12 @@ mod tests {
         // makes the pack lossy for no gain on a local link.
         assert_eq!(cfg.color_depth, 32);
         assert_eq!(cfg.port, 3389);
-        assert!(cfg.clipboard, "clipboard is on by default in the product UI");
+        assert!(
+            cfg.clipboard,
+            "clipboard is on by default in the product UI"
+        );
+        assert_eq!(cfg.security, Security::Auto);
+        assert!(!cfg.ignore_certificate);
     }
 
     #[test]
@@ -415,7 +515,10 @@ mod tests {
          * still answers as if it had one. `is_available` and the cfg must agree,
          * so a test run on a machine without FreeRDP still checks the contract. */
         if is_available() {
-            assert!(freerdp_major().is_some(), "an available engine must report its major");
+            assert!(
+                freerdp_major().is_some(),
+                "an available engine must report its major"
+            );
         } else {
             assert_eq!(freerdp_major(), None);
             assert_eq!(validate_drive("share", "/tmp"), Err(Error::Unavailable));

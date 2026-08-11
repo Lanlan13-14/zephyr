@@ -11,6 +11,8 @@ lifecycle = "2.8.7"
 activityCompose = "1.9.3"
 navigationCompose = "2.8.5"
 room = "2.6.1"
+sqlite = "2.6.2"
+sqlcipher = "4.17.0"
 okhttp = "4.12.0"
 kotlinxSerialization = "1.7.3"
 kotlinxCoroutines = "1.9.0"
@@ -45,6 +47,8 @@ androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "
 androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 androidx-room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
+androidx-sqlite = { module = "androidx.sqlite:sqlite", version.ref = "sqlite" }
+sqlcipher-android = { module = "net.zetetic:sqlcipher-android", version.ref = "sqlcipher" }
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "workManager" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "security" }
 androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }

@@ -86,5 +86,5 @@ test('frontend saveNotesSettings always writes personal notes override', () => {
     assert.match(body, /savePersonalSettings\(\{\s*notes:\s*\{\s*enabled\s*\}\s*\}\)/);
     assert.doesNotMatch(body, /if \(myIdentity\.role === 'admin'\) \{\s*settings = await savePlatformSettings\('notes'/);
     // Superadmin loadSettings must explicitly re-merge personal notes over platform defaults.
-    assert.match(appSrc, /notes:\s*\{\s*\.\.\.\(admin\.notes \|\| \{\}\),\s*\.\.\.\(settings\.notes \|\| \{\}\)\s*\}/);
+    assert.match(appSrc, /notes:\s*\{\s*\.\.\.\(admin\.notes \|\| \{\}\),\s*\.\.\.\((?:nextSettings|settings)\.notes \|\| \{\}\)\s*\}/);
 });

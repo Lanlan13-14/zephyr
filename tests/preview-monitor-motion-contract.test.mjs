@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertAssetVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const terminal = fs.readFileSync(path.join(root, 'public', 'terminal.js'), 'utf8');
@@ -9,6 +10,8 @@ const style = fs.readFileSync(path.join(root, 'public', 'style.css'), 'utf8');
 const imagePreview = fs.readFileSync(path.join(root, 'public', 'preview', 'image', 'image-preview.js'), 'utf8');
 const mediaPreview = fs.readFileSync(path.join(root, 'public', 'preview', 'media', 'media-preview.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public', 'terminal.html'), 'utf8');
+const appHtml = fs.readFileSync(path.join(root, 'public', 'app.html'), 'utf8');
+const sw = fs.readFileSync(path.join(root, 'public', 'sw.js'), 'utf8');
 
 test('image and media previews use shared floating-panel close motion', () => {
     for (const selector of [
@@ -43,9 +46,12 @@ test('monitor thumb geometry is CSS-driven and shadow-free', () => {
 });
 
 test('preview and monitor assets carry their current cache-busts', () => {
-    assert.match(html, /style\.css\?v=20260730-admin-role-delete1/, 'style.css app cache version');
-    assert.match(html, /terminal\.js\?v=20260730-admin-role-delete1/, 'terminal.js app cache version');
+    const appStyleVersion = singleAssetVersion(appHtml, 'style.css', 'app shell style');
+    const terminalVersion = singleAssetVersion(html, 'terminal.js', 'terminal page script');
+    assertAssetVersion(html, 'style.css', appStyleVersion, 'terminal page style');
+    assertAssetVersion(sw, 'style.css', appStyleVersion, 'service worker style');
+    assertAssetVersion(sw, 'terminal.js', terminalVersion, 'service worker terminal script');
     for (const asset of ['image-preview.css', 'media-preview.css', 'image-preview.js', 'media-preview.js']) {
-        assert.match(html, new RegExp(`${asset.replaceAll('.', '\\.')}\\?v=20260725-telnet-page-split1`), `${asset} preview cache version`);
+        singleAssetVersion(html, asset, `${asset} preview asset`);
     }
 });

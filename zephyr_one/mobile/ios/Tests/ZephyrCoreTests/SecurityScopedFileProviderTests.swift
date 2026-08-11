@@ -28,13 +28,15 @@ final class SecurityScopedFileProviderTests: XCTestCase {
     private func provider(
         readOnly: Bool = false,
         maxHandles: Int = 64,
-        maxList: Int = 2000
+        maxList: Int = 2000,
+        maxRead: Int = SecurityScopedFileProvider.defaultMaxReadBytes
     ) -> SecurityScopedFileProvider {
         SecurityScopedFileProvider(
             fileSystem: fs,
             readOnly: readOnly,
             maxOpenHandles: maxHandles,
-            maxListEntries: maxList
+            maxListEntries: maxList,
+            maxReadBytes: maxRead
         )
     }
 
@@ -89,15 +91,14 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         await refused("invalid_path") { _ = try await provider.list(path: "/docs/bridge") }
     }
 
-    func testAContainedSymlinkStillWorks() async throws {
-        /* Refusing every link would be the easy answer and the wrong one: a link
-         * that stays inside the granted directory is a legitimate part of the user's
-         * folder and must remain usable. */
+    func testAContainedSymlinkIsAlsoRefusedFailClosed() async throws {
+        /* A contained link can be retargeted between validation and use. The
+         * descriptor-relative policy therefore refuses every ancestor and target
+         * symlink rather than trying to preserve contained-link convenience. */
         fs.addSymlink("/granted/docs/inside", to: "/granted/top.bin")
         let provider = provider()
-        let stat = try await provider.stat(path: "/docs/inside")
-        XCTAssertEqual(stat.path, "/docs/inside")
-        XCTAssertFalse(stat.isDir)
+        await refused("invalid_path") { _ = try await provider.stat(path: "/docs/inside") }
+        await refused("invalid_path") { _ = try await provider.open(path: "/docs/inside", mode: "read") }
     }
 
     func testCreatingThroughAnEscapingLinkIsRefused() async throws {
@@ -163,7 +164,7 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         fs.addSymlink("/granted/docs/escape", to: "/elsewhere/secret.txt")
         fs.addSymlink("/granted/docs/inside", to: "/granted/top.bin")
         let names = try await provider().list(path: "/docs").map(\.name)
-        XCTAssertEqual(names, ["a.txt", "inside"])
+        XCTAssertEqual(names, ["a.txt"])
     }
 
     func testListIsBoundedSoAHugeDirectoryCannotExhaustMemory() async throws {
@@ -174,6 +175,7 @@ final class SecurityScopedFileProviderTests: XCTestCase {
          * trips instead of this silently truncating the directory. */
         let entries = try await provider(maxList: 10).list(path: "/docs")
         XCTAssertEqual(entries.count, 11)
+        XCTAssertEqual(fs.lastDescriptorListLimit, 11)
     }
 
     func testListRefusesAFile() async throws {
@@ -285,6 +287,53 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         XCTAssertEqual(fs.accessBalance, 0)
         let remainingClaims = await provider.accessClaimCount()
         XCTAssertEqual(remainingClaims, 0)
+        await refused("not_found") { _ = try await provider.open(path: "/docs/a.txt", mode: "read") }
+    }
+
+    func testCloseAllFencesAnOpenAlreadySuspendedInTheFilesystem() async throws {
+        let provider = provider()
+        try await provider.beginAccess()
+        let gate = ProviderOpenGate()
+        fs.pauseNextDescriptorOpen = { await gate.pause() }
+
+        let opening = Task { () -> Zft2Error? in
+            do {
+                _ = try await provider.open(path: "/docs/a.txt", mode: "read")
+                return nil
+            } catch let error as Zft2Error {
+                return error
+            } catch {
+                return Zft2Error(code: "unexpected", message: "unexpected error")
+            }
+        }
+        await gate.waitUntilEntered()
+
+        let closing = Task { await provider.closeAll() }
+        var observedFence = false
+        for _ in 0..<100 {
+            do {
+                _ = try await provider.stat(path: "/docs/a.txt")
+            } catch let error as Zft2Error where error.code == "not_found" {
+                observedFence = true
+                break
+            } catch {
+                break
+            }
+            await Task<Never, Never>.yield()
+        }
+        XCTAssertTrue(observedFence)
+        /* The claim stays live while the pre-fence open is suspended. */
+        XCTAssertEqual(fs.accessBalance, 1)
+
+        await gate.release()
+        let openFailure = await opening.value
+        await closing.value
+
+        XCTAssertEqual(openFailure?.code, "not_found")
+        XCTAssertEqual(fs.liveAccess, [])
+        XCTAssertEqual(fs.accessBalance, 0)
+        let remainingHandles = await provider.openHandleCount()
+        XCTAssertEqual(remainingHandles, 0)
     }
 
     func testARefusedClaimIsReportedRatherThanAssumed() async throws {
@@ -309,6 +358,15 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         chunk = try await provider.read(handle: handle, offset: 99, length: 5)
         XCTAssertTrue(chunk.isEmpty)
         await refused("invalid_argument") { _ = try await provider.read(handle: handle, offset: -1, length: 5) }
+    }
+
+    func testReadClampsIntMaxBeforeTheRandomAccessAllocation() async throws {
+        let provider = provider(maxRead: 1024)
+        let handle = try await provider.open(path: "/docs/a.txt", mode: "read")
+        let data = try await provider.read(handle: handle, offset: 0, length: Int.max)
+
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), "hello world")
+        XCTAssertEqual(fs.readLengths, [1024])
     }
 
     func testOpenForWriteCreatesTheFileWithoutCreatingItsParents() async throws {
@@ -432,5 +490,157 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         XCTAssertEqual(root.path, "/")
         XCTAssertEqual(root.name, "")
         XCTAssertEqual(root.size, 0)
+    }
+}
+
+private actor ProviderOpenGate {
+    private var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func pause() async {
+        entered = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilEntered() async {
+        while !entered {
+            await Task<Never, Never>.yield()
+        }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+final class PosixSecurityScopedFileSystemRaceTests: XCTestCase {
+
+    func testReplacingCanonicalisedAncestorCannotRedirectSensitiveOperations() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.base) }
+        let provider = fixture.provider
+        try await provider.beginAccess()
+
+        let originalFile = fixture.root.appendingPathComponent("docs/a.txt")
+        XCTAssertNotNil(try fixture.fileSystem.canonicalPath(of: originalFile.path))
+        XCTAssertNotNil(try fixture.fileSystem.canonicalPath(
+            of: fixture.root.appendingPathComponent("docs").path
+        ))
+
+        let parked = fixture.root.appendingPathComponent("parked-docs")
+        try FileManager.default.moveItem(
+            at: fixture.root.appendingPathComponent("docs"),
+            to: parked
+        )
+        try FileManager.default.createSymbolicLink(
+            atPath: fixture.root.appendingPathComponent("docs").path,
+            withDestinationPath: fixture.outside.path
+        )
+
+        await refused("invalid_path") {
+            _ = try await provider.open(path: "/docs/a.txt", mode: "read")
+        }
+        await refused("invalid_path") {
+            _ = try await provider.open(path: "/docs/new.bin", mode: "write")
+        }
+        await refused("invalid_path") {
+            try await provider.delete(path: "/docs/a.txt", recursive: false)
+        }
+        await refused("invalid_path") {
+            try await provider.rename(oldPath: "/docs/a.txt", newPath: "/moved.txt")
+        }
+        await refused("invalid_path") {
+            try await provider.truncate(path: "/docs/a.txt", size: 0)
+        }
+
+        XCTAssertEqual(
+            try String(contentsOf: fixture.outside.appendingPathComponent("a.txt"), encoding: .utf8),
+            "outside"
+        )
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.outside.appendingPathComponent("new.bin").path
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.root.appendingPathComponent("moved.txt").path
+        ))
+        await provider.closeAll()
+    }
+
+    func testPosixListStopsReaddirAtTheProviderLimit() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.base) }
+        let provider = SecurityScopedFileProvider(
+            fileSystem: fixture.fileSystem,
+            readOnly: false,
+            maxListEntries: 10
+        )
+        try await provider.beginAccess()
+        for index in 0..<500 {
+            XCTAssertTrue(FileManager.default.createFile(
+                atPath: fixture.root.appendingPathComponent("many/f\(index)").path,
+                contents: Data("x".utf8)
+            ))
+        }
+
+        let entries = try await provider.list(path: "/many")
+        XCTAssertEqual(entries.count, 11)
+        await provider.closeAll()
+    }
+
+    private struct Fixture {
+        let base: URL
+        let root: URL
+        let outside: URL
+        let fileSystem: PosixSecurityScopedFileSystem
+        let provider: SecurityScopedFileProvider
+    }
+
+    private func makeFixture() throws -> Fixture {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zephyr-posix-" + UUID().uuidString)
+        let root = base.appendingPathComponent("root")
+        let outside = base.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("docs"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("many"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data("inside".utf8).write(to: root.appendingPathComponent("docs/a.txt"))
+        try Data("outside".utf8).write(to: outside.appendingPathComponent("a.txt"))
+
+        let fileSystem = try PosixSecurityScopedFileSystem(
+            root: root,
+            requiresSecurityScope: false
+        )
+        return Fixture(
+            base: base,
+            root: root,
+            outside: outside,
+            fileSystem: fileSystem,
+            provider: SecurityScopedFileProvider(fileSystem: fileSystem, readOnly: false)
+        )
+    }
+
+    private func refused(
+        _ code: String,
+        _ operation: () async throws -> Void,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            try await operation()
+            XCTFail("expected " + code, file: file, line: line)
+        } catch let failure as Zft2Error {
+            XCTAssertEqual(failure.code, code, file: file, line: line)
+        } catch {
+            XCTFail("expected Zft2Error " + code, file: file, line: line)
+        }
     }
 }

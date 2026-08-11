@@ -23,6 +23,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createProofClient } from "./mobile-v1-proof-client.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -31,8 +32,16 @@ const state = {
   child: null, base: "", dataDir: "", sid: "", tokenId: "",
   deviceId: "", access: "", registryHash: "",
   serverId: "", serverKey: null, serverKeyVersion: 0,
-  entityId: "", revision: 0,
+  entityId: "", revision: 0, signingPrivateKey: null, ownerUserId: "",
+  serverLog: "", secretCanaries: [], envelopeArtifacts: [],
 };
+
+const proofDevice = createProofClient({
+  base: () => state.base,
+  access: () => state.access,
+  deviceId: () => state.deviceId,
+  privateKey: () => state.signingPrivateKey,
+});
 
 const ADMIN_PASSWORD = "mv1-secret-e2e-pass";
 
@@ -50,7 +59,7 @@ async function waitUp(url, budgetMs) {
 
 function device(pathname, init) {
   const options = init || {};
-  return fetch(state.base + pathname, {
+  return proofDevice(pathname, {
     method: options.method || "GET",
     headers: Object.assign(
       { authorization: "Bearer " + state.access },
@@ -59,6 +68,40 @@ function device(pathname, init) {
     ),
     body: options.body,
   });
+}
+
+async function push(operation, batchId) {
+  const res = await device("/api/mobile/v1/sync/push", {
+    method: "POST",
+    body: JSON.stringify({
+      protocolVersion: 1,
+      deviceId: state.deviceId,
+      batchId,
+      baseCursor: 0,
+      registryHash: state.registryHash,
+      operations: [operation],
+    }),
+  });
+  return { res, body: await res.json() };
+}
+
+async function createBindGrant(tokenId, deviceId) {
+  const verified = await fetch(state.base + "/api/mobile/v1/sensitive/verify", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-zephyr-sid": state.sid },
+    body: JSON.stringify({
+      action: "device.bind",
+      secret: ADMIN_PASSWORD,
+      targetIds: [tokenId, deviceId],
+    }),
+  });
+  const body = await verified.json();
+  assert.equal(verified.status, 200, "sensitive verification failed: " + JSON.stringify(body).slice(0, 300));
+  assert.equal(body.action, "device.bind");
+  assert.match(body.grant, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(body.secret, undefined, "the password must not be echoed by sensitive verification");
+  assert.equal(body.targetIds, undefined, "sensitive verification must not echo its targets");
+  return body.grant;
 }
 
 /** Byte-for-byte the construction in mobile/tools/lib/aad.mjs and MobileAad.kt. */
@@ -103,7 +146,7 @@ async function seal(plaintext, aad, keyVersion, entityRevision) {
   cipher.setAAD(aad);
   const body = Buffer.concat([cipher.update(Buffer.from(plaintext, "utf8")), cipher.final()]);
 
-  return {
+  const envelope = {
     v: 1,
     alg: "ML-KEM-768+HKDF-SHA256+AES-256-GCM",
     kem: "ML-KEM-768",
@@ -116,6 +159,9 @@ async function seal(plaintext, aad, keyVersion, entityRevision) {
     keyVersion,
     entityRevision,
   };
+  state.secretCanaries.push(String(plaintext));
+  state.envelopeArtifacts.push(envelope.ct, envelope.data, envelope.aad);
+  return envelope;
 }
 
 test("boot a server and bind a device", async () => {
@@ -140,12 +186,11 @@ test("boot a server and bind a device", async () => {
     }),
     stdio: ["ignore", "pipe", "pipe"],
   });
-  let log = "";
-  state.child.stdout.on("data", (b) => { log += b.toString(); });
-  state.child.stderr.on("data", (b) => { log += b.toString(); });
+  state.child.stdout.on("data", (b) => { state.serverLog += b.toString(); });
+  state.child.stderr.on("data", (b) => { state.serverLog += b.toString(); });
 
   const up = await waitUp(state.base + "/api/mobile/v1/capabilities", 60000);
-  assert.ok(up, "server never came up:\n" + log.slice(-3000));
+  assert.ok(up, "server never came up:\n" + state.serverLog.slice(-3000));
 
   const login = await fetch(state.base + "/api/auth/login", {
     method: "POST",
@@ -181,12 +226,18 @@ test("boot a server and bind a device", async () => {
   const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
   const kem = ml_kem768.keygen();
   const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  state.signingPrivateKey = ec.privateKey;
   const jwk = ec.publicKey.export({ format: "jwk" });
   state.deviceId = "dev-" + crypto.randomUUID();
+  const grant = await createBindGrant(state.tokenId, state.deviceId);
 
   const bind = await fetch(state.base + "/api/mobile/v1/devices/bind", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-zephyr-sid": state.sid },
+    headers: {
+      "content-type": "application/json",
+      "x-zephyr-sid": state.sid,
+      "x-zephyr-sensitive-grant": grant,
+    },
     body: JSON.stringify({
       deviceId: state.deviceId, deviceName: "Secret Pixel", platform: "android",
       appVersion: "0.1.0", tokenId: state.tokenId, syncIntervalSec: 300,
@@ -198,6 +249,8 @@ test("boot a server and bind a device", async () => {
   });
   const bindBody = await bind.json();
   assert.equal(bind.status, 200, "bind failed: " + JSON.stringify(bindBody).slice(0, 300));
+  assert.equal(bindBody.grant, undefined, "bind must not echo the sensitive grant");
+  assert.ok(!JSON.stringify(bindBody).includes(grant), "the grant must remain header-only");
   state.access = bindBody.accessCredential;
   state.registryHash = bindBody.registryHash;
 });
@@ -234,11 +287,13 @@ test("a sealed password reaches the canonical service as plaintext", async () =>
   const secret = "s3cret-" + crypto.randomUUID();
   state.revision = 1;
 
+  state.ownerUserId = (await (await fetch(state.base + "/api/mobile/v1/devices", {
+    headers: { "x-zephyr-sid": state.sid },
+  })).json()).devices[0].ownerUserId;
+
   const aad = secretAad({
     serverId: state.serverId,
-    userId: (await (await fetch(state.base + "/api/mobile/v1/devices", {
-      headers: { "x-zephyr-sid": state.sid },
-    })).json()).devices[0].ownerUserId,
+    userId: state.ownerUserId,
     deviceId: state.deviceId,
     entityType: "connection",
     entityId: state.entityId,
@@ -318,11 +373,153 @@ test("a change feed row never carries a secret", async () => {
   assert.equal(mine.payload.name, "Secret Host");
 });
 
+test("pure-secret clear is authoritative, feed-safe, and idempotent", async () => {
+  const operation = {
+    opId: "op-secret-clear-1",
+    entityType: "connection",
+    entityId: state.entityId,
+    action: "upsert",
+    baseRevision: state.revision,
+    clientModifiedAt: Date.now(),
+    fieldMask: [],
+    payload: {},
+    clearSecretFields: ["password"],
+  };
+  const first = await push(operation, "batch-secret-clear-1");
+  assert.equal(first.res.status, 200);
+  assert.equal(first.body.results[0].status, "accepted");
+  assert.equal(first.body.results[0].revision, 2);
+  assert.ok(first.body.results[0].changeSeq > 0);
+
+  const list = await fetch(state.base + "/api/connections", {
+    headers: { "x-zephyr-sid": state.sid },
+  });
+  const rows = await list.json();
+  const mine = (Array.isArray(rows) ? rows : rows.connections || []).find((c) => c.id === state.entityId);
+  assert.equal(mine.hasPassword, false, "explicit clear must remove the authoritative secret");
+  assert.equal(mine.password, "");
+
+  const changesRes = await device("/api/mobile/v1/sync/changes?sinceCursor=0&limit=100");
+  const changesBody = await changesRes.json();
+  const clearChange = changesBody.changes.find((change) => (
+    change.entityId === state.entityId && change.revision === 2
+  ));
+  assert.ok(clearChange, "a pure-secret clear must create a change/outbox cursor");
+  assert.deepEqual(clearChange.fieldMask, []);
+  assert.equal(clearChange.payload.password, undefined);
+  assert.equal(clearChange.clearSecretFields, undefined);
+  assert.equal(clearChange.secretEnvelopes, undefined);
+
+  const replay = await push(operation, "batch-secret-clear-replay");
+  assert.equal(replay.body.results[0].status, "duplicate");
+  assert.equal(replay.body.results[0].revision, first.body.results[0].revision);
+  assert.equal(replay.body.results[0].changeSeq, first.body.results[0].changeSeq);
+  const afterReplay = await (await device("/api/mobile/v1/sync/changes?sinceCursor=0&limit=100")).json();
+  assert.equal(afterReplay.changes.filter((change) => (
+    change.entityId === state.entityId && change.revision === 2
+  )).length, 1, "an opId replay must not append a second change");
+  state.revision = 2;
+});
+
+test("secret clear and replace have deterministic field-conflict semantics", async () => {
+  const replacement = "replacement-" + crypto.randomUUID();
+  const aad = secretAad({
+    serverId: state.serverId,
+    userId: state.ownerUserId,
+    deviceId: state.deviceId,
+    entityType: "connection",
+    entityId: state.entityId,
+    fieldName: "password",
+    entityRevision: 3,
+    keyVersion: state.serverKeyVersion,
+  });
+  const envelope = await seal(replacement, aad, state.serverKeyVersion, 3);
+  const staleOperation = {
+    opId: "op-secret-replace-stale",
+    entityType: "connection",
+    entityId: state.entityId,
+    action: "upsert",
+    baseRevision: 1,
+    clientModifiedAt: Date.now(),
+    fieldMask: [],
+    payload: {},
+    secretEnvelopes: { password: envelope },
+  };
+  const stale = await push(staleOperation, "batch-secret-replace-stale");
+  assert.equal(stale.body.results[0].status, "conflict");
+  assert.equal(stale.body.results[0].revision, 2);
+  assert.deepEqual(stale.body.results[0].conflict.fields, ["password"]);
+  assert.equal(stale.body.results[0].conflict.serverPayload.password, undefined);
+  assert.ok(!JSON.stringify(stale.body).includes(replacement));
+  assert.ok(!JSON.stringify(stale.body).includes(envelope.data));
+
+  const replayedConflict = await push(staleOperation, "batch-secret-replace-stale-replay");
+  assert.deepEqual(replayedConflict.body.results[0], stale.body.results[0],
+    "a conflict retry must preserve the first logical result");
+
+  const acceptedOperation = { ...staleOperation, opId: "op-secret-replace-2", baseRevision: 2 };
+  const accepted = await push(acceptedOperation, "batch-secret-replace-2");
+  assert.equal(accepted.body.results[0].status, "accepted");
+  assert.equal(accepted.body.results[0].revision, 3);
+  const replayed = await push(acceptedOperation, "batch-secret-replace-2-replay");
+  assert.equal(replayed.body.results[0].status, "duplicate");
+  assert.equal(replayed.body.results[0].changeSeq, accepted.body.results[0].changeSeq);
+
+  const rows = await (await fetch(state.base + "/api/connections", {
+    headers: { "x-zephyr-sid": state.sid },
+  })).json();
+  const mine = (Array.isArray(rows) ? rows : rows.connections || []).find((c) => c.id === state.entityId);
+  assert.equal(mine.hasPassword, true);
+  assert.equal(mine.password, "******");
+  const changes = await (await device("/api/mobile/v1/sync/changes?sinceCursor=0&limit=100")).json();
+  const replaceChange = changes.changes.find((change) => (
+    change.entityId === state.entityId && change.revision === 3
+  ));
+  assert.ok(replaceChange);
+  assert.deepEqual(replaceChange.fieldMask, []);
+  assert.equal(replaceChange.payload.password, undefined);
+  assert.ok(!JSON.stringify({ accepted: accepted.body, change: replaceChange }).includes(replacement));
+  state.revision = 3;
+});
+
+test("clear and replace are mutually exclusive without echoing an envelope", async () => {
+  const plaintext = "mutual-exclusion-" + crypto.randomUUID();
+  const aad = secretAad({
+    serverId: state.serverId,
+    userId: state.ownerUserId,
+    deviceId: state.deviceId,
+    entityType: "connection",
+    entityId: state.entityId,
+    fieldName: "password",
+    entityRevision: state.revision + 1,
+    keyVersion: state.serverKeyVersion,
+  });
+  const envelope = await seal(plaintext, aad, state.serverKeyVersion, state.revision + 1);
+  const attempt = await push({
+    opId: "op-secret-mutual-exclusion",
+    entityType: "connection",
+    entityId: state.entityId,
+    action: "upsert",
+    baseRevision: state.revision,
+    fieldMask: [],
+    payload: {},
+    secretEnvelopes: { password: envelope },
+    clearSecretFields: ["password"],
+  }, "batch-secret-mutual-exclusion");
+  assert.equal(attempt.res.status, 400);
+  assert.equal(attempt.body.error.code, "invalid_request");
+  const serialized = JSON.stringify(attempt.body);
+  assert.ok(!serialized.includes(plaintext));
+  for (const artifact of [envelope.ct, envelope.data, envelope.aad]) {
+    assert.ok(!serialized.includes(artifact), "errors must not echo envelope content");
+  }
+});
+
 test("an envelope sealed for another device is refused", async () => {
   const entityId = "conn-" + crypto.randomUUID();
   const aad = secretAad({
     serverId: state.serverId,
-    userId: "some-other-user",
+    userId: state.ownerUserId,
     deviceId: "dev-not-mine",
     entityType: "connection",
     entityId,
@@ -350,6 +547,34 @@ test("an envelope sealed for another device is refused", async () => {
   assert.equal(res.status, 200, "the batch itself is well formed");
   assert.equal(body.results[0].status, "rejected",
     "an envelope bound to another device must not be opened");
+  assert.ok(!JSON.stringify(body).includes(envelope.data), "the error must not echo the envelope");
+});
+
+test("an envelope sealed for another account is refused", async () => {
+  const entityId = "conn-" + crypto.randomUUID();
+  const aad = secretAad({
+    serverId: state.serverId,
+    userId: "user-not-mine",
+    deviceId: state.deviceId,
+    entityType: "connection",
+    entityId,
+    fieldName: "password",
+    entityRevision: 1,
+    keyVersion: state.serverKeyVersion,
+  });
+  const plaintext = "wrong-account-" + crypto.randomUUID();
+  const envelope = await seal(plaintext, aad, state.serverKeyVersion, 1);
+  const result = await push({
+    opId: "op-wrong-account", entityType: "connection", entityId,
+    action: "upsert", baseRevision: 0,
+    fieldMask: ["name", "host", "port", "protocol", "username"],
+    payload: { name: "Nope", host: "1.1.1.1", port: 22, protocol: "SSH", username: "root" },
+    secretEnvelopes: { password: envelope },
+  }, "batch-wrong-account");
+  assert.equal(result.body.results[0].status, "rejected");
+  const serialized = JSON.stringify(result.body);
+  assert.ok(!serialized.includes(plaintext));
+  assert.ok(!serialized.includes(envelope.data));
 });
 
 test("a tampered ciphertext is refused", async () => {
@@ -420,8 +645,19 @@ test("a non-secret field name in secretEnvelopes is refused", async () => {
     }),
   });
   const body = await res.json();
-  assert.equal(body.results[0].status, "rejected",
+  assert.equal(res.status, 400);
+  assert.equal(body.error.code, "invalid_request",
     "only registry secretFields may arrive as envelopes");
+});
+
+test("secret plaintext and envelope contents never enter server logs", async () => {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  for (const canary of state.secretCanaries) {
+    assert.ok(!state.serverLog.includes(canary), "plaintext secret leaked into a server log");
+  }
+  for (const artifact of state.envelopeArtifacts.filter((value) => value.length >= 16)) {
+    assert.ok(!state.serverLog.includes(artifact), "secret envelope content leaked into a server log");
+  }
 });
 
 test("stop the server", async () => {

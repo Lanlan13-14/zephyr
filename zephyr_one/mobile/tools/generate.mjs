@@ -2,10 +2,11 @@
 // Regenerates every derived mobile artifact from mobile/contracts.
 //   node mobile/tools/generate.mjs           write files
 //   node mobile/tools/generate.mjs --check   fail on drift (CI gate)
+//   node mobile/tools/generate.mjs --update-freeze contracts/<file>  refresh one reviewed mirror
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { MOBILE_ROOT } from './lib/contracts.mjs';
+import { MOBILE_ROOT, REPO_ROOT } from './lib/contracts.mjs';
 import { kotlinSources, KOTLIN_PACKAGE } from './lib/codegen-kotlin.mjs';
 import { swiftSources } from './lib/codegen-swift.mjs';
 import { fixtureFiles } from './lib/fixtures.mjs';
@@ -24,8 +25,36 @@ function collect() {
 
 const sha256 = (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 
+function updateFreeze(rel) {
+  const posix = String(rel || '').replaceAll('\\', '/');
+  if (!posix.startsWith('contracts/') && !posix.startsWith('branding/')) {
+    throw new Error('--update-freeze path must be under contracts/ or branding/');
+  }
+  const parityPath = path.join(MOBILE_ROOT, 'contracts', 'FREEZE_PARITY.json');
+  const parity = JSON.parse(fs.readFileSync(parityPath, 'utf8'));
+  const entry = parity.files.find((candidate) => candidate.path === posix);
+  if (!entry) throw new Error('--update-freeze path is not tracked by FREEZE_PARITY.json: ' + posix);
+
+  const source = path.join(MOBILE_ROOT, ...posix.split('/'));
+  const freeze = path.join(REPO_ROOT, ...entry.freezePath.split('/'));
+  const bytes = fs.readFileSync(source);
+  const normalised = Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'), 'utf8');
+  fs.mkdirSync(path.dirname(freeze), { recursive: true });
+  fs.writeFileSync(freeze, bytes);
+  entry.sha256 = crypto.createHash('sha256').update(normalised).digest('hex');
+  entry.bytes = normalised.length;
+  fs.writeFileSync(parityPath, JSON.stringify(parity, null, 2) + '\n', 'utf8');
+  console.log('updated freeze parity for ' + posix);
+}
+
 function main() {
   const check = process.argv.includes('--check');
+  const freezeIndex = process.argv.indexOf('--update-freeze');
+  if (freezeIndex >= 0) {
+    const rel = process.argv[freezeIndex + 1];
+    if (!rel || rel.startsWith('--')) throw new Error('--update-freeze requires one tracked relative path');
+    updateFreeze(rel);
+  }
   const files = collect();
   const manifest = { generator: 'mobile/tools/generate.mjs', files: {} };
   const drift = [];

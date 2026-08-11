@@ -24,6 +24,25 @@ import org.junit.Test
  */
 class ConnectionDraftTest {
 
+    @Test
+    fun `superseded and disposed secret buffers are overwritten`() {
+        val originalPassword = SecretState.Replace("first-password")
+        val replacementPassword = SecretState.Replace("second-password")
+        val privateKey = SecretState.Replace("private-key")
+        val draft = ConnectionDraft.create("owner", "connection")
+            .withPassword(originalPassword)
+            .withPassword(replacementPassword)
+            .withPrivateKey(privateKey)
+
+        assertTrue(originalPassword.isWiped())
+
+        val cleared = draft.wipeSecretBuffers()
+        assertTrue(replacementPassword.isWiped())
+        assertTrue(privateKey.isWiped())
+        assertEquals(SecretState.Unchanged, cleared.password)
+        assertEquals(SecretState.Unchanged, cleared.privateKey)
+    }
+
     // ---- port and protocol ---------------------------------------------------------------------
 
     @Test
@@ -310,6 +329,26 @@ class ConnectionDraftTest {
                 assertFalse(protocol.wireName + " masks " + field, forbidden.contains(field))
             }
         }
+    }
+
+    @Test
+    fun secretMutationsStayOutsideEveryProtocolFieldMask() {
+        for (protocol in Protocol.entries) {
+            val draft = ConnectionDraft.create(Fixtures.OWNER, "c-new", protocol)
+                .withPassword(SecretState.Replace("password"))
+
+            assertFalse(protocol.wireName + " masks password", draft.changedFields().contains("password"))
+            assertEquals(
+                protocol.wireName + " sends password through secret states",
+                SecretState.Replace("password"),
+                draft.secretStates()["password"],
+            )
+        }
+
+        val sshDraft = ConnectionDraft.create(Fixtures.OWNER, "c-new", Protocol.SSH)
+            .withPrivateKey(SecretState.Clear)
+        assertFalse(sshDraft.changedFields().contains("privateKey"))
+        assertEquals(SecretState.Clear, sshDraft.secretStates()["privateKey"])
     }
 
     @Test

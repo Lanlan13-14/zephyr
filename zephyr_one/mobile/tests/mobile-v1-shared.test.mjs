@@ -19,11 +19,28 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createProofClient } from "./mobile-v1-proof-client.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
+const ACCOUNT_PASSWORDS = Object.freeze({
+  owner: "shared-owner-pass",
+  borrower: "shared-borrower-pass",
+});
 
 const state = {};
+const borrowerProof = createProofClient({
+  base: () => state.base,
+  access: () => state.access,
+  deviceId: () => state.deviceId,
+  privateKey: () => state.signingPrivateKey,
+});
+const ownerProof = createProofClient({
+  base: () => state.base,
+  access: () => state.ownerDevice.access,
+  deviceId: () => state.ownerDevice.deviceId,
+  privateKey: () => state.ownerDevice.signingPrivateKey,
+});
 
 async function waitUp(url, budgetMs) {
   const until = Date.now() + budgetMs;
@@ -44,11 +61,30 @@ function sid(who, url, init = {}) {
   return fetch(state.base + url, Object.assign({}, init, { headers }));
 }
 
+async function createBindGrant(who, tokenId, deviceId) {
+  const verified = await sid(who, "/api/mobile/v1/sensitive/verify", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "device.bind",
+      secret: ACCOUNT_PASSWORDS[who],
+      targetIds: [tokenId, deviceId],
+    }),
+  });
+  const body = await verified.json();
+  assert.equal(verified.status, 200,
+    "sensitive verification failed for " + who + ": " + JSON.stringify(body).slice(0, 300));
+  assert.equal(body.action, "device.bind");
+  assert.match(body.grant, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(body.secret, undefined, "sensitive verification must not echo the account password");
+  assert.equal(body.targetIds, undefined, "sensitive verification must not echo its targets");
+  return body.grant;
+}
+
 /** Device plane: the bearer credential of the *borrower* device. */
 function device(url, init = {}) {
   const headers = Object.assign({ "content-type": "application/json" }, init.headers || {});
   headers.authorization = "Bearer " + state.access;
-  return fetch(state.base + url, Object.assign({}, init, { headers }));
+  return borrowerProof(url, Object.assign({}, init, { headers }));
 }
 
 async function login(username, password) {
@@ -181,11 +217,14 @@ test("bind a device for the borrower account", async () => {
   const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
   state.kem = ml_kem768.keygen();
   const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  state.signingPrivateKey = ec.privateKey;
   const jwk = ec.publicKey.export({ format: "jwk" });
   state.deviceId = "dev-" + crypto.randomUUID();
+  const grant = await createBindGrant("borrower", tokenId, state.deviceId);
 
   const res = await sid("borrower", "/api/mobile/v1/devices/bind", {
     method: "POST",
+    headers: { "x-zephyr-sensitive-grant": grant },
     body: JSON.stringify({
       deviceId: state.deviceId, deviceName: "Borrower Pixel", platform: "android",
       appVersion: "0.1.0", tokenId, syncIntervalSec: 300,
@@ -197,6 +236,8 @@ test("bind a device for the borrower account", async () => {
   });
   const body = await res.json();
   assert.equal(res.status, 200, "bind failed: " + JSON.stringify(body).slice(0, 400));
+  assert.equal(body.grant, undefined, "bind must not echo its sensitive grant");
+  assert.ok(!JSON.stringify(body).includes(grant), "the grant must remain header-only");
   state.access = body.accessCredential;
   state.registryHash = body.registryHash;
 });
@@ -224,9 +265,11 @@ async function bindDeviceFor(who) {
   const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
   const jwk = ec.publicKey.export({ format: "jwk" });
   const deviceId = "dev-" + crypto.randomUUID();
+  const grant = await createBindGrant(who, tokenId, deviceId);
 
   const res = await sid(who, "/api/mobile/v1/devices/bind", {
     method: "POST",
+    headers: { "x-zephyr-sensitive-grant": grant },
     body: JSON.stringify({
       deviceId, deviceName: who + " Pixel", platform: "android",
       appVersion: "0.1.0", tokenId, syncIntervalSec: 300,
@@ -238,7 +281,9 @@ async function bindDeviceFor(who) {
   });
   const body = await res.json();
   assert.equal(res.status, 200, "bind failed for " + who + ": " + JSON.stringify(body).slice(0, 400));
-  return { deviceId, kem, access: body.accessCredential };
+  assert.equal(body.grant, undefined, "bind must not echo its sensitive grant");
+  assert.ok(!JSON.stringify(body).includes(grant), "the grant must remain header-only");
+  return { deviceId, kem, access: body.accessCredential, signingPrivateKey: ec.privateKey };
 }
 
 test("bind a second device, owned by the owner account", async () => {
@@ -394,13 +439,28 @@ test("the relay credential is not a bearer token for anything else", async () =>
     "a relay credential must not authenticate the sync plane (got " + res.status + ")");
 });
 
+test("relay attach rejects credentials carried in the query string", async () => {
+  const { WebSocket } = await import("ws");
+  const result = await new Promise((resolve) => {
+    const wsUrl = state.base.replace("http://", "ws://")
+      + state.relayUrl + "&credential=" + encodeURIComponent(state.relayCredential);
+    const sock = new WebSocket(wsUrl);
+    const frames = [];
+    sock.on("message", (raw) => frames.push(raw));
+    sock.on("close", (code, reason) => resolve({ code, reason: reason.toString(), frames }));
+    sock.on("error", () => { /* close follows */ });
+  });
+  assert.match(result.reason, /query-credential-forbidden/);
+  assert.equal(result.frames.length, 0);
+});
+
 test("relay attach rejects a forged credential and honours the real one", async () => {
   const { WebSocket } = await import("ws");
 
   const attach = (credential) => new Promise((resolve) => {
     const wsUrl = state.base.replace("http://", "ws://")
-      + state.relayUrl + "&credential=" + encodeURIComponent(credential);
-    const sock = new WebSocket(wsUrl);
+      + state.relayUrl;
+    const sock = new WebSocket(wsUrl, credential);
     const frames = [];
     let settled = false;
     const done = (result) => { if (!settled) { settled = true; resolve(result); } };
@@ -467,9 +527,8 @@ test("a relay credential is scoped to the one session that minted it", async () 
 
   const attachTo = (sessionId, credential) => new Promise((resolve) => {
     const wsUrl = state.base.replace("http://", "ws://")
-      + "/api/mobile/v1/shared/relay?sessionId=" + encodeURIComponent(sessionId)
-      + "&credential=" + encodeURIComponent(credential);
-    const sock = new WebSocket(wsUrl);
+      + "/api/mobile/v1/shared/relay?sessionId=" + encodeURIComponent(sessionId);
+    const sock = new WebSocket(wsUrl, credential);
     const frames = [];
     let settled = false;
     const done = (r) => { if (!settled) { settled = true; resolve(r); } };
@@ -736,7 +795,7 @@ test("a session opened before the revoke cannot be refreshed after it", async ()
 function ownerDevice(url, init = {}) {
   const headers = Object.assign({ "content-type": "application/json" }, init.headers || {});
   headers.authorization = "Bearer " + state.ownerDevice.access;
-  return fetch(state.base + url, Object.assign({}, init, { headers }));
+  return ownerProof(url, Object.assign({}, init, { headers }));
 }
 
 test("the shared plane refuses a row the caller owns", async () => {
@@ -835,7 +894,13 @@ test("a session is bound to the device that opened it", async () => {
   /* The borrower binds a *second* device. Same account, different device: the
    * session must not be usable from it. */
   const second = await bindDeviceFor("borrower");
-  const stolen = await fetch(state.base + "/api/mobile/v1/shared/sessions/" + sessionId + "/refresh", {
+  const secondDevice = createProofClient({
+    base: () => state.base,
+    access: () => second.access,
+    deviceId: () => second.deviceId,
+    privateKey: () => second.signingPrivateKey,
+  });
+  const stolen = await secondDevice("/api/mobile/v1/shared/sessions/" + sessionId + "/refresh", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: "Bearer " + second.access },
     body: JSON.stringify({ clientSessionNonce: crypto.randomBytes(24).toString("base64url") }),
@@ -846,7 +911,7 @@ test("a session is bound to the device that opened it", async () => {
   assert.equal(stolenBody.useEnvelope, undefined,
     "a cross-device refresh must never return connect material");
 
-  const closed = await fetch(state.base + "/api/mobile/v1/shared/sessions/" + sessionId, {
+  const closed = await secondDevice("/api/mobile/v1/shared/sessions/" + sessionId, {
     method: "DELETE",
     headers: { "content-type": "application/json", authorization: "Bearer " + second.access },
   });

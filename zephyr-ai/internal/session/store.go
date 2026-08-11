@@ -33,6 +33,7 @@ type Session struct {
 	PermissionMode string         `json:"permissionMode,omitempty"`
 	ConnectionIDs  []string       `json:"connectionIds,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
+	DatabaseGeneration string     `json:"-"`
 	CreatedAt      int64          `json:"createdAt"`
 	UpdatedAt      int64          `json:"updatedAt"`
 	ArchivedAt     int64          `json:"archivedAt,omitempty"`
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS ai_sessions (
   permission_mode TEXT NOT NULL DEFAULT 'ask',
   connection_ids_json TEXT NOT NULL DEFAULT '[]',
   metadata_json TEXT NOT NULL DEFAULT '{}',
+  database_generation TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   archived_at INTEGER NOT NULL DEFAULT 0
@@ -179,6 +181,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_grants_user ON ai_permission_grants(user_id, s
 	}
 	// Soft migrate older DBs missing resume_json
 	_, _ = s.db.Exec(`ALTER TABLE ai_runs ADD COLUMN resume_json TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE ai_sessions ADD COLUMN database_generation TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
@@ -210,9 +213,13 @@ func (s *Store) LoadRunResume(runID string, dest any) error {
 
 func nowMS() int64 { return time.Now().UnixMilli() }
 
-func (s *Store) CreateSession(userID string, title string, meta map[string]any) (*Session, error) {
+func (s *Store) CreateSession(userID string, title string, meta map[string]any, generation ...string) (*Session, error) {
 	id := newID("ses")
 	ts := nowMS()
+	databaseGeneration := ""
+	if len(generation) > 0 {
+		databaseGeneration = generation[0]
+	}
 	metaJSON, _ := json.Marshal(meta)
 	if metaJSON == nil {
 		metaJSON = []byte("{}")
@@ -220,20 +227,26 @@ func (s *Store) CreateSession(userID string, title string, meta map[string]any) 
 	if title == "" {
 		title = "新对话"
 	}
-	_, err := s.db.Exec(`INSERT INTO ai_sessions(session_id,user_id,title,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?)`,
-		id, userID, title, string(metaJSON), ts, ts)
+	_, err := s.db.Exec(`INSERT INTO ai_sessions(session_id,user_id,title,metadata_json,database_generation,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`,
+		id, userID, title, string(metaJSON), databaseGeneration, ts, ts)
 	if err != nil {
 		return nil, err
 	}
-	return s.GetSession(userID, id)
+	return s.GetSession(userID, id, generation...)
 }
 
-func (s *Store) GetSession(userID, id string) (*Session, error) {
-	row := s.db.QueryRow(`SELECT session_id,user_id,title,provider_id,model,mode,permission_mode,connection_ids_json,metadata_json,created_at,updated_at,archived_at
-FROM ai_sessions WHERE session_id=? AND user_id=?`, id, userID)
+func (s *Store) GetSession(userID, id string, generation ...string) (*Session, error) {
+	query := `SELECT session_id,user_id,title,provider_id,model,mode,permission_mode,connection_ids_json,metadata_json,database_generation,created_at,updated_at,archived_at
+FROM ai_sessions WHERE session_id=? AND user_id=?`
+	args := []any{id, userID}
+	if len(generation) > 0 {
+		query += ` AND database_generation=?`
+		args = append(args, generation[0])
+	}
+	row := s.db.QueryRow(query, args...)
 	var sess Session
 	var connJSON, metaJSON string
-	if err := row.Scan(&sess.ID, &sess.UserID, &sess.Title, &sess.ProviderID, &sess.Model, &sess.Mode, &sess.PermissionMode, &connJSON, &metaJSON, &sess.CreatedAt, &sess.UpdatedAt, &sess.ArchivedAt); err != nil {
+	if err := row.Scan(&sess.ID, &sess.UserID, &sess.Title, &sess.ProviderID, &sess.Model, &sess.Mode, &sess.PermissionMode, &connJSON, &metaJSON, &sess.DatabaseGeneration, &sess.CreatedAt, &sess.UpdatedAt, &sess.ArchivedAt); err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal([]byte(connJSON), &sess.ConnectionIDs)
@@ -241,12 +254,20 @@ FROM ai_sessions WHERE session_id=? AND user_id=?`, id, userID)
 	return &sess, nil
 }
 
-func (s *Store) ListSessions(userID string, limit int) ([]Session, error) {
+func (s *Store) ListSessions(userID string, limit int, generation ...string) ([]Session, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.Query(`SELECT session_id,user_id,title,provider_id,model,mode,permission_mode,connection_ids_json,metadata_json,created_at,updated_at,archived_at
-FROM ai_sessions WHERE user_id=? AND archived_at=0 ORDER BY updated_at DESC LIMIT ?`, userID, limit)
+	query := `SELECT session_id,user_id,title,provider_id,model,mode,permission_mode,connection_ids_json,metadata_json,database_generation,created_at,updated_at,archived_at
+FROM ai_sessions WHERE user_id=? AND archived_at=0`
+	args := []any{userID}
+	if len(generation) > 0 {
+		query += ` AND database_generation=?`
+		args = append(args, generation[0])
+	}
+	query += ` ORDER BY updated_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +276,7 @@ FROM ai_sessions WHERE user_id=? AND archived_at=0 ORDER BY updated_at DESC LIMI
 	for rows.Next() {
 		var sess Session
 		var connJSON, metaJSON string
-		if err := rows.Scan(&sess.ID, &sess.UserID, &sess.Title, &sess.ProviderID, &sess.Model, &sess.Mode, &sess.PermissionMode, &connJSON, &metaJSON, &sess.CreatedAt, &sess.UpdatedAt, &sess.ArchivedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.UserID, &sess.Title, &sess.ProviderID, &sess.Model, &sess.Mode, &sess.PermissionMode, &connJSON, &metaJSON, &sess.DatabaseGeneration, &sess.CreatedAt, &sess.UpdatedAt, &sess.ArchivedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(connJSON), &sess.ConnectionIDs)
@@ -328,6 +349,84 @@ VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		PartsJSON: parts, ToolCalls: tcs, ToolCallID: msg.ToolCallID, Name: msg.Name,
 		ResponseID: msg.ResponseID, RunID: runID, CreatedAt: ts,
 	}, nil
+}
+
+const (
+	maxBootstrapMessages     = 500
+	maxBootstrapMessageBytes = 2 * 1024 * 1024
+	maxBootstrapTotalBytes   = 8 * 1024 * 1024
+)
+
+// BootstrapMessages imports an owner-authenticated canonical transcript into
+// a newly-created runtime session. It is intentionally insert-if-empty: Node
+// may resend the same bootstrap on retries, but an existing runtime transcript
+// can never be overwritten or extended through this path.
+func (s *Store) BootstrapMessages(userID, sessionID string, messages []provider.Message) (bool, error) {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(sessionID) == "" {
+		return false, fmt.Errorf("bootstrap owner and session are required")
+	}
+	if len(messages) == 0 {
+		return false, nil
+	}
+	if len(messages) > maxBootstrapMessages {
+		return false, fmt.Errorf("bootstrap transcript exceeds %d messages", maxBootstrapMessages)
+	}
+	totalBytes := 0
+	for _, message := range messages {
+		if message.Role != provider.RoleUser && message.Role != provider.RoleAssistant {
+			return false, fmt.Errorf("bootstrap transcript contains forbidden role %q", message.Role)
+		}
+		if len(message.Content) > maxBootstrapMessageBytes {
+			return false, fmt.Errorf("bootstrap message exceeds %d bytes", maxBootstrapMessageBytes)
+		}
+		totalBytes += len(message.Content)
+		if totalBytes > maxBootstrapTotalBytes {
+			return false, fmt.Errorf("bootstrap transcript exceeds %d bytes", maxBootstrapTotalBytes)
+		}
+		if len(message.Parts) != 0 || len(message.ToolCalls) != 0 ||
+			message.ToolCallID != "" || message.Name != "" || message.ResponseID != "" {
+			return false, fmt.Errorf("bootstrap transcript must contain plain completed messages only")
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var owner string
+	if err := tx.QueryRow(`SELECT user_id FROM ai_sessions WHERE session_id=?`, sessionID).Scan(&owner); err != nil {
+		return false, err
+	}
+	if owner != userID {
+		return false, fmt.Errorf("runtime session does not belong to authenticated owner")
+	}
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM ai_messages WHERE session_id=?`, sessionID).Scan(&count); err != nil {
+		return false, err
+	}
+	if count != 0 {
+		return false, nil
+	}
+	ts := nowMS()
+	for index, message := range messages {
+		if _, err := tx.Exec(`INSERT INTO ai_messages
+			(session_id,role,content,parts_json,tool_calls_json,tool_call_id,name,response_id,run_id,created_at)
+			VALUES(?,?,?,'','','','','','bootstrap',?)`,
+			sessionID, string(message.Role), message.Content, ts+int64(index)); err != nil {
+			return false, err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE ai_sessions SET updated_at=? WHERE session_id=? AND user_id=?`,
+		ts+int64(len(messages)), sessionID, userID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) ListMessages(sessionID string, afterID int64, limit int) ([]Message, error) {
@@ -433,8 +532,8 @@ func metricInt(raw json.RawMessage, key string) int {
 	return int(value)
 }
 
-func (s *Store) SessionUsage(userID, sessionID string) (SessionUsage, error) {
-	if err := s.ValidateUserSession(userID, sessionID); err != nil {
+func (s *Store) SessionUsage(userID, sessionID string, generation ...string) (SessionUsage, error) {
+	if err := s.ValidateUserSession(userID, sessionID, generation...); err != nil {
 		return SessionUsage{}, err
 	}
 	rows, err := s.db.Query(`SELECT run_id,session_id,user_id,status,provider,model,error,metrics_json,created_at,updated_at FROM ai_runs WHERE session_id=? AND user_id=? ORDER BY created_at ASC, rowid ASC`, sessionID, userID)
@@ -583,14 +682,17 @@ func randHex(n int) string {
 }
 
 // ValidateUserSession ensures session belongs to user.
-func (s *Store) ValidateUserSession(userID, sessionID string) error {
-	var uid string
-	err := s.db.QueryRow(`SELECT user_id FROM ai_sessions WHERE session_id=?`, sessionID).Scan(&uid)
+func (s *Store) ValidateUserSession(userID, sessionID string, generation ...string) error {
+	var uid, databaseGeneration string
+	err := s.db.QueryRow(`SELECT user_id,database_generation FROM ai_sessions WHERE session_id=?`, sessionID).Scan(&uid, &databaseGeneration)
 	if err != nil {
 		return fmt.Errorf("session_not_found")
 	}
 	if uid != userID {
 		return fmt.Errorf("session_forbidden")
+	}
+	if len(generation) > 0 && databaseGeneration != generation[0] {
+		return fmt.Errorf("session_generation_expired")
 	}
 	return nil
 }

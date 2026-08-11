@@ -1,9 +1,9 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
-import { createNotesController } from './notes.js?v=20260729-ai-notes-switches1';
+import { createNotesController } from './notes.js?v=20260811-webdav1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-handle-only-drag1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260811-webdav1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260811-webdav1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -39,10 +39,244 @@ function installClosestFallback() {
     define(window.Document?.prototype, function closestFromDocument() { return null; });
     define(window.Window?.prototype, function closestFromWindow() { return null; });
 }
+
+/* Browser change wake runtime start. Kept dependency-injected so the same
+ * lifecycle runs in standalone Web, the Zephyr One iframe, and browser tests. */
+function createBrowserChangeWakeClient({
+    endpoint,
+    entityTypes,
+    onEntityTypes,
+    onResume = () => {},
+    EventSourceImpl,
+    documentRef,
+    windowRef,
+    navigatorRef,
+    locationRef,
+    setTimeoutImpl = window.setTimeout.bind(window),
+    clearTimeoutImpl = window.clearTimeout.bind(window),
+    baseRetryMs = 1000,
+    maxRetryMs = 30000,
+} = {}) {
+    const allowedEntityTypes = new Set(entityTypes || []);
+    let source = null;
+    let reconnectTimer = 0;
+    let reconnectAttempt = 0;
+    let lastSequence = null;
+    let started = false;
+
+    const isVisible = () => documentRef?.visibilityState !== 'hidden';
+    const isOnline = () => navigatorRef?.onLine !== false;
+    const clearReconnect = () => {
+        if (!reconnectTimer) return;
+        clearTimeoutImpl(reconnectTimer);
+        reconnectTimer = 0;
+    };
+    const disconnect = () => {
+        const current = source;
+        source = null;
+        try { current?.close?.(); } catch {}
+    };
+    const streamUrl = () => {
+        const url = new URL(endpoint, locationRef?.href || 'http://localhost/');
+        if (lastSequence !== null) url.searchParams.set('cursor', String(lastSequence));
+        return url.origin === locationRef?.origin
+            ? `${url.pathname}${url.search}`
+            : url.href;
+    };
+    const scheduleReconnect = () => {
+        disconnect();
+        clearReconnect();
+        if (!started || !isVisible() || !isOnline() || typeof EventSourceImpl !== 'function') return;
+        const delay = Math.min(maxRetryMs, baseRetryMs * (2 ** reconnectAttempt));
+        reconnectAttempt += 1;
+        reconnectTimer = setTimeoutImpl(() => {
+            reconnectTimer = 0;
+            connect();
+        }, delay);
+    };
+    const handleChange = (candidate, event) => {
+        if (source !== candidate) return;
+        let payload;
+        try { payload = JSON.parse(String(event?.data || '')); } catch { return; }
+        const sequence = Number(payload?.sequence);
+        const reason = String(payload?.reason || '');
+        const rawTypes = Array.isArray(payload?.entityTypes) ? payload.entityTypes : null;
+        if (!Number.isSafeInteger(sequence) || sequence < 0
+            || !['connected', 'change', 'reconnect', 'database_rebind'].includes(reason)
+            || !rawTypes
+            || rawTypes.some((type) => typeof type !== 'string' || !allowedEntityTypes.has(type))) return;
+        lastSequence = sequence;
+        reconnectAttempt = 0;
+        const uniqueTypes = [...new Set(rawTypes)];
+        if (uniqueTypes.length) onEntityTypes?.(uniqueTypes, payload);
+    };
+    function connect() {
+        if (!started || source || reconnectTimer || !isVisible() || !isOnline()
+            || typeof EventSourceImpl !== 'function') return;
+        const candidate = new EventSourceImpl(streamUrl(), { withCredentials: true });
+        source = candidate;
+        candidate.onopen = () => {
+            if (source === candidate) reconnectAttempt = 0;
+        };
+        candidate.addEventListener('change', (event) => handleChange(candidate, event));
+        candidate.onerror = () => {
+            if (source === candidate) scheduleReconnect();
+        };
+    }
+    const handleVisibility = () => {
+        if (!isVisible()) {
+            clearReconnect();
+            disconnect();
+            return;
+        }
+        onResume();
+        connect();
+    };
+    const handleOnline = () => { onResume(); connect(); };
+    const handleOffline = () => { clearReconnect(); disconnect(); };
+    const handlePageHide = () => { clearReconnect(); disconnect(); };
+    const handlePageShow = () => { onResume(); connect(); };
+    const start = () => {
+        if (started) return;
+        started = true;
+        documentRef?.addEventListener?.('visibilitychange', handleVisibility);
+        windowRef?.addEventListener?.('online', handleOnline);
+        windowRef?.addEventListener?.('offline', handleOffline);
+        windowRef?.addEventListener?.('pagehide', handlePageHide);
+        windowRef?.addEventListener?.('pageshow', handlePageShow);
+        connect();
+    };
+    const stop = () => {
+        if (!started) return;
+        started = false;
+        clearReconnect();
+        disconnect();
+        documentRef?.removeEventListener?.('visibilitychange', handleVisibility);
+        windowRef?.removeEventListener?.('online', handleOnline);
+        windowRef?.removeEventListener?.('offline', handleOffline);
+        windowRef?.removeEventListener?.('pagehide', handlePageHide);
+        windowRef?.removeEventListener?.('pageshow', handlePageShow);
+    };
+    return {
+        start,
+        stop,
+        connect,
+        state: () => ({ connected: !!source, reconnectAttempt, lastSequence, started }),
+    };
+}
+
+function createBrowserChangeRefreshScheduler({
+    entityGroups,
+    loaders,
+    documentRef,
+    debounceMs = 160,
+    setTimeoutImpl = window.setTimeout.bind(window),
+    clearTimeoutImpl = window.clearTimeout.bind(window),
+} = {}) {
+    const typeTimers = new Map();
+    const groupStates = new Map();
+    const isVisible = () => documentRef?.visibilityState !== 'hidden';
+    const stateFor = (group) => {
+        if (!groupStates.has(group)) groupStates.set(group, { queued: false, running: null, launchTimer: 0 });
+        return groupStates.get(group);
+    };
+    const requestGroup = (group) => {
+        const loader = loaders?.[group];
+        if (typeof loader !== 'function') return;
+        const state = stateFor(group);
+        state.queued = true;
+        if (state.running || state.launchTimer || !isVisible()) return;
+        state.launchTimer = setTimeoutImpl(() => {
+            state.launchTimer = 0;
+            if (state.running || !state.queued || !isVisible()) return;
+            state.running = (async () => {
+                while (state.queued && isVisible()) {
+                    state.queued = false;
+                    try { await loader(); } catch (error) {
+                        console.warn('[change-wake]', group, error?.code || error?.message || error);
+                    }
+                }
+            })().finally(() => {
+                state.running = null;
+                if (state.queued && isVisible()) requestGroup(group);
+            });
+        }, 0);
+    };
+    const flushType = (type) => {
+        const timer = typeTimers.get(type);
+        if (timer) clearTimeoutImpl(timer);
+        typeTimers.delete(type);
+        const groups = Array.isArray(entityGroups?.[type]) ? entityGroups[type] : [entityGroups?.[type]];
+        groups.filter(Boolean).forEach(requestGroup);
+    };
+    const schedule = (types) => {
+        [...new Set(Array.isArray(types) ? types : [])].forEach((type) => {
+            if (!entityGroups?.[type]) return;
+            const oldTimer = typeTimers.get(type);
+            if (oldTimer) clearTimeoutImpl(oldTimer);
+            typeTimers.set(type, setTimeoutImpl(() => flushType(type), debounceMs));
+        });
+    };
+    const resume = () => {
+        if (!isVisible()) return;
+        groupStates.forEach((state, group) => {
+            if (state.queued) requestGroup(group);
+        });
+    };
+    const flushNow = () => {
+        [...typeTimers.keys()].forEach(flushType);
+        resume();
+    };
+    const stop = () => {
+        typeTimers.forEach((timer) => clearTimeoutImpl(timer));
+        typeTimers.clear();
+        groupStates.forEach((state) => {
+            state.queued = false;
+            if (state.launchTimer) clearTimeoutImpl(state.launchTimer);
+            state.launchTimer = 0;
+        });
+    };
+    return { schedule, resume, flushNow, stop };
+}
+/* Browser change wake runtime end. */
+
 installClosestFallback();
 document.documentElement.dataset.appModule = 'loaded';
 
+const BROWSER_CHANGE_ENTITY_TYPES = Object.freeze([
+    'connection', 'proxy', 'sshKey', 'jumpHost', 'note', 'snippet',
+    'aiProvider', 'aiMemory', 'aiSkill', 'aiEnv', 'aiConversation', 'aiMessage',
+    'oneUserSettings', 'serverSettings', 'backupMetadata', 'activityEvent',
+    'resourceAcl', 'clientToken', 'workspaceState', 'fileSyncConfig',
+]);
+const BROWSER_CHANGE_ENTITY_GROUPS = Object.freeze({
+    connection: 'connections',
+    proxy: 'network',
+    sshKey: 'network',
+    jumpHost: 'network',
+    note: 'notes',
+    snippet: 'settings',
+    aiProvider: 'settings',
+    aiMemory: 'settings',
+    aiSkill: 'settings',
+    aiEnv: 'settings',
+    aiConversation: 'aiHistory',
+    aiMessage: 'aiHistory',
+    oneUserSettings: 'settings',
+    serverSettings: 'settings',
+    backupMetadata: 'backup',
+    activityEvent: 'activities',
+    resourceAcl: ['connections', 'network', 'settings', 'notes'],
+    clientToken: 'agentTokens',
+    workspaceState: 'workspace',
+    fileSyncConfig: 'oneClients',
+});
+
 let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], settings = {}, personalSettingsOverrides = {};
+let connectionsLoadGeneration = 0;
+let activitiesLoadGeneration = 0;
+let networkLoadGeneration = 0;
+let settingsLoadGeneration = 0;
 let activityRange = '7d';
 let zephyrSharedClipboard = { type: '', text: '', files: [], sourceTabId: '', sourcePage: '', updatedAt: 0 };
 let aiSettingsState = null;
@@ -50,6 +284,9 @@ let aiProviderShareTargetsState = [];
 let aiProviderSelectedUserIds = new Set();
 let aiChatSessions = [];
 let aiCurrentSessionId = null;
+let aiHistoryLoaded = false;
+let aiHistoryLoadPromise = null;
+let aiHistoryReloadTimer = 0;
 let aiPanelLayoutMenu = null;
 let aiPanelLayoutMenuButton = null;
 let aiPanelSuppressLayoutClick = false;
@@ -101,6 +338,9 @@ let workspaceRevision = null;
 let workspaceRestoring = false;
 let workspaceReady = false;
 let workspaceSaveTimer = null;
+let workspaceRemoteUpdatePending = false;
+let browserChangeWakeClient = null;
+let browserChangeRefreshScheduler = null;
 let currentAppView = 'dashboard';
 let terminalTabs = [], activeTerminalTab = null;
 let openOrderStack = [], visualLayout = [], recentUseStack = [];
@@ -207,6 +447,146 @@ function api(path, options = {}) {
     return fetch(path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options })
         .then(async (res) => { const data = await res.json().catch(() => ({})); if (!res.ok) throw apiErrorFromResponse(res, data); return data; });
 }
+
+/* Backup import UI start. The one-time grant stays in function scope so it
+ * cannot be persisted or reused after either phase finishes. */
+const backupImportUiState = { active: false, statusKey: '' };
+
+function makeBackupImportUiError(code, status = 0) {
+    const error = new Error('Backup import failed.');
+    error.code = String(code || 'backup_import_failed');
+    error.status = Number(status) || 0;
+    return error;
+}
+
+function backupImportErrorKey(error) {
+    const byCode = {
+        backup_import_step_up_failed: '当前登录密码验证失败，请重试。',
+        backup_import_grant_invalid: '导入授权无效或已过期，请重新验证当前登录密码。',
+        invalid_backup_import_multipart: '备份导入请求无效，请重新选择备份文件后重试。',
+        backup_import_payload_too_large: '备份文件超过允许的大小限制。',
+        backup_import_busy: '已有备份导入正在进行，请稍后重试。',
+        webdav_sensitive_rate_limited: '敏感操作过于频繁，请稍后重试。',
+    };
+    return byCode[String(error?.code || '')] || '导入失败，请稍后重试。';
+}
+
+function setBackupImportStatus(statusKey, { tone = 'idle', focus = false } = {}) {
+    backupImportUiState.statusKey = statusKey;
+    const status = $('#importDataStatus');
+    if (!status) return;
+    status.textContent = statusKey ? t(statusKey) : '';
+    status.dataset.state = tone;
+    status.setAttribute('aria-live', tone === 'warning' || tone === 'error' ? 'assertive' : 'polite');
+    if (focus) status.focus({ preventScroll: true });
+}
+
+function setBackupImportBusy(busy, labelKey = '导入备份') {
+    const form = $('#importDataForm');
+    const button = $('#importDataBtn');
+    form?.setAttribute('aria-busy', busy ? 'true' : 'false');
+    form?.querySelectorAll('input, button').forEach((control) => { control.disabled = busy; });
+    if (button) {
+        button.textContent = t(labelKey);
+        button.setAttribute('aria-busy', busy ? 'true' : 'false');
+        button.setAttribute('aria-disabled', busy ? 'true' : 'false');
+    }
+}
+
+async function readBackupImportResponse(response) {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw makeBackupImportUiError(payload?.code, response.status);
+    return payload && typeof payload === 'object' ? payload : {};
+}
+
+async function submitBackupImport({ fetchImpl = fetch, confirmImpl = confirm } = {}) {
+    if (backupImportUiState.active) return { ok: false, busy: true };
+    const form = $('#importDataForm');
+    const fileInput = $('#backupFile');
+    const loginPasswordInput = $('#importLoginPassword');
+    const backupPasswordInput = $('#backupPassword');
+    const file = fileInput?.files?.[0];
+    let loginPassword = String(loginPasswordInput?.value || '');
+    let backupPassword = String(backupPasswordInput?.value || '');
+    if (!file) {
+        setBackupImportStatus('backupImport.fileRequired', { tone: 'error', focus: true });
+        fileInput?.focus({ preventScroll: true });
+        return { ok: false, validation: true };
+    }
+    if (!loginPassword) {
+        setBackupImportStatus('backupImport.loginPasswordRequired', { tone: 'error', focus: true });
+        loginPasswordInput?.focus({ preventScroll: true });
+        return { ok: false, validation: true };
+    }
+    if (!confirmImpl(t('导入会覆盖当前数据库，系统会先生成本地备份。继续？'))) return { ok: false, cancelled: true };
+
+    backupImportUiState.active = true;
+    setBackupImportBusy(true, '正在验证导入授权');
+    setBackupImportStatus('backupImport.verifyingAuthorization', { tone: 'busy' });
+    let uploadStarted = false;
+    let grant = '';
+    try {
+        let grantResponse;
+        try {
+            grantResponse = await fetchImpl('/api/data/import/grant', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: loginPassword }),
+            });
+        } finally {
+            loginPassword = '';
+            if (loginPasswordInput) loginPasswordInput.value = '';
+        }
+        const grantPayload = await readBackupImportResponse(grantResponse);
+        grant = typeof grantPayload.grant === 'string' ? grantPayload.grant : '';
+        if (!grant) throw makeBackupImportUiError('backup_import_grant_invalid', grantResponse.status);
+
+        const formData = new FormData();
+        formData.append('backup', file);
+        if (backupPassword) formData.append('backupPassword', backupPassword);
+        setBackupImportBusy(true, '正在上传备份');
+        setBackupImportStatus('backupImport.uploadingBackup', { tone: 'busy' });
+        uploadStarted = true;
+        let importResponse;
+        try {
+            importResponse = await fetchImpl('/api/data/import', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'X-Zephyr-Backup-Import-Grant': grant },
+                body: formData,
+            });
+        } catch (error) {
+            error.backupImportOutcomeUnknown = true;
+            throw error;
+        }
+        const result = await readBackupImportResponse(importResponse);
+        setBackupImportStatus(result.message || '导入完成', { tone: 'success', focus: true });
+        return { ok: true, value: result };
+    } catch (error) {
+        const outcomeUnknown = uploadStarted && error?.backupImportOutcomeUnknown === true;
+        setBackupImportStatus(
+            outcomeUnknown ? '导入请求已提交；结果可能已完成，请刷新页面确认。' : backupImportErrorKey(error),
+            { tone: outcomeUnknown ? 'warning' : 'error', focus: true },
+        );
+        return { ok: false, error, outcomeUnknown };
+    } finally {
+        loginPassword = '';
+        backupPassword = '';
+        grant = '';
+        if (uploadStarted && backupPasswordInput) backupPasswordInput.value = '';
+        backupImportUiState.active = false;
+        setBackupImportBusy(false);
+    }
+}
+
+function setupBackupImportUi() {
+    $('#importDataForm')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        submitBackupImport();
+    });
+}
+/* Backup import UI end. */
 function apiMaybeForm(path, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (!(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
@@ -1313,6 +1693,455 @@ async function requestSensitiveSecret(actionText = t('查看已保存敏感信�
     console.debug('[secret-open]', 'sensitive reveal requested', { actionText, authType: usingTotp ? 'totp' : 'password' });
     return secret;
 }
+
+/* WebDAV settings start. Kept as one block so its request contract can be
+ * exercised with a mocked fetch without booting the full application shell. */
+const WEB_DAV_API_BASE = '/api/webdav-sync';
+const webDavUiState = {
+    config: null,
+    controller: null,
+    operation: '',
+    retry: null,
+    statusKey: '正在读取 WebDAV 设置',
+    statusTone: 'busy',
+    remoteStatusKey: '尚未验证',
+    errorKey: '',
+    retryLabelKey: '重试上次操作',
+    credentialOriginChanged: false,
+    savedCredentialOrigin: '',
+    baseUrlOrigin: '',
+    credentialInputOrigin: '',
+    hasSavedCredentialProjection: false,
+};
+
+function makeWebDavRequestError(code, status = 0, retryable = false, { confirmedBeforeSideEffect = false } = {}) {
+    const error = new Error('WebDAV request failed.');
+    error.code = String(code || 'webdav_backup_failed');
+    error.status = Number(status) || 0;
+    error.retryable = retryable === true;
+    // A browser abort cannot establish whether the remote side effect happened.
+    error.confirmedBeforeSideEffect = confirmedBeforeSideEffect === true;
+    return error;
+}
+
+async function requestWebDav(path, { method = 'GET', body, signal, fetchImpl = fetch } = {}) {
+    let response;
+    try {
+        response = await fetchImpl(`${WEB_DAV_API_BASE}${path}`, {
+            method,
+            credentials: 'same-origin',
+            headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            signal,
+        });
+    } catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') {
+            throw makeWebDavRequestError('webdav_cancelled');
+        }
+        throw makeWebDavRequestError('webdav_network_error', 0, true);
+    }
+
+    const text = await response.text().catch(() => '');
+    let payload = {};
+    if (text) {
+        try { payload = JSON.parse(text); } catch { payload = {}; }
+    }
+    if (!response.ok) {
+        const publicError = payload && typeof payload.error === 'object' ? payload.error : {};
+        throw makeWebDavRequestError(publicError.code, response.status, publicError.retryable, {
+            confirmedBeforeSideEffect: publicError.confirmedBeforeSideEffect === true,
+        });
+    }
+    return payload && typeof payload === 'object' ? payload : {};
+}
+
+function webDavErrorKey(error) {
+    const code = String(error?.code || '');
+    if (code === 'webdav_cancelled' && error?.confirmedBeforeSideEffect === true) return '已确认 WebDAV 操作在更改数据前取消。';
+    const byCode = {
+        sensitive_verification_failed: '敏感验证失败，未执行 WebDAV 操作。',
+        one_unlock_required: '请先完成系统解锁验证。',
+        webdav_cancelled: '已停止等待 WebDAV 操作；操作可能已完成，请刷新状态。',
+        webdav_sync_unknown: 'WebDAV 同步结果未知；远端可能已更新，请刷新状态。',
+        webdav_network_error: '无法连接到 Zephyr 服务，请检查当前网络后重试。',
+        webdav_not_configured: '请先保存 WebDAV 设置。',
+        webdav_disabled: '请先启用并保存 WebDAV 备份。',
+        webdav_invalid_config: 'WebDAV 设置无效，请检查地址、远程目录和凭据。',
+        webdav_insecure_url: 'WebDAV 地址必须使用 HTTPS。',
+        webdav_ssrf_blocked: '此 WebDAV 主机不在允许的网络范围内。',
+        webdav_dns_failed: '无法解析 WebDAV 主机，请检查地址。',
+        webdav_timeout: 'WebDAV 服务器响应超时，请稍后重试。',
+        webdav_unavailable: 'WebDAV 服务当前不可用，请检查服务配置后重试。',
+        webdav_auth_failed: 'WebDAV 用户名或密码不正确。',
+        webdav_forbidden: 'WebDAV 服务器拒绝了此操作。',
+        webdav_not_found: 'WebDAV 远程目录不存在或无法访问。',
+        webdav_conflict: '远程备份已被修改，为避免覆盖，当前备份已停止。',
+        webdav_protocol_error: 'WebDAV 服务器返回了不兼容的响应。',
+        webdav_response_too_large: 'WebDAV 响应超过安全大小限制。',
+        webdav_backup_too_large: '备份超过允许的大小限制。',
+        webdav_sync_in_progress: '已有 WebDAV 操作正在进行，请稍后重试。',
+        webdav_rate_limited: 'WebDAV 操作过于频繁，请稍后重试。',
+        webdav_config_changed: 'WebDAV 设置已变更，当前操作已安全停止。',
+        webdav_backup_failed: 'WebDAV 操作失败，未覆盖远程备份。',
+    };
+    if (Number(error?.status) === 429) return 'WebDAV 操作过于频繁，请稍后重试。';
+    return byCode[code] || 'WebDAV 操作失败，未覆盖远程备份。';
+}
+
+function webDavRemoteStatusKey(error) {
+    const code = String(error?.code || '');
+    if (code === 'webdav_cancelled' && error?.confirmedBeforeSideEffect === true) return '已确认未更改';
+    if (code === 'webdav_sync_unknown') return '远端状态待确认';
+    if (code === 'webdav_conflict') return '检测到远程冲突';
+    if (code === 'webdav_rate_limited' || Number(error?.status) === 429) return '请求过于频繁';
+    if (['webdav_network_error', 'webdav_dns_failed', 'webdav_timeout', 'webdav_unavailable'].includes(code)) return '当前不可达';
+    if (code === 'webdav_cancelled') return '操作结果待确认';
+    return '验证或备份失败';
+}
+
+function renderWebDavText() {
+    const config = webDavUiState.config;
+    const status = $('#webDavStatusText');
+    const statusBand = $('#webDavStatusBand');
+    const remoteStatus = $('#webDavRemoteStatus');
+    const lastSuccess = $('#webDavLastSuccess');
+    const badge = $('#webDavConfigBadge');
+    const passwordState = $('#webDavPasswordState');
+    const errorBox = $('#webDavError');
+    const dangerActions = $('#webDavDangerActions');
+
+    if (status) status.textContent = t(webDavUiState.statusKey);
+    if (statusBand) statusBand.dataset.state = webDavUiState.statusTone;
+    if (remoteStatus) remoteStatus.textContent = t(webDavUiState.remoteStatusKey);
+    if (lastSuccess) lastSuccess.textContent = config?.lastSyncedAt ? formatDateTime(config.lastSyncedAt) : t('暂无');
+
+    if (badge) {
+        const badgeKey = config?.configured
+            ? (config.enabled ? '已配置并启用' : '已配置但未启用')
+            : '未配置';
+        badge.textContent = t(badgeKey);
+        badge.dataset.state = config?.configured ? 'configured' : (webDavUiState.errorKey ? 'error' : 'idle');
+    }
+    if (passwordState) {
+        passwordState.textContent = t(webDavUiState.credentialOriginChanged
+            ? 'WebDAV 地址来源已变更；已清除用户名和密码，请显式输入此地址的凭据。'
+            : (config?.hasPassword
+                ? '已保存 WebDAV 密码。仅在需要更改时输入新密码。'
+                : '尚未保存 WebDAV 密码。保存时请显式输入。'));
+    }
+    if (errorBox) {
+        errorBox.textContent = webDavUiState.errorKey ? t(webDavUiState.errorKey) : '';
+        errorBox.classList.toggle('force-hidden', !webDavUiState.errorKey);
+    }
+    const retryButton = $('#webDavRetryBtn');
+    if (retryButton) retryButton.textContent = t(webDavUiState.retryLabelKey || '重试上次操作');
+    dangerActions?.classList.toggle('force-hidden', !config?.configured);
+    renderWebDavActionLabels();
+}
+
+function renderWebDavActionLabels() {
+    const actions = [
+        ['#webDavSaveBtn', 'save', '保存 WebDAV 设置', '正在保存 WebDAV 设置'],
+        ['#webDavTestBtn', 'test', '测试连接', '正在验证 WebDAV 连接'],
+        ['#webDavSyncNowBtn', 'sync', '立即备份', '正在创建 WebDAV 备份'],
+        ['#webDavDeleteBtn', 'delete', '删除 WebDAV 设置', '正在删除 WebDAV 设置'],
+    ];
+    actions.forEach(([selector, operation, idleKey, busyKey]) => {
+        const button = $(selector);
+        if (!button) return;
+        const pending = webDavUiState.operation === operation;
+        button.textContent = t(pending ? busyKey : idleKey);
+        button.setAttribute('aria-busy', pending ? 'true' : 'false');
+    });
+}
+
+function webDavCanonicalOrigin(value) {
+    try {
+        const url = new URL(String(value || '').trim());
+        return url.protocol === 'https:' && url.origin !== 'null' ? url.origin : '';
+    } catch { return ''; }
+}
+
+function clearWebDavCredentialProjection() {
+    setVal('#webDavUsername', '');
+    setVal('#webDavPassword', '');
+    webDavUiState.credentialInputOrigin = '';
+    if (webDavUiState.config) {
+        webDavUiState.config.username = '';
+        webDavUiState.config.hasPassword = false;
+    }
+}
+
+function updateWebDavCredentialOriginHint() {
+    const currentOrigin = webDavCanonicalOrigin($('#webDavBaseUrl')?.value);
+    const previousOrigin = webDavUiState.baseUrlOrigin;
+    const originChanged = webDavUiState.hasSavedCredentialProjection && currentOrigin !== previousOrigin;
+    const differsFromSaved = webDavUiState.hasSavedCredentialProjection
+        && (!currentOrigin || !webDavUiState.savedCredentialOrigin || currentOrigin !== webDavUiState.savedCredentialOrigin);
+    if (originChanged) clearWebDavCredentialProjection();
+    if (originChanged || differsFromSaved) webDavUiState.credentialOriginChanged = true;
+    webDavUiState.baseUrlOrigin = currentOrigin;
+    renderWebDavText();
+}
+
+function trackWebDavCredentialInputOrigin() {
+    webDavUiState.credentialInputOrigin = webDavCanonicalOrigin($('#webDavBaseUrl')?.value);
+}
+
+function setWebDavStatus(statusKey, { tone = 'idle', remoteStatusKey } = {}) {
+    webDavUiState.statusKey = statusKey;
+    webDavUiState.statusTone = tone;
+    if (remoteStatusKey) webDavUiState.remoteStatusKey = remoteStatusKey;
+    renderWebDavText();
+}
+
+function updateWebDavActionAvailability() {
+    const busy = !!webDavUiState.controller;
+    const baseUrlReady = !!String($('#webDavBaseUrl')?.value || '').trim();
+    const draftEnabled = !!$('#webDavEnabled')?.checked;
+    const configuredAndEnabled = !!(webDavUiState.config?.configured && webDavUiState.config?.enabled && draftEnabled);
+    const save = $('#webDavSaveBtn');
+    const test = $('#webDavTestBtn');
+    const sync = $('#webDavSyncNowBtn');
+    const remove = $('#webDavDeleteBtn');
+    const setAvailability = (button, disabled) => {
+        if (!button) return;
+        button.disabled = disabled;
+        button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    };
+    setAvailability(save, busy);
+    setAvailability(test, busy || !baseUrlReady);
+    setAvailability(sync, busy || !configuredAndEnabled);
+    setAvailability(remove, busy || !webDavUiState.config?.configured);
+}
+
+function setWebDavBusy(operation, busy) {
+    const section = $('#webDavSettingsSection');
+    const cancel = $('#webDavCancelBtn');
+    section?.setAttribute('aria-busy', busy ? 'true' : 'false');
+    document.querySelectorAll('[data-webdav-lock]').forEach((control) => { control.disabled = busy; });
+    if (cancel) cancel.classList.toggle('force-hidden', !busy);
+    if (cancel) cancel.disabled = !busy;
+    if (cancel) cancel.setAttribute('aria-disabled', busy ? 'false' : 'true');
+    if (!busy) webDavUiState.operation = '';
+    else webDavUiState.operation = operation;
+    renderWebDavActionLabels();
+    updateWebDavActionAvailability();
+}
+
+function populateWebDavForm(config = {}) {
+    setChecked('#webDavEnabled', config.enabled === true);
+    setVal('#webDavBaseUrl', config.baseUrl || '');
+    setVal('#webDavUsername', config.username || '');
+    setVal('#webDavRemotePath', config.remotePath || '');
+    setVal('#webDavPassword', '');
+    const savedOrigin = webDavCanonicalOrigin(config.baseUrl);
+    webDavUiState.savedCredentialOrigin = savedOrigin;
+    webDavUiState.baseUrlOrigin = savedOrigin;
+    webDavUiState.credentialInputOrigin = savedOrigin;
+    webDavUiState.hasSavedCredentialProjection = Boolean(config.baseUrl || config.username || config.hasPassword);
+    webDavUiState.credentialOriginChanged = false;
+}
+
+function collectWebDavDraft({ includeEnabled = true } = {}) {
+    const baseUrl = String($('#webDavBaseUrl')?.value || '').trim();
+    const currentOrigin = webDavCanonicalOrigin(baseUrl);
+    const canSubmitCredentials = Boolean(currentOrigin)
+        && (!webDavUiState.credentialOriginChanged || webDavUiState.credentialInputOrigin === currentOrigin);
+    const draft = {
+        baseUrl,
+        remotePath: String($('#webDavRemotePath')?.value || '').trim(),
+    };
+    if (includeEnabled) draft.enabled = !!$('#webDavEnabled')?.checked;
+    if (canSubmitCredentials) draft.username = String($('#webDavUsername')?.value || '');
+    const password = String($('#webDavPassword')?.value || '');
+    if (canSubmitCredentials && password) draft.password = password;
+    return draft;
+}
+
+function validateWebDavForm() {
+    const form = $('#webDavSettingsForm');
+    const input = $('#webDavBaseUrl');
+    if (!form || !input) return false;
+    input.setCustomValidity('');
+    try {
+        if (new URL(String(input.value || '').trim()).protocol !== 'https:') {
+            input.setCustomValidity(t('WebDAV 地址必须使用 HTTPS。'));
+        }
+    } catch {
+        input.setCustomValidity(t('请输入有效的 WebDAV HTTPS 地址。'));
+    }
+    return form.reportValidity();
+}
+
+async function requestWebDavVerification(actionKey) {
+    try {
+        return await requestSensitiveSecret(t(actionKey));
+    } catch (error) {
+        const code = String(error?.code || '');
+        throw makeWebDavRequestError(code === 'one_unlock_required' ? code : 'sensitive_verification_failed');
+    }
+}
+
+function showWebDavError(error, { retry, focus = true } = {}) {
+    const code = String(error?.code || '');
+    const cancellationOutcomeUnknown = (code === 'webdav_cancelled' && error?.confirmedBeforeSideEffect !== true)
+        || code === 'webdav_sync_unknown';
+    webDavUiState.errorKey = webDavErrorKey(error);
+    webDavUiState.retry = cancellationOutcomeUnknown ? () => loadWebDavSettings() : (typeof retry === 'function' ? retry : null);
+    webDavUiState.retryLabelKey = cancellationOutcomeUnknown ? '刷新 WebDAV 状态' : '重试上次操作';
+    setWebDavStatus(webDavUiState.errorKey, {
+        tone: code === 'webdav_conflict' || cancellationOutcomeUnknown ? 'warning' : 'idle',
+        remoteStatusKey: webDavRemoteStatusKey(error),
+    });
+    const retryButton = $('#webDavRetryBtn');
+    retryButton?.classList.toggle('force-hidden', !webDavUiState.retry);
+    if (focus) $('#webDavError')?.focus({ preventScroll: true });
+}
+
+async function runWebDavOperation(operation, busyStatusKey, work, retry, { focusErrors = true } = {}) {
+    if (webDavUiState.controller) return { ok: false, busy: true };
+    const controller = new AbortController();
+    webDavUiState.controller = controller;
+    webDavUiState.retry = null;
+    webDavUiState.retryLabelKey = '重试上次操作';
+    webDavUiState.errorKey = '';
+    $('#webDavRetryBtn')?.classList.add('force-hidden');
+    setWebDavBusy(operation, true);
+    setWebDavStatus(busyStatusKey, { tone: 'busy' });
+    try {
+        return { ok: true, value: await work(controller.signal) };
+    } catch (error) {
+        showWebDavError(error, { retry, focus: focusErrors });
+        return { ok: false, error };
+    } finally {
+        if (webDavUiState.controller === controller) webDavUiState.controller = null;
+        setWebDavBusy(operation, false);
+    }
+}
+
+async function loadWebDavSettings() {
+    const retry = () => loadWebDavSettings();
+    const outcome = await runWebDavOperation('load', '正在读取 WebDAV 设置', (signal) => (
+        requestWebDav('/config', { signal })
+    ), retry, { focusErrors: false });
+    if (!outcome.ok) return;
+    const config = outcome.value?.config || {};
+    webDavUiState.config = config;
+    webDavUiState.errorKey = '';
+    webDavUiState.retry = null;
+    populateWebDavForm(config);
+    const previousError = config.lastErrorCode ? makeWebDavRequestError(config.lastErrorCode) : null;
+    if (previousError) {
+        setWebDavStatus('webDav.status.loadedWithBackupFailure', {
+            tone: 'warning',
+            remoteStatusKey: webDavRemoteStatusKey(previousError),
+        });
+    } else {
+        setWebDavStatus(config.configured ? 'WebDAV 设置已配置。' : '尚未配置 WebDAV 备份。', {
+            tone: config.lastSyncedAt ? 'success' : 'idle',
+            remoteStatusKey: config.lastSyncedAt ? '最近备份成功' : '尚未验证',
+        });
+    }
+    renderWebDavText();
+    updateWebDavActionAvailability();
+}
+
+async function saveWebDavSettings() {
+    if (!validateWebDavForm()) return;
+    const draft = collectWebDavDraft();
+    const retry = () => saveWebDavSettings();
+    const outcome = await runWebDavOperation('save', '正在保存 WebDAV 设置', async (signal) => {
+        const secret = await requestWebDavVerification('保存 WebDAV 设置');
+        return requestWebDav('/config', { method: 'PATCH', body: { ...draft, secret }, signal });
+    }, retry);
+    if (!outcome.ok) return;
+    webDavUiState.config = outcome.value?.config || {};
+    webDavUiState.errorKey = '';
+    webDavUiState.retry = null;
+    populateWebDavForm(webDavUiState.config);
+    setWebDavStatus('webDav.status.settingsSaved', { tone: 'success' });
+    $('#webDavStatusBand')?.focus({ preventScroll: true });
+    updateWebDavActionAvailability();
+}
+
+async function testWebDavConnection() {
+    if (!validateWebDavForm()) return;
+    const draft = collectWebDavDraft({ includeEnabled: false });
+    const retry = () => testWebDavConnection();
+    const outcome = await runWebDavOperation('test', '正在验证 WebDAV 连接', async (signal) => {
+        const secret = await requestWebDavVerification('验证 WebDAV 连接');
+        return requestWebDav('/test', { method: 'POST', body: { ...draft, secret }, signal });
+    }, retry);
+    if (!outcome.ok) return;
+    const result = outcome.value?.result || {};
+    webDavUiState.errorKey = '';
+    webDavUiState.retry = null;
+    setWebDavStatus('webDav.status.connectionVerified', {
+        tone: 'success',
+        remoteStatusKey: result.namespaceExists === false ? 'webDav.remote.directoryCreatedOnBackup' : 'webDav.remote.available',
+    });
+    $('#webDavStatusBand')?.focus({ preventScroll: true });
+}
+
+async function syncWebDavNow() {
+    const retry = () => syncWebDavNow();
+    const outcome = await runWebDavOperation('sync', '正在创建 WebDAV 备份', async (signal) => {
+        const secret = await requestWebDavVerification('立即创建 WebDAV 备份');
+        return requestWebDav('/sync-now', { method: 'POST', body: { secret }, signal });
+    }, retry);
+    if (!outcome.ok) return;
+    const result = outcome.value?.result || {};
+    webDavUiState.config = {
+        ...(webDavUiState.config || {}),
+        configured: true,
+        lastSyncedAt: Number(result.syncedAt) || Date.now(),
+        lastErrorCode: null,
+    };
+    webDavUiState.errorKey = '';
+    webDavUiState.retry = null;
+    setWebDavStatus('webDav.status.backupComplete', { tone: 'success', remoteStatusKey: 'webDav.remote.latestBackupSucceeded' });
+    $('#webDavStatusBand')?.focus({ preventScroll: true });
+}
+
+async function deleteWebDavSettings() {
+    if (!webDavUiState.config?.configured) return;
+    if (!confirm(t('删除 WebDAV 设置会移除 Zephyr 保存的凭据，但不会删除远程备份文件。继续？'))) return;
+    const retry = () => deleteWebDavSettings();
+    const outcome = await runWebDavOperation('delete', '正在删除 WebDAV 设置', async (signal) => {
+        const secret = await requestWebDavVerification('删除 WebDAV 设置');
+        return requestWebDav('/config', { method: 'DELETE', body: { secret }, signal });
+    }, retry);
+    if (!outcome.ok) return;
+    webDavUiState.config = { configured: false, enabled: false, hasPassword: false, lastSyncedAt: null, lastErrorCode: null };
+    webDavUiState.credentialOriginChanged = false;
+    webDavUiState.errorKey = '';
+    webDavUiState.retry = null;
+    populateWebDavForm(webDavUiState.config);
+    setWebDavStatus(outcome.value?.deleted === true ? 'WebDAV 设置已删除。' : '尚未配置 WebDAV 备份。', {
+        tone: outcome.value?.deleted === true ? 'success' : 'idle',
+        remoteStatusKey: '尚未验证',
+    });
+    $('#webDavStatusBand')?.focus({ preventScroll: true });
+    updateWebDavActionAvailability();
+}
+
+function cancelWebDavOperation() {
+    const controller = webDavUiState.controller;
+    if (!controller || controller.signal.aborted) return;
+    setWebDavStatus('webDav.status.cancellationRequested', { tone: 'busy', remoteStatusKey: 'webDav.remote.resultPendingConfirmation' });
+    controller.abort();
+}
+
+function retryWebDavOperation() {
+    if (webDavUiState.controller || typeof webDavUiState.retry !== 'function') return;
+    const retry = webDavUiState.retry;
+    webDavUiState.retry = null;
+    $('#webDavRetryBtn')?.classList.add('force-hidden');
+    retry();
+}
+/* WebDAV settings end. */
+
 function syncTerminalSmartbarTop() {
     const nav = $('.main-nav');
     const smartbar = $('#sessionTabs');
@@ -1356,9 +2185,7 @@ function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     const target = name === 'ai' ? 'dashboard' : name;
     currentAppView = target;
     rememberLastAppView(target);
-    if (target !== 'notes' && notesController?.state?.dirty) {
-        notesController.flushSave().catch(() => {});
-    }
+    if (target !== 'notes') notesController?.leave?.().catch(() => {});
     $$('.nav-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === target));
     $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${target}`));
     const wasTerminal = document.body.classList.contains('terminal-mode');
@@ -2774,15 +3601,25 @@ function renderActivities() {
     requestAnimationFrame(() => syncActivityRangeThumb({ instant: true }));
 }
 async function loadActivities() {
+    const generation = ++activitiesLoadGeneration;
     const { from, to } = activityRangeBounds();
     const params = new URLSearchParams();
     if (from) params.set('from', String(from));
     if (to) params.set('to', String(to));
     const data = await api(`/api/activities${params.size ? `?${params}` : ''}`);
+    if (generation !== activitiesLoadGeneration) return activities;
     activities = data.activities || [];
     renderActivities();
+    return activities;
 }
-async function loadConnections() { const data = await api('/api/connections'); connections = data.connections || []; renderConnections(); }
+async function loadConnections() {
+    const generation = ++connectionsLoadGeneration;
+    const data = await api('/api/connections');
+    if (generation !== connectionsLoadGeneration) return connections;
+    connections = data.connections || [];
+    renderConnections();
+    return connections;
+}
 function waitForConnectionCardExit(card, connectionId) {
     if (!card) return Promise.resolve();
     card.querySelectorAll('button').forEach((btn) => { btn.disabled = true; });
@@ -4264,9 +5101,9 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}&v=20260804-rdp-ssh-scroll4`
+            ? `/rdp.html?embed=1&v=20260804-rdp-ssh-scroll4&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}&v=20260804-terminal-shell3`
+                ? `/novnc.html?embed=1&v=20260804-terminal-shell3&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
                     ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260801-terminal-grid-converge1-mobile-ime2`
                     : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260801-terminal-grid-converge1-mobile-ime2`;
@@ -7890,7 +8727,10 @@ async function saveAiEnv(e) {
         id,
         name: $('#aiEnvName').value.trim(),
         description: $('#aiEnvDescription').value.trim(),
-        value: rawValue === '******' ? (oldItem.value || '') : rawValue,
+        // The settings response intentionally has no plaintext env value.
+        // Preserve the sentinel so the account-scoped canonical service keeps
+        // the existing ciphertext instead of treating an edit as a clear.
+        value: rawValue === '******' ? '******' : rawValue,
         enabled: $('#aiEnvEnabled').checked,
         visibleToAi: $('#aiEnvVisibleToAi').checked,
         valueVisibleToAi: $('#aiEnvValueVisibleToAi').checked,
@@ -8041,54 +8881,104 @@ async function deleteAiSkill(id) {
         },
     });
 }
-function stripAiHistoryBase64(content = '') {
-    return String(content || '')
-        .replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+/g, '[image omitted]')
-        .replace(/附件图片：([^\n]+)\n\s*\[image omitted\]/g, '附件图片：$1\n[图片已发送]');
-}
-function sanitizeAiChatSessionsForStorage(sessions = []) {
-    return (Array.isArray(sessions) ? sessions : []).slice(0, 20).map((s) => ({
-        ...s,
-        messages: (Array.isArray(s.messages) ? s.messages : []).map((m) => ({
-            ...m,
-            content: stripAiHistoryBase64(m.content),
-            // Keep attachment refs only — drop any accidental content blobs.
-            attachments: Array.isArray(m.attachments)
-                ? m.attachments.map((a) => ({ id: a.id, name: a.name, kind: a.kind, mime: a.mime, size: a.size })).filter((a) => a.id)
-                : undefined,
-        })),
-    }));
+function aiHistoryCacheMetadata(sessions = []) {
+    return (Array.isArray(sessions) ? sessions : []).slice(0, 40).map((session) => ({
+        id: String(session?.id || ''),
+        runtimeSessionId: String(session?.runtimeSessionId || ''),
+        collabMode: String(session?.collabMode || ''),
+        runProfile: String(session?.runProfile || ''),
+        permissionMode: String(session?.permissionMode || ''),
+    })).filter((session) => session.id);
 }
 function saveAiChats() {
     try {
         localStorage.setItem(AI_CHAT_STORAGE_KEY, JSON.stringify({
+            version: 2,
+            ownerUserId: myIdentity.userId || '',
             current: aiCurrentSessionId,
-            sessions: sanitizeAiChatSessionsForStorage(aiChatSessions),
+            // Canonical message bodies and attachment refs never enter browser
+            // persistence. This cache contains only UI/runtime routing state.
+            sessions: aiHistoryCacheMetadata(aiChatSessions),
         }));
     } catch (_) {}
 }
-function loadAiChats() {
+function readAiHistoryMetadataCache() {
     try {
         const data = JSON.parse(localStorage.getItem(AI_CHAT_STORAGE_KEY) || '{}');
-        aiChatSessions = Array.isArray(data.sessions)
-            ? sanitizeAiChatSessionsForStorage(data.sessions).filter((s) => s?.id && Array.isArray(s.messages)).map((s) => ({
-                ...s,
-                title: s.title === '新沙箱' ? t('新对话') : s.title,
-                messages: s.messages.filter((m) => !(/^.*已就绪。可搜索网页、调用工具、读写远程文件、辅助代码编辑。$/.test(String(m.content || '')))),
-            }))
-            : [];
-        aiCurrentSessionId = aiChatSessions.some((s) => s.id === data.current) ? data.current : aiChatSessions[0]?.id || null;
-    } catch (_) { aiChatSessions = []; aiCurrentSessionId = null; }
+        if (Number(data.version) !== 2 || String(data.ownerUserId || '') !== String(myIdentity.userId || '')) {
+            // Version 1 contained ownerless message bodies. It cannot be
+            // assigned to whichever account happens to log in next.
+            localStorage.removeItem(AI_CHAT_STORAGE_KEY);
+            return { current: '', sessions: [] };
+        }
+        return {
+            current: String(data.current || ''),
+            sessions: aiHistoryCacheMetadata(data.sessions),
+        };
+    } catch (_) { return { current: '', sessions: [] }; }
+}
+async function loadAiChats({ force = false } = {}) {
+    if (aiHistoryLoadPromise) return aiHistoryLoadPromise;
+    aiHistoryLoadPromise = (async () => {
+        const cache = readAiHistoryMetadataCache();
+        const metadata = new Map(cache.sessions.map((session) => [session.id, session]));
+        const data = await api('/api/ai/history/conversations?withMessages=1');
+        aiChatSessions = (Array.isArray(data.conversations) ? data.conversations : []).map((conversation) => ({
+            ...metadata.get(String(conversation.id)) || {},
+            ...conversation,
+            messages: Array.isArray(conversation.messages) ? conversation.messages : [],
+        }));
+        aiCurrentSessionId = aiChatSessions.some((session) => session.id === aiCurrentSessionId)
+            ? aiCurrentSessionId
+            : (aiChatSessions.some((session) => session.id === cache.current) ? cache.current : aiChatSessions[0]?.id || null);
+        aiHistoryLoaded = true;
+        saveAiChats();
+        return aiChatSessions;
+    })().finally(() => { aiHistoryLoadPromise = null; });
+    return aiHistoryLoadPromise;
+}
+function ensureCanonicalAiConversation(session) {
+    if (!session) return Promise.reject(new Error(t('AI 对话不存在')));
+    if (session.revision > 0) return Promise.resolve(session);
+    if (session.canonicalPromise) return session.canonicalPromise;
+    session.canonicalPromise = api('/api/ai/history/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ id: session.id, title: session.title || t('新对话') }),
+    }).then((data) => {
+        Object.assign(session, data.conversation || {}, { messages: session.messages || [] });
+        saveAiChats();
+        return session;
+    }).finally(() => { delete session.canonicalPromise; });
+    return session.canonicalPromise;
+}
+async function reloadCanonicalAiHistory() {
+    if ([...aiSessionRuns.keys()].some((id) => aiIsSessionRunning(id))) {
+        scheduleAiHistoryReload(800);
+        return;
+    }
+    const current = aiCurrentSessionId;
+    await loadAiChats({ force: true });
+    if (current && aiChatSessions.some((session) => session.id === current)) aiCurrentSessionId = current;
+    if (aiPanelState !== 'closed') renderAiChat();
+}
+function scheduleAiHistoryReload(delay = 180) {
+    window.clearTimeout(aiHistoryReloadTimer);
+    aiHistoryReloadTimer = window.setTimeout(() => {
+        reloadCanonicalAiHistory().catch((error) => console.warn('[ai-history]', error?.code || error?.message || error));
+    }, delay);
 }
 function createAiChat({ silent = false } = {}) {
     const id = `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    aiChatSessions.unshift({ id, title: t('新对话'), messages: [] });
+    const session = { id, title: t('新对话'), messages: [], revision: 0, ownerUserId: myIdentity.userId || '' };
+    aiChatSessions.unshift(session);
     aiCurrentSessionId = id;
     aiEditingMessageIndex = -1;
     aiEditingSessionId = '';
     syncAiEditingState();
     saveAiChats();
+    ensureCanonicalAiConversation(session).catch((error) => toast(error.message || t('创建 AI 对话失败')));
     if (!silent) renderAiChat();
+    return session;
 }
 function renderAiChatList() {
     const list = $('#aiChatList');
@@ -8135,16 +9025,27 @@ function renderAiMessageContent(text = '', role = 'assistant', rawHtml = false) 
     const source = role === 'user' ? summarizeAiUserMessageForDisplay(text) : String(text || '');
     return renderMarkdown(source, { enhancedCode: role !== 'trace' });
 }
-function appendAiMessage(text, role = 'assistant', { store = true, meta = '', rawHtml = false, messageIndex = -1, sessionId = '', metrics = null } = {}) {
+function appendAiMessage(text, role = 'assistant', { store = true, meta = '', rawHtml = false, messageIndex = -1, sessionId = '', metrics = null, id = '', attachments = [] } = {}) {
     const targetSessionId = String(sessionId || aiCurrentSessionId || '');
     const session = targetSessionId
         ? aiChatSessions.find((s) => s.id === targetSessionId)
         : aiCurrentSession();
-    if (!session) return;
+    if (!session) return null;
     const normalizedRole = rawHtml ? 'trace' : (role === 'ai' ? 'assistant' : role);
     let storedIndex = messageIndex;
     if (store) {
-        const record = { role: normalizedRole, content: String(text || '') };
+        const record = {
+            id: String(id || `message-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+            role: normalizedRole,
+            content: String(text || ''),
+        };
+        if (Array.isArray(attachments) && attachments.length) {
+            record.attachments = attachments.map((item) => ({
+                id: String(item?.id || ''), name: String(item?.name || ''),
+                kind: String(item?.kind || ''), mime: String(item?.mime || ''),
+                size: Math.max(0, Number(item?.size) || 0),
+            })).filter((item) => item.id);
+        }
         if (metrics && typeof metrics === 'object') record.metrics = metrics;
         session.messages.push(record);
         storedIndex = session.messages.length - 1;
@@ -8155,7 +9056,8 @@ function appendAiMessage(text, role = 'assistant', { store = true, meta = '', ra
         saveAiChats();
         renderAiChatList();
     }
-    if (session.id !== aiCurrentSessionId) return;
+    const storedRecord = storedIndex >= 0 ? session.messages[storedIndex] : null;
+    if (session.id !== aiCurrentSessionId) return storedRecord;
     const area = $('#aiChatArea');
     const typing = $('#aiTypingIndicator');
     if (!area || !typing) return;
@@ -8171,6 +9073,7 @@ function appendAiMessage(text, role = 'assistant', { store = true, meta = '', ra
         div.classList.add('ai-trace-message');
     }
     scrollAiChat();
+    return storedRecord;
 }
 function scrollAiChat() { requestAnimationFrame(() => { const a = $('#aiChatArea'); if (a) a.scrollTo({ top: a.scrollHeight, behavior: 'smooth' }); }); }
 function aiIsSessionRunning(sessionId = '') { return aiSessionRuns.has(String(sessionId || '')); }
@@ -8440,13 +9343,20 @@ function deleteAiChat(id) {
     if (!id) return;
     openAiInlineConfirm({
         title: t('删除对话'),
-        body: t('将删除此会话的本地消息记录（服务端会话若已创建不会自动清档）。'),
+        body: t('将从同账号的所有设备删除此对话及其消息。'),
         confirmLabel: t('删除'),
         danger: true,
-        onConfirm: () => deleteAiChatConfirmed(id),
+        onConfirm: () => deleteAiChatConfirmed(id).catch((error) => toast(error.message || t('删除对话失败'))),
     });
 }
-function deleteAiChatConfirmed(id) {
+async function deleteAiChatConfirmed(id) {
+    const target = aiChatSessions.find((session) => session.id === id);
+    if (target?.revision > 0) {
+        await api(`/api/ai/history/conversations/${encodeURIComponent(id)}`, {
+            method: 'DELETE',
+            body: JSON.stringify({ expectedRevision: target.revision }),
+        });
+    }
     if (aiEditingSessionId === id) cancelAiMessageEdit({ focus: false });
     const controller = aiRunForSession(id);
     if (controller) {
@@ -8460,6 +9370,21 @@ function deleteAiChatConfirmed(id) {
     aiCurrentSessionId = aiChatSessions[0]?.id || null;
     if (!aiChatSessions.length) createAiChat({ silent: true });
     saveAiChats();
+    renderAiChat();
+}
+async function clearCurrentAiChat() {
+    const session = aiCurrentSession();
+    if (!session) return;
+    if (aiIsSessionRunning(session.id)) return toast(t('请先停止当前对话的 AI 回复'));
+    if (session.revision > 0) {
+        await api(`/api/ai/history/conversations/${encodeURIComponent(session.id)}`, {
+            method: 'DELETE',
+            body: JSON.stringify({ expectedRevision: session.revision }),
+        });
+    }
+    closeAiBrowserForSession(session.id);
+    aiChatSessions = aiChatSessions.filter((item) => item.id !== session.id);
+    createAiChat({ silent: true });
     renderAiChat();
 }
 function updateAiPanelResponsiveState() {
@@ -8651,6 +9576,11 @@ function terminalFrameByIdForAi(tabId = '') {
     const id = String(tabId || '').trim();
     return id ? document.querySelector(`#terminalWorkspace .terminal-frame[data-frame="${CSS.escape(id)}"]`) : null;
 }
+function nativeRemoteDesktopBridge(frame) {
+    const bridge = frame?.__zephyrNativeRdpBridge;
+    return bridge && typeof bridge.snapshot === 'function' && typeof bridge.action === 'function'
+        ? bridge : null;
+}
 function terminalFrameForAi(tabId = '') {
     const id = currentOrRequestedTerminalTab(tabId);
     return terminalFrameByIdForAi(id);
@@ -8706,7 +9636,10 @@ function readRemoteDesktopSnapshotForAi(tabId = '', maxWidth = 960) {
     const frame = terminalFrameByIdForAi(id);
     let shot = null;
     try {
-        shot = frame?.contentWindow?.__zephyrGetRemoteDesktopSnapshot?.({ maxWidth });
+        const nativeBridge = nativeRemoteDesktopBridge(frame);
+        shot = nativeBridge
+            ? nativeBridge.snapshot({ maxWidth })
+            : frame?.contentWindow?.__zephyrGetRemoteDesktopSnapshot?.({ maxWidth });
         if (shot && typeof shot.then === 'function') return {
             pending: true,
             promise: shot,
@@ -8877,6 +9810,7 @@ function clickSettingsSection(section = '') {
     if (btn) btn.click();
 }
 function waitForTerminalFrameReady(frame, timeoutMs = 1800) {
+    if (nativeRemoteDesktopBridge(frame)) return Promise.resolve(frame);
     if (!frame) return Promise.reject(new Error(t('当前终端页面还没准备好')));
     try {
         const doc = frame.contentDocument;
@@ -8936,7 +9870,8 @@ async function performAiUiAction(action = {}) {
         const id = currentOrRequestedRemoteDesktopTab(action.tabId);
         if (!id) throw new Error(t('暂无 RDP/VNC 远程桌面会话'));
         const frame = await waitForTerminalFrameReady(terminalFrameByIdForAi(id));
-        if (!frame?.contentWindow) throw new Error(t('当前远程桌面页面还没准备好'));
+        const nativeBridge = nativeRemoteDesktopBridge(frame);
+        if (!nativeBridge && !frame?.contentWindow) throw new Error(t('当前远程桌面页面还没准备好'));
         const actionId = `rdp-${Date.now().toString(36)}-${++aiRemoteDesktopActionSeq}`;
         const actionForMessage = normalizeAiRemoteDesktopMouseAction(action, id);
         const msg = publicAiRemoteDesktopAction({
@@ -8945,9 +9880,16 @@ async function performAiUiAction(action = {}) {
             desktopControl: actionForMessage.desktopControl || actionForMessage.control || (a === 'remote_desktop_send_text' ? 'text' : a === 'remote_desktop_mouse' ? 'mouse_click' : ''),
         });
         const beforeFrameAt = Number(action.frameAt || 0);
-        const ackPromise = waitForAiRemoteDesktopActionAck(actionId, action.ackTimeoutMs || 5200);
-        frame.contentWindow.postMessage(msg, '*');
-        const ack = await ackPromise;
+        let ack;
+        if (nativeBridge) {
+            // The shell validates and consumes captureId before dispatching
+            // input into the owner-bound FreeRDP session.
+            ack = await nativeBridge.action(msg);
+        } else {
+            const ackPromise = waitForAiRemoteDesktopActionAck(actionId, action.ackTimeoutMs || 5200);
+            frame.contentWindow.postMessage(msg, '*');
+            ack = await ackPromise;
+        }
         await delayMs(action.waitMs ?? 2000);
         const remoteDesktopScreenshot = await waitForFreshRemoteDesktopSnapshot(id, { maxWidth: action.maxWidth || 640, afterFrameAt: beforeFrameAt, timeoutMs: action.freshTimeoutMs || 2600 });
         const result = { remoteDesktopAction: ack || { ok: false, timeout: true }, remoteDesktopScreenshot, actionId, beforeCaptureId: action.captureId || '', afterCaptureId: remoteDesktopScreenshot?.captureId || '' };
@@ -9115,7 +10057,7 @@ function needsRemoteDesktopClientFollowup(toolResults = []) {
         return r.tool === 'remote_desktop_action_v1' || ['RDP', 'VNC'].includes(protocol) || action.startsWith('remote_desktop');
     });
 }
-async function continueAiAfterRemoteDesktopClientActions({ original = '', providerId = '', model = '', options = {}, signal = null, toolResults = [], sessionId = '' } = {}) {
+async function continueAiAfterRemoteDesktopClientActions({ original = '', providerId = '', model = '', options = {}, signal = null, toolResults = [], sessionId = '', historyCommit = null } = {}) {
     const targetSessionId = sessionId || aiCurrentSessionId;
     // Legacy followup never carries vision Parts. Remote-desktop must stay on Runtime.
     const rdContext = collectAiContext({ includeRemoteDesktopImages: false, sessionId: targetSessionId });
@@ -9125,14 +10067,17 @@ async function continueAiAfterRemoteDesktopClientActions({ original = '', provid
     const sideEffectSummary = JSON.stringify(maskAiSensitive((Array.isArray(toolResults) ? toolResults : []).map((r) => ({ tool: r.tool, args: r.args, result: r.result }))), null, 2).slice(0, 7000);
     const followup = `原问题：${original}\n\n前端已经尝试执行 RDP/VNC 打开或远程桌面操作。工具/前端执行结果摘要如下：\n${sideEffectSummary || '（无工具结果）'}\n\n现在请基于最新 Zephyr 上下文继续回答；如果结果里有 clientError 或 remoteDesktopAction.ok=false，必须直接告诉用户该操作失败和失败原因，不要声称已经完成；如果工具结果已经包含 remoteDesktopScreenshot/截图摘要，可直接依据它回答，不要重复截图；只有缺少截图且原问题确实询问当前画面时，才调用 remote_desktop_screenshot。不要重复打开同一连接或重复点击刚才的按钮。`;
     const nextOptions = { ...(options || {}), max_tokens: Math.min(Number(options?.max_tokens || 900), 900), max_output_tokens: Math.min(Number(options?.max_output_tokens || 900), 900) };
-    const next = await api('/api/ai/chat', { method: 'POST', signal, body: JSON.stringify({ messages: [{ role: 'user', content: followup }], providerId, model, options: nextOptions, context: collectAiContext({ includeRemoteDesktopImages: false, sessionId: targetSessionId }) }) });
+    const next = await api('/api/ai/chat', { method: 'POST', signal, body: JSON.stringify({ messages: [{ role: 'user', content: followup }], providerId, model, options: nextOptions, context: collectAiContext({ includeRemoteDesktopImages: false, sessionId: targetSessionId }), historyCommit: historyCommit || undefined }) });
     if (next.toolResults?.length) {
         await syncAiToolSideEffects(next.toolResults, { sessionId: targetSessionId });
         appendAiMessage(next.toolResults.map(formatAiToolResult).join(''), 'trace', { rawHtml: true, sessionId: targetSessionId });
     }
     if (next.clientCaptureRequired) return handleAiClientCapture(next, { providerId, model, options, signal, original, sessionId: targetSessionId });
-    if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId, model, options, context: collectAiContext({ sessionId: targetSessionId }), sessionId: targetSessionId });
-    else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId: targetSessionId, metrics: { ...(next.metrics || {}), provider: next.provider, model: next.model } });
+    if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId, model, options, context: collectAiContext({ sessionId: targetSessionId }), sessionId: targetSessionId, historyCommit });
+    else {
+        appendAiMessage(next.message?.content || '执行完成。', 'assistant', { id: historyCommit?.assistantMessageId || '', meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId: targetSessionId, metrics: { ...(next.metrics || {}), provider: next.provider, model: next.model } });
+        if (next.historyPersisted) scheduleAiHistoryReload(300);
+    }
     return true;
 }
 function maskAiSensitive(value, tool = '') {
@@ -9351,16 +10296,34 @@ function aiCaptureDataUrlToBlob(dataUrl) {
 
 async function ensureAiRuntimeSessionId(session, sessionId) {
     if (session.runtimeSessionId) return session.runtimeSessionId;
+    await ensureCanonicalAiConversation(session);
     const created = await api('/api/ai/runtime/sessions', {
         method: 'POST',
-        body: JSON.stringify({ title: session.title || t('新对话'), metadata: { clientSessionId: sessionId } }),
+        body: JSON.stringify({
+            title: session.title || t('新对话'),
+            metadata: { clientSessionId: sessionId, canonicalConversationId: session.id },
+        }),
     });
     session.runtimeSessionId = created.session?.id || created.sessionId;
     saveAiChats();
     return session.runtimeSessionId;
 }
 
-async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, model, options, context, abortController, attachments = [] }) {
+function aiHistoryCommitFor(session, userMessage, assistantMessageId, providerId, model) {
+    return {
+        conversationId: session.id,
+        title: session.title || t('新对话'),
+        providerId: providerId || null,
+        model: model || null,
+        userMessage: {
+            id: userMessage?.id || `message-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            content: String(userMessage?.content || ''),
+        },
+        assistantMessageId: assistantMessageId || `message-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    };
+}
+
+async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, model, options, context, abortController, attachments = [], userMessage, assistantMessageId }) {
     // Bind browser chat id → server session id (stored on session object).
     const serverSessionId = await ensureAiRuntimeSessionId(session, sessionId);
     const aiCfg = normalizeAiSettings(settings.ai || {});
@@ -9383,6 +10346,11 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
         signal: abortController.signal,
         body: JSON.stringify({
             sessionId: serverSessionId,
+            conversationId: session.id,
+            title: session.title || t('新对话'),
+            userMessageId: userMessage?.id || '',
+            assistantMessageId,
+            historyUserContent: String(userMessage?.content || text || ''),
             message: text,
             attachments: attachmentIds,
             providerId,
@@ -9416,6 +10384,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
             sessionId,
             meta: [model].filter(Boolean).join(' / '),
             store: true,
+            id: assistantMessageId,
         });
         const area = $('#aiChatArea');
         const nodes = area?.querySelectorAll?.('.ai-message.ai, .ai-message.assistant');
@@ -9610,6 +10579,10 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                         if (last?.role === 'assistant') last.metrics = body?.metrics || null;
                         saveAiChats();
                     }
+                    // Canonical persistence is performed by the independent
+                    // Node completion monitor. Refresh after local run state is
+                    // released; metrics remain device-local and are not synced.
+                    scheduleAiHistoryReload(600);
                     break;
                 }
                 case 'run.failed':
@@ -9623,6 +10596,25 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
             }
         },
     });
+}
+
+async function deleteCanonicalAiTail(session, fromIndex) {
+    const tail = (Array.isArray(session?.messages) ? session.messages : []).slice(Math.max(0, fromIndex));
+    for (const message of tail) {
+        if (!message?.id || !['user', 'assistant'].includes(String(message.role || ''))) continue;
+        try {
+            await api(`/api/ai/history/messages/${encodeURIComponent(message.id)}`, {
+                method: 'DELETE',
+                body: JSON.stringify({ expectedRevision: Number(message.revision) || 1 }),
+            });
+        } catch (error) {
+            // A local-only cancelled/failed turn never entered canonical
+            // history. Every other failure (especially CAS conflict) must stop
+            // the edit so another device's update is not silently erased.
+            if (Number(error?.status) === 404 && !message.revision) continue;
+            throw error;
+        }
+    }
 }
 
 async function sendAiMessage() {
@@ -9645,6 +10637,15 @@ async function sendAiMessage() {
     }
     const text = displayBits.filter(Boolean).join('\n\n');
     const editingIndex = aiEditingSessionId && aiEditingSessionId !== sessionId ? -1 : aiEditingMessageIndex;
+    if (editingIndex >= 0) {
+        try {
+            await deleteCanonicalAiTail(session, editingIndex);
+        } catch (error) {
+            toast(error.message || t('对话已在其他设备更新，请刷新后重试'));
+            scheduleAiHistoryReload(0);
+            return;
+        }
+    }
     aiEditingMessageIndex = -1;
     aiEditingSessionId = '';
     syncAiEditingState();
@@ -9658,10 +10659,11 @@ async function sendAiMessage() {
     updateAiInputPreview();
     input.focus?.();
     // Persist only attachment refs in local history — never base64 payloads.
-    appendAiMessage(text, 'user', {
+    const userMessage = appendAiMessage(text, 'user', {
         sessionId,
         attachments: readyAttachments.map((a) => ({ id: a.id, name: a.name, kind: a.kind, mime: a.mime, size: a.size })),
     });
+    const assistantMessageId = `message-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const abortController = new AbortController();
     registerAiSessionRun(sessionId, abortController);
     try {
@@ -9669,6 +10671,7 @@ async function sendAiMessage() {
         const providerId = $('#aiProviderSelect').value;
         const model = $('#aiModelSelect').value;
         const options = aiIntensityOptions();
+        await ensureCanonicalAiConversation(session);
         const useRuntime = await aiRuntimeIsEnabled();
         if (context?.activeSurface?.kind === 'remote-desktop' && !useRuntime) {
             throw new Error(t('RDP/VNC AI 视觉操作需要 Go Runtime'));
@@ -9680,11 +10683,13 @@ async function sendAiMessage() {
             await sendAiMessageViaRuntime({
                 session, sessionId, text: typedText || (readyAttachments.length ? t('（用户发送了附件）') : ''),
                 providerId, model, options, context, abortController, attachments: readyAttachments,
+                userMessage, assistantMessageId,
             });
             return;
         }
         const requestMessages = aiMessagesForRequest(session, typedText);
-        const data = await api('/api/ai/chat', { method: 'POST', signal: abortController.signal, body: JSON.stringify({ messages: requestMessages, providerId, model, options, context }) });
+        const historyCommit = aiHistoryCommitFor(session, userMessage, assistantMessageId, providerId, model);
+        const data = await api('/api/ai/chat', { method: 'POST', signal: abortController.signal, body: JSON.stringify({ messages: requestMessages, providerId, model, options, context, historyCommit }) });
         if (data.toolResults?.length) {
             await syncAiToolSideEffects(data.toolResults, { sessionId });
             appendAiMessage(data.toolResults.map(formatAiToolResult).join(''), 'trace', { rawHtml: true, sessionId });
@@ -9692,11 +10697,12 @@ async function sendAiMessage() {
         if (data.clientCaptureRequired) {
             await handleAiClientCapture(data, { providerId, model, options, signal: abortController.signal, original: typedText, sessionId });
         } else if (data.confirmationRequired) {
-            appendAiConfirmation(data.confirmation, { messages: requestMessages.slice(), providerId, model, options, context, sessionId });
+            appendAiConfirmation(data.confirmation, { messages: requestMessages.slice(), providerId, model, options, context, sessionId, historyCommit });
         } else if (needsRemoteDesktopClientFollowup(data.toolResults || [])) {
-            await continueAiAfterRemoteDesktopClientActions({ original: typedText, providerId, model, options, signal: abortController.signal, toolResults: data.toolResults || [], sessionId });
+            await continueAiAfterRemoteDesktopClientActions({ original: typedText, providerId, model, options, signal: abortController.signal, toolResults: data.toolResults || [], sessionId, historyCommit });
         } else {
-            appendAiMessage(data.message?.content || '执行完成。', 'assistant', { meta: [data.provider?.name, data.model].filter(Boolean).join(' / '), sessionId, metrics: { ...(data.metrics || {}), provider: data.provider, model: data.model } });
+            appendAiMessage(data.message?.content || '执行完成。', 'assistant', { id: assistantMessageId, meta: [data.provider?.name, data.model].filter(Boolean).join(' / '), sessionId, metrics: { ...(data.metrics || {}), provider: data.provider, model: data.model } });
+            if (data.historyPersisted) scheduleAiHistoryReload(300);
         }
     } catch (err) {
         if (err.name === 'AbortError' || /aborted|abort|已停止/i.test(String(err.message || ''))) {
@@ -9787,11 +10793,14 @@ async function continueAiAfterConfirmation(id, approve, data) {
         if (context?.activeSurface?.kind === 'remote-desktop') {
             throw new Error(t('RDP/VNC AI 视觉操作需要 Go Runtime'));
         }
-        const next = await api('/api/ai/chat', { method: 'POST', signal: abortController.signal, body: JSON.stringify({ messages: [{ role: 'user', content: followup }], providerId: pending.providerId, model: pending.model, options: pending.options || aiIntensityOptions(), context }) });
+        const next = await api('/api/ai/chat', { method: 'POST', signal: abortController.signal, body: JSON.stringify({ messages: [{ role: 'user', content: followup }], providerId: pending.providerId, model: pending.model, options: pending.options || aiIntensityOptions(), context, historyCommit: pending.historyCommit || undefined }) });
         if (next.toolResults?.length) { await syncAiToolSideEffects(next.toolResults, { sessionId }); appendAiMessage(next.toolResults.map(formatAiToolResult).join(''), 'trace', { rawHtml: true, sessionId }); }
         if (next.clientCaptureRequired) await handleAiClientCapture(next, { providerId: pending.providerId, model: pending.model, options: pending.options || aiIntensityOptions(), signal: abortController.signal, original, sessionId });
-        else if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId: pending.providerId, model: pending.model, options: pending.options, context: pending.context || context, sessionId });
-        else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId, metrics: { ...(next.metrics || {}), provider: next.provider, model: next.model } });
+        else if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId: pending.providerId, model: pending.model, options: pending.options, context: pending.context || context, sessionId, historyCommit: pending.historyCommit });
+        else {
+            appendAiMessage(next.message?.content || '执行完成。', 'assistant', { id: pending.historyCommit?.assistantMessageId || '', meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId, metrics: { ...(next.metrics || {}), provider: next.provider, model: next.model } });
+            if (next.historyPersisted) scheduleAiHistoryReload(300);
+        }
     } catch (err) {
         if (err.name === 'AbortError' || /aborted|abort|已停止/i.test(String(err.message || ''))) {
             if (!aiStoppedControllers.has(abortController)) appendAiMessage('AI 后续处理已中断。', 'system', { sessionId });
@@ -10050,7 +11059,7 @@ function openAiAssistantPanel(trigger = null) {
     prepareAiPanelLayout(panel);
     bringAiPanelToFront();
     updateAiPanelResponsiveState();
-    if (!aiChatSessions.length) { loadAiChats(); if (!aiChatSessions.length) createAiChat({ silent: true }); }
+    if (!aiChatSessions.length) createAiChat({ silent: true });
     renderAiHeaderSelectors(); renderAiBrowserPreview(); renderAiChat();
     if (!wasHidden) {
         panel.style.visibility = 'visible';
@@ -10792,7 +11801,7 @@ function setupAiAssistant() {
     $('#aiUserInput')?.addEventListener('input', (e) => { autoResizeAiInput(e.target); updateAiInputPreview(); });
     $('#aiUserInput')?.addEventListener('keydown', (e) => { if (e.key === 'Escape' && aiEditingMessageIndex >= 0) { e.preventDefault(); cancelAiMessageEdit(); return; } if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendAiMessage(); } });
     // Markdown preview toggle removed; messages are rendered as Markdown directly.
-    $('#aiClearChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast(t('请先停止当前对话的 AI 回复')); cancelAiMessageEdit({ focus: false }); s.messages = []; renderAiChat(); });
+    $('#aiClearChatBtn')?.addEventListener('click', () => { cancelAiMessageEdit({ focus: false }); clearCurrentAiChat().catch((error) => { toast(error.message || t('清空对话失败')); scheduleAiHistoryReload(0); }); });
     $('#aiCompressChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast(t('请先停止当前对话的 AI 回复')); if (s.messages.length > 2) s.messages = [{ role: 'system', content: `历史已压缩：此前共有 ${s.messages.length} 条消息。` }, s.messages[s.messages.length - 1]]; renderAiChat(); });
     $('#aiProviderPickerBtn')?.addEventListener('click', (e) => openAiPicker('provider', e.currentTarget));
     $('#aiModelPickerBtn')?.addEventListener('click', (e) => openAiPicker('model', e.currentTarget));
@@ -10850,12 +11859,14 @@ function renderRemoteServers() { const ssh = connections.filter((c) => c.protoco
 async function remoteExecute(e) { e.preventDefault(); const ids = $$('#remoteServerList input:checked').map((i) => i.value); try { $('#remoteResults').innerHTML = `<div class="empty-card">${t('执行中...')}</div>`; const data = await api('/api/remote-execute', { method: 'POST', body: JSON.stringify({ connectionIds: ids, command: $('#remoteCommand').value, timeoutSeconds: Number($('#remoteTimeout').value) || 30 }) }); $('#remoteResults').innerHTML = data.results.map((r) => `<article class="result-card ${r.success ? 'ok' : 'fail'}"><h3>${escapeHtml(r.name)} <span>${escapeHtml(r.status)} · ${r.durationMs}ms</span></h3>${r.error ? `<p class="error-text">${escapeHtml(r.error)}</p>` : ''}<pre>${escapeHtml(r.stdout || '')}</pre>${r.stderr ? `<pre class="stderr">${escapeHtml(r.stderr)}</pre>` : ''}</article>`).join(''); await loadConnections(); } catch (err) { toast(err.message); } }
 
 async function savePersonalSettings(patch) {
+    settingsLoadGeneration += 1;
     const result = await api('/api/me/settings', { method: 'PUT', body: JSON.stringify(patch) });
     personalSettingsOverrides = result.overrides || personalSettingsOverrides;
     return result.settings || settings;
 }
 
 async function savePlatformSettings(section, patch) {
+    settingsLoadGeneration += 1;
     const result = await api(`/api/settings/${encodeURIComponent(section)}`, { method: 'PUT', body: JSON.stringify(patch) });
     return { ...settings, ...result, _admin: result };
 }
@@ -10887,28 +11898,32 @@ function applyAgentReleaseLinks(agentRelease) {
 }
 
 async function loadSettings() {
+    const generation = ++settingsLoadGeneration;
     const personal = await api('/api/me/settings');
-    personalSettingsOverrides = personal.overrides || {};
-    settings = personal.settings || {};
+    const nextPersonalSettingsOverrides = personal.overrides || {};
+    let nextSettings = personal.settings || {};
     if (myIdentity.isSuperAdmin) {
         const admin = await api('/api/settings/admin');
-        settings = {
+        nextSettings = {
             ...admin,
-            ...settings,
-            appearance: { ...(admin.appearance || {}), ...(settings.appearance || {}) },
-            terminal: { ...(admin.terminal || {}), ...(settings.terminal || {}) },
-            workspace: { ...(admin.workspace || {}), ...(settings.workspace || {}) },
-            ai: { ...(admin.ai || {}), ...(settings.ai || {}) },
-            mail: { ...(admin.mail || {}), ...(settings.mail || {}) },
+            ...nextSettings,
+            appearance: { ...(admin.appearance || {}), ...(nextSettings.appearance || {}) },
+            terminal: { ...(admin.terminal || {}), ...(nextSettings.terminal || {}) },
+            workspace: { ...(admin.workspace || {}), ...(nextSettings.workspace || {}) },
+            ai: { ...(admin.ai || {}), ...(nextSettings.ai || {}) },
+            mail: { ...(admin.mail || {}), ...(nextSettings.mail || {}) },
             // Personal notes.enabled must win over platform default (same as /api/me/settings).
-            notes: { ...(admin.notes || {}), ...(settings.notes || {}) },
+            notes: { ...(admin.notes || {}), ...(nextSettings.notes || {}) },
             _admin: admin,
         };
     }
     const aiProvidersData = await api('/api/ai/providers').catch(() => null);
     if (aiProvidersData?.providers) {
-        settings.ai = { ...(settings.ai || {}), providers: aiProvidersData.providers };
+        nextSettings.ai = { ...(nextSettings.ai || {}), providers: aiProvidersData.providers };
     }
+    if (generation !== settingsLoadGeneration) return settings;
+    personalSettingsOverrides = nextPersonalSettingsOverrides;
+    settings = nextSettings;
     const sec = settings.security || {}, cap = settings.captcha || {}, mail = settings.mail || {}, beian = settings.beian || {};
     $('#versionText').textContent = settings.version || '--';
     applyAgentReleaseLinks(settings.agentRelease);
@@ -10934,7 +11949,7 @@ async function loadSettings() {
     applyTheme(getPreferredTheme());
     renderAiSettingsForm();
     renderNotesToggle();
-    await loadSecurityStatus(); await loadSecurityLists();
+    await loadSecurityStatus(); await loadSecurityLists(); loadWebDavSettings();
     // Settings values filled into native selects — refresh toggle faces / wrap new ones.
     enhanceAllToggleSelects();
     TOGGLE_SELECT_IDS.forEach((id) => {
@@ -11445,15 +12460,20 @@ function setupSnippetSettings() {
 async function setupTotp() { if (!$('#totpEnableForm')) return; const r = await api('/api/security/totp/setup', { method: 'POST', body: '{}' }); $('#totpEnableForm').classList.remove('force-hidden'); $('#totpQrBox').innerHTML = `<img class="qr-img" src="${r.qr}"><p class="muted">${t('密钥：')}${escapeHtml(r.secret)}</p>`; }
 async function registerPasskey() { try { if (!window.PublicKeyCredential) return toast(t('当前浏览器不支持 Passkey')); const options = await api('/api/passkeys/register/options', { method: 'POST', body: '{}' }); options.challenge = base64urlToBuffer(options.challenge); options.user.id = base64urlToBuffer(options.user.id); (options.excludeCredentials || []).forEach((c) => { c.id = base64urlToBuffer(c.id); }); const cred = await navigator.credentials.create({ publicKey: options }); if (!cred) return toast(t('Passkey 创建被取消')); const payload = { id: cred.id, rawId: bufferToBase64url(cred.rawId), type: cred.type, response: { clientDataJSON: bufferToBase64url(cred.response.clientDataJSON), attestationObject: bufferToBase64url(cred.response.attestationObject), transports: cred.response.getTransports ? cred.response.getTransports() : [] } }; await api('/api/passkeys/register/verify', { method: 'POST', body: JSON.stringify(payload) }); toast(t('Passkey 已绑定')); await loadSecurityStatus(); } catch (err) { toast(t('Passkey 注册失败：') + err.message); } }
 async function loadNetwork() {
-    const [proxyData, keyData] = await Promise.all([
+    const generation = ++networkLoadGeneration;
+    const [proxyData, keyData, jumpData] = await Promise.all([
         api('/api/proxies'),
-        api('/api/ssh-keys').catch(() => ({ sshKeys: [] }))
+        api('/api/ssh-keys').catch(() => ({ sshKeys: [] })),
+        api('/api/jump-hosts').catch(() => ({ jumpHosts: [] })),
     ]);
+    if (generation !== networkLoadGeneration) return { proxies, sshKeys, jumpHosts };
     proxies = proxyData.proxies || [];
     sshKeys = keyData.sshKeys || [];
+    jumpHosts = jumpData.jumpHosts || [];
     renderNetwork();
     updateRouteOptions();
     renderSshKeyOptions($('#connSshKey')?.value || '');
+    return { proxies, sshKeys, jumpHosts };
 }
 function renderNetwork() {
     $('#proxyList').innerHTML = proxies.map((p) => `<div class="mini-item proxy-item"><span class="resource-tag resource-tag-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml((p.type || 'socks5').toUpperCase())}</span><span class="resource-tag resource-tag-host" title="${escapeHtml(p.host)}">${escapeHtml(p.host)}</span><span class="resource-tag resource-tag-port">${Number(p.port) || 1080}</span>${p.username ? `<span class="resource-tag resource-tag-auth">${escapeHtml(p.username)}</span>` : ''}${p.hasPassword ? `<span class="resource-tag resource-tag-secret">${t('有密码')}</span>` : ''}</div><button data-edit-proxy="${p.id}">${t('编辑')}</button><button data-open-proxy="${p.id}">${t('查看')}</button><button data-del-proxy="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无代理')}</p>`;
@@ -12022,6 +13042,23 @@ function bindEvents() {
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn')?.addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
     bindLocaleSelects();
     $('#notesSettingsForm')?.addEventListener('submit', saveNotesSettings);
+    $('#webDavSettingsForm')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveWebDavSettings();
+    });
+    $('#webDavTestBtn')?.addEventListener('click', testWebDavConnection);
+    $('#webDavSyncNowBtn')?.addEventListener('click', syncWebDavNow);
+    $('#webDavDeleteBtn')?.addEventListener('click', deleteWebDavSettings);
+    $('#webDavCancelBtn')?.addEventListener('click', cancelWebDavOperation);
+    $('#webDavRetryBtn')?.addEventListener('click', retryWebDavOperation);
+    $('#webDavEnabled')?.addEventListener('change', updateWebDavActionAvailability);
+    $('#webDavBaseUrl')?.addEventListener('input', (event) => {
+        event.currentTarget.setCustomValidity('');
+        updateWebDavCredentialOriginHint();
+        updateWebDavActionAvailability();
+    });
+    $('#webDavUsername')?.addEventListener('input', trackWebDavCredentialInputOrigin);
+    $('#webDavPassword')?.addEventListener('input', trackWebDavCredentialInputOrigin);
     $('#notifyLoginPersonal')?.addEventListener('change', () => savePersonalLoginNotification().catch((err) => toast(err.message || '保存通知设置失败')));
     $('#adminAddUserBtn')?.addEventListener('click', (e) => openAdminAddUserDialog(e.currentTarget));
     $('#adminUserForm')?.addEventListener('submit', (e) => { saveAdminUser(e).catch((err) => toast(err.message || t('创建失败'))); });
@@ -12577,7 +13614,7 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
     $('#exportDataBtn').addEventListener('click', () => { location.href = '/api/data/export'; });
     $('#clearActivityBtn').addEventListener('click', async () => { if (!confirm(t('确定清理活动日志？'))) return; await api('/api/activities', { method: 'DELETE' }); await loadActivities(); toast(t('活动日志已清理')); });
     $('#clearLoginEventsBtn')?.addEventListener('click', async () => { if (!confirm(t('确定清理登录事件日志？'))) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast(t('登录事件已清理')); });
-    $('#importDataForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm(t('导入会覆盖当前数据库，系统会先生成本地备份。继续？'))) return; const fd = new FormData(); fd.append('backup', $('#backupFile').files[0]); fd.append('loginPassword', $('#importLoginPassword').value); fd.append('backupPassword', $('#backupPassword').value); const res = await fetch('/api/data/import', { method: 'POST', body: fd, credentials: 'same-origin' }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || t('导入失败')); toast(data.message || t('导入完成')); });
+    setupBackupImportUi();
 }
 function automaticWorkspaceId() {
     return `auto-${String(workspaceClientId || 'default').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80)}`;
@@ -13332,6 +14369,7 @@ function rerenderLocaleSensitiveContent() {
         renderAiSkillList,
         renderSnippetSettings,
         renderNetwork,
+        renderWebDavText,
     ]) {
         try { render?.(); } catch (err) { console.warn('[i18n] dynamic rerender failed', err); }
     }
@@ -13353,6 +14391,46 @@ function bindLocaleSelects() {
             changeAppLocale(e.target.value).catch((err) => console.warn('[i18n]', err));
         });
     });
+}
+
+function markWorkspaceRemoteUpdate() {
+    workspaceRemoteUpdatePending = true;
+    document.documentElement.dataset.workspaceRemoteUpdate = 'pending';
+}
+
+function startBrowserChangeWake() {
+    if (browserChangeWakeClient || typeof window.EventSource !== 'function') return;
+    browserChangeRefreshScheduler = createBrowserChangeRefreshScheduler({
+        entityGroups: BROWSER_CHANGE_ENTITY_GROUPS,
+        documentRef: document,
+        loaders: {
+            connections: () => loadConnections(),
+            network: () => loadNetwork(),
+            settings: async () => {
+                await loadSettings();
+                renderSnippetSettings();
+            },
+            notes: () => notesController?.notifyRemoteUpdate?.(),
+            aiHistory: () => scheduleAiHistoryReload(120),
+            workspace: () => markWorkspaceRemoteUpdate(),
+            activities: () => loadActivities(),
+            backup: () => loadWebDavSettings(),
+            agentTokens: () => loadAgentTokens(),
+            oneClients: () => loadOneClients(),
+        },
+    });
+    browserChangeWakeClient = createBrowserChangeWakeClient({
+        endpoint: '/api/me/change-wake',
+        entityTypes: BROWSER_CHANGE_ENTITY_TYPES,
+        onEntityTypes: (types) => browserChangeRefreshScheduler?.schedule(types),
+        onResume: () => browserChangeRefreshScheduler?.resume(),
+        EventSourceImpl: window.EventSource,
+        documentRef: document,
+        windowRef: window,
+        navigatorRef: navigator,
+        locationRef: window.location,
+    });
+    browserChangeWakeClient.start();
 }
 
 async function init() {
@@ -13393,6 +14471,7 @@ async function init() {
             $,
             $$,
         });
+        startBrowserChangeWake();
         bindEvents();
         bindDeepLinkChannel();
         initSettingsVisibility();
@@ -13403,6 +14482,10 @@ async function init() {
         ]);
         await loadSettings();
         document.documentElement.dataset.appLoadSettings = 'ok';
+        await loadAiChats().catch((error) => {
+            console.warn('[ai-history] canonical load failed', error?.code || error?.message || error);
+            if (!aiChatSessions.length) createAiChat({ silent: true });
+        });
         await migrateLocalSnippetsToServer();
         renderSnippetSettings();
         await loadConnections();

@@ -12,6 +12,7 @@ import one.zephyr.mobile.data.db.Converters
 import one.zephyr.mobile.data.db.EntitySearchRow
 import one.zephyr.mobile.data.db.MirrorEntityRow
 import one.zephyr.mobile.data.db.PendingOperationRow
+import one.zephyr.mobile.data.db.SecretMutationRetention
 import one.zephyr.mobile.data.db.TombstoneRow
 import one.zephyr.mobile.data.db.ZephyrDatabase
 import one.zephyr.mobile.model.CapabilitySet
@@ -68,6 +69,7 @@ class LocalWriteRejected(val reason: String, message: String) : IllegalArgumentE
 class LocalWriteGateway(
     private val db: ZephyrDatabase,
     private val secretStore: SecretStore,
+    private val secretJournal: SecretMutationJournal,
     private val clock: () -> Long = System::currentTimeMillis,
     private val opIdFactory: () -> String = { "op-" + UUID.randomUUID() },
 ) {
@@ -104,6 +106,14 @@ class LocalWriteGateway(
 
         val now = clock()
         val sanitized = FieldMask.sanitize(edit.entityType, edit.requestedMask)
+        // This must precede all SecretStore/journal and Room work. The only persistent form of a
+        // local editable object is a deep-copied projection of exact registry paths.
+        val editableValues = SecretPayloadSanitizer.sanitizeLocalEditableValues(
+            entityType = edit.entityType,
+            values = edit.values,
+            acceptedMask = sanitized.accepted,
+        )
+        validateSecretFields(edit.secrets, spec.secretFields)
 
         // A secret change is never named in the mask, but it still has to make the operation
         // non-empty so the push carries the envelope.
@@ -113,10 +123,22 @@ class LocalWriteGateway(
             throw LocalWriteRejected("empty_field_mask", "nothing editable changed for " + edit.entityType)
         }
 
-        var opId: String? = null
+        val newOpId = opIdFactory()
+        val secretMutations = stageSecretMutations(edit, spec.secretFields)
+        val replacementFields = changedSecrets.filterValues { it is SecretState.Replace }.keys.toList()
+        val clearedFields = changedSecrets.filterValues { it is SecretState.Clear }.keys.toList()
+        val pendingPartitions = partitionLocalEdit(
+            primaryOpId = newOpId,
+            action = edit.action,
+            fieldMask = sanitized.accepted,
+            replacementFields = replacementFields,
+            clearedFields = clearedFields,
+        )
+        val splitSecretWireOps = pendingPartitions.size > 1
+        val localBatchId = if (splitSecretWireOps) "local-edit:$newOpId" else null
         var revision = 0L
 
-        db.withTransaction {
+        val roomCommit: suspend () -> Unit = {
             val existing = db.mirrorDao().find(edit.entityType, edit.entityId)
             if (existing != null && existing.ownerUserId != ownerUserId) {
                 // Defence in depth: a row owned by someone else cannot be edited through One even
@@ -124,11 +146,18 @@ class LocalWriteGateway(
                 throw ResidencyViolationException("refusing to edit foreign-owned " + edit.entityType)
             }
             revision = existing?.revision ?: 0L
-            val storedPayload = existing?.let { EntityCodec.parse(it.payloadJson) } ?: JsonObject(emptyMap())
+            val storedPayload = existing?.let {
+                SecretPayloadSanitizer.sanitizeForStorage(edit.entityType, EntityCodec.parse(it.payloadJson))
+            } ?: JsonObject(emptyMap())
 
             when (edit.action) {
                 SyncAction.UPSERT -> {
-                    val mergedPayload = EntityCodec.merge(storedPayload, edit.values, sanitized.accepted)
+                    val mergedPayload = SecretPayloadSanitizer.mergeLocalEditableValues(
+                        entityType = edit.entityType,
+                        stored = storedPayload,
+                        editableValues = editableValues,
+                        acceptedMask = sanitized.accepted,
+                    )
                     val presence = presenceAfter(existing, edit)
                     db.mirrorDao().upsert(
                         MirrorEntityRow(
@@ -146,7 +175,6 @@ class LocalWriteGateway(
                         ),
                     )
                     reindex(edit.entityType, edit.entityId, mergedPayload)
-                    writeSecrets(edit, ownerUserId)
                     writeOverlay(edit, now)
                 }
 
@@ -167,9 +195,6 @@ class LocalWriteGateway(
                             authoritative = false,
                         ),
                     )
-                    // The local secret goes immediately: a deleted row must not leave key material
-                    // behind while the delete is still queued.
-                    secretStore.removeEntity(edit.entityType, edit.entityId)
                 }
 
                 SyncAction.RESTORE -> {
@@ -181,41 +206,71 @@ class LocalWriteGateway(
                     reindex(edit.entityType, edit.entityId, EntityCodec.parse(row.payloadJson))
                 }
             }
-
-
-            val newOpId = opIdFactory()
-            opId = newOpId
-            db.pendingOperationDao().upsert(
-                PendingOperationRow(
-                    opId = newOpId,
-                    batchId = null,
+            for (partition in pendingPartitions) {
+                db.pendingOperationDao().upsert(
+                    PendingOperationRow(
+                    opId = partition.opId,
+                    batchId = localBatchId,
                     entityType = edit.entityType,
                     entityId = edit.entityId,
-                    action = edit.action.name.lowercase(),
+                    action = partition.action.name.lowercase(),
                     baseRevision = revision,
-                    fieldMaskJson = Converters.stringListToText(
-                        if (edit.action == SyncAction.UPSERT) sanitized.accepted else emptyList(),
-                    ),
+                    fieldMaskJson = Converters.stringListToText(partition.fieldMask),
                     payloadJson = EntityCodec.encode(
-                        if (edit.action == SyncAction.UPSERT) pushPayload(edit, sanitized.accepted) else JsonObject(emptyMap()),
+                        if (partition.isPrimary && edit.action == SyncAction.UPSERT) {
+                            pushPayload(edit.entityType, editableValues, partition.fieldMask)
+                        } else {
+                            JsonObject(emptyMap())
+                        },
                     ),
                     createdAt = now,
                     attemptCount = 0,
                     lastError = null,
-                    createdLocally = edit.createdLocally,
+                    createdLocally = edit.createdLocally && partition.isPrimary,
                     // Only genuinely changed secrets: an Unchanged state must not cause a re-seal,
                     // which is what keeps a masked placeholder from becoming a new secret.
-                    secretFieldsJson = Converters.stringListToText(
-                        if (edit.action == SyncAction.UPSERT) changedSecrets.keys.toList() else emptyList(),
-                    ),
+                    secretFieldsJson = Converters.stringListToText(partition.secretFields),
+                    clearedSecretFieldsJson = Converters.stringListToText(partition.clearSecretFields),
                     dispatchedAt = null,
-                ),
+                    ),
+                )
+            }
+        }
+
+        if (secretMutations.isEmpty()) {
+            db.withTransaction { roomCommit() }
+        } else {
+            val journalOperations = if (splitSecretWireOps) {
+                listOf(
+                    SecretMutationOperation(
+                        operationId = newOpId,
+                        mutations = secretMutations.filterIsInstance<SecretMutationIntent.Put>(),
+                        retention = SecretMutationRetention.UNTIL_REMOTE_ACK,
+                    ),
+                    SecretMutationOperation(
+                        operationId = "$newOpId-clear",
+                        mutations = secretMutations.filterIsInstance<SecretMutationIntent.Clear>(),
+                        retention = SecretMutationRetention.UNTIL_REMOTE_ACK,
+                    ),
+                )
+            } else {
+                listOf(
+                    SecretMutationOperation(
+                        operationId = newOpId,
+                        mutations = secretMutations,
+                        retention = SecretMutationRetention.UNTIL_REMOTE_ACK,
+                    ),
+                )
+            }
+            secretJournal.commitBatch(
+                operations = journalOperations,
+                roomCommit = roomCommit,
             )
         }
 
         signals.tryEmit(Unit)
         return LocalEditResult(
-            opId = opId,
+            opId = newOpId,
             acceptedMask = sanitized.accepted,
             rejectedMask = sanitized.rejected,
             revision = revision,
@@ -226,9 +281,16 @@ class LocalWriteGateway(
      * Only masked fields travel. Secret values are excluded on purpose: the sync actor attaches
      * envelopes separately, so plaintext never sits in the pending_operations table.
      */
-    private fun pushPayload(edit: LocalEdit, mask: List<String>): JsonObject {
-        val roots = mask.map(FieldMask::rootOf).toSet()
-        return JsonObject(edit.values.filterKeys { roots.contains(it) })
+    private fun pushPayload(entityType: String, values: JsonObject, mask: List<String>): JsonObject =
+        SecretPayloadSanitizer.sanitizeLocalEditableValues(entityType, values, mask)
+
+    private fun validateSecretFields(
+        secrets: Map<String, SecretState>,
+        registrySecretFields: Collection<String>,
+    ) {
+        if (secrets.keys.any { it !in registrySecretFields }) {
+            throw LocalWriteRejected("invalid_secret_field", "secret state is not registered")
+        }
     }
 
     private fun presenceAfter(
@@ -248,15 +310,28 @@ class LocalWriteGateway(
         return JsonObject(next)
     }
 
-    private fun writeSecrets(edit: LocalEdit, ownerUserId: String) {
-        for ((field, state) in edit.secrets) {
+    private fun stageSecretMutations(
+        edit: LocalEdit,
+        registrySecretFields: Collection<String>,
+    ): List<SecretMutationIntent> = when (edit.action) {
+        SyncAction.UPSERT -> edit.secrets.mapNotNull { (field, state) ->
             val ref = SecretRef.of(edit.entityType, edit.entityId, field)
             when (state) {
-                is SecretState.Replace -> secretStore.putText(ref, state.plaintext, edit.residency)
-                SecretState.Clear -> secretStore.remove(ref)
-                SecretState.Unchanged -> Unit
+                is SecretState.Replace -> state.withUtf8Bytes { plaintext ->
+                    secretJournal.stagePut(ref, plaintext, edit.residency)
+                }
+                SecretState.Clear -> secretJournal.stageClear(ref)
+                SecretState.Unchanged -> null
             }
         }
+        SyncAction.DELETE -> {
+            val fields = LinkedHashSet(registrySecretFields)
+            secretStore.ownedRefs()
+                .filter { it.belongsTo(edit.entityType, edit.entityId) }
+                .mapNotNullTo(fields) { it.partsOrNull()?.fieldName }
+            fields.map { field -> secretJournal.stageClear(SecretRef.of(edit.entityType, edit.entityId, field)) }
+        }
+        SyncAction.RESTORE -> emptyList()
     }
 
     private suspend fun writeOverlay(edit: LocalEdit, now: Long) {
@@ -280,4 +355,58 @@ class LocalWriteGateway(
             EntitySearchRow(entityType = entityType, entityId = entityId, title = text.first, body = text.second),
         )
     }
+}
+
+internal data class PendingPartition(
+    val opId: String,
+    val action: SyncAction,
+    val fieldMask: List<String>,
+    val secretFields: List<String>,
+    val clearSecretFields: List<String>,
+    val isPrimary: Boolean,
+)
+
+/** Wire replace envelopes and explicit clears are mutually exclusive within one operation. */
+internal fun partitionLocalEdit(
+    primaryOpId: String,
+    action: SyncAction,
+    fieldMask: List<String>,
+    replacementFields: List<String>,
+    clearedFields: List<String>,
+): List<PendingPartition> {
+    require(primaryOpId.isNotBlank()) { "local operation id must not be blank" }
+    require(replacementFields.intersect(clearedFields.toSet()).isEmpty()) {
+        "one secret field cannot be replaced and cleared in the same edit"
+    }
+    val split = action == SyncAction.UPSERT && replacementFields.isNotEmpty() && clearedFields.isNotEmpty()
+    if (split) {
+        return listOf(
+            PendingPartition(
+                opId = primaryOpId,
+                action = action,
+                fieldMask = fieldMask,
+                secretFields = replacementFields,
+                clearSecretFields = emptyList(),
+                isPrimary = true,
+            ),
+            PendingPartition(
+                opId = "$primaryOpId-clear",
+                action = action,
+                fieldMask = emptyList(),
+                secretFields = emptyList(),
+                clearSecretFields = clearedFields,
+                isPrimary = false,
+            ),
+        )
+    }
+    return listOf(
+        PendingPartition(
+            opId = primaryOpId,
+            action = action,
+            fieldMask = if (action == SyncAction.UPSERT) fieldMask else emptyList(),
+            secretFields = if (action == SyncAction.UPSERT) replacementFields else emptyList(),
+            clearSecretFields = if (action == SyncAction.UPSERT) clearedFields else emptyList(),
+            isPrimary = true,
+        ),
+    )
 }

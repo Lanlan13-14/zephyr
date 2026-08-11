@@ -1,5 +1,6 @@
 package one.zephyr.mobile.sync
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,6 +13,7 @@ import one.zephyr.mobile.contracts.SyncContract
 import one.zephyr.mobile.contracts.SyncPhase
 import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.PendingOperation
+import one.zephyr.mobile.model.ChangePage
 import one.zephyr.mobile.model.PushResponse
 import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.SyncProgress
@@ -20,6 +22,8 @@ import one.zephyr.mobile.model.sync.BindingStateMachine
 import one.zephyr.mobile.model.sync.PushPrediction
 import one.zephyr.mobile.model.sync.SyncEvent
 import one.zephyr.mobile.network.ApiResult
+import one.zephyr.mobile.security.ResidencyViolationException
+import one.zephyr.mobile.data.SecretReconciliationException
 
 /**
  * Runs sync rounds for exactly one binding.
@@ -54,14 +58,17 @@ class SyncActor(
     private var running = false
     private var rerunRequested = false
     private var rerunTrigger: SyncTrigger? = null
+    private var bootstrapContinuationPending = false
 
     /**
-     * True when a trigger arrived that this invocation could not absorb.
+     * True when a trigger could not be absorbed or a bootstrap continuation remains durable.
      *
      * The scheduler reads it to enqueue one more run, which is how the two-round cap stays a cap
      * rather than a dropped write.
      */
-    suspend fun rerunPending(): Boolean = flagLock.withLock { rerunRequested }
+    suspend fun rerunPending(): Boolean = flagLock.withLock {
+        rerunRequested || bootstrapContinuationPending
+    }
 
     /**
      * Run sync, coalescing with any round already in flight.
@@ -82,6 +89,7 @@ class SyncActor(
                 // The round about to start subsumes anything queued before it.
                 rerunRequested = false
                 rerunTrigger = null
+                bootstrapContinuationPending = false
                 true
             }
         }
@@ -91,8 +99,12 @@ class SyncActor(
         try {
             var next: SyncTrigger? = trigger
             while (next != null) {
-                results.add(runRound(next))
+                val result = runRound(next)
+                results.add(result)
                 next = flagLock.withLock {
+                    bootstrapContinuationPending =
+                        result.bootstrapOutcome is BootstrapOutcome.Incomplete ||
+                            result.error?.requiresBootstrapSignal() == true
                     when {
                         !rerunRequested -> null
                         // Second round already run: leave the flag set so the scheduler picks it up
@@ -129,9 +141,11 @@ class SyncActor(
 
         var failure: MobileError? = null
         var stoppedAt: SyncPhase? = null
+        var bootstrapOutcome: BootstrapOutcome? = null
 
         for (phase in phases) {
             if (!shouldRun(phase, state)) continue
+            val stateBeforePhase = state
             acc.phasesRun.add(phase)
             publish(phase, acc)
 
@@ -140,12 +154,24 @@ class SyncActor(
 
                 SyncPhase.RECOVER_BOOTSTRAP -> {
                     state = BindingStateMachine.next(state, SyncEvent.RUN)
-                    runBootstrap(acc, checkpoint)
+                    when (val result = runBootstrap(acc, checkpoint)) {
+                        is BootstrapAttempt.Failed -> result.error
+                        is BootstrapAttempt.Finished -> {
+                            bootstrapOutcome = result.outcome
+                            null
+                        }
+                    }
                 }
 
                 SyncPhase.BOOTSTRAP_PAGE -> {
                     state = BindingStateMachine.next(state, SyncEvent.RUN)
-                    runBootstrap(acc, resume = null)
+                    when (val result = runBootstrap(acc, resume = null)) {
+                        is BootstrapAttempt.Failed -> result.error
+                        is BootstrapAttempt.Finished -> {
+                            bootstrapOutcome = result.outcome
+                            null
+                        }
+                    }
                 }
 
                 SyncPhase.CATCH_UP_PULL -> pullLoop(acc)
@@ -165,12 +191,27 @@ class SyncActor(
                 SyncPhase.COMMIT_SUCCESS -> null
             }
 
+            if (bootstrapOutcome is BootstrapOutcome.Incomplete) {
+                stoppedAt = phase
+                break
+            }
+
             if (error != null) {
-                SyncErrorMapping.eventFor(error.code)?.let { event ->
-                    state = BindingStateMachine.next(state, event)
+                if (phase == SyncPhase.PUSH_PENDING && error.code == "shared_residency_violation") {
+                    // Entering PUSH_PENDING moves IDLE/CONFLICTED to RUNNING. An untrusted conflict
+                    // response must not make even that state transition durable.
+                    state = stateBeforePhase
+                }
+                val event = if (error.requiresBootstrapSignal()) {
+                    SyncEvent.CURSOR_EXPIRED
+                } else {
+                    SyncErrorMapping.eventFor(error.code)
+                }
+                event?.let {
+                    state = BindingStateMachine.next(state, it)
                 }
                 if (SyncErrorMapping.requiresSharedPurge(error.code)) onSharedPurge()
-                if (SyncErrorMapping.abortsRound(error)) {
+                if (error.requiresBootstrapSignal() || SyncErrorMapping.abortsRound(error)) {
                     failure = error
                     stoppedAt = phase
                     break
@@ -196,10 +237,10 @@ class SyncActor(
         }
 
         val finishedAt = clock()
-        if (failure == null) {
+        if (failure == null && bootstrapOutcome !is BootstrapOutcome.Incomplete) {
             store.recordSuccess(finishedAt)
             store.pruneRetention(finishedAt)
-        } else {
+        } else if (failure != null) {
             val retryable = SyncErrorMapping.isRetryable(failure)
             val delay = SyncErrorMapping.retryDelayMs(failure, opening.consecutiveFailures, jitter())
             store.recordFailure(finishedAt, failure, if (retryable) finishedAt + delay else null)
@@ -223,6 +264,7 @@ class SyncActor(
             error = failure,
             stoppedAt = stoppedAt,
             blobsBlocked = acc.blobsBlocked,
+            bootstrapOutcome = bootstrapOutcome,
         )
     }
 
@@ -281,60 +323,133 @@ class SyncActor(
      * The snapshot cursor is persisted before the first page is staged: it is the join between the
      * snapshot and the change feed, and a crash that loses it makes every staged row unusable
      * (DATA_AND_MIGRATION.md 7.2). Pages stage into a generation and only become visible at
-     * [SyncLocalStore.promoteBootstrap], so an interrupted bootstrap leaves the old mirror intact.
+     * [SyncLocalStore.commitBootstrap], so an interrupted bootstrap leaves the old mirror intact.
      */
-    private suspend fun runBootstrap(acc: RoundAccumulator, resume: BootstrapCheckpoint?): MobileError? {
+    private suspend fun runBootstrap(
+        acc: RoundAccumulator,
+        resume: BootstrapCheckpoint?,
+    ): BootstrapAttempt {
+        var checkpoint = resume
+        var restartedExpiredContinuation = false
+
+        while (true) {
+            val attempt = downloadBootstrap(acc, checkpoint)
+            if (
+                attempt is BootstrapAttempt.Failed &&
+                attempt.error.code == "bootstrap_expired" &&
+                checkpoint != null &&
+                !restartedExpiredContinuation
+            ) {
+                // A continuation can expire between planning and the request. Restart once in this
+                // round; downloadBootstrap resets both stale rows and the stale token before the
+                // request without a token is sent.
+                checkpoint = null
+                restartedExpiredContinuation = true
+                continue
+            }
+            if (attempt is BootstrapAttempt.Failed && attempt.error.code == "bootstrap_expired") {
+                store.resetBootstrap()
+            }
+            return attempt
+        }
+    }
+
+    private suspend fun downloadBootstrap(
+        acc: RoundAccumulator,
+        resume: BootstrapCheckpoint?,
+    ): BootstrapAttempt {
         val generation = resume?.generation ?: clock()
         var pageToken = resume?.nextPageToken
-        var pages = resume?.pagesFetched ?: 0
+        var pagesFetched = resume?.pagesFetched ?: 0
+        var pagesThisRound = 0
         var staged = resume?.entitiesStaged ?: 0
         var snapshotCursor = resume?.snapshotCursor ?: 0L
         var bootstrapId = resume?.bootstrapId ?: ""
+        val seenPageTokens = mutableSetOf<String>()
 
-        if (resume == null) store.clearBootstrapStaging()
+        if (resume == null) {
+            try {
+                store.resetBootstrap()
+            } catch (failure: SecretReconciliationException) {
+                return BootstrapAttempt.Failed(secretReconciliationFailure())
+            }
+        }
 
-        while (true) {
+        while (pagesThisRound < MAX_PAGES_PER_ROUND) {
+            if (pageToken != null && !seenPageTokens.add(pageToken)) {
+                return invalidBootstrap("bootstrap page token repeated")
+            }
+            val requestedToken = pageToken
             val page = when (val result = transport.bootstrap(pageToken, bootstrapPageSize)) {
-                is ApiResult.Failure -> return result.error
+                is ApiResult.Failure -> return BootstrapAttempt.Failed(result.error)
                 is ApiResult.Success -> result.value
             }
 
-            if (pages == 0) {
+            val firstPage = pagesFetched == 0
+            if (firstPage) {
                 snapshotCursor = page.snapshotCursor
                 bootstrapId = page.bootstrapId
-                store.saveSnapshotCursor(snapshotCursor)
+            } else if (page.bootstrapId != bootstrapId || page.snapshotCursor != snapshotCursor) {
+                return invalidBootstrap("bootstrap snapshot changed during pagination")
             }
 
-            staged += store.stageBootstrap(generation, page.entities)
-            pages += 1
+            val stagedThisPage = try {
+                store.stageBootstrap(generation, page.entities)
+            } catch (violation: ResidencyViolationException) {
+                return BootstrapAttempt.Failed(residencyFailure(violation))
+            } catch (failure: SecretReconciliationException) {
+                return BootstrapAttempt.Failed(secretReconciliationFailure())
+            }
+            // A rejected first page must not advance even the snapshot cursor. Staging is invisible
+            // and reset on recovery, so persisting the join only after validation is crash-safe.
+            if (firstPage) store.saveSnapshotCursor(snapshotCursor)
+            staged += stagedThisPage
+            pagesFetched += 1
+            pagesThisRound += 1
             pageToken = page.nextPageToken
 
-            store.saveBootstrapCheckpoint(
-                BootstrapCheckpoint(
-                    generation = generation,
-                    bootstrapId = bootstrapId,
-                    snapshotCursor = snapshotCursor,
-                    nextPageToken = pageToken,
-                    pagesFetched = pages,
-                    entitiesStaged = staged,
-                    expiresAt = clock() + PAGE_TOKEN_TTL_MS,
-                ),
-            )
             acc.entitiesStaged = staged
             publish(SyncPhase.BOOTSTRAP_PAGE, acc)
 
-            if (page.complete || pageToken == null) break
-            if (pages >= MAX_PAGES_PER_ROUND) break
+            if (page.complete) {
+                try {
+                    store.commitBootstrap(generation, snapshotCursor)
+                } catch (violation: ResidencyViolationException) {
+                    return BootstrapAttempt.Failed(residencyFailure(violation))
+                } catch (failure: SecretReconciliationException) {
+                    return BootstrapAttempt.Failed(secretReconciliationFailure())
+                }
+                acc.applied += staged
+                return BootstrapAttempt.Finished(BootstrapOutcome.Complete)
+            }
+
+            if (pageToken == null) {
+                return invalidBootstrap("incomplete bootstrap page omitted its continuation token")
+            }
+            if (pageToken == requestedToken || seenPageTokens.contains(pageToken)) {
+                return invalidBootstrap("bootstrap page token loop detected")
+            }
+
+            val continuation = BootstrapCheckpoint(
+                generation = generation,
+                bootstrapId = bootstrapId,
+                snapshotCursor = snapshotCursor,
+                nextPageToken = pageToken,
+                pagesFetched = pagesFetched,
+                entitiesStaged = staged,
+                expiresAt = clock() + PAGE_TOKEN_TTL_MS,
+            )
+            store.saveBootstrapCheckpoint(continuation)
+            if (pagesThisRound >= MAX_PAGES_PER_ROUND) {
+                return BootstrapAttempt.Finished(BootstrapOutcome.Incomplete(continuation))
+            }
         }
 
-        store.promoteBootstrap(generation)
-        // The mirror now matches the snapshot, so the change feed resumes from its cursor. ackedCursor
-        // stays behind until ACK_CURSOR succeeds.
-        store.saveAppliedCursor(snapshotCursor)
-        store.clearBootstrapCheckpoint()
-        acc.applied += staged
-        return null
+        error("bootstrap page loop exited without an outcome")
     }
+
+    private fun invalidBootstrap(message: String): BootstrapAttempt.Failed =
+        BootstrapAttempt.Failed(MobileError.local("bootstrap_expired", message))
 
     /**
      * Change-feed drain, shared by CATCH_UP_PULL and PULL_CHANGES.
@@ -352,15 +467,19 @@ class SyncActor(
                 is ApiResult.Failure -> return result.error
                 is ApiResult.Success -> result.value
             }
+            validateChangePage(page, cursors.appliedCursor)?.let { return it }
 
             if (page.changes.isEmpty()) {
-                // An empty page still carries a cursor; honouring it lets the server prune its
-                // change log even when nothing changed for this device.
-                if (page.nextCursor > cursors.appliedCursor) store.saveAppliedCursor(page.nextCursor)
                 return null
             }
 
-            val applied = store.applyChanges(page.changes, cursors.appliedCursor)
+            val applied = try {
+                store.applyChanges(page.changes, cursors.appliedCursor)
+            } catch (violation: ResidencyViolationException) {
+                return residencyFailure(violation)
+            } catch (failure: SecretReconciliationException) {
+                return secretReconciliationFailure()
+            }
             acc.applied += applied.applied
             acc.skipped += applied.skipped
             acc.envelopeFailures += applied.envelopeFailures.size
@@ -371,6 +490,19 @@ class SyncActor(
         }
         return null
     }
+
+    private fun residencyFailure(violation: ResidencyViolationException): MobileError =
+        MobileError.local(
+            code = "shared_residency_violation",
+            message = violation.message ?: "server change did not prove ownership",
+        )
+
+    private fun secretReconciliationFailure(): MobileError =
+        MobileError.local(
+            code = "internal_error",
+            message = "secret envelope reconciliation failed",
+            retryable = true,
+        )
 
     private suspend fun pushPending(acc: RoundAccumulator): MobileError? {
         val queued = store.pendingOperations()
@@ -396,6 +528,31 @@ class SyncActor(
         for (batch in plan.batches) {
             val batchId = batchIdFactory()
             val envelopes = sealEnvelopes(batch)
+            val mixedSecretOperation = batch.firstOrNull {
+                it.secretFields.isNotEmpty() && it.clearSecretFields.isNotEmpty()
+            }
+            if (mixedSecretOperation != null) {
+                store.markFailed(mixedSecretOperation.opId, "invalid_secret_operation")
+                return MobileError.local(
+                    code = "invalid_request",
+                    message = "a sync operation mixes secret replacement and clear",
+                    retryable = false,
+                )
+            }
+            val unsealedOperation = batch.firstOrNull { operation ->
+                operation.secretFields.isNotEmpty() &&
+                    envelopes[operation.opId]?.keys?.containsAll(operation.secretFields) != true
+            }
+            if (unsealedOperation != null) {
+                // Never turn an unavailable replacement into an envelope-less update. The queued
+                // op remains intact and is retried under the same id after the server key recovers.
+                store.markFailed(unsealedOperation.opId, "secret_upstream_unavailable")
+                return MobileError.local(
+                    code = "secret_upstream_unavailable",
+                    message = "a changed secret could not be sealed",
+                    retryable = true,
+                )
+            }
 
             // Marked before the call, never after: an operation whose outcome is unknown must replay
             // under the same opId so the server deduplicates instead of applying it twice.
@@ -417,7 +574,8 @@ class SyncActor(
                 is ApiResult.Success -> result.value
             }
 
-            applyPushResults(batch, response, acc)
+            val resultError = applyPushResults(batch, batchId, response, acc)
+            if (resultError != null) return resultError
             publish(SyncPhase.PUSH_PENDING, acc)
         }
         return null
@@ -425,13 +583,34 @@ class SyncActor(
 
     private suspend fun applyPushResults(
         batch: List<PendingOperation>,
+        expectedBatchId: String,
         response: PushResponse,
         acc: RoundAccumulator,
-    ) {
+    ): MobileError? {
+        validatePushResponse(batch, expectedBatchId, response)?.let { return it }
         val byId = batch.associateBy { it.opId }
         val accepted = mutableListOf<AcceptedOperation>()
         val dropped = mutableListOf<String>()
+        val bootstrapErrors = linkedMapOf<String, String>()
+        var bootstrapError: MobileError? = null
         val now = clock()
+
+        // Validate every conflict before processing any result. Otherwise an accepted result earlier
+        // in the same batch could be committed before a malicious conflict later in the response is
+        // discovered.
+        for (result in response.results) {
+            if (result.status != PushStatus.CONFLICT) continue
+            val op = byId[result.opId] ?: continue
+            val payload = result.serverPayload
+                ?: return residencyFailure(
+                    ResidencyViolationException("conflict response omitted its account owner"),
+                )
+            try {
+                store.validateConflictPayload(op.entityType, payload)
+            } catch (violation: ResidencyViolationException) {
+                return residencyFailure(violation)
+            }
+        }
 
         for (result in response.results) {
             val op = byId[result.opId] ?: continue
@@ -439,15 +618,15 @@ class SyncActor(
                 // DUPLICATE is a success: it means a replay found the original already applied,
                 // which is exactly what reusing the opId is for.
                 PushStatus.ACCEPTED, PushStatus.DUPLICATE -> {
-                    accepted.add(
-                        AcceptedOperation(
-                            opId = op.opId,
-                            entityType = op.entityType,
-                            entityId = result.entityId ?: op.entityId,
-                            revision = result.revision ?: op.baseRevision,
-                            appliedAt = now,
-                        ),
+                    val operation = AcceptedOperation(
+                        opId = op.opId,
+                        entityType = op.entityType,
+                        entityId = result.entityId ?: op.entityId,
+                        revision = result.revision ?: op.baseRevision,
+                        appliedAt = now,
                     )
+                    accepted.add(operation)
+                    acc.accepted.add(operation)
                     acc.pushed += 1
                     acc.appliedOpIds.add(op.opId)
                 }
@@ -464,7 +643,7 @@ class SyncActor(
                         op.fieldMask.filter { result.serverChangedFields.contains(it) }
                     }
                     val code = result.error?.code
-                    store.recordConflict(
+                    store.recordConflictAndDrop(
                         DetectedConflict(
                             entityType = op.entityType,
                             entityId = op.entityId,
@@ -479,22 +658,29 @@ class SyncActor(
                             aclRevoked = code != null && code.startsWith("forbidden_"),
                             secretFields = op.secretFields,
                         ),
+                        op.opId,
                     )
                     // The conflict row owns the local payload and mask from here, so leaving the
                     // operation queued would push the losing edit again on the next round.
-                    dropped.add(op.opId)
                     acc.conflicts += 1
                 }
 
                 PushStatus.REJECTED -> {
                     val code = result.error?.code ?: "invalid_request"
-                    val action = ErrorRegistry.clientAction(code)
-                    if (action == "drop_operation_and_report" || action == "upgrade_or_drop_operation") {
-                        dropped.add(op.opId)
+                    if (result.error?.requiresBootstrapSignal() == true) {
+                        // The server withheld a conflict payload it could not prove safe for this
+                        // account. Keep the edit, but make bootstrap durable before it can replay.
+                        bootstrapErrors[op.opId] = code
+                        if (bootstrapError == null) bootstrapError = result.error
                     } else {
-                        // Kept deliberately: a dropped row is a silently lost user edit, whereas a
-                        // queued row with lastError is visible on the 文件同步 card.
-                        store.markFailed(op.opId, code)
+                        val action = ErrorRegistry.clientAction(code)
+                        if (action == "drop_operation_and_report" || action == "upgrade_or_drop_operation") {
+                            dropped.add(op.opId)
+                        } else {
+                            // Kept deliberately: a dropped row is a silently lost user edit,
+                            // whereas a queued row with lastError remains visible to the user.
+                            store.markFailed(op.opId, code)
+                        }
                     }
                     acc.rejected += 1
                 }
@@ -508,9 +694,84 @@ class SyncActor(
             }
         }
 
-        if (accepted.isNotEmpty()) store.completeOperations(accepted)
+        // Accepted rows deliberately stay pending here. Only a validated ACK can atomically move
+        // them into the applied log and release UNTIL_REMOTE_ACK journal rows.
+        if (bootstrapErrors.isNotEmpty()) {
+            store.enterBootstrapRequiredAfterPush(accepted, bootstrapErrors)
+        }
         if (dropped.isNotEmpty()) store.dropOperations(dropped)
+        return bootstrapError
     }
+
+    /** Validate untrusted page metadata before handing any row to the local transaction. */
+    private fun validateChangePage(page: ChangePage, requestedFrom: Long): MobileError? {
+        val valid = page.fromCursor == requestedFrom &&
+            page.fromCursor >= 0L &&
+            page.nextCursor >= page.fromCursor &&
+            if (page.changes.isEmpty()) {
+                !page.hasMore && page.nextCursor == page.fromCursor
+            } else {
+                var expected = page.fromCursor + 1L
+                val contiguous = page.changes.all { change ->
+                    val matches = change.changeSeq == expected
+                    expected += 1L
+                    matches
+                }
+                contiguous && page.nextCursor == page.changes.last().changeSeq
+            }
+        return if (valid) null else malformedResponse("server returned an invalid change page")
+    }
+
+    /**
+     * A push result is a receipt for one particular operation. Validate the complete receipt set
+     * before completing, dropping, failing, or recording conflict rows for any operation.
+     */
+    private fun validatePushResponse(
+        batch: List<PendingOperation>,
+        expectedBatchId: String,
+        response: PushResponse,
+    ): MobileError? {
+        if (response.batchId != expectedBatchId || response.serverCursor < 0L) {
+            return malformedResponse("server returned a push response for a different batch")
+        }
+        val expectedIds = batch.map { it.opId }
+        if (expectedIds.size != expectedIds.toSet().size || response.results.size != expectedIds.size) {
+            return malformedResponse("server returned an incomplete push result set")
+        }
+        val resultIds = response.results.map { it.opId }
+        if (resultIds.any { it.isBlank() } || resultIds.size != resultIds.toSet().size ||
+            resultIds.toSet() != expectedIds.toSet()
+        ) {
+            return malformedResponse("server returned mismatched push operation ids")
+        }
+        for (result in response.results) {
+            // Public nullable properties from core-model are not stable enough for cross-module
+            // smart casts; snapshot them once so every validation below sees the same receipt.
+            val revision = result.revision
+            val changeSeq = result.changeSeq
+            val receiptValid = when (result.status) {
+                PushStatus.ACCEPTED ->
+                    !result.entityId.isNullOrBlank() && revision != null && revision > 0L &&
+                        changeSeq != null && changeSeq > 0L && result.error == null &&
+                        result.serverPayload == null && result.serverChangedFields.isEmpty()
+                PushStatus.DUPLICATE ->
+                    !result.entityId.isNullOrBlank() && revision != null && revision > 0L &&
+                        (changeSeq == null || changeSeq > 0L) && result.error == null &&
+                        result.serverPayload == null && result.serverChangedFields.isEmpty()
+                PushStatus.CONFLICT ->
+                    !result.entityId.isNullOrBlank() && revision != null && revision > 0L &&
+                        result.serverChangedFields.all { it.isNotBlank() } &&
+                        result.serverChangedFields.distinct().size == result.serverChangedFields.size
+                PushStatus.REJECTED, PushStatus.DEPENDENCY_MISSING ->
+                    result.error != null && result.serverPayload == null && result.serverChangedFields.isEmpty()
+            }
+            if (!receiptValid) return malformedResponse("server returned an invalid push result")
+        }
+        return null
+    }
+
+    private fun malformedResponse(message: String): MobileError =
+        MobileError.local(code = "malformed_response", message = message, retryable = false)
 
     private suspend fun sealEnvelopes(
         batch: List<PendingOperation>,
@@ -549,8 +810,18 @@ class SyncActor(
         return when (val result = transport.ack(cursors.appliedCursor, acc.appliedOpIds.toList())) {
             is ApiResult.Failure -> result.error
             is ApiResult.Success -> {
-                store.saveAckedCursor(cursors.appliedCursor)
-                null
+                try {
+                    store.commitAcknowledgement(cursors.appliedCursor, acc.accepted.toList())
+                    null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    MobileError.local(
+                        code = "internal_error",
+                        message = "local ACK commit failed",
+                        retryable = true,
+                    )
+                }
             }
         }
     }
@@ -567,6 +838,7 @@ class SyncActor(
         val phasesRun = mutableListOf<SyncPhase>()
         val deferred = mutableListOf<DeferredOperation>()
         val appliedOpIds = mutableListOf<String>()
+        val accepted = mutableListOf<AcceptedOperation>()
         var pushed = 0
         var rejected = 0
         var conflicts = 0
@@ -576,6 +848,11 @@ class SyncActor(
         var envelopeFailures = 0
         var blobsBlocked = false
         var blobsCompleted = 0
+    }
+
+    private sealed interface BootstrapAttempt {
+        data class Finished(val outcome: BootstrapOutcome) : BootstrapAttempt
+        data class Failed(val error: MobileError) : BootstrapAttempt
     }
 
     private companion object {
@@ -592,3 +869,7 @@ class SyncActor(
             SyncContract.BOOTSTRAP_PAGE_TOKEN_TTL_MINUTES * 60L * 1000L
     }
 }
+
+/** Per-operation errors may carry this forward-compatible signal before a dedicated error code. */
+internal fun MobileError.requiresBootstrapSignal(): Boolean =
+    requiresBootstrapRestart || details["bootstrapRequired"]?.equals("true", ignoreCase = true) == true

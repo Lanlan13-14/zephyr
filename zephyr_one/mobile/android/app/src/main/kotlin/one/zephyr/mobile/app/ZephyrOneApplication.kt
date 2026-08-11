@@ -5,6 +5,9 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
+import androidx.work.WorkManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import one.zephyr.mobile.app.di.AppContainer
 
 /**
@@ -23,6 +26,19 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.clearPendingBindingAuthentication()
+        // Journal replay is the first account-shaped action. It must finish before WorkManager or
+        // binding recovery can reopen credentials and an encrypted mirror from a revoked scope.
+        runBlocking(Dispatchers.IO) {
+            container.bindingCoordinator.completePendingTeardown()
+        }
+        // A database tombstone can outlive its journal if the process died after the journal clear.
+        container.sweepErasedAccountDatabases()
+        // Recovery completes before any Activity or persisted worker can observe the container.
+        runBlocking(Dispatchers.IO) {
+            container.bindingCoordinator.restoreActiveBinding()
+        }
+        WorkManager.initialize(this, workManagerConfiguration)
         ProcessLifecycleOwner.get().lifecycle.addObserver(LockLifecycleObserver())
     }
 
@@ -47,9 +63,11 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
     private inner class LockLifecycleObserver : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) {
             container.appLock.onEnterForeground()
+            container.onProcessForeground()
         }
 
         override fun onStop(owner: LifecycleOwner) {
+            container.onProcessBackground()
             container.appLock.onEnterBackground()
         }
     }

@@ -18,6 +18,35 @@ class SharingService {
         this.authz = authz;
         this.storage = storage;
         this.resources = resources;
+        this.revocationHook = null;
+        this.aclMetadataService = null;
+    }
+
+    /** Installs the canonical Authz-level sync hook without coupling routes to mobile. */
+    setAclMetadataService(service) {
+        if (!service || service.authz !== this.authz || typeof service.install !== 'function') {
+            throw new TypeError('ACL metadata service must wrap this SharingService Authz instance');
+        }
+        service.install();
+        this.aclMetadataService = service;
+        return service;
+    }
+
+    /** Mobile shared sessions subscribe without coupling ACL storage to mobile. */
+    setRevocationHook(hook) {
+        this.revocationHook = typeof hook === 'function' ? hook : null;
+    }
+
+    _notifyGrantChanged(resourceType, resourceId, subjectId, reason) {
+        try {
+            this.revocationHook?.({
+                kind: 'grant',
+                resourceType: String(resourceType || ''),
+                resourceId: String(resourceId || ''),
+                subjectId: String(subjectId || ''),
+                reason,
+            });
+        } catch { /* notification cannot roll back a committed ACL mutation */ }
     }
 
     _loadResourceForAcl(resourceType, resourceId) {
@@ -76,6 +105,7 @@ class SharingService {
             if (!capabilities.length) {
                 if (existing.has(subjectId)) {
                     this.authz.revoke({ resourceType, resourceId, subjectId, revokedByUserId: user.userId });
+                    this._notifyGrantChanged(resourceType, resourceId, subjectId, 'acl-revoked');
                     results.push({ subjectId, revoked: true });
                 }
                 continue;
@@ -88,11 +118,13 @@ class SharingService {
                 grantedByUserId: user.userId,
                 expiresAt,
             });
+            this._notifyGrantChanged(resourceType, resourceId, subjectId, 'acl-changed');
             results.push({ subjectId, capabilities: caps, expiresAt });
         }
         for (const subjectId of existing.keys()) {
             if (!wanted.has(subjectId)) {
                 this.authz.revoke({ resourceType, resourceId, subjectId, revokedByUserId: user.userId });
+                this._notifyGrantChanged(resourceType, resourceId, subjectId, 'acl-revoked');
                 results.push({ subjectId, revoked: true });
             }
         }
@@ -104,21 +136,25 @@ class SharingService {
         this.authz.assertCan(user, CAP.SHARE, resourceType, resourceId, raw || { ownerUserId: '' }, { resourceExists: !!raw });
         const changed = this.authz.revoke({ resourceType, resourceId, subjectId: String(subjectId || ''), revokedByUserId: user.userId });
         if (!changed) throw new HttpError(404, 'share_not_found', '共享不存在');
+        this._notifyGrantChanged(resourceType, resourceId, subjectId, 'acl-revoked');
         return true;
     }
 
     /** Everything shared TO the given user (for their "shared with me" view). */
     listSharedWithMe(user, { resourceType = null } = {}) {
-        return this.authz.listSubjectGrants(user.userId, { resourceType }).map((g) => {
+        const shared = [];
+        for (const g of this.authz.listSubjectGrants(user.userId, { resourceType })) {
             const raw = this.resources._rawResource(g.resourceType, g.resourceId);
             const owner = raw?.ownerUserId ? this.storage.getUserById(raw.ownerUserId) : null;
-            return {
+            if (!raw || owner?.status !== 'active') continue;
+            shared.push({
                 ...g,
-                resourceExists: !!raw,
+                resourceExists: true,
                 resourceName: raw?.name || '',
                 ownerName: owner?.username || '',
-            };
-        });
+            });
+        }
+        return shared;
     }
 }
 

@@ -708,7 +708,7 @@ private fun SecretEditor(
 
         if (state is SecretState.Replace) {
             OutlinedTextField(
-                value = state.plaintext,
+                value = state.editingText(),
                 onValueChange = { onChange(SecretState.Replace(it)) },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text(stringResource(R.string.editor_secret_new_value)) },

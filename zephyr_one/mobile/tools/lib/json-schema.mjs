@@ -115,6 +115,19 @@ function validateNode(schema, value, instancePath, errors) {
   }
 
   for (const sub of schema.allOf ?? []) validateNode(sub, value, instancePath, errors);
+  if (schema.anyOf) {
+    const matched = schema.anyOf.some((sub) => {
+      const probe = [];
+      validateNode(sub, value, instancePath, probe);
+      return probe.length === 0;
+    });
+    if (!matched) pushError(errors, instancePath, 'value does not match any anyOf branch');
+  }
+  if (schema.not) {
+    const probe = [];
+    validateNode(schema.not, value, instancePath, probe);
+    if (probe.length === 0) pushError(errors, instancePath, 'value matches a forbidden schema');
+  }
   if (schema.if) {
     const probe = [];
     validateNode(schema.if, value, instancePath, probe);

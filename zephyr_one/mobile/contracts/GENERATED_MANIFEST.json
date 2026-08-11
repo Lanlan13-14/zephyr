@@ -1,18 +1,18 @@
 {
   "generator": "mobile/tools/generate.mjs",
   "files": {
-    "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/EntityRegistry.kt": "2ab380b20dc01b6b43f93c63b63aad3d5ba977a8343d561ec21be530b3db3007",
+    "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/EntityRegistry.kt": "6696abd0ddeee4ac56a1a3bb0a1db9546cd9c0aa12ef2ac440721828fd049910",
     "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/ErrorRegistry.kt": "adeb5a0e4e20fc9224652e9184ecd71007feb68360bdad135d4b641165505c7e",
-    "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/MobileApiPaths.kt": "bb8915a664c79c6503f6dbac0e1d4635efa913a4c3b7d456c8063ef0bb8d025f",
+    "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/MobileApiPaths.kt": "6d3bc3afdd087145a8b2da59d819bed1e16f7ab6da974619528fe71c036163d9",
     "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/SecretEnvelopeContract.kt": "6932158d97140f73d11815c0de174662354a7c4cde04a101f4fcfb917392e0db",
     "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/SyncContract.kt": "d3233910376f2ee17903807a6eb708f146f91c7dd0d2839cf3e1ccb401d1b54a",
     "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/Zft2Contract.kt": "22e82b6e81ca64b53fd468d88eb699ca40b3ef919fb02a520b11ef44b8d0f919",
     "contracts/generated/aad-vectors.json": "d1c78c0ace53d1ee133967ec5679518041445eec0dfea175990f0435fd37f860",
     "contracts/generated/sync-cases.json": "dcb0e789c64dd2a80a814074ce321c4395ca36cf418b26af7ec194ef00209b49",
     "contracts/generated/zft2-frames.json": "b3196a913adcf28e950b7e563c47e58c879fd316f7d509768de326f9f4839820",
-    "ios/Sources/ZephyrContracts/Generated/EntityRegistry.swift": "9620bc1cdf10a696937a4995e7465a203ee5ad323d337a681bd42d7b0d980d39",
+    "ios/Sources/ZephyrContracts/Generated/EntityRegistry.swift": "d6a8ae5e97c7b97cc1503b37c58a287cc35f3b2c1b087890ba20a71419912cde",
     "ios/Sources/ZephyrContracts/Generated/ErrorRegistry.swift": "126281ba33ea2e1615b9dcf416a4ea69134131f1c50bd76b5d42d76ae49b18f5",
-    "ios/Sources/ZephyrContracts/Generated/MobileApiPaths.swift": "0be53c1009271ddfd934bfa651523b005095c404c7ad5e63d89d03e266102b39",
+    "ios/Sources/ZephyrContracts/Generated/MobileApiPaths.swift": "e885b97b4533c4ee4eae8d8fab38596bfe53b2d15be4b1a793ab7fb1d3655741",
     "ios/Sources/ZephyrContracts/Generated/SecretEnvelopeContract.swift": "49baaa3f51cd8f9c974f4ef160f4c3a407b2d37086b08144c38b7b51eb1b33d0",
     "ios/Sources/ZephyrContracts/Generated/SyncContract.swift": "77391a0a333f3c8a5485eb24bb929d3f744dae69846fd14b10ce49b7946799e3",
     "ios/Sources/ZephyrContracts/Generated/Zft2Contract.swift": "19359da2044f63b8a59b6d5019e1ff984a05d63187b6a75af5b2c96cc4a61791"

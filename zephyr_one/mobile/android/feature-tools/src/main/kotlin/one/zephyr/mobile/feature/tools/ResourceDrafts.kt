@@ -342,7 +342,12 @@ object ResourceDrafts {
      * emptying a field means they want it gone.
      */
     fun foldSecret(state: SecretState): SecretState =
-        if (state is SecretState.Replace && state.plaintext.isBlank()) SecretState.Clear else state
+        if (state is SecretState.Replace && state.isBlank) {
+            state.wipe()
+            SecretState.Clear
+        } else {
+            state
+        }
 
     fun presenceFor(state: SecretState, stored: SecretPresence): SecretPresence = when (state) {
         SecretState.Unchanged -> stored

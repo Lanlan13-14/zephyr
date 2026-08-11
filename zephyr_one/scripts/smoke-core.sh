@@ -5,10 +5,12 @@ CORE="$ROOT/zephyr-core"
 DATA="/tmp/zephyr-one-smoke-$$"
 PORT=3921
 LOG="/tmp/zephyr-one-smoke-$$.log"
+CHALLENGE="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
 mkdir -p "$DATA"
 cd "$CORE"
 ZEPHYR_DATA_DIR="$DATA" HTTP_ENABLED=true HTTPS_ENABLED=false PORT="$PORT" \
 PUBLIC_ORIGIN="http://127.0.0.1:$PORT" ZEPHYR_ONE_EMBEDDED=1 \
+ZEPHYR_ONE_STARTUP_CHALLENGE="$CHALLENGE" \
 node server.js >"$LOG" 2>&1 &
 PID=$!
 cleanup() { kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; }

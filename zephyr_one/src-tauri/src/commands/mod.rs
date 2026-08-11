@@ -4,11 +4,14 @@ use crate::icon;
 use crate::rdp;
 use crate::rdp_picker;
 use crate::runtime;
-use crate::unlock_bridge;
 use crate::token::{TokenRecord, TokenState};
+use crate::unlock_bridge;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+
+pub mod rdp_surface;
+pub use rdp_surface::NativeRdpSurfaceState;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,11 +169,7 @@ pub fn agent_fs_close(state: State<'_, FsState>, handle: String) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn agent_fs_mkdir(
-    state: State<'_, FsState>,
-    root: String,
-    path: String,
-) -> Result<(), String> {
+pub fn agent_fs_mkdir(state: State<'_, FsState>, root: String, path: String) -> Result<(), String> {
     state.mkdir(&root, &path).map_err(map_fs_err)
 }
 
@@ -255,7 +254,6 @@ pub fn token_import_local(
     tokens.import_json(&raw)
 }
 
-
 /* -- Native RDP -------------------------------------------------------------
  *
  * FreeRDP linked into this process, replacing the Go/WASM client One inherited
@@ -272,15 +270,6 @@ pub fn token_import_local(
  * connected, resized, channel up, certificate fingerprint, frame counters.
  */
 
-/// Session-scoped sink that keeps counters and a bounded event log.
-///
-/// Events reach the UI by being read through `rdp_native_session_state` rather
-/// than pushed: an emit per event would put clipboard text and cursor motion on
-/// the IPC channel at input frequency, and the UI only ever renders the latest
-/// state anyway.
-pub type NativeRdpSinks =
-    parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<rdp::RecordingSink>>>;
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RdpCapabilities {
@@ -288,6 +277,11 @@ pub struct RdpCapabilities {
     pub available: bool,
     /// FreeRDP major version linked in, or null when unavailable.
     pub freerdp_major: Option<i32>,
+    /// False when the linked FreeRDP lacks Zephyr's pre-allocation cliprdr cap.
+    pub clipboard_available: bool,
+    pub clipboard_reason: String,
+    pub folder_mapping_available: bool,
+    pub folder_mapping_reason: String,
     /// Why, when unavailable. Empty when it is.
     pub reason: String,
 }
@@ -298,6 +292,16 @@ pub fn rdp_native_capabilities() -> RdpCapabilities {
     RdpCapabilities {
         available,
         freerdp_major: rdp::freerdp_major(),
+        clipboard_available: rdp::clipboard_available(),
+        clipboard_reason: if rdp::clipboard_available() {
+            String::new()
+        } else {
+            "Clipboard redirection is disabled because this FreeRDP build lacks the required bounded cliprdr reassembler.".to_string()
+        },
+        folder_mapping_available: false,
+        folder_mapping_reason:
+            "Native drive mapping is disabled until a handle-based channel is available."
+                .to_string(),
         reason: if available {
             String::new()
         } else {
@@ -309,137 +313,27 @@ pub fn rdp_native_capabilities() -> RdpCapabilities {
     }
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RdpFolderCheck {
-    pub ok: bool,
-    /// Stable code the UI maps to a specific message: a missing path means the
-    /// user never picked a folder, a bad name is a different fix entirely.
-    pub code: String,
-    pub message: String,
-}
-
-/// Check a folder mapping before connecting.
-///
-/// Separate command because `freerdp_client_add_device_channel` stats the path
-/// and fails the *entire* settings assembly when it is gone, so a folder that was
-/// valid when picked but has since been unmounted would otherwise surface as a
-/// generic connect failure.
-#[tauri::command]
-pub fn rdp_native_validate_folder(name: String, path: String) -> RdpFolderCheck {
-    match rdp::validate_drive(&name, &path) {
-        Ok(()) => RdpFolderCheck {
-            ok: true,
-            code: String::new(),
-            message: String::new(),
-        },
-        Err(error) => RdpFolderCheck {
-            ok: false,
-            code: error.code().to_string(),
-            message: error.to_string(),
-        },
-    }
-}
-
-/// What the product UI sends to open a session.
-///
-/// Field names match the saved connection record so the page does not have to
-/// translate; `Option` on the toggles means "leave at the engine default" rather
-/// than silently forcing false, which would disable clipboard and dynamic
-/// resolution for every caller that omitted them.
+/// The renderer's complete authority: name one saved connection and one native
+/// surface. Targets, credentials, security, channels, and filesystem paths are
+/// deliberately absent and unknown fields are rejected by serde.
 #[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RdpConnectRequest {
+    pub connection_id: String,
     pub session_id: String,
-    pub host: String,
-    pub port: Option<u32>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub domain: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
-    pub security: Option<String>,
-    pub ignore_certificate: Option<bool>,
-    pub audio_mode: Option<String>,
-    pub microphone: Option<bool>,
-    pub clipboard: Option<bool>,
-    pub folder_name: Option<String>,
-    pub folder_path: Option<String>,
-    pub folder_read_only: Option<bool>,
-    pub dynamic_resolution: Option<bool>,
-    pub gfx: Option<bool>,
-    pub disable_wallpaper: Option<bool>,
-    pub disable_themes: Option<bool>,
-    pub disable_menu_anims: Option<bool>,
-    pub disable_full_window_drag: Option<bool>,
-    pub allow_font_smoothing: Option<bool>,
 }
 
 impl RdpConnectRequest {
-    fn into_config(self) -> Result<(String, rdp::Config), String> {
-        let session_id = self.session_id.trim().to_string();
-        if session_id.is_empty() {
-            return Err("\u{7f3a}\u{5c11}\u{4f1a}\u{8bdd} id".to_string());
-        }
-        if self.host.trim().is_empty() {
-            return Err("\u{4e3b}\u{673a}\u{4e0d}\u{80fd}\u{4e3a}\u{7a7a}".to_string());
-        }
-
+    fn into_intent(self) -> rdp::broker::OpenIntent {
         let defaults = rdp::Config::default();
-
-        /* An unrecognised security or audio spelling is refused rather than
-         * defaulted. Defaulting `security: "plaintxet"` to Auto would silently
-         * negotiate something weaker than the user asked for, which is the one
-         * mistake in this struct that must never be quiet. */
-        let security = match self.security.as_deref() {
-            None => defaults.security,
-            Some(value) => rdp::Security::parse(value)
-                .ok_or_else(|| format!("\u{65e0}\u{6cd5}\u{8bc6}\u{522b}\u{7684} RDP \u{5b89}\u{5168}\u{6a21}\u{5f0f}\u{ff1a}{value}"))?,
-        };
-        let audio = match self.audio_mode.as_deref() {
-            None => defaults.audio,
-            Some(value) => rdp::AudioMode::parse(value)
-                .ok_or_else(|| format!("\u{65e0}\u{6cd5}\u{8bc6}\u{522b}\u{7684}\u{97f3}\u{9891}\u{6a21}\u{5f0f}\u{ff1a}{value}"))?,
-        };
-
-        Ok((
-            session_id,
-            rdp::Config {
-                host: self.host.trim().to_string(),
-                port: self.port.unwrap_or(defaults.port),
-                username: self.username.unwrap_or_default(),
-                password: self.password.unwrap_or_default(),
-                domain: self.domain.unwrap_or_default(),
-                width: self.width.unwrap_or(defaults.width),
-                height: self.height.unwrap_or(defaults.height),
-                color_depth: defaults.color_depth,
-                security,
-                ignore_certificate: self
-                    .ignore_certificate
-                    .unwrap_or(defaults.ignore_certificate),
-                audio,
-                microphone: self.microphone.unwrap_or(defaults.microphone),
-                clipboard: self.clipboard.unwrap_or(defaults.clipboard),
-                drive_name: self.folder_name.unwrap_or_default(),
-                drive_path: self.folder_path.unwrap_or_default(),
-                drive_read_only: self.folder_read_only.unwrap_or(defaults.drive_read_only),
-                dynamic_resolution: self
-                    .dynamic_resolution
-                    .unwrap_or(defaults.dynamic_resolution),
-                gfx: self.gfx.unwrap_or(defaults.gfx),
-                disable_wallpaper: self.disable_wallpaper.unwrap_or(defaults.disable_wallpaper),
-                disable_themes: self.disable_themes.unwrap_or(defaults.disable_themes),
-                disable_menu_anims: self
-                    .disable_menu_anims
-                    .unwrap_or(defaults.disable_menu_anims),
-                disable_full_window_drag: self
-                    .disable_full_window_drag
-                    .unwrap_or(defaults.disable_full_window_drag),
-                allow_font_smoothing: self
-                    .allow_font_smoothing
-                    .unwrap_or(defaults.allow_font_smoothing),
-            },
-        ))
+        rdp::broker::OpenIntent {
+            connection_id: self.connection_id,
+            session_id: self.session_id,
+            width: self.width.unwrap_or(defaults.width),
+            height: self.height.unwrap_or(defaults.height),
+        }
     }
 }
 
@@ -459,24 +353,47 @@ fn rdp_err(error: rdp::Error) -> String {
 
 #[tauri::command]
 pub fn rdp_native_connect(
-    registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
-    sinks: State<'_, NativeRdpSinks>,
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
+    surfaces: State<'_, std::sync::Arc<NativeRdpSurfaceState>>,
     request: RdpConnectRequest,
 ) -> Result<RdpConnectResult, String> {
-    let (session_id, config) = request.into_config()?;
-
-    /* Reject a duplicate id instead of silently replacing: the old session's
-     * thread would keep running with nothing able to stop it, which is a leaked
-     * connection to a remote machine. */
-    if registry.get(&session_id).is_some() {
-        return Err(format!("rdp_session_exists: \u{4f1a}\u{8bdd} {session_id} \u{5df2}\u{5b58}\u{5728}"));
-    }
-
-    let sink = std::sync::Arc::new(rdp::RecordingSink::default());
-    registry
-        .start(&session_id, config, sink.clone())
-        .map_err(rdp_err)?;
-    sinks.lock().insert(session_id.clone(), sink);
+    let intent = request.into_intent();
+    let session_id = intent.session_id.clone();
+    let owner_label = window.label().to_owned();
+    broker.authorize_and_open(
+        &owner_label,
+        &intent,
+        || {
+            runtime::authorize_native_rdp(
+                &app,
+                &intent.connection_id,
+                &intent.session_id,
+                &owner_label,
+            )
+        },
+        |binding| {
+            let approval = crate::auth::unlock(
+                &app,
+                &format!(
+                    "Authorize Remote Desktop connection to {}:{}",
+                    binding.host, binding.port
+                ),
+            );
+            if approval.ok {
+                Ok(())
+            } else {
+                Err(format!(
+                    "rdp_native_user_authorization_required: {}",
+                    approval
+                        .error
+                        .unwrap_or_else(|| "system authorization was cancelled".to_string())
+                ))
+            }
+        },
+        |config| surfaces.start_session(&session_id, config),
+    )?;
 
     Ok(RdpConnectResult {
         session_id,
@@ -486,23 +403,36 @@ pub fn rdp_native_connect(
 
 #[tauri::command]
 pub fn rdp_native_disconnect(
-    registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
-    sinks: State<'_, NativeRdpSinks>,
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
+    surfaces: State<'_, std::sync::Arc<NativeRdpSurfaceState>>,
     session_id: String,
-) -> bool {
-    let closed = registry.close(&session_id);
-    sinks.lock().remove(&session_id);
-    closed
+) -> Result<bool, String> {
+    broker.close_owned(window.label(), &session_id, || {
+        surfaces.disconnect_session(&session_id)
+    })
 }
 
 #[tauri::command]
 pub fn rdp_native_sessions(
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
     registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
+    surfaces: State<'_, std::sync::Arc<NativeRdpSurfaceState>>,
 ) -> Vec<String> {
+    surfaces.reap_closed_surfaces();
     // Reap first so a session that ended on its own does not linger in the list
     // the UI renders as live tabs.
     registry.reap();
-    registry.ids()
+    let live = registry
+        .ids()
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    broker
+        .owned_active_ids(window.label())
+        .into_iter()
+        .filter(|session_id| live.contains(session_id))
+        .collect()
 }
 
 #[derive(Debug, Serialize)]
@@ -522,45 +452,44 @@ pub struct RdpSessionState {
 /// IPC channel at input frequency for a UI that only renders the latest state.
 #[tauri::command]
 pub fn rdp_native_session_state(
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
     registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
-    sinks: State<'_, NativeRdpSinks>,
+    surfaces: State<'_, std::sync::Arc<NativeRdpSurfaceState>>,
     session_id: String,
 ) -> Result<RdpSessionState, String> {
+    broker.assert_active_owner(window.label(), &session_id)?;
     let handle = registry
         .get(&session_id)
         .ok_or_else(|| rdp_err(rdp::Error::NoSuchSession))?;
-    let recorded = sinks
-        .lock()
-        .get(&session_id)
-        .map(|sink| sink.snapshot())
-        .unwrap_or_default();
+    let recorded = surfaces.telemetry(&session_id);
 
     Ok(RdpSessionState {
         live: handle.is_live(),
         stopping: handle.is_stopping(),
         frames: recorded.frames,
         bytes: recorded.bytes,
-        events: recorded
-            .events
-            .iter()
-            .map(|event| format!("{event:?}"))
-            .collect(),
+        events: recorded.events,
     })
 }
 
 fn with_session<R>(
+    broker: &rdp::broker::NativeRdpBroker,
+    owner_label: &str,
     registry: &rdp::SessionRegistry,
     session_id: &str,
     f: impl FnOnce(rdp::SessionHandle) -> R,
 ) -> Result<R, String> {
-    match registry.get(session_id) {
+    broker.with_active(owner_label, session_id, || match registry.get(session_id) {
         Some(handle) => Ok(f(handle)),
         None => Err(rdp_err(rdp::Error::NoSuchSession)),
-    }
+    })?
 }
 
 #[tauri::command]
 pub fn rdp_native_send_mouse(
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
     registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
     session_id: String,
     flags: u16,
@@ -568,7 +497,7 @@ pub fn rdp_native_send_mouse(
     y: u16,
     extended: Option<bool>,
 ) -> Result<(), String> {
-    with_session(&registry, &session_id, |handle| {
+    with_session(&broker, window.label(), &registry, &session_id, |handle| {
         /* The two side buttons travel on a different PDU. Folding them into the
          * primary call would send button 4/5 as a left click. */
         if extended.unwrap_or(false) {
@@ -581,13 +510,15 @@ pub fn rdp_native_send_mouse(
 
 #[tauri::command]
 pub fn rdp_native_send_key(
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
     registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
     session_id: String,
     flags: u16,
     code: u16,
     unicode: Option<bool>,
 ) -> Result<(), String> {
-    with_session(&registry, &session_id, |handle| {
+    with_session(&broker, window.label(), &registry, &session_id, |handle| {
         /* Unicode is how IME and CJK text reach the session: a scancode cannot
          * express a composed character. */
         if unicode.unwrap_or(false) {
@@ -605,11 +536,13 @@ pub fn rdp_native_send_key(
 /// a surrogate pair.
 #[tauri::command]
 pub fn rdp_native_send_text(
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
     registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
     session_id: String,
     text: String,
 ) -> Result<u32, String> {
-    with_session(&registry, &session_id, |handle| {
+    with_session(&broker, window.label(), &registry, &session_id, |handle| {
         let mut sent = 0u32;
         for unit in text.encode_utf16() {
             // 0 = key down, 0x8000 (KBD_FLAGS_RELEASE) = key up. Both are needed
@@ -624,30 +557,103 @@ pub fn rdp_native_send_text(
 
 #[tauri::command]
 pub fn rdp_native_resize(
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
     registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
     session_id: String,
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    with_session(&registry, &session_id, |handle| handle.resize(width, height))
+    with_session(&broker, window.label(), &registry, &session_id, |handle| {
+        handle.resize(width, height)
+    })
 }
 
 #[tauri::command]
 pub fn rdp_native_set_clipboard(
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
     registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
     session_id: String,
     text: String,
 ) -> Result<(), String> {
-    let handle = registry
-        .get(&session_id)
-        .ok_or_else(|| rdp_err(rdp::Error::NoSuchSession))?;
-    handle.set_clipboard(&text).map_err(rdp_err)
+    with_session(&broker, window.label(), &registry, &session_id, |handle| {
+        handle.set_clipboard(&text).map_err(rdp_err)
+    })?
 }
 
 #[tauri::command]
 pub fn rdp_native_request_full_frame(
+    window: tauri::WebviewWindow,
+    broker: State<'_, std::sync::Arc<rdp::broker::NativeRdpBroker>>,
     registry: State<'_, std::sync::Arc<rdp::SessionRegistry>>,
     session_id: String,
 ) -> Result<(), String> {
-    with_session(&registry, &session_id, |handle| handle.request_full_frame())
+    with_session(&broker, window.label(), &registry, &session_id, |handle| {
+        handle.request_full_frame()
+    })
+}
+
+#[cfg(test)]
+mod native_rdp_security_tests {
+    use super::*;
+
+    #[test]
+    fn renderer_intent_accepts_only_opaque_ids_and_dimensions() {
+        let request: RdpConnectRequest = serde_json::from_value(serde_json::json!({
+            "connectionId": "connection-1",
+            "sessionId": "session-1",
+            "width": 1280,
+            "height": 720
+        }))
+        .unwrap();
+        let intent = request.into_intent();
+        assert_eq!(intent.connection_id, "connection-1");
+        assert_eq!(intent.session_id, "session-1");
+
+        for forbidden in [
+            "host",
+            "password",
+            "path",
+            "drivePath",
+            "folderPath",
+            "folderGrant",
+            "security",
+        ] {
+            let mut payload = serde_json::json!({
+                "connectionId": "connection-1",
+                "sessionId": "session-1"
+            });
+            payload[forbidden] = serde_json::Value::String("attacker-controlled".into());
+            assert!(serde_json::from_value::<RdpConnectRequest>(payload).is_err());
+        }
+    }
+
+    #[test]
+    fn connect_result_serialization_contains_no_target_credential_or_grant() {
+        let serialized = serde_json::to_value(RdpConnectResult {
+            session_id: "session-1".to_owned(),
+            started: true,
+        })
+        .unwrap();
+        assert_eq!(serialized["sessionId"], "session-1");
+        for forbidden in [
+            "host",
+            "port",
+            "username",
+            "password",
+            "path",
+            "grant",
+            "authorization",
+        ] {
+            assert!(serialized.get(forbidden).is_none());
+        }
+    }
+
+    #[test]
+    fn folder_mapping_capability_is_fail_closed() {
+        let capabilities = rdp_native_capabilities();
+        assert!(!capabilities.folder_mapping_available);
+        assert!(!capabilities.folder_mapping_reason.is_empty());
+    }
 }

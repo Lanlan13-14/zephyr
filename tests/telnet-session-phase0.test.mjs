@@ -81,12 +81,98 @@ let server;
 let adminCookie;
 let listenServer;
 let listenPort;
-let peerSockets = [];
+const peerSockets = new Set();
+const webSockets = new Set();
+const fixtureErrors = [];
 let peerReceived = [];
+
+function recordFixtureError(resource, error) {
+    const cause = error instanceof Error ? error : new Error(String(error));
+    cause.message = `${resource}: ${cause.message}`;
+    fixtureErrors.push(cause);
+}
+
+function trackPeerSocket(socket) {
+    peerSockets.add(socket);
+    socket.on('error', (error) => recordFixtureError('TELNET peer socket', error));
+    socket.once('close', () => peerSockets.delete(socket));
+    return socket;
+}
+
+function livePeerCount() {
+    return [...peerSockets].filter((socket) => !socket.destroyed).length;
+}
+
+function waitForClose(resource, label, timeoutMs = 3000) {
+    if (!resource || resource.closed === true || resource.readyState === WebSocket.CLOSED) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resource.off?.('close', onClose);
+            if (error) reject(error);
+            else resolve();
+        };
+        const onClose = () => finish();
+        const timer = setTimeout(
+            () => finish(new Error(`timeout waiting for ${label} close`)),
+            timeoutMs,
+        );
+        resource.once('close', onClose);
+    });
+}
+
+async function closeWebSocketBounded(ws) {
+    if (!ws || ws.readyState === WebSocket.CLOSED) return;
+    let closed = waitForClose(ws, 'WebSocket', 1500);
+    try {
+        if (ws.readyState === WebSocket.OPEN) ws.close(1000, 'test-cleanup');
+        else ws.terminate();
+        await closed;
+    } catch (error) {
+        closed.catch(() => {});
+        try { ws.terminate(); } catch {}
+        closed = waitForClose(ws, 'terminated WebSocket', 500);
+        try { await closed; } catch { throw error; }
+    }
+}
+
+async function closePeerSocketBounded(socket) {
+    if (!socket || socket.closed === true) return;
+    const closed = waitForClose(socket, 'TELNET peer socket', 1500);
+    try { socket.end(); } catch (error) { recordFixtureError('TELNET peer socket end', error); }
+    try {
+        await closed;
+    } catch (error) {
+        try { socket.destroy(); } catch {}
+        await waitForClose(socket, 'destroyed TELNET peer socket', 500).catch(() => {});
+        throw error;
+    }
+}
+
+function closeServerBounded(targetServer, label, timeoutMs = 3000) {
+    if (!targetServer?.listening) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error);
+            else resolve();
+        };
+        const timer = setTimeout(() => finish(new Error(`timeout closing ${label}`)), timeoutMs);
+        try { targetServer.close(finish); } catch (error) { finish(error); }
+    });
+}
 
 before(async () => {
     listenServer = net.createServer((sock) => {
-        peerSockets.push(sock);
+        trackPeerSocket(sock);
         sock.write(Buffer.from('login: '));
         sock.on('data', (chunk) => {
             peerReceived.push(Buffer.from(chunk));
@@ -118,56 +204,94 @@ before(async () => {
 });
 
 after(async () => {
-    await server.cleanup();
-    for (const s of peerSockets) {
-        try { s.destroy(); } catch {}
-    }
-    await new Promise((r) => listenServer.close(r));
+    const failures = [];
+    const listenerClosed = closeServerBounded(listenServer, 'TELNET fixture server');
+    await Promise.allSettled([...webSockets].map(closeWebSocketBounded)).then((results) => {
+        for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+    });
+    await Promise.allSettled([...peerSockets].map(closePeerSocketBounded)).then((results) => {
+        for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+    });
+    try { await listenerClosed; } catch (error) { failures.push(error); }
+    try { await server?.cleanup(); } catch (error) { failures.push(error); }
+    failures.push(...fixtureErrors);
+    if (failures.length) throw new AggregateError(failures, 'telnet phase 0 fixture cleanup failed');
 });
 
 function openWs(cookie) {
     const url = server.url('/ssh').replace(/^http/, 'ws');
-    return new WebSocket(url, { headers: { Cookie: cookie } });
+    const ws = new WebSocket(url, { headers: { Cookie: cookie } });
+    webSockets.add(ws);
+    ws.on('error', (error) => recordFixtureError('WebSocket client', error));
+    ws.once('close', () => webSockets.delete(ws));
+    return ws;
 }
 
 function waitFor(ws, type, timeoutMs = 5000) {
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), timeoutMs);
+        let settled = false;
+        const finish = (error, value) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            ws.off('message', onMsg);
+            ws.off('error', onError);
+            ws.off('close', onClose);
+            if (error) reject(error);
+            else resolve(value);
+        };
+        const timer = setTimeout(
+            () => finish(new Error(`timeout waiting for ${type}`)),
+            timeoutMs,
+        );
         const onMsg = (raw) => {
             let msg;
             try { msg = JSON.parse(String(raw)); } catch { return; }
             if (msg.type === type) {
-                clearTimeout(timer);
-                ws.off('message', onMsg);
-                resolve(msg);
+                finish(null, msg);
             } else if (msg.type === 'error' && type !== 'error') {
-                clearTimeout(timer);
-                ws.off('message', onMsg);
-                reject(new Error(msg.message || 'error'));
+                finish(new Error(msg.message || 'error'));
             }
         };
+        const onError = (error) => finish(error);
+        const onClose = () => finish(new Error(`WebSocket closed while waiting for ${type}`));
         ws.on('message', onMsg);
+        ws.once('error', onError);
+        ws.once('close', onClose);
     });
 }
 
 function collectUntil(ws, predicate, timeoutMs = 5000) {
     return new Promise((resolve, reject) => {
         const bag = [];
-        const timer = setTimeout(() => {
+        let settled = false;
+        const finish = (error, value) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
             ws.off('message', onMsg);
-            reject(new Error(`timeout collect: got ${bag.map((m) => m.type).join(',')}`));
-        }, timeoutMs);
+            ws.off('error', onError);
+            ws.off('close', onClose);
+            if (error) reject(error);
+            else resolve(value);
+        };
+        const timer = setTimeout(
+            () => finish(new Error(`timeout collect: got ${bag.map((m) => m.type).join(',')}`)),
+            timeoutMs,
+        );
         const onMsg = (raw) => {
             let msg;
             try { msg = JSON.parse(String(raw)); } catch { return; }
             bag.push(msg);
             if (predicate(msg, bag)) {
-                clearTimeout(timer);
-                ws.off('message', onMsg);
-                resolve(bag);
+                finish(null, bag);
             }
         };
+        const onError = (error) => finish(error);
+        const onClose = () => finish(new Error('WebSocket closed while collecting messages'));
         ws.on('message', onMsg);
+        ws.once('error', onError);
+        ws.once('close', onClose);
     });
 }
 
@@ -222,7 +346,7 @@ test('telnet WS close detaches; reattach replays history and keeps TCP alive', a
     await new Promise((r) => setTimeout(r, 120));
 
     // Peer sockets alive count before detach.
-    const peersBefore = peerSockets.filter((s) => !s.destroyed).length;
+    const peersBefore = livePeerCount();
     assert.ok(peersBefore >= 1, 'tcp peer should be up');
 
     // Close WS — must detach, not kill TCP.
@@ -231,7 +355,7 @@ test('telnet WS close detaches; reattach replays history and keeps TCP alive', a
         ws1.close();
     });
     await new Promise((r) => setTimeout(r, 80));
-    const peersAfterDetach = peerSockets.filter((s) => !s.destroyed).length;
+    const peersAfterDetach = livePeerCount();
     assert.equal(peersAfterDetach, peersBefore, 'telnet TCP must survive WS close');
 
     // Re-attach with same sessionId.
@@ -276,7 +400,7 @@ test('telnet WS close detaches; reattach replays history and keeps TCP alive', a
     assert.match(live.data, /after-reattach-/);
 
     // Still one live peer for this session (not a new dial).
-    const peersAfterReattach = peerSockets.filter((s) => !s.destroyed).length;
+    const peersAfterReattach = livePeerCount();
     assert.equal(peersAfterReattach, peersBefore, 'reattach must not dial a new TCP');
 
     ws2.close();

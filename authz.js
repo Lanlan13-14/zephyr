@@ -111,6 +111,19 @@ class Authz {
         return true;
     }
 
+    _activeOwner(resource) {
+        const ownerUserId = String(resource?.ownerUserId || '').trim();
+        if (!ownerUserId) return null;
+        try {
+            const owner = this.getUserById(ownerUserId);
+            return owner?.status === 'active' ? owner : null;
+        } catch {
+            /* Owner lookup is part of the authorization decision. Storage
+             * failures must fail closed rather than revive an orphaned ACL. */
+            return null;
+        }
+    }
+
     /**
      * Effective capability set for (user, resource).
      * @param {object} user       { userId, role, status }
@@ -121,7 +134,9 @@ class Authz {
         const caps = new Set();
         if (!user || !resource) return caps;
         if (user.status !== 'active') return caps;
-        if (resource.ownerUserId && resource.ownerUserId === user.userId) {
+        const owner = this._activeOwner(resource);
+        if (!owner) return caps;
+        if (owner.userId === user.userId) {
             for (const cap of OWNER_CAPS) caps.add(cap);
             return caps;
         }
@@ -260,7 +275,9 @@ class Authz {
         const grants = this.listSubjectGrants(user.userId, { resourceType });
         const discoverable = new Set(grants.filter((g) => g.capabilities.includes(CAP.DISCOVER)).map((g) => g.resourceId));
         for (const row of rows || []) {
-            if (row.ownerUserId && row.ownerUserId === user.userId) out.add(row.id);
+            const owner = this._activeOwner(row);
+            if (!owner) continue;
+            if (owner.userId === user.userId) out.add(row.id);
             else if (discoverable.has(row.id)) out.add(row.id);
             else {
                 const vis = String(row.visibility || '');

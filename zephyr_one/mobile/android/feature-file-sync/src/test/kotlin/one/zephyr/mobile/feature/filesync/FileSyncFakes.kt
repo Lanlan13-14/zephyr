@@ -164,6 +164,12 @@ class FakeDocumentTree(
 /** In-memory [UriPermissionStore]. Refuses whatever a test tells it to refuse. */
 class FakeUriPermissions : UriPermissionStore {
 
+    data class ReleaseCall(
+        val uri: String,
+        val releaseRead: Boolean,
+        val releaseWrite: Boolean,
+    )
+
     private val grants = LinkedHashMap<String, UriGrant>()
 
     /** URIs the system will refuse to persist, e.g. one not produced by a picker. */
@@ -174,21 +180,50 @@ class FakeUriPermissions : UriPermissionStore {
 
     val released = mutableListOf<String>()
 
+    /** Exact platform modes requested on each release call. */
+    val releaseCalls = mutableListOf<ReleaseCall>()
+
+    /** URIs whose release throws/returns false while retaining every requested mode. */
+    val refuseRelease = mutableSetOf<String>()
+
     override fun persisted(): List<UriGrant> = grants.values.toList()
 
     override fun takePersistable(uri: String, allowWrite: Boolean): Boolean {
         if (uri in refuse) return false
+        val existing = grants[uri]
         grants[uri] = UriGrant(
             uri = uri,
             canRead = true,
-            canWrite = allowWrite && uri !in readOnlyUris,
+            /* Android accumulates persisted access for the URI. A later caller that only asks for
+             * read must not remove write that an earlier picker result already persisted. The
+             * profile still becomes read-only when its own requestWrite is false; this is only the
+             * shared platform grant. */
+            canWrite = existing?.canWrite == true || (allowWrite && uri !in readOnlyUris),
         )
         return true
     }
 
-    override fun releasePersistable(uri: String) {
+    override fun releasePersistable(
+        uri: String,
+        releaseRead: Boolean,
+        releaseWrite: Boolean,
+    ): Boolean {
         released += uri
-        grants.remove(uri)
+        releaseCalls += ReleaseCall(uri, releaseRead, releaseWrite)
+        if (uri in refuseRelease) return false
+        val existing = grants[uri] ?: return true
+        val remaining = existing.copy(
+            canRead = existing.canRead && !releaseRead,
+            canWrite = existing.canWrite && !releaseWrite,
+        )
+        if (!remaining.canRead && !remaining.canWrite) grants.remove(uri)
+        else grants[uri] = remaining
+        return true
+    }
+
+    /** Seeds a permission as if a previous process died after taking it. */
+    fun seed(uri: String, canRead: Boolean = true, canWrite: Boolean = true) {
+        grants[uri] = UriGrant(uri, canRead, canWrite)
     }
 
     /** Simulates the user revoking the grant in system settings. */

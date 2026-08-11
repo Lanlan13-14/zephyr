@@ -43,32 +43,48 @@ const MEM_LIMIT_BYTES = 512 * 1024 * 1024; // default for compile/ffmpeg
 const NODE_MEM_LIMIT_BYTES = 1536 * 1024 * 1024; // V8 reserves a large virtual CodeRange before running scripts
 const CPU_CPU_SECONDS = 120;
 
+// Windows does not have the Unix utility paths below. Keep the fallback list
+// explicit: never resolve session tools from the service account's PATH.
+const WINDOWS_GIT_USR_BIN = [
+    'C:\\Program Files\\Git\\usr\\bin',
+    'C:\\Program Files (x86)\\Git\\usr\\bin',
+];
+
+function windowsGitCandidates(name) {
+    return WINDOWS_GIT_USR_BIN.map((dir) => path.join(dir, `${name}.exe`));
+}
+
+function currentNodeCandidate() {
+    const exe = String(process.execPath || '');
+    return /^node(?:\.exe)?$/i.test(path.basename(exe)) ? [exe] : [];
+}
+
 /** @type {ReadonlyArray<{name:string, candidates:string[], tier?:string}>} */
 const WHITELIST = Object.freeze([
     // text utilities
-    { name: 'jq', candidates: ['/usr/bin/jq', '/bin/jq'], tier: 'text' },
-    { name: 'grep', candidates: ['/bin/grep', '/usr/bin/grep'], tier: 'text' },
-    { name: 'sed', candidates: ['/bin/sed', '/usr/bin/sed'], tier: 'text' },
-    { name: 'awk', candidates: ['/usr/bin/awk', '/bin/awk', '/usr/bin/gawk', '/bin/gawk'], tier: 'text' },
-    { name: 'head', candidates: ['/usr/bin/head', '/bin/head'], tier: 'text' },
-    { name: 'tail', candidates: ['/usr/bin/tail', '/bin/tail'], tier: 'text' },
-    { name: 'wc', candidates: ['/usr/bin/wc', '/bin/wc'], tier: 'text' },
-    { name: 'sort', candidates: ['/usr/bin/sort', '/bin/sort'], tier: 'text' },
-    { name: 'uniq', candidates: ['/usr/bin/uniq', '/bin/uniq'], tier: 'text' },
-    { name: 'file', candidates: ['/usr/bin/file', '/bin/file'], tier: 'text' },
-    { name: 'sha256sum', candidates: ['/usr/bin/sha256sum', '/bin/sha256sum'], tier: 'text' },
-    { name: 'md5sum', candidates: ['/usr/bin/md5sum', '/bin/md5sum'], tier: 'text' },
-    { name: 'cut', candidates: ['/usr/bin/cut', '/bin/cut'], tier: 'text' },
-    { name: 'tr', candidates: ['/usr/bin/tr', '/bin/tr'], tier: 'text' },
-    { name: 'cat', candidates: ['/bin/cat', '/usr/bin/cat'], tier: 'text' },
-    { name: 'basename', candidates: ['/usr/bin/basename', '/bin/basename'], tier: 'text' },
-    { name: 'dirname', candidates: ['/usr/bin/dirname', '/bin/dirname'], tier: 'text' },
+    { name: 'jq', candidates: ['/usr/bin/jq', '/bin/jq', ...windowsGitCandidates('jq')], tier: 'text' },
+    { name: 'grep', candidates: ['/bin/grep', '/usr/bin/grep', ...windowsGitCandidates('grep')], tier: 'text' },
+    { name: 'sed', candidates: ['/bin/sed', '/usr/bin/sed', ...windowsGitCandidates('sed')], tier: 'text' },
+    { name: 'awk', candidates: ['/usr/bin/awk', '/bin/awk', '/usr/bin/gawk', '/bin/gawk', ...windowsGitCandidates('awk')], tier: 'text' },
+    { name: 'head', candidates: ['/usr/bin/head', '/bin/head', ...windowsGitCandidates('head')], tier: 'text' },
+    { name: 'tail', candidates: ['/usr/bin/tail', '/bin/tail', ...windowsGitCandidates('tail')], tier: 'text' },
+    { name: 'wc', candidates: ['/usr/bin/wc', '/bin/wc', ...windowsGitCandidates('wc')], tier: 'text' },
+    { name: 'sort', candidates: ['/usr/bin/sort', '/bin/sort', ...windowsGitCandidates('sort')], tier: 'text' },
+    { name: 'uniq', candidates: ['/usr/bin/uniq', '/bin/uniq', ...windowsGitCandidates('uniq')], tier: 'text' },
+    { name: 'file', candidates: ['/usr/bin/file', '/bin/file', ...windowsGitCandidates('file')], tier: 'text' },
+    { name: 'sha256sum', candidates: ['/usr/bin/sha256sum', '/bin/sha256sum', ...windowsGitCandidates('sha256sum')], tier: 'text' },
+    { name: 'md5sum', candidates: ['/usr/bin/md5sum', '/bin/md5sum', ...windowsGitCandidates('md5sum')], tier: 'text' },
+    { name: 'cut', candidates: ['/usr/bin/cut', '/bin/cut', ...windowsGitCandidates('cut')], tier: 'text' },
+    { name: 'tr', candidates: ['/usr/bin/tr', '/bin/tr', ...windowsGitCandidates('tr')], tier: 'text' },
+    { name: 'cat', candidates: ['/bin/cat', '/usr/bin/cat', ...windowsGitCandidates('cat')], tier: 'text' },
+    { name: 'basename', candidates: ['/usr/bin/basename', '/bin/basename', ...windowsGitCandidates('basename')], tier: 'text' },
+    { name: 'dirname', candidates: ['/usr/bin/dirname', '/bin/dirname', ...windowsGitCandidates('dirname')], tier: 'text' },
     // Python — full (script files + uv)
     { name: 'python3', candidates: ['/usr/bin/python3', '/bin/python3', '/usr/local/bin/python3'], tier: 'python' },
     { name: 'python', candidates: ['/usr/bin/python3', '/usr/bin/python', '/bin/python3'], tier: 'python' },
     { name: 'uv', candidates: ['/usr/local/bin/uv', '/usr/bin/uv', '/home/linuxbrew/.linuxbrew/bin/uv'], tier: 'python' },
     // Node — partial (script only; limited npm)
-    { name: 'node', candidates: ['/usr/bin/node', '/usr/local/bin/node'], tier: 'node' },
+    { name: 'node', candidates: ['/usr/bin/node', '/usr/local/bin/node', ...currentNodeCandidate()], tier: 'node' },
     { name: 'npm', candidates: ['/usr/bin/npm', '/usr/local/bin/npm'], tier: 'node' },
     // Go / Rust
     { name: 'go', candidates: ['/usr/bin/go', '/usr/local/go/bin/go'], tier: 'go' },
@@ -109,6 +125,12 @@ function realpathExists(p) {
     }
 }
 
+function isCandidateForPlatform(candidate) {
+    const value = String(candidate || '');
+    if (process.platform === 'win32') return !value.startsWith('/');
+    return !/^[A-Za-z]:[\\/]/.test(value);
+}
+
 /**
  * @returns {Map<string, {absolute:string, applet:string|null}>}
  */
@@ -120,6 +142,7 @@ function resolveWhitelistBins() {
         // Prefer non-busybox real binaries first
         let chosen = null;
         for (const c of entry.candidates) {
+            if (!isCandidateForPlatform(c)) continue;
             const rp = realpathExists(c);
             if (!rp || !fs.statSync(rp).isFile()) continue;
             const base = path.basename(rp);
@@ -569,6 +592,22 @@ function validateRuntimePolicy(commandName, args, sessionRoot) {
     }
 }
 
+function validateCommandPolicyName(command) {
+    const name = String(command || '').trim();
+    if (!name) throw new HttpError(400, 'command_required', 'command required');
+    const base = path.basename(name);
+    if (FORBIDDEN_NAMES.has(base) || FORBIDDEN_NAMES.has(name)) {
+        throw new HttpError(400, 'command_forbidden', `command is forbidden: ${base}`);
+    }
+    if (name.includes('/') || name.includes('\\')) {
+        throw new HttpError(400, 'command_must_be_name', 'command must be a whitelisted short name');
+    }
+    if (!WHITELIST.some((entry) => entry.name === base)) {
+        throw new HttpError(400, 'command_unavailable', `command is unavailable or not whitelisted: ${base}`);
+    }
+    return base;
+}
+
 function resolveCommand(command) {
     const name = String(command || '').trim();
     if (!name) throw new HttpError(400, 'command_required', 'command required');
@@ -676,8 +715,11 @@ function wrapWithLimits(argv, timeoutMs, memLimitBytes = MEM_LIMIT_BYTES) {
 
 function planExecution({ command, args, sessionRoot, cwdAbs, network, timeoutMs }) {
     const caps = probeCapabilities();
-    const cmd = resolveCommand(command);
-    const confinedArgs = validateArgs(cmd.name, args, cwdAbs, sessionRoot);
+    // Apply policy for known commands before checking optional host binaries.
+    // This keeps path/runtime guards fail-closed on minimal installations.
+    const commandName = validateCommandPolicyName(command);
+    const confinedArgs = validateArgs(commandName, args, cwdAbs, sessionRoot);
+    const cmd = resolveCommand(commandName);
     const memLimitBytes = (cmd.name === 'node' || cmd.name === 'npm') ? NODE_MEM_LIMIT_BYTES : MEM_LIMIT_BYTES;
     // busybox multi-call must invoke as: busybox <applet> args...
     const inner = cmd.applet
@@ -1027,6 +1069,7 @@ module.exports = {
     environmentMatrix,
     probeCapabilities,
     resolveCommand,
+    validateCommandPolicyName,
     validateArgs,
     validateRuntimePolicy,
     normalizeCwdRequest,

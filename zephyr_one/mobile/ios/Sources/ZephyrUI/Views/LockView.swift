@@ -8,6 +8,7 @@ import SwiftUI
 /// this view only renders the platform prompt result. When the platform cannot
 /// authenticate, the screen says so precisely instead of offering a One-built
 /// password, which the product contract forbids.
+@MainActor
 public struct LockView: View {
 
     @ObservedObject var appLock: AppLock

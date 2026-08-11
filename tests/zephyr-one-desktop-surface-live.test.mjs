@@ -10,11 +10,12 @@
 // Tauri webview does.
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
+import crypto from "node:crypto";
+import net from "node:net";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createSecureTestDataDir, removeSecureTestDataDir } from "./helpers/secure-data-dir.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
@@ -22,7 +23,9 @@ const repoRoot = path.resolve(here, "..");
 let child = null;
 let base = "";
 let dataDir = "";
+let dataFixture = null;
 let sid = "";
+const startupChallenge = crypto.randomBytes(32).toString("hex");
 
 async function waitUp(url, budgetMs) {
   const until = Date.now() + budgetMs;
@@ -36,9 +39,26 @@ async function waitUp(url, budgetMs) {
   return null;
 }
 
+async function allocateLoopbackPorts(count) {
+  const reservations = Array.from({ length: count }, () => net.createServer());
+  try {
+    await Promise.all(reservations.map((server) => new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    })));
+    return reservations.map((server) => server.address().port);
+  } finally {
+    await Promise.all(reservations.map((server) => new Promise((resolve) => {
+      if (!server.listening) return resolve();
+      server.close(() => resolve());
+    })));
+  }
+}
+
 test("boot the desktop shell server in embedded mode", async () => {
-  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "one-desktop-"));
-  const port = 23100 + Math.floor(Math.random() * 300);
+  dataFixture = createSecureTestDataDir("one-desktop-");
+  dataDir = dataFixture.dataDir;
+  const [port, aiHostPort] = await allocateLoopbackPorts(2);
   base = "http://127.0.0.1:" + port;
 
   child = spawn(process.execPath, ["server.js"], {
@@ -47,10 +67,13 @@ test("boot the desktop shell server in embedded mode", async () => {
       HTTP_ENABLED: "true",
       HTTPS_ENABLED: "false",
       PORT: String(port),
+      ZEPHYR_AI_HOST_LISTEN: `127.0.0.1:${aiHostPort}`,
+      ZEPHYR_AI_PLATFORM_HOST_URL: `http://127.0.0.1:${aiHostPort}`,
       ZEPHYR_DATA_DIR: dataDir,
       ZEPHYR_ONE_USE_BUILTIN_SQLITE: "1",
       /* The whole point: this is the embedded desktop surface, not the browser. */
       ZEPHYR_ONE_EMBEDDED: "1",
+      ZEPHYR_ONE_STARTUP_CHALLENGE: startupChallenge,
       ENCRYPTION_KEY: "one-desktop-surface-test-key",
       NODE_ENV: "production",
     }),
@@ -64,19 +87,24 @@ test("boot the desktop shell server in embedded mode", async () => {
   assert.ok(res, "server never became healthy:\n" + log.slice(-3000));
 });
 
-test("the embedded shell adopts a session without any cookie", async () => {
-  /* The Tauri webview has no cookie on first paint. If adoption regressed, the
-   * shell would bounce to the login page and the user would report exactly the
-   * "loads but goes nowhere" symptom. */
-  const res = await fetch(base + "/api/auth/me");
-  assert.equal(res.status, 200, "embedded mode must adopt a local session");
+test("the embedded shell exchanges its one-time native bootstrap header", async () => {
+  const anonymous = await fetch(base + "/api/auth/me");
+  assert.equal(anonymous.status, 401, "loopback requests must not inherit a local session");
+  const exchange = await fetch(base + "/__zephyr_one/bootstrap", {
+    method: "POST",
+    headers: { "x-zephyr-one-bootstrap-challenge": startupChallenge },
+  });
+  assert.equal(exchange.status, 204);
+  sid = (exchange.headers.get("set-cookie") || "").split(";")[0];
+  assert.match(sid, /^zephyr_sid=/);
+  const res = await fetch(base + "/api/auth/me", { headers: { cookie: sid } });
+  assert.equal(res.status, 200, "the exchanged cookie must authenticate the desktop session");
   const body = await res.json();
   assert.ok(body.user, "no user on the adopted session");
-  sid = "";
 });
 
 test("GET /app.html serves the One product marker, not the Zephyr surface", async () => {
-  const res = await fetch(base + "/app.html");
+  const res = await fetch(base + "/app.html", { headers: { cookie: sid } });
   assert.equal(res.status, 200, "the desktop shell entry point must load");
   const html = await res.text();
 
@@ -96,7 +124,7 @@ test("GET /app.html serves the One product marker, not the Zephyr surface", asyn
 });
 
 test("the served page still boots app.js and theme-runtime", async () => {
-  const html = await (await fetch(base + "/app.html")).text();
+  const html = await (await fetch(base + "/app.html", { headers: { cookie: sid } })).text();
   assert.match(html, /<script src="app\.js/, "app.js must still be the entry module");
   assert.match(html, /id="brandIcon"/, "the brand icon host element must survive the transform");
 
@@ -129,5 +157,5 @@ test("stop the server", async () => {
     child.kill("SIGKILL");
     await new Promise((r) => setTimeout(r, 400));
   }
-  if (dataDir) { try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ } }
+  if (dataFixture) { try { removeSecureTestDataDir(dataFixture); } catch (err) { /* windows lock */ } }
 });

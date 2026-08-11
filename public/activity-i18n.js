@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
+import { t } from './i18n/runtime.js?v=20260811-webdav1';
 
 const exact = new Set([
     '修改登录密码', '通过邮箱重置令牌重置密码', '开启 TOTP 两步验证', '关闭 TOTP 两步验证',
@@ -26,7 +26,7 @@ const prefixRules = [
 ];
 
 const testConnection = /^测试连接：(.+?) - (.*)$/s;
-const remoteExecute = /^远程执行：(\d+) 台服务器，命令 (.*)$/s;
+const remoteExecute = /^远程执行：(\d+) 台服务器$/;
 
 export function localizeActivityMessage(message) {
     const raw = String(message || '');
@@ -38,6 +38,6 @@ export function localizeActivityMessage(message) {
     let match = raw.match(testConnection);
     if (match) return t('测试连接：{name} - {result}', { name: match[1], result: match[2] });
     match = raw.match(remoteExecute);
-    if (match) return t('远程执行：{count} 台服务器，命令 {command}', { count: match[1], command: match[2] });
+    if (match) return t('远程执行：{count} 台服务器', { count: match[1] });
     return raw;
 }

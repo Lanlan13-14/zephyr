@@ -273,10 +273,7 @@ mod tests {
         // would ship something Image::from_bytes rejects at runtime.
         const PNG_MAGIC: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
         for (name, bytes) in ICONS {
-            assert!(
-                bytes.starts_with(PNG_MAGIC),
-                "{name} artwork must be a PNG"
-            );
+            assert!(bytes.starts_with(PNG_MAGIC), "{name} artwork must be a PNG");
         }
     }
 

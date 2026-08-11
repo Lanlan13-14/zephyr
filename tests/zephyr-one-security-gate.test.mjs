@@ -33,8 +33,14 @@ const {
     CapabilityCache,
     UnlockQueue,
     GrantStore,
+    ShellRequestAuthenticator,
+    signedShellMessage,
     GRANT_NAMESPACE,
 } = require(path.join(root, 'zephyr-one-security.js'));
+
+const crypto = require('node:crypto');
+const SHELL_SECRET = '0123456789abcdef'.repeat(4);
+const SHELL_INSTANCE = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 
 const SERVER_JS = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const APP_JS = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
@@ -48,6 +54,7 @@ const COMMANDS_RS = fs.readFileSync(
     'utf8',
 );
 const LIB_RS = fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/src/lib.rs'), 'utf8');
+const RUNTIME_RS = fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/src/runtime/mod.rs'), 'utf8');
 
 /** A fake Express that records handlers so they can be invoked directly. */
 function fakeApp() {
@@ -83,8 +90,60 @@ function mount({ dataDir } = {}) {
         getSessionUser: (req) => req.user || { username: 'local' },
         dataDir: dir,
         logger: { info() {}, warn() {} },
+        shellSecret: SHELL_SECRET,
+        shellInstance: SHELL_INSTANCE,
     });
     return { app, api, dir };
+}
+
+function shellRequest(action, fields, req = {}, {
+    secret = SHELL_SECRET,
+    shellInstance = SHELL_INSTANCE,
+    timestamp = String(Date.now()),
+    nonce = crypto.randomBytes(20).toString('hex'),
+} = {}) {
+    const message = signedShellMessage(action, timestamp, nonce, shellInstance, fields);
+    const mac = crypto.createHmac('sha256', secret).update(message, 'utf8').digest('hex');
+    const headers = {
+        'x-zephyr-one-shell-instance': shellInstance,
+        'x-zephyr-one-shell-timestamp': timestamp,
+        'x-zephyr-one-shell-nonce': nonce,
+        'x-zephyr-one-shell-mac': mac,
+    };
+    return {
+        ...req,
+        headers,
+        get(name) { return headers[String(name).toLowerCase()] || ''; },
+    };
+}
+
+function claimThroughShell(app) {
+    return app.call(
+        'GET /api/one/security/unlock-queue',
+        shellRequest('unlock.claim', []),
+    );
+}
+
+function resolveThroughShell(app, claim, verdict) {
+    const body = {
+        username: claim.username,
+        purpose: claim.purpose,
+        ok: verdict.ok === true,
+        method: verdict.method || '',
+        error: verdict.error || '',
+    };
+    const fields = [
+        claim.id,
+        body.username,
+        body.purpose,
+        body.ok ? '1' : '0',
+        body.method,
+        body.error,
+    ];
+    return app.call(
+        'POST /api/one/security/unlock-queue/:id',
+        shellRequest('unlock.resolve', fields, { params: { id: claim.id }, body }),
+    );
 }
 
 test('a fresh install asks for nothing', () => {
@@ -249,21 +308,162 @@ test('an unlock request is claimed once, resolved once, and read once', () => {
     const queue = new UnlockQueue();
     const id = queue.request({ username: 'local', reason: 'reveal a key' });
 
-    const claim = queue.claim();
+    const claim = queue.claim({ shellInstance: 'shell-a' });
     assert.equal(claim.id, id);
     assert.equal(claim.reason, 'reveal a key');
+    assert.equal(claim.purpose, 'reveal_secret');
     // A second shell must not claim the same request and show a second prompt.
-    assert.equal(queue.claim(), null);
+    assert.equal(queue.claim({ shellInstance: 'shell-b' }), null);
 
-    assert.equal(queue.poll(id).status, 'pending');
-    queue.resolve(id, { ok: true, method: 'windows_hello' });
+    assert.equal(queue.poll(id, { username: 'local' }).status, 'pending');
+    assert.equal(queue.resolve(id, {
+        username: 'local', purpose: 'reveal_secret', ok: true, method: 'windows_hello',
+    }, { shellInstance: 'shell-a' }), true);
+    assert.equal(queue.resolve(id, {
+        username: 'local', purpose: 'reveal_secret', ok: false, error: 'overwrite',
+    }, { shellInstance: 'shell-a' }), false, 'a resolved request is one-shot');
 
-    const done = queue.poll(id);
+    const done = queue.poll(id, { username: 'local' });
     assert.equal(done.ok, true);
     assert.equal(done.method, 'windows_hello');
     // Single-shot: a captured id cannot be polled again to mint a second grant
     // from one OS prompt.
-    assert.equal(queue.poll(id).status, 'unknown');
+    assert.equal(queue.poll(id, { username: 'local' }).status, 'unknown');
+});
+
+test('resolve requires its claim and is bound to shell, user, and purpose', () => {
+    const queue = new UnlockQueue();
+    const id = queue.request({ username: 'alice', purpose: 'reveal_key', reason: 'r' });
+    const verdict = {
+        username: 'alice', purpose: 'reveal_key', ok: true, method: 'pin',
+    };
+
+    assert.equal(
+        queue.resolve(id, verdict, { shellInstance: 'shell-a' }),
+        false,
+        'pending requests cannot be resolved without an OS prompt claimant',
+    );
+    assert.equal(queue.claim({ shellInstance: 'shell-a' }).id, id);
+    assert.equal(queue.resolve(id, verdict, { shellInstance: 'shell-b' }), false);
+    assert.equal(queue.resolve(id, { ...verdict, username: 'bob' }, { shellInstance: 'shell-a' }), false);
+    assert.equal(queue.resolve(id, { ...verdict, purpose: 'enable_policy' }, { shellInstance: 'shell-a' }), false);
+    assert.equal(queue.resolve(id, verdict, { shellInstance: 'shell-a' }), true);
+    assert.equal(queue.resolve(id, verdict, { shellInstance: 'shell-a' }), false, 'resolve replay is refused');
+});
+
+test('a WebView user session has no access to the shell queue', () => {
+    const { app } = mount();
+    const filed = app.call('POST /api/one/security/unlock', {
+        body: { purpose: 'reveal_key', reason: 'r' },
+    });
+
+    const forgedClaim = app.call('GET /api/one/security/unlock-queue', {
+        user: { username: 'local' },
+    });
+    assert.equal(forgedClaim.status, 403);
+    assert.equal(forgedClaim.body.code, 'shell_auth_required');
+
+    const claim = claimThroughShell(app).body;
+    assert.equal(claim.id, filed.body.id, 'the denied WebView request must not consume the claim');
+    const forgedResolve = app.call('POST /api/one/security/unlock-queue/:id', {
+        user: { username: 'local' },
+        params: { id: claim.id },
+        body: {
+            username: claim.username,
+            purpose: claim.purpose,
+            ok: true,
+            method: 'forged',
+            error: '',
+        },
+    });
+    assert.equal(forgedResolve.status, 403);
+    assert.equal(resolveThroughShell(app, claim, { ok: true, method: 'pin' }).body.ok, true);
+});
+
+test('shell MAC forgery and nonce replay cannot publish capabilities', () => {
+    const { app, api } = mount();
+    const body = { available: true, biometry: true, reason: 'Windows Hello' };
+    const fields = ['1', '1', body.reason];
+    const forged = app.call(
+        'POST /api/one/security/capabilities',
+        shellRequest('capabilities', fields, { body }, { secret: 'f'.repeat(64) }),
+    );
+    assert.equal(forged.status, 403);
+    assert.equal(api.capabilities.get().known, false);
+
+    const signed = shellRequest('capabilities', fields, { body });
+    assert.equal(app.call('POST /api/one/security/capabilities', signed).status, 200);
+    const replay = app.call('POST /api/one/security/capabilities', signed);
+    assert.equal(replay.status, 403);
+    assert.equal(replay.body.code, 'shell_auth_required');
+});
+
+test('a signed resolve cannot be changed from failure to success', () => {
+    const { app } = mount();
+    app.call('POST /api/one/security/unlock', { body: { reason: 'r' } });
+    const claim = claimThroughShell(app).body;
+    const signedFields = [claim.id, claim.username, claim.purpose, '0', '', 'cancelled'];
+    const forged = app.call(
+        'POST /api/one/security/unlock-queue/:id',
+        shellRequest('unlock.resolve', signedFields, {
+            params: { id: claim.id },
+            body: {
+                username: claim.username,
+                purpose: claim.purpose,
+                ok: true,
+                method: 'forged',
+                error: '',
+            },
+        }),
+    );
+    assert.equal(forged.status, 403);
+    assert.equal(resolveThroughShell(app, claim, { ok: false, error: 'cancelled' }).body.ok, true);
+});
+
+test('an unlock request cannot be polled across users', () => {
+    const { app } = mount();
+    const filed = app.call('POST /api/one/security/unlock', {
+        user: { username: 'alice' },
+        body: { reason: 'r' },
+    });
+    const denied = app.call('GET /api/one/security/unlock/:id', {
+        user: { username: 'bob' },
+        params: { id: filed.body.id },
+    });
+    assert.equal(denied.status, 403);
+    const owner = app.call('GET /api/one/security/unlock/:id', {
+        user: { username: 'alice' },
+        params: { id: filed.body.id },
+    });
+    assert.equal(owner.body.status, 'pending');
+});
+
+test('shell authentication rejects a stale or wrong-instance request', () => {
+    let now = 1_700_000_000_000;
+    const auth = new ShellRequestAuthenticator({
+        secret: SHELL_SECRET,
+        shellInstance: SHELL_INSTANCE,
+        now: () => now,
+        maxSkewMs: 1000,
+    });
+    const stale = shellRequest('unlock.claim', [], {}, { timestamp: String(now - 1001) });
+    assert.equal(auth.verify(stale, 'unlock.claim', []).reason, 'stale');
+    const wrong = shellRequest('unlock.claim', [], {}, { shellInstance: 'b'.repeat(32), timestamp: String(now) });
+    assert.equal(auth.verify(wrong, 'unlock.claim', []).reason, 'wrong_instance');
+});
+
+test('a future-dated nonce stays consumed for its full acceptance window', () => {
+    let now = 1_700_000_000_000;
+    const auth = new ShellRequestAuthenticator({
+        secret: SHELL_SECRET,
+        shellInstance: SHELL_INSTANCE,
+        now: () => now,
+        maxSkewMs: 1000,
+    });
+    const signed = shellRequest('unlock.claim', [], {}, { timestamp: String(now + 1000) });
+    assert.equal(auth.verify(signed, 'unlock.claim', []).ok, true);
+    now += 1001;
+    assert.equal(auth.verify(signed, 'unlock.claim', []).reason, 'replayed');
 });
 
 test('an abandoned unlock request is swept instead of waiting forever', () => {
@@ -271,14 +471,15 @@ test('an abandoned unlock request is swept instead of waiting forever', () => {
     const queue = new UnlockQueue({ ttlMs: 1000, now: () => now });
     const id = queue.request({ username: 'local', reason: 'x' });
     now += 1001;
-    assert.equal(queue.poll(id).status, 'unknown');
-    assert.equal(queue.claim(), null, 'a swept request must not be claimable');
+    assert.equal(queue.poll(id, { username: 'local' }).status, 'unknown');
+    assert.equal(queue.claim({ shellInstance: 'shell-a' }), null, 'a swept request must not be claimable');
 });
 
 test('a cancelled unlock yields no grant', () => {
     const { app, api } = mount();
     const filed = app.call('POST /api/one/security/unlock', { body: { reason: 'r' } });
-    api.unlocks.resolve(filed.body.id, { ok: false, error: 'cancelled' });
+    const claim = claimThroughShell(app).body;
+    assert.equal(resolveThroughShell(app, claim, { ok: false, error: 'cancelled' }).body.ok, true);
     const polled = app.call('GET /api/one/security/unlock/:id', { params: { id: filed.body.id } });
     assert.equal(polled.body.unlocked, false);
     assert.equal(polled.body.grant, undefined, 'a refusal must not carry a grant');
@@ -288,7 +489,8 @@ test('a successful unlock yields a grant that actually opens the gate', () => {
     const { app, api } = mount();
     api.prefs.set(true);
     const filed = app.call('POST /api/one/security/unlock', { body: { reason: 'r' } });
-    api.unlocks.resolve(filed.body.id, { ok: true, method: 'windows_hello' });
+    const claim = claimThroughShell(app).body;
+    assert.equal(resolveThroughShell(app, claim, { ok: true, method: 'windows_hello' }).body.ok, true);
     const polled = app.call('GET /api/one/security/unlock/:id', { params: { id: filed.body.id } });
     assert.equal(polled.body.unlocked, true);
     // End to end: the grant the page receives is the one the gate accepts.
@@ -392,6 +594,12 @@ test('the shell watcher is wired and publishes what the platform can do', () => 
     assert.match(BRIDGE_RS, /api\/one\/security\/capabilities/);
     assert.match(BRIDGE_RS, /crate::auth::unlock\(&app, &reason\)/);
     assert.match(BRIDGE_RS, /crate::auth::capabilities\(app\)/);
+    assert.match(BRIDGE_RS, /X-Zephyr-One-Shell-Mac/);
+    assert.match(BRIDGE_RS, /X-Zephyr-One-Shell-Nonce/);
+    assert.match(RUNTIME_RS, /unlock_bridge::shell_identity_env\(\)/);
+    assert.match(RUNTIME_RS, /\.env\("ZEPHYR_ONE_SHELL_SECRET", shell_secret\)/);
+    assert.match(RUNTIME_RS, /\.env\("ZEPHYR_ONE_SHELL_INSTANCE", shell_instance\)/);
+    assert.match(SERVER_JS, /delete process\.env\.ZEPHYR_ONE_SHELL_SECRET/);
     // Idempotent, or a retried runtime_start would race two watchers for one id.
     assert.match(BRIDGE_RS, /WATCHER_STARTED\.swap\(true, Ordering::SeqCst\)/);
 });

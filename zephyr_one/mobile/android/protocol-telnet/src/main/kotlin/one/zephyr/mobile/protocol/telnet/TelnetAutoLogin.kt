@@ -89,8 +89,8 @@ class TelnetAutoLogin(
         const val MAX_SCAN_CHARS = 8192
 
         /** Full-width colon included: Chinese network gear commonly prompts that way. */
-        val DEFAULT_LOGIN_PATTERN = Regex("(?:login|user\\s?name|username|用户名|登录名)\\s*[::]\\s*\$", RegexOption.IGNORE_CASE)
+        val DEFAULT_LOGIN_PATTERN = Regex("(?:login|user\\s?name|username|用户名|登录名)\\s*[:\uFF1A]\\s*\$", RegexOption.IGNORE_CASE)
 
-        val DEFAULT_PASSWORD_PATTERN = Regex("(?:password|passwd|密码|口令)\\s*[::]\\s*\$", RegexOption.IGNORE_CASE)
+        val DEFAULT_PASSWORD_PATTERN = Regex("(?:password|passwd|密码|口令)\\s*[:\uFF1A]\\s*\$", RegexOption.IGNORE_CASE)
     }
 }

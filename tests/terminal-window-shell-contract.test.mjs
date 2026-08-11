@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAssetVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const styleCss = readFileSync(join(root, 'public/style.css'), 'utf8');
@@ -12,6 +13,7 @@ const terminalHtml = readFileSync(join(root, 'public/terminal.html'), 'utf8');
 const telnetHtml = readFileSync(join(root, 'public/telnet-terminal.html'), 'utf8');
 const rdpHtml = readFileSync(join(root, 'public/rdp.html'), 'utf8');
 const vncHtml = readFileSync(join(root, 'public/novnc.html'), 'utf8');
+const sw = readFileSync(join(root, 'public/sw.js'), 'utf8');
 
 function cssRule(selector, { last = false } = {}) {
     const start = last ? styleCss.lastIndexOf(selector) : styleCss.indexOf(selector);
@@ -54,19 +56,22 @@ test('only fullscreen terminal shells are square', () => {
 });
 
 test('SSH, Telnet, RDP and VNC load the same refreshed shell stylesheet', () => {
-    assert.match(appHtml, /style\.css\?v=20260807-ai-edit-cancel1-terminal-shell3-splitgrid1/);
-    assert.match(terminalHtml, /style\.css\?v=20260731-sftp-multi-close1-mobile-ime2-shell3/);
-    assert.match(telnetHtml, /style\.css\?v=20260731-sftp-multi-close1-mobile-ime2-shell3/);
-    assert.match(rdpHtml, /style\.css\?v=20260804-rdp-ssh-scroll3-shell3/);
-    assert.match(vncHtml, /style\.css\?v=20260801-rdp-vnc-notes-icon1-shell3/);
+    const styleVersion = singleAssetVersion(appHtml, 'style.css', 'app shell style');
+    assertAssetVersion(terminalHtml, 'style.css', styleVersion, 'SSH page style');
+    assertAssetVersion(telnetHtml, 'style.css', styleVersion, 'Telnet page style');
+    assertAssetVersion(rdpHtml, 'style.css', styleVersion, 'RDP page style');
+    assertAssetVersion(vncHtml, 'style.css', styleVersion, 'VNC page style');
+    assertAssetVersion(sw, 'style.css', styleVersion, 'service worker style');
 });
 
 test('app cache-busts every protocol iframe after shell and input changes', () => {
-    assert.match(appHtml, /app\.js\?v=20260807-notes-enabled-persist1-mobile-ime2-shell5-splitgrid1/);
-    assert.match(appJs, /rdp\.html\?embed=1[\s\S]*&v=20260804-rdp-ssh-scroll4/);
-    assert.match(appJs, /novnc\.html\?embed=1[\s\S]*&v=20260804-terminal-shell3/);
-    assert.match(appJs, /telnet-terminal\.html\?embed=1[\s\S]*terminal-grid-converge1-mobile-ime2/);
-    assert.match(appJs, /terminal\.html\?embed=1[\s\S]*terminal-grid-converge1-mobile-ime2/);
+    singleAssetVersion(appHtml, 'app.js', 'app shell app.js references');
+    singleAssetVersion(appJs, 'rdp.html', 'RDP iframe');
+    singleAssetVersion(appJs, 'novnc.html', 'VNC iframe');
+    const terminalVersion = singleAssetVersion(terminalHtml, 'terminal.js', 'SSH page script');
+    const telnetVersion = singleAssetVersion(telnetHtml, 'telnet-terminal.js', 'Telnet page script');
+    assertAssetVersion(appJs, 'terminal.html', terminalVersion, 'SSH iframe');
+    assertAssetVersion(appJs, 'telnet-terminal.html', telnetVersion, 'Telnet iframe');
 });
 
 test('light RDP/VNC page chrome uses the same app background as SSH/Telnet', () => {

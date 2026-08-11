@@ -145,24 +145,17 @@ cat > "$OUT/ZEPHYR_ONE_CORE.json" <<EOF
 }
 EOF
 
-# ── One-only: retire the Go/WASM RDP client in favour of native FreeRDP ──
+# ── One-only: retire the browser RDP client in favour of native FreeRDP ──
 #
-# Zephyr One talks RDP through native FreeRDP, so the staged core drops the
-# browser-only WASM runtime assets (vendor/rdp-wasm/ and rdp-wasm-client.js).
+# Zephyr One talks RDP through native FreeRDP. The staging transform replaces
+# app.js's browser iframe URL with an inert native-session marker, copies the
+# One-only control surface, and drops every browser-only RDP runtime asset.
 # The repository's own public/ is untouched, so the standalone server keeps
 # serving WASM RDP to browser users byte-for-byte.
 #
-# This runs *after* the vendor copies above so the deletion sees the final
-# tree, and it fails the build if the removed assets are still present: a
-# missing rdp-wasm-client.js would otherwise 404 at runtime and leave the RDP
-# tab dead. The /rdp-proxy WebSocket route is gated separately in server.js
-# via ZEPHYR_ONE_EMBEDDED. motion-wasm and every other asset stay untouched.
-rm -rf "$OUT/public/vendor/rdp-wasm"
-rm -f "$OUT/public/rdp-wasm-client.js"
-test ! -e "$OUT/public/vendor/rdp-wasm" && test ! -e "$OUT/public/rdp-wasm-client.js" || {
-  echo "ERROR: RDP WASM assets still present in staged core" >&2
-  exit 1
-}
+# This runs after dependency/vendor copies so the verifier sees the final tree.
+# motion-wasm and every unrelated asset stay untouched.
+node "$ROOT/scripts/stage-native-rdp.mjs" "$OUT"
 
 echo "Staged core OK: $OUT"
 test -f "$OUT/server.js"

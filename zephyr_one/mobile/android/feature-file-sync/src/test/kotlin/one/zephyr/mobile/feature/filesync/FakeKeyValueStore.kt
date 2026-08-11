@@ -12,6 +12,12 @@ class FakeKeyValueStore(
     private val values: MutableMap<String, Any> = LinkedHashMap(),
 ) : KeyValueStore {
 
+    /** Makes the next durable batch fail without changing visible or restart state. */
+    var failNextEdit: Boolean = false
+
+    /** One-based batch number to fail; useful when an operation has a prepare and commit phase. */
+    var failBatch: Int? = null
+
     /** Number of batches applied. Proves a multi-key row is written once, not key by key. */
     var batches = 0
         private set
@@ -26,7 +32,7 @@ class FakeKeyValueStore(
 
     override fun keys(): Set<String> = values.keys.toSet()
 
-    override fun edit(block: KeyValueEditor.() -> Unit) {
+    override fun edit(block: KeyValueEditor.() -> Unit): Boolean {
         batches += 1
         /* Staged and then merged, so a batch that throws part-way leaves nothing behind. The real
          * editor behaves the same way: nothing is visible until apply(). */
@@ -53,8 +59,14 @@ class FakeKeyValueStore(
                 removed += key
             }
         }.block()
+        if (failNextEdit || failBatch == batches) {
+            failNextEdit = false
+            failBatch = null
+            return false
+        }
         for (key in removed) values.remove(key)
         values.putAll(staged)
+        return true
     }
 
     /** Simulates a relaunch: the same bytes, a new object graph on top of them. */

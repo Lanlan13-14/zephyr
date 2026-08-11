@@ -13,7 +13,8 @@ test('settings sidebar exposes notes toggle and admin user management', () => {
   assert.match(html, /id="adminSettingsTab"[^>]*data-settings="admin"/);
   assert.match(html, /id="adminAddUserBtn"/);
   assert.match(js, /\/api\/me\/settings/);
-  assert.match(js, /'notes\.enabled'/);
+  assert.match(js, /savePersonalSettings\(\{\s*notes:\s*\{\s*enabled\s*\}\s*\}\)/);
+  assert.match(js, /notesSettingsForm'\)\?\.addEventListener\('submit',\s*saveNotesSettings\)/);
 });
 
 test('AI settings UI exposes and persists notesRead/notesWrite independently', () => {

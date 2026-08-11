@@ -234,16 +234,21 @@ test('server.js routes embedded page loads through the transform', () => {
     );
 });
 
-test('embedded mode skips the login page entirely', () => {
+test('embedded mode skips the login page only after one-time bootstrap', () => {
     // Root redirect: index.html's boot path is GET /api/auth/me -> redirect,
     // which would flash the credential wall for one frame.
     assert.match(SERVER_JS, /app\.get\(\['\/', '\/index\.html'\]/);
     assert.match(SERVER_JS, /return res\.redirect\('\/app\.html'\)/);
 
-    // Local account adoption + the loopback pin that makes it safe.
-    assert.match(SERVER_JS, /function adoptEmbeddedLocalSession/);
-    assert.match(SERVER_JS, /app\.use\(adoptEmbeddedLocalSession\)/);
+    // The OS-unlocked shell exchanges a one-time process-local challenge.
+    assert.match(SERVER_JS, /function exchangeEmbeddedBootstrap/);
+    assert.match(SERVER_JS, /app\.post\(EMBEDDED_BOOTSTRAP_PATH, exchangeEmbeddedBootstrap\)/);
+    assert.match(SERVER_JS, /crypto\.timingSafeEqual/);
+    assert.match(SERVER_JS, /createHmac\('sha256', embeddedStartupChallenge\)/);
+    assert.doesNotMatch(SERVER_JS, /req\.query\.nonce/);
     assert.match(SERVER_JS, /mustChangePassword: false/);
+    assert.match(SERVER_JS, /SameSite=Strict/);
+    assert.doesNotMatch(SERVER_JS, /adoptEmbeddedLocalSession/);
     assert.match(SERVER_JS, /const EMBEDDED_LISTEN_HOST = ZEPHYR_ONE_EMBEDDED/);
     assert.match(SERVER_JS, /\? '127\.0\.0\.1'/);
 });

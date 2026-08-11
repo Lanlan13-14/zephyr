@@ -9,6 +9,19 @@ const changeSchema = schema('sync-change.schema.json');
 const secretSchema = schema('secret-envelope.schema.json');
 const sharedSchema = schema('shared-use-envelope.schema.json');
 const errorSchema = schema('error.schema.json');
+const sealedPassword = {
+  v: 1,
+  alg: 'ML-KEM-768+HKDF-SHA256+AES-256-GCM',
+  kem: 'ML-KEM-768',
+  aead: 'AES-256-GCM',
+  ct: 'AA==',
+  iv: 'AA==',
+  tag: 'AA==',
+  data: 'AA==',
+  aad: 'AA==',
+  keyVersion: 1,
+  entityRevision: 2,
+};
 
 test('the frozen accepted upsert vector validates', () => {
   assertValid(operationSchema, syncVectors().operations.acceptedUpsert, 'acceptedUpsert');
@@ -19,13 +32,30 @@ test('an upsert without a fieldMask is rejected', () => {
   assert.equal(result.valid, false, 'a maskless upsert would overwrite unknown fields');
 });
 
-test('upsert requires a non-empty mask; delete and restore require an empty one', () => {
-  const base = { opId: 'op-1', entityType: 'note', entityId: 'n1', baseRevision: 1 };
+test('pure-secret upserts allow an empty mask while delete and restore stay empty', () => {
+  const base = { opId: 'op-1', entityType: 'connection', entityId: 'c1', baseRevision: 1 };
   assert.equal(validate(operationSchema, { ...base, action: 'upsert', fieldMask: [], payload: {} }).valid, false);
-  assert.equal(validate(operationSchema, { ...base, action: 'upsert', fieldMask: ['title'], payload: { title: 't' } }).valid, true);
+  assert.equal(validate(operationSchema, { ...base, action: 'upsert', fieldMask: ['name'], payload: { name: 't' } }).valid, true);
+  assert.equal(validate(operationSchema, {
+    ...base, action: 'upsert', fieldMask: [], payload: {}, clearSecretFields: ['password'],
+  }).valid, true);
+  assert.equal(validate(operationSchema, {
+    ...base, action: 'upsert', fieldMask: [], payload: {}, secretEnvelopes: { password: sealedPassword },
+  }).valid, true);
+  assert.equal(validate(operationSchema, {
+    ...base, action: 'upsert', fieldMask: [], payload: {},
+    secretEnvelopes: { password: sealedPassword }, clearSecretFields: ['password'],
+  }).valid, false, 'clear and replace are mutually exclusive');
+  assert.equal(validate(operationSchema, {
+    ...base, action: 'upsert', fieldMask: ['name'], payload: { name: 't' },
+    secretEnvelopes: {}, clearSecretFields: [],
+  }).valid, false, 'mutual exclusion is based on explicit protocol intent, even for empty values');
   assert.equal(validate(operationSchema, { ...base, action: 'delete', fieldMask: [], payload: {} }).valid, true);
-  assert.equal(validate(operationSchema, { ...base, action: 'delete', fieldMask: ['title'], payload: {} }).valid, false);
-  assert.equal(validate(operationSchema, { ...base, action: 'delete', fieldMask: [], payload: { title: 't' } }).valid, false);
+  assert.equal(validate(operationSchema, { ...base, action: 'delete', fieldMask: ['name'], payload: {} }).valid, false);
+  assert.equal(validate(operationSchema, { ...base, action: 'delete', fieldMask: [], payload: { name: 't' } }).valid, false);
+  assert.equal(validate(operationSchema, {
+    ...base, action: 'delete', fieldMask: [], payload: {}, clearSecretFields: ['password'],
+  }).valid, false);
   assert.equal(validate(operationSchema, { ...base, action: 'restore', fieldMask: [], payload: {} }).valid, true);
   assert.equal(validate(operationSchema, { ...base, action: 'archive', fieldMask: [], payload: {} }).valid, false);
 });

@@ -116,11 +116,11 @@ pub type zephyr_rdp_frame_cb = Option<
 
 /// Session lifecycle / channel / clipboard notification.
 ///
-/// `text` is NUL-terminated UTF-8 and may be NULL. For `EV_RESIZE` the two ints
-/// are width/height; for `EV_CURSOR` they are x/y.
-pub type zephyr_rdp_event_cb = Option<
-    unsafe extern "C" fn(user: *mut c_void, code: i32, a: i32, b: i32, text: *const c_char),
->;
+/// For clipboard events, `text` borrows exactly `a` bytes of validated UTF-16LE
+/// including its final NUL. Other text is NUL-terminated UTF-8 or NULL. For
+/// `EV_RESIZE` the two ints are width/height; for `EV_CURSOR` they are x/y.
+pub type zephyr_rdp_event_cb =
+    Option<unsafe extern "C" fn(user: *mut c_void, code: i32, a: i32, b: i32, text: *const c_char)>;
 
 /* ---- Config -------------------------------------------------------------- */
 
@@ -216,6 +216,7 @@ extern "C" {
 
     pub fn zephyr_rdp_validate_drive(drive_name: *const c_char, drive_path: *const c_char) -> i32;
     pub fn zephyr_rdp_freerdp_major() -> i32;
+    pub fn zephyr_rdp_clipboard_available() -> i32;
     pub fn zephyr_rdp_config_layout(selector: i32) -> i32;
 
     pub fn zephyr_rdp_probe_settings(
@@ -231,6 +232,11 @@ extern "C" {
         gfx: *mut i32,
     ) -> i32;
 
+    pub fn zephyr_rdp_security_protocol_allowed(
+        cfg: *const zephyr_rdp_config,
+        selected_protocol: u32,
+    ) -> i32;
+
     pub fn zephyr_rdp_utf_roundtrip(input: *const c_char, out: *mut c_char, out_cap: usize) -> i32;
 
     #[allow(dead_code)]
@@ -239,6 +245,9 @@ extern "C" {
         out: *mut u16,
         units: usize,
     ) -> c_long;
+
+    #[allow(dead_code)]
+    pub fn zephyr_rdp_test_clipboard_payload(data: *const u8, bytes: usize) -> i32;
 }
 
 /// Compare every field offset against the C definition.
@@ -265,25 +274,81 @@ pub fn assert_layout_matches_c() -> Result<(), String> {
     }
 
     let fields: [(&str, i32, usize); 23] = [
-        ("host", ZEPHYR_RDP_LAYOUT_HOST, offset_of!(zephyr_rdp_config, host)),
-        ("port", ZEPHYR_RDP_LAYOUT_PORT, offset_of!(zephyr_rdp_config, port)),
-        ("username", ZEPHYR_RDP_LAYOUT_USERNAME, offset_of!(zephyr_rdp_config, username)),
-        ("password", ZEPHYR_RDP_LAYOUT_PASSWORD, offset_of!(zephyr_rdp_config, password)),
-        ("domain", ZEPHYR_RDP_LAYOUT_DOMAIN, offset_of!(zephyr_rdp_config, domain)),
-        ("width", ZEPHYR_RDP_LAYOUT_WIDTH, offset_of!(zephyr_rdp_config, width)),
-        ("height", ZEPHYR_RDP_LAYOUT_HEIGHT, offset_of!(zephyr_rdp_config, height)),
-        ("color_depth", ZEPHYR_RDP_LAYOUT_COLOR_DEPTH, offset_of!(zephyr_rdp_config, color_depth)),
-        ("security", ZEPHYR_RDP_LAYOUT_SECURITY, offset_of!(zephyr_rdp_config, security)),
+        (
+            "host",
+            ZEPHYR_RDP_LAYOUT_HOST,
+            offset_of!(zephyr_rdp_config, host),
+        ),
+        (
+            "port",
+            ZEPHYR_RDP_LAYOUT_PORT,
+            offset_of!(zephyr_rdp_config, port),
+        ),
+        (
+            "username",
+            ZEPHYR_RDP_LAYOUT_USERNAME,
+            offset_of!(zephyr_rdp_config, username),
+        ),
+        (
+            "password",
+            ZEPHYR_RDP_LAYOUT_PASSWORD,
+            offset_of!(zephyr_rdp_config, password),
+        ),
+        (
+            "domain",
+            ZEPHYR_RDP_LAYOUT_DOMAIN,
+            offset_of!(zephyr_rdp_config, domain),
+        ),
+        (
+            "width",
+            ZEPHYR_RDP_LAYOUT_WIDTH,
+            offset_of!(zephyr_rdp_config, width),
+        ),
+        (
+            "height",
+            ZEPHYR_RDP_LAYOUT_HEIGHT,
+            offset_of!(zephyr_rdp_config, height),
+        ),
+        (
+            "color_depth",
+            ZEPHYR_RDP_LAYOUT_COLOR_DEPTH,
+            offset_of!(zephyr_rdp_config, color_depth),
+        ),
+        (
+            "security",
+            ZEPHYR_RDP_LAYOUT_SECURITY,
+            offset_of!(zephyr_rdp_config, security),
+        ),
         (
             "ignore_certificate",
             ZEPHYR_RDP_LAYOUT_IGNORE_CERTIFICATE,
             offset_of!(zephyr_rdp_config, ignore_certificate),
         ),
-        ("audio_mode", ZEPHYR_RDP_LAYOUT_AUDIO_MODE, offset_of!(zephyr_rdp_config, audio_mode)),
-        ("microphone", ZEPHYR_RDP_LAYOUT_MICROPHONE, offset_of!(zephyr_rdp_config, microphone)),
-        ("clipboard", ZEPHYR_RDP_LAYOUT_CLIPBOARD, offset_of!(zephyr_rdp_config, clipboard)),
-        ("drive_name", ZEPHYR_RDP_LAYOUT_DRIVE_NAME, offset_of!(zephyr_rdp_config, drive_name)),
-        ("drive_path", ZEPHYR_RDP_LAYOUT_DRIVE_PATH, offset_of!(zephyr_rdp_config, drive_path)),
+        (
+            "audio_mode",
+            ZEPHYR_RDP_LAYOUT_AUDIO_MODE,
+            offset_of!(zephyr_rdp_config, audio_mode),
+        ),
+        (
+            "microphone",
+            ZEPHYR_RDP_LAYOUT_MICROPHONE,
+            offset_of!(zephyr_rdp_config, microphone),
+        ),
+        (
+            "clipboard",
+            ZEPHYR_RDP_LAYOUT_CLIPBOARD,
+            offset_of!(zephyr_rdp_config, clipboard),
+        ),
+        (
+            "drive_name",
+            ZEPHYR_RDP_LAYOUT_DRIVE_NAME,
+            offset_of!(zephyr_rdp_config, drive_name),
+        ),
+        (
+            "drive_path",
+            ZEPHYR_RDP_LAYOUT_DRIVE_PATH,
+            offset_of!(zephyr_rdp_config, drive_path),
+        ),
         (
             "drive_read_only",
             ZEPHYR_RDP_LAYOUT_DRIVE_READ_ONLY,
@@ -294,7 +359,11 @@ pub fn assert_layout_matches_c() -> Result<(), String> {
             ZEPHYR_RDP_LAYOUT_DYNAMIC_RESOLUTION,
             offset_of!(zephyr_rdp_config, dynamic_resolution),
         ),
-        ("gfx", ZEPHYR_RDP_LAYOUT_GFX, offset_of!(zephyr_rdp_config, gfx)),
+        (
+            "gfx",
+            ZEPHYR_RDP_LAYOUT_GFX,
+            offset_of!(zephyr_rdp_config, gfx),
+        ),
         (
             "disable_wallpaper",
             ZEPHYR_RDP_LAYOUT_DISABLE_WALLPAPER,

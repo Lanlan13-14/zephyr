@@ -33,7 +33,14 @@ interface KeyValueStore {
      * process death between two of them would leave a row that names a directory with no share name
      * or, worse, an id in the index with no URI behind it.
      */
-    fun edit(block: KeyValueEditor.() -> Unit)
+    /**
+     * Commits one batch durably before returning.
+     *
+     * False is a real write failure, not a delayed success. SAF permission bookkeeping uses this as
+     * a transaction boundary: it must never report a row as stored while its bytes are still only
+     * queued for an asynchronous preferences write.
+     */
+    fun edit(block: KeyValueEditor.() -> Unit): Boolean
 }
 
 /** Accumulates one batch of writes. */

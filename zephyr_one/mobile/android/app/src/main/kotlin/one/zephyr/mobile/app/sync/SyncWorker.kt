@@ -3,7 +3,11 @@ package one.zephyr.mobile.app.sync
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import one.zephyr.mobile.app.ZephyrOneApplication
+import one.zephyr.mobile.app.binding.isDeviceRevocationError
+import one.zephyr.mobile.sync.SyncScheduler
 
 /**
  * The WorkManager entry point for a background sync round.
@@ -12,7 +16,7 @@ import one.zephyr.mobile.app.ZephyrOneApplication
  * engine schedules lands here. The worker itself owns no sync logic: it resolves the account graph,
  * asks the engine for one round and translates the outcome into a WorkManager result.
  *
- * A missing account graph is [Result.success], not failure or retry. An unbound app has nothing to
+ * A missing account graph is [Result.success] once recovery has completed. An unbound app has nothing to
  * sync, and retrying would burn the backoff budget on work that cannot become possible until the
  * user completes S02 - at which point the engine schedules a fresh round anyway.
  */
@@ -20,9 +24,15 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     override suspend fun doWork(): Result {
         val app = applicationContext as? ZephyrOneApplication ?: return Result.success()
-        val account = app.container.account ?: return Result.success()
+        // WorkManager can recreate a persisted request at process start.  Do not turn a graph that
+        // is merely fenced behind replacement/restore recovery into a permanently successful run.
+        if (!app.container.bindingCoordinator.workersAreReady()) return Result.retry()
+        val bindingKey = inputData.getString(SyncScheduler.INPUT_BINDING_KEY)
+        val generation = inputData.getString(SyncScheduler.INPUT_BINDING_GENERATION)
+        val account = app.container.bindingCoordinator.graphForWorker(bindingKey, generation)
+            ?: return Result.success()
 
-        val results = account.syncEngine.runScheduledRound()
+        val results = account.runScheduledRound()
 
         // The last round decides: an earlier round may have failed and been retried successfully
         // inside the same request, and reporting the first failure would hide that recovery.
@@ -30,10 +40,19 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         if (last.succeeded) return Result.success()
 
         val error = last.error
+        if (isDeviceRevocationError(error?.code)) {
+            // Cancelling this binding's Work includes this worker. Finish the wipe in a
+            // non-cancellable section so self-cancellation cannot leave credentials behind.
+            withContext(NonCancellable) {
+                app.container.bindingCoordinator.onDeviceRevoked(account.bindingKey, account.generation)
+            }
+            return Result.success()
+        }
         /* Retry only when the error says so. WorkManager's backoff is the wrong tool for a revoked
          * token or a rotated binding: those need the user, and retrying them on a schedule would
          * hammer the server until the backoff cap while the UI shows nothing. SyncEngine has already
          * recorded the failure and scheduled its own retry where one is warranted. */
         return if (error != null && error.retryable) Result.retry() else Result.success()
     }
+
 }

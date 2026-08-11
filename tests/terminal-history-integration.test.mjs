@@ -14,9 +14,21 @@ test('server creates configured history service',()=>{
 });
 test('Node output is batched and ordered with resize close',()=>{
  assert.match(server,/queueSshSessionHistory\(session, bytes\)/);
- assert.match(server,/flushSshSessionHistory\(attachedSshSession\)/);
- assert.match(server,/terminalHistory\.appendResize/);
- assert.match(server,/flushSshSessionHistory\(session\);\n\s*try \{ terminalHistory\.close/);
+ const destroy = server.slice(
+  server.indexOf('function destroySshTerminalSession'),
+  server.indexOf('function loadDataEnv'),
+ );
+ const destroyFlush = destroy.indexOf('flushSshSessionHistory(session);');
+ const historyClose = destroy.indexOf('terminalHistory.close(session.userId, session.id, reason)');
+ assert.ok(destroyFlush >= 0 && historyClose > destroyFlush, 'history must flush before close');
+
+ const resizeStart = server.lastIndexOf("if (msg.type === 'resize')");
+ const resize = server.slice(resizeStart, server.indexOf("if (msg.type === 'stats-subscribe')", resizeStart));
+ const resizeFlushes = [...resize.matchAll(/flushSshSessionHistory\(attachedSshSession\)/g)];
+ const resizeAppends = [...resize.matchAll(/terminalHistory\.appendResize/g)];
+ assert.equal(resizeFlushes.length, 2, 'Telnet and SSH resize paths must flush history');
+ assert.equal(resizeAppends.length, 2, 'Telnet and SSH resize paths must append resize records');
+ assert.ok(resizeFlushes.every((match, index) => match.index < resizeAppends[index].index), 'each resize must flush output before its resize record');
 });
 test('attach replay prefers canonical framebuffer with journal fallback',()=>{
  const attach = server.slice(server.indexOf('async function attachSshSession'), server.indexOf('function execDockerStream'));

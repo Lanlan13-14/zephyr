@@ -37,75 +37,75 @@ public enum EntityRegistry {
     public static let entities: [SyncEntitySpec] = [
         SyncEntitySpec(
             type: "connection",
-            source: "storage.js connections + resource-service.js",
+            source: "ResourceService/storage.js connections",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
             deleteMode: "tombstone",
             dependencyOrder: 40,
             minimumClientVersion: 1,
-            editableFields: ["name", "host", "port", "protocol", "username", "remark", "tags", "connectionMode", "proxyId", "jumpHostId", "jumpHostIds", "sshKeyId", "rdpSoundMode", "rdpClipboard", "rdpMicrophone", "rdpCamera", "rdpStorage", "rdpLocation", "rdpResolution", "rdpQuality", "rdpFps", "rdpTouchMode", "rdpTouchSensitivity", "rdpDomain", "encoding", "visibility"],
+            editableFields: ["name", "host", "port", "protocol", "username", "remark", "tags", "connectionMode", "proxyId", "jumpHostId", "jumpHostIds", "sshKeyId", "rdpSoundMode", "rdpClipboard", "rdpMicrophone", "rdpCamera", "rdpStorage", "rdpLocation", "rdpResolution", "rdpQuality", "rdpFps", "rdpTouchMode", "rdpTouchSensitivity", "rdpDomain", "encoding"],
             secretFields: ["password", "privateKey"],
-            serverAuthorityFields: ["ownerUserId", "createdByUserId", "revision", "createdAt", "updatedAt", "lastConnectedAt"],
+            serverAuthorityFields: ["ownerUserId", "createdByUserId", "revision", "createdAt", "updatedAt", "lastConnectedAt", "visibility"],
             opaquePreserveFields: ["rdpPipeline"],
             deviceLocalFields: ["ephemeral"],
             capabilities: ["discover", "view", "use", "observe", "control", "execute", "fileRead", "fileWrite", "edit", "share", "delete", "revealSecret"],
-            status: "source-ready-needs-tombstone-hook"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "proxy",
-            source: "storage.js proxies + resource-service.js",
+            source: "ResourceService/storage.js proxies",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
             deleteMode: "tombstone",
             dependencyOrder: 10,
             minimumClientVersion: 1,
-            editableFields: ["name", "host", "port", "type", "username", "visibility"],
+            editableFields: ["name", "host", "port", "type", "username"],
             secretFields: ["password"],
-            serverAuthorityFields: ["ownerUserId", "revision", "createdAt", "updatedAt"],
+            serverAuthorityFields: ["ownerUserId", "revision", "createdAt", "updatedAt", "visibility"],
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: ["discover", "view", "use", "edit", "share", "delete", "revealSecret"],
-            status: "source-ready-needs-tombstone-hook"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "sshKey",
-            source: "storage.js ssh_keys + resource-service.js",
+            source: "ResourceService/storage.js ssh_keys",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
             deleteMode: "tombstone",
             dependencyOrder: 10,
             minimumClientVersion: 1,
-            editableFields: ["name", "remark", "visibility"],
+            editableFields: ["name", "remark"],
             secretFields: ["privateKey", "passphrase"],
-            serverAuthorityFields: ["ownerUserId", "revision", "createdAt", "updatedAt"],
+            serverAuthorityFields: ["ownerUserId", "revision", "createdAt", "updatedAt", "visibility"],
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: ["discover", "view", "use", "edit", "share", "delete", "revealSecret"],
-            status: "source-ready-needs-tombstone-hook"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "jumpHost",
-            source: "storage.js jump_hosts + resource-service.js",
+            source: "ResourceService/storage.js jump_hosts",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
             deleteMode: "tombstone",
             dependencyOrder: 20,
             minimumClientVersion: 1,
-            editableFields: ["name", "connectionId", "visibility"],
+            editableFields: ["name", "connectionId"],
             secretFields: [],
-            serverAuthorityFields: ["ownerUserId", "revision", "createdAt", "updatedAt"],
+            serverAuthorityFields: ["ownerUserId", "revision", "createdAt", "updatedAt", "visibility"],
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: ["discover", "view", "use", "edit", "share", "delete"],
-            status: "source-ready-needs-tombstone-hook"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "note",
-            source: "storage.js notes + notes-service.js",
+            source: "NotesService/storage.js notes",
             idField: "noteId",
             ownerField: "ownerUserId",
             revisionField: "revision",
@@ -118,11 +118,11 @@ public enum EntityRegistry {
             opaquePreserveFields: ["allowAi"],
             deviceLocalFields: [],
             capabilities: [],
-            status: "source-ready-soft-delete-exists"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "snippet",
-            source: "user_settings.snippets + ai-snippet-tools.js",
+            source: "SnippetService/snippets",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
@@ -131,15 +131,15 @@ public enum EntityRegistry {
             minimumClientVersion: 1,
             editableFields: ["name", "command", "group", "autoRun"],
             secretFields: [],
-            serverAuthorityFields: ["revision", "createdAt", "updatedAt"],
+            serverAuthorityFields: ["ownerUserId", "revision", "createdAt", "updatedAt"],
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: [],
-            status: "requires-normalization-out-of-settings-bag"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "aiProvider",
-            source: "ai-provider-service.js ai_providers",
+            source: "AiProviderService/ai_providers",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
@@ -148,15 +148,15 @@ public enum EntityRegistry {
             minimumClientVersion: 1,
             editableFields: ["name", "type", "baseUrl", "defaultModel", "models", "config", "visibility", "shareWithUsers", "shareWithAdmins", "sharedUserIds", "enabled"],
             secretFields: ["apiKey"],
-            serverAuthorityFields: ["ownerUserId", "createdAt", "updatedAt"],
+            serverAuthorityFields: ["ownerUserId", "revision", "createdAt", "updatedAt"],
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: [],
-            status: "requires-revision-and-change-hook"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "aiMemory",
-            source: "settings.ai.memories",
+            source: "AiKnowledgeService/ai_knowledge_entities",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
@@ -169,11 +169,11 @@ public enum EntityRegistry {
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: [],
-            status: "requires-normalization-out-of-global-settings"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "aiSkill",
-            source: "settings.ai.skills",
+            source: "AiKnowledgeService/ai_knowledge_entities",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
@@ -186,11 +186,11 @@ public enum EntityRegistry {
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: [],
-            status: "requires-normalization-out-of-global-settings"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "aiEnv",
-            source: "settings.ai.envVars",
+            source: "AiKnowledgeService/ai_knowledge_entities + ai_knowledge_env_secrets",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
@@ -203,11 +203,11 @@ public enum EntityRegistry {
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: [],
-            status: "requires-normalization-out-of-global-settings"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "aiConversation",
-            source: "AI runtime session service",
+            source: "AiHistoryService/ai_conversations",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
@@ -220,11 +220,11 @@ public enum EntityRegistry {
             opaquePreserveFields: ["runtimeMetadata"],
             deviceLocalFields: ["activeRunId"],
             capabilities: [],
-            status: "blocked-no-canonical-server-schema"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "aiMessage",
-            source: "AI runtime session service",
+            source: "AiHistoryService/ai_messages",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
@@ -237,11 +237,11 @@ public enum EntityRegistry {
             opaquePreserveFields: ["toolEvents", "usage"],
             deviceLocalFields: ["streamState"],
             capabilities: [],
-            status: "blocked-no-canonical-server-schema"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "oneUserSettings",
-            source: "user-settings-service.js user_settings",
+            source: "PersonalSettingsSectionService + user_setting_sections/user_settings",
             idField: "sectionKey",
             ownerField: "userId",
             revisionField: "revision",
@@ -250,15 +250,15 @@ public enum EntityRegistry {
             minimumClientVersion: 1,
             editableFields: ["appearance.theme", "appearance.autoThemeEnabled", "appearance.colorScheme", "appearance.customThemeMode", "appearance.customColors", "appearance.terminalBackground", "appearance.terminalFontColor", "appearance.terminalFontColors", "appearance.rdp", "terminal.maxWindows", "terminal.minimizedKeepAlive", "terminal.smartbarOrder", "terminal.shortcutPlatform", "terminal.allowLigatures", "notes.enabled", "notes.editorMode", "notes.fontSize", "workspace.defaultView", "workspace.sessionPersistence", "ai.panelLayout", "ai.assistantName"],
             secretFields: [],
-            serverAuthorityFields: ["userId", "updatedAt"],
+            serverAuthorityFields: ["userId", "revision", "updatedAt"],
             opaquePreserveFields: ["appearance.customCss", "mail.notifyLogin"],
             deviceLocalFields: [],
             capabilities: [],
-            status: "requires-per-key-revision"
+            status: "implemented-canonical-service-revision-reset-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "serverSettings",
-            source: "storage.js settings + /api/settings sections",
+            source: "CanonicalServerSettingsService/storage.js settings",
             idField: "sectionKey",
             ownerField: "serverId",
             revisionField: "revision",
@@ -271,7 +271,7 @@ public enum EntityRegistry {
             opaquePreserveFields: ["security", "mail", "captcha", "beian", "appearance.customCss", "appearance.customJs"],
             deviceLocalFields: [],
             capabilities: [],
-            status: "role-gated-adapter-required-ai-provider-memory-skill-env-are-separate-entities"
+            status: "blocked-owner-scope-change-feed-partition-mismatch"
         ),
         SyncEntitySpec(
             type: "backupMetadata",
@@ -288,11 +288,11 @@ public enum EntityRegistry {
             opaquePreserveFields: [],
             deviceLocalFields: ["localDownloadUri"],
             capabilities: [],
-            status: "requires-job-and-metadata-layer"
+            status: "blocked-no-durable-job-metadata-layer"
         ),
         SyncEntitySpec(
             type: "activityEvent",
-            source: "storage.js activities",
+            source: "CanonicalActivityEventService/storage.js activities",
             idField: "id",
             ownerField: "userId",
             revisionField: nil,
@@ -305,28 +305,28 @@ public enum EntityRegistry {
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: [],
-            status: "source-ready-add-change-hook"
+            status: "implemented-read-only-canonical-service-append-only-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "resourceAcl",
-            source: "authz.js resource_acl",
+            source: "ResourceAclMetadataService/resource_acl",
             idField: "grantKey",
             ownerField: "resourceOwnerUserId",
             revisionField: "revision",
             deleteMode: "revocation-tombstone",
             dependencyOrder: 30,
             minimumClientVersion: 1,
-            editableFields: ["subjectType", "subjectId", "capabilities", "expiresAt"],
+            editableFields: ["capabilities", "expiresAt"],
             secretFields: [],
-            serverAuthorityFields: ["grantedByUserId", "createdAt", "revokedAt", "revision"],
+            serverAuthorityFields: ["subjectType", "subjectId", "grantedByUserId", "createdAt", "revokedAt", "revision"],
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: ["discover", "view", "use", "observe", "control", "execute", "fileRead", "fileWrite", "edit", "share", "delete", "revealSecret", "administer"],
-            status: "source-ready-add-revision-and-change-hook"
+            status: "implemented-canonical-service-revision-revocation-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "clientToken",
-            source: "file-agent-manager.js agent-tokens.json v2",
+            source: "AgentTokenStore/encrypted_client_tokens",
             idField: "id",
             ownerField: "ownerUserId",
             revisionField: "revision",
@@ -339,11 +339,11 @@ public enum EntityRegistry {
             opaquePreserveFields: [],
             deviceLocalFields: [],
             capabilities: [],
-            status: "blocked-migrate-plaintext-json-to-encrypted-sqlite"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "workspaceState",
-            source: "workspace-service.js workspaces",
+            source: "WorkspacePortableSyncService + workspaces/workspace_portable_identities",
             idField: "workspaceId",
             ownerField: "userId",
             revisionField: "revision",
@@ -356,24 +356,24 @@ public enum EntityRegistry {
             opaquePreserveFields: [],
             deviceLocalFields: ["clientId"],
             capabilities: [],
-            status: "source-ready-mobile-state-adapter-required"
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
             type: "fileSyncConfig",
-            source: "one-client-manager.js one_clients",
+            source: "FileSyncConfigService + mobile_devices/one_clients",
             idField: "clientId",
             ownerField: "ownerUserId",
             revisionField: "syncRevision",
             deleteMode: "revoke",
             dependencyOrder: 0,
             minimumClientVersion: 1,
-            editableFields: ["deviceName", "enabled", "automaticEnabled", "syncIntervalSec", "networkPolicy"],
+            editableFields: ["deviceName", "enabled", "automaticEnabled", "syncIntervalSec"],
             secretFields: [],
-            serverAuthorityFields: ["ownerUserId", "tokenId", "platform", "appVersion", "lastSyncAt", "lastSeenAt", "createdAt", "revokedAt"],
+            serverAuthorityFields: ["ownerUserId", "syncRevision", "tokenId", "platform", "appVersion", "lastSyncAt", "lastSeenAt", "createdAt", "revokedAt"],
             opaquePreserveFields: [],
-            deviceLocalFields: ["lastLocalAttemptAt", "localError"],
+            deviceLocalFields: ["networkPolicy", "lastLocalAttemptAt", "localError"],
             capabilities: [],
-            status: "source-partial-needs-automatic-flag-and-v1-credentials"
+            status: "implemented-canonical-service-revision-revoke-atomic-change-feed-secret-safe-projection"
         ),
     ]
 

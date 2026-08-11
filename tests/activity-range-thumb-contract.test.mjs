@@ -3,14 +3,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAssetVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-
-const CACHE = '20260731-sftp-multi-close1';
 
 function extractFn(src, name) {
     const re = new RegExp(`function ${name}\\s*\\(`);
@@ -89,8 +88,8 @@ test('JS measures active chip and animates selection changes', () => {
 });
 
 test('cache bust revision is consistent across app shell assets', () => {
-    assert.match(appHtml, new RegExp(`app\\.js\\?v=${CACHE}`));
-    assert.match(appHtml, new RegExp(`style\\.css\\?v=${CACHE}`));
-    assert.match(swJs, new RegExp(`app\\.js\\?v=${CACHE}`));
-    assert.match(swJs, new RegExp(`style\\.css\\?v=${CACHE}`));
+    const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
+    assertAssetVersion(appHtml, 'style.css', appVersion, 'app shell style.css');
+    assertAssetVersion(swJs, 'app.js', appVersion, 'service worker app.js');
+    assertAssetVersion(swJs, 'style.css', appVersion, 'service worker style.css');
 });

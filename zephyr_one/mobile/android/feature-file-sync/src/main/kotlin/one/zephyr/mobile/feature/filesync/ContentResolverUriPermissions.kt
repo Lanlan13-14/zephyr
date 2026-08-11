@@ -35,15 +35,20 @@ class ContentResolverUriPermissions(
         true
     }.isSuccess
 
-    override fun releasePersistable(uri: String) {
-        /* Both flags, regardless of what was taken. Releasing a flag that was never held is a no-op;
-         * releasing only read would leave a write grant behind, which is exactly the ambient access
-         * revoking is meant to remove. */
-        runCatching {
+    override fun releasePersistable(
+        uri: String,
+        releaseRead: Boolean,
+        releaseWrite: Boolean,
+    ): Boolean {
+        if (!releaseRead && !releaseWrite) return true
+        return runCatching {
+            var flags = 0
+            if (releaseRead) flags = flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            if (releaseWrite) flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             resolver.releasePersistableUriPermission(
                 Uri.parse(uri),
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                flags,
             )
-        }
+        }.isSuccess
     }
 }

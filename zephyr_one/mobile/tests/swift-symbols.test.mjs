@@ -109,11 +109,103 @@ test('every target the manifest declares has sources on disk', () => {
   }
 });
 
-test('the package has no external dependencies', () => {
-  /* The Node contract suite is deliberately stdlib-only so nothing can drift
-   * between a local run and CI. Same reasoning here, and it also keeps the iOS
-   * job from needing a package cache. */
-  assert.doesNotMatch(MANIFEST, /\.package\(/, 'no third-party packages');
+test('the native crypto and encrypted database dependencies are supply-chain pinned', () => {
+  /* iOS 15 CryptoKit has no ML-KEM implementation, and system SQLite has no
+   * page encryption. Both reviewed binary packages are pinned to immutable
+   * manifest commits whose binary targets carry XCFramework checksums. */
+  const packages = [...MANIFEST.matchAll(/\.package\(/g)];
+  assert.equal(packages.length, 2, 'only the audited ML-KEM and SQLCipher packages are allowed');
+  assert.match(
+    MANIFEST,
+    /url:\s*"https:\/\/github\.com\/krzyzanowskim\/OpenSSL-Package\.git"[\s\S]*revision:\s*"0b0cc7392a4ff6a798c9ed8f4981f1c1bbcb4722"/,
+  );
+  assert.match(MANIFEST, /\.product\(name:\s*"OpenSSL",\s*package:\s*"OpenSSL-Package"\)/);
+  assert.match(
+    MANIFEST,
+    /6c4b064d12b8de2ae77ac59fbcbbd1c20b4fecfb7fc50b8ab326347c52ecbf0c/,
+    'the reviewed XCFramework checksum must remain documented beside the pin',
+  );
+  assert.match(
+    MANIFEST,
+    /url:\s*"https:\/\/github\.com\/zhuorantan\/SQLiteCipher\.git"[\s\S]*revision:\s*"70589046bd800e3db5c0155a558a9bc7a9f260ef"/,
+  );
+  assert.match(MANIFEST, /\.product\(name:\s*"SQLiteCipher",\s*package:\s*"SQLiteCipher"\)/);
+  assert.match(
+    MANIFEST,
+    /cb13b28fecf0d651a451d29545f4904af7c2781e9774c1d4da2cd442126f420b/,
+    'the reviewed SQLCipher XCFramework checksum must remain documented beside the pin',
+  );
+  assert.match(MANIFEST, /f0b61023394fbcf3c52877f4bef371c32f4098704668a5986992bcad8ce31c03/);
+  assert.doesNotMatch(MANIFEST, /linkedLibrary\("sqlite3"\)/, 'system SQLite must not back the mirror');
+  assert.doesNotMatch(MANIFEST, /\bfrom:\s*"/, 'crypto dependencies must not use a version range');
+
+  const notices = fs.readFileSync(path.join(IOS_ROOT, 'THIRD_PARTY_NOTICES.md'), 'utf8');
+  assert.match(notices, /SQLCipher 4\.10\.0/);
+  assert.match(notices, /SQLite 3\.50\.4/);
+  assert.match(notices, /cb13b28fecf0d651a451d29545f4904af7c2781e9774c1d4da2cd442126f420b/);
+  assert.match(notices, /f0b61023394fbcf3c52877f4bef371c32f4098704668a5986992bcad8ce31c03/);
+  assert.match(notices, /Copyright \(c\) 2025, ZETETIC LLC/);
+});
+
+test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-erased', () => {
+  const repository = fs.readFileSync(
+    path.join(TARGET_DIRS.ZephyrCore, 'SQLiteSyncRepository.swift'),
+    'utf8',
+  );
+  const keyStore = fs.readFileSync(
+    path.join(TARGET_DIRS.ZephyrCore, 'KeychainSyncDatabaseKeyStore.swift'),
+    'utf8',
+  );
+  const binding = fs.readFileSync(
+    path.join(TARGET_DIRS.ZephyrCore, 'MobileBindingCoordinator.swift'),
+    'utf8',
+  );
+  const repositoryTests = fs.readFileSync(
+    path.join(TARGET_DIRS.ZephyrCoreTests, 'SQLiteSyncRepositoryTests.swift'),
+    'utf8',
+  );
+  const keyTests = fs.readFileSync(
+    path.join(TARGET_DIRS.ZephyrCoreTests, 'KeychainSyncDatabaseKeyStoreTests.swift'),
+    'utf8',
+  );
+
+  assert.match(repository, /import SQLCipher/);
+  assert.doesNotMatch(repository, /import SQLite3/);
+  assert.match(repository, /PRAGMA key =/);
+  assert.match(repository, /PRAGMA cipher_integrity_check/);
+  assert.match(repository, /SQLite format 3\\u\{0\}/);
+  assert.match(repository, /FileProtectionType\.complete/);
+  assert.doesNotMatch(repository, /completeUntilFirstUserAuthentication/);
+
+  for (const component of ['serverID', 'accountID', 'deviceID', 'generation']) {
+    assert.match(keyStore, new RegExp('public let ' + component + ': String'));
+  }
+  assert.match(keyStore, /keyByteCount = 32/);
+  assert.match(keyStore, /whenUnlockedThisDeviceOnly/);
+  assert.match(keyStore, /addGenericPasswordIfAbsent/);
+
+  assert.match(repository, /SELECT server_id, account_id, device_id, generation FROM sync_state/);
+  assert.match(repository, /\.migrating/);
+  assert.match(repository, /PRAGMA rekey =/);
+  assert.match(repository, /encryptedCopyReady/);
+  assert.match(repository, /beforePromotion/);
+
+  const checkpoint = repository.indexOf('PRAGMA wal_checkpoint(TRUNCATE)');
+  const fileDelete = repository.indexOf('removeDatabaseArtifacts(at: databaseURL)');
+  const keyDelete = repository.indexOf('keyStore.deleteKey(for: keyScope)');
+  assert.ok(checkpoint >= 0 && checkpoint < fileDelete && fileDelete < keyDelete);
+  assert.match(
+    binding,
+    /prepared\.credentials\.terminateLease\(cleanupLease\)[\s\S]{0,1600}try await prepared\.cleanupFailedRuntimeCreation\(cleanupIdentity\)/,
+    'the terminal credential tombstone must gate exact-identity partial database cleanup',
+  );
+
+  for (const phrase of ['WrongKey', 'CrashRetryable', 'Sidecars', 'UnprovenOwner']) {
+    assert.match(repositoryTests, new RegExp(phrase));
+  }
+  for (const phrase of ['IndependentUnlockedOnlyKey', 'DuplicateInsert', 'GenerationScoped']) {
+    assert.match(keyTests, new RegExp(phrase));
+  }
 });
 
 test('the hand-written core is separate from the generated contracts', () => {
@@ -153,7 +245,9 @@ test('every type the Swift references is declared somewhere in the tree', () => 
    * find those. */
   const PLATFORM = new Set([
     // modules
-    'Foundation', 'CryptoKit', 'XCTest', 'PackageDescription',
+    'Foundation', 'CryptoKit', 'Security', 'SQLCipher', 'Network', 'BackgroundTasks',
+    'OpenSSL',
+    'XCTest', 'PackageDescription',
     // the package's own modules, which are imported rather than declared
     ...Object.keys(TARGET_DIRS),
     // standard library
@@ -161,15 +255,39 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'Error', 'Equatable', 'Sendable', 'Codable', 'CaseIterable', 'CustomStringConvertible',
     'ExpressibleByArrayLiteral', 'RawRepresentable', 'Hashable', 'Comparable',
     'Character', 'Unicode', 'UTF8', 'Array', 'Dictionary', 'Set', 'Optional',
+    'Range', 'Substring',
     'Any', 'Self', 'Never', 'Void', 'Result', 'Scalar',
+    'Encoder', 'Decoder', 'Encodable', 'Decodable', 'CodingKey', 'DecodingError',
+    'CancellationError', 'CheckedContinuation', 'MainActor',
     // Foundation
-    'URL', 'JSONSerialization', 'NSNumber', 'NSString', 'Date',
+    'URL', 'URLComponents', 'URLQueryItem', 'URLRequest', 'URLResponse',
+    'HTTPURLResponse', 'URLError', 'URLSession', 'URLSessionConfiguration',
+    'URLSessionTask', 'URLSessionDataTask', 'URLSessionTaskDelegate', 'URLSessionDataDelegate',
+    'URLProtocol', 'ResponseDisposition', 'URLAuthenticationChallenge',
+    'AuthChallengeDisposition', 'URLCredential', 'NSURLAuthenticationMethodServerTrust',
+    'HTTPCookie', 'HTTPCookieStorage', 'URLCache', 'StoragePolicy', 'CharacterSet',
+    'JSONSerialization', 'JSONEncoder', 'JSONDecoder', 'NSNumber', 'NSString', 'NSDictionary',
+    'NSNull',
+    'Date', 'DateFormatter', 'TimeInterval', 'TimeZone', 'Locale', 'UUID', 'NSObject',
+    'NotificationCenter',
+    // Network path observation and iOS opportunistic background scheduling.
+    'NWPathMonitor',
+    'BGTaskScheduler', 'BGTask', 'BGAppRefreshTaskRequest', 'BGProcessingTaskRequest',
     /* Reached only by UserDefaultsKeyValueStore, which is the one file allowed to
      * know how the file-sync rows are stored. Every rule above it is written
      * against the KeyValueStore seam so it can be tested without a container. */
     'UserDefaults',
     // CryptoKit
-    'SHA256',
+    'SHA256', 'P256', 'Signing', 'ECDSASignature',
+    /* Security/CoreFoundation used by the device-local Keychain, Secure
+     * Enclave signing identity and URLSession server-trust delegate. */
+    'OSStatus', 'CFTypeRef', 'CFDictionary', 'CFString', 'CFData', 'CFError', 'Unmanaged',
+    'SecItemCopyMatching', 'SecItemUpdate', 'SecItemAdd', 'SecItemDelete',
+    'SecAccessControlCreateWithFlags',
+    'SecKey', 'SecKeyCreateRandomKey', 'SecKeyCopyAttributes', 'SecKeyCopyPublicKey',
+    'SecKeyCopyExternalRepresentation', 'SecKeyIsAlgorithmSupported', 'SecKeyCreateSignature',
+    'SecTrust', 'SecPolicyCreateSSL', 'SecTrustSetPolicies', 'SecTrustEvaluateWithError',
+    'SecTrustGetCertificateCount', 'SecTrustGetCertificateAtIndex', 'SecCertificateCopyData',
     /* ZephyrUI is the SwiftUI presentation layer. The product rules it
      * renders are Foundation/Combine-only so the macOS CI host can test them;
      * the views themselves are compiled but not run there, and they are the
@@ -186,18 +304,19 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'Slider', 'TextField', 'SecureField', 'List', 'Form', 'Section', 'Group',
     'HStack', 'VStack', 'Spacer', 'ForEach', 'ProgressView', 'EmptyView',
     'AnyView', 'NavigationView', 'NavigationLink', 'TabView', 'ToolbarItem',
-    'State', 'StateObject', 'Environment', 'Binding', 'ViewBuilder',
+    'State', 'StateObject', 'Environment', 'Binding', 'ViewBuilder', 'FocusState',
     /* The UIKit bridge behind canImport(UIKit): the interactive pop gesture
      * recognizer is re-enabled, never replaced, per MOBILE_EXPERIENCE.md. */
     'UIViewControllerRepresentable', 'UIViewController', 'UINavigationController',
+    'UIApplication',
     'Context',
     // more standard library / Foundation reached by the presentation layer
-    'Task', 'AnyHashable', 'WritableKeyPath', 'Identifiable', 'NSLock',
+    'Task', 'AnyHashable', 'WritableKeyPath', 'Identifiable', 'NSLock', 'DispatchQueue',
     /* Generic parameter names. The matcher reads `PageState<Value>` as a type
      * reference and there is no declaration syntax it can see for a type
      * parameter, so the one name in use is listed here rather than weakening
      * the check with a heuristic. */
-    'Value',
+    'Value', 'Element', 'T', 'Type',
     /* Darwin / POSIX, used by PosixSecurityScopedFileSystem.
      *
      * The iOS provider reaches the filesystem through syscalls rather than
@@ -207,13 +326,33 @@ test('every type the Swift references is declared somewhere in the tree', () => 
      * from the mode bits. Listed explicitly, like every other entry here, so a
      * genuinely missing type is still caught. */
     'Darwin',
-    'S_IFMT', 'S_IFLNK', 'S_IFDIR',
+    'S_IFMT', 'S_IFLNK', 'S_IFDIR', 'S_IFREG',
     'R_OK', 'W_OK',
-    'O_CREAT', 'O_EXCL', 'O_WRONLY', 'O_RDWR', 'O_RDONLY',
+    'O_CREAT', 'O_EXCL', 'O_WRONLY', 'O_RDWR', 'O_RDONLY', 'O_NOFOLLOW',
+    'O_CLOEXEC', 'O_NONBLOCK', 'O_TRUNC', 'O_DIRECTORY',
+    'AT_SYMLINK_NOFOLLOW', 'AT_REMOVEDIR', 'RENAME_EXCL', 'RENAME_NOFOLLOW_ANY',
+    'F_DUPFD_CLOEXEC', 'MAXNAMLEN',
     'EACCES', 'EPERM', 'EROFS', 'ENOENT', 'EEXIST', 'ENOSPC', 'EDQUOT',
+    'ELOOP',
     'EISDIR', 'ENOTDIR', 'ENOTEMPTY', 'EXDEV', 'EINTR',
     // Foundation and standard library reached by the same file
-    'FileManager', 'Int32', 'UInt64', 'AnyObject',
+    'FileManager', 'FileHandle', 'FileProtectionType', 'URLResourceValues',
+    'SecRandomCopyBytes',
+    'Int32', 'UInt64', 'AnyObject', 'OpaquePointer', 'UnsafeMutablePointer', 'CChar',
+    'UnsafeMutableRawPointer', 'UnsafeMutableRawBufferPointer', 'UnsafeRawBufferPointer',
+    // OpenSSL 3.6.3 C API used only behind KeychainMLKEMIdentityStore.
+    'ERR_clear_error', 'OPENSSL_cleanse',
+    'EVP_PKEY_CTX_new_from_name', 'EVP_PKEY_CTX_new_from_pkey', 'EVP_PKEY_CTX_free',
+    'EVP_PKEY_keygen_init', 'EVP_PKEY_keygen', 'EVP_PKEY_free',
+    'EVP_PKEY_get_octet_string_param', 'EVP_PKEY_fromdata_init', 'EVP_PKEY_fromdata',
+    'EVP_PKEY_encapsulate_init', 'EVP_PKEY_encapsulate',
+    'EVP_PKEY_decapsulate_init', 'EVP_PKEY_decapsulate',
+    'EVP_PKEY_KEYPAIR', 'EVP_PKEY_PUBLIC_KEY',
+    'OSSL_PARAM_construct_octet_string', 'OSSL_PARAM_construct_end',
+    // SQLite3 C module used by the durable, actor-isolated sync repository.
+    'SQLITE_OPEN_CREATE', 'SQLITE_OPEN_READWRITE', 'SQLITE_OPEN_FULLMUTEX',
+    'SQLITE_OK', 'SQLITE_DONE', 'SQLITE_ROW',
+    'SQLITE_INTEGER', 'SQLITE_FLOAT', 'SQLITE_TEXT', 'SQLITE_BLOB',
     /* #filePath / #line default arguments in the XCTest helpers, so a failure is
      * reported at the caller rather than inside the helper. */
     'StaticString', 'UInt',

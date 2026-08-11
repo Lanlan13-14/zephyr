@@ -1,18 +1,196 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { createDatabase } = require('./sqlite-driver');
 const { getAppVersion } = require('./version');
 const { DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, DEFAULT_ZEPHYR_SYSTEM_PROMPT, DEFAULT_ZEPHYR_SKILLS } = require('./ai-defaults');
 const secretCrypto = require('./secret-crypto');
+const { ensureWebDavSensitiveAttemptSchema } = require('./webdav-sensitive-attempt-store');
+const { ensureAiHistorySchema } = require('./ai-history-service');
 
 const DATA_DIR = process.env.ZEPHYR_DATA_DIR ? path.resolve(process.env.ZEPHYR_DATA_DIR) : path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'zephyr.db');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const CLIENT_TOKEN_KEY_FILE = path.join(DATA_DIR, 'crypto', 'client-token-keys.json');
 
 let db;
 const APP_VERSION = getAppVersion();
+
+function decodeComparableSecret(value) {
+    const text = String(value || '');
+    if (!text) return [];
+    const candidates = [Buffer.from(text, 'utf8')];
+    if (/^[0-9a-f]{64}$/i.test(text)) candidates.push(Buffer.from(text, 'hex'));
+    if (/^[A-Za-z0-9_-]{43}$/.test(text)) candidates.push(Buffer.from(text, 'base64url'));
+    if (/^[A-Za-z0-9+/]{43}=$/.test(text)) candidates.push(Buffer.from(text, 'base64'));
+    return candidates;
+}
+
+class ClientTokenKeyring {
+    constructor(options = {}) {
+        this.filePath = path.resolve(options.filePath || process.env.ZEPHYR_CLIENT_TOKEN_KEY_FILE || CLIENT_TOKEN_KEY_FILE);
+        this.fs = options.fs || fs;
+        this.randomBytes = options.randomBytes || crypto.randomBytes;
+        this.clock = options.now || Date.now;
+        this.cached = null;
+    }
+
+    _validateKey(raw) {
+        const key = Buffer.from(String(raw || ''), 'base64url');
+        if (key.length !== 32 || key.toString('base64url') !== String(raw || '')) {
+            throw new Error('Client Token keyring contains an invalid key');
+        }
+        return key;
+    }
+
+    _forbiddenSecrets() {
+        return [
+            process.env.ENCRYPTION_KEY,
+            process.env.WEBDAV_CREDENTIAL_KEY,
+            process.env.WEBDAV_BACKUP_KEY,
+            process.env.ZEPHYR_WEBDAV_CREDENTIAL_KEY,
+            process.env.ZEPHYR_WEBDAV_BACKUP_KEY,
+        ].flatMap(decodeComparableSecret);
+    }
+
+    _assertDedicated(key) {
+        for (const other of this._forbiddenSecrets()) {
+            if (other.length === key.length && crypto.timingSafeEqual(other, key)) {
+                throw new Error('Client Token key must not reuse a general or WebDAV encryption key');
+            }
+        }
+    }
+
+    _normalise(payload) {
+        if (payload?.version !== 1 || !Array.isArray(payload.keys) || !payload.keys.length) {
+            throw new Error('Client Token keyring format is invalid');
+        }
+        const seen = new Set();
+        const keys = payload.keys.map((entry) => {
+            const id = String(entry?.id || '');
+            if (!/^[A-Za-z0-9_-]{22}$/.test(id) || seen.has(id)) {
+                throw new Error('Client Token keyring key id is invalid');
+            }
+            seen.add(id);
+            const key = this._validateKey(entry.key);
+            this._assertDedicated(key);
+            return {
+                id,
+                key,
+                createdAt: Number(entry.createdAt || 0),
+            };
+        });
+        const currentKeyId = String(payload.currentKeyId || '');
+        if (!keys.some((entry) => entry.id === currentKeyId)) {
+            throw new Error('Client Token keyring current key is missing');
+        }
+        return { version: 1, currentKeyId, keys };
+    }
+
+    _serialise(value) {
+        return {
+            version: 1,
+            purpose: 'zephyr-client-token-aead-only',
+            currentKeyId: value.currentKeyId,
+            keys: value.keys.map((entry) => ({
+                id: entry.id,
+                key: Buffer.from(entry.key).toString('base64url'),
+                createdAt: entry.createdAt,
+            })),
+        };
+    }
+
+    _syncDirectory(directory) {
+        let descriptor = null;
+        try {
+            descriptor = this.fs.openSync(directory, 'r');
+            this.fs.fsyncSync(descriptor);
+        } catch {
+            // Directory fsync is not supported on every Windows filesystem.
+        } finally {
+            if (descriptor !== null) {
+                try { this.fs.closeSync(descriptor); } catch {}
+            }
+        }
+    }
+
+    _write(value) {
+        const directory = path.dirname(this.filePath);
+        const temporary = path.join(directory, `.${path.basename(this.filePath)}.tmp-${process.pid}-${this.randomBytes(8).toString('hex')}`);
+        let descriptor = null;
+        try {
+            this.fs.mkdirSync(directory, { recursive: true });
+            descriptor = this.fs.openSync(temporary, 'wx', 0o600);
+            this.fs.writeFileSync(descriptor, `${JSON.stringify(this._serialise(value), null, 2)}\n`, 'utf8');
+            this.fs.fsyncSync(descriptor);
+            this.fs.closeSync(descriptor);
+            descriptor = null;
+            this.fs.renameSync(temporary, this.filePath);
+            try { this.fs.chmodSync(this.filePath, 0o600); } catch {}
+            this._syncDirectory(directory);
+        } catch (error) {
+            if (descriptor !== null) {
+                try { this.fs.closeSync(descriptor); } catch {}
+            }
+            try { this.fs.unlinkSync(temporary); } catch {}
+            throw error;
+        }
+    }
+
+    ensure() {
+        if (this.cached) return this.cached;
+        if (this.fs.existsSync(this.filePath)) {
+            this.cached = this._normalise(JSON.parse(this.fs.readFileSync(this.filePath, 'utf8')));
+            try { this.fs.chmodSync(this.filePath, 0o600); } catch {}
+            return this.cached;
+        }
+        const key = this.randomBytes(32);
+        this._assertDedicated(key);
+        const id = this.randomBytes(16).toString('base64url');
+        const created = { version: 1, currentKeyId: id, keys: [{ id, key, createdAt: Number(this.clock()) }] };
+        this._write(created);
+        this.cached = created;
+        return this.cached;
+    }
+
+    current() {
+        const value = this.ensure();
+        return value.keys.find((entry) => entry.id === value.currentKeyId);
+    }
+
+    get(keyId) {
+        return this.ensure().keys.find((entry) => entry.id === String(keyId || '')) || null;
+    }
+
+    all() {
+        return this.ensure().keys.map((entry) => ({ ...entry, key: Buffer.from(entry.key) }));
+    }
+
+    rotate() {
+        const value = this.ensure();
+        const key = this.randomBytes(32);
+        this._assertDedicated(key);
+        const id = this.randomBytes(16).toString('base64url');
+        const next = {
+            version: 1,
+            currentKeyId: id,
+            keys: [...value.keys, { id, key, createdAt: Number(this.clock()) }],
+        };
+        this._write(next);
+        this.cached = next;
+        return this.current();
+    }
+
+    reset() {
+        this.cached = null;
+    }
+}
+
+function createClientTokenKeyring(options = {}) {
+    return new ClientTokenKeyring(options);
+}
 
 function now() { return Date.now(); }
 function json(value, fallback) { try { return JSON.parse(value || ''); } catch { return fallback; } }
@@ -415,6 +593,31 @@ function init({ hashPassword }) {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (user_id, key)
         );
+        CREATE TABLE IF NOT EXISTS user_setting_sections (
+            user_id TEXT NOT NULL,
+            section_key TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL,
+            reset_at INTEGER,
+            PRIMARY KEY (user_id, section_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_setting_sections_active
+            ON user_setting_sections(user_id, reset_at, section_key);
+        CREATE TABLE IF NOT EXISTS snippets (
+            owner_user_id TEXT NOT NULL,
+            snippet_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            command TEXT NOT NULL,
+            group_name TEXT NOT NULL DEFAULT '',
+            auto_run INTEGER NOT NULL DEFAULT 0,
+            revision INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            deleted_at INTEGER,
+            PRIMARY KEY (owner_user_id, snippet_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_snippets_owner_active
+            ON snippets(owner_user_id, deleted_at, updated_at DESC);
         CREATE TABLE IF NOT EXISTS notes (
             note_id TEXT PRIMARY KEY,
             owner_user_id TEXT NOT NULL,
@@ -446,7 +649,28 @@ function init({ hashPassword }) {
             created_at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_deeplink_tokens_user ON deeplink_tokens(user_id, expires_at);
+        CREATE TABLE IF NOT EXISTS encrypted_client_tokens (
+            id TEXT PRIMARY KEY,
+            owner_user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            secret_ciphertext TEXT NOT NULL,
+            secret_digest BLOB,
+            key_id TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            last_used_at INTEGER,
+            deleted_at INTEGER,
+            CHECK (revision >= 1),
+            CHECK (length(name) BETWEEN 1 AND 80)
+        );
+        CREATE INDEX IF NOT EXISTS idx_encrypted_client_tokens_owner
+            ON encrypted_client_tokens(owner_user_id, deleted_at, updated_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_encrypted_client_tokens_active_digest
+            ON encrypted_client_tokens(secret_digest) WHERE deleted_at IS NULL;
     `);
+    ensureWebDavSensitiveAttemptSchema(db);
+    ensureAiHistorySchema(db);
 
     addColumnIfMissing('users', 'email', 'TEXT');
     addColumnIfMissing('users', 'totpEnabled', 'INTEGER DEFAULT 0');
@@ -769,6 +993,26 @@ function createUser({ username, passwordHash, email = '', role = 'user', status 
         .run(String(username), String(passwordHash), defaultPassword ? 1 : 0, ts, ts, String(email || ''), userId, role === 'admin' ? 'admin' : 'user', ['active', 'invited', 'suspended'].includes(status) ? status : 'active', isSuperAdmin ? 1 : 0);
     return getUserById(userId);
 }
+function archiveDeletedUsername(userId) {
+    const old = getUserById(userId);
+    if (!old || old.status !== 'deleted') return null;
+    const archivedUsername = `${old.username}#deleted:${old.userId}`;
+    const archivedTotpSecret = old.totpSecret
+        ? encryptSecretField(old.totpSecret, 'user', archivedUsername, 'totpSecret')
+        : null;
+    const changed = db.prepare("UPDATE users SET username=?, totpSecret=?, updatedAt=? WHERE userId=? AND status='deleted'")
+        .run(archivedUsername, archivedTotpSecret, now(), old.userId).changes;
+    if (!changed) return null;
+
+    // Username remains the lookup key for these legacy credential paths. Move
+    // them with the tombstoned identity so a same-name account cannot inherit
+    // old passkeys, reset codes, rollback tokens, or session fallbacks.
+    db.prepare('UPDATE passkeys SET username=?, userId=? WHERE username=?').run(archivedUsername, old.userId, old.username);
+    db.prepare('UPDATE password_reset_codes SET username=?, userId=? WHERE username=?').run(archivedUsername, old.userId, old.username);
+    db.prepare('UPDATE password_rollback_tokens SET username=? WHERE userId=?').run(archivedUsername, old.userId);
+    db.prepare('UPDATE auth_sessions SET username=? WHERE user_id=?').run(archivedUsername, old.userId);
+    return getUserById(old.userId);
+}
 function updateUser(username, values) { const old = getUser(username); if (!old) return null; const next = { ...old, ...values, updatedAt: now(), defaultPassword: values.defaultPassword ?? old.defaultPassword ? 1 : 0, totpEnabled: values.totpEnabled ?? old.totpEnabled ? 1 : 0 }; const safe = encryptUser(next); db.prepare('UPDATE users SET passwordHash=@passwordHash, defaultPassword=@defaultPassword, updatedAt=@updatedAt, email=@email, totpEnabled=@totpEnabled, totpSecret=@totpSecret, failedLoginCount=@failedLoginCount, lockedUntil=@lockedUntil WHERE username=@username').run({ ...safe, email: safe.email || '', totpSecret: safe.totpSecret || null, failedLoginCount: Number(safe.failedLoginCount) || 0, lockedUntil: safe.lockedUntil || null }); return getUser(username); }
 function updateUserById(userId, values) {
     const old = getUserById(userId);
@@ -948,4 +1192,4 @@ function deletePasskey(username, id) { db.prepare('DELETE FROM passkeys WHERE us
 function rawDb() { return db; }
 function close() { if (db) { db.close(); db = null; } }
 
-module.exports = { init, ensureAiGuidanceDefaults, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, recordResetCodeAttempt, invalidateResetCodesForUser, createPasswordRollbackToken, findPasswordRollbackTokenByHash, markPasswordRollbackTokenUsed, invalidatePasswordRollbackTokensForUser, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };
+module.exports = { init, ensureAiGuidanceDefaults, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, archiveDeletedUsername, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, recordResetCodeAttempt, invalidateResetCodesForUser, createPasswordRollbackToken, findPasswordRollbackTokenByHash, markPasswordRollbackTokenUsed, invalidatePasswordRollbackTokensForUser, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close, CLIENT_TOKEN_KEY_FILE, ClientTokenKeyring, createClientTokenKeyring };

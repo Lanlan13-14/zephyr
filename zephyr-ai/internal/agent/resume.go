@@ -61,6 +61,8 @@ type ResumeState struct {
 	// MCP servers to re-attach.
 	MCPServers          json.RawMessage `json:"mcpServers,omitempty"`
 	Context             json.RawMessage `json:"context,omitempty"`
+	DatabaseGeneration  string          `json:"databaseGeneration"`
+	RunNonce            string          `json:"runNonce"`
 	ContextWindowTokens int             `json:"contextWindowTokens,omitempty"`
 	OutputReserveTokens int             `json:"outputReserveTokens,omitempty"`
 

@@ -353,16 +353,9 @@ pub fn default_share_path() -> (String, String) {
     }
 
     // Other / unknown targets
-    #[cfg(not(any(
-        target_os = "windows",
-        target_os = "macos",
-        target_os = "linux"
-    )))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let tmp = std::env::temp_dir();
-        (
-            tmp.to_string_lossy().to_string(),
-            "Temp".into(),
-        )
+        (tmp.to_string_lossy().to_string(), "Temp".into())
     }
 }

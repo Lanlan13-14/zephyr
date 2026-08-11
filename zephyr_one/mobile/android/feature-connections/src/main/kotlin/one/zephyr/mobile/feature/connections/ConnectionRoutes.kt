@@ -1,6 +1,7 @@
 package one.zephyr.mobile.feature.connections
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -87,6 +88,12 @@ fun ConnectionEditorRoute(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsState()
+
+    // The route leaves composition when the app lock covers it, the process backgrounds or the
+    // account graph is revoked. Do not let its ViewModel retain typed password/private-key buffers.
+    DisposableEffect(viewModel) {
+        onDispose(viewModel::clearSecretBuffers)
+    }
 
     CollectMessages(viewModel.message, onMessage)
 

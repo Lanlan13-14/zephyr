@@ -69,12 +69,27 @@ jobs:
           # and the panic text is far less obvious than this failure would be.
           test -d desktop-runtime
           test -f desktop-runtime/runtime.json
-      # FreeRDP is a hard build dependency of the desktop shell: src-tauri links
-      # the C shim in-process and there is no WASM fallback in One.
-      - name: Install FreeRDP dev files
+          node scripts/verify-rdp-packaging.mjs staged zephyr-core ../public
+      - name: Cache pinned patched FreeRDP
+        uses: actions/cache@v4
+        with:
+          path: zephyr_one/native/freerdp-core/.freerdp-dist
+          key: freerdp-3.30.0-patched-${{ runner.os }}-${{ hashFiles('zephyr_one/native/freerdp-core/scripts/build-freerdp.sh', 'zephyr_one/native/freerdp-core/patches/**') }}
+      # CI compiles the same pinned static FreeRDP used by release packages.
+      # System freerdp3-dev is intentionally not accepted: it lacks Zephyr's
+      # pre-allocation cliprdr bound even when its ABI major is correct.
+      - name: Build and verify pinned patched FreeRDP 3
         run: |
           sudo apt-get update
-          sudo apt-get install -y freerdp3-dev
+          sudo apt-get install -y cmake ninja-build pkg-config libssl-dev zlib1g-dev libcjson-dev libasound2-dev
+          sh native/freerdp-core/scripts/build-freerdp.sh
+          python3 scripts/resolve-rdp-pkgconfig.py
+          echo 'ZEPHYR_ONE_REQUIRE_PATCHED_FREERDP=1' >> "$GITHUB_ENV"
+          node scripts/verify-rdp-packaging.mjs patched-install native/freerdp-core/.freerdp-dist/install
+      - name: Verify pinned FreeRDP pkg-config modules
+        run: |
+          "$PKG_CONFIG" --atleast-version=3.0.0 freerdp3 freerdp-client3 winpr3
+          "$PKG_CONFIG" --modversion freerdp3 freerdp-client3 winpr3
       # C-level tests first: they link the shim directly, so a failure here points
       # at the C ABI rather than at the Rust binding layer.
       - name: Test FreeRDP C core
@@ -142,30 +157,46 @@ jobs:
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Install WebView2 (usually preinstalled on windows-2022)
         shell: pwsh
         run: |
           Write-Host "WebView2 / MSVC toolchain assumed available on runner"
-      # FreeRDP for the in-process RDP engine. Cached because vcpkg builds it
-      # from source, which dominates this job's runtime on a cold cache.
-      - name: Cache vcpkg FreeRDP
+      # vcpkg supplies only third-party static dependencies. FreeRDP itself is
+      # the pinned, source-verified 3.30.0 build below.
+      - name: Cache pinned FreeRDP and vcpkg dependencies
         uses: actions/cache@v4
         with:
           path: |
             C:/vcpkg/installed
             C:/vcpkg/packages
-          key: vcpkg-freerdp-${{ runner.os }}-${{ hashFiles('zephyr_one/native/freerdp-core/vcpkg.json') }}
-      - name: Install FreeRDP via vcpkg
+            zephyr_one/native/freerdp-core/.freerdp-dist
+          key: freerdp-3.30.0-patched-${{ runner.os }}-${{ hashFiles('zephyr_one/native/freerdp-core/vcpkg.json', 'zephyr_one/native/freerdp-core/scripts/build-freerdp.sh', 'zephyr_one/native/freerdp-core/patches/**') }}
+      - name: Install static FreeRDP dependencies via vcpkg
         shell: pwsh
         run: |
-          vcpkg install freerdp:x64-windows pkgconf:x64-windows
-          # build.rs discovers FreeRDP through pkg-config, so point it at the
-          # vcpkg .pc files and put pkgconf on PATH.
-          $root = "C:/vcpkg/installed/x64-windows"
-          "PKG_CONFIG_PATH=$root/lib/pkgconfig" >> $env:GITHUB_ENV
-          "PATH=$root/tools/pkgconf;$env:PATH" >> $env:GITHUB_ENV
-          # The DLLs must sit next to the exe for the bundled app to start.
-          "FREERDP_BIN_DIR=$root/bin" >> $env:GITHUB_ENV
+          vcpkg install --x-manifest-root=native/freerdp-core --triplet x64-windows-static-md
+          "VCPKG_INSTALLED_DIR=C:/vcpkg/installed" >> $env:GITHUB_ENV
+          "VCPKG_DEFAULT_TRIPLET=x64-windows-static-md" >> $env:GITHUB_ENV
+      - name: Build and verify pinned patched FreeRDP 3
+        shell: bash
+        env:
+          ZEPHYR_FREERDP_CMAKE_ARGS: >-
+            -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
+        run: |
+          sh native/freerdp-core/scripts/build-freerdp.sh
+          python3 scripts/resolve-rdp-pkgconfig.py
+          echo 'ZEPHYR_ONE_REQUIRE_PATCHED_FREERDP=1' >> "$GITHUB_ENV"
+          node scripts/verify-rdp-packaging.mjs patched-install native/freerdp-core/.freerdp-dist/install
+      - name: Verify pinned FreeRDP pkg-config modules
+        shell: pwsh
+        run: |
+          & $env:PKG_CONFIG --atleast-version=3.0.0 freerdp3 freerdp-client3 winpr3
+          if ($LASTEXITCODE -ne 0) { throw "pinned FreeRDP 3 pkg-config contract failed" }
+          & $env:PKG_CONFIG --modversion freerdp3 freerdp-client3 winpr3
       - name: Install npm deps
         shell: pwsh
         run: npm install
@@ -182,19 +213,29 @@ jobs:
         shell: pwsh
         # stage:core already done; avoid double npm install in pretauri
         run: npx tauri build
-      # A dynamically linked FreeRDP is useless to a user if its DLLs are not
-      # beside the exe: the app would install and then fail to start with a
-      # missing-DLL dialog. The collect step below zips `*.dll` from this
-      # directory, so they must land here before it runs.
-      - name: Stage FreeRDP runtime DLLs
+      # Static FreeRDP must leave no FreeRDP/WinPR DLL import or payload. This
+      # catches an accidental reversion to vcpkg's unpatched dynamic port.
+      - name: Verify raw Windows static FreeRDP payload
         shell: pwsh
         run: |
           $target = "src-tauri/target/release"
           if (-not (Test-Path $target)) { throw "no release dir; tauri build did not run" }
-          $dlls = Get-ChildItem "$env:FREERDP_BIN_DIR/*.dll" -ErrorAction Stop
-          if ($dlls.Count -eq 0) { throw "FREERDP_BIN_DIR held no DLLs: $env:FREERDP_BIN_DIR" }
-          Copy-Item $dlls.FullName $target -Force
-          Write-Host "staged $($dlls.Count) FreeRDP DLLs into $target"
+          node scripts/verify-rdp-packaging.mjs windows-static "$target/zephyr-one.exe" $target
+      - name: Verify MSI preserves the static FreeRDP contract
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi" -ErrorAction Stop | Select-Object -First 1
+          if (-not $msi) { throw "Tauri produced no MSI to inspect" }
+          $extract = Join-Path (Resolve-Path .) "dist-msi-contract"
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          $arguments = @('/a', "`"$($msi.FullName)`"", '/qn', "TARGETDIR=`"$extract`"")
+          $process = Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "MSI administrative extraction failed with exit code $($process.ExitCode)" }
+          $exe = Get-ChildItem $extract -Recurse -File -Filter "*.exe" |
+            Where-Object { $_.BaseName -match '^zephyr(?:-| )one$' } |
+            Select-Object -First 1
+          if (-not $exe) { throw "MSI extraction did not contain the Zephyr One executable: $extract" }
+          node scripts/verify-rdp-packaging.mjs windows-static $exe.FullName $exe.Directory.FullName
       - name: Collect Windows artifacts
         shell: bash
         run: |
@@ -251,40 +292,59 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - name: Install FreeRDP
+      - name: Cache pinned patched FreeRDP
+        uses: actions/cache@v4
+        with:
+          path: zephyr_one/native/freerdp-core/.freerdp-dist
+          key: freerdp-3.30.0-patched-${{ runner.os }}-${{ hashFiles('zephyr_one/native/freerdp-core/scripts/build-freerdp.sh', 'zephyr_one/native/freerdp-core/patches/**') }}
+      - name: Install pinned FreeRDP build dependencies
         run: |
-          brew install freerdp pkg-config
-          # Homebrew keeps freerdp keg-only on some versions; make its .pc files
-          # discoverable either way rather than assuming the default prefix.
-          echo "PKG_CONFIG_PATH=$(brew --prefix freerdp)/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+          brew install cmake ninja pkg-config dylibbundler openssl@3 cjson
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix cjson)/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+      - name: Build and verify pinned patched FreeRDP 3
+        run: |
+          export ZEPHYR_FREERDP_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) -DCMAKE_PREFIX_PATH=$(brew --prefix cjson)"
+          sh native/freerdp-core/scripts/build-freerdp.sh
+          python3 scripts/resolve-rdp-pkgconfig.py
+          echo 'ZEPHYR_ONE_REQUIRE_PATCHED_FREERDP=1' >> "$GITHUB_ENV"
+          node scripts/verify-rdp-packaging.mjs patched-install native/freerdp-core/.freerdp-dist/install
+      - name: Verify pinned FreeRDP pkg-config modules
+        run: |
+          "$PKG_CONFIG" --atleast-version=3.0.0 freerdp3 freerdp-client3 winpr3
+          "$PKG_CONFIG" --modversion freerdp3 freerdp-client3 winpr3
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
       - run: npm run build
       - name: Tauri build macOS
         run: npx tauri build
+      - name: Bundle and verify macOS FreeRDP dependency closure
+        run: |
+          set -eu
+          app_path=$(find src-tauri/target/release/bundle -maxdepth 4 -name '*.app' -type d | head -n 1)
+          [ -n "$app_path" ] || { echo "ERROR: Tauri produced no macOS app bundle" >&2; exit 1; }
+          executable=$(find "$app_path/Contents/MacOS" -maxdepth 1 -type f | head -n 1)
+          [ -n "$executable" ] || { echo "ERROR: app bundle has no main executable" >&2; exit 1; }
+          mkdir -p "$app_path/Contents/Frameworks"
+          dylibbundler -od -b -x "$executable" \
+            -d "$app_path/Contents/Frameworks/" \
+            -p '@executable_path/../Frameworks/'
+          codesign --force --deep --sign - "$app_path"
+          node scripts/verify-rdp-packaging.mjs macos-static "$app_path"
       - name: Collect macOS artifacts
         run: |
           mkdir -p dist-out
           find src-tauri/target/release/bundle -type f \( -name '*.dmg' -o -name '*.app' \) 2>/dev/null | head -50 || true
           find src-tauri/target -type d -name '*.app' 2>/dev/null | head -20 || true
-          # DMG
-          cp -v src-tauri/target/release/bundle/dmg/*.dmg dist-out/ 2>/dev/null || true
-          # App bundle zip
+          # The original Tauri DMG predates dylib relocation. Build both release
+          # artifacts from the verified app instead of publishing that stale DMG.
           app_path=$(find src-tauri/target/release/bundle -maxdepth 3 -name '*.app' -type d | head -n 1 || true)
           if [ -n "$app_path" ]; then
             app_name=$(basename "$app_path")
             (cd "$(dirname "$app_path")" && zip -r "$OLDPWD/dist-out/zephyr-one-macos-${{ github.event.inputs.tag }}.zip" "$app_name")
+            hdiutil create -volname "Zephyr One" -srcfolder "$app_path" -ov -format UDZO \
+              "dist-out/zephyr-one-macos-${{ github.event.inputs.tag }}.dmg"
           fi
-          # rename dmg if generic
-          for f in dist-out/*.dmg; do
-            [ -f "$f" ] || continue
-            base=$(basename "$f")
-            case "$base" in
-              zephyr-one-*) ;;
-              *) mv "$f" "dist-out/zephyr-one-macos-${{ github.event.inputs.tag }}.dmg" 2>/dev/null || true ;;
-            esac
-          done
           ls -la dist-out || true
       - uses: actions/upload-artifact@v4
         with:
@@ -304,14 +364,27 @@ jobs:
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
+      - name: Cache pinned patched FreeRDP
+        uses: actions/cache@v4
+        with:
+          path: zephyr_one/native/freerdp-core/.freerdp-dist
+          key: freerdp-3.30.0-patched-${{ runner.os }}-${{ hashFiles('zephyr_one/native/freerdp-core/scripts/build-freerdp.sh', 'zephyr_one/native/freerdp-core/patches/**') }}
       - name: Install Linux deps
         working-directory: .
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
-          # FreeRDP is a hard dependency of the shell, not an optional extra:
-          # src-tauri links the C shim and One has no WASM RDP fallback.
-          sudo apt-get install -y freerdp3-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev \
+            cmake ninja-build pkg-config libssl-dev zlib1g-dev libcjson-dev libasound2-dev rpm
+      - name: Build and verify pinned patched FreeRDP 3
+        run: |
+          sh native/freerdp-core/scripts/build-freerdp.sh
+          python3 scripts/resolve-rdp-pkgconfig.py
+          echo 'ZEPHYR_ONE_REQUIRE_PATCHED_FREERDP=1' >> "$GITHUB_ENV"
+          node scripts/verify-rdp-packaging.mjs patched-install native/freerdp-core/.freerdp-dist/install
+      - name: Verify pinned FreeRDP pkg-config modules
+        run: |
+          "$PKG_CONFIG" --atleast-version=3.0.0 freerdp3 freerdp-client3 winpr3
+          "$PKG_CONFIG" --modversion freerdp3 freerdp-client3 winpr3
       - run: npm install
       - run: npm run stage:core
       - run: node scripts/stage-desktop-runtime.mjs
@@ -320,12 +393,8 @@ jobs:
         run: |
           # Full compile always; AppImage's linuxdeploy often fails on GH runners.
           npx tauri build --bundles deb,rpm
-          # Keep the raw binary as portable fallback
-          mkdir -p dist-out
-          if [ -f src-tauri/target/release/zephyr-one ]; then
-            cp -v src-tauri/target/release/zephyr-one "dist-out/zephyr-one-linux-x64-${{ github.event.inputs.tag }}"
-            chmod +x "dist-out/zephyr-one-linux-x64-${{ github.event.inputs.tag }}"
-          fi
+      - name: Verify Linux native imports and package dependencies
+        run: node scripts/verify-rdp-packaging.mjs linux-static src-tauri/target/release/zephyr-one src-tauri/target/release/bundle
       - name: Collect Linux artifacts
         run: |
           mkdir -p dist-out
@@ -357,9 +426,6 @@ jobs:
             -name '*.msi' -o -name '*.exe' -o -name '*.zip' -o \
             -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' \
           \) -exec cp -v {} dist-one/ \; || true
-          # Linux also ships a bare portable binary with no extension.
-          find release-artifacts -type f -name 'zephyr-one-linux-x64-*' \
-            -exec cp -v {} dist-one/ \; || true
           ls -la dist-one || true
           test "$(find dist-one -type f | wc -l)" -gt 0
       - uses: softprops/action-gh-release@v2
@@ -376,7 +442,7 @@ jobs:
             |---|---|
             | Windows | MSI / NSIS / portable zip |
             | macOS | DMG / app zip |
-            | Linux | deb / rpm / portable binary |
+            | Linux | deb / rpm |
 
             Android and iOS are **not** part of Zephyr One. The Tauri mobile
             path has been removed from this repository: iOS cannot spawn the

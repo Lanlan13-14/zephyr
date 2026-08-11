@@ -52,6 +52,7 @@ type Server struct {
 	mu       sync.Mutex
 	tickets  map[string]*runTicket
 	cancels  map[string]context.CancelFunc
+	runDone  map[string]chan struct{}
 	emitters map[string]*sseHub
 }
 
@@ -86,6 +87,7 @@ func New(cfg config.Config, store *session.Store, log *slog.Logger) *Server {
 		captures: agent.NewCaptureStore(filepath.Join(os.TempDir(), "zephyr-ai-captures")),
 		tickets:  make(map[string]*runTicket),
 		cancels:  make(map[string]context.CancelFunc),
+		runDone:  make(map[string]chan struct{}),
 		emitters: make(map[string]*sseHub),
 	}
 }
@@ -93,6 +95,10 @@ func New(cfg config.Config, store *session.Store, log *slog.Logger) *Server {
 func (s *Server) Close() {
 	if s.captures != nil {
 		s.captures.Clear()
+	}
+	if s.archive != nil {
+		_ = s.archive.Close()
+		s.archive = nil
 	}
 }
 
@@ -140,18 +146,19 @@ func (s *Server) checkAdmin(r *http.Request) bool {
 }
 
 type createSessionReq struct {
-	UserID string         `json:"userId"`
-	Title  string         `json:"title"`
-	Meta   map[string]any `json:"metadata"`
+	UserID             string         `json:"userId"`
+	DatabaseGeneration string         `json:"databaseGeneration"`
+	Title              string         `json:"title"`
+	Meta               map[string]any `json:"metadata"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req createSessionReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
-		writeJSON(w, 400, map[string]any{"ok": false, "error": "userId required"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" || req.DatabaseGeneration == "" {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": "userId and databaseGeneration required"})
 		return
 	}
-	sess, err := s.store.CreateSession(req.UserID, req.Title, req.Meta)
+	sess, err := s.store.CreateSession(req.UserID, req.Title, req.Meta, req.DatabaseGeneration)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -161,11 +168,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("userId")
-	if userID == "" {
-		writeJSON(w, 400, map[string]any{"ok": false, "error": "userId required"})
+	databaseGeneration := r.URL.Query().Get("databaseGeneration")
+	if userID == "" || databaseGeneration == "" {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": "userId and databaseGeneration required"})
 		return
 	}
-	list, err := s.store.ListSessions(userID, 50)
+	list, err := s.store.ListSessions(userID, 50, databaseGeneration)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -175,8 +183,13 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("userId")
+	databaseGeneration := r.URL.Query().Get("databaseGeneration")
 	id := r.PathValue("id")
-	sess, err := s.store.GetSession(userID, id)
+	if userID == "" || databaseGeneration == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "userId and databaseGeneration required"})
+		return
+	}
+	sess, err := s.store.GetSession(userID, id, databaseGeneration)
 	if err != nil {
 		writeJSON(w, 404, map[string]any{"ok": false, "error": "not_found"})
 		return
@@ -186,11 +199,12 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "user_id_required"})
+	databaseGeneration := strings.TrimSpace(r.URL.Query().Get("databaseGeneration"))
+	if userID == "" || databaseGeneration == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "user_id_and_database_generation_required"})
 		return
 	}
-	usage, err := s.store.SessionUsage(userID, r.PathValue("id"))
+	usage, err := s.store.SessionUsage(userID, r.PathValue("id"), databaseGeneration)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not_found"})
 		return
@@ -200,8 +214,13 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("userId")
+	databaseGeneration := r.URL.Query().Get("databaseGeneration")
 	id := r.PathValue("id")
-	if err := s.store.ValidateUserSession(userID, id); err != nil {
+	if userID == "" || databaseGeneration == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "userId and databaseGeneration required"})
+		return
+	}
+	if err := s.store.ValidateUserSession(userID, id, databaseGeneration); err != nil {
 		writeJSON(w, 404, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -233,6 +252,7 @@ type startRunReq struct {
 	Model              string             `json:"model"`
 	Message            string             `json:"message"`
 	Messages           []provider.Message `json:"messages,omitempty"` // optional multi-part user content
+	BootstrapMessages  []provider.Message `json:"bootstrapMessages,omitempty"`
 	Options            map[string]any     `json:"options"`
 	MaxSteps           int                `json:"maxSteps"`
 	Permission         permission.Policy  `json:"permission"`
@@ -242,6 +262,8 @@ type startRunReq struct {
 	SystemCompose      compose.Input      `json:"systemCompose"`
 	ContextJSON        json.RawMessage    `json:"context"`
 	MCPServers         []mcp.ServerConfig `json:"mcpServers,omitempty"`
+	DatabaseGeneration string             `json:"databaseGeneration"`
+	RunNonce           string             `json:"runNonce"`
 	// Quota limits (0 = unlimited)
 	HourlyLimit         int `json:"hourlyLimit"`
 	DailyLimit          int `json:"dailyLimit"`
@@ -255,13 +277,24 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"ok": false, "error": "bad json: " + err.Error()})
 		return
 	}
-	if req.UserID == "" || req.SessionID == "" {
-		writeJSON(w, 400, map[string]any{"ok": false, "error": "userId and sessionId required"})
+	if req.UserID == "" || req.SessionID == "" || req.DatabaseGeneration == "" || req.RunNonce == "" {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": "userId, sessionId, databaseGeneration and runNonce required"})
 		return
 	}
-	if err := s.store.ValidateUserSession(req.UserID, req.SessionID); err != nil {
+	if err := s.store.ValidateUserSession(req.UserID, req.SessionID, req.DatabaseGeneration); err != nil {
 		writeJSON(w, 404, map[string]any{"ok": false, "error": err.Error()})
 		return
+	}
+	// Canonical history is imported through a distinct, insert-if-empty seam.
+	// The session store revalidates owner, roles and the absence of parts/tool
+	// state so the provider tail below cannot accidentally become a sync path.
+	if len(req.BootstrapMessages) > 0 {
+		if _, err := s.store.BootstrapMessages(req.UserID, req.SessionID, req.BootstrapMessages); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"ok": false, "code": "invalid_bootstrap_messages", "error": err.Error(),
+			})
+			return
+		}
 	}
 	if req.Provider.APIKey == "" && req.Provider.Kind != provider.KindOllama {
 		// allow empty for local ollama; otherwise require key
@@ -316,7 +349,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 
 	// Build tools. Platform catalog is mandatory: running without it makes the
 	// model falsely claim that Zephyr tools do not exist.
-	reg, err := s.buildToolRegistry(r.Context(), req.UserID, req.SessionID, run.ID, req.MCPServers, req.ContextJSON)
+	reg, err := s.buildToolRegistry(r.Context(), req.UserID, req.SessionID, run.ID, req.DatabaseGeneration, req.RunNonce, req.MCPServers, req.ContextJSON)
 	if err != nil {
 		_ = s.store.UpdateRunStatus(run.ID, "failed", err.Error(), nil)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "code": "platform_tools_unavailable", "error": err.Error()})
@@ -374,6 +407,8 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		AutoConfirmDelayMS:  req.AutoConfirmDelayMS,
 		MCPServersJSON:      mcpJSON,
 		ContextJSON:         req.ContextJSON,
+		DatabaseGeneration:  req.DatabaseGeneration,
+		RunNonce:            req.RunNonce,
 		ContextWindowTokens: req.ContextWindowTokens,
 		OutputReserveTokens: req.OutputReserveTokens,
 		Archive:             s.archive,
@@ -399,19 +434,25 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 // launchRun starts the agent loop in a goroutine. On pause the hub stays open.
 func (s *Server) launchRun(runID string, hub *sseHub, cfg agent.Config) {
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	s.mu.Lock()
 	if old, ok := s.cancels[runID]; ok {
 		old()
 	}
 	s.cancels[runID] = cancel
+	s.runDone[runID] = done
 	s.emitters[runID] = hub
 	s.mu.Unlock()
 
 	go func() {
 		defer func() {
 			s.mu.Lock()
-			delete(s.cancels, runID)
+			if s.runDone[runID] == done {
+				delete(s.cancels, runID)
+				delete(s.runDone, runID)
+			}
 			s.mu.Unlock()
+			close(done)
 		}()
 		_, err := s.runner.Run(ctx, cfg)
 		if err != nil {
@@ -437,7 +478,7 @@ func (s *Server) launchRun(runID string, hub *sseHub, cfg agent.Config) {
 }
 
 // buildToolRegistry reconstructs registry (MCP + platform host + history).
-func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID string, servers []mcp.ServerConfig, contextJSON json.RawMessage) (*tool.Registry, error) {
+func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID, databaseGeneration, runNonce string, servers []mcp.ServerConfig, contextJSON json.RawMessage) (*tool.Registry, error) {
 	reg := tool.NewRegistry()
 	for _, mc := range servers {
 		if _, err := s.mcp.Connect(ctx, mc); err != nil {
@@ -447,7 +488,7 @@ func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID
 	}
 	_ = s.mcp.RegisterAll(ctx, reg)
 	if s.host != nil {
-		if err := platform.RegisterFromHost(ctx, reg, s.host, userID, sessionID, runID, contextJSON); err != nil {
+		if err := platform.RegisterFromHost(ctx, reg, s.host, userID, sessionID, runID, databaseGeneration, runNonce, contextJSON); err != nil {
 			return nil, fmt.Errorf("platform_tools_unavailable: %w", err)
 		}
 	}
@@ -458,21 +499,33 @@ func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID
 }
 
 // rebuildTools reconstructs registry for resume from raw MCP JSON.
-func (s *Server) rebuildTools(ctx context.Context, userID, sessionID, runID string, mcpRaw, contextJSON json.RawMessage) (*tool.Registry, error) {
+func (s *Server) rebuildTools(ctx context.Context, userID, sessionID, runID, databaseGeneration, runNonce string, mcpRaw, contextJSON json.RawMessage) (*tool.Registry, error) {
 	var servers []mcp.ServerConfig
 	if len(mcpRaw) > 0 {
 		_ = json.Unmarshal(mcpRaw, &servers)
 	}
-	return s.buildToolRegistry(ctx, userID, sessionID, runID, servers, contextJSON)
+	return s.buildToolRegistry(ctx, userID, sessionID, runID, databaseGeneration, runNonce, servers, contextJSON)
 }
 
 func (s *Server) handleAbortRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.mu.Lock()
 	cancel, ok := s.cancels[id]
+	done := s.runDone[id]
 	s.mu.Unlock()
 	if ok {
 		cancel()
+	}
+	if done != nil {
+		select {
+		case <-done:
+		case <-r.Context().Done():
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "code": "run_abort_interrupted", "error": "run abort was interrupted"})
+			return
+		case <-time.After(30 * time.Second):
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "code": "run_abort_timeout", "error": "timed out waiting for run abort"})
+			return
+		}
 	}
 	_ = s.store.UpdateRunStatus(id, "aborted", "user_abort", nil)
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -590,7 +643,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 	// one-shot: allow this exact tool for the resume decision via Resume path (not rule)
 	eng := permission.NewEngine(pol)
 
-	reg, err := s.rebuildTools(r.Context(), userID, sessionID, runID, st.MCPServers, st.Context)
+	reg, err := s.rebuildTools(r.Context(), userID, sessionID, runID, st.DatabaseGeneration, st.RunNonce, st.MCPServers, st.Context)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "code": "platform_tools_unavailable", "error": err.Error()})
 		return
@@ -631,6 +684,8 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		AutoConfirmDelayMS:  st.AutoConfirmDelayMS,
 		MCPServersJSON:      st.MCPServers,
 		ContextJSON:         st.Context,
+		DatabaseGeneration:  st.DatabaseGeneration,
+		RunNonce:            st.RunNonce,
 		ContextWindowTokens: st.ContextWindowTokens,
 		OutputReserveTokens: st.OutputReserveTokens,
 		Captures:            s.captures,
@@ -759,7 +814,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		pol.Allow = append(pol.Allow, permission.Rule(a))
 	}
 	eng := permission.NewEngine(pol)
-	reg, err := s.rebuildTools(r.Context(), userID, sessionID, runID, st.MCPServers, st.Context)
+	reg, err := s.rebuildTools(r.Context(), userID, sessionID, runID, st.DatabaseGeneration, st.RunNonce, st.MCPServers, st.Context)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "code": "platform_tools_unavailable", "error": err.Error()})
 		return
@@ -792,6 +847,8 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		AutoConfirmDelayMS:  st.AutoConfirmDelayMS,
 		MCPServersJSON:      st.MCPServers,
 		ContextJSON:         st.Context,
+		DatabaseGeneration:  st.DatabaseGeneration,
+		RunNonce:            st.RunNonce,
 		ContextWindowTokens: st.ContextWindowTokens,
 		OutputReserveTokens: st.OutputReserveTokens,
 		Captures:            s.captures,

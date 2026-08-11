@@ -6,7 +6,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -23,27 +22,33 @@ const registry = JSON.parse(
 );
 
 function freshStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-mv1-'));
-  const db = createDatabase(path.join(dir, 'test.db'), { forceBuiltin: true });
+  const db = createDatabase(':memory:', { forceBuiltin: true });
   const store = new MobileV1Store({ db, entityRegistry: registry });
-  return { db, store, dir, cleanup: () => { try { db.close(); } catch {} fs.rmSync(dir, { recursive: true, force: true }); } };
+  return { db, store, cleanup: () => { try { db.close(); } catch {} } };
 }
 
 // Every table and index the frozen DDL names, so a rename fails here rather
 // than at the first device bind on a production box.
 const REQUIRED_TABLES = [
   'mobile_devices',
+  'mobile_device_proof_challenges',
+  'mobile_device_bind_attempts',
   'mobile_entity_versions',
   'mobile_entity_field_revisions',
   'mobile_sync_changes',
   'mobile_applied_ops',
   'mobile_sync_runs',
   'mobile_sensitive_grants',
+  'mobile_sensitive_attempts',
 ];
 
 const REQUIRED_INDEXES = [
   'idx_mobile_devices_owner',
   'idx_mobile_devices_token',
+  'idx_mobile_proof_challenges_device',
+  'idx_mobile_proof_challenges_expiry',
+  'idx_mobile_bind_attempts_owner_device',
+  'idx_mobile_bind_attempts_expiry',
   'idx_mobile_field_revision_entity',
   'idx_mobile_changes_owner_seq',
   'idx_mobile_changes_entity',
@@ -83,7 +88,7 @@ test('mobile_devices carries every column the bind flow writes', () => {
       'device_id', 'owner_user_id', 'owner_username_compat', 'token_id', 'device_name',
       'platform', 'app_version', 'encryption_public_key', 'signing_public_jwk',
       'refresh_token_hash', 'refresh_generation', 'enabled', 'automatic_enabled',
-      'sync_interval_sec', 'registry_hash', 'last_acked_cursor', 'last_sync_at',
+      'sync_interval_sec', 'binding_revision', 'registry_hash', 'last_acked_cursor', 'last_sync_at',
       'last_seen_at', 'created_at', 'revoked_at', 'revoke_reason',
     ]) {
       assert.ok(cols.includes(col), 'mobile_devices.' + col + ' is required by DATA_AND_MIGRATION.md 2');
@@ -101,6 +106,82 @@ test('construction is idempotent and the registry hash is stable', () => {
     const second = new MobileV1Store({ db: ctx.db, entityRegistry: registry }).registryHash;
     assert.equal(second, first);
     assert.match(first, /^[0-9a-f]{64}$/, 'registryHash must be a sha256 hex digest');
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('proof challenges are high-entropy, request-bound and single-use', () => {
+  const ctx = freshStore();
+  try {
+    const binding = {
+      ownerUserId: 'u1', deviceId: 'd1', method: 'POST',
+      canonicalPath: '/api/mobile/v1/sync/push', bodySha256: 'A'.repeat(43) + '=',
+      usage: 'sync.push',
+    };
+    const first = ctx.store.issueProofChallenge(binding);
+    const second = ctx.store.issueProofChallenge(binding);
+    assert.match(first.nonce, /^[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(first.nonce, second.nonce);
+    assert.equal(first.timestamp, Math.floor(first.timestamp));
+    assert.ok(first.expiresAt > Date.now());
+
+    const attempt = { ...binding, nonce: first.nonce, timestamp: first.timestamp };
+    assert.equal(ctx.store.consumeProofChallenge({ ...attempt, deviceId: 'd2' }), false,
+      'a challenge must not cross devices');
+    assert.equal(ctx.store.consumeProofChallenge({ ...attempt, canonicalPath: '/api/mobile/v1/sync/ack' }), false,
+      'a challenge must not cross routes');
+    assert.equal(ctx.store.consumeProofChallenge({ ...attempt, bodySha256: 'B'.repeat(43) + '=' }), false,
+      'a challenge must not cross bodies');
+    assert.equal(ctx.store.consumeProofChallenge(attempt), true);
+    assert.equal(ctx.store.consumeProofChallenge(attempt), false, 'a spent challenge must reject replay');
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('independent proof challenges can be consumed concurrently exactly once each', async () => {
+  const ctx = freshStore();
+  try {
+    const binding = {
+      ownerUserId: 'u1', deviceId: 'd1', method: 'GET',
+      canonicalPath: '/api/mobile/v1/sync/status',
+      bodySha256: 'A'.repeat(43) + '=', usage: 'sync.status',
+    };
+    const challenges = Array.from({ length: 8 }, () => ctx.store.issueProofChallenge(binding));
+    const consumed = await Promise.all(challenges.map((challenge) => Promise.resolve().then(() =>
+      ctx.store.consumeProofChallenge({
+        ...binding, nonce: challenge.nonce, timestamp: challenge.timestamp,
+      }))));
+    assert.deepEqual(consumed, Array(8).fill(true));
+
+    const replayRace = await Promise.all(Array.from({ length: 8 }, () => Promise.resolve().then(() =>
+      ctx.store.consumeProofChallenge({
+        ...binding, nonce: challenges[0].nonce, timestamp: challenges[0].timestamp,
+      }))));
+    assert.deepEqual(replayRace, Array(8).fill(false));
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('expired proof challenges fail and issuance is bounded per device', () => {
+  const ctx = freshStore();
+  try {
+    const binding = {
+      ownerUserId: 'u1', deviceId: 'd1', method: 'GET',
+      canonicalPath: '/api/mobile/v1/sync/status',
+      bodySha256: 'A'.repeat(43) + '=', usage: 'sync.status',
+    };
+    const expired = ctx.store.issueProofChallenge(binding);
+    ctx.db.prepare('UPDATE mobile_device_proof_challenges SET expires_at = 0 WHERE nonce_hash IS NOT NULL').run();
+    assert.equal(ctx.store.consumeProofChallenge({
+      ...binding, nonce: expired.nonce, timestamp: expired.timestamp,
+    }), false);
+
+    for (let i = 0; i < 16; i += 1) ctx.store.issueProofChallenge(binding);
+    assert.throws(() => ctx.store.issueProofChallenge(binding), (err) =>
+      err.code === 'rate_limited' && err.status === 429);
   } finally {
     ctx.cleanup();
   }
@@ -301,7 +382,7 @@ test('the change feed is partitioned by owner', () => {
   }
 });
 
-test('a cursor older than the oldest retained change is reported expired', () => {
+test('cursor expiry tracks only owner rows actually removed by retention', () => {
   const ctx = freshStore();
   try {
     const first = ctx.store.appendChange({
@@ -342,9 +423,161 @@ test('a cursor older than the oldest retained change is reported expired', () =>
     );
     assert.equal(ctx.store.isCursorExpired('u1', first), true);
 
-    // An empty feed cannot expire anyone: there is nothing to have missed.
+    // Removing the last survivor must retain the owner's GC watermark. A fresh
+    // bootstrap uses latestCursor and therefore starts at a servable cursor.
     assert.equal(ctx.store.pruneChangesBefore('u1', third + 1), 1);
-    assert.equal(ctx.store.isCursorExpired('u1', 0), false);
+    assert.equal(ctx.store.oldestCursor('u1'), 0);
+    assert.equal(ctx.store.latestCursor('u1'), third);
+    assert.equal(ctx.store.isCursorExpired('u1', 0), true);
+    assert.equal(ctx.store.isCursorExpired('u1', third), false);
+
+    const reopened = new MobileV1Store({ db: ctx.db, entityRegistry: registry });
+    assert.equal(reopened.latestCursor('u1'), third,
+      'retention state must survive a server restart');
+    assert.equal(reopened.isCursorExpired('u1', third), false);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('actor enrichment never coalesces the same entity revision across owners', () => {
+  const ctx = freshStore();
+  try {
+    const foreignSeq = ctx.store.appendChange({
+      ownerUserId: 'u1',
+      entityType: 'oneUserSettings',
+      entityId: 'appearance',
+      action: 'upsert',
+      revision: 1,
+      fieldMask: ['appearance.theme'],
+      actorDeviceId: null,
+    });
+    const foreignChangeBefore = ctx.db.prepare(`SELECT * FROM mobile_sync_changes
+      WHERE owner_user_id = ? AND change_seq = ?`).get('u1', foreignSeq);
+    const foreignOutboxBefore = ctx.db.prepare(`SELECT * FROM mobile_change_outbox
+      WHERE owner_user_id = ? AND change_seq = ?`).get('u1', foreignSeq);
+
+    const ownSeq = ctx.store.appendChange({
+      ownerUserId: 'u2',
+      entityType: 'oneUserSettings',
+      entityId: 'appearance',
+      action: 'upsert',
+      revision: 1,
+      fieldMask: ['appearance.customColors'],
+      actorDeviceId: 'u2-device',
+    });
+
+    assert.notEqual(ownSeq, foreignSeq);
+    assert.deepEqual(
+      ctx.db.prepare(`SELECT * FROM mobile_sync_changes
+        WHERE owner_user_id = ? AND change_seq = ?`).get('u1', foreignSeq),
+      foreignChangeBefore,
+      'the foreign change row must not be enriched or rewritten',
+    );
+    assert.deepEqual(
+      ctx.db.prepare(`SELECT * FROM mobile_change_outbox
+        WHERE owner_user_id = ? AND change_seq = ?`).get('u1', foreignSeq),
+      foreignOutboxBefore,
+      'the foreign wake outbox row must not be replaced or redelivered',
+    );
+    assert.deepEqual(ctx.store.changePage('u1', 0, 20).changes.map((change) => ({
+      actorDeviceId: change.actorDeviceId,
+      fieldMask: change.fieldMask,
+    })), [{ actorDeviceId: null, fieldMask: ['appearance.theme'] }]);
+    assert.deepEqual(ctx.store.changePage('u2', 0, 20).changes.map((change) => ({
+      actorDeviceId: change.actorDeviceId,
+      fieldMask: change.fieldMask,
+    })), [{ actorDeviceId: 'u2-device', fieldMask: ['appearance.customColors'] }]);
+    assert.deepEqual(ctx.store.wakeOutboxPage(20).map((event) => [
+      event.ownerUserId,
+      event.throughCursor,
+    ]), [
+      ['u1', foreignSeq],
+      ['u2', ownSeq],
+    ]);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('foreign cursor gaps do not expire a new or empty owner feed', () => {
+  const ctx = freshStore();
+  try {
+    const foreignFirst = ctx.store.appendChange({
+      ownerUserId: 'u1', entityType: 'connection', entityId: 'foreign-1',
+      action: 'upsert', revision: 1, fieldMask: ['name'],
+    });
+    const foreignSecond = ctx.store.appendChange({
+      ownerUserId: 'u1', entityType: 'connection', entityId: 'foreign-2',
+      action: 'upsert', revision: 1, fieldMask: ['name'],
+    });
+
+    assert.ok(foreignSecond > foreignFirst);
+    assert.equal(ctx.store.latestCursor('empty-owner'), 0);
+    assert.equal(ctx.store.oldestCursor('empty-owner'), 0);
+    assert.equal(ctx.store.isCursorExpired('empty-owner', 0), false);
+    assert.deepEqual(ctx.store.changePage('empty-owner', 0, 50), {
+      fromCursor: 0,
+      nextCursor: 0,
+      hasMore: false,
+      changes: [],
+    });
+
+    // A prune request that only spans foreign rows must not manufacture owner
+    // retention history or reveal that those rows exist.
+    assert.equal(ctx.store.pruneChangesBefore('empty-owner', foreignSecond + 1), 0);
+    assert.equal(ctx.store.prunedThroughCursor('empty-owner'), 0);
+    assert.equal(ctx.store.isCursorExpired('empty-owner', 0), false);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('retention expiry is exact across interleaved owner sequence gaps', () => {
+  const ctx = freshStore();
+  try {
+    const first = ctx.store.appendChange({
+      ownerUserId: 'u1', entityType: 'connection', entityId: 'mine-1',
+      action: 'upsert', revision: 1, fieldMask: ['name'],
+    });
+    const foreign = ctx.store.appendChange({
+      ownerUserId: 'u2', entityType: 'connection', entityId: 'theirs',
+      action: 'upsert', revision: 1, fieldMask: ['name'],
+    });
+    const survivor = ctx.store.appendChange({
+      ownerUserId: 'u1', entityType: 'connection', entityId: 'mine-2',
+      action: 'upsert', revision: 1, fieldMask: ['name'],
+    });
+
+    assert.ok(first < foreign && foreign < survivor);
+    assert.equal(ctx.store.isCursorExpired('u1', 0), false,
+      'a high first sequence is not evidence of retention loss');
+    assert.equal(ctx.store.pruneChangesBefore('u1', survivor), 1);
+    assert.equal(ctx.store.prunedThroughCursor('u1'), first);
+    assert.equal(ctx.store.isCursorExpired('u1', 0), true);
+    assert.equal(ctx.store.isCursorExpired('u1', first), false,
+      'the foreign gap before the survivor does not belong to u1');
+    assert.equal(ctx.store.isCursorExpired('u1', foreign), false);
+    assert.deepEqual(
+      ctx.store.changePage('u1', first, 50).changes.map((change) => change.entityId),
+      ['mine-2'],
+    );
+    assert.deepEqual(
+      ctx.store.changePage('u2', 0, 50).changes.map((change) => change.entityId),
+      ['theirs'],
+    );
+
+    // The boundary is exclusive and a no-op prune cannot advance the owner
+    // watermark beyond a row that was actually deleted.
+    assert.equal(ctx.store.pruneChangesBefore('u1', survivor), 0);
+    assert.equal(ctx.store.prunedThroughCursor('u1'), first);
+    assert.equal(ctx.store.pruneChangesBefore('u1', survivor + 1), 1);
+    assert.equal(ctx.store.prunedThroughCursor('u1'), survivor);
+    assert.equal(ctx.store.isCursorExpired('u1', survivor - 1), true);
+    assert.equal(ctx.store.isCursorExpired('u1', survivor), false);
+
+    assert.equal(ctx.store.prunedThroughCursor('u2'), 0);
+    assert.equal(ctx.store.isCursorExpired('u2', 0), false);
   } finally {
     ctx.cleanup();
   }
@@ -382,6 +615,44 @@ test('sensitive grants are single-use and bound to their exact target list', () 
       (err) => err.code === 'sensitive_grant_consumed',
       'replaying a consumed grant must be reported as a replay, not as a fresh failure',
     );
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('sensitive verification attempts are durably rate limited per account', () => {
+  const ctx = freshStore();
+  try {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const result = ctx.store.takeSensitiveVerificationAttempt('u1', 1_000_000);
+      assert.equal(result.remaining, 9 - attempt);
+    }
+    assert.throws(
+      () => ctx.store.takeSensitiveVerificationAttempt('u1', 1_000_001),
+      (err) => err.code === 'rate_limited' && err.status === 429 && err.retryable === true,
+    );
+    assert.equal(ctx.store.takeSensitiveVerificationAttempt('u2', 1_000_001).remaining, 9,
+      'one account must not spend another account\'s verification budget');
+    assert.equal(ctx.store.takeSensitiveVerificationAttempt('u1', 1_300_000).remaining, 9,
+      'the next fixed window must restore the account budget');
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test('only one concurrent grant consumer can perform the transition', async () => {
+  const ctx = freshStore();
+  try {
+    const created = ctx.store.createGrant({
+      ownerUserId: 'u1', action: 'token.reveal', targetIds: ['tok-1'], requestId: 'req-race',
+    });
+    const attempts = await Promise.allSettled(Array.from({ length: 8 }, () => Promise.resolve().then(() =>
+      ctx.store.consumeGrant({
+        ownerUserId: 'u1', action: 'token.reveal', targetIds: ['tok-1'], grant: created.grant,
+      }))));
+    assert.equal(attempts.filter((entry) => entry.status === 'fulfilled').length, 1);
+    assert.equal(attempts.filter((entry) => entry.status === 'rejected'
+      && entry.reason?.code === 'sensitive_grant_consumed').length, 7);
   } finally {
     ctx.cleanup();
   }

@@ -64,6 +64,13 @@ const ZFT2_CHUNK_BYTES = 262144;
  * bearer is the device the grant was minted for. */
 const RELAY_CREDENTIAL_TTL_MS = 60 * 1000;
 const RELAY_NAMESPACE = 'shared-relay-v1';
+const MAX_RELAY_ATTACHES_PER_SESSION = 1;
+
+/* Methods are wrapped once and fan out to every SharedResourceApi using the
+ * same service instance. Symbols keep the hook private and avoid collisions
+ * with service state restored through Object.assign during database reopen. */
+const REVOCATION_HOOKS = Symbol('mobile-v1-shared-revocation-hooks');
+const REVOCATION_WRAPPED = Symbol('mobile-v1-shared-revocation-wrapped');
 
 const FILE_LEASE_TTL_SEC = 300;
 
@@ -72,6 +79,49 @@ function nowMs() { return Date.now(); }
 function protocolPurpose(protocol) {
     const value = String(protocol || '').toLowerCase();
     return SHARED_PURPOSES.includes(value) ? value : null;
+}
+
+/**
+ * Observes a successful mutation without changing the service public API.
+ *
+ * MobileV1Api is constructed after the canonical services, so this is the one
+ * place that can connect their revoke operations to ephemeral shared sessions
+ * without making those services depend on the mobile module. The wrapper is
+ * installed once; subsequent API instances only add another subscriber.
+ */
+function subscribeMutation(target, methodName, subscriber, describe) {
+    if (!target || typeof target[methodName] !== 'function') return;
+    if (!Object.prototype.hasOwnProperty.call(target, REVOCATION_HOOKS)) {
+        Object.defineProperty(target, REVOCATION_HOOKS, { value: new Map(), configurable: false });
+        Object.defineProperty(target, REVOCATION_WRAPPED, { value: new Set(), configurable: false });
+    }
+    let subscribers = target[REVOCATION_HOOKS].get(methodName);
+    if (!subscribers) {
+        subscribers = new Set();
+        target[REVOCATION_HOOKS].set(methodName, subscribers);
+    }
+    subscribers.add(subscriber);
+    if (target[REVOCATION_WRAPPED].has(methodName)) return;
+
+    const original = target[methodName];
+    Object.defineProperty(target, methodName, {
+        configurable: true,
+        writable: true,
+        value: function sharedRevocationObservedMutation(...args) {
+            const result = original.apply(this, args);
+            const notify = (value) => {
+                const event = describe(args, value);
+                if (event) {
+                    for (const listener of [...subscribers]) {
+                        try { listener(event); } catch {}
+                    }
+                }
+                return value;
+            };
+            return result && typeof result.then === 'function' ? result.then(notify) : notify(result);
+        },
+    });
+    target[REVOCATION_WRAPPED].add(methodName);
 }
 
 /**
@@ -97,6 +147,7 @@ function noStore(res) {
 class SharedSessionRegistry {
     constructor() {
         this.sessions = new Map();
+        this.listeners = new Map();
     }
 
     create(entry) {
@@ -115,6 +166,9 @@ class SharedSessionRegistry {
              * SHARED_RESOURCE_RESIDENCY.md 3.2, where a failed handshake
              * re-seals under a *fresh* nonce inside the same grant. */
             usedNonces: new Set(),
+            usedAttachJtis: new Set(),
+            activeAttachIds: new Set(),
+            relayCredentialGeneration: 0,
         });
         return sessionId;
     }
@@ -143,31 +197,112 @@ class SharedSessionRegistry {
         return this.sessions.get(String(sessionId || '')) || null;
     }
 
-    drop(sessionId) {
-        return this.sessions.delete(String(sessionId || ''));
+    drop(sessionId, reason = 'revoked') {
+        const id = String(sessionId || '');
+        const entry = this.sessions.get(id);
+        if (!entry || !this.sessions.delete(id)) return false;
+        const listeners = this.listeners.get(id);
+        this.listeners.delete(id);
+        if (listeners) {
+            for (const listener of [...listeners]) {
+                try { listener({ sessionId: id, reason }); } catch {}
+            }
+        }
+        return true;
     }
 
     /** Every session belonging to a device, used when a device is revoked. */
-    dropForDevice(deviceId) {
+    dropForDevice(deviceId, reason = 'device-revoked') {
+        return this.dropMatching((entry) => entry.deviceId === String(deviceId || ''), reason);
+    }
+
+    dropForUser(userId, reason = 'account-revoked') {
+        const id = String(userId || '');
+        return this.dropMatching((entry) => entry.userId === id || entry.ownerUserId === id, reason);
+    }
+
+    dropForToken(tokenId, reason = 'backing-token-revoked') {
+        return this.dropMatching((entry) => entry.backingTokenId === String(tokenId || ''), reason);
+    }
+
+    dropForGrant(resourceType, resourceId, subjectId, reason = 'acl-revoked') {
+        return this.dropMatching((entry) => (
+            (
+                (entry.resourceType === String(resourceType || '')
+                    && entry.resourceId === String(resourceId || ''))
+                || (entry.dependencyRefs || []).some((dependency) => (
+                    dependency.resourceType === String(resourceType || '')
+                    && dependency.resourceId === String(resourceId || '')
+                ))
+            )
+            && (!subjectId || entry.userId === String(subjectId))
+        ), reason);
+    }
+
+    dropMatching(predicate, reason = 'revoked') {
         let removed = 0;
-        for (const [id, entry] of this.sessions) {
-            if (entry.deviceId === deviceId) { this.sessions.delete(id); removed += 1; }
+        for (const [id, entry] of [...this.sessions]) {
+            if (predicate(entry) && this.drop(id, reason)) removed += 1;
         }
         return removed;
     }
 
-    dropForUser(ownerUserId) {
-        let removed = 0;
-        for (const [id, entry] of this.sessions) {
-            if (entry.userId === ownerUserId) { this.sessions.delete(id); removed += 1; }
+    subscribe(sessionId, listener) {
+        const id = String(sessionId || '');
+        if (!this.sessions.has(id)) {
+            listener({ sessionId: id, reason: 'session-missing' });
+            return () => {};
         }
-        return removed;
+        let listeners = this.listeners.get(id);
+        if (!listeners) {
+            listeners = new Set();
+            this.listeners.set(id, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners.delete(listener);
+            if (!listeners.size) this.listeners.delete(id);
+        };
+    }
+
+    mintRelayClaim(sessionId) {
+        const entry = this.sessions.get(String(sessionId || ''));
+        if (!entry) return null;
+        entry.relayCredentialGeneration += 1;
+        return {
+            jti: crypto.randomUUID(),
+            attachGeneration: entry.relayCredentialGeneration,
+        };
+    }
+
+    reserveRelayAttach(sessionId, jti, attachGeneration, limit = MAX_RELAY_ATTACHES_PER_SESSION) {
+        const entry = this.sessions.get(String(sessionId || ''));
+        if (!entry) return { ok: false, code: 'shared_session_expired' };
+        const id = String(jti || '');
+        if (!id || entry.usedAttachJtis.has(id)) return { ok: false, code: 'shared_session_consumed' };
+        if (Number(attachGeneration) !== Number(entry.relayCredentialGeneration)) {
+            return { ok: false, code: 'shared_session_consumed' };
+        }
+        if (entry.activeAttachIds.size >= limit) return { ok: false, code: 'shared_session_consumed' };
+
+        /* This synchronous check-and-add is the atomic consume point. Node runs
+         * this block without an await, so two upgrade callbacks cannot both
+         * observe the jti as unused or the slot as free. */
+        entry.usedAttachJtis.add(id);
+        const attachId = 'sha-' + crypto.randomUUID();
+        entry.activeAttachIds.add(attachId);
+        return { ok: true, attachId };
+    }
+
+    releaseRelayAttach(sessionId, attachId) {
+        const entry = this.sessions.get(String(sessionId || ''));
+        return !!entry && entry.activeAttachIds.delete(String(attachId || ''));
     }
 
     gc() {
         const ts = nowMs();
-        for (const [id, entry] of this.sessions) {
-            if (Number(entry.sessionExpiresAt) <= ts) this.sessions.delete(id);
+        for (const [id, entry] of [...this.sessions]) {
+            if (Number(entry.sessionExpiresAt) <= ts) this.drop(id, 'session-expired');
         }
     }
 
@@ -187,6 +322,7 @@ class SharedResourceApi {
         this.resourceService = opts.resourceService;
         this.notesService = opts.notesService;
         this.sharingService = opts.sharingService;
+        this.fileAgentManager = opts.fileAgentManager || null;
         this.store = opts.store;
         this.serverEncryptionKey = opts.serverEncryptionKey;
         this.log = opts.log || (() => {});
@@ -196,11 +332,142 @@ class SharedResourceApi {
          * not mounted, and that is reported honestly instead of downgrading a
          * relay-strict request to direct. */
         this.relayMount = opts.relayMount || null;
+        /* Secret export has a separate policy gate from the ACL. An explicit
+         * revealSecret grant is necessary but never sufficient. Hosts may
+         * inject a sensitive-grant consumer or an independent owner policy;
+         * absent that callback, direct use is fail-closed. */
+        this.directUseAuthorizer = typeof opts.directUseAuthorizer === 'function'
+            ? opts.directUseAuthorizer
+            : null;
+        this.ownerDirectPolicy = typeof opts.ownerDirectPolicy === 'function'
+            ? opts.ownerDirectPolicy
+            : null;
+        this.maxRelayAttachesPerSession = Math.max(
+            1,
+            Math.min(8, Number(opts.maxRelayAttachesPerSession) || MAX_RELAY_ATTACHES_PER_SESSION),
+        );
         this.sessions = new SharedSessionRegistry();
         /* leaseId -> lease. In-process by design: a file lease is valid for
          * 5 minutes and must not survive a restart, because the SAF grant
          * backing it on the device does not survive one either. */
         this.leases = new Map();
+        this.installRevocationHooks();
+    }
+
+    /** Connects canonical revoke operations to one fail-closed session hook. */
+    installRevocationHooks() {
+        const onRevoke = (event) => this.revokeSessions(event);
+
+        subscribeMutation(this.authz, 'revoke', onRevoke, ([input], changed) => (
+            changed ? {
+                kind: 'grant',
+                resourceType: input && input.resourceType,
+                resourceId: input && input.resourceId,
+                subjectId: input && input.subjectId,
+                reason: 'acl-revoked',
+            } : null
+        ));
+        /* Replacing an ACL can remove a live channel even when `use` remains,
+         * so every successful grant replacement terminates old sessions. */
+        subscribeMutation(this.authz, 'grant', onRevoke, ([input]) => ({
+            kind: 'grant',
+            resourceType: input && input.resourceType,
+            resourceId: input && input.resourceId,
+            subjectId: input && input.subjectId,
+            reason: 'acl-changed',
+        }));
+        subscribeMutation(this.authz, 'revokeAllForResource', onRevoke, ([resourceType, resourceId], changed) => (
+            Number(changed) > 0 ? { kind: 'resource', resourceType, resourceId, reason: 'acl-revoked' } : null
+        ));
+
+        subscribeMutation(this.store, 'revokeDevice', onRevoke, (args, changed) => (
+            changed ? { kind: 'device', deviceId: args[1], reason: 'device-revoked' } : null
+        ));
+        subscribeMutation(this.store, 'rotateRefresh', onRevoke, ([deviceId], value) => (
+            value ? { kind: 'device', deviceId, reason: 'device-generation-changed' } : null
+        ));
+        subscribeMutation(this.store, 'bindDevice', onRevoke, ([input], value) => (
+            value ? { kind: 'device', deviceId: input && input.deviceId, reason: 'device-generation-changed' } : null
+        ));
+        subscribeMutation(this.store, 'patchDevice', onRevoke, ([, deviceId, patch], value) => (
+            value && patch && patch.enabled === false
+                ? { kind: 'device', deviceId, reason: 'device-disabled' }
+                : null
+        ));
+
+        subscribeMutation(this.fileAgentManager, 'deleteToken', onRevoke, ([ownerName, tokenId]) => ({
+            kind: 'token', ownerName, tokenId, reason: 'backing-token-revoked',
+        }));
+        subscribeMutation(this.fileAgentManager, 'regenerateTokenRecord', onRevoke, ([ownerName, tokenId]) => ({
+            kind: 'token', ownerName, tokenId, reason: 'backing-token-rotated',
+        }));
+        subscribeMutation(this.fileAgentManager, 'regenerateToken', onRevoke, ([ownerName]) => ({
+            kind: 'account-token', ownerName, reason: 'backing-tokens-reset',
+        }));
+        subscribeMutation(this.fileAgentManager, 'createToken', onRevoke, ([ownerName]) => ({
+            /* reset-all deletes records directly, then creates the replacement.
+             * Reconcile here so only sessions whose backing id disappeared are
+             * dropped; ordinary token creation leaves live sessions alone. */
+            kind: 'token-registry', ownerName, reason: 'backing-token-revoked',
+        }));
+
+        subscribeMutation(this.storage, 'updateUserById', onRevoke, ([userId, patch], value) => (
+            value && patch && patch.status && patch.status !== 'active'
+                ? { kind: 'account', userId, reason: 'account-unavailable' }
+                : null
+        ));
+
+        if (this.sharingService && typeof this.sharingService.setRevocationHook === 'function') {
+            this.sharingService.setRevocationHook(onRevoke);
+        }
+    }
+
+    revokeSessions(event = {}) {
+        if (event.kind === 'device') {
+            this.dropLeasesForDevice(String(event.deviceId || ''));
+            return this.sessions.dropForDevice(event.deviceId, event.reason);
+        }
+        if (event.kind === 'token') return this.sessions.dropForToken(event.tokenId, event.reason);
+        if (event.kind === 'account-token') {
+            return this.sessions.dropMatching(
+                (entry) => entry.backingTokenOwner === String(event.ownerName || ''),
+                event.reason,
+            );
+        }
+        if (event.kind === 'token-registry') {
+            let liveIds = new Set();
+            try {
+                liveIds = new Set(
+                    (this.fileAgentManager?.listTokens(String(event.ownerName || '')) || [])
+                        .map((token) => String(token.id || '')),
+                );
+            } catch {
+                /* Registry I/O failures are handled by the watchdog. Do not
+                 * misreport a temporary read failure as a token revoke. */
+                return 0;
+            }
+            return this.sessions.dropMatching(
+                (entry) => entry.backingTokenOwner === String(event.ownerName || '')
+                    && !liveIds.has(entry.backingTokenId),
+                event.reason,
+            );
+        }
+        if (event.kind === 'account') {
+            this.dropLeasesForUser(String(event.userId || ''));
+            return this.sessions.dropForUser(event.userId, event.reason);
+        }
+        if (event.kind === 'grant') {
+            return this.sessions.dropForGrant(
+                event.resourceType,
+                event.resourceId,
+                event.subjectId,
+                event.reason,
+            );
+        }
+        if (event.kind === 'resource') {
+            return this.sessions.dropForGrant(event.resourceType, event.resourceId, '', event.reason);
+        }
+        return 0;
     }
 
     // ------------------------------------------------------------ listing ---
@@ -230,6 +497,17 @@ class SharedResourceApi {
         return { items, nextPageToken: null };
     }
 
+    activeOwner(raw) {
+        const ownerUserId = String(raw?.ownerUserId || raw?.owner_user_id || '').trim();
+        if (!ownerUserId) return null;
+        try {
+            const owner = this.storage.getUserById(ownerUserId);
+            return owner?.status === 'active' ? owner : null;
+        } catch {
+            return null;
+        }
+    }
+
     /** Summary for one grant, or null when the row is gone or self-owned. */
     projectSummary(user, grant) {
         const raw = this.rawResource(grant.resourceType, grant.resourceId);
@@ -237,7 +515,8 @@ class SharedResourceApi {
         const ownerUserId = String(raw.ownerUserId || raw.owner_user_id || '');
         if (ownerUserId === user.userId) return null;
 
-        const owner = ownerUserId ? this.storage.getUserById(ownerUserId) : null;
+        const owner = this.activeOwner(raw);
+        if (!owner) return null;
         return {
             resourceType: grant.resourceType,
             resourceId: grant.resourceId,
@@ -263,13 +542,14 @@ class SharedResourceApi {
             }
             if (resourceType === 'note' && this.notesService) {
                 const row = this.notesService.stmtGet ? this.notesService.stmtGet.get(id) : null;
-                if (!row) return null;
-                return {
+                if (!row || row.deleted_at || row.deletedAt) return null;
+                const raw = {
                     id: row.note_id,
                     title: row.title,
                     ownerUserId: row.owner_user_id,
                     revision: Number(row.revision) || 1,
                 };
+                return this.activeOwner(raw) ? raw : null;
             }
         } catch (err) {
             this.log('[mobile-v1] shared resource read failed', { resourceType, error: err.message });
@@ -293,6 +573,8 @@ class SharedResourceApi {
         /* An owned row is not a shared row. Serving it here would make the
          * shared surface a second read path for mirrored data. */
         if (!raw || ownerUserId === user.userId) throw this.notFound();
+        const owner = this.activeOwner(raw);
+        if (!owner) throw this.notFound();
 
         const caps = this.authz.effectiveCapabilities(user, resourceType, resourceId, {
             ownerUserId,
@@ -300,7 +582,6 @@ class SharedResourceApi {
         });
         if (!caps.has('view') && !caps.has('use')) throw this.notFound();
 
-        const owner = ownerUserId ? this.storage.getUserById(ownerUserId) : null;
         const detail = {
             resourceType,
             resourceId: String(resourceId),
@@ -318,7 +599,12 @@ class SharedResourceApi {
             detail.host = String(raw.host || '');
             detail.port = Number(raw.port) || 0;
             detail.username = String(raw.username || '');
-            detail.directUseAllowed = caps.has('use');
+            /* This is only the durable owner-policy half of the decision. A
+             * per-request sensitive authorizer is intentionally not evaluated
+             * by a metadata GET. */
+            detail.directUseAllowed = caps.has('revealSecret')
+                && !!this.ownerDirectPolicy
+                && this.ownerPolicyAllowsDirect({ user, connection: raw, capabilities: caps });
         }
         if (resourceType === 'note' && this.notesService) {
             /* Body is fetched through invoke(read), never inlined into the
@@ -342,6 +628,45 @@ class SharedResourceApi {
 
     // ----------------------------------------------------------- sessions ---
 
+    ownerPolicyAllowsDirect(context) {
+        if (!this.ownerDirectPolicy) return false;
+        try { return this.ownerDirectPolicy(context) === true; } catch { return false; }
+    }
+
+    directUseAllowed({ user, deviceRow, connection, capabilities, request }) {
+        if (!capabilities.has('revealSecret')) return false;
+        if (this.ownerPolicyAllowsDirect({ user, deviceRow, connection, capabilities, request })) return true;
+        if (!this.directUseAuthorizer) return false;
+        try {
+            return this.directUseAuthorizer({ user, deviceRow, connection, capabilities, request }) === true;
+        } catch {
+            /* A missing/expired/consumed sensitive approval forces relay. It
+             * must never turn into an accidental secret-bearing error path. */
+            return false;
+        }
+    }
+
+    connectionDependencyRefs(connection) {
+        const refs = [];
+        const add = (resourceType, resourceId) => {
+            const id = String(resourceId || '');
+            if (id && !refs.some((ref) => ref.resourceType === resourceType && ref.resourceId === id)) {
+                refs.push({ resourceType, resourceId: id });
+            }
+        };
+        add('sshKey', connection.sshKeyId);
+        if (connection.connectionMode === 'proxy') add('proxy', connection.proxyId);
+        if (connection.connectionMode === 'jump') {
+            const jumpHosts = this.storage.listJumpHosts ? this.storage.listJumpHosts() : [];
+            for (const jumpId of (Array.isArray(connection.jumpHostIds) ? connection.jumpHostIds : [])) {
+                add('jumpHost', jumpId);
+                const jump = jumpHosts.find((row) => row.id === jumpId);
+                if (jump && jump.connectionId) add('connection', jump.connectionId);
+            }
+        }
+        return refs;
+    }
+
     /**
      * Opens a session against a shared connection.
      *
@@ -349,10 +674,9 @@ class SharedResourceApi {
      * capability first, then server-side dependency resolution (which is where
      * a proxy or SSH key the sharee may not use becomes a 403), then mode.
      *
-     * `relay-strict` is the safe default and the only mode available when the
-     * owner has not granted `revealSecret`-free direct use. A client asking for
-     * direct when policy forbids it is answered with relay, never with a
-     * silently downgraded secret.
+     * `relay-strict` is the safe default. Direct requires revealSecret plus a
+     * separate sensitive approval or owner policy; a client asking for direct
+     * without both gates receives relay and no secret.
      */
     openConnectionSession(user, deviceRow, connectionId, request) {
         const mode = String(request.mode || '');
@@ -407,20 +731,32 @@ class SharedResourceApi {
         const sessionExpiresAt = nowMs() + SESSION_TTL_MS;
         const revision = Math.max(1, Number(conn.revision) || 1);
 
-        /* Owner policy decides. `use` alone authorises relay; direct also needs
-         * the owner to have shared the connection with control-level access,
-         * because direct hands real connect material to the device. */
-        const directAllowed = caps.has('control') || caps.has('execute');
+        /* control/execute authorise actions, never disclosure. Direct export
+         * requires explicit revealSecret plus a separate sensitive approval or
+         * independent owner policy. Missing either gate forces relay. */
+        const directAllowed = this.directUseAllowed({
+            user,
+            deviceRow,
+            connection: conn,
+            capabilities: caps,
+            request,
+        });
         const effectiveMode = mode === 'direct-ephemeral' && directAllowed ? 'direct-ephemeral' : 'relay-strict';
 
         const sessionId = this.sessions.create({
             userId: user.userId,
             deviceId: deviceRow.device_id,
+            deviceGeneration: Number(deviceRow.refresh_generation || 1),
+            backingTokenId: String(deviceRow.token_id || ''),
+            backingTokenOwner: String(user.username || ''),
+            ownerUserId,
             resourceType: 'connection',
             resourceId: conn.id,
+            dependencyRefs: this.connectionDependencyRefs(conn),
             revision,
             purpose,
             mode: effectiveMode,
+            directAuthorized: directAllowed,
             capabilities: [...caps].sort(),
             channels: grantedChannels,
             sessionExpiresAt,
@@ -445,21 +781,11 @@ class SharedResourceApi {
             capabilities: [...caps].sort(),
         };
 
-        /* Relay transport is not mounted yet.
-         *
-         * SHARED_RESOURCE_RESIDENCY.md 3.3 requires the main end to hold the
-         * credential and proxy the protocol, and 3.3 also states that when
-         * relay is unavailable the server must say so rather than silently
-         * hand the secret down. There is no WebSocket route behind
-         * .../sessions/{id}/stream on this build, so returning a URL here
-         * would advertise a transport the client cannot reach, and falling
-         * back to direct would be exactly the downgrade the contract forbids.
-         *
-         * The session grant itself is already recorded, so once the relay
-         * transport lands this becomes a response rather than a new flow. */
+        /* Relay-unavailable must be explicit; it can never fall back to a
+         * secret-bearing direct response. */
         if (effectiveMode === 'relay-strict') {
             if (!this.relayMount) {
-                this.sessions.drop(sessionId);
+                this.sessions.drop(sessionId, 'relay-unavailable');
                 throw new MobileStoreError(
                     'shared_relay_unavailable',
                     '\u670d\u52a1\u7aef relay \u901a\u9053\u5c1a\u672a\u5b9e\u73b0\uff0c\u65e0\u6cd5\u4ee3\u6267\u884c\u6b64\u5171\u4eab\u8fde\u63a5',
@@ -474,18 +800,7 @@ class SharedResourceApi {
             response.relay = {
                 websocketUrl: this.relayMount + '?sessionId=' + encodeURIComponent(sessionId),
                 protocol: purpose,
-                credential: this.store.signBlob(
-                    RELAY_NAMESPACE,
-                    {
-                        sessionId,
-                        userId: user.userId,
-                        deviceId: deviceRow.device_id,
-                        resourceId: conn.id,
-                        purpose,
-                        channels: grantedChannels,
-                    },
-                    RELAY_CREDENTIAL_TTL_MS,
-                ),
+                credential: this.mintRelayCredential(this.sessions.get(sessionId)),
             };
             return response;
         }
@@ -512,6 +827,29 @@ class SharedResourceApi {
         /* microphone / camera / location are device-invasive and are never
          * inferred from a resource ACL. */
         return false;
+    }
+
+    mintRelayCredential(session) {
+        const attach = session && this.sessions.mintRelayClaim(session.sessionId);
+        if (!session || !attach) {
+            throw new MobileStoreError('shared_session_expired', '\u4f1a\u8bdd\u5df2\u8fc7\u671f\u6216\u4e0d\u5b58\u5728', 410);
+        }
+        return this.store.signBlob(
+            RELAY_NAMESPACE,
+            {
+                jti: attach.jti,
+                attachGeneration: attach.attachGeneration,
+                sessionId: session.sessionId,
+                userId: session.userId,
+                deviceId: session.deviceId,
+                deviceGeneration: session.deviceGeneration,
+                backingTokenId: session.backingTokenId,
+                resourceId: session.resourceId,
+                purpose: session.purpose,
+                channels: session.channels || [],
+            },
+            RELAY_CREDENTIAL_TTL_MS,
+        );
     }
 
     /**
@@ -640,6 +978,11 @@ class SharedResourceApi {
         if (session.userId !== user.userId || session.deviceId !== deviceRow.device_id) {
             throw new MobileStoreError('shared_session_expired', '\u4f1a\u8bdd\u4e0d\u5c5e\u4e8e\u5f53\u524d\u8bbe\u5907', 410);
         }
+        if (Number(session.deviceGeneration) !== Number(deviceRow.refresh_generation || 1)
+            || session.backingTokenId !== String(deviceRow.token_id || '')) {
+            this.sessions.drop(sessionId, 'device-generation-changed');
+            throw new MobileStoreError('shared_session_expired', '\u8bbe\u5907\u51ed\u636e\u5df2\u66f4\u65b0', 410);
+        }
         const nonce = String(clientNonce || '');
         if (nonce.length < 22) {
             throw new MobileStoreError('invalid_request', 'clientSessionNonce \u957f\u5ea6\u65e0\u6548', 400);
@@ -651,8 +994,12 @@ class SharedResourceApi {
         if (!conn) throw this.notFound();
         const caps = this.authz.effectiveCapabilities(user, 'connection', conn.id, conn);
         if (!caps.has('use')) {
-            this.sessions.drop(sessionId);
+            this.sessions.drop(sessionId, 'acl-revoked');
             throw new MobileStoreError('shared_grant_revoked', '\u5171\u4eab\u6388\u6743\u5df2\u88ab\u6536\u56de', 410);
+        }
+        if (session.mode === 'direct-ephemeral' && (!session.directAuthorized || !caps.has('revealSecret'))) {
+            this.sessions.drop(sessionId, 'secret-disclosure-revoked');
+            throw new MobileStoreError('shared_grant_revoked', '\u5171\u4eab\u5bc6\u94a5\u6388\u6743\u5df2\u88ab\u6536\u56de', 410);
         }
 
         const response = {
@@ -677,18 +1024,7 @@ class SharedResourceApi {
             response.relay = {
                 websocketUrl: this.relayMount + '?sessionId=' + encodeURIComponent(session.sessionId),
                 protocol: session.purpose,
-                credential: this.store.signBlob(
-                    RELAY_NAMESPACE,
-                    {
-                        sessionId: session.sessionId,
-                        userId: user.userId,
-                        deviceId: deviceRow.device_id,
-                        resourceId: conn.id,
-                        purpose: session.purpose,
-                        channels: session.channels || [],
-                    },
-                    RELAY_CREDENTIAL_TTL_MS,
-                ),
+                credential: this.mintRelayCredential(session),
             };
         } else {
             throw new MobileStoreError(
@@ -708,7 +1044,7 @@ class SharedResourceApi {
             throw this.notFound();
         }
         if (session) {
-            this.sessions.drop(sessionId);
+            this.sessions.drop(sessionId, 'client-closed');
             this.authz.audit({
                 actorUserId: user.userId,
                 resourceType: session.resourceType,
@@ -754,6 +1090,14 @@ class SharedResourceApi {
             throw new MobileStoreError('server_unavailable', '\u7b14\u8bb0\u670d\u52a1\u4e0d\u53ef\u7528', 503, { retryable: true });
         }
 
+        /* Do not let legacy share flags or historical ACL rows resurrect a
+         * soft-deleted note or a note whose owner account no longer exists.
+         * NotesService remains the canonical second authorization check. */
+        const raw = this.rawResource('note', noteId);
+        if (!raw || String(raw.ownerUserId || '') === user.userId || !this.activeOwner(raw)) {
+            throw this.notFound();
+        }
+
         if (operation === 'read') {
             let note;
             try {
@@ -763,7 +1107,7 @@ class SharedResourceApi {
                  * 404, which is exactly the residency requirement. */
                 throw this.notFound();
             }
-            if (String(note.ownerUserId || '') === user.userId) throw this.notFound();
+            if (String(note.ownerUserId || '') === user.userId || !this.activeOwner(note)) throw this.notFound();
             return {
                 ok: true,
                 revision: Math.max(1, Number(note.revision) || 1),
@@ -903,6 +1247,97 @@ class SharedResourceApi {
         }
     }
 
+    /** Rechecks every authority that can disappear while a relay is alive. */
+    assertRelaySessionLive(sessionId, { attachId = '', checkDependencies = true } = {}) {
+        const session = this.sessions.get(String(sessionId || ''));
+        if (!session) {
+            throw new MobileStoreError('shared_session_expired', '\u4f1a\u8bdd\u5df2\u8fc7\u671f\u6216\u4e0d\u5b58\u5728', 410);
+        }
+        if (attachId && !session.activeAttachIds.has(String(attachId))) {
+            throw new MobileStoreError('shared_session_expired', '\u9644\u52a0\u5df2\u7ec8\u6b62', 410);
+        }
+
+        const user = this.storage.getUserBrief(session.userId);
+        if (!user || user.status !== 'active') {
+            this.sessions.drop(session.sessionId, 'account-unavailable');
+            throw new MobileStoreError('account_unavailable', '\u8d26\u53f7\u4e0d\u53ef\u7528', 403);
+        }
+        const owner = this.storage.getUserBrief(session.ownerUserId);
+        if (!owner || owner.status !== 'active') {
+            this.sessions.drop(session.sessionId, 'owner-account-unavailable');
+            throw new MobileStoreError('account_unavailable', '\u8d44\u6e90\u6240\u6709\u8005\u8d26\u53f7\u4e0d\u53ef\u7528', 403);
+        }
+
+        const device = this.store.getDeviceRow(session.deviceId);
+        const deviceLive = device
+            && device.owner_user_id === session.userId
+            && !device.revoked_at
+            && !!device.enabled
+            && Number(device.refresh_generation || 1) === Number(session.deviceGeneration)
+            && String(device.token_id || '') === session.backingTokenId;
+        if (!deviceLive) {
+            this.sessions.drop(session.sessionId, 'device-revoked');
+            throw new MobileStoreError('client_revoked', '\u8bbe\u5907\u5df2\u88ab\u540a\u9500\u6216\u51ed\u636e\u5df2\u66f4\u65b0', 403);
+        }
+
+        let tokenLive = false;
+        try {
+            tokenLive = !!this.fileAgentManager
+                && this.fileAgentManager.listTokens(user.username)
+                    .some((token) => token.id === session.backingTokenId);
+        } catch {
+            throw new MobileStoreError('server_unavailable', 'Token \u670d\u52a1\u6682\u65f6\u4e0d\u53ef\u7528', 503, { retryable: true });
+        }
+        if (!tokenLive) {
+            this.sessions.drop(session.sessionId, 'backing-token-revoked');
+            throw new MobileStoreError('token_missing', '\u5173\u8054 Token \u5df2\u5220\u9664', 403);
+        }
+
+        const conn = this.storage.getConnectionById(session.resourceId);
+        if (!conn || String(conn.ownerUserId || '') !== session.ownerUserId) {
+            this.sessions.drop(session.sessionId, 'resource-unavailable');
+            throw this.notFound();
+        }
+        const caps = this.authz.effectiveCapabilities(user, 'connection', conn.id, conn);
+        const channelsLive = (session.channels || []).every((channel) => this.channelAllowed(channel, caps));
+        if (!caps.has('use') || !channelsLive) {
+            this.sessions.drop(session.sessionId, 'acl-revoked');
+            throw new MobileStoreError('shared_grant_revoked', '\u5171\u4eab\u6388\u6743\u5df2\u88ab\u6536\u56de', 410);
+        }
+        if (Math.max(1, Number(conn.revision) || 1) !== Number(session.revision)) {
+            this.sessions.drop(session.sessionId, 'resource-revision-changed');
+            throw new MobileStoreError('shared_session_expired', '\u8d44\u6e90\u7248\u672c\u5df2\u66f4\u65b0', 410);
+        }
+        if (checkDependencies && typeof this.resourceService._resolveDependencySecrets === 'function') {
+            try {
+                /* The return value may contain secrets and is deliberately not
+                 * retained, serialized, audited or logged. This call exists
+                 * only to re-evaluate dependency ACLs. */
+                this.resourceService._resolveDependencySecrets(user, conn);
+            } catch (err) {
+                this.sessions.drop(session.sessionId, 'dependency-acl-revoked');
+                throw new MobileStoreError(err.code || 'shared_grant_revoked', err.message || '\u4f9d\u8d56\u6388\u6743\u5df2\u5931\u6548', err.status || 403);
+            }
+        }
+        return { session, user, device, conn, caps };
+    }
+
+    validateRelaySession(sessionId, attachId) {
+        try {
+            return this.assertRelaySessionLive(sessionId, { attachId, checkDependencies: true });
+        } catch (err) {
+            return { ok: false, error: err };
+        }
+    }
+
+    subscribeSessionRevocation(sessionId, listener) {
+        return this.sessions.subscribe(sessionId, listener);
+    }
+
+    releaseRelayAttach(sessionId, attachId) {
+        return this.sessions.releaseRelayAttach(sessionId, attachId);
+    }
+
     /**
      * Authorises one relay attach.
      *
@@ -927,7 +1362,7 @@ class SharedResourceApi {
         if (!session) {
             throw new MobileStoreError('shared_session_expired', '\u4f1a\u8bdd\u5df2\u8fc7\u671f\u6216\u4e0d\u5b58\u5728', 410);
         }
-        /* Defence in depth, deliberately not covered by a test.
+        /* Defence in depth.
          *
          * Both mint sites (openConnectionSession and refreshSession) derive
          * userId/deviceId from the *authenticated requester* and sessionId from
@@ -941,36 +1376,58 @@ class SharedResourceApi {
         if (session.userId !== String(claim.userId) || session.deviceId !== String(claim.deviceId)) {
             throw new MobileStoreError('shared_session_expired', '\u4f1a\u8bdd\u4e0d\u5c5e\u4e8e\u5f53\u524d\u8bbe\u5907', 410);
         }
+        if (session.resourceId !== String(claim.resourceId)
+            || session.backingTokenId !== String(claim.backingTokenId)
+            || Number(session.deviceGeneration) !== Number(claim.deviceGeneration)
+            || session.purpose !== String(claim.purpose)) {
+            throw new MobileStoreError('shared_session_expired', '\u4f1a\u8bdd\u7ed1\u5b9a\u4e0d\u5339\u914d', 410);
+        }
         if (session.mode !== 'relay-strict') {
             throw new MobileStoreError('shared_direct_forbidden', '\u8be5\u4f1a\u8bdd\u4e0d\u662f relay \u6a21\u5f0f', 403);
         }
 
-        const user = this.storage.getUserBrief(session.userId);
-        if (!user || user.status !== 'active') {
-            throw new MobileStoreError('account_unavailable', '\u8d26\u53f7\u4e0d\u53ef\u7528', 403);
+        /* resolveForConnect below performs the attach-time dependency ACL
+         * check; avoid resolving secret material twice on this path. */
+        const live = this.assertRelaySessionLive(sessionId, { checkDependencies: false });
+        const reserved = this.sessions.reserveRelayAttach(
+            sessionId,
+            claim.jti,
+            claim.attachGeneration,
+            this.maxRelayAttachesPerSession,
+        );
+        if (!reserved.ok) {
+            throw new MobileStoreError(
+                reserved.code,
+                reserved.code === 'shared_session_consumed'
+                    ? '\u9644\u52a0\u51ed\u636e\u5df2\u4f7f\u7528\u3001\u5df2\u8fc7\u65f6\u6216\u5e76\u53d1\u8d85\u9650'
+                    : '\u4f1a\u8bdd\u5df2\u8fc7\u671f',
+                reserved.code === 'shared_session_consumed' ? 409 : 410,
+            );
         }
 
-        /* Live ACL recheck, then server-side dependency resolution. The
-         * credentials produced here never leave this process: they are handed
-         * straight to the upstream client. */
-        const conn = this.storage.getConnectionById(session.resourceId);
-        if (!conn) throw this.notFound();
-        const caps = this.authz.effectiveCapabilities(user, 'connection', conn.id, conn);
-        if (!caps.has('use')) {
-            this.sessions.drop(sessionId);
-            throw new MobileStoreError('shared_grant_revoked', '\u5171\u4eab\u6388\u6743\u5df2\u88ab\u6536\u56de', 410);
+        let resolved;
+        try {
+            /* The credentials produced here never leave this process: they are
+             * handed straight to the upstream client. */
+            resolved = this.resourceService.resolveForConnect(live.user, live.conn.id);
+        } catch (err) {
+            this.sessions.releaseRelayAttach(sessionId, reserved.attachId);
+            throw err;
         }
-
-        const resolved = this.resourceService.resolveForConnect(user, conn.id);
-        this.authz.audit({
-            actorUserId: user.userId,
-            resourceType: 'connection',
-            resourceId: conn.id,
-            action: 'shared.relay.attach',
-            outcome: 'success',
-            metadata: { deviceId: session.deviceId, purpose: session.purpose, mode: 'relay-strict' },
-        });
-        return { session, user, resolved };
+        try {
+            this.authz.audit({
+                actorUserId: live.user.userId,
+                resourceType: 'connection',
+                resourceId: live.conn.id,
+                action: 'shared.relay.attach',
+                outcome: 'success',
+                metadata: { deviceId: session.deviceId, purpose: session.purpose, mode: 'relay-strict' },
+            });
+        } catch (err) {
+            this.sessions.releaseRelayAttach(sessionId, reserved.attachId);
+            throw err;
+        }
+        return { session, user: live.user, resolved, attachId: reserved.attachId };
     }
 
     assertNoForbiddenKeys(payload) {
@@ -1006,6 +1463,7 @@ module.exports = {
     FILE_LEASE_TTL_SEC,
     RELAY_CREDENTIAL_TTL_MS,
     RELAY_NAMESPACE,
+    MAX_RELAY_ATTACHES_PER_SESSION,
     ZFT2_MAX_INFLIGHT,
     ZFT2_CHUNK_BYTES,
     noStore,

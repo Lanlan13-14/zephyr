@@ -2,7 +2,8 @@
 //
 // Why a Node test for Rust code:
 //   The compile-and-link proof lives in CI (`cargo test --lib` against
-//   freerdp3-dev), because it needs a Rust toolchain and FreeRDP headers. What
+//   the pinned patched FreeRDP 3.30 build), because it needs a Rust toolchain
+//   and FreeRDP headers. What
 //   this file guards is the wiring that decides *whether that proof runs at all*,
 //   plus the architectural constraints a compiler cannot express.
 //
@@ -53,7 +54,7 @@ test('the C shim is compiled by the build and consumed by Rust', () => {
     assert.match(LIB_RS, /^mod rdp;\r?$/m, 'the rdp module must be registered in lib.rs');
     assert.match(LIB_RS, /rdp::SessionRegistry::new\(\)/, 'and its registry managed');
     assert.match(RDP_FFI, /pub fn zephyr_rdp_new\(/, 'the session entry point must be bound');
-    assert.match(RDP_SESSION, /ffi::zephyr_rdp_run\(raw\)/, 'something must actually run a session');
+    assert.match(RDP_SESSION, /ffi::zephyr_rdp_run\(session\)/, 'something must actually run a session');
     assert.match(COMMANDS_RS, /pub fn rdp_native_connect\(/, 'the UI must be able to reach it');
 });
 
@@ -226,22 +227,29 @@ test('session teardown cannot use a freed pointer', () => {
 
     // Clearing before freeing, under the lock, is what makes "observed Some
     // implies live" true for every input caller.
-    const thread = RDP_SESSION.slice(RDP_SESSION.indexOf('let code = unsafe { ffi::zephyr_rdp_run'));
-    const clearAt = thread.indexOf('*slot = None;');
-    const freeAt = thread.indexOf('ffi::zephyr_rdp_free(raw)');
+    const thread = RDP_SESSION.slice(RDP_SESSION.indexOf('impl RunOwnership'));
+    const clearAt = thread.indexOf('slot.take()');
+    const freeAt = thread.indexOf('(self.free)(raw)');
     assert.ok(clearAt > 0 && freeAt > clearAt,
         'the slot must be cleared before the session is freed');
 
     // Input must not hold the lock across the blocking run call, or every send
     // would wait for the session to end.
-    assert.match(RDP_SESSION, /Copied out without holding the lock/);
+    const runAt = thread.indexOf('(self.run)(raw)');
+    assert.ok(runAt > 0 && runAt < clearAt,
+        'the blocking run must execute outside the pointer mutex');
+    assert.match(RDP_SESSION, /rejected_thread_spawn_frees_session_and_callback_owner_exactly_once/,
+        'thread creation failure must have a deterministic free/Arc reclamation test');
 });
 
 test('CI actually compiles and links the engine', () => {
     /* Without this the whole module is unverified: nothing in this repository can
      * compile Rust or C on the machine it was written on. */
     const test = WORKFLOW.slice(WORKFLOW.indexOf('  test:'), WORKFLOW.indexOf('  build-windows:'));
-    assert.match(test, /freerdp3-dev/, 'the test job must install FreeRDP');
+    assert.match(test, /native\/freerdp-core\/scripts\/build-freerdp\.sh/, 'the test job must build pinned FreeRDP');
+    assert.match(test, /verify-rdp-packaging\.mjs patched-install/);
+    assert.match(test, /ZEPHYR_ONE_REQUIRE_PATCHED_FREERDP=1/);
+    assert.doesNotMatch(test, /apt-get install[^\n]*freerdp3-dev/);
     assert.match(test, /run-ctests\.sh/, 'the C-level tests must still run');
     assert.match(test, /cargo test --lib/, 'the Rust must be compiled and its tests run');
     assert.match(test, /dtolnay\/rust-toolchain@stable/);
@@ -252,48 +260,48 @@ test('CI actually compiles and links the engine', () => {
     assert.match(test, /cargo check --lib/);
 });
 
-test('every release build can satisfy the new hard dependency', () => {
-    /* build.rs now panics without FreeRDP, so a release job that does not install
-     * it fails at link time -- after a full frontend build. Each of the three
-     * platforms needs its own package manager. */
+test('every release build uses the pinned patched static FreeRDP', () => {
+    /* Release builds must not drift to an unpatched system/vcpkg FreeRDP even
+     * when that package happens to expose the v3 ABI. */
     const job = (name, next) =>
         WORKFLOW.slice(WORKFLOW.indexOf(`  ${name}:`), WORKFLOW.indexOf(`  ${next}:`));
 
-    assert.match(job('build-windows', 'build-macos'), /vcpkg install freerdp/);
-    assert.match(job('build-macos', 'build-linux'), /brew install freerdp/);
-    assert.match(job('build-linux', 'release'), /freerdp3-dev/);
+    for (const section of [
+        job('build-windows', 'build-macos'),
+        job('build-macos', 'build-linux'),
+        job('build-linux', 'release'),
+    ]) {
+        assert.match(section, /native\/freerdp-core\/scripts\/build-freerdp\.sh/);
+        assert.match(section, /verify-rdp-packaging\.mjs patched-install/);
+        assert.match(section, /ZEPHYR_ONE_REQUIRE_PATCHED_FREERDP=1/);
+        assert.doesNotMatch(section, /vcpkg install freerdp|brew install freerdp|freerdp3-dev/);
+    }
 
-    /* Windows links FreeRDP dynamically, so the DLLs must sit beside the exe or
-     * the installed app dies with a missing-DLL dialog before showing a window. */
+    /* The pinned archives are static. Any FreeRDP DLL import or payload is an
+     * accidental reversion to an unverified dynamic build. */
     const windows = job('build-windows', 'build-macos');
-    assert.match(windows, /Stage FreeRDP runtime DLLs/);
-    const stageAt = windows.indexOf('Stage FreeRDP runtime DLLs');
-    const collectAt = windows.indexOf('Collect Windows artifacts');
-    assert.ok(stageAt < collectAt, 'DLLs must be staged before artifacts are collected');
+    assert.match(windows, /ilammy\/msvc-dev-cmd@v1/);
+    assert.match(windows, /verify-rdp-packaging\.mjs windows-static/);
+    assert.doesNotMatch(windows, /stage-windows-freerdp|tauri\.freerdp\.windows\.json/);
 });
 
-test('the Linux package declares its FreeRDP runtime dependency', () => {
-    /* apt would otherwise install a .deb that cannot start. The alternation keeps
-     * it installable on a distro that ships FreeRDP 2, which the shim also
-     * supports through the accessor API. */
+test('the Linux package cannot resolve FreeRDP from a runtime dependency', () => {
+    /* FreeRDP is linked from the audited static archives. A distro dependency
+     * would let package installation silently substitute an unpatched build. */
     const conf = JSON.parse(read('zephyr_one/src-tauri/tauri.conf.json'));
-    const depends = conf.bundle.linux.deb.depends;
-    assert.ok(Array.isArray(depends) && depends.length > 0, 'deb depends must not be empty');
-    assert.ok(depends.some((d) => /libfreerdp/.test(d)), `no FreeRDP dependency in ${depends}`);
-    assert.ok(depends.some((d) => /libwinpr/.test(d)), `no WinPR dependency in ${depends}`);
+    assert.equal(conf.bundle.linux, undefined);
+    assert.match(WORKFLOW, /verify-rdp-packaging\.mjs linux-static/);
 });
 
-test('an unrecognised security or audio mode is refused, never defaulted', () => {
-    /* The one mistake in the connect request that must never be quiet: silently
-     * treating security="plaintxet" as Auto would negotiate something weaker
-     * than the operator asked for. */
-    /* The Rust sources spell CJK as `\u{65e0}` escapes -- a deliberate choice, so
-     * that no editor or shell round-trip can mangle a user-facing string into
-     * question marks. Match that form rather than the decoded characters. */
-    assert.match(COMMANDS_RS, /RDP \\u\{5b89\}\\u\{5168\}\\u\{6a21\}\\u\{5f0f\}/,
-        'an unrecognised security mode must be reported, not defaulted');
-    assert.match(COMMANDS_RS, /\\u\{97f3\}\\u\{9891\}\\u\{6a21\}\\u\{5f0f\}/,
-        'an unrecognised audio mode must be reported, not defaulted');
+test('security and audio policy come from the trusted core, never renderer overrides', () => {
+    assert.match(COMMANDS_RS, /deny_unknown_fields/,
+        'opaque renderer intents must reject extra host, credential, and policy fields');
+    for (const forbidden of ['host', 'password', 'folderPath', 'folderGrant', 'security']) {
+        assert.match(COMMANDS_RS, new RegExp(`"${forbidden}"`),
+            `the attack contract must reject renderer field ${forbidden}`);
+    }
+    assert.match(COMMANDS_RS, /runtime::authorize_native_rdp/,
+        'connect must resolve policy through the authenticated core bridge');
     assert.match(RDP_MOD, /pub fn parse\(value: &str\) -> Option<Self>/);
 
     // Parse returning Option is what forces the caller to decide; a Default impl
@@ -302,28 +310,14 @@ test('an unrecognised security or audio mode is refused, never defaulted', () =>
     assert.doesNotMatch(RDP_MOD, /impl Default for AudioMode/);
 });
 
-test('a folder mapping is validated before it can fail the whole connect', () => {
-    /* freerdp_client_add_device_channel stats the path and fails the *entire*
-     * settings assembly when it is gone, so an unmounted share would otherwise
-     * surface as a generic connect failure with no hint at the cause. */
-    assert.match(RDP_MOD, /pub fn validate_drive\(name: &str, path: &str\)/);
-    assert.match(COMMANDS_RS, /pub fn rdp_native_validate_folder\(/);
-
-    /* Newline-agnostic: these sources are checked out with CRLF on Windows, so a
-     * pattern hard-coding \n would fail for a reason unrelated to the claim. */
-    const startAt = RDP_SESSION.search(/#\[cfg\(zephyr_native_rdp\)\]\r?\n\s*fn start_impl/);
-    assert.ok(startAt > 0, 'the native start_impl must exist');
-    const start = RDP_SESSION.slice(startAt);
-    const validateAt = start.indexOf('super::validate_drive(');
-    const newAt = start.indexOf('ffi::zephyr_rdp_new(');
-    assert.ok(validateAt > 0 && validateAt < newAt,
-        'the mapping must be validated before the session is created');
-
-    // Each reason keeps its own code, because the fix differs per case.
-    for (const code of ['drive_name_empty', 'drive_path_empty', 'drive_not_found',
-        'drive_not_directory', 'drive_name_unusable']) {
-        assert.ok(RDP_MOD.includes(`"${code}"`), `missing drive reason code ${code}`);
-    }
+test('desktop drive mapping is fail-closed until FreeRDP accepts a verified handle', () => {
+    assert.doesNotMatch(COMMANDS_RS, /pub fn rdp_native_validate_folder\(/,
+        'renderer paths must not cross a raw validation command');
+    assert.match(COMMANDS_RS, /folder_mapping_available:\s*false/);
+    assert.match(COMMANDS_RS, /folderPath.*folderGrant/s,
+        'the opaque-intent attack contract must cover both path and grant injection');
+    assert.match(RDP_SESSION, /if !config\.drive_path\.is_empty\(\) \|\| !config\.drive_name\.is_empty\(\)/,
+        'the native layer must retain a final fail-closed guard');
 });
 
 test('the docs no longer claim One ships the browser WASM engine', () => {

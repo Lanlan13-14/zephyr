@@ -228,6 +228,7 @@ dependencies = [
  "glib-sys",
  "libc",
  "system-deps",
+ "x11",
 ]
 
 [[package]]
@@ -613,6 +614,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "subtle",
 ]
 
 [[package]]
@@ -1327,6 +1329,15 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
+]
 
 [[package]]
 name = "html5ever"
@@ -5314,13 +5325,20 @@ dependencies = [
 name = "zephyr-one"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "cairo-sys-rs",
  "cc",
+ "core-graphics",
+ "getrandom 0.3.4",
+ "hmac",
  "localauthentication-rs",
  "once_cell",
  "parking_lot",
  "pkg-config",
+ "png 0.18.1",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -5334,6 +5352,8 @@ dependencies = [
  "ureq",
  "uuid",
  "windows 0.58.0",
+ "x11",
+ "zeroize",
 ]
 
 [[package]]

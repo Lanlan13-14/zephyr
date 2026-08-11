@@ -43,13 +43,15 @@ const EMBED_STYLESHEET = '/zephyr-one-embed.css';
  *
  * Inside One the same fields do mean something, so this script supplies the
  * behaviour: it drives the native OS folder dialog through the shell's polled
- * handoff and persists {folder, deviceName} per connection.
+ * handoff. The page sees only a selected flag and display label; the embedded
+ * core persists the native path without returning it to JavaScript.
  *
  * Injected here rather than added to app.html because app.html is shared: a
  * <script> tag there would make the browser product request a file it does not
  * serve (404) for a feature it cannot perform.
  */
 const EMBED_RDP_SETTINGS_SCRIPT = '/zephyr-one-rdp-settings.js';
+const EMBED_NATIVE_RDP_SCRIPT = '/zephyr-one-native-rdp.js';
 const EMBED_SECURITY_SCRIPT = '/zephyr-one-security-ui.js';
 
 /** Exact markup fragments this transform depends on existing in app.html. */
@@ -360,8 +362,11 @@ function applyEmbeddedSurface(source) {
          * button - a plain <script> in <body> satisfies that because app.js is
          * a module and therefore deferred. */
         html: injectOverlayScript(
-            injectOverlayScript(injectStylesheet(withOnePanel), EMBED_SECURITY_SCRIPT),
-            EMBED_RDP_SETTINGS_SCRIPT,
+            injectOverlayScript(
+                injectOverlayScript(injectStylesheet(withOnePanel), EMBED_SECURITY_SCRIPT),
+                EMBED_RDP_SETTINGS_SCRIPT,
+            ),
+            EMBED_NATIVE_RDP_SCRIPT,
         ),
         applied,
         skipped,
@@ -379,6 +384,7 @@ module.exports = {
     FAVICON_LINK,
     ONE_FAVICON_LINK,
     EMBED_RDP_SETTINGS_SCRIPT,
+    EMBED_NATIVE_RDP_SCRIPT,
     EMBED_SECURITY_SCRIPT,
     ONE_SECURITY_PANEL_BODY,
     replaceSecurityPanelBody,

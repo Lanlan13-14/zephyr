@@ -47,6 +47,7 @@ function stripComments(file, text) {
 }
 
 const runtimeRs = read('zephyr_one/src-tauri/src/runtime/mod.rs');
+const mainJs = read('zephyr_one/src/main.js');
 const serverJs = read('server.js');
 const workflow = read('.github/workflows/zephyr-one.yml');
 
@@ -96,17 +97,52 @@ test('embedded mode pins the listener to loopback', () => {
     assert.match(serverJs, /server\.listen\(PORT, resolve\)/);
 });
 
-test('adopted local session cannot be reached without the embedded flag', () => {
-    const guardAt = serverJs.indexOf('if (!ZEPHYR_ONE_EMBEDDED) return next();');
-    const adoptAt = serverJs.indexOf('function adoptEmbeddedLocalSession');
-    assert.ok(adoptAt > 0, 'adoption middleware must exist');
-    assert.ok(guardAt > adoptAt, 'adoption must bail out first when not embedded');
-
-    // mustChangePassword=false is the point: the rotation wall is what crashed
-    // and it has no meaning when the OS unlock is the gate.
-    const body = serverJs.slice(adoptAt, adoptAt + 1800);
+test('embedded local session requires a one-time parent-process challenge', () => {
+    const exchangeAt = serverJs.indexOf('function exchangeEmbeddedBootstrap');
+    assert.ok(exchangeAt > 0, 'bootstrap exchange endpoint must exist');
+    const body = serverJs.slice(exchangeAt, exchangeAt + 2400);
     assert.match(body, /mustChangePassword:\s*false/);
     assert.match(body, /storage\.getFirstUser\(\)/);
+    assert.match(body, /revokeAllForUser\(user\.userId, 'embedded-session-replaced'/);
+    assert.match(body, /consumeEmbeddedStartupChallenge\(\)/);
+    assert.match(body, /SameSite=Strict/);
+    assert.match(serverJs, /crypto\.timingSafeEqual/);
+    assert.match(serverJs, /ZEPHYR_ONE_STARTUP_CHALLENGE/);
+    assert.match(serverJs, /createHmac\('sha256', embeddedStartupChallenge\)/);
+    assert.match(serverJs, /app\.post\(EMBEDDED_BOOTSTRAP_PATH, exchangeEmbeddedBootstrap\)/);
+    assert.doesNotMatch(serverJs, /req\.query\.nonce/);
+    assert.doesNotMatch(serverJs, /adoptEmbeddedLocalSession/);
+});
+
+test('the shell keeps the startup challenge out of URLs and renderer state', () => {
+    assert.match(runtimeRs, /\.env\(STARTUP_CHALLENGE_ENV, &startup_challenge_encoded\)/);
+    assert.match(runtimeRs, /ensure_started_inner\(&app, false\)/,
+        'autostart must preserve the challenge for the later native handoff');
+    assert.match(runtimeRs, /st\.startup_challenge\.take\(\)/,
+        'the runtime must consume the challenge during native handoff');
+    assert.match(runtimeRs, /\.set\(BOOTSTRAP_HEADER, &challenge\.encoded\(\)\)/);
+    assert.match(runtimeRs, /\.set_cookie\(cookie\)/,
+        'the native shell must install the HttpOnly session without renderer access');
+    assert.match(runtimeRs, /"runtime ready port=\{\} node=\{\}"/,
+        'autostart diagnostics may log the port but never the challenge');
+    assert.match(mainJs, /state\.runtime = \{ \.\.\.info, baseUrl: cleanOrigin \}/);
+    assert.doesNotMatch(runtimeRs, /bootstrap\?nonce|nonce=\{bootstrap/i);
+    assert.doesNotMatch(mainJs, /startupChallenge|bootstrapChallenge|bootstrapNonce/,
+        'the renderer must never receive or persist the startup challenge');
+});
+
+test('embedded mode cannot fall back to the browser RDP proxy', () => {
+    const upgradeAt = serverJs.indexOf('function handleHttpUpgrade');
+    const targetAt = serverJs.indexOf("const targetWss = pathname === '/ssh'", upgradeAt);
+    const embeddedRejectAt = serverJs.indexOf(
+        "if (ZEPHYR_ONE_EMBEDDED && pathname === '/rdp-proxy')",
+        upgradeAt,
+    );
+    assert.ok(embeddedRejectAt > upgradeAt && embeddedRejectAt < targetAt,
+        'embedded /rdp-proxy must be rejected before WebSocket dispatch');
+    assert.match(serverJs.slice(embeddedRejectAt, targetAt), /rejectSocket\(socket, 404, 'Not Found'\)/);
+    assert.match(serverJs.slice(targetAt, targetAt + 500), /pathname === '\/rdp-proxy'/,
+        'hosted mode must retain the browser RDP proxy dispatch');
 });
 
 test('the workflow builds only the three desktop platforms', () => {

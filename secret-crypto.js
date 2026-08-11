@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { ml_kem768 } = require('@noble/post-quantum/ml-kem.js');
+const { writeFileAtomically } = require('./durable-file');
 
 const DATA_DIR = process.env.ZEPHYR_DATA_DIR
     ? path.resolve(process.env.ZEPHYR_DATA_DIR)
@@ -44,9 +45,7 @@ function loadKeyPairFromFile() {
     return validateKeyPair({ publicKey: unb64(raw.publicKey), secretKey: unb64(raw.secretKey), source: 'file' });
 }
 
-function writeKeyPairToFile(pair) {
-    const keyFile = currentKeyFile();
-    fs.mkdirSync(path.dirname(keyFile), { recursive: true });
+function serializeKeyPair(pair) {
     const payload = {
         version: 1,
         alg: 'ML-KEM-768',
@@ -55,8 +54,41 @@ function writeKeyPairToFile(pair) {
         createdAt: Date.now(),
         warning: 'Keep this file secret. It is required to decrypt encrypted Zephyr data fields.',
     };
-    fs.writeFileSync(keyFile, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-    try { fs.chmodSync(keyFile, 0o600); } catch {}
+    return Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function validateKeyBackupBuffer(buffer) {
+    if (!Buffer.isBuffer(buffer) || !buffer.length || buffer.length > 128 * 1024) {
+        throw new Error('ML-KEM-768 key backup is invalid');
+    }
+    let parsed;
+    try {
+        parsed = JSON.parse(buffer.toString('utf8'));
+    } catch {
+        throw new Error('ML-KEM-768 key backup is invalid');
+    }
+    const publicKey = unb64(parsed?.publicKey);
+    const secretKey = unb64(parsed?.secretKey);
+    if (b64(publicKey) !== parsed?.publicKey || b64(secretKey) !== parsed?.secretKey) {
+        throw new Error('ML-KEM-768 key backup encoding is invalid');
+    }
+    return validateKeyPair({ publicKey, secretKey, source: 'file' });
+}
+
+function writeKeyPairToFile(pair, options = {}) {
+    const keyFile = currentKeyFile();
+    const payload = serializeKeyPair(validateKeyPair(pair));
+    try {
+        writeFileAtomically(keyFile, payload, {
+            mode: 0o600,
+            directoryMode: 0o700,
+            tempLabel: 'key',
+            stagePrefix: options.stagePrefix || 'data_key',
+            faultInjector: options.faultInjector,
+        });
+    } finally {
+        payload.fill(0);
+    }
 }
 
 function ensureKeyPair() {
@@ -135,14 +167,24 @@ function getKeyBackupFile() {
     return fs.existsSync(keyFile) ? { archivePath: 'crypto/ml-kem-768-keypair.json', filePath: keyFile } : null;
 }
 
-function restoreKeyBackup(buffer) {
+function restoreKeyBackup(buffer, options = {}) {
     if (!buffer?.length) return false;
+    if (readEnvKeyPair()) throw new Error('cannot replace an externally managed ML-KEM-768 data key');
+    const expected = validateKeyBackupBuffer(buffer);
     const keyFile = currentKeyFile();
-    fs.mkdirSync(path.dirname(keyFile), { recursive: true });
-    fs.writeFileSync(keyFile, buffer, { mode: 0o600 });
-    try { fs.chmodSync(keyFile, 0o600); } catch {}
+    writeFileAtomically(keyFile, buffer, {
+        mode: 0o600,
+        directoryMode: 0o700,
+        tempLabel: 'restore-key',
+        stagePrefix: options.stagePrefix || 'data_key_restore',
+        faultInjector: options.faultInjector,
+    });
     resetKeyPairCache();
-    ensureKeyPair();
+    const installed = ensureKeyPair();
+    if (!crypto.timingSafeEqual(installed.publicKey, expected.publicKey)
+        || !crypto.timingSafeEqual(installed.secretKey, expected.secretKey)) {
+        throw new Error('installed ML-KEM-768 data key does not match the backup');
+    }
     return true;
 }
 
@@ -158,4 +200,6 @@ module.exports = {
     decryptSecret,
     getKeyBackupFile,
     restoreKeyBackup,
+    restoreKeyBackupAtomically: restoreKeyBackup,
+    validateKeyBackupBuffer,
 };

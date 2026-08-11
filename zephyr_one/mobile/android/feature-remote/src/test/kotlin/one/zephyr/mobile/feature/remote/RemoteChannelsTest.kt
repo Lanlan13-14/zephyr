@@ -7,7 +7,6 @@ import one.zephyr.mobile.protocol.rdp.PermissionState
 import one.zephyr.mobile.protocol.rdp.RdpChannelPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -59,12 +58,75 @@ class RemoteChannelsTest {
     fun onlyCaptureChannelsAreBackedByARuntimePermission() {
         /* Audio *output* and the clipboard need no grant on Android. Requesting one anyway would train
          * the user to deny prompts, which is what section 8's 实际请求时申请 rule is guarding. */
-        assertEquals("android.permission.RECORD_AUDIO", RemoteChannels.permissionFor(RdpChannel.MICROPHONE))
-        assertEquals("android.permission.CAMERA", RemoteChannels.permissionFor(RdpChannel.CAMERA))
-        assertEquals("android.permission.ACCESS_FINE_LOCATION", RemoteChannels.permissionFor(RdpChannel.LOCATION))
-        assertNull(RemoteChannels.permissionFor(RdpChannel.AUDIO))
-        assertNull(RemoteChannels.permissionFor(RdpChannel.CLIPBOARD))
-        assertNull(RemoteChannels.permissionFor(RdpChannel.DRIVE))
+        assertEquals(
+            listOf("android.permission.RECORD_AUDIO"),
+            RemoteChannels.permissionsFor(RdpChannel.MICROPHONE, sdkInt = 35),
+        )
+        assertEquals(
+            listOf("android.permission.CAMERA"),
+            RemoteChannels.permissionsFor(RdpChannel.CAMERA, sdkInt = 35),
+        )
+    }
+
+    @Test
+    fun android12LocationRequestsCoarseAndFineInOneBatch() {
+        assertEquals(
+            listOf(
+                "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.ACCESS_FINE_LOCATION",
+            ),
+            RemoteChannels.permissionsFor(RdpChannel.LOCATION, sdkInt = 31),
+        )
+        assertEquals(
+            listOf("android.permission.ACCESS_FINE_LOCATION"),
+            RemoteChannels.permissionsFor(RdpChannel.LOCATION, sdkInt = 30),
+        )
+    }
+
+    @Test
+    fun nonPermissionChannelsNeverProduceAFrameworkRequest() {
+        assertTrue(RemoteChannels.permissionsFor(RdpChannel.AUDIO, sdkInt = 35).isEmpty())
+        assertTrue(RemoteChannels.permissionsFor(RdpChannel.CLIPBOARD, sdkInt = 35).isEmpty())
+        assertTrue(RemoteChannels.permissionsFor(RdpChannel.DRIVE, sdkInt = 35).isEmpty())
+    }
+
+    @Test
+    fun android12ApproximateLocationIsAnHonestGrant() {
+        val outcome = RemoteChannels.permissionOutcome(
+            channel = RdpChannel.LOCATION,
+            sdkInt = 35,
+            grantedPermissions = setOf("android.permission.ACCESS_COARSE_LOCATION"),
+            requestablePermissions = setOf("android.permission.ACCESS_FINE_LOCATION"),
+        )
+
+        assertEquals(PermissionState.GRANTED, outcome.state)
+        assertFalse(outcome.permanentlyDenied)
+    }
+
+    @Test
+    fun aDeniedPermissionThatCanPromptAgainIsNotPermanent() {
+        val outcome = RemoteChannels.permissionOutcome(
+            channel = RdpChannel.CAMERA,
+            sdkInt = 35,
+            grantedPermissions = emptySet(),
+            requestablePermissions = setOf("android.permission.CAMERA"),
+        )
+
+        assertEquals(PermissionState.DENIED, outcome.state)
+        assertFalse(outcome.permanentlyDenied)
+    }
+
+    @Test
+    fun aDeniedPermissionWithNoRemainingPromptRoutesToSettings() {
+        val outcome = RemoteChannels.permissionOutcome(
+            channel = RdpChannel.LOCATION,
+            sdkInt = 35,
+            grantedPermissions = emptySet(),
+            requestablePermissions = emptySet(),
+        )
+
+        assertEquals(PermissionState.DENIED, outcome.state)
+        assertTrue(outcome.permanentlyDenied)
     }
 
     @Test
@@ -177,7 +239,7 @@ class RemoteChannelsTest {
             ),
         )
         val requested = RemoteChannels.toRequest(rows, requestedByRemote = setOf(RdpChannel.MICROPHONE))
-        assertEquals(listOf("android.permission.RECORD_AUDIO"), requested)
+        assertEquals(listOf(RdpChannel.MICROPHONE), requested)
     }
 
     @Test
@@ -206,8 +268,8 @@ class RemoteChannelsTest {
 
     @Test
     fun aChannelWithNoPermissionNeverProducesAnEmptyRequest() {
-        /* DRIVE is denied by a missing directory, not by a permission. mapNotNull is what keeps a null
-         * permission name out of the request array, where it would throw at the framework boundary. */
+        /* DRIVE is denied by a missing directory, not by a runtime permission. It must never reach
+         * the host permission launcher, where an empty request would fail at the framework boundary. */
         val decisions = listOf(
             ChannelDecision(RdpChannel.DRIVE, false, RemoteChannels.REASON_PERMISSION_DENIED),
         )
@@ -216,15 +278,15 @@ class RemoteChannelsTest {
     }
 
     @Test
-    fun duplicatePermissionsAreRequestedOnce() {
-        // Two rows can share one Android permission; asking twice stacks two identical dialogs.
+    fun duplicateChannelsAreRequestedOnce() {
+        // Duplicate policy rows must not turn one channel request into two system dialogs.
         val decisions = listOf(
             ChannelDecision(RdpChannel.MICROPHONE, false, RemoteChannels.REASON_PERMISSION_DENIED),
             ChannelDecision(RdpChannel.MICROPHONE, false, RemoteChannels.REASON_PERMISSION_DENIED),
         )
         val rows = RemoteChannels.rows(decisions, emptyMap(), emptySet())
         assertEquals(
-            listOf("android.permission.RECORD_AUDIO"),
+            listOf(RdpChannel.MICROPHONE),
             RemoteChannels.toRequest(rows, setOf(RdpChannel.MICROPHONE)),
         )
     }

@@ -19,17 +19,31 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-l2-'));
 }
 
+function optionalCommand(name) {
+  try {
+    return resolveCommand(name);
+  } catch (error) {
+    if (error?.code === 'command_unavailable') return null;
+    throw error;
+  }
+}
+
 test('whitelist resolves jq/grep and forbids shell/network tools', () => {
   _resetCapsCache();
-  const jq = resolveCommand('jq');
-  assert.ok(jq.absolute.includes('jq'));
+  const jq = optionalCommand('jq');
+  if (jq) assert.ok(jq.absolute.toLowerCase().includes('jq'));
+  else assert.throws(() => resolveCommand('jq'), (error) => error?.code === 'command_unavailable');
+  assert.ok(resolveCommand('grep').absolute);
   assert.throws(() => resolveCommand('bash'), /不在白名单|forbidden|command_forbidden/);
   assert.throws(() => resolveCommand('curl'), /不在白名单|forbidden|command_forbidden/);
   assert.throws(() => resolveCommand('/bin/bash'), /短名|command_must_be_name|不在白名单|forbidden/);
   // python3/node are allowed runtimes (not in FORBIDDEN_NAMES)
   assert.equal(FORBIDDEN_NAMES.has('python3'), false);
   assert.equal(FORBIDDEN_NAMES.has('bash'), true);
-  assert.ok(resolveCommand('python3').absolute);
+  const python = optionalCommand('python3');
+  if (python) assert.ok(python.absolute);
+  else assert.throws(() => resolveCommand('python3'), (error) => error?.code === 'command_unavailable');
+  assert.ok(resolveCommand('node').absolute);
 });
 
 test('sandbox status exposes isolation and limits', () => {
@@ -142,7 +156,11 @@ test('timeout kills long-running whitelist command', async () => {
   assert.equal(result.exitCode, 0);
 });
 
-test('jq processes JSON in workspace', async () => {
+test('jq processes JSON in workspace', async (t) => {
+  if (!optionalCommand('jq')) {
+    t.skip('jq is an optional sandbox utility on this platform');
+    return;
+  }
   const dataDir = tmpDir();
   const fsApi = new AiSessionFs({ dataDir });
   await fsApi.writeWorkspaceFile('u1', 's1', 'workspace/data.json', JSON.stringify({ a: 1, b: { c: 2 } }));
@@ -206,21 +224,25 @@ test('environment matrix reports Python Node Go/Rust FFmpeg', () => {
   assert.equal(st.policy.node, 'partial-script-only');
 });
 
-test('python runs session script and rejects -c', async () => {
+test('python runs session script and rejects -c', async (t) => {
   const dataDir = tmpDir();
   const fsApi = new AiSessionFs({ dataDir });
   await fsApi.writeWorkspaceFile('u1', 's1', 'workspace/hello.py', 'print("hello-sandbox")\n');
+  await assert.rejects(() => sessionExec({
+    userId: 'u1', sessionId: 's1', dataDir, sessionFs: fsApi,
+    command: 'python3', args: ['-c', 'print(1)'], cwd: 'workspace',
+  }), /python_inline|禁止 python -c/);
+
+  if (!optionalCommand('python3')) {
+    t.skip('Python is an optional sandbox runtime on this platform');
+    return;
+  }
   const ok = await sessionExec({
     userId: 'u1', sessionId: 's1', dataDir, sessionFs: fsApi,
     command: 'python3', args: ['workspace/hello.py'], cwd: 'workspace',
   });
   assert.equal(ok.exitCode, 0);
   assert.match(ok.stdout, /hello-sandbox/);
-
-  await assert.rejects(() => sessionExec({
-    userId: 'u1', sessionId: 's1', dataDir, sessionFs: fsApi,
-    command: 'python3', args: ['-c', 'print(1)'], cwd: 'workspace',
-  }), /python_inline|禁止 python -c/);
 });
 
 test('node partial: runs js file, rejects -e', async () => {
@@ -240,7 +262,7 @@ test('node partial: runs js file, rejects -e', async () => {
   }), /node_inline|部分支持/);
 });
 
-test('ffmpeg rejects remote URLs and accepts local version probe', async () => {
+test('ffmpeg rejects remote URLs and accepts local version probe', async (t) => {
   const dataDir = tmpDir();
   const fsApi = new AiSessionFs({ dataDir });
   await fsApi.ensure('u1', 's1');
@@ -248,6 +270,10 @@ test('ffmpeg rejects remote URLs and accepts local version probe', async () => {
     userId: 'u1', sessionId: 's1', dataDir, sessionFs: fsApi,
     command: 'ffmpeg', args: ['-i', 'https://example.com/a.mp4', 'workspace/out.mp4'],
   }), /ffmpeg_remote|远程/);
+  if (!optionalCommand('ffmpeg')) {
+    t.skip('FFmpeg is an optional sandbox runtime on this platform');
+    return;
+  }
   const ver = await sessionExec({
     userId: 'u1', sessionId: 's1', dataDir, sessionFs: fsApi,
     command: 'ffmpeg', args: ['-version'], cwd: 'workspace',

@@ -109,15 +109,15 @@ def page_static_findings(path, text):
 
 
 def main():
-    zh = json.loads((PUBLIC / "i18n/locales/zh-CN.json").read_text())
-    en = json.loads((PUBLIC / "i18n/locales/en.json").read_text())
+    zh = json.loads((PUBLIC / "i18n/locales/zh-CN.json").read_text(encoding="utf-8"))
+    en = json.loads((PUBLIC / "i18n/locales/en.json").read_text(encoding="utf-8"))
     seen = set()
     duplicate_attrs = []
     nested_i18n = []
     static_page_findings = []
 
     for path in frontend_files():
-        text = path.read_text(errors="replace")
+        text = path.read_text(encoding="utf-8", errors="replace")
         if path.suffix == ".html":
             parser = I18nHtmlAudit(path)
             parser.feed(text)

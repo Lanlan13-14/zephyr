@@ -105,6 +105,8 @@ type Config struct {
 	AutoConfirmDelayMS int
 	MCPServersJSON     json.RawMessage
 	ContextJSON        json.RawMessage
+	DatabaseGeneration string
+	RunNonce           string
 }
 
 type Metrics struct {
@@ -673,6 +675,8 @@ func (r *Runner) makeResumeState(cfg Config, metrics Metrics, kind PauseKind, ca
 		AutoConfirmDelayMS:  cfg.AutoConfirmDelayMS,
 		MCPServers:          cfg.MCPServersJSON,
 		Context:             cfg.ContextJSON,
+		DatabaseGeneration:  cfg.DatabaseGeneration,
+		RunNonce:            cfg.RunNonce,
 		ContextWindowTokens: cfg.ContextWindowTokens,
 		OutputReserveTokens: cfg.OutputReserveTokens,
 		Metrics:             metrics,

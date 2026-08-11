@@ -60,11 +60,28 @@ function Dump-Fail([string]$reason) {
     $lines.Add("(missing node log path=$($script:NodeLog))") | Out-Null
   }
   $lines.Add("---- autostart crumbs ----") | Out-Null
-  if ($script:CrumbLog -and (Test-Path -LiteralPath $script:CrumbLog)) {
-    $lines.Add((Get-Content -LiteralPath $script:CrumbLog -Raw -ErrorAction SilentlyContinue)) | Out-Null
-    Copy-Item -LiteralPath $script:CrumbLog -Destination (Join-Path $OutDir "zephyr-one-autostart.log") -Force
+  $crumbs = @()
+  foreach ($candidate in @($script:AppDataCrumbLog, $script:CrumbLog, $script:SystemTempCrumbLog)) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate) -and ($crumbs -notcontains $candidate)) {
+      $crumbs += $candidate
+    }
+  }
+  try {
+    $discovered = @(Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA -Recurse -Filter "runtime-autostart.log" -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -First 5 -ExpandProperty FullName)
+    foreach ($candidate in $discovered) {
+      if ($crumbs -notcontains $candidate) { $crumbs += $candidate }
+    }
+  } catch { $lines.Add("autostart log discovery failed: $_") | Out-Null }
+  if ($crumbs.Count -gt 0) {
+    foreach ($crumb in $crumbs) {
+      $lines.Add(("path={0}" -f $crumb)) | Out-Null
+      $lines.Add((Get-Content -LiteralPath $crumb -Raw -ErrorAction SilentlyContinue)) | Out-Null
+    }
+    Copy-Item -LiteralPath $crumbs[0] -Destination (Join-Path $OutDir "runtime-autostart.log") -Force
   } else {
-    $lines.Add("(no autostart crumb log at TEMP\zephyr-one-autostart.log -- thread never ran)") | Out-Null
+    $lines.Add(("(no autostart log; env TEMP={0}; system temp={1})" -f $env:TEMP, ([System.IO.Path]::GetTempPath()))) | Out-Null
   }
   $lines.Add("---- env ----") | Out-Null
   $lines.Add(("LOCALAPPDATA={0}" -f $env:LOCALAPPDATA)) | Out-Null
@@ -153,12 +170,27 @@ if (-not $installDir -or -not (Test-Path -LiteralPath $installDir)) {
   Dump-Fail ("installDir invalid: '{0}'" -f $installDir)
 }
 $script:InstallDir = $installDir
-# CI/headless: start embedded core from Rust setup without waiting on WebView JS.
+# Release builds link the pinned, patched FreeRDP archives statically. Any
+# FreeRDP/WinPR DLL beside the installed executable means the package silently
+# fell back to an unverified dynamic runtime.
+$installedDlls = @(Get-ChildItem -LiteralPath $installDir -File -Filter "*.dll" -ErrorAction SilentlyContinue |
+  Select-Object -ExpandProperty Name)
+$dynamicFreeRdp = @($installedDlls | Where-Object { $_ -match '^(?:lib)?(?:freerdp|winpr)' })
+if ($dynamicFreeRdp.Count -gt 0) {
+  Dump-Fail ("installed payload must statically link pinned FreeRDP but contains native DLLs: {0}" -f ($dynamicFreeRdp -join ', '))
+}
+# CI/headless: force the Rust Ready-event path without waiting on WebView JS.
 $env:ZEPHYR_ONE_AUTOSTART_RUNTIME = "1"
 Write-Log ("Launching '{0}' cwd='{1}' ZEPHYR_ONE_AUTOSTART_RUNTIME=1" -f $launchExe, $installDir)
 # Fresh crumb log so a stale one cannot masquerade as this run.
 $script:CrumbLog = Join-Path $env:TEMP "zephyr-one-autostart.log"
-if (Test-Path -LiteralPath $script:CrumbLog) { Remove-Item -LiteralPath $script:CrumbLog -Force -ErrorAction SilentlyContinue }
+$script:SystemTempCrumbLog = Join-Path ([System.IO.Path]::GetTempPath()) "zephyr-one-autostart.log"
+$script:AppDataCrumbLog = Join-Path $script:DataDir "runtime-autostart.log"
+foreach ($staleCrumb in @($script:CrumbLog, $script:SystemTempCrumbLog, $script:AppDataCrumbLog)) {
+  if ($staleCrumb -and (Test-Path -LiteralPath $staleCrumb)) {
+    Remove-Item -LiteralPath $staleCrumb -Force -ErrorAction SilentlyContinue
+  }
+}
 $proc = Start-Process -FilePath $launchExe -WorkingDirectory $installDir -PassThru
 if (-not $proc) { Dump-Fail "Start-Process returned null" }
 Write-Log ("pid={0}" -f $proc.Id)

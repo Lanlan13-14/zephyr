@@ -54,7 +54,7 @@ func runPlatformConfirmationCase(t *testing.T, policy permission.Policy, auto bo
 	run, _ := st.CreateRun(sess.ID, "u", "mock", "m")
 	reg := tool.NewRegistry()
 	ph := platform.NewHost(host.URL, "")
-	if err := platform.RegisterFromHost(context.Background(), reg, ph, "u", sess.ID, run.ID, nil); err != nil {
+	if err := platform.RegisterFromHost(context.Background(), reg, ph, "u", sess.ID, run.ID, "generation", "nonce", nil); err != nil {
 		t.Fatal(err)
 	}
 	mp := &mockProvider{rounds: []provider.Message{

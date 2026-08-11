@@ -69,6 +69,7 @@ test('OpenAPI covers auth, binding, bidirectional sync and sensitive grants', ()
   // (b) actually exist in server.js. Freezing one SHA string only breaks on
   // every rebase while proving nothing about the real server.
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const mobileRoutes = fs.readFileSync(path.join(root, 'mobile-v1-routes.js'), 'utf8');
   const implemented = Object.entries(api.paths).filter(([, item]) => Object.values(item)
     .some((op) => op && typeof op === 'object' && String(op['x-zephyr-implementation'] || '').startsWith('implemented-')));
   assert.ok(implemented.length >= 2, 'pre-existing Zephyr auth routes must be marked implemented');
@@ -76,16 +77,23 @@ test('OpenAPI covers auth, binding, bidirectional sync and sensitive grants', ()
     for (const [method, op] of Object.entries(item)) {
       if (!op || typeof op !== 'object' || !op['x-zephyr-implementation']) continue;
       assert.match(op['x-zephyr-implementation'], /^implemented-[0-9a-f]{7,40}$/, `${route} marker must pin a commit`);
-      assert.ok(server.includes(`app.${method}('${route}'`), `${route} claims implemented but is absent from server.js`);
+      const ownerSource = route.startsWith('/api/mobile/v1') ? mobileRoutes : server;
+      const mountedRoute = route.replace(/\{([^}]+)\}/g, ':$1');
+      assert.ok(ownerSource.includes(`app.${method}('${mountedRoute}'`),
+        `${route} claims implemented but is absent from its mounted route owner`);
     }
   }
 
-  // Everything under /api/mobile/v1 is still an unbuilt server extension.
+  // A mobile operation may remain a required extension until its production
+  // implementation is pinned. Implemented operations must use the commit
+  // marker checked above and exist in MobileV1Api's mounted route table.
   for (const [route, item] of Object.entries(api.paths)) {
     if (!route.startsWith('/api/mobile/v1')) continue;
     for (const [method, op] of Object.entries(item)) {
       if (!op || typeof op !== 'object' || !op.responses) continue;
-      assert.equal(op['x-zephyr-implementation'], 'required-server-extension', `${method} ${route} must not claim implemented`);
+      const marker = String(op['x-zephyr-implementation'] || '');
+      assert.ok(marker === 'required-server-extension' || /^implemented-[0-9a-f]{7,40}$/.test(marker),
+        `${method} ${route} has an invalid implementation marker`);
     }
   }
 });
@@ -101,8 +109,8 @@ test('entity registry covers every product-required mirror family', () => {
   ];
   for (const type of expected) assert.ok(byType.has(type), `registry missing ${type}`);
   assert.deepEqual(byType.get('connection').secretFields, ['password', 'privateKey']);
-  assert.ok(byType.get('clientToken').status.includes('blocked'));
-  assert.ok(byType.get('aiConversation').status.includes('blocked'));
+  assert.match(byType.get('clientToken').status, /^implemented-/);
+  assert.match(byType.get('aiConversation').status, /^implemented-/);
   assert.ok(registry.excludedEditableScopes.includes('accountSecurity'));
   assert.ok(registry.excludedEditableScopes.includes('smtp'));
 });

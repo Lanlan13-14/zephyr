@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { assertAssetVersion, cacheNameVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const floating = readFileSync(new URL('../public/floating-panel.js', import.meta.url), 'utf8');
 const terminal = readFileSync(new URL('../public/terminal.js', import.meta.url), 'utf8');
@@ -11,10 +12,10 @@ const image = readFileSync(new URL('../public/preview/image/image-preview.js', i
 const media = readFileSync(new URL('../public/preview/media/media-preview.js', import.meta.url), 'utf8');
 const style = readFileSync(new URL('../public/style.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+const appHtml = readFileSync(new URL('../public/app.html', import.meta.url), 'utf8');
+const terminalHtml = readFileSync(new URL('../public/terminal.html', import.meta.url), 'utf8');
 const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
 const CACHE = '20260731-panel-drag-physics4';
-const TERMINAL_CACHE = '20260801-terminal-grid-converge1';
-const APP_CACHE = '20260801-dock-notes-fullscreen1';
 
 test('shared floating-panel exposes AI-parity physics + hard drag', () => {
   assert.match(floating, /export async function ensureFloatingPanelPhysicsDrag/);
@@ -149,8 +150,11 @@ test('image/media preview use shared physics, not header hard drag', () => {
 });
 
 test('cache revision pins style + terminal + floating-panel physics4', () => {
-  assert.match(sw, new RegExp(`CACHE_NAME = 'zephyr-static-${APP_CACHE}'`));
-  assert.match(sw, new RegExp(`/style\\.css\\?v=${APP_CACHE}`));
-  assert.match(sw, new RegExp(`/terminal\\.js\\?v=${TERMINAL_CACHE}`));
-  assert.match(sw, new RegExp(`/floating-panel\\.js\\?v=${CACHE}`));
+  const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
+  const styleVersion = singleAssetVersion(appHtml, 'style.css', 'app shell style.css');
+  const terminalVersion = singleAssetVersion(terminalHtml, 'terminal.js', 'terminal page script');
+  assert.equal(cacheNameVersion(sw), appVersion);
+  assertAssetVersion(sw, 'style.css', styleVersion, 'service worker style.css');
+  assertAssetVersion(sw, 'terminal.js', terminalVersion, 'service worker terminal.js');
+  assertAssetVersion(sw, 'floating-panel.js', CACHE, 'service worker floating-panel.js');
 });

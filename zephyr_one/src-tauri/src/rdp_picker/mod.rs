@@ -12,22 +12,99 @@
 //!
 //!   So the page files a request with the core, and this watcher — running in
 //!   the shell process, which *can* open a native dialog — claims it, shows the
-//!   OS folder chooser, and posts the chosen path back. Same shape as the theme
-//!   watcher already in `icon`, and it reuses the core's own session adoption
-//!   (`adoptEmbeddedLocalSession` is global middleware, so a cookieless request
-//!   from this process authenticates as the local account).
+//!   OS folder chooser, and posts the chosen path back. Session adoption selects
+//!   the local account, while the per-process shell MAC proves the caller is the
+//!   native shell rather than JavaScript running in that adopted WebView session.
 
+use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_dialog::DialogExt;
+use uuid::Uuid;
 
 /// Poll cadence. Fast enough that tapping 选择文件夹 feels immediate, slow
 /// enough to be invisible on idle: an empty claim is a single loopback GET
 /// returning a 30-byte body.
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
+const SHELL_AUTH_NAMESPACE: &str = "one-shell-unlock-v1";
 
 static WATCHER_STARTED: AtomicBool = AtomicBool::new(false);
+
+fn signed_message(
+    action: &str,
+    timestamp: &str,
+    nonce: &str,
+    shell_instance: &str,
+    fields: &[&str],
+) -> String {
+    let mut parts = vec![
+        SHELL_AUTH_NAMESPACE.to_string(),
+        action.to_string(),
+        timestamp.to_string(),
+        nonce.to_string(),
+        shell_instance.to_string(),
+    ];
+    parts.extend(
+        fields
+            .iter()
+            .map(|value| format!("{}:{}", value.len(), value)),
+    );
+    parts.join("\n")
+}
+
+fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
+    const BLOCK_SIZE: usize = 64;
+    let mut key_block = [0_u8; BLOCK_SIZE];
+    if key.len() > BLOCK_SIZE {
+        let digest = Sha256::digest(key);
+        key_block[..digest.len()].copy_from_slice(&digest);
+    } else {
+        key_block[..key.len()].copy_from_slice(key);
+    }
+
+    let mut inner_pad = [0x36_u8; BLOCK_SIZE];
+    let mut outer_pad = [0x5c_u8; BLOCK_SIZE];
+    for index in 0..BLOCK_SIZE {
+        inner_pad[index] ^= key_block[index];
+        outer_pad[index] ^= key_block[index];
+    }
+
+    let mut inner = Sha256::new();
+    inner.update(inner_pad);
+    inner.update(message);
+    let inner_digest = inner.finalize();
+
+    let mut outer = Sha256::new();
+    outer.update(outer_pad);
+    outer.update(inner_digest);
+    outer
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Authenticate a loopback request as this Tauri shell process. The identity
+/// is shared with the Node child by `runtime`; it must not be copied into a
+/// picker-specific secret or exposed through the request body.
+fn signed_request(request: ureq::Request, action: &str, fields: &[&str]) -> ureq::Request {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .to_string();
+    let nonce = Uuid::new_v4().simple().to_string();
+    let (secret, shell_instance) = crate::unlock_bridge::shell_identity_env();
+    let message = signed_message(action, &timestamp, &nonce, shell_instance, fields);
+    let mac = hmac_sha256_hex(secret.as_bytes(), message.as_bytes());
+
+    request
+        .set("X-Zephyr-One-Shell-Instance", shell_instance)
+        .set("X-Zephyr-One-Shell-Timestamp", &timestamp)
+        .set("X-Zephyr-One-Shell-Nonce", &nonce)
+        .set("X-Zephyr-One-Shell-Mac", &mac)
+}
 
 /// Extract a JSON string field. Hand-rolled rather than pulling in a full parse
 /// because the two payloads involved are one and two flat string fields; the
@@ -99,10 +176,12 @@ pub fn spawn_picker_watcher<R: Runtime>(app: &AppHandle<R>) {
         }
         let base = base_url.trim_end_matches('/').to_string();
 
-        let claim = match ureq::get(&format!("{base}/api/one/rdp/picker-queue"))
-            .timeout(Duration::from_secs(3))
-            .call()
-        {
+        let claim_request = signed_request(
+            ureq::get(&format!("{base}/api/one/rdp/picker-queue")),
+            "rdp_picker.claim",
+            &[],
+        );
+        let claim = match claim_request.timeout(Duration::from_secs(3)).call() {
             Ok(resp) if resp.status() == 200 => match resp.into_string() {
                 Ok(text) => text,
                 Err(_) => continue,
@@ -121,27 +200,37 @@ pub fn spawn_picker_watcher<R: Runtime>(app: &AppHandle<R>) {
          * open there is nothing else for the watcher to do, and claiming a
          * second request mid-dialog would show two choosers at once. */
         let picked = app.dialog().file().blocking_pick_folder();
-        let body = match picked {
+        let (path, error) = match picked {
             Some(folder) => {
                 let path = match folder.into_path() {
                     Ok(path) => path.to_string_lossy().into_owned(),
                     Err(raw) => raw.to_string(),
                 };
-                format!("{{\"path\":\"{}\"}}", json_escape(&path))
+                (path, String::new())
             }
             /* Cancelled. Reported explicitly rather than left to time out, so
              * the page can restore the button instead of spinning for two
              * minutes. */
-            None => "{\"error\":\"cancelled\"}".to_string(),
+            None => (String::new(), "cancelled".to_string()),
         };
+        let body = format!(
+            "{{\"path\":\"{}\",\"error\":\"{}\"}}",
+            json_escape(&path),
+            json_escape(&error)
+        );
 
         let url = format!("{base}/api/one/rdp/picker-queue/{id}");
-        if let Err(error) = ureq::post(&url)
+        let request = signed_request(
+            ureq::post(&url),
+            "rdp_picker.resolve",
+            &[&id, &path, &error],
+        );
+        if let Err(delivery_error) = request
             .timeout(Duration::from_secs(3))
             .set("Content-Type", "application/json")
             .send_string(&body)
         {
-            eprintln!("zephyr-one: folder picker result not delivered: {error}");
+            eprintln!("zephyr-one: folder picker result not delivered: {delivery_error}");
         }
     });
 }
@@ -154,10 +243,7 @@ mod tests {
     fn reads_a_flat_string_field() {
         let body = r#"{"id":"7f3a-1","username":"root"}"#;
         assert_eq!(json_string_field(body, "id").as_deref(), Some("7f3a-1"));
-        assert_eq!(
-            json_string_field(body, "username").as_deref(),
-            Some("root")
-        );
+        assert_eq!(json_string_field(body, "username").as_deref(), Some("root"));
         assert_eq!(json_string_field(body, "missing"), None);
     }
 
@@ -206,5 +292,52 @@ mod tests {
         // Same shape as the mapping payload: `path` must not match `drivePath`.
         let paths = r#"{"drivePath":"nope","path":"yes"}"#;
         assert_eq!(json_string_field(paths, "path").as_deref(), Some("yes"));
+    }
+
+    #[test]
+    fn hmac_matches_the_rfc_4231_sha256_vector() {
+        assert_eq!(
+            hmac_sha256_hex(&[0x0b; 20], b"Hi There"),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+    }
+
+    #[test]
+    fn resolve_signature_binds_id_path_and_error_in_order() {
+        let message = signed_message(
+            "rdp_picker.resolve",
+            "1723000000000",
+            "0123456789abcdef0123456789abcdef",
+            "shell-instance",
+            &["pick-1", "C:\\Users\\Alice\\Share", ""],
+        );
+        assert_eq!(
+            message,
+            "one-shell-unlock-v1\nrdp_picker.resolve\n1723000000000\n0123456789abcdef0123456789abcdef\nshell-instance\n6:pick-1\n20:C:\\Users\\Alice\\Share\n0:"
+        );
+
+        let unicode_path = "C:\\\u{5171}\u{4eab}";
+        let unicode_message = signed_message(
+            "rdp_picker.resolve",
+            "1723000000000",
+            "0123456789abcdef0123456789abcdef",
+            "shell-instance",
+            &["pick-1", unicode_path, ""],
+        );
+        assert!(unicode_message.ends_with("\n6:pick-1\n9:C:\\\u{5171}\u{4eab}\n0:"));
+    }
+
+    #[test]
+    fn claim_signature_has_no_mutable_fields() {
+        assert_eq!(
+            signed_message(
+                "rdp_picker.claim",
+                "1723000000000",
+                "0123456789abcdef0123456789abcdef",
+                "shell-instance",
+                &[],
+            ),
+            "one-shell-unlock-v1\nrdp_picker.claim\n1723000000000\n0123456789abcdef0123456789abcdef\nshell-instance"
+        );
     }
 }

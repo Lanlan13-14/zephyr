@@ -191,7 +191,11 @@ class SyncEngine(
         val failure = results.lastOrNull()?.takeIf { !it.succeeded }
         if (failure != null) {
             val error = failure.error
-            if (error != null && SyncErrorMapping.isRetryable(error)) {
+            if (error?.requiresBootstrapSignal() == true && actor.rerunPending()) {
+                // cursor_invalid is non-retryable as a push. This is a bootstrap continuation,
+                // protected by the durable BOUND_NEEDS_BOOTSTRAP transition in the local store.
+                scheduler.requestBootstrapRound(current.networkPolicy)
+            } else if (error != null && SyncErrorMapping.isRetryable(error)) {
                 val attempt = syncState.state(bindingKey)?.consecutiveFailures ?: 0
                 scheduler.scheduleRetry(
                     SyncErrorMapping.retryDelayMs(error, attempt),

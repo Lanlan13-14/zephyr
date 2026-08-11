@@ -159,9 +159,7 @@ fn unlock_macos(reason: &str) -> UnlockResult {
 #[cfg(target_os = "windows")]
 fn unlock_windows(reason: &str) -> UnlockResult {
     use windows::core::HSTRING;
-    use windows::Security::Credentials::UI::{
-        UserConsentVerificationResult, UserConsentVerifier,
-    };
+    use windows::Security::Credentials::UI::{UserConsentVerificationResult, UserConsentVerifier};
     let msg = HSTRING::from(reason);
     match UserConsentVerifier::RequestVerificationAsync(&msg) {
         Ok(op) => match op.get() {

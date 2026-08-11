@@ -29,6 +29,7 @@ object PendingOperationMapper {
         lastError = row.lastError,
         createdLocally = row.createdLocally,
         secretFields = Converters.textToStringList(row.secretFieldsJson),
+        clearSecretFields = Converters.textToStringList(row.clearedSecretFieldsJson),
         dispatchedAt = row.dispatchedAt,
     )
 
@@ -46,6 +47,7 @@ object PendingOperationMapper {
         lastError = model.lastError,
         createdLocally = model.createdLocally,
         secretFieldsJson = Converters.stringListToText(model.secretFields),
+        clearedSecretFieldsJson = Converters.stringListToText(model.clearSecretFields),
         dispatchedAt = model.dispatchedAt,
     )
 }

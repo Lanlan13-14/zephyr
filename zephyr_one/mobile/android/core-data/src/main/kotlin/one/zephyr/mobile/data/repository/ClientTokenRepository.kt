@@ -1,5 +1,6 @@
 package one.zephyr.mobile.data.repository
 
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonObject
@@ -7,6 +8,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import one.zephyr.mobile.contracts.SyncAction
 import one.zephyr.mobile.data.LocalEdit
 import one.zephyr.mobile.data.LocalWriteGateway
+import one.zephyr.mobile.data.db.MirrorEntityRow
+import one.zephyr.mobile.data.db.TombstoneRow
 import one.zephyr.mobile.data.db.ZephyrDatabase
 import one.zephyr.mobile.data.mapper.ResourceMappers
 import one.zephyr.mobile.model.ClientToken
@@ -28,6 +31,7 @@ class ClientTokenRepository(
     private val db: ZephyrDatabase,
     private val gateway: LocalWriteGateway,
     private val secretStore: SecretStore,
+    private val boundOwnerUserId: String,
 ) {
 
     fun observeAll(ownerUserId: String): Flow<List<ClientToken>> =
@@ -61,12 +65,17 @@ class ClientTokenRepository(
      * @param grantId proof that the main end verified the account password or TOTP for this exact
      *   action. DEVELOPMENT.md 617 forbids App Lock or biometrics from standing in for it.
      */
-    fun reveal(id: String, grantId: String?): String? {
-        require(!grantId.isNullOrEmpty()) {
-            "revealing a Client Token requires a main-end sensitive grant"
+    suspend fun reveal(id: String, grantId: String?): String? =
+        db.withTransaction {
+            revealLiveClientToken(
+                id = id,
+                boundOwnerUserId = boundOwnerUserId,
+                grantId = grantId,
+                loadMirror = { tokenId -> db.mirrorDao().find(ClientToken.ENTITY_TYPE, tokenId) },
+                loadTombstone = { tokenId -> db.tombstoneDao().find(ClientToken.ENTITY_TYPE, tokenId) },
+                readSecret = secretStore::getText,
+            )
         }
-        return secretStore.getText(SecretRef.of(ClientToken.ENTITY_TYPE, id, "token"))
-    }
 
     fun hasSecret(id: String): Boolean =
         secretStore.has(SecretRef.of(ClientToken.ENTITY_TYPE, id, "token"))
@@ -109,4 +118,40 @@ class ClientTokenRepository(
             secretStore.remove(SecretRef.of(ClientToken.ENTITY_TYPE, row.entityId, "token"))
         }
     }
+}
+
+/**
+ * Performs the reveal checks before [readSecret] is invoked.
+ *
+ * Production calls this inside one Room transaction, so a tombstone or mirror replacement cannot
+ * race between the authorization checks and the SecretStore read. The SecretStore itself adds the
+ * server/user/device/generation binding to the physical ref and rejects a blob from another scope.
+ */
+internal suspend fun revealLiveClientToken(
+    id: String,
+    boundOwnerUserId: String,
+    grantId: String?,
+    loadMirror: suspend (String) -> MirrorEntityRow?,
+    loadTombstone: suspend (String) -> TombstoneRow?,
+    readSecret: (SecretRef) -> String?,
+): String? {
+    require(!grantId.isNullOrEmpty()) {
+        "revealing a Client Token requires a main-end sensitive grant"
+    }
+
+    val row = loadMirror(id) ?: return null
+    if (
+        row.entityType != ClientToken.ENTITY_TYPE ||
+        row.entityId != id ||
+        row.ownerUserId != boundOwnerUserId ||
+        row.revision <= 0L ||
+        row.deletedAt != null
+    ) {
+        return null
+    }
+    if (loadTombstone(id) != null) return null
+
+    val token = runCatching { ResourceMappers.clientToken(row) }.getOrNull() ?: return null
+    if (!token.token.hasValue) return null
+    return readSecret(SecretRef.of(ClientToken.ENTITY_TYPE, id, "token"))
 }

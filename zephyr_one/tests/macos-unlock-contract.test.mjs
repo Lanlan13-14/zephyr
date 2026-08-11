@@ -176,11 +176,10 @@ test('the bridge mints a success verdict only from UnlockResult.ok', () => {
     const bridgeRs = read('zephyr_one/src-tauri/src/unlock_bridge/mod.rs');
     const verdictAt = bridgeRs.indexOf('let verdict = crate::auth::unlock(&app, &reason);');
     assert.ok(verdictAt > 0, 'the bridge must call the real auth::unlock');
-    const gateAt = bridgeRs.indexOf('if verdict.ok {', verdictAt);
-    assert.ok(gateAt > verdictAt, 'the success body must be gated on the verdict');
-    const okBody = bridgeRs.indexOf('\\"ok\\":true', verdictAt);
-    assert.ok(okBody > gateAt, 'the ok:true payload must be inside the gated branch');
-    // Cancellation/failure is reported, never silently retried into a success.
-    const failBody = bridgeRs.indexOf('\\"ok\\":false', verdictAt);
-    assert.ok(failBody > okBody, 'failure must be posted explicitly');
+    const gateAt = bridgeRs.indexOf('let (ok, method, error) = if verdict.ok {', verdictAt);
+    assert.ok(gateAt > verdictAt, 'the posted verdict must be derived from UnlockResult.ok');
+    const bodyAt = bridgeRs.indexOf('"ok": ok,', gateAt);
+    assert.ok(bodyAt > gateAt, 'the JSON body must use the gated verdict, not a constant');
+    const macAt = bridgeRs.indexOf('let ok_field = if ok { "1" } else { "0" };', bodyAt);
+    assert.ok(macAt > bodyAt, 'the signed resolve fields must bind the same gated verdict');
 });

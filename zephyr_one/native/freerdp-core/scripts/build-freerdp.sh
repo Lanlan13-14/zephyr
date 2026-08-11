@@ -19,7 +19,6 @@
 # a path upstream tests, not one we invented.
 #
 # Environment:
-#   ZEPHYR_FREERDP_TAG         git tag to build (default: pinned below)
 #   ZEPHYR_FREERDP_PREFIX      install prefix (default: <crate>/.freerdp-dist)
 #   ZEPHYR_FREERDP_JOBS        parallel jobs (default: nproc)
 #   ZEPHYR_FREERDP_CMAKE_ARGS  extra cmake args, appended last so they win
@@ -33,10 +32,24 @@ set -eu
 # Pinned deliberately. 3.30.0 is the version Ubuntu 24.04 ships, which is the
 # version our live RDP e2e already passes 19/19 against in CI, so the vendored
 # build starts from a configuration that has been exercised end to end.
-TAG="${ZEPHYR_FREERDP_TAG:-3.30.0}"
+TAG="3.30.0"
+COMMIT="6b107f0aadbabc47941c5a5b893b88c01792af6d"
+PATCH_REV="cliprdr-reassembly-limit-v1"
+PATCH_FILE=""
+ADDIN_UPSTREAM_SHA256="92efc5c0f3b2c16ee304ef290c5bc3ee528806fe939060dd1a09da8540f36ae4"
+CHANNELS_UPSTREAM_SHA256="6c78a8896421495230bea71ec57afd1f9942e539782e7e84c7e3bcb1e0cd1e95"
+# Git for Windows may have checked an already-existing source tree out with
+# CRLF before this script began enforcing LF for new clones. These are the same
+# audited blobs with only line endings converted; git apply normalizes the two
+# patched files and the post-patch hashes below remain singular.
+ADDIN_UPSTREAM_CRLF_SHA256="8e7043fac321dbfc1f918abb922076f7824d4d668927876b4a2cdad97dd88469"
+CHANNELS_UPSTREAM_CRLF_SHA256="d718329cff2136a89951554ff53e991a52a92d63ae1f7548e857c4eb13b61e0f"
+ADDIN_PATCHED_SHA256="d3e5ec1cb9b267540b52f921df146104b13144dc486e10996b239dbe70191ae0"
+CHANNELS_PATCHED_SHA256="972e7de531580d53a164912e6544c0a34d3eca8f9a4e5aaad17cef98e0b33b34"
 
 HERE="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 CRATE="$(CDPATH= cd -- "$HERE/.." && pwd)"
+PATCH_FILE="$CRATE/patches/freerdp-3.30.0-cliprdr-reassembly-limit.patch"
 PREFIX="${ZEPHYR_FREERDP_PREFIX:-$CRATE/.freerdp-dist}"
 JOBS="${ZEPHYR_FREERDP_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
@@ -44,10 +57,14 @@ SRC="$PREFIX/src"
 BUILD="$PREFIX/build"
 INSTALL="$PREFIX/install"
 
-# Already built and complete? Skip. The stamp records the tag so bumping
-# ZEPHYR_FREERDP_TAG forces a rebuild instead of silently reusing the old tree.
+# Already built and complete? Skip only when both the patch revision and the
+# installed public marker agree. A tag-only stamp could silently reuse an old,
+# allocation-vulnerable build of the same upstream release.
 STAMP="$INSTALL/.zephyr-freerdp-tag"
-if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$TAG" ]; then
+STAMP_VALUE="$TAG+$PATCH_REV"
+if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$STAMP_VALUE" ] &&
+   grep -q '^#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1$' \
+     "$INSTALL/include/freerdp3/freerdp/client/channels.h"; then
   printf 'FreeRDP %s already built at %s\n' "$TAG" "$INSTALL"
   exit 0
 fi
@@ -57,11 +74,56 @@ mkdir -p "$PREFIX"
 if [ ! -d "$SRC/.git" ]; then
   rm -rf "$SRC"
   printf 'Cloning FreeRDP %s\n' "$TAG"
-  git clone --depth 1 --branch "$TAG" \
+  git -c core.autocrlf=false clone --depth 1 --branch "$TAG" \
     https://github.com/FreeRDP/FreeRDP.git "$SRC"
 else
   printf 'Reusing source tree at %s\n' "$SRC"
 fi
+
+hash_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print tolower($1) }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{ print tolower($1) }'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$1" | awk '{ print tolower($NF) }'
+  else
+    echo "ERROR: SHA-256 tool required to verify pinned FreeRDP sources" >&2
+    exit 2
+  fi
+}
+
+[ -f "$PATCH_FILE" ] || { echo "ERROR: missing FreeRDP security patch: $PATCH_FILE" >&2; exit 2; }
+[ "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" ] || {
+  echo "ERROR: FreeRDP $TAG source is not pinned commit $COMMIT" >&2
+  exit 2
+}
+
+ADDIN="$SRC/channels/client/addin.c"
+CHANNELS="$SRC/include/freerdp/client/channels.h"
+addin_hash="$(hash_file "$ADDIN")"
+channels_hash="$(hash_file "$CHANNELS")"
+if { [ "$addin_hash" = "$ADDIN_UPSTREAM_SHA256" ] ||
+     [ "$addin_hash" = "$ADDIN_UPSTREAM_CRLF_SHA256" ]; } &&
+   { [ "$channels_hash" = "$CHANNELS_UPSTREAM_SHA256" ] ||
+     [ "$channels_hash" = "$CHANNELS_UPSTREAM_CRLF_SHA256" ]; }; then
+  # --check makes an upstream context/offset change a hard build failure. The
+  # patch is never applied with fuzz or silently skipped.
+  git -C "$SRC" apply --check "$PATCH_FILE"
+  git -C "$SRC" apply "$PATCH_FILE"
+elif [ "$addin_hash" != "$ADDIN_PATCHED_SHA256" ] ||
+     [ "$channels_hash" != "$CHANNELS_PATCHED_SHA256" ]; then
+  echo "ERROR: pinned FreeRDP files differ from both audited upstream and patched hashes" >&2
+  echo "addin.c=$addin_hash channels.h=$channels_hash" >&2
+  exit 2
+fi
+
+[ "$(hash_file "$ADDIN")" = "$ADDIN_PATCHED_SHA256" ] &&
+[ "$(hash_file "$CHANNELS")" = "$CHANNELS_PATCHED_SHA256" ] &&
+grep -q '^#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1$' "$CHANNELS" || {
+  echo "ERROR: FreeRDP cliprdr pre-allocation limit was not applied exactly" >&2
+  exit 2
+}
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD"
@@ -80,7 +142,10 @@ case "$(uname -s)" in
   Linux)  AUDIO_ARGS="-DWITH_ALSA=ON -DWITH_MACAUDIO=OFF -DWITH_WINMM=OFF" ;;
   Darwin) AUDIO_ARGS="-DWITH_ALSA=OFF -DWITH_MACAUDIO=ON -DWITH_WINMM=OFF" ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
-          AUDIO_ARGS="-DWITH_ALSA=OFF -DWITH_MACAUDIO=OFF -DWITH_WINMM=ON" ;;
+          # vcpkg's x64-windows-static-md dependencies and Rust's MSVC target
+          # both use the DLL CRT. FreeRDP defaults static builds to /MT, which
+          # makes libssl/cJSON imports unresolved when the final archive links.
+          AUDIO_ARGS="-DWITH_ALSA=OFF -DWITH_MACAUDIO=OFF -DWITH_WINMM=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL" ;;
   *) echo "ERROR: unsupported host for audio backend: $(uname -s)" >&2; exit 2 ;;
 esac
 # PulseAudio/OSS/sndio stay off everywhere: each would add another runtime .so
@@ -160,5 +225,27 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
 cmake --build "$BUILD" --parallel "$JOBS"
 cmake --install "$BUILD"
 
-printf '%s' "$TAG" > "$STAMP"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    # FreeRDP 3.30's static client pkg-config module references these private
+    # channel archives but its install target omits them on MSVC.
+    for archive in \
+      "$BUILD/channels/remdesk/common/remdesk-common.lib" \
+      "$BUILD/channels/rdpsnd/common/rdpsnd-common.lib"; do
+      [ -f "$archive" ] || {
+        echo "ERROR: Windows static FreeRDP closure is missing $archive" >&2
+        exit 2
+      }
+      install -m 0644 "$archive" "$INSTALL/lib/$(basename "$archive")"
+    done
+
+    # The generated Windows .pc files inherit Unix-only private libraries.
+    # Keep every real dependency, but never feed dl/rt/pthread/m to link.exe.
+    for pc in "$INSTALL"/lib/pkgconfig/*.pc; do
+      sed -E -i 's/-l(dl|rt|pthread|m)([[:space:]]|$)/ /g' "$pc"
+    done
+    ;;
+esac
+
+printf '%s' "$STAMP_VALUE" > "$STAMP"
 printf 'FreeRDP %s installed to %s\n' "$TAG" "$INSTALL"

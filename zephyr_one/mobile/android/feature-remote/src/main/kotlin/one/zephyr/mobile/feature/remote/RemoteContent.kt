@@ -2,6 +2,7 @@ package one.zephyr.mobile.feature.remote
 
 import one.zephyr.mobile.data.session.SessionTransport
 import one.zephyr.mobile.model.Connection
+import one.zephyr.mobile.model.RdpChannel
 import one.zephyr.mobile.protocol.rdp.RdpCertificateReview
 import one.zephyr.mobile.protocol.rdp.RdpDriveResolution
 
@@ -52,8 +53,8 @@ data class RemoteContent(
     // ---- RDP only ----
     val channels: List<RemoteChannelRow> = emptyList(),
     val drive: RdpDriveResolution? = null,
-    /** Android permissions to request now, because the remote actually opened those channels. */
-    val pendingPermissions: List<String> = emptyList(),
+    /** Channels waiting for an explicit user grant action; the host maps each to platform permissions. */
+    val pendingPermissions: List<RdpChannel> = emptyList(),
     /** Mic/camera that are live. Section 8 requires these to stay visible for the whole session. */
     val captureLabels: List<String> = emptyList(),
     // ---- VNC only ----

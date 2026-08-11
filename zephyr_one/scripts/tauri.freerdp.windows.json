@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": {
+      "../zephyr-core": "zephyr-core",
+      "../desktop-runtime": "desktop-runtime",
+      "../freerdp-runtime/*.dll": ""
+    }
+  }
+}

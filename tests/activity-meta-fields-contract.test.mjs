@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAssetVersion, cacheNameVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const storageJs = readFileSync(path.join(root, 'storage.js'), 'utf8');
@@ -11,7 +12,10 @@ const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const CACHE = '20260731-sftp-multi-close1';
+const i18nRuntimeJs = readFileSync(path.join(root, 'public/i18n/runtime.js'), 'utf8');
+const activityI18nJs = readFileSync(path.join(root, 'public/activity-i18n.js'), 'utf8');
+const notesJs = readFileSync(path.join(root, 'public/notes.js'), 'utf8');
+const previewMockJs = readFileSync(path.join(root, 'public/preview-mock.js'), 'utf8');
 
 test('activities table persists sourceIp and durationMs (plus detail columns)', () => {
     assert.match(storageJs, /addColumnIfMissing\('activities', 'sourceIp'/);
@@ -63,9 +67,32 @@ test('activity cards keep hover affordance without per-card entrance storms', ()
     assert.doesNotMatch(styleCss, /\.activity-detail-item\s*\{[\s\S]*animation:\s*activityCardIn/);
 });
 
-test('cache revision bumped for activity meta fix', () => {
-    assert.match(appHtml, new RegExp(`app\\.js\\?v=${CACHE}`));
-    assert.match(appHtml, new RegExp(`style\\.css\\?v=${CACHE}`));
-    assert.match(swJs, new RegExp(`app\\.js\\?v=${CACHE}`));
-    assert.match(swJs, new RegExp(`style\\.css\\?v=${CACHE}`));
+test('app shell cache versions stay aligned across HTML, i18n, and service worker', () => {
+    const appVersion = singleAssetVersion(appHtml, 'app.js', 'app.html app.js references');
+    const styleVersion = singleAssetVersion(appHtml, 'style.css', 'app.html style.css references');
+    const htmlI18nVersion = singleAssetVersion(appHtml, 'i18n/runtime.js', 'app.html i18n runtime references');
+    const appI18nVersion = singleAssetVersion(appJs, 'i18n/runtime.js', 'app.js i18n runtime import');
+    const catalogVersionMatch = i18nRuntimeJs.match(/url\.searchParams\.set\('v', '([^']+)'\)/);
+    assert.ok(catalogVersionMatch, 'i18n catalog requests must set a cache version');
+    const catalogVersion = catalogVersionMatch[1];
+
+    assert.equal(styleVersion, appVersion);
+    assert.equal(htmlI18nVersion, appVersion);
+    assert.equal(appI18nVersion, appVersion);
+    assert.equal(catalogVersion, appVersion);
+    assertAssetVersion(appJs, 'activity-i18n.js', appVersion, 'app.js activity i18n import');
+    assertAssetVersion(appJs, 'notes.js', appVersion, 'app.js notes import');
+    assertAssetVersion(appHtml, 'preview-mock.js', appVersion, 'app.html preview mock script');
+    assertAssetVersion(activityI18nJs, 'i18n/runtime.js', appVersion, 'activity i18n runtime import');
+    assertAssetVersion(notesJs, 'i18n/runtime.js', appVersion, 'notes i18n runtime import');
+    assertAssetVersion(previewMockJs, 'i18n/runtime.js', appVersion, 'preview mock i18n runtime import');
+    assert.equal(cacheNameVersion(swJs), appVersion);
+    assertAssetVersion(swJs, 'app.js', appVersion, 'service worker app.js');
+    assertAssetVersion(swJs, 'style.css', appVersion, 'service worker style.css');
+    assertAssetVersion(swJs, 'i18n/runtime.js', appVersion, 'service worker i18n runtime');
+    assertAssetVersion(swJs, 'i18n/locales/en.json', appVersion, 'service worker English catalog');
+    assertAssetVersion(swJs, 'i18n/locales/zh-CN.json', appVersion, 'service worker Chinese catalog');
+    assertAssetVersion(swJs, 'activity-i18n.js', appVersion, 'service worker activity i18n');
+    assertAssetVersion(swJs, 'notes.js', appVersion, 'service worker notes');
+    assertAssetVersion(swJs, 'preview-mock.js', appVersion, 'service worker preview mock');
 });

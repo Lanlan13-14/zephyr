@@ -22,6 +22,7 @@ import one.zephyr.mobile.model.PageState
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.Proxy
 import one.zephyr.mobile.model.SshKey
+import one.zephyr.mobile.security.LockSensitiveSink
 
 /** Everything the S11 form renders. */
 data class ConnectionEditorUiState(
@@ -71,7 +72,9 @@ class ConnectionEditorViewModel(
     private val newIdFactory: () -> String,
     private val tester: ConnectionTester = UnavailableConnectionTester,
     private val clock: () -> Long = System::currentTimeMillis,
-) : ViewModel() {
+    private val registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
+    private val unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
+) : ViewModel(), LockSensitiveSink {
 
     private val page = MutableStateFlow<PageState<ConnectionEditorUiState>>(PageState.InitialLoading)
     val state: StateFlow<PageState<ConnectionEditorUiState>> = page.asStateFlow()
@@ -83,6 +86,7 @@ class ConnectionEditorViewModel(
     val message: SharedFlow<String> = messages
 
     init {
+        registerSensitiveSink(this)
         viewModelScope.launch { load() }
         // The inventory is observed rather than read once: an ACL revocation while the editor is
         // open must turn into "路由需要修复" instead of a save-time surprise.
@@ -219,6 +223,7 @@ class ConnectionEditorViewModel(
             mutate { it.copy(saving = false) }
             outcome
                 .onSuccess {
+                    draft.wipeSecretBuffers()
                     // The saved row becomes the new baseline so the form is no longer dirty.
                     mutate { it.copy(draft = ConnectionDraft.edit(row)) }
                     messages.tryEmit(MSG_SAVED)
@@ -257,6 +262,7 @@ class ConnectionEditorViewModel(
         }
         val row = content.value.draft.normalized().copy(ephemeral = true)
         events.tryEmit(ConnectionEditorEvent.Connect(row, persisted = false))
+        clearSecretBuffers()
     }
 
     fun test() {
@@ -284,7 +290,23 @@ class ConnectionEditorViewModel(
     }
 
     fun dismiss() {
+        clearSecretBuffers()
         events.tryEmit(ConnectionEditorEvent.Dismissed)
+    }
+
+    /** Lock/background/navigation disposal all call this same non-persisting cleanup path. */
+    fun clearSecretBuffers() {
+        mutate { it.copy(draft = it.draft.wipeSecretBuffers()) }
+    }
+
+    override fun onLocked() {
+        clearSecretBuffers()
+    }
+
+    override fun onCleared() {
+        unregisterSensitiveSink(this)
+        clearSecretBuffers()
+        super.onCleared()
     }
 
     companion object {
@@ -301,6 +323,8 @@ class ConnectionEditorViewModel(
             connectionId: String?,
             newIdFactory: () -> String,
             tester: ConnectionTester = UnavailableConnectionTester,
+            registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
+            unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ConnectionEditorViewModel(
@@ -310,6 +334,8 @@ class ConnectionEditorViewModel(
                 connectionId = connectionId,
                 newIdFactory = newIdFactory,
                 tester = tester,
+                registerSensitiveSink = registerSensitiveSink,
+                unregisterSensitiveSink = unregisterSensitiveSink,
             ) as T
         }
     }

@@ -12,6 +12,7 @@ import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.ServerCapabilities
 import one.zephyr.mobile.model.SyncTrigger
 import one.zephyr.mobile.network.ApiResult
+import one.zephyr.mobile.network.ValidatedAck
 
 /**
  * Everything the sync round needs from the network.
@@ -37,7 +38,7 @@ interface SyncTransport {
         envelopes: Map<String, Map<String, SecretEnvelope>>,
     ): ApiResult<PushResponse>
 
-    suspend fun ack(cursor: Long, appliedOpIds: List<String>): ApiResult<Boolean>
+    suspend fun ack(cursor: Long, appliedOpIds: List<String>): ApiResult<ValidatedAck>
 }
 
 /**
@@ -87,8 +88,6 @@ interface SyncLocalStore {
 
     suspend fun saveAppliedCursor(cursor: Long)
 
-    suspend fun saveAckedCursor(cursor: Long)
-
     suspend fun saveSnapshotCursor(cursor: Long)
 
     suspend fun recordAttempt(startedAt: Long)
@@ -113,11 +112,33 @@ interface SyncLocalStore {
 
     suspend fun markFailed(opId: String, error: String?)
 
-    suspend fun completeOperations(accepted: List<AcceptedOperation>)
+    /**
+     * Commits the complete local side of one validated remote ACK atomically.
+     *
+     * Until this succeeds, accepted operations remain pending under the same opId and retained
+     * secret-journal rows remain live, so a crash retries the push as a server-side duplicate.
+     */
+    suspend fun commitAcknowledgement(cursor: Long, accepted: List<AcceptedOperation>)
+
+    /**
+     * Durably cross the push/bootstrap boundary after a per-operation bootstrap signal.
+     *
+     * Remotely accepted siblings remain queued for duplicate replay because this error path never
+     * reaches ACK. The state change and staging reset are one transaction so process death can
+     * never restart in a push-capable state with the same unsafe operation.
+     */
+    suspend fun enterBootstrapRequiredAfterPush(
+        accepted: List<AcceptedOperation>,
+        retainedErrors: Map<String, String>,
+    )
 
     suspend fun dropOperations(opIds: List<String>)
 
-    suspend fun recordConflict(conflict: DetectedConflict)
+    /** Fail closed unless this server view is safe to persist for the bound account. */
+    fun validateConflictPayload(entityType: String, payload: kotlinx.serialization.json.JsonObject)
+
+    /** Persists the conflict and removes its losing operation in the same durable boundary. */
+    suspend fun recordConflictAndDrop(conflict: DetectedConflict, opId: String)
 
     // ---- mirror -------------------------------------------------------------------------------
 
@@ -125,15 +146,24 @@ interface SyncLocalStore {
 
     suspend fun stageBootstrap(generation: Long, entities: List<one.zephyr.mobile.model.SyncChange>): Int
 
-    suspend fun promoteBootstrap(generation: Long)
-
-    suspend fun clearBootstrapStaging()
+    /**
+     * Discard every staged generation and its continuation in one durable transaction.
+     *
+     * A fresh bootstrap must not leave an expired checkpoint pointing at rows it just deleted.
+     */
+    suspend fun resetBootstrap()
 
     suspend fun bootstrapCheckpoint(): BootstrapCheckpoint?
 
     suspend fun saveBootstrapCheckpoint(checkpoint: BootstrapCheckpoint)
 
-    suspend fun clearBootstrapCheckpoint()
+    /**
+     * Make a complete staged snapshot visible and advance its cursor atomically.
+     *
+     * The checkpoint is cleared in the same transaction. Device-local overlays and queued local
+     * operations are outside the snapshot mirror and must survive this commit.
+     */
+    suspend fun commitBootstrap(generation: Long, snapshotCursor: Long)
 
     suspend fun pruneRetention(nowMs: Long)
 }
@@ -233,6 +263,20 @@ data class SyncRoundResult(
     /** Set when the round stopped early; the phase it stopped in. */
     val stoppedAt: SyncPhase? = null,
     val blobsBlocked: Boolean = false,
+    /** Present only for a round that entered the bootstrap phase. */
+    val bootstrapOutcome: BootstrapOutcome? = null,
 ) {
+    /** The round itself had no error; it may still need a bootstrap continuation. */
     val succeeded: Boolean get() = error == null
+
+    /** True only when no further bootstrap page is required. */
+    val complete: Boolean get() = succeeded && bootstrapOutcome !is BootstrapOutcome.Incomplete
+}
+
+/** Explicit snapshot result so a page guard can never be mistaken for completion. */
+sealed interface BootstrapOutcome {
+    data object Complete : BootstrapOutcome
+
+    /** The durable token from which another actor or process can continue. */
+    data class Incomplete(val continuation: BootstrapCheckpoint) : BootstrapOutcome
 }

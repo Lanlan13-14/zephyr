@@ -8,6 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -19,6 +20,17 @@ const repoRoot = path.resolve(here, "..", "..", "..");
 let child = null;
 let base = "";
 let dataDir = "";
+
+async function freePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
 
 async function waitUp(url, budgetMs) {
   const until = Date.now() + budgetMs;
@@ -36,7 +48,8 @@ async function waitUp(url, budgetMs) {
 
 test("boot the server with mobile v1 mounted", async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-api-"));
-  const port = 21800 + Math.floor(Math.random() * 300);
+  const port = await freePort();
+  const aiPort = await freePort();
   base = "http://127.0.0.1:" + port;
 
   child = spawn(process.execPath, ["server.js"], {
@@ -49,8 +62,8 @@ test("boot the server with mobile v1 mounted", async () => {
       PORT: String(port),
       /* The AI tool host binds a loopback port of its own. Two suites running
        * in parallel would otherwise fight over the default. */
-      ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + (port + 1000),
-      ZEPHYR_AI_PLATFORM_HOST_URL: "http://127.0.0.1:" + (port + 1000),
+      ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + aiPort,
+      ZEPHYR_AI_PLATFORM_HOST_URL: "http://127.0.0.1:" + aiPort,
       ZEPHYR_DATA_DIR: dataDir,
       ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(dataDir, "crypto", "key.json"),
       ENCRYPTION_KEY: "mobile-v1-api-test-key",
@@ -98,7 +111,7 @@ test("capabilities negotiates protocol, registry and limits", async () => {
   // Shared residency is implemented, so it must read true: the client branches
   // on this flag and a false here makes One skip the shared surface entirely.
   assert.equal(body.features.sharedResources, true);
-  /* file-bridge and blob transfer must stay false.
+  /* File bridge must stay false.
    *
    * POST /file-bridge/lease exists and validates its request, but there is no
    * ZFT2 transport behind it for a mobile device: the /file-transfer upgrade
@@ -107,7 +120,10 @@ test("capabilities negotiates protocol, registry and limits", async () => {
    * lease and then attach to a socket that refuses it, which is worse than
    * knowing up front that the capability is absent. */
   assert.equal(body.features.fileBridge, false);
-  assert.equal(body.features.blobTransfer, false);
+
+  // Blob upload/download is mounted at /api/mobile/v1/blobs/* and has its
+  // own authenticated HTTP coverage, so the capability must advertise it.
+  assert.equal(body.features.blobTransfer, true);
 });
 
 test("the registry hash the server serves is the one the client generated against", async () => {
@@ -142,6 +158,7 @@ test("every authenticated plane refuses an anonymous caller", async () => {
     ["POST", "/api/mobile/v1/sync/ack"],
     ["POST", "/api/mobile/v1/sync/now"],
     ["POST", "/api/mobile/v1/devices/bind"],
+    ["POST", "/api/mobile/v1/devices/proof-challenge"],
     ["POST", "/api/mobile/v1/sensitive/verify"],
     ["PATCH", "/api/mobile/v1/devices/dev-1"],
     ["DELETE", "/api/mobile/v1/devices/dev-1"],
@@ -251,6 +268,19 @@ test("surfaces with no implementation say so instead of pretending to work", asy
     const body = await res.json();
     assert.equal(body.ok, false);
   }
+});
+
+test("the mounted push parser rejects oversized JSON before the auth plane", async () => {
+  const res = await fetch(base + "/api/mobile/v1/sync/push", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ padding: "x".repeat(4 * 1024 * 1024 + 1024) }),
+  });
+  assert.equal(res.status, 413);
+  const body = await res.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.error.code, "payload_too_large");
+  assert.ok(body.error.requestId);
 });
 
 test("stop the server", async () => {

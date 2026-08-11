@@ -98,7 +98,10 @@ object PushPlanner {
                 }
                 // An upsert with nothing to say cannot be encoded: the schema demands a non-empty
                 // mask, and an empty payload would be a silent no-op on the server.
-                if (op.action == SyncAction.UPSERT && op.fieldMask.isEmpty() && op.secretFields.isEmpty()) {
+                if (
+                    op.action == SyncAction.UPSERT && op.fieldMask.isEmpty() &&
+                        op.secretFields.isEmpty() && op.clearSecretFields.isEmpty()
+                ) {
                     removed.add(op.opId)
                     continue
                 }

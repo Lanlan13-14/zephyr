@@ -7,6 +7,8 @@ import one.zephyr.mobile.contracts.BindingState
 import one.zephyr.mobile.contracts.PushStatus
 import one.zephyr.mobile.contracts.SyncAction
 import one.zephyr.mobile.contracts.SyncPhase
+import one.zephyr.mobile.data.SecretReconciliationException
+import one.zephyr.mobile.data.SecretReconciliationFailure
 import one.zephyr.mobile.model.BootstrapPage
 import one.zephyr.mobile.model.ChangePage
 import one.zephyr.mobile.model.MobileError
@@ -15,6 +17,7 @@ import one.zephyr.mobile.model.PushResult
 import one.zephyr.mobile.model.SyncChange
 import one.zephyr.mobile.model.SyncTrigger
 import one.zephyr.mobile.network.ApiResult
+import one.zephyr.mobile.security.ResidencyViolationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -182,6 +185,178 @@ class SyncActorTest {
     }
 
     @Test
+    fun `a 513 page snapshot returns a continuation before promotion and resumes after restart`() = runTest {
+        val transport = FakeSyncTransport()
+        repeat(512) { index ->
+            transport.bootstrapPages.add(
+                ApiResult.Success(
+                    BootstrapPage(
+                        bootstrapId = "boot-large",
+                        snapshotCursor = 900,
+                        nextPageToken = "page-${index + 1}",
+                        complete = false,
+                        entities = emptyList(),
+                    ),
+                    null,
+                ),
+            )
+        }
+        val store = FakeSyncLocalStore(BindingState.BOUND_NEEDS_BOOTSTRAP)
+        store.queue.add(pendingOp("must-wait"))
+        val firstActor = actor(transport, store)
+
+        val first = firstActor.request(SyncTrigger.BIND_COMPLETE).single()
+
+        val incomplete = first.bootstrapOutcome as BootstrapOutcome.Incomplete
+        assertFalse(first.complete)
+        assertTrue(first.succeeded)
+        assertEquals("page-512", incomplete.continuation.nextPageToken)
+        assertEquals(512, incomplete.continuation.pagesFetched)
+        assertEquals(BindingState.BOOTSTRAPPING, first.endState)
+        assertEquals(SyncPhase.BOOTSTRAP_PAGE, first.stoppedAt)
+        assertEquals(
+            listOf(SyncPhase.VALIDATE_BINDING, SyncPhase.BOOTSTRAP_PAGE),
+            first.phasesRun,
+        )
+        assertTrue(store.promotedGenerations.isEmpty())
+        assertEquals(incomplete.continuation, store.checkpoint)
+        assertEquals(512, store.stagedGenerations.size)
+        assertEquals(0L, store.appliedCursor)
+        assertTrue(transport.changeCursors.isEmpty())
+        assertTrue(transport.pushedBatches.isEmpty())
+        assertTrue(transport.ackedCursors.isEmpty())
+        assertEquals(0, store.successes)
+        assertTrue(firstActor.rerunPending())
+
+        transport.bootstrapPages.add(
+            ApiResult.Success(
+                BootstrapPage(
+                    bootstrapId = "boot-large",
+                    snapshotCursor = 900,
+                    nextPageToken = null,
+                    complete = true,
+                    entities = emptyList(),
+                ),
+                null,
+            ),
+        )
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 900,
+                    results = listOf(
+                        PushResult(
+                            opId = "must-wait",
+                            status = PushStatus.ACCEPTED,
+                            entityId = "c-1",
+                            revision = 2,
+                            changeSeq = 901,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        // A new actor has no in-memory continuation flag; the persisted state/checkpoint are enough.
+        val resumed = actor(transport, store).request(SyncTrigger.FOREGROUND_START).single()
+
+        assertEquals(BootstrapOutcome.Complete, resumed.bootstrapOutcome)
+        assertTrue(resumed.complete)
+        assertEquals(BindingState.IDLE, resumed.endState)
+        assertEquals("page-512", transport.bootstrapTokens.last())
+        assertEquals(listOf(1_000L), store.promotedGenerations)
+        assertEquals(900L, store.appliedCursor)
+        assertEquals(null, store.checkpoint)
+    }
+
+    @Test
+    fun `a looping page token aborts without promoting its partial generation`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.bootstrapPages.add(
+            ApiResult.Success(
+                BootstrapPage("boot-loop", 40, "loop", complete = false, entities = emptyList()),
+                null,
+            ),
+        )
+        transport.bootstrapPages.add(
+            ApiResult.Success(
+                BootstrapPage("boot-loop", 40, "loop", complete = false, entities = emptyList()),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.BOUND_NEEDS_BOOTSTRAP)
+
+        val result = actor(transport, store).request(SyncTrigger.BIND_COMPLETE).single()
+
+        assertEquals("bootstrap_expired", result.error?.code)
+        assertEquals(BindingState.BOUND_NEEDS_BOOTSTRAP, result.endState)
+        assertEquals(SyncPhase.BOOTSTRAP_PAGE, result.stoppedAt)
+        assertEquals(listOf<String?>(null, "loop"), transport.bootstrapTokens)
+        assertTrue(store.promotedGenerations.isEmpty())
+        assertEquals(null, store.checkpoint)
+        assertFalse(result.phasesRun.contains(SyncPhase.CATCH_UP_PULL))
+        assertTrue(transport.pushedBatches.isEmpty())
+        assertTrue(transport.ackedCursors.isEmpty())
+    }
+
+    @Test
+    fun `a server-expired continuation is discarded and restarted safely in the same round`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.bootstrapPages.add(
+            ApiResult.Failure(MobileError.local("bootstrap_expired", "expired")),
+        )
+        transport.bootstrapPages.add(
+            ApiResult.Success(
+                BootstrapPage("boot-new", 88, null, complete = true, entities = emptyList()),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.BOOTSTRAPPING)
+        store.checkpoint = BootstrapCheckpoint(
+            generation = 7,
+            bootstrapId = "boot-old",
+            snapshotCursor = 70,
+            nextPageToken = "old-token",
+            pagesFetched = 3,
+            entitiesStaged = 30,
+            expiresAt = now + 60_000,
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.FOREGROUND_START).single()
+
+        assertEquals(listOf<String?>("old-token", null), transport.bootstrapTokens)
+        assertEquals(BootstrapOutcome.Complete, result.bootstrapOutcome)
+        assertEquals(BindingState.IDLE, result.endState)
+        assertEquals(listOf(1_000L), store.promotedGenerations)
+        assertEquals(1, store.stagingCleared)
+        assertEquals(null, store.checkpoint)
+    }
+
+    @Test
+    fun `final promotion uses one atomic commit and preserves the local overlay`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.bootstrapPages.add(
+            ApiResult.Success(
+                BootstrapPage("boot-atomic", 123, null, complete = true, entities = emptyList()),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.BOUND_NEEDS_BOOTSTRAP)
+        store.localOverlay["connection/c-1/color"] = "green"
+
+        val result = actor(transport, store).request(SyncTrigger.BIND_COMPLETE).single()
+
+        assertTrue(result.complete)
+        assertEquals(listOf(1_000L to 123L), store.bootstrapCommits)
+        assertEquals(123L, store.appliedCursor)
+        assertEquals(null, store.checkpoint)
+        assertEquals("green", store.localOverlay["connection/c-1/color"])
+    }
+
+    @Test
     fun `cursor expiry stops pushing and parks the binding on bootstrap`() = runTest {
         val transport = FakeSyncTransport()
         transport.changePages.add(ApiResult.Failure(MobileError.local("cursor_expired", "gone")))
@@ -193,7 +368,9 @@ class SyncActorTest {
                 PushResponse(
                     batchId = "batch-fixed",
                     serverCursor = 41,
-                    results = listOf(PushResult(opId = "op-1", status = PushStatus.ACCEPTED, revision = 2)),
+                    results = listOf(
+                        PushResult(opId = "op-1", status = PushStatus.ACCEPTED, entityId = "c-1", revision = 2, changeSeq = 41),
+                    ),
                     changesAvailable = true,
                 ),
                 null,
@@ -210,6 +387,36 @@ class SyncActorTest {
     }
 
     @Test
+    fun `secret reconciliation failure does not advance or acknowledge the page cursor`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.changePages.add(
+            ApiResult.Success(
+                ChangePage(
+                    fromCursor = 40,
+                    nextCursor = 41,
+                    hasMore = false,
+                    changes = listOf(change(41, revision = 8)),
+                ),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.appliedCursor = 40
+        store.ackedCursor = 40
+        store.applyChangesFailure = SecretReconciliationException(
+            SecretReconciliationFailure.ENVELOPE_REJECTED,
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
+
+        assertEquals("internal_error", result.error?.code)
+        assertEquals(40L, store.appliedCursor)
+        assertEquals(40L, store.ackedCursor)
+        assertTrue(transport.ackedCursors.isEmpty())
+        assertEquals(SyncPhase.PULL_CHANGES, result.stoppedAt)
+    }
+
+    @Test
     fun `an accepted push clears the queue and acknowledges its opIds`() = runTest {
         val transport = FakeSyncTransport()
         val store = FakeSyncLocalStore(BindingState.IDLE)
@@ -220,7 +427,9 @@ class SyncActorTest {
                     batchId = "batch-fixed",
                     serverCursor = 9,
                     results = listOf(
-                        PushResult(opId = "op-1", status = PushStatus.ACCEPTED, entityId = "c-1", revision = 7),
+                        PushResult(
+                            opId = "op-1", status = PushStatus.ACCEPTED, entityId = "c-1", revision = 7, changeSeq = 9,
+                        ),
                     ),
                     changesAvailable = false,
                 ),
@@ -248,7 +457,9 @@ class SyncActorTest {
                 PushResponse(
                     batchId = "batch-fixed",
                     serverCursor = 3,
-                    results = listOf(PushResult(opId = "op-1", status = PushStatus.DUPLICATE, revision = 4)),
+                    results = listOf(
+                        PushResult(opId = "op-1", status = PushStatus.DUPLICATE, entityId = "c-1", revision = 4),
+                    ),
                     changesAvailable = false,
                 ),
                 null,
@@ -261,6 +472,24 @@ class SyncActorTest {
         assertEquals(1, result.pushed)
         assertTrue(store.queue.isEmpty())
         assertTrue(result.succeeded)
+    }
+
+    @Test
+    fun `malformed push result sets never finalize drop or acknowledge operations`() = runTest {
+        val valid = listOf(acceptedReceipt("op-1", "c-1"), acceptedReceipt("op-2", "c-2"))
+        val responses = listOf(
+            PushResponse("another-batch", 2, valid, changesAvailable = false),
+            PushResponse("batch-fixed", 2, listOf(valid[0], valid[0]), changesAvailable = false),
+            PushResponse("batch-fixed", 2, listOf(valid[0]), changesAvailable = false),
+            PushResponse(
+                "batch-fixed",
+                2,
+                listOf(valid[0], acceptedReceipt("unknown", "c-9")),
+                changesAvailable = false,
+            ),
+        )
+
+        for (response in responses) assertMalformedPush(response)
     }
 
     @Test
@@ -277,8 +506,12 @@ class SyncActorTest {
                         PushResult(
                             opId = "op-1",
                             status = PushStatus.CONFLICT,
+                            entityId = "c-1",
                             revision = 9,
-                            serverPayload = payload("name" to "server wins"),
+                            serverPayload = payload(
+                                "ownerUserId" to "user-1",
+                                "name" to "server wins",
+                            ),
                             serverChangedFields = listOf("name"),
                         ),
                     ),
@@ -314,8 +547,13 @@ class SyncActorTest {
                         PushResult(
                             opId = "op-1",
                             status = PushStatus.CONFLICT,
+                            entityId = "c-1",
                             revision = 9,
                             error = MobileError.local("forbidden_resource_edit", "no edit capability"),
+                            serverPayload = payload(
+                                "ownerUserId" to "user-1",
+                                "name" to "server wins",
+                            ),
                             serverChangedFields = listOf("name"),
                         ),
                     ),
@@ -329,6 +567,355 @@ class SyncActorTest {
 
         // ConflictRepository refuses keep_local on this flag, which is what makes revocation win.
         assertTrue(store.conflicts.single().aclRevoked)
+    }
+
+    @Test
+    fun `a foreign conflict aborts without persisting or dropping the pending edit`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-1"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 12,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.CONFLICT,
+                            entityId = "c-1",
+                            revision = 9,
+                            serverPayload = payload(
+                                "ownerUserId" to "user-2",
+                                "name" to "foreign row",
+                            ),
+                            serverChangedFields = listOf("name"),
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+        var purged = 0
+        val subject = SyncActor(
+            transport = transport,
+            store = store,
+            sealer = NoSealer,
+            blobs = NoBlobs,
+            clock = { now },
+            batchIdFactory = { "batch-fixed" },
+            onSharedPurge = { purged += 1 },
+        )
+
+        val result = subject.request(SyncTrigger.MANUAL).single()
+
+        assertEquals("shared_residency_violation", result.error?.code)
+        assertEquals(SyncPhase.PUSH_PENDING, result.stoppedAt)
+        assertEquals(BindingState.IDLE, result.endState)
+        assertEquals(1, purged)
+        assertTrue(store.conflicts.isEmpty())
+        assertTrue(store.droppedOpIds.isEmpty())
+        assertTrue(store.completed.isEmpty())
+        assertEquals("op-1", store.queue.single().opId)
+        assertNotNull(store.queue.single().dispatchedAt)
+        assertEquals(0L, store.appliedCursor)
+        assertEquals(0L, store.ackedCursor)
+        assertTrue(transport.ackedCursors.isEmpty())
+    }
+
+    @Test
+    fun `a conflict without a server payload fails closed and remains pending`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-1"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 12,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.CONFLICT,
+                            entityId = "c-1",
+                            revision = 9,
+                            serverPayload = null,
+                            serverChangedFields = listOf("name"),
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
+
+        assertEquals("shared_residency_violation", result.error?.code)
+        assertEquals(BindingState.IDLE, result.endState)
+        assertEquals("op-1", store.queue.single().opId)
+        assertTrue(store.conflicts.isEmpty())
+        assertTrue(store.droppedOpIds.isEmpty())
+    }
+
+    @Test
+    fun `conflict preflight leaves earlier accepted result in the same batch pending`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-1", entityId = "c-1"))
+        store.queue.add(pendingOp("op-2", entityId = "c-2"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 12,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.ACCEPTED,
+                            entityId = "c-1",
+                            revision = 2,
+                            changeSeq = 13,
+                        ),
+                        PushResult(
+                            opId = "op-2",
+                            status = PushStatus.CONFLICT,
+                            entityId = "c-2",
+                            revision = 3,
+                            serverPayload = payload(
+                                "ownerUserId" to "foreign-user",
+                                "name" to "foreign row",
+                            ),
+                            serverChangedFields = listOf("name"),
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
+
+        assertEquals("shared_residency_violation", result.error?.code)
+        assertEquals(listOf("op-1", "op-2"), store.queue.map { it.opId })
+        assertTrue(store.completed.isEmpty())
+        assertTrue(store.conflicts.isEmpty())
+        assertTrue(store.droppedOpIds.isEmpty())
+        assertEquals(0, result.pushed)
+        assertEquals(0, result.conflicts)
+    }
+
+    @Test
+    fun `an oversized conflict payload remains pending and never reaches the conflict store`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-1"))
+        val oversized = JsonObject(
+            mapOf(
+                "ownerUserId" to JsonPrimitive("user-1"),
+                "name" to JsonPrimitive("x".repeat(ConflictPayloadValidator.MAX_BYTES)),
+            ),
+        )
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 12,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.CONFLICT,
+                            entityId = "c-1",
+                            revision = 9,
+                            serverPayload = oversized,
+                            serverChangedFields = listOf("name"),
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
+
+        assertEquals("shared_residency_violation", result.error?.code)
+        assertEquals(BindingState.IDLE, result.endState)
+        assertEquals("op-1", store.queue.single().opId)
+        assertTrue(store.conflicts.isEmpty())
+        assertTrue(store.droppedOpIds.isEmpty())
+    }
+
+    @Test
+    fun `cursor invalid rejection retains accepted siblings and journal until post-bootstrap ACK`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-accepted", entityId = "c-1"))
+        store.queue.add(pendingOp("op-bootstrap", entityId = "c-2"))
+        store.retainedJournalOpIds.add("op-accepted")
+        store.checkpoint = BootstrapCheckpoint(
+            generation = 7,
+            bootstrapId = "stale-bootstrap",
+            snapshotCursor = 10,
+            nextPageToken = "stale-token",
+            pagesFetched = 1,
+            entitiesStaged = 2,
+            expiresAt = now + 60_000,
+        )
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 12,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-accepted",
+                            status = PushStatus.ACCEPTED,
+                            entityId = "c-1",
+                            revision = 4,
+                            changeSeq = 13,
+                        ),
+                        PushResult(
+                            opId = "op-bootstrap",
+                            status = PushStatus.REJECTED,
+                            entityId = "c-2",
+                            error = MobileError(
+                                code = "cursor_invalid",
+                                message = "refresh the account snapshot",
+                                retryable = false,
+                                requestId = "request-1",
+                                details = mapOf("bootstrapRequired" to "true"),
+                            ),
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+        val subject = actor(transport, store)
+
+        val result = subject.request(SyncTrigger.MANUAL).single()
+
+        assertEquals("cursor_invalid", result.error?.code)
+        assertEquals(SyncPhase.PUSH_PENDING, result.stoppedAt)
+        assertEquals(BindingState.BOUND_NEEDS_BOOTSTRAP, result.endState)
+        assertTrue(store.completed.isEmpty())
+        assertEquals(listOf("op-accepted", "op-bootstrap"), store.queue.map { it.opId })
+        assertEquals("cursor_invalid", store.queue.single { it.opId == "op-bootstrap" }.lastError)
+        assertEquals(setOf("op-accepted"), store.retainedJournalOpIds)
+        assertTrue(transport.ackedCursors.isEmpty())
+        assertTrue(store.droppedOpIds.isEmpty())
+        assertEquals(null, store.checkpoint)
+        assertEquals(1, store.stagingCleared)
+        assertTrue(subject.rerunPending())
+        assertEquals(1, transport.pushedBatches.size)
+    }
+
+    @Test
+    fun `explicit bootstrapRequired detail is typed even before a dedicated error code`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-1"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 1,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.REJECTED,
+                            error = MobileError(
+                                code = "conflict_projection_unavailable",
+                                message = "refresh required",
+                                retryable = false,
+                                requestId = null,
+                                details = mapOf("bootstrapRequired" to "TRUE"),
+                            ),
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
+
+        assertEquals("conflict_projection_unavailable", result.error?.code)
+        assertEquals(BindingState.BOUND_NEEDS_BOOTSTRAP, result.endState)
+        assertEquals("op-1", store.queue.single().opId)
+        assertEquals("conflict_projection_unavailable", store.queue.single().lastError)
+        assertTrue(store.completed.isEmpty())
+        assertTrue(store.droppedOpIds.isEmpty())
+    }
+
+    @Test
+    fun `a new actor recovers bootstrap before retrying the retained operation`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-1"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 1,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.REJECTED,
+                            error = MobileError.local("cursor_invalid", "bootstrap required"),
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val failed = actor(transport, store).request(SyncTrigger.INTERVAL).single()
+        assertEquals(BindingState.BOUND_NEEDS_BOOTSTRAP, failed.endState)
+        assertEquals(1, transport.pushedBatches.size)
+
+        transport.bootstrapPages.add(
+            ApiResult.Success(
+                BootstrapPage(
+                    bootstrapId = "fresh-bootstrap",
+                    snapshotCursor = 20,
+                    nextPageToken = null,
+                    complete = true,
+                    entities = emptyList(),
+                ),
+                null,
+            ),
+        )
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 21,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1", status = PushStatus.ACCEPTED, entityId = "c-1", revision = 3, changeSeq = 21,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val recovered = actor(transport, store).request(SyncTrigger.FOREGROUND_START).single()
+
+        assertEquals(SyncPhase.BOOTSTRAP_PAGE, recovered.phasesRun[1])
+        assertEquals(listOf<String?>(null), transport.bootstrapTokens)
+        assertEquals(2, transport.pushedBatches.size)
+        assertEquals(listOf("op-1"), store.completed.map { it.opId })
+        assertTrue(store.queue.isEmpty())
+        assertEquals(BindingState.IDLE, recovered.endState)
     }
 
     @Test
@@ -395,7 +982,7 @@ class SyncActorTest {
         val transport = FakeSyncTransport()
         transport.changePages.add(
             ApiResult.Success(
-                ChangePage(fromCursor = 0, nextCursor = 30, hasMore = false, changes = listOf(change(30, revision = 2))),
+                ChangePage(fromCursor = 0, nextCursor = 1, hasMore = false, changes = listOf(change(1, revision = 2))),
                 null,
             ),
         )
@@ -405,14 +992,104 @@ class SyncActorTest {
         val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
 
         // Applied locally, but the server was not told, so the change will be re-sent next round.
-        assertEquals(30L, store.appliedCursor)
+        assertEquals(1L, store.appliedCursor)
         assertEquals(0L, store.ackedCursor)
         assertEquals(SyncPhase.ACK_CURSOR, result.stoppedAt)
         assertNotNull(result.error)
     }
 
     @Test
-    fun `an empty change page still honours the server cursor`() = runTest {
+    fun `a retryable ACK protocol failure retains pending operation journal and cursor`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-1"))
+        store.retainedJournalOpIds.add("op-1")
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 1,
+                    results = listOf(acceptedReceipt("op-1", "c-1")),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+        transport.ackResult = ApiResult.Failure(
+            MobileError.local("malformed_response", "ACK response omitted ok", retryable = true),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
+
+        assertEquals("malformed_response", result.error?.code)
+        assertEquals(SyncPhase.ACK_CURSOR, result.stoppedAt)
+        assertEquals(listOf("op-1"), store.queue.map { it.opId })
+        assertEquals(setOf("op-1"), store.retainedJournalOpIds)
+        assertTrue(store.completed.isEmpty())
+        assertEquals(0L, store.ackedCursor)
+        assertTrue(store.acknowledgementCommits.isEmpty())
+    }
+
+    @Test
+    fun `a new actor replays duplicate after ACK commit fault and clears journal only on retry`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-1"))
+        store.retainedJournalOpIds.add("op-1")
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 1,
+                    results = listOf(acceptedReceipt("op-1", "c-1")),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+        store.acknowledgementCommitFault = IllegalStateException("simulated transaction rollback")
+
+        val interrupted = actor(transport, store).request(SyncTrigger.INTERVAL).single()
+
+        assertEquals("internal_error", interrupted.error?.code)
+        assertEquals(listOf("op-1"), store.queue.map { it.opId })
+        assertEquals(setOf("op-1"), store.retainedJournalOpIds)
+        assertTrue(store.completed.isEmpty())
+        assertEquals(0L, store.ackedCursor)
+
+        store.acknowledgementCommitFault = null
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 1,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.DUPLICATE,
+                            entityId = "c-1",
+                            revision = 2,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val recovered = actor(transport, store).request(SyncTrigger.FOREGROUND_START).single()
+
+        assertTrue(recovered.succeeded)
+        assertEquals(2, transport.pushedBatches.size)
+        assertEquals(listOf(listOf("op-1"), listOf("op-1")), transport.ackedOpIds)
+        assertTrue(store.queue.isEmpty())
+        assertTrue(store.retainedJournalOpIds.isEmpty())
+        assertEquals(listOf("op-1"), store.completed.map { it.opId })
+        assertEquals(listOf(0L to listOf("op-1")), store.acknowledgementCommits)
+    }
+
+    @Test
+    fun `an empty change page cannot advance the server cursor`() = runTest {
         val transport = FakeSyncTransport()
         transport.changePages.add(
             ApiResult.Success(ChangePage(fromCursor = 5, nextCursor = 11, hasMore = false, changes = emptyList()), null),
@@ -420,11 +1097,39 @@ class SyncActorTest {
         val store = FakeSyncLocalStore(BindingState.IDLE)
         store.appliedCursor = 5
 
-        actor(transport, store).request(SyncTrigger.INTERVAL)
+        val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
 
         // Letting the cursor advance is what allows the server to prune its change log.
-        assertEquals(11L, store.appliedCursor)
-        assertEquals(11L, store.ackedCursor)
+        assertEquals("malformed_response", result.error?.code)
+        assertEquals(5L, store.appliedCursor)
+        assertEquals(0L, store.ackedCursor)
+        assertTrue(transport.ackedCursors.isEmpty())
+    }
+
+    @Test
+    fun `malformed change page metadata never applies advances or acknowledges`() = runTest {
+        val pages = listOf(
+            ChangePage(fromCursor = 0, nextCursor = 1, hasMore = false, changes = emptyList()),
+            ChangePage(fromCursor = 0, nextCursor = 2, hasMore = false, changes = listOf(change(2), change(1))),
+            ChangePage(fromCursor = 0, nextCursor = 1, hasMore = false, changes = listOf(change(1), change(1))),
+            ChangePage(fromCursor = 0, nextCursor = 2, hasMore = false, changes = listOf(change(2))),
+            ChangePage(fromCursor = 0, nextCursor = 2, hasMore = false, changes = listOf(change(1))),
+            ChangePage(fromCursor = 1, nextCursor = 1, hasMore = false, changes = emptyList()),
+        )
+
+        for (page in pages) {
+            val transport = FakeSyncTransport()
+            transport.changePages.add(ApiResult.Success(page, null))
+            val store = FakeSyncLocalStore(BindingState.IDLE)
+
+            val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
+
+            assertEquals("malformed_response", result.error?.code)
+            assertTrue(store.appliedPages.isEmpty())
+            assertEquals(0L, store.appliedCursor)
+            assertEquals(0L, store.ackedCursor)
+            assertTrue(transport.ackedCursors.isEmpty())
+        }
     }
 
     @Test
@@ -432,13 +1137,13 @@ class SyncActorTest {
         val transport = FakeSyncTransport()
         transport.changePages.add(
             ApiResult.Success(
-                ChangePage(fromCursor = 0, nextCursor = 10, hasMore = true, changes = listOf(change(10))),
+                ChangePage(fromCursor = 0, nextCursor = 1, hasMore = true, changes = listOf(change(1))),
                 null,
             ),
         )
         transport.changePages.add(
             ApiResult.Success(
-                ChangePage(fromCursor = 10, nextCursor = 20, hasMore = false, changes = listOf(change(20, entityId = "c-2"))),
+                ChangePage(fromCursor = 1, nextCursor = 2, hasMore = false, changes = listOf(change(2, entityId = "c-2"))),
                 null,
             ),
         )
@@ -446,9 +1151,9 @@ class SyncActorTest {
 
         val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
 
-        assertEquals(listOf(0L, 10L), transport.changeCursors)
+        assertEquals(listOf(0L, 1L), transport.changeCursors)
         assertEquals(2, result.applied)
-        assertEquals(20L, store.appliedCursor)
+        assertEquals(2L, store.appliedCursor)
     }
 
     @Test
@@ -467,6 +1172,41 @@ class SyncActorTest {
     }
 
     @Test
+    fun `a pure secret clear sends without a sealer and keeps an explicit clear intent`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(
+            pendingOp(
+                "op-clear",
+                fieldMask = emptyList(),
+                clearSecretFields = listOf("password"),
+            ),
+        )
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 1,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-clear", status = PushStatus.ACCEPTED, entityId = "c-1", revision = 2, changeSeq = 2,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store, sealer = NoSealer).request(SyncTrigger.MANUAL).single()
+
+        assertEquals(1, result.pushed)
+        assertEquals(listOf("op-clear"), transport.pushedBatches.single().map { it.opId })
+        assertTrue(transport.pushedEnvelopes.single().isEmpty())
+        assertTrue(store.queue.isEmpty())
+    }
+
+    @Test
     fun `a sealable secret travels as an envelope keyed by opId`() = runTest {
         val transport = FakeSyncTransport()
         val store = FakeSyncLocalStore(BindingState.IDLE)
@@ -476,7 +1216,11 @@ class SyncActorTest {
                 PushResponse(
                     batchId = "batch-fixed",
                     serverCursor = 1,
-                    results = listOf(PushResult(opId = "op-1", status = PushStatus.ACCEPTED, revision = 2)),
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1", status = PushStatus.ACCEPTED, entityId = "c-1", revision = 2, changeSeq = 2,
+                        ),
+                    ),
                     changesAvailable = false,
                 ),
                 null,
@@ -552,6 +1296,76 @@ class SyncActorTest {
     }
 
     @Test
+    fun `local owner rejection rolls back page cursor and acknowledgement`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.changePages.add(
+            ApiResult.Success(
+                ChangePage(fromCursor = 0, nextCursor = 1, hasMore = false, changes = listOf(change(1))),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.applyChangesFailure = ResidencyViolationException("missing ownerUserId")
+        var purged = 0
+        val subject = SyncActor(
+            transport = transport,
+            store = store,
+            sealer = NoSealer,
+            blobs = NoBlobs,
+            clock = { now },
+            onSharedPurge = { purged += 1 },
+        )
+
+        val result = subject.request(SyncTrigger.INTERVAL).single()
+
+        assertEquals("shared_residency_violation", result.error?.code)
+        assertEquals(SyncPhase.PULL_CHANGES, result.stoppedAt)
+        assertEquals(0L, store.appliedCursor)
+        assertEquals(0L, store.ackedCursor)
+        assertTrue(transport.ackedCursors.isEmpty())
+        assertTrue(store.appliedPages.isEmpty())
+        assertEquals(1, purged)
+    }
+
+    @Test
+    fun `bootstrap owner rejection does not persist snapshot cursor or staged rows`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.bootstrapPages.add(
+            ApiResult.Success(
+                BootstrapPage(
+                    bootstrapId = "boot-owner-invalid",
+                    snapshotCursor = 90,
+                    nextPageToken = null,
+                    complete = true,
+                    entities = listOf(change(1)),
+                ),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.BOUND_NEEDS_BOOTSTRAP)
+        store.stageBootstrapFailure = ResidencyViolationException("owner has wrong type")
+        var purged = 0
+        val subject = SyncActor(
+            transport = transport,
+            store = store,
+            sealer = NoSealer,
+            blobs = NoBlobs,
+            clock = { now },
+            onSharedPurge = { purged += 1 },
+        )
+
+        val result = subject.request(SyncTrigger.BIND_COMPLETE).single()
+
+        assertEquals("shared_residency_violation", result.error?.code)
+        assertEquals(SyncPhase.BOOTSTRAP_PAGE, result.stoppedAt)
+        assertTrue(store.snapshotCursorWrites.isEmpty())
+        assertTrue(store.stagedGenerations.isEmpty())
+        assertTrue(store.promotedGenerations.isEmpty())
+        assertEquals(0L, store.appliedCursor)
+        assertEquals(1, purged)
+    }
+
+    @Test
     fun `blocked blob transport is reported rather than silently skipped`() = runTest {
         val transport = FakeSyncTransport()
         val store = FakeSyncLocalStore(BindingState.IDLE)
@@ -606,6 +1420,31 @@ class SyncActorTest {
         action = action,
         revision = revision,
         changedAt = 0,
+    )
+
+    private suspend fun assertMalformedPush(response: PushResponse) {
+        val transport = FakeSyncTransport()
+        transport.pushResponses.add(ApiResult.Success(response, null))
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-1", entityId = "c-1"))
+        store.queue.add(pendingOp("op-2", entityId = "c-2"))
+
+        val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
+
+        assertEquals("malformed_response", result.error?.code)
+        assertEquals(listOf("op-1", "op-2"), store.queue.map { it.opId })
+        assertTrue(store.completed.isEmpty())
+        assertTrue(store.droppedOpIds.isEmpty())
+        assertTrue(store.conflicts.isEmpty())
+        assertTrue(transport.ackedCursors.isEmpty())
+    }
+
+    private fun acceptedReceipt(opId: String, entityId: String): PushResult = PushResult(
+        opId = opId,
+        status = PushStatus.ACCEPTED,
+        entityId = entityId,
+        revision = 2,
+        changeSeq = 2,
     )
 
     private fun payload(vararg pairs: Pair<String, String>): JsonObject =

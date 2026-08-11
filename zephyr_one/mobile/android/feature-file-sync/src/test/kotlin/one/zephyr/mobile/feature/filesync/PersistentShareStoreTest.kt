@@ -74,7 +74,7 @@ class PersistentShareStoreTest {
 
         assertNull(grants(backing.surviveRestart(), permissions).grant("p1"))
         /* And the id index no longer names it, or load() would read a row with no URI behind it. */
-        assertTrue(backing.stringSet("share.profileIds").isEmpty())
+        assertTrue(backing.keys().none { it.endsWith(".profileIds") })
     }
 
     @Test
@@ -84,7 +84,7 @@ class PersistentShareStoreTest {
 
         /* Simulates external truncation. A row with no tree URI cannot address anything, and inventing
          * one would point the share at a directory the user never picked. */
-        backing.drop("share.p1.treeUri")
+        backing.drop(backing.keys().single { it.endsWith("share.p1.treeUri") })
         assertNull(grants(backing.surviveRestart(), permissions).grant("p1"))
     }
 
@@ -92,7 +92,7 @@ class PersistentShareStoreTest {
     fun aRowMissingItsWriteFlagIsAssumedReadOnly() {
         val permissions = FakeUriPermissions()
         grants(backing, permissions).authorize("p1", "PHONE", tree, requestWrite = true)
-        backing.drop("share.p1.readOnly")
+        backing.drop(backing.keys().single { it.endsWith("share.p1.readOnly") })
 
         /* The strictest reading is the safe one: assuming writable would offer a write on a grant
          * whose recorded authority is unknown. */
@@ -100,13 +100,13 @@ class PersistentShareStoreTest {
     }
 
     @Test
-    fun aGrantRowIsWrittenAsOneBatch() {
+    fun aGrantAuthorizationUsesOneIntentAndOneAtomicRowCommit() {
         val permissions = FakeUriPermissions()
         grants(backing, permissions).authorize("p1", "DOCUMENTS", tree, requestWrite = true)
 
-        /* Three keys plus the index in one batch. Written key by key, a process death in the middle
-         * would leave an id in the index with no URI behind it. */
-        assertEquals(1, backing.batches)
+        /* First batch journals intent before ContentResolver is touched. The second atomically writes
+         * three row fields plus the index and clears intent. */
+        assertEquals(2, backing.batches)
     }
 
     @Test
@@ -115,6 +115,9 @@ class PersistentShareStoreTest {
         val live = grants(backing, permissions)
         live.authorize("p1", "PHONE", tree, requestWrite = true)
         live.authorize("p2", "DOCUMENTS", tree, requestWrite = false)
+        /* Persisted SAF modes are URI-scoped and accumulate on Android. The second profile's
+         * read-only configuration must not take write away from p1's existing platform grant. */
+        assertEquals(true, permissions.persisted().single().canWrite)
 
         val restarted = grants(backing.surviveRestart(), permissions)
         assertEquals(listOf("p1", "p2"), restarted.all().map { it.profileId }.sorted())
@@ -122,6 +125,489 @@ class PersistentShareStoreTest {
         assertEquals(true, restarted.grant("p2")?.readOnly)
         assertEquals(false, restarted.grant("p1")?.readOnly)
     }
+
+    @Test
+    fun ownerlessLegacyGrantsAreRevokedInsteadOfAssignedToTheFirstAccount() {
+        val readOnlyTree = "content://tree/ReadOnly"
+        assertTrue(
+            backing.edit {
+                putStringSet("share.profileIds", setOf("p1", "p2"))
+                putString("share.p1.treeUri", tree)
+                putString("share.p1.shareName", "DOCUMENTS")
+                putBoolean("share.p1.readOnly", false)
+                putString("share.p2.treeUri", readOnlyTree)
+                putString("share.p2.shareName", "READ_ONLY")
+                putBoolean("share.p2.readOnly", true)
+            },
+        )
+        val permissions = FakeUriPermissions().apply {
+            seed(tree, canRead = true, canWrite = true)
+            seed(readOnlyTree, canRead = true, canWrite = false)
+        }
+
+        val accountB = SafShareGrants(
+            permissions,
+            PersistentShareStore(backing, ownerId = "account-b-generation"),
+        )
+
+        assertTrue(accountB.all().isEmpty())
+        assertNull(accountB.grant("p1"))
+        assertTrue(permissions.persisted().isEmpty())
+        assertEquals(
+            listOf(
+                FakeUriPermissions.ReleaseCall(tree, releaseRead = true, releaseWrite = true),
+                FakeUriPermissions.ReleaseCall(readOnlyTree, releaseRead = true, releaseWrite = false),
+            ),
+            permissions.releaseCalls,
+        )
+        assertTrue(backing.stringSet("share.profileIds").isEmpty())
+        assertNull(backing.string("share.p1.treeUri"))
+        assertTrue(backing.stringSet("saf.v2.ownerIds").isEmpty())
+    }
+
+    @Test
+    fun ownerlessLegacyMetadataWithoutAPlatformPermissionIsCleared() {
+        assertTrue(
+            backing.edit {
+                putStringSet("share.profileIds", setOf("p1"))
+                putString("share.p1.treeUri", tree)
+                putString("share.p1.shareName", "DOCUMENTS")
+                putBoolean("share.p1.readOnly", false)
+            },
+        )
+        val permissions = FakeUriPermissions()
+
+        val accountB = SafShareGrants(
+            permissions,
+            PersistentShareStore(backing, ownerId = "account-b-generation"),
+        )
+
+        assertTrue(accountB.all().isEmpty())
+        assertTrue(permissions.releaseCalls.isEmpty())
+        assertTrue(backing.keys().none { it.startsWith("share.") })
+        assertTrue(backing.stringSet("saf.v2.ownerIds").isEmpty())
+    }
+}
+
+/** Crash consistency and binding-generation ownership for app-wide SAF capabilities. */
+class SafGrantRecoveryTest {
+
+    private val tree = "content://tree/Documents"
+    private val otherTree = "content://tree/Other"
+    private val legacyTree = "content://tree/Legacy"
+    private val owner = "owner-current"
+
+    @Test
+    fun aFailedPrepareCommitNeverTakesAPlatformPermission() {
+        val values = FakeKeyValueStore().apply { failNextEdit = true }
+        val permissions = FakeUriPermissions()
+        val grants = SafShareGrants(permissions, PersistentShareStore(values, owner))
+
+        assertNull(grants.authorize("p1", "PHONE", tree, requestWrite = true))
+        assertTrue(permissions.persisted().isEmpty())
+        assertTrue(PersistentShareStore(values.surviveRestart(), owner).pendingAuthorizations().isEmpty())
+    }
+
+    @Test
+    fun aFailedRowCommitImmediatelyRollsBackTheTakenPermission() {
+        val values = FakeKeyValueStore()
+        val permissions = FakeUriPermissions()
+        val grants = SafShareGrants(permissions, PersistentShareStore(values, owner))
+        /* authorize writes pending intent first and the complete row second. */
+        values.failBatch = values.batches + 2
+
+        assertNull(grants.authorize("p1", "PHONE", tree, requestWrite = true))
+        assertTrue(permissions.persisted().isEmpty())
+        val restarted = PersistentShareStore(values.surviveRestart(), owner)
+        assertTrue(restarted.isEmpty())
+        assertTrue(restarted.pendingAuthorizations().isEmpty())
+    }
+
+    @Test
+    fun crashBeforeTakeClearsIntentWithoutReleasingAnything() {
+        val values = FakeKeyValueStore()
+        val permissions = FakeUriPermissions()
+        val store = PersistentShareStore(values, owner)
+        assertTrue(store.prepareAuthorization("p1", tree, previous = null))
+
+        val restartedValues = values.surviveRestart()
+        SafShareGrants(permissions, PersistentShareStore(restartedValues, owner))
+
+        assertTrue(permissions.released.isEmpty())
+        assertTrue(PersistentShareStore(restartedValues, owner).pendingAuthorizations().isEmpty())
+    }
+
+    @Test
+    fun crashAfterTakeReleasesFromDurableIntentOnRestart() {
+        val values = FakeKeyValueStore()
+        val permissions = FakeUriPermissions()
+        val store = PersistentShareStore(values, owner)
+        assertTrue(store.prepareAuthorization("p1", tree, previous = null))
+        assertTrue(permissions.takePersistable(tree, allowWrite = true))
+
+        val restartedValues = values.surviveRestart()
+        SafShareGrants(permissions, PersistentShareStore(restartedValues, owner))
+
+        assertTrue(permissions.persisted().isEmpty())
+        assertEquals(listOf(tree), permissions.released)
+        assertTrue(PersistentShareStore(restartedValues, owner).pendingAuthorizations().isEmpty())
+    }
+
+    @Test
+    fun releaseFailureKeepsJournalAndForegroundRecoveryRetries() {
+        val values = FakeKeyValueStore()
+        val permissions = FakeUriPermissions()
+        val store = PersistentShareStore(values, owner)
+        assertTrue(store.prepareAuthorization("p1", tree, previous = null))
+        assertTrue(permissions.takePersistable(tree, allowWrite = true))
+        permissions.refuseRelease += tree
+
+        val restartedValues = values.surviveRestart()
+        val restartedStore = PersistentShareStore(restartedValues, owner)
+        val grants = SafShareGrants(permissions, restartedStore)
+        assertEquals(listOf(tree), permissions.persisted().map { it.uri })
+        assertEquals(listOf("p1"), restartedStore.pendingAuthorizations().map { it.profileId })
+
+        permissions.refuseRelease -= tree
+        grants.reconcilePersistedPermissions()
+        assertTrue(permissions.persisted().isEmpty())
+        assertTrue(restartedStore.pendingAuthorizations().isEmpty())
+        assertEquals(2, permissions.released.count { it == tree })
+    }
+
+    @Test
+    fun failedLegacyRevokeStaysQuarantinedAndRetriesAfterRestart() {
+        val values = FakeKeyValueStore()
+        assertTrue(
+            values.edit {
+                putStringSet("share.profileIds", setOf("account-a-profile"))
+                putString("share.account-a-profile.treeUri", tree)
+                putString("share.account-a-profile.shareName", "ACCOUNT_A")
+                putBoolean("share.account-a-profile.readOnly", false)
+            },
+        )
+        val permissions = FakeUriPermissions().apply {
+            seed(tree, canRead = true, canWrite = true)
+            refuseRelease += tree
+        }
+
+        val accountBStore = PersistentShareStore(values, "account-b-generation")
+        val accountB = SafShareGrants(permissions, accountBStore)
+
+        assertTrue(accountB.all().isEmpty())
+        assertTrue(values.keys().none { it.startsWith("share.") })
+        assertEquals(1, accountBStore.ownerIds().size)
+        assertFalse("account-b-generation" in accountBStore.ownerIds())
+        assertEquals(
+            FakeUriPermissions.ReleaseCall(tree, releaseRead = true, releaseWrite = true),
+            permissions.releaseCalls.single(),
+        )
+
+        permissions.refuseRelease -= tree
+        val restartedValues = values.surviveRestart()
+        val restartedStore = PersistentShareStore(restartedValues, "account-b-generation")
+        val restarted = SafShareGrants(permissions, restartedStore)
+
+        assertTrue(restarted.all().isEmpty())
+        assertTrue(permissions.persisted().isEmpty())
+        assertTrue(restartedStore.ownerIds().isEmpty())
+        assertEquals(2, permissions.releaseCalls.size)
+    }
+
+    @Test
+    fun failedLegacyQuarantineCommitNeverExposesTheRowAndRetriesMetadataCleanup() {
+        val values = FakeKeyValueStore()
+        assertTrue(
+            values.edit {
+                putStringSet("share.profileIds", setOf("account-a-profile"))
+                putString("share.account-a-profile.treeUri", tree)
+                putString("share.account-a-profile.shareName", "ACCOUNT_A")
+                putBoolean("share.account-a-profile.readOnly", false)
+            },
+        )
+        val permissions = FakeUriPermissions().apply { seed(tree) }
+        values.failNextEdit = true
+
+        val accountB = SafShareGrants(
+            permissions,
+            PersistentShareStore(values, "account-b-generation"),
+        )
+
+        assertTrue(accountB.all().isEmpty())
+        assertTrue(permissions.persisted().isEmpty())
+        assertEquals(tree, values.string("share.account-a-profile.treeUri"))
+
+        val restartedValues = values.surviveRestart()
+        val restarted = SafShareGrants(
+            permissions,
+            PersistentShareStore(restartedValues, "account-b-generation"),
+        )
+        assertTrue(restarted.all().isEmpty())
+        assertTrue(restartedValues.keys().none { it.startsWith("share.") })
+        assertTrue(restartedValues.stringSet("saf.v2.ownerIds").isEmpty())
+    }
+
+    @Test
+    fun unresolvedRollbackCannotBeOverwrittenByASecondPickerResult() {
+        val values = FakeKeyValueStore()
+        val permissions = FakeUriPermissions()
+        val store = PersistentShareStore(values, owner)
+        assertTrue(store.prepareAuthorization("p1", tree, previous = null))
+        assertTrue(permissions.takePersistable(tree, allowWrite = true))
+        permissions.refuseRelease += tree
+        val grants = SafShareGrants(permissions, store)
+
+        assertNull(grants.authorize("p1", "OTHER", otherTree, requestWrite = true))
+
+        assertEquals(listOf(tree), permissions.persisted().map { it.uri })
+        assertEquals(tree, store.pendingAuthorizations().single().treeUri)
+    }
+
+    @Test
+    fun startupSweepsAnUnindexedAmbientGrant() {
+        val permissions = FakeUriPermissions().apply { seed(tree) }
+
+        SafShareGrants(
+            permissions,
+            PersistentShareStore(FakeKeyValueStore(), owner),
+        )
+
+        assertTrue(permissions.persisted().isEmpty())
+        assertEquals(listOf(tree), permissions.released)
+    }
+
+    @Test
+    fun aReplacementGenerationCannotInheritOldRowsOrPermissions() {
+        val values = FakeKeyValueStore()
+        val permissions = FakeUriPermissions()
+        val old = SafShareGrants(permissions, PersistentShareStore(values, "generation-old"))
+        assertTrue(old.authorize("p1", "OLD", tree, requestWrite = true) != null)
+
+        val replacement = SafShareGrants(
+            permissions,
+            PersistentShareStore(values, "generation-new"),
+        )
+
+        assertTrue(replacement.all().isEmpty())
+        assertTrue(permissions.persisted().isEmpty())
+        assertTrue(PersistentShareStore(values, "generation-old").isEmpty())
+    }
+
+    @Test
+    fun ownerScopedRowsSurviveForTheSameOwnerButStayHiddenFromAnotherAccount() {
+        val values = FakeKeyValueStore()
+        val accountA = PersistentShareStore(values, "account-a-generation")
+        accountA["p1"] = stored("p1", tree, readOnly = false)
+
+        val restartedA = PersistentShareStore(values.surviveRestart(), "account-a-generation")
+        val accountB = PersistentShareStore(values.surviveRestart(), "account-b-generation")
+
+        assertEquals("p1", restartedA.values.single().profileId)
+        assertTrue(accountB.isEmpty())
+        assertEquals(setOf("account-a-generation"), accountB.ownerIds())
+    }
+
+    @Test
+    fun oldGenerationTeardownDoesNotReleaseReplacementAccountGrant() {
+        val values = FakeKeyValueStore()
+        val permissions = FakeUriPermissions()
+        val oldStore = PersistentShareStore(values, "generation-old")
+        val newStore = PersistentShareStore(values, "generation-new")
+        oldStore["old"] = stored("old", tree, readOnly = false)
+        newStore["new"] = stored("new", otherTree, readOnly = false)
+        permissions.seed(tree)
+        permissions.seed(otherTree)
+
+        val old = SafShareGrants(permissions, oldStore, reconcileOnInit = false)
+        assertTrue(old.revokeAllOwned())
+
+        assertEquals(listOf(otherTree), permissions.persisted().map { it.uri })
+        assertEquals("new", newStore.values.single().profileId)
+    }
+
+    @Test
+    fun sharedUriTeardownPreservesModesRequiredByAnotherGeneration() {
+        val values = FakeKeyValueStore()
+        val permissions = FakeUriPermissions()
+        val oldStore = PersistentShareStore(values, "generation-old")
+        val newStore = PersistentShareStore(values, "generation-new")
+        oldStore["old"] = stored("old", tree, readOnly = false)
+        newStore["new"] = stored("new", tree, readOnly = true)
+        permissions.seed(tree, canRead = true, canWrite = true)
+
+        val old = SafShareGrants(permissions, oldStore, reconcileOnInit = false)
+        assertTrue(old.revokeAllOwned())
+
+        assertEquals(UriGrant(tree, canRead = true, canWrite = false), permissions.persisted().single())
+        assertEquals("new", newStore.values.single().profileId)
+    }
+
+    @Test
+    fun soleOwnerTeardownAlsoReleasesUnknownLegacyOrphans() {
+        val values = FakeKeyValueStore()
+        val permissions = FakeUriPermissions()
+        val store = PersistentShareStore(values, owner)
+        store["p1"] = stored("p1", tree, readOnly = false)
+        permissions.seed(tree)
+        permissions.seed(otherTree)
+
+        val grants = SafShareGrants(permissions, store, reconcileOnInit = false)
+        assertTrue(grants.revokeAllOwned())
+
+        assertTrue(permissions.persisted().isEmpty())
+        assertTrue(PersistentShareStore(values, owner).isEmpty())
+    }
+
+    @Test
+    fun noAccountGlobalTeardownRevokesAQuarantinedLegacyGrant() {
+        val values = FakeKeyValueStore()
+        assertTrue(
+            values.edit {
+                putStringSet("share.profileIds", setOf("legacy"))
+                putString("share.legacy.treeUri", legacyTree)
+                putBoolean("share.legacy.readOnly", false)
+            },
+        )
+        val permissions = FakeUriPermissions().apply { seed(legacyTree) }
+        val store = PersistentShareStore(values, "no-account-teardown")
+        val teardown = SafShareGrants(permissions, store, reconcileOnInit = false)
+
+        assertTrue(teardown.all().isEmpty())
+        assertTrue(store.ownerIds().isNotEmpty())
+        assertTrue(teardown.revokeAllPersistedForGlobalTeardown())
+
+        assertTrue(permissions.persisted().isEmpty())
+        assertEquals(
+            FakeUriPermissions.ReleaseCall(legacyTree, releaseRead = true, releaseWrite = true),
+            permissions.releaseCalls.single(),
+        )
+        assertTrue(store.ownerIds().isEmpty())
+        assertTrue(values.keys().none { it.startsWith("saf.v2.owner.") || it.startsWith("share.") })
+    }
+
+    @Test
+    fun failedGlobalLegacyTeardownKeepsJournalAndRetriesAfterRestart() {
+        val values = FakeKeyValueStore()
+        assertTrue(
+            values.edit {
+                putStringSet("share.profileIds", setOf("legacy"))
+                putString("share.legacy.treeUri", legacyTree)
+                putBoolean("share.legacy.readOnly", false)
+            },
+        )
+        val permissions = FakeUriPermissions().apply {
+            seed(legacyTree)
+            refuseRelease += legacyTree
+        }
+        val firstStore = PersistentShareStore(values, "no-account-teardown")
+        val firstSweep = SafShareGrants(permissions, firstStore, reconcileOnInit = false)
+
+        assertFalse(firstSweep.revokeAllPersistedForGlobalTeardown())
+        assertTrue(firstSweep.all().isEmpty())
+        assertTrue(firstStore.ownerIds().isNotEmpty())
+        assertEquals(listOf(legacyTree), permissions.persisted().map { it.uri })
+
+        permissions.refuseRelease -= legacyTree
+        val restartedValues = values.surviveRestart()
+        val restartedStore = PersistentShareStore(restartedValues, "no-account-teardown")
+        val restartedSweep = SafShareGrants(permissions, restartedStore, reconcileOnInit = false)
+
+        assertTrue(restartedSweep.revokeAllPersistedForGlobalTeardown())
+        assertTrue(permissions.persisted().isEmpty())
+        assertTrue(restartedStore.ownerIds().isEmpty())
+        assertEquals(2, permissions.releaseCalls.size)
+    }
+
+    @Test
+    fun globalTeardownReleasesEachLegacyGrantWithItsExactLiveModes() {
+        val writeOnlyTree = "content://tree/WriteOnly"
+        val values = FakeKeyValueStore()
+        assertTrue(
+            values.edit {
+                putStringSet("share.profileIds", setOf("rw", "read", "write"))
+                putString("share.rw.treeUri", tree)
+                putBoolean("share.rw.readOnly", false)
+                putString("share.read.treeUri", otherTree)
+                putBoolean("share.read.readOnly", true)
+                putString("share.write.treeUri", writeOnlyTree)
+                putBoolean("share.write.readOnly", false)
+            },
+        )
+        val permissions = FakeUriPermissions().apply {
+            seed(tree, canRead = true, canWrite = true)
+            seed(otherTree, canRead = true, canWrite = false)
+            seed(writeOnlyTree, canRead = false, canWrite = true)
+        }
+        val teardown = SafShareGrants(
+            permissions,
+            PersistentShareStore(values, "no-account-teardown"),
+            reconcileOnInit = false,
+        )
+
+        assertTrue(teardown.revokeAllPersistedForGlobalTeardown())
+
+        assertEquals(
+            listOf(
+                FakeUriPermissions.ReleaseCall(tree, releaseRead = true, releaseWrite = true),
+                FakeUriPermissions.ReleaseCall(otherTree, releaseRead = true, releaseWrite = false),
+                FakeUriPermissions.ReleaseCall(writeOnlyTree, releaseRead = false, releaseWrite = true),
+            ),
+            permissions.releaseCalls,
+        )
+        assertTrue(permissions.persisted().isEmpty())
+        assertTrue(values.stringSet("saf.v2.ownerIds").isEmpty())
+    }
+
+    @Test
+    fun generationTeardownPreservesAnotherActiveOwnerWhenQuarantineAlsoExists() {
+        val values = FakeKeyValueStore()
+        assertTrue(
+            values.edit {
+                putStringSet("share.profileIds", setOf("legacy"))
+                putString("share.legacy.treeUri", legacyTree)
+                putBoolean("share.legacy.readOnly", false)
+            },
+        )
+        val oldStore = PersistentShareStore(values, "generation-old")
+        val activeStore = PersistentShareStore(values, "generation-active")
+        oldStore["old"] = stored("old", tree, readOnly = false)
+        activeStore["active"] = stored("active", otherTree, readOnly = true)
+        val permissions = FakeUriPermissions().apply {
+            seed(tree, canRead = true, canWrite = true)
+            seed(otherTree, canRead = true, canWrite = false)
+            seed(legacyTree, canRead = true, canWrite = true)
+        }
+
+        val old = SafShareGrants(permissions, oldStore, reconcileOnInit = false)
+        assertTrue(old.revokeAllOwned())
+
+        assertEquals(setOf(otherTree, legacyTree), permissions.persisted().map { it.uri }.toSet())
+        assertEquals(UriGrant(otherTree, canRead = true, canWrite = false), permissions.persisted()[0])
+        assertEquals("active", activeStore.values.single().profileId)
+        assertEquals(
+            listOf(FakeUriPermissions.ReleaseCall(tree, releaseRead = true, releaseWrite = true)),
+            permissions.releaseCalls,
+        )
+    }
+
+    @Test
+    fun ownerIdentityIsGenerationAndBoundarySensitive() {
+        val old = PersistentShareStore.ownerId("server", "user", "device", "generation-old")
+        val replacement = PersistentShareStore.ownerId("server", "user", "device", "generation-new")
+        val differentBoundary = PersistentShareStore.ownerId("server/user", "device", "generation-old")
+
+        assertFalse(old == replacement)
+        assertFalse(old == differentBoundary)
+        assertEquals(64, old.length)
+    }
+
+    private fun stored(profileId: String, uri: String, readOnly: Boolean) = SafShareGrant(
+        profileId = profileId,
+        shareName = "PHONE",
+        treeUri = uri,
+        readOnly = readOnly,
+        grantValid = true,
+    )
 }
 
 /** The per-connection directory choice. */
@@ -174,6 +660,47 @@ class ConnectionSharePreferencesTest {
 
         assertEquals(emptyList<String>(), shares.pruneMissing(setOf("p1")))
         assertEquals("content://tree", store.string("share.p1.treeUri"))
+    }
+
+    @Test
+    fun choicesAreIsolatedByBindingGeneration() {
+        val old = ConnectionSharePreferences(store, ownerId = "generation-old")
+        val replacement = ConnectionSharePreferences(store, ownerId = "generation-new")
+        old.choose("c1", "old-profile")
+
+        assertNull(replacement.profileFor("c1"))
+        replacement.choose("c1", "new-profile")
+        assertEquals("old-profile", old.profileFor("c1"))
+        assertEquals("new-profile", replacement.profileFor("c1"))
+        assertTrue(old.clearAll())
+        assertNull(old.profileFor("c1"))
+        assertEquals("new-profile", replacement.profileFor("c1"))
+    }
+
+    @Test
+    fun ownerlessLegacyChoiceIsDiscardedInsteadOfAssignedToTheFirstAccount() {
+        assertTrue(store.edit { putString("connection.share.c1", "account-a-profile") })
+
+        val accountB = ConnectionSharePreferences(store, ownerId = "account-b-generation")
+
+        assertNull(accountB.profileFor("c1"))
+        assertNull(store.string("connection.share.c1"))
+    }
+
+    @Test
+    fun failedLegacyChoiceCleanupRemainsHiddenAndRetriesAfterRestart() {
+        assertTrue(store.edit { putString("connection.share.c1", "account-a-profile") })
+        store.failNextEdit = true
+
+        val accountB = ConnectionSharePreferences(store, ownerId = "account-b-generation")
+
+        assertNull(accountB.profileFor("c1"))
+        assertEquals("account-a-profile", store.string("connection.share.c1"))
+
+        val restarted = store.surviveRestart()
+        val restartedB = ConnectionSharePreferences(restarted, ownerId = "account-b-generation")
+        assertNull(restartedB.profileFor("c1"))
+        assertNull(restarted.string("connection.share.c1"))
     }
 }
 

@@ -5,17 +5,25 @@ mod fs;
 mod icon;
 mod rdp;
 mod rdp_picker;
+mod rdp_surface;
 mod runtime;
 mod token;
 mod unlock_bridge;
-
-use tauri::Manager;
 
 /// Desktop-only entry point (Windows / macOS / Linux). Zephyr One no longer
 /// ships Android or iOS: the core is a spawned Node child process, which iOS
 /// forbids outright, and the Android path needed a libnode.so + APK-asset
 /// pipeline that is not worth maintaining alongside the desktop product.
 pub fn run() {
+    let rdp_sessions = std::sync::Arc::new(rdp::SessionRegistry::new());
+    let rdp_broker = std::sync::Arc::new(rdp::broker::NativeRdpBroker::new());
+    let rdp_surfaces = std::sync::Arc::new(rdp_surface::NativeRdpSurfaceRegistry::new(
+        rdp_sessions.clone(),
+    ));
+    let rdp_surface_state = std::sync::Arc::new(commands::NativeRdpSurfaceState::new(
+        rdp_sessions.clone(),
+        rdp_surfaces.clone(),
+    ));
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -25,17 +33,24 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build());
 
-    builder
+    let app = builder
         .manage(fs::FsState::default())
         .manage(token::TokenState::default())
+        /* The renderer never receives a native-RDP grant. WebView ownership,
+         * one-shot connect authorization, and every session operation are
+         * enforced by this process-local broker. */
+        .manage(rdp_broker)
         /* One registry for every RDP session, owned by the shell rather than by
          * a window: a session must outlive a tab being re-attached, and the
          * loop thread needs somewhere stable to be reaped from. */
-        .manage(std::sync::Arc::new(rdp::SessionRegistry::new()))
-        /* Per-session frame counters and bounded event logs. Separate from the
-         * registry because the registry owns control (stop, input) while this
-         * owns observation, and the UI reads the two at different rates. */
-        .manage(commands::NativeRdpSinks::default())
+        .manage(rdp_sessions)
+        /* Native platform render targets live outside WebView ownership. The
+         * surface registry consumes borrowed FreeRDP frames in-process; only
+         * the owner-checked AI capture command can obtain an encoded copy. */
+        .manage(rdp_surfaces)
+        /* Own the generation leases and serialize native-window lifecycle with
+         * FreeRDP start/stop. It also keeps pixel-free session telemetry. */
+        .manage(rdp_surface_state)
         .invoke_handler(tauri::generate_handler![
             commands::get_platform,
             commands::get_app_version,
@@ -63,7 +78,6 @@ pub fn run() {
             commands::token_export_local,
             commands::token_import_local,
             commands::rdp_native_capabilities,
-            commands::rdp_native_validate_folder,
             commands::rdp_native_connect,
             commands::rdp_native_disconnect,
             commands::rdp_native_sessions,
@@ -74,59 +88,35 @@ pub fn run() {
             commands::rdp_native_set_clipboard,
             commands::rdp_native_request_full_frame,
             commands::rdp_native_session_state,
+            commands::rdp_surface::rdp_native_surface_create,
+            commands::rdp_surface::rdp_native_surface_show,
+            commands::rdp_surface::rdp_native_surface_close,
+            commands::rdp_surface::rdp_native_surface_resize,
+            commands::rdp_surface::rdp_native_surface_focus,
+            commands::rdp_surface::rdp_native_surface_status,
+            commands::rdp_surface::rdp_native_surface_capture,
         ])
-        .setup(|app| {
-            // Default: the frontend invokes async `runtime_start` once the boot
-            // UI is visible, so a slow core start never blocks first paint.
-            // CI/install smoke sets ZEPHYR_ONE_AUTOSTART_RUNTIME=1 so the
-            // embedded Node core comes up even if the WebView never finishes
-            // loading JS.
-            let _ = app.get_webview_window("main");
-            let autostart = std::env::var("ZEPHYR_ONE_AUTOSTART_RUNTIME")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
-            if autostart {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    /* windows_subsystem = "windows" sends eprintln! nowhere, so
-                     * an autostart failure used to be invisible. Breadcrumb each
-                     * run to a temp file the install smoke collects. */
-                    let crumb_path = std::env::temp_dir().join("zephyr-one-autostart.log");
-                    let crumb = |msg: &str| {
-                        let millis = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis())
-                            .unwrap_or(0);
-                        if let Ok(mut file) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&crumb_path)
-                        {
-                            use std::io::Write;
-                            let _ = writeln!(file, "{millis} {msg}");
-                        }
-                    };
-                    crumb("autostart thread entered");
-                    match runtime::ensure_started(&handle) {
-                        Ok(info) => {
-                            crumb(&format!(
-                                "autostart ok base_url={} node={}",
-                                info.base_url, info.node_path
-                            ));
-                        }
-                        Err(error) => {
-                            crumb(&format!("autostart failed: {error}"));
-                        }
-                    }
-                });
-            }
-            Ok(())
-        })
-        .on_window_event(|_window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                runtime::stop();
-            }
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running Zephyr One");
+        .build(tauri::generate_context!())
+        .expect("error while building Zephyr One");
+
+    let configured_autostart = std::env::var("ZEPHYR_ONE_AUTOSTART_RUNTIME").ok();
+    let windows_release = cfg!(target_os = "windows") && !cfg!(debug_assertions);
+    let autostart = runtime::should_autostart(configured_autostart.as_deref(), windows_release);
+    let mut autostart_dispatched = false;
+
+    app.run(move |handle, event| match event {
+        /* `Ready` is the first point at which Tauri's event loop and all
+         * plugins are initialized. Windows release builds start here even if
+         * WebView JavaScript never loads; the UI's runtime_start command stays
+         * as an idempotent retry path. */
+        tauri::RunEvent::Ready if autostart && !autostart_dispatched => {
+            autostart_dispatched = true;
+            runtime::spawn_autostart(handle.clone());
+        }
+        /* Stop the child when the application exits, not whenever an
+         * individual window is destroyed. Window recreation must not tear
+         * down a healthy local core while the Tauri process is still alive. */
+        tauri::RunEvent::Exit => runtime::stop(),
+        _ => {}
+    });
 }

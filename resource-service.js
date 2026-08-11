@@ -12,6 +12,7 @@
  *   does not implicitly share its dependencies (§12.2, §13.1)
  */
 const { CAP, HttpError } = require('./authz');
+const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 
 const RESOURCE_TYPES = Object.freeze({
     connection: { table: 'connections' },
@@ -25,9 +26,16 @@ class ResourceService {
      * @param {object} storage  the storage.js module
      * @param {import('./authz').Authz} authz
      */
-    constructor(storage, authz) {
+    constructor(storage, authz, options = {}) {
         this.storage = storage;
         this.authz = authz;
+        this.mobileChangeBridge = options.mobileChangeBridge === false
+            ? null
+            : (options.mobileChangeBridge || getMobileV1ChangeBridge(storage.rawDb()));
+    }
+
+    _runMobileMutation(meta, write) {
+        return this.mobileChangeBridge ? this.mobileChangeBridge.runMutation(meta, write) : write();
     }
 
     /* ── raw lookups (server-internal only) ─────────────────────── */
@@ -114,7 +122,17 @@ class ResourceService {
         return this._toPublicConnection(user, conn);
     }
 
-    createConnection(user, data) {
+    createConnection(user, data, mutationContext = {}) {
+        return this._runMobileMutation({
+            entityType: 'connection', entityId: data.id, action: 'upsert', user, before: null,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+            forceChange: mutationContext.forceMobileChange === true,
+            changedSecretFields: mutationContext.changedSecretFields,
+        }, () => this._createConnection(user, data));
+    }
+
+    _createConnection(user, data) {
         const ephemeral = !!data.ephemeral;
         // One-shot rows are never shared into the host library visibility graph.
         const visibility = ephemeral
@@ -144,7 +162,18 @@ class ResourceService {
         return this._toPublicConnection(user, saved);
     }
 
-    updateConnection(user, id, mutate) {
+    updateConnection(user, id, mutate, mutationContext = {}) {
+        const before = this.storage.getConnectionById(id);
+        return this._runMobileMutation({
+            entityType: 'connection', entityId: id, action: 'upsert', user, before,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+            forceChange: mutationContext.forceMobileChange === true,
+            changedSecretFields: mutationContext.changedSecretFields,
+        }, () => this._updateConnection(user, id, mutate));
+    }
+
+    _updateConnection(user, id, mutate) {
         const conn = this.storage.getConnectionById(id);
         this.authz.assertCan(user, CAP.EDIT, 'connection', id, conn || { ownerUserId: '' }, { resourceExists: !!conn });
         const next = mutate({ ...conn }) || conn;
@@ -164,7 +193,16 @@ class ResourceService {
         return this._toPublicConnection(user, saved);
     }
 
-    deleteConnection(user, id) {
+    deleteConnection(user, id, mutationContext = {}) {
+        const before = this.storage.getConnectionById(id);
+        return this._runMobileMutation({
+            entityType: 'connection', entityId: id, action: 'delete', user, before,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+        }, () => this._deleteConnection(user, id));
+    }
+
+    _deleteConnection(user, id) {
         const conn = this.storage.getConnectionById(id);
         this.authz.assertCan(user, CAP.DELETE, 'connection', id, conn || { ownerUserId: '' }, { resourceExists: !!conn });
         this.storage.deleteConnectionRow(id);
@@ -191,6 +229,216 @@ class ResourceService {
         const resolved = this._resolveDependencySecrets(user, conn);
         this.authz.audit({ actorUserId: user.userId, resourceType: 'connection', resourceId: id, action: 'resource.use', outcome: 'success', metadata: { host: conn.host, port: conn.port, protocol: conn.protocol } });
         return resolved;
+    }
+
+    /**
+     * Authorize and freeze the complete route used by /api/connections/test.
+     *
+     * A shared `use` grant authorizes the saved endpoint, not an arbitrary
+     * caller-supplied endpoint that happens to reuse the owner's credentials.
+     * Owners/admins may test edits before saving them, while draft tests must
+     * hold `use` on every referenced dependency themselves.
+     */
+    resolveForConnectionTest(user, candidate, { savedConnectionId = null } = {}) {
+        const saved = savedConnectionId
+            ? this.storage.getConnectionById(String(savedConnectionId))
+            : null;
+        if (savedConnectionId) {
+            this.authz.assertCan(
+                user,
+                CAP.USE,
+                'connection',
+                String(savedConnectionId),
+                saved || { ownerUserId: '' },
+                { resourceExists: !!saved },
+            );
+        }
+
+        const connection = {
+            ...(candidate || {}),
+            ...(saved ? {
+                id: saved.id,
+                ownerUserId: saved.ownerUserId,
+                createdByUserId: saved.createdByUserId,
+            } : {
+                ownerUserId: user.userId,
+                createdByUserId: user.userId,
+            }),
+        };
+        const privilegedOverride = !!saved
+            && (saved.ownerUserId === user.userId || user.role === 'admin');
+        const routeChanged = !!saved && this._connectionTestRouteFingerprint(saved)
+            !== this._connectionTestRouteFingerprint(connection);
+        if (routeChanged && !privilegedOverride) {
+            throw new HttpError(
+                403,
+                'connection_test_override_forbidden',
+                'The saved connection target or route cannot be overridden',
+                false,
+            );
+        }
+
+        /* Only an unchanged shared connection may inherit its owner's bound
+         * dependency graph. Drafts and privileged previews authorize every
+         * dependency against the requesting account. */
+        const boundOwnerUserId = saved && !privilegedOverride && !routeChanged
+            ? saved.ownerUserId
+            : null;
+        const routePlan = this._resolveConnectionTestRoute(user, connection, { boundOwnerUserId });
+        if (saved) {
+            this.authz.audit({
+                actorUserId: user.userId,
+                resourceType: 'connection',
+                resourceId: saved.id,
+                action: 'resource.use',
+                outcome: 'success',
+                metadata: { host: connection.host, port: connection.port, protocol: connection.protocol, purpose: 'test' },
+            });
+        }
+        return { connection: routePlan.target, routePlan };
+    }
+
+    _normalizeConnectionTestJumpIds(connOrValue) {
+        const value = Array.isArray(connOrValue) || typeof connOrValue === 'string'
+            ? connOrValue
+            : connOrValue?.jumpHostIds;
+        let ids = [];
+        if (Array.isArray(value)) ids = value;
+        else if (typeof value === 'string' && value.trim()) {
+            try {
+                const parsed = JSON.parse(value);
+                ids = Array.isArray(parsed) ? parsed : value.split(',');
+            } catch {
+                ids = value.split(',');
+            }
+        }
+        if (!ids.length && connOrValue?.jumpHostId) ids = [connOrValue.jumpHostId];
+        return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))];
+    }
+
+    _connectionTestRouteFingerprint(conn) {
+        return JSON.stringify({
+            host: String(conn?.host || ''),
+            port: Number(conn?.port) || 0,
+            protocol: String(conn?.protocol || 'SSH').toUpperCase(),
+            connectionMode: ['direct', 'proxy', 'jump'].includes(conn?.connectionMode)
+                ? conn.connectionMode
+                : 'direct',
+            proxyId: String(conn?.proxyId || ''),
+            jumpHostIds: this._normalizeConnectionTestJumpIds(conn),
+            sshKeyId: String(conn?.sshKeyId || ''),
+        });
+    }
+
+    _connectionTestDependencyUnavailable() {
+        return new HttpError(
+            403,
+            'connection_test_dependency_unavailable',
+            'A connection test dependency is unavailable',
+            false,
+        );
+    }
+
+    _assertConnectionTestDependency(user, resourceType, dependency, boundOwnerUserId) {
+        if (!dependency) throw this._connectionTestDependencyUnavailable();
+        if (boundOwnerUserId && dependency.ownerUserId === boundOwnerUserId) return dependency;
+        if (!this.authz.can(user, CAP.USE, resourceType, dependency.id, dependency)) {
+            throw this._connectionTestDependencyUnavailable();
+        }
+        return dependency;
+    }
+
+    _resolveConnectionTestRoute(user, candidate, { boundOwnerUserId = null } = {}) {
+        const MAX_GRAPH_DEPTH = 8;
+        const MAX_GRAPH_NODES = 32;
+        const MAX_GRAPH_WORK = 64;
+        const connections = new Map(this.storage.listAllConnectionRows().map((conn) => [String(conn.id), conn]));
+        const jumpHosts = new Map(this.storage.listJumpHosts().map((jump) => [String(jump.id), jump]));
+        const resolving = new Set();
+        const resolvedConnections = new Map();
+        const graphNodes = new Set();
+        let graphWork = 0;
+
+        const invalidRoute = () => new HttpError(
+            400,
+            'connection_test_invalid_route',
+            'The connection test route is invalid',
+            false,
+        );
+        const resolveConnection = (input, identity, depth = 0) => {
+            const nodeIdentity = String(identity || input?.id || 'draft');
+            graphWork += 1;
+            if (depth > MAX_GRAPH_DEPTH || graphWork > MAX_GRAPH_WORK) throw invalidRoute();
+            if (resolving.has(nodeIdentity)) throw invalidRoute();
+            if (resolvedConnections.has(nodeIdentity)) return resolvedConnections.get(nodeIdentity);
+            graphNodes.add(nodeIdentity);
+            if (graphNodes.size > MAX_GRAPH_NODES) throw invalidRoute();
+            resolving.add(nodeIdentity);
+            try {
+                const resolved = { ...input };
+                if (resolved.sshKeyId) {
+                    const key = this._assertConnectionTestDependency(
+                        user,
+                        'sshKey',
+                        this.storage.getSshKeyRaw(String(resolved.sshKeyId)),
+                        boundOwnerUserId,
+                    );
+                    if (!resolved.privateKey || resolved.privateKey === '******') resolved.privateKey = key.privateKey || '';
+                    if ((!resolved.password || resolved.password === '******') && key.passphrase) resolved.password = key.passphrase || '';
+                }
+
+                const mode = ['direct', 'proxy', 'jump'].includes(resolved.connectionMode)
+                    ? resolved.connectionMode
+                    : 'direct';
+                resolved.connectionMode = mode;
+                let proxy = null;
+                const hops = [];
+                if (mode === 'proxy') {
+                    if (!resolved.proxyId) throw this._connectionTestDependencyUnavailable();
+                    proxy = this._assertConnectionTestDependency(
+                        user,
+                        'proxy',
+                        this.storage.getProxyRaw(String(resolved.proxyId)),
+                        boundOwnerUserId,
+                    );
+                } else if (mode === 'jump') {
+                    const jumpIds = this._normalizeConnectionTestJumpIds(resolved);
+                    if (!jumpIds.length || jumpIds.length > 8) throw invalidRoute();
+                    resolved.jumpHostIds = jumpIds;
+                    resolved.jumpHostId = jumpIds[0] || null;
+                    const hopConnectionIds = new Set();
+                    for (const jumpId of jumpIds) {
+                        const jump = jumpHosts.get(jumpId) || null;
+                        if (jump) this._assertConnectionTestDependency(user, 'jumpHost', jump, boundOwnerUserId);
+                        const hopConnectionId = String(jump?.connectionId || jumpId);
+                        const hopRaw = connections.get(hopConnectionId) || null;
+                        this._assertConnectionTestDependency(user, 'connection', hopRaw, boundOwnerUserId);
+                        if (hopConnectionIds.has(hopConnectionId)) throw invalidRoute();
+                        hopConnectionIds.add(hopConnectionId);
+                        if (String(hopRaw.protocol || 'SSH').toUpperCase() !== 'SSH') throw invalidRoute();
+                        const hop = resolveConnection(hopRaw, hopConnectionId, depth + 1);
+                        hops.push({
+                            ...hop.connection,
+                            routeName: jump?.name || hop.connection.name || hop.connection.host,
+                            jumpHostConfigId: jump?.id || null,
+                        });
+                    }
+                }
+                const result = { connection: resolved, proxy, hops };
+                resolvedConnections.set(nodeIdentity, result);
+                return result;
+            } finally {
+                resolving.delete(nodeIdentity);
+            }
+        };
+
+        const top = resolveConnection(candidate, candidate?.id || 'draft');
+        const firstProxy = top.connection.connectionMode === 'proxy'
+            ? top.proxy
+            : (top.hops[0]?.connectionMode === 'proxy'
+                ? resolveConnection(connections.get(String(top.hops[0].id)), String(top.hops[0].id), 1).proxy
+                : null);
+        return { target: top.connection, hops: top.hops, firstProxy };
     }
 
     /**
@@ -290,7 +538,17 @@ class ResourceService {
         return raw;
     }
 
-    createOwned(user, resourceType, data) {
+    createOwned(user, resourceType, data, mutationContext = {}) {
+        return this._runMobileMutation({
+            entityType: resourceType, entityId: data.id, action: 'upsert', user, before: null,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+            forceChange: mutationContext.forceMobileChange === true,
+            changedSecretFields: mutationContext.changedSecretFields,
+        }, () => this._createOwned(user, resourceType, data));
+    }
+
+    _createOwned(user, resourceType, data) {
         const payload = { ...data, ownerUserId: user.userId, visibility: 'private' };
         let saved;
         if (resourceType === 'proxy') saved = this.storage.saveProxy(payload);
@@ -301,7 +559,18 @@ class ResourceService {
         return saved;
     }
 
-    updateOwned(user, resourceType, id, data) {
+    updateOwned(user, resourceType, id, data, mutationContext = {}) {
+        const before = this.getRawAuthorized(user, resourceType, id, CAP.EDIT);
+        return this._runMobileMutation({
+            entityType: resourceType, entityId: id, action: 'upsert', user, before,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+            forceChange: mutationContext.forceMobileChange === true,
+            changedSecretFields: mutationContext.changedSecretFields,
+        }, () => this._updateOwned(user, resourceType, id, data));
+    }
+
+    _updateOwned(user, resourceType, id, data) {
         const current = this.getRawAuthorized(user, resourceType, id, CAP.EDIT);
         const revision = ['proxy', 'sshKey', 'jumpHost'].includes(resourceType) ? Math.max(1, Number(current.revision) || 1) + 1 : undefined;
         const payload = {
@@ -322,7 +591,16 @@ class ResourceService {
         return saved;
     }
 
-    deleteOwned(user, resourceType, id) {
+    deleteOwned(user, resourceType, id, mutationContext = {}) {
+        const before = this.getRawAuthorized(user, resourceType, id, CAP.DELETE);
+        return this._runMobileMutation({
+            entityType: resourceType, entityId: id, action: 'delete', user, before,
+            actorDeviceId: mutationContext.actorDeviceId,
+            mutationReceipt: mutationContext.mutationReceipt,
+        }, () => this._deleteOwned(user, resourceType, id));
+    }
+
+    _deleteOwned(user, resourceType, id) {
         this.getRawAuthorized(user, resourceType, id, CAP.DELETE);
         if (resourceType === 'proxy') this.storage.deleteProxy(id);
         else if (resourceType === 'sshKey') this.storage.deleteSshKey(id);

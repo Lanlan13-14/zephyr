@@ -14,6 +14,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { FileSyncConfigService } = require('./file-sync-config-service');
 
 function sha256(value) {
     return crypto.createHash('sha256').update(String(value)).digest('hex');
@@ -51,22 +52,20 @@ class OneClientManager {
         this.storage = opts.storage;
         this.log = opts.log || console.log;
         this._ensureSchema();
+        this.fileSyncConfigService = opts.fileSyncConfigService || new FileSyncConfigService({ db: this.db });
         this.stmtInsert = this.db.prepare(`INSERT INTO one_clients
             (client_id, owner_user_id, owner_username, device_name, platform, app_version,
              token_id, device_token_hash, enabled, sync_interval_sec, last_sync_at, last_seen_at,
-             created_at, revoked_at, revoke_reason, device_fingerprint, sync_revision)
+             created_at, revoked_at, revoke_reason, device_fingerprint, sync_revision,
+             automatic_enabled, config_revision)
             VALUES (@clientId, @ownerUserId, @ownerUsername, @deviceName, @platform, @appVersion,
              @tokenId, @deviceTokenHash, 1, @syncIntervalSec, NULL, @lastSeenAt,
-             @createdAt, NULL, NULL, @deviceFingerprint, 0)`);
+             @createdAt, NULL, NULL, @deviceFingerprint, 0, 1, 1)`);
         this.stmtGet = this.db.prepare('SELECT * FROM one_clients WHERE client_id = ?');
         this.stmtGetByTokenHash = this.db.prepare('SELECT * FROM one_clients WHERE device_token_hash = ? AND revoked_at IS NULL');
-        this.stmtListByUser = this.db.prepare('SELECT * FROM one_clients WHERE owner_user_id = ? ORDER BY created_at DESC');
+        this.stmtListByUser = this.db.prepare('SELECT * FROM one_clients WHERE owner_user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC');
         this.stmtTouch = this.db.prepare('UPDATE one_clients SET last_seen_at = ?, app_version = COALESCE(?, app_version), platform = COALESCE(?, platform), device_name = COALESCE(?, device_name) WHERE client_id = ?');
-        this.stmtSetInterval = this.db.prepare('UPDATE one_clients SET sync_interval_sec = ?, last_seen_at = ? WHERE client_id = ? AND revoked_at IS NULL');
         this.stmtMarkSync = this.db.prepare('UPDATE one_clients SET last_sync_at = ?, last_seen_at = ?, sync_revision = sync_revision + 1 WHERE client_id = ?');
-        this.stmtRevoke = this.db.prepare('UPDATE one_clients SET revoked_at = ?, revoke_reason = ?, enabled = 0, device_token_hash = NULL WHERE client_id = ? AND owner_user_id = ? AND revoked_at IS NULL');
-        this.stmtEnable = this.db.prepare('UPDATE one_clients SET enabled = ?, last_seen_at = ? WHERE client_id = ? AND owner_user_id = ? AND revoked_at IS NULL');
-        this.stmtDelete = this.db.prepare('DELETE FROM one_clients WHERE client_id = ? AND owner_user_id = ?');
     }
 
     _ensureSchema() {
@@ -88,11 +87,20 @@ class OneClientManager {
                 revoked_at INTEGER,
                 revoke_reason TEXT,
                 device_fingerprint TEXT,
-                sync_revision INTEGER NOT NULL DEFAULT 0
+                sync_revision INTEGER NOT NULL DEFAULT 0,
+                automatic_enabled INTEGER NOT NULL DEFAULT 1,
+                config_revision INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS idx_one_clients_owner ON one_clients(owner_user_id);
             CREATE INDEX IF NOT EXISTS idx_one_clients_token_hash ON one_clients(device_token_hash);
         `);
+        const columns = this.db.prepare('PRAGMA table_info(one_clients)').all();
+        if (!columns.some((column) => column.name === 'automatic_enabled')) {
+            this.db.exec('ALTER TABLE one_clients ADD COLUMN automatic_enabled INTEGER NOT NULL DEFAULT 1');
+        }
+        if (!columns.some((column) => column.name === 'config_revision')) {
+            this.db.exec('ALTER TABLE one_clients ADD COLUMN config_revision INTEGER NOT NULL DEFAULT 1');
+        }
     }
 
     _rowPublic(row, { includeTokenId = true } = {}) {
@@ -106,14 +114,13 @@ class OneClientManager {
             appVersion: row.app_version || '',
             tokenId: includeTokenId ? row.token_id : undefined,
             enabled: !!row.enabled && !row.revoked_at,
+            automaticEnabled: !!row.automatic_enabled && !row.revoked_at,
             syncIntervalSec: Number(row.sync_interval_sec || 300),
             lastSyncAt: row.last_sync_at ? Number(row.last_sync_at) : null,
             lastSeenAt: row.last_seen_at ? Number(row.last_seen_at) : null,
             createdAt: Number(row.created_at || 0),
             revokedAt: row.revoked_at ? Number(row.revoked_at) : null,
-            revokeReason: row.revoke_reason || null,
-            syncRevision: Number(row.sync_revision || 0),
-            deviceFingerprint: row.device_fingerprint || null,
+            syncRevision: Math.max(1, Number(row.config_revision || 1)),
         };
     }
 
@@ -173,7 +180,18 @@ class OneClientManager {
         const deviceToken = crypto.randomBytes(32).toString('base64url');
         const deviceTokenHash = sha256(deviceToken);
         const ts = nowMs();
+        const nextDeviceName = String(deviceName || existing?.device_name || 'Zephyr One').slice(0, 120);
+        const configChanged = existing && (
+            String(existing.device_name || '') !== nextDeviceName
+            || Number(existing.sync_interval_sec || 300) !== interval
+            || !existing.enabled
+            || existing.revoked_at != null
+        );
+        const configRevision = existing
+            ? Math.max(1, Number(existing.config_revision || 1)) + (configChanged ? 1 : 0)
+            : 1;
 
+        const writeBinding = () => {
         if (existing) {
             if (existing.owner_user_id !== user.userId) {
                 throw new OneClientError('client_owned_by_other', 'clientId 已被其他账号绑定', 409);
@@ -181,15 +199,16 @@ class OneClientManager {
             this.db.prepare(`UPDATE one_clients SET
                 device_name = ?, platform = ?, app_version = ?, token_id = ?,
                 device_token_hash = ?, enabled = 1, sync_interval_sec = ?,
-                last_seen_at = ?, revoked_at = NULL, revoke_reason = NULL,
+                config_revision = ?, last_seen_at = ?, revoked_at = NULL, revoke_reason = NULL,
                 device_fingerprint = COALESCE(?, device_fingerprint)
                 WHERE client_id = ?`).run(
-                String(deviceName || existing.device_name || 'Zephyr One').slice(0, 120),
+                nextDeviceName,
                 String(platform || existing.platform || '').slice(0, 40),
                 String(appVersion || existing.app_version || '').slice(0, 40),
                 tokenRecord.id,
                 deviceTokenHash,
                 interval,
+                configRevision,
                 ts,
                 deviceFingerprint ? String(deviceFingerprint).slice(0, 200) : null,
                 id,
@@ -199,7 +218,7 @@ class OneClientManager {
                 clientId: id,
                 ownerUserId: user.userId,
                 ownerUsername: user.username,
-                deviceName: String(deviceName || 'Zephyr One').slice(0, 120),
+                deviceName: nextDeviceName,
                 platform: String(platform || '').slice(0, 40),
                 appVersion: String(appVersion || '').slice(0, 40),
                 tokenId: tokenRecord.id,
@@ -210,6 +229,11 @@ class OneClientManager {
                 deviceFingerprint: deviceFingerprint ? String(deviceFingerprint).slice(0, 200) : null,
             });
         }
+        };
+        this.fileSyncConfigService.runBindingMutation({
+            ownerUserId: user.userId,
+            clientId: id,
+        }, writeBinding);
 
         const row = this.stmtGet.get(id);
         return {
@@ -247,8 +271,7 @@ class OneClientManager {
         const row = this.stmtGet.get(clientId);
         if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', '客户端不存在', 404);
         if (row.revoked_at) throw new OneClientError('client_revoked', '客户端已吊销', 403);
-        const interval = clampInterval(syncIntervalSec);
-        this.stmtSetInterval.run(interval, nowMs(), clientId);
+        this.fileSyncConfigService.setInterval(userId, clientId, syncIntervalSec);
         return this.get(clientId);
     }
 
@@ -256,7 +279,31 @@ class OneClientManager {
         const row = this.stmtGet.get(clientId);
         if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', '客户端不存在', 404);
         if (row.revoked_at) throw new OneClientError('client_revoked', '客户端已吊销', 403);
-        this.stmtEnable.run(enabled ? 1 : 0, nowMs(), clientId, userId);
+        this.fileSyncConfigService.setEnabled(userId, clientId, enabled);
+        return this.get(clientId);
+    }
+
+    setAutomaticEnabled(userId, clientId, automaticEnabled) {
+        const row = this.stmtGet.get(clientId);
+        if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', 'Client does not exist', 404);
+        if (row.revoked_at) throw new OneClientError('client_revoked', 'Client has been revoked', 403);
+        this.fileSyncConfigService.setAutomaticEnabled(userId, clientId, automaticEnabled);
+        return this.get(clientId);
+    }
+
+    setDeviceName(userId, clientId, deviceName) {
+        const row = this.stmtGet.get(clientId);
+        if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', 'Client does not exist', 404);
+        if (row.revoked_at) throw new OneClientError('client_revoked', 'Client has been revoked', 403);
+        this.fileSyncConfigService.update(userId, clientId, { deviceName });
+        return this.get(clientId);
+    }
+
+    patchConfig(userId, clientId, patch, options) {
+        const row = this.stmtGet.get(clientId);
+        if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', 'Client does not exist', 404);
+        if (row.revoked_at) throw new OneClientError('client_revoked', 'Client has been revoked', 403);
+        this.fileSyncConfigService.update(userId, clientId, patch, options);
         return this.get(clientId);
     }
 
@@ -266,10 +313,7 @@ class OneClientManager {
     revoke(userId, clientId, reason = 'revoked_by_user') {
         const row = this.stmtGet.get(clientId);
         if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', '客户端不存在', 404);
-        this.stmtRevoke.run(nowMs(), String(reason || 'revoked_by_user').slice(0, 120), clientId, userId);
-        // Hard delete row after revoke so list stays clean; keep revoke semantics via response.
-        this.stmtDelete.run(clientId, userId);
-        return { ok: true, clientId, revoked: true };
+        return this.fileSyncConfigService.revoke(userId, clientId, reason);
     }
 
     /**
@@ -448,14 +492,16 @@ class OneClientManager {
         app.patch('/api/one/clients/:clientId', requireUser, (req, res) => {
             try {
                 const body = req.body || {};
-                let client;
-                if (body.syncIntervalSec != null) {
-                    client = this.updateInterval(req.user.userId, req.params.clientId, body.syncIntervalSec);
-                }
-                if (body.enabled != null) {
-                    client = this.setEnabled(req.user.userId, req.params.clientId, !!body.enabled);
-                }
-                if (!client) client = this.get(req.params.clientId);
+                const patch = {};
+                if (body.syncIntervalSec != null) patch.syncIntervalSec = body.syncIntervalSec;
+                if (body.deviceName != null) patch.deviceName = body.deviceName;
+                if (body.enabled != null) patch.enabled = !!body.enabled;
+                if (body.automaticEnabled != null) patch.automaticEnabled = !!body.automaticEnabled;
+                const client = Object.keys(patch).length
+                    ? this.patchConfig(req.user.userId, req.params.clientId, patch, {
+                        expectedRevision: body.expectedRevision ?? body.baseRevision,
+                    })
+                    : this.get(req.params.clientId);
                 if (!client || client.ownerUserId !== req.user.userId) {
                     throw new OneClientError('client_not_found', '客户端不存在', 404);
                 }
@@ -500,15 +546,18 @@ class OneClientManager {
                         throw new OneClientError('client_not_found', '客户端未绑定', 404);
                     }
                 }
-                if (req.body?.syncIntervalSec != null) {
-                    this.updateInterval(req.user.userId, clientRow.client_id, req.body.syncIntervalSec);
+                const configPatch = {};
+                if (req.body?.syncIntervalSec != null) configPatch.syncIntervalSec = req.body.syncIntervalSec;
+                if (req.body?.deviceName != null) configPatch.deviceName = req.body.deviceName;
+                if (Object.keys(configPatch).length) {
+                    this.patchConfig(req.user.userId, clientRow.client_id, configPatch);
                     clientRow = this.stmtGet.get(clientRow.client_id);
                 }
                 this.stmtTouch.run(
                     nowMs(),
                     req.body?.appVersion || null,
                     req.body?.platform || null,
-                    req.body?.deviceName || null,
+                    null,
                     clientRow.client_id,
                 );
                 const user = resolveUserById(req.user.userId) || resolveUserByUsername(req.user.username);

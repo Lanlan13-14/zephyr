@@ -85,6 +85,30 @@ class TelnetAutoLoginTest {
         assertEquals(2, sink.lines.size)
     }
 
+    @Test
+    fun acceptsOnlyAsciiOrFullWidthColonWithSurroundingWhitespace() {
+        listOf(":", "\uFF1A").forEach { separator ->
+            val sink = Sink()
+            val login = TelnetAutoLogin("alice", null, sink.send())
+
+            login.observe("login \t$separator \r\n")
+
+            assertEquals(listOf("alice" + TelnetAutoLogin.LINE_END), sink.lines)
+        }
+    }
+
+    @Test
+    fun doesNotTreatOtherAsciiOrFullWidthPunctuationAsASeparator() {
+        listOf(";", "\uFF1B").forEach { separator ->
+            val sink = Sink()
+            val login = TelnetAutoLogin("alice", null, sink.send())
+
+            login.observe("login$separator ")
+
+            assertTrue(sink.lines.isEmpty())
+        }
+    }
+
     /**
      * Gives up after a bounded amount of output.
      *

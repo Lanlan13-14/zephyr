@@ -4,14 +4,14 @@
     {
       "path": "contracts/openapi-mobile-v1.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/openapi-mobile-v1.json",
-      "sha256": "8adf2d0bce3c6dc7f3b3156b5e21f40302397afab4ecb73ecbc2da8922298bd5",
-      "bytes": 96552
+      "sha256": "e1dc2388bb9124ef4d98d267839a2985dc91af5e5a94d927d729a0f90ab160c6",
+      "bytes": 129432
     },
     {
       "path": "contracts/registries/entity-registry.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/entity-registry.json",
-      "sha256": "4c7861b283f96f17683181407f12732921303c5e6a03eefeab83d90a7310232b",
-      "bytes": 18328
+      "sha256": "576d20bb23c5606dd8099061b44410ba5c1d92ae90f152cfc06ab6c773acc0af",
+      "bytes": 19520
     },
     {
       "path": "contracts/registries/error-registry.json",
@@ -28,8 +28,8 @@
     {
       "path": "contracts/schemas/sync-operation.schema.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/schemas/sync-operation.schema.json",
-      "sha256": "365a3f1d0128e7378132c0960f67c9a37b0eb32ab37f48de611088f3f4850d03",
-      "bytes": 2130
+      "sha256": "ab1a4fa737a098d6f558d880a8bd21c26e384b3a8e969afc90d26363e943caca",
+      "bytes": 3004
     },
     {
       "path": "contracts/schemas/sync-change.schema.json",

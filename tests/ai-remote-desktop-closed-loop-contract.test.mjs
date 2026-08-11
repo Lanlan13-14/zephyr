@@ -9,8 +9,11 @@ import { PLAYBOOKS } from '../ai-playbooks.js';
 const root = path.resolve(import.meta.dirname, '..');
 const app = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const vnc = fs.readFileSync(path.join(root, 'public/novnc.js'), 'utf8');
-const rdp = fs.readFileSync(path.join(root, 'public/rdp-wasm-client.js'), 'utf8');
-const worker = fs.readFileSync(path.join(root, 'public/rdp-worker.js'), 'utf8');
+const nativeClient = fs.readFileSync(path.join(root, 'zephyr_one/src/rdp/native-rdp-client.js'), 'utf8');
+const nativeEmbedded = fs.readFileSync(path.join(root, 'zephyr_one/src/rdp/native-rdp-embedded.js'), 'utf8');
+const nativeCommands = fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/src/commands/rdp_surface.rs'), 'utf8');
+const nativeSurface = fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/src/rdp_surface/windows.rs'), 'utf8');
+const nativeLib = fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/src/lib.rs'), 'utf8');
 const loop = fs.readFileSync(path.join(root, 'zephyr-ai/internal/agent/loop.go'), 'utf8');
 
 const names = [
@@ -32,7 +35,7 @@ test('remote desktop canonical catalog exposes capture action verify chain', () 
   assert.equal(catalog.some((item) => item.name === 'remote_desktop_screenshot'), false);
 });
 
-test('frontend binds actions and results to capture ids', () => {
+test('frontend binds actions and results to native FreeRDP capture ids', () => {
   assert.match(app, /captureId:\s*action\.captureId/);
   assert.match(app, /beforeCaptureId/);
   assert.match(app, /afterCaptureId/);
@@ -41,11 +44,31 @@ test('frontend binds actions and results to capture ids', () => {
   assert.match(vnc, /vncLastFrameAt \|\| Date\.now\(\)/);
   assert.match(vnc, /captureId was already validated by the Node run ledger/);
   assert.match(vnc, /captureId/);
-  assert.match(rdp, /__zephyrGetRemoteDesktopSnapshot/);
-  assert.match(rdp, /performAiRemoteDesktopAction/);
-  assert.match(rdp, /ai-remote-desktop-action-result/);
-  assert.match(worker, /rdpCaptureFrame/);
-  assert.match(worker, /readPixels/);
+  assert.match(app, /nativeRemoteDesktopBridge\(frame\)/);
+  assert.match(app, /nativeBridge\.snapshot\(\{ maxWidth \}\)/);
+  assert.match(app, /nativeBridge\.action\(msg\)/);
+  assert.match(nativeEmbedded, /__zephyrNativeRdpBridge/);
+  assert.match(nativeEmbedded, /shellRequest\('capture'/);
+  assert.match(nativeEmbedded, /shellRequest\('input'/);
+  assert.match(nativeClient, /invoke\('rdp_native_surface_capture'/);
+  assert.match(nativeClient, /lastCaptures\.get\(sessionId\)/);
+  assert.match(nativeClient, /lastCaptures\.delete\(sessionId\)/);
+  assert.match(nativeClient, /invoke\('rdp_native_send_mouse'/);
+  assert.match(nativeClient, /invoke\('rdp_native_send_text'/);
+});
+
+test('native capture is owner-bound, encoded from the Rust surface, and has no WASM fallback', () => {
+  assert.match(nativeCommands, /pub fn rdp_native_surface_capture\b/);
+  assert.match(nativeCommands, /broker\.assert_active_owner\(window\.label\(\), &session_id\)/);
+  assert.match(nativeCommands, /state\.capture_surface\(&session_id,[\s\S]*?max_width/);
+  assert.match(nativeCommands, /data:image\/png;base64/);
+  assert.match(nativeSurface, /pub fn capture_frame\(&self, max_width: u32\)/);
+  assert.match(nativeSurface, /let mut pixels = zeroed_bgra\(size\)/);
+  assert.match(nativeSurface, /original_size/);
+  assert.match(nativeSurface, /self\.revision = self\.revision\.saturating_add\(1\)/);
+  assert.match(nativeLib, /commands::rdp_surface::rdp_native_surface_capture/);
+  assert.doesNotMatch(nativeClient, /rdp-wasm|WebAssembly|readPixels|public\/rdp-worker/i);
+  assert.doesNotMatch(nativeEmbedded, /rdp-wasm|WebAssembly|readPixels|WebSocket|rdp-proxy/i);
 });
 
 test('Go runtime detects wrapped canonical client captures', () => {

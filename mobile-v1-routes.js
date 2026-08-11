@@ -1,7 +1,7 @@
 /**
  * Zephyr One mobile v1 HTTP surface.
  *
- * Implements the 22 operations frozen in
+ * Implements the operations declared in
  * `zephyr_one/mobile/contracts/openapi-mobile-v1.json`. The Kotlin client in
  * `zephyr_one/mobile/android` is already written against that contract, so the
  * response field names here are the wire format and are not free to drift:
@@ -29,12 +29,25 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const Ajv2020 = require('ajv/dist/2020');
 
-const { MobileV1Store, MobileStoreError } = require('./mobile-v1-store');
+const {
+    MobileV1Store,
+    MobileStoreError,
+    PROOF_CHALLENGE_TTL_SEC,
+    PROOF_MAX_ACTIVE_PER_DEVICE,
+    PROOF_MAX_ISSUES_PER_MINUTE,
+} = require('./mobile-v1-store');
+const { MobileV1BlobManager } = require('./mobile-v1-blob-manager');
 const { createEntityAdapters, projectPayload, assertMaskAllowed } = require('./mobile-v1-entities');
 const { SharedResourceApi, noStore } = require('./mobile-v1-shared');
+const { MobileV1Wake } = require('./mobile-v1-wake');
 const mobileCrypto = require('./mobile-v1-crypto');
+const mobileProof = require('./mobile-v1-proof');
 const secretCrypto = require('./secret-crypto');
+const { HttpError } = require('./authz');
 
 /** Protocol versions this build speaks. A client outside this set is fatal. */
 const PROTOCOL_VERSIONS = [1];
@@ -50,10 +63,234 @@ const BLOB_CHUNK_BYTES = 4 * 1024 * 1024;
  * sync plane; 512 MiB covers encrypted backup archives by an order of magnitude. */
 const MAX_BLOB_BYTES = 512 * 1024 * 1024;
 const MAX_BLOB_CHUNKS = Math.ceil(MAX_BLOB_BYTES / BLOB_CHUNK_BYTES);
-/** Rejects a stale or pre-dated proof. Two minutes covers ordinary clock skew. */
-const PROOF_SKEW_SEC = 120;
+const MAX_CONFLICT_PAYLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_CONFLICT_PAYLOAD_DEPTH = 16;
+/** Push JSON is metadata, while large binary/content bodies use blob routes. */
+const MAX_PUSH_BODY_BYTES = 4 * 1024 * 1024;
+const MAX_PUSH_OPERATION_PAYLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_PUSH_ID_LENGTH = 80;
+const MAX_JSON_INPUT_DEPTH = 64;
+const PUSH_REQUEST_FIELDS = new Set([
+    'protocolVersion',
+    'deviceId',
+    'batchId',
+    'baseCursor',
+    'registryHash',
+    'operations',
+]);
+const PUSH_REQUEST_REQUIRED_FIELDS = [...PUSH_REQUEST_FIELDS];
+/** Kept in capabilities for old clients; v2 uses the server-issued timestamp. */
+const PROOF_SKEW_SEC = 0;
+/** Account-level operations that may exchange a password/TOTP for a grant. */
+const SENSITIVE_ACTIONS = Object.freeze([
+    'device.bind',
+    'device.revoke',
+    'token.reveal',
+    'token.rotate',
+    'token.delete',
+    'token.resetAll',
+    'backup.import',
+]);
 
 function nowMs() { return Date.now(); }
+
+function publishAcceptedPushWake(changeBridge, ownerUserId, result) {
+    const sequence = Number(result?.changeSeq);
+    const owner = String(ownerUserId || '').trim();
+    if (!owner || result?.status !== 'accepted' || !Number.isSafeInteger(sequence) || sequence <= 0) return false;
+    if (typeof changeBridge?.publishCommittedChange !== 'function') return false;
+    changeBridge.publishCommittedChange(owner, sequence);
+    return true;
+}
+
+function timingSafeSecretEqual(left, right) {
+    const digest = (value) => crypto.createHash('sha256').update(String(value), 'utf8').digest();
+    return crypto.timingSafeEqual(digest(left), digest(right));
+}
+
+function normalizeSensitiveTargets(action, value) {
+    if (!Array.isArray(value) || value.length > 200) return null;
+    const targets = value.map(String);
+    if (targets.some((item) => !item || item.length > 256 || item.includes('\u0000'))) return null;
+    if (new Set(targets).size !== targets.length) return null;
+    if (action === 'device.bind' && targets.length !== 2) return null;
+    if (action === 'device.revoke' && targets.length !== 1) return null;
+    return targets;
+}
+
+let validateFrozenSyncOperation = null;
+
+function resolveMobileSchema(name) {
+    const candidates = [
+        path.join(__dirname, 'mobile-contracts', 'schemas', name),
+        path.join(__dirname, 'zephyr_one', 'mobile', 'contracts', 'schemas', name),
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    throw new Error('mobile schema not found: ' + name);
+}
+
+function frozenSyncOperationValidator() {
+    if (validateFrozenSyncOperation) return validateFrozenSyncOperation;
+    const operationSchema = JSON.parse(fs.readFileSync(resolveMobileSchema('sync-operation.schema.json'), 'utf8'));
+    const envelopeSchema = JSON.parse(fs.readFileSync(resolveMobileSchema('secret-envelope.schema.json'), 'utf8'));
+    const ajv = new Ajv2020({
+        allErrors: true,
+        strict: false,
+        ownProperties: true,
+    });
+    ajv.addSchema(envelopeSchema);
+    validateFrozenSyncOperation = ajv.compile(operationSchema);
+    return validateFrozenSyncOperation;
+}
+
+function invalidPush(message, details = null) {
+    return new MobileStoreError('invalid_request', message, 400, { details });
+}
+
+/**
+ * Requires the in-memory value to have the same ownership semantics as parsed
+ * JSON. This keeps internal callers and tests from satisfying a required field
+ * through a prototype or smuggling an accessor that changes during validation.
+ */
+function assertOwnJsonData(root, label = 'request') {
+    const pending = [{ value: root, depth: 0 }];
+    const seen = new WeakSet();
+    while (pending.length) {
+        const { value, depth } = pending.pop();
+        if (!value || typeof value !== 'object') continue;
+        if (depth > MAX_JSON_INPUT_DEPTH) throw invalidPush(label + ' JSON nesting is too deep');
+        if (seen.has(value)) throw invalidPush(label + ' must not contain cycles');
+        seen.add(value);
+
+        const prototype = Object.getPrototypeOf(value);
+        const expected = Array.isArray(value) ? Array.prototype : Object.prototype;
+        if (prototype !== expected && prototype !== null) {
+            throw invalidPush(label + ' must contain only own JSON properties');
+        }
+        for (const key of Reflect.ownKeys(value)) {
+            if (typeof key !== 'string') throw invalidPush(label + ' must not contain symbol properties');
+            const descriptor = Object.getOwnPropertyDescriptor(value, key);
+            if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+                throw invalidPush(label + ' must not contain accessors');
+            }
+            pending.push({ value: descriptor.value, depth: depth + 1 });
+        }
+    }
+}
+
+function jsonBytes(value, label) {
+    try {
+        const encoded = JSON.stringify(value);
+        if (encoded === undefined) throw new Error('not JSON');
+        return Buffer.byteLength(encoded, 'utf8');
+    } catch {
+        throw invalidPush(label + ' must be JSON serializable');
+    }
+}
+
+function validationDetails(errors) {
+    return {
+        schema: 'sync-operation',
+        violations: (errors || []).slice(0, 8).map((error) => ({
+            path: String(error.instancePath || ''),
+            keyword: String(error.keyword || 'invalid'),
+        })),
+    };
+}
+
+function validatePushRequest(body) {
+    assertOwnJsonData(body, 'push request');
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        throw invalidPush('push request must be an object');
+    }
+    for (const field of PUSH_REQUEST_REQUIRED_FIELDS) {
+        if (!Object.prototype.hasOwnProperty.call(body, field)) {
+            throw invalidPush('push request is missing ' + field);
+        }
+    }
+    for (const field of Object.keys(body)) {
+        if (!PUSH_REQUEST_FIELDS.has(field)) throw invalidPush('unknown push request field', { field });
+    }
+    if (body.protocolVersion !== 1) {
+        throw invalidPush('protocolVersion must be 1');
+    }
+    if (typeof body.deviceId !== 'string' || body.deviceId.length < 1
+        || [...body.deviceId].length > MAX_PUSH_ID_LENGTH || body.deviceId.includes('\u0000')) {
+        throw invalidPush('deviceId is invalid');
+    }
+    if (typeof body.batchId !== 'string' || body.batchId.length < 1
+        || [...body.batchId].length > MAX_PUSH_ID_LENGTH || body.batchId.includes('\u0000')) {
+        throw invalidPush('batchId is invalid');
+    }
+    if (!Number.isSafeInteger(body.baseCursor) || body.baseCursor < 0) {
+        throw invalidPush('baseCursor must be a non-negative safe integer');
+    }
+    if (typeof body.registryHash !== 'string' || !/^[0-9a-f]{64}$/.test(body.registryHash)) {
+        throw invalidPush('registryHash is invalid');
+    }
+    if (!Array.isArray(body.operations)) throw invalidPush('operations must be an array');
+    if (body.operations.length > MAX_OPS_PER_BATCH) {
+        throw new MobileStoreError('payload_too_large', '\u5355\u6279\u64cd\u4f5c\u8d85\u8fc7\u4e0a\u9650', 413);
+    }
+
+    const validateOperation = frozenSyncOperationValidator();
+    body.operations.forEach((operation, index) => {
+        if (!validateOperation(operation)) {
+            throw invalidPush('operation does not match the frozen schema', {
+                operationIndex: index,
+                ...validationDetails(validateOperation.errors),
+            });
+        }
+        for (const field of ['opId', 'entityType', 'entityId']) {
+            if (operation[field].includes('\u0000')) {
+                throw invalidPush('operation identifier contains NUL', { operationIndex: index, field });
+            }
+        }
+        const payloadBytes = jsonBytes(operation.payload, 'operation payload');
+        if (payloadBytes > MAX_PUSH_OPERATION_PAYLOAD_BYTES) {
+            throw new MobileStoreError('payload_too_large', 'operation payload is too large', 413, {
+                details: {
+                    operationIndex: index,
+                    maxBytes: MAX_PUSH_OPERATION_PAYLOAD_BYTES,
+                },
+            });
+        }
+    });
+    return body;
+}
+
+function pushBodyByteLength(req) {
+    const declared = String(req.headers?.['content-length'] || '').trim();
+    if (/^[0-9]+$/.test(declared) && Number(declared) > MAX_PUSH_BODY_BYTES) {
+        return Number(declared);
+    }
+    if (Buffer.isBuffer(req.rawBody)) return req.rawBody.length;
+    return jsonBytes(req.body, 'push request');
+}
+
+function createPushJsonBodyParser() {
+    return express.json({
+        type: ['application/json'],
+        limit: MAX_PUSH_BODY_BYTES,
+        verify: (req, _res, buf) => { req.rawBody = buf; },
+    });
+}
+
+function cloneJsonForPatch(value) {
+    if (Array.isArray(value)) return value.map(cloneJsonForPatch);
+    if (!value || typeof value !== 'object') return value;
+    const copy = Object.create(null);
+    for (const [key, child] of Object.entries(value)) copy[key] = cloneJsonForPatch(child);
+    return copy;
+}
+
+function fieldPathsOverlap(left, right) {
+    const a = String(left);
+    const b = String(right);
+    return a === b || a.startsWith(b + '.') || b.startsWith(a + '.');
+}
 
 /**
  * Clamps a client-supplied page size into the range capabilities advertises.
@@ -85,20 +322,159 @@ function sendError(res, status, code, message, { retryable = false, details = nu
     });
 }
 
-/** Maps a thrown error onto the registry envelope without leaking internals. */
-function sendThrown(res, err, requestId) {
-    if (err instanceof MobileStoreError) {
-        return sendError(res, err.status || 400, err.code, err.message, {
+function payloadValueAtPath(payload, field) {
+    let current = payload;
+    for (const part of String(field || '').split('.')) {
+        if (!current || typeof current !== 'object' || !Object.prototype.hasOwnProperty.call(current, part)) {
+            return { present: false, value: undefined };
+        }
+        current = current[part];
+    }
+    return { present: true, value: current };
+}
+
+function setPatchValueAtPath(patch, field, value) {
+    const parts = String(field || '').split('.').filter(Boolean);
+    if (!parts.length) return;
+    let current = patch;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+        const part = parts[index];
+        if (!Object.prototype.hasOwnProperty.call(current, part)
+            || !current[part] || typeof current[part] !== 'object' || Array.isArray(current[part])) {
+            current[part] = Object.create(null);
+        }
+        current = current[part];
+    }
+    current[parts[parts.length - 1]] = cloneJsonForPatch(value);
+}
+
+function conflictProjectionPath(payload, source, field) {
+    if (Object.prototype.hasOwnProperty.call(source, field)) {
+        payload[field] = source[field];
+        return;
+    }
+    const parts = String(field || '').split('.').filter(Boolean);
+    let current = source;
+    for (const part of parts) {
+        if (!current || typeof current !== 'object' || Array.isArray(current)
+            || !Object.prototype.hasOwnProperty.call(current, part)) return;
+        current = current[part];
+    }
+    setPatchValueAtPath(payload, field, current);
+}
+
+function conflictPayloadWithinDepth(root) {
+    const pending = [{ value: root, depth: 0 }];
+    while (pending.length) {
+        const { value, depth } = pending.pop();
+        if (depth > MAX_CONFLICT_PAYLOAD_DEPTH) return false;
+        if (!value || typeof value !== 'object') continue;
+        const children = Array.isArray(value) ? value : Object.values(value);
+        for (const child of children) pending.push({ value: child, depth: depth + 1 });
+    }
+    return true;
+}
+
+/**
+ * Produces the only canonical row shape that may be persisted in a conflict.
+ *
+ * projectPayload remains the common secret/device-local projection seam. This
+ * second allow-list is intentionally narrower than bootstrap: conflict rows
+ * need only editable data, opaque-preserve data, and the typed account owner.
+ */
+function safeConflictPayload(spec, row, ownerUserId) {
+    const ownerField = String(spec?.ownerField || 'ownerUserId');
+    const editableFields = Array.isArray(spec?.editableFields) ? spec.editableFields.map(String) : [];
+    if (!row || !ownerField || ownerField === 'serverId' || !editableFields.length) return null;
+
+    let projected;
+    try {
+        projected = projectPayload(spec, row);
+    } catch {
+        return null;
+    }
+    if (!projected || typeof projected !== 'object' || Array.isArray(projected)
+        || typeof projected[ownerField] !== 'string'
+        || !projected[ownerField]
+        || projected[ownerField] !== String(ownerUserId || '')) return null;
+
+    const payload = { [ownerField]: projected[ownerField] };
+    const allowedPaths = [...new Set([
+        ...editableFields,
+        ...((spec.opaquePreserveFields || []).map(String)),
+    ])];
+    for (const field of allowedPaths) conflictProjectionPath(payload, projected, field);
+
+    try {
+        const encoded = JSON.stringify(payload);
+        if (!encoded || Buffer.byteLength(encoded, 'utf8') > MAX_CONFLICT_PAYLOAD_BYTES) return null;
+        const plain = JSON.parse(encoded);
+        return conflictPayloadWithinDepth(plain) ? plain : null;
+    } catch {
+        return null;
+    }
+}
+
+const INTERNAL_ERROR_MESSAGE = '\u670d\u52a1\u5668\u5185\u90e8\u9519\u8bef';
+
+function loadPublicErrorCodes() {
+    const candidates = [
+        path.join(__dirname, 'mobile-contracts', 'registries', 'error-registry.json'),
+        path.join(__dirname, 'zephyr_one', 'mobile', 'contracts', 'registries', 'error-registry.json'),
+    ];
+    for (const candidate of candidates) {
+        try {
+            const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+            return new Set((parsed.errors || []).map((entry) => entry.code));
+        } catch {
+            // Try the other supported runtime layout.
+        }
+    }
+    /* Contract resolution failure already prevents MobileV1Api construction in
+     * server.js. Keep module loading fail-closed too: no error text is public
+     * until a registry explicitly declares its code stable. */
+    return new Set();
+}
+
+const PUBLIC_ERROR_CODES = loadPublicErrorCodes();
+
+/**
+ * Only deliberately typed business errors may cross the mobile boundary.
+ * SQLite/crypto/programming errors can carry table names, SQL text, paths or
+ * secret-adjacent values in `message`, even when a dependency added a `code`
+ * property of its own.
+ */
+function publicError(err) {
+    const typed = err instanceof MobileStoreError || err instanceof HttpError;
+    if (typed && PUBLIC_ERROR_CODES.has(err.code) && err.code !== 'internal_error') {
+        return {
+            status: Number(err.status) || 400,
+            code: String(err.code),
+            message: String(err.message || '\u8bf7\u6c42\u5931\u8d25'),
             retryable: err.retryable === true,
             details: err.details || null,
-            requestId,
-        });
+        };
     }
-    // HttpError from authz.js / resource-service.js carries status + code.
-    if (err && typeof err.status === 'number' && err.code) {
-        return sendError(res, err.status, err.code, err.message || '\u8bf7\u6c42\u5931\u8d25', { requestId });
+    return {
+        status: 500,
+        code: 'internal_error',
+        message: INTERNAL_ERROR_MESSAGE,
+        retryable: true,
+        details: null,
+    };
+}
+
+/** Maps a thrown error onto the registry envelope without leaking internals. */
+function sendThrown(res, err, requestId) {
+    const safe = publicError(err);
+    if (safe.status === 429 && err && err.retryAfterSec) {
+        res.setHeader('Retry-After', String(Math.max(1, Math.ceil(Number(err.retryAfterSec) || 1))));
     }
-    return sendError(res, 500, 'internal_error', '\u670d\u52a1\u5668\u5185\u90e8\u9519\u8bef', { retryable: true, requestId });
+    return sendError(res, safe.status, safe.code, safe.message, {
+        retryable: safe.retryable,
+        details: safe.details,
+        requestId,
+    });
 }
 
 class MobileV1Api {
@@ -110,8 +486,16 @@ class MobileV1Api {
      * @param {object} opts.resourceService canonical connection/proxy/key writes
      * @param {object} opts.notesService canonical note writes
      * @param {object} opts.userSettingsService canonical settings writes
+     * @param {object} opts.aiProviderService canonical AI provider writes
+     * @param {object} opts.aiKnowledgeService canonical AI knowledge writes
+     * @param {object} opts.aiHistoryService canonical persisted AI history writes
+     * @param {object} opts.workspacePortableSyncService canonical portable workspace writes
+     * @param {object} opts.serverMetadataServices canonical server settings/activity seams
+     * @param {Function} opts.serverMetadataAuthorize explicit server metadata policy
      * @param {object} opts.fileAgentManager Client Token registry
      * @param {object} opts.authz ACL
+     * @param {object} opts.resourceAclService canonical owner-only ACL metadata
+     * @param {object} opts.clientTokenService canonical secret-free Client Token metadata
      * @param {object} opts.entityRegistry parsed entity-registry.json
      * @param {Function} [opts.verifySensitive] (user, secret) => {method}
      */
@@ -122,15 +506,31 @@ class MobileV1Api {
         this.resourceService = opts.resourceService;
         this.notesService = opts.notesService;
         this.userSettingsService = opts.userSettingsService;
+        this.aiProviderService = opts.aiProviderService;
+        this.aiKnowledgeService = opts.aiKnowledgeService || this.userSettingsService?.aiKnowledgeService;
+        this.aiHistoryService = opts.aiHistoryService;
         this.fileAgentManager = opts.fileAgentManager;
         this.authz = opts.authz;
+        this.resourceAclService = opts.resourceAclService;
+        this.clientTokenService = opts.clientTokenService;
+        this.changeBridge = opts.changeBridge || null;
         this.entityRegistry = opts.entityRegistry;
         this.verifySensitive = opts.verifySensitive || null;
         this.log = opts.log || (() => {});
 
+        /* The durable change bridge only needs this payload-free publisher
+         * seam. Tests and alternate hosts may inject an equivalent broadcaster. */
+        this.wake = opts.wake || new MobileV1Wake({ log: this.log });
+
         this.store = opts.store || new MobileV1Store({
             db: this.db,
             entityRegistry: this.entityRegistry,
+            log: this.log,
+        });
+        this.blobs = opts.blobs || new MobileV1BlobManager({
+            store: this.store,
+            limits: opts.blobLimits,
+            availableDiskBytes: opts.availableBlobDiskBytes,
             log: this.log,
         });
 
@@ -145,7 +545,22 @@ class MobileV1Api {
         this.adapters = createEntityAdapters({
             resourceService: this.resourceService,
             notesService: this.notesService,
+            userSettingsService: this.userSettingsService,
             storage: this.storage,
+            db: this.db,
+            store: this.store,
+            changeBridge: opts.changeBridge,
+            fileSyncConfigService: opts.fileSyncConfigService,
+            entityRegistry: this.entityRegistry,
+            aiProviderService: this.aiProviderService,
+            aiKnowledgeService: this.aiKnowledgeService,
+            aiHistoryService: this.aiHistoryService,
+            workspacePortableSyncService: opts.workspacePortableSyncService,
+            serverMetadataServices: opts.serverMetadataServices,
+            serverMetadataAuthorize: opts.serverMetadataAuthorize,
+            serverId: () => this.store.serverId(),
+            resourceAclService: this.resourceAclService,
+            clientTokenService: this.clientTokenService,
         });
 
         /* Bootstrap walks types in dependency order, so a client applying pages
@@ -259,9 +674,16 @@ class MobileV1Api {
                 accessScheme: 'Bearer',
                 proofHeader: 'X-Zephyr-Device-Proof',
                 nonceHeader: 'X-Zephyr-Server-Nonce',
+                timestampHeader: 'X-Zephyr-Proof-Timestamp',
+                challengePath: '/api/mobile/v1/devices/proof-challenge',
+                proofVersion: mobileProof.PROOF_VERSION,
                 proofSkewSec: PROOF_SKEW_SEC,
+                challengeTtlSec: PROOF_CHALLENGE_TTL_SEC,
+                challengeMaxActivePerDevice: PROOF_MAX_ACTIVE_PER_DEVICE,
+                challengeMaxIssuesPerMinute: PROOF_MAX_ISSUES_PER_MINUTE,
+                signatureFormat: 'P1363',
                 encryptionAlg: 'ML-KEM-768',
-                signingAlg: 'ES256',
+                signingAlg: mobileProof.PROOF_ALGORITHM,
             },
             serverEncryption: serverKey
                 ? {
@@ -288,14 +710,16 @@ class MobileV1Api {
                 /* Blobs move through /api/mobile/v1/blobs/* per
                  * SYNC_STATE_MACHINE.md 11, so the flag advertises them. */
                 blobTransfer: true,
+                nearRealtimeWake: true,
             },
+            wake: this.wake.capabilities('/api/mobile/v1/sync/wake'),
         };
     }
 
     // --------------------------------------------------------------- auth ---
 
     /** ZephyrSid plane: the human's own session. */
-    requireSid(req, res) {
+    requireSid(req, res, { passwordReady = false } = {}) {
         const sid = String(req.headers['x-zephyr-sid'] || '').trim();
         if (!sid) {
             sendError(res, 401, 'app_session_expired', '\u672a\u767b\u5f55\u6216\u4f1a\u8bdd\u5df2\u8fc7\u671f', { requestId: req.mobileRequestId });
@@ -315,18 +739,22 @@ class MobileV1Api {
             sendError(res, 403, 'account_suspended', '\u8d26\u53f7\u5df2\u88ab\u505c\u7528\uff0c\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458', { requestId: req.mobileRequestId });
             return null;
         }
+        /* Re-check both durable sources. A stale session flag must not bypass
+         * a newly forced reset, and a stale user row must not bypass the
+         * session's first-login requirement. */
+        if (passwordReady && (session.mustChangePassword || user.defaultPassword)) {
+            sendError(res, 403, 'must_change_password', '\u8bf7\u5148\u4fee\u6539\u9ed8\u8ba4\u5bc6\u7801', {
+                details: { mustChangePassword: true },
+                requestId: req.mobileRequestId,
+            });
+            return null;
+        }
+        req.mobileSidSession = session;
         return user;
     }
 
-    /**
-     * DeviceAccess plane, plus DeviceProof when the device registered a
-     * signing key.
-     *
-     * The proof is verified rather than merely accepted: a device that bound
-     * with a signing key must keep signing, otherwise stripping the header
-     * would downgrade every request to bearer-only.
-     */
-    requireDevice(req, res) {
+    /** Resolves Bearer access and all mutable account/token authorities. */
+    requireDeviceAccess(req, res, { touch = false } = {}) {
         const header = String(req.headers.authorization || '');
         const match = header.match(/^Bearer\s+(.+)$/i);
         if (!match) {
@@ -367,47 +795,33 @@ class MobileV1Api {
             return null;
         }
 
-        if (!this.verifyProof(req, row)) {
-            sendError(res, 401, 'device_proof_invalid', '\u8bbe\u5907\u7b7e\u540d\u65e0\u6548', { requestId: req.mobileRequestId });
-            return null;
-        }
-
-        this.store.touchDevice(row.device_id, { appVersion: req.headers['x-zephyr-one-version'] });
+        if (touch) this.store.touchDevice(row.device_id, { appVersion: req.headers['x-zephyr-one-version'] });
         return { user, device: row };
     }
 
     /**
-     * Verifies the ES256 proof.
-     *
-     * Signed string is NUL-joined exactly as DeviceIdentity.signRequestProof
-     * builds it, so any reordering or field-shifting changes the digest.
+     * Device data-plane gate: Bearer access AND a server-issued, single-use
+     * ES256 proof. There is intentionally no access-only downgrade path.
      */
+    requireDevice(req, res) {
+        const auth = this.requireDeviceAccess(req, res);
+        if (!auth) return null;
+        if (!this.verifyProof(req, auth.device)) {
+            sendError(res, 401, 'device_proof_invalid', '\u8bbe\u5907\u7b7e\u540d\u65e0\u6548', { requestId: req.mobileRequestId });
+            return null;
+        }
+        this.store.touchDevice(auth.device.device_id, { appVersion: req.headers['x-zephyr-one-version'] });
+        return auth;
+    }
+
+    /** Verifies P1363 first, then atomically consumes the matching challenge. */
     verifyProof(req, row) {
         const proof = String(req.headers['x-zephyr-device-proof'] || '').trim();
-        if (!proof) {
-            /* No proof is not a failure.
-             *
-             * openapi-mobile-v1.json lists [{DeviceAccess}, {DeviceProof}] on
-             * these operations, and an OpenAPI security *array* is a list of
-             * alternatives: satisfying either entry authenticates the request.
-             * The bearer access credential was already verified by
-             * resolveAccess before this runs.
-             *
-             * This is also the only reading that interoperates with the
-             * shipped client. DeviceProofInterceptor signs only when the
-             * request carries X-Zephyr-Server-Nonce, and the signer returns
-             * null without a nonce rather than signing over an invented one --
-             * a proof computed over a self-chosen nonce would be replayable,
-             * so refusing to forge one is correct. This server issues no nonce
-             * yet, so requiring a proof here would reject every request from a
-             * correctly behaving device. */
-            return true;
-        }
-        const timestamp = Number(req.headers['x-zephyr-proof-timestamp'] || 0);
-        const nonce = String(req.headers['x-zephyr-server-nonce'] || '');
-        if (!Number.isFinite(timestamp) || timestamp <= 0) return false;
-        const skew = Math.abs(Math.floor(nowMs() / 1000) - timestamp);
-        if (skew > PROOF_SKEW_SEC) return false;
+        const timestampHeader = String(req.headers['x-zephyr-proof-timestamp'] || '').trim();
+        const nonce = String(req.headers['x-zephyr-server-nonce'] || '').trim();
+        if (!proof || !/^[0-9]{10}$/.test(timestampHeader) || !/^[A-Za-z0-9_-]{43}$/.test(nonce)) return false;
+        const timestamp = Number(timestampHeader);
+        if (!Number.isSafeInteger(timestamp) || timestamp <= 0) return false;
 
         let jwk;
         try {
@@ -416,30 +830,39 @@ class MobileV1Api {
             return false;
         }
         if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256') return false;
-
-        const bodyBytes = req.rawBody instanceof Buffer
-            ? req.rawBody
-            : Buffer.from(req.body === undefined ? '' : JSON.stringify(req.body), 'utf8');
-        const digest = crypto.createHash('sha256').update(bodyBytes).digest('base64');
-
-        const signed = [
-            'zephyr-one-device-proof-v1',
-            row.device_id,
-            String(req.method || '').toUpperCase(),
-            req.path,
-            digest,
-            String(timestamp),
+        const binding = mobileProof.requestBinding(req);
+        if (!binding) return false;
+        const payload = mobileProof.signedProofPayload({
+            deviceId: row.device_id,
+            ...binding,
+            timestamp,
             nonce,
-        ].join('\u0000');
-
+        });
+        if (!mobileProof.verifyP1363({ jwk, payload, proof })) return false;
         try {
-            const key = crypto.createPublicKey({ key: { ...jwk, kty: 'EC', crv: 'P-256' }, format: 'jwk' });
-            return crypto.verify(
-                'sha256',
-                Buffer.from(signed, 'utf8'),
-                { key, dsaEncoding: 'ieee-p1363' },
-                Buffer.from(proof, 'base64'),
-            );
+            return this.store.consumeProofChallenge({
+                nonce,
+                ownerUserId: row.owner_user_id,
+                deviceId: row.device_id,
+                ...binding,
+                timestamp,
+            });
+        } catch {
+            return false;
+        }
+    }
+
+    /** Re-checks the mutable authorities behind an established wake stream. */
+    isDeviceSessionLive(accessCredential, expectedDeviceId, expectedOwnerUserId) {
+        try {
+            const row = this.store.resolveAccess(accessCredential);
+            if (String(row.device_id) !== String(expectedDeviceId)
+                || String(row.owner_user_id) !== String(expectedOwnerUserId)) return false;
+
+            const user = this.storage.getUserBrief(row.owner_user_id);
+            if (!user || user.status === 'deleted' || user.status === 'suspended') return false;
+            const tokens = this.fileAgentManager.listTokens(user.username);
+            return tokens.some((token) => token.id === row.token_id);
         } catch {
             return false;
         }
@@ -475,7 +898,7 @@ class MobileV1Api {
      */
     handleBind(req, res) {
         const requestId = req.mobileRequestId;
-        const auth = this.requireSid(req, res);
+        const auth = this.requireSid(req, res, { passwordReady: true });
         if (!auth) return undefined;
 
         const body = req.body || {};
@@ -483,43 +906,117 @@ class MobileV1Api {
         if (!tokenId) {
             return sendError(res, 400, 'token_required', '\u8bf7\u5148\u5728\u4e3b\u7aef\u521b\u5efa Client Token', { requestId });
         }
-
-        /* The token must exist and belong to this account. A device is only ever
-         * as authorised as the Client Token behind it, and deleting that token
-         * on the main end is the documented way to cut the device off. */
-        let tokens;
-        try {
-            tokens = this.fileAgentManager.listTokens(auth.username);
-        } catch {
-            return sendError(res, 503, 'server_unavailable', 'Token \u670d\u52a1\u6682\u65f6\u4e0d\u53ef\u7528', { retryable: true, requestId });
+        const deviceId = String(body.deviceId || '').trim();
+        const grant = String(req.headers['x-zephyr-sensitive-grant'] || '').trim();
+        const tokenSecret = String(body.tokenSecret || '').trim();
+        const bindReceipt = String(body.bindReceipt || '').trim();
+        if (bindReceipt && !/^[A-Za-z0-9_-]{43}$/.test(bindReceipt)) {
+            return sendError(res, 400, 'invalid_request', 'bindReceipt is invalid', { requestId });
         }
-        if (!tokens.length) {
-            return sendError(res, 400, 'token_required', '\u8bf7\u5148\u5728\u4e3b\u7aef\u8bbe\u7f6e\u4e2d\u65b0\u589e Client Token', { requestId });
+        if (body.bindingProtocolVersion != null && Number(body.bindingProtocolVersion) !== 2) {
+            return sendError(res, 400, 'invalid_request', 'bindingProtocolVersion is unsupported', { requestId });
         }
-        if (!tokens.some((t) => t.id === tokenId)) {
-            return sendError(res, 404, 'token_not_found', 'Token \u4e0d\u5b58\u5728\u6216\u4e0d\u5c5e\u4e8e\u5f53\u524d\u8d26\u53f7', { requestId });
+        const hasGrant = /^[A-Za-z0-9_-]{43}$/.test(grant);
+        if (!hasGrant && !tokenSecret) {
+            return sendError(res, 403, 'sensitive_verification_required', '\u8be5\u64cd\u4f5c\u9700\u8981\u5148\u5b8c\u6210\u654f\u611f\u9a8c\u8bc1', { requestId });
         }
 
+        if (!hasGrant) {
+            /* A SID holder can create a new Client Token through the ordinary
+             * settings API. Such a token is not an independent proof, so the
+             * secret fallback is limited to tokens that predate this session. */
+            let tokenRecord = null;
+            try {
+                tokenRecord = this.fileAgentManager
+                    .listTokens(auth.username, { includeToken: true })
+                    .find((token) => token.id === tokenId) || null;
+            } catch {
+                return sendError(res, 503, 'server_unavailable', 'Token \u670d\u52a1\u6682\u65f6\u4e0d\u53ef\u7528', { retryable: true, requestId });
+            }
+            const sessionCreatedAt = Number(req.mobileSidSession?.createdAt || 0);
+            const tokenCreatedAt = Number(tokenRecord?.createdAt || 0);
+            const secretIsIndependent = tokenSecret.length <= 512
+                && tokenRecord !== null
+                && sessionCreatedAt > 0
+                && tokenCreatedAt > 0
+                && tokenCreatedAt < sessionCreatedAt
+                && timingSafeSecretEqual(tokenRecord?.token || '', tokenSecret);
+            if (!secretIsIndependent) {
+                return sendError(res, 403, 'sensitive_verification_required', '\u8be5\u64cd\u4f5c\u9700\u8981\u5148\u5b8c\u6210\u654f\u611f\u9a8c\u8bc1', { requestId });
+            }
+        }
+
         try {
-            const bound = this.store.bindDevice({
-                ownerUserId: auth.userId,
-                ownerUsername: auth.username,
-                deviceId: body.deviceId,
-                deviceName: body.deviceName,
-                platform: body.platform,
-                appVersion: body.appVersion,
-                tokenId,
-                keys: body.keys,
-                syncIntervalSec: body.syncIntervalSec,
+            const requestFingerprint = MobileV1Store.bindRequestFingerprint(body);
+            const bindTransaction = this.db.transaction(() => {
+                let attempt;
+                if (hasGrant) {
+                    const claimed = this.store.claimBindAttempt({
+                        ownerUserId: auth.userId,
+                        deviceId,
+                        tokenId,
+                        grant,
+                        receipt: bindReceipt,
+                        requestFingerprint,
+                    });
+                    let tokens;
+                    try {
+                        tokens = this.fileAgentManager.listTokens(auth.username);
+                    } catch {
+                        throw new MobileStoreError('server_unavailable', 'Token \u670d\u52a1\u6682\u65f6\u4e0d\u53ef\u7528', 503, { retryable: true });
+                    }
+                    if (!tokens.length) {
+                        throw new MobileStoreError('token_required', '\u8bf7\u5148\u5728\u4e3b\u7aef\u8bbe\u7f6e\u4e2d\u65b0\u589e Client Token', 400);
+                    }
+                    if (!tokens.some((token) => token.id === tokenId)) {
+                        throw new MobileStoreError('token_not_found', 'Token \u4e0d\u5b58\u5728\u6216\u4e0d\u5c5e\u4e8e\u5f53\u524d\u8d26\u53f7', 404);
+                    }
+                    if (claimed.replay) return this.store.replayBindAttempt(claimed);
+                    attempt = claimed.attempt;
+                } else {
+                    /* The legacy pre-session token-secret proof is one HTTP
+                     * request, but still uses the conditional writer. */
+                    attempt = this.store.beginBindAttempt({
+                        ownerUserId: auth.userId,
+                        deviceId,
+                        tokenId,
+                        requestId,
+                    });
+                    if (attempt.expectedBindingRevision !== 0
+                        || attempt.expectedRefreshGeneration !== 0) {
+                        throw new MobileStoreError(
+                            'sensitive_verification_required',
+                            'device rebind requires a server-issued verified attempt',
+                            403,
+                        );
+                    }
+                }
+                return this.store.bindDevice({
+                    ownerUserId: auth.userId,
+                    ownerUsername: auth.username,
+                    deviceId,
+                    deviceName: body.deviceName,
+                    platform: body.platform,
+                    appVersion: body.appVersion,
+                    tokenId,
+                    keys: body.keys,
+                    syncIntervalSec: body.syncIntervalSec,
+                    attempt,
+                    requestFingerprint,
+                });
             });
-            const access = this.store.mintAccess(bound.row);
+            const bound = bindTransaction();
+            noStore(res);
             return res.json({
                 ok: true,
                 device: this.store.devicePublic(bound.row),
-                accessCredential: access.accessCredential,
-                accessExpiresAt: access.accessExpiresAt,
+                accessCredential: bound.accessCredential,
+                accessExpiresAt: bound.accessExpiresAt,
                 refreshCredential: bound.refreshCredential,
                 registryHash: this.store.registryHash,
+                bindingProtocolVersion: bound.bindingProtocolVersion,
+                bindingRevision: bound.bindingRevision,
+                bindingToken: bound.bindingToken,
                 /* Always true on a fresh bind: the device has no mirror yet, and
                  * the client uses this to enter BOUND_NEEDS_BOOTSTRAP rather
                  * than asking for changes from cursor 0 it cannot interpret. */
@@ -561,6 +1058,54 @@ class MobileV1Api {
         }
     }
 
+    /**
+     * Mints a short-lived proof challenge using Bearer access alone. This call
+     * exposes no device or account data and cannot be used as a data-plane
+     * downgrade: every target operation still requires the private-key proof.
+     */
+    handleProofChallenge(req, res) {
+        const requestId = req.mobileRequestId;
+        const auth = this.requireDeviceAccess(req, res, { touch: true });
+        if (!auth) return undefined;
+        const body = req.body || {};
+        const method = String(body.method || '').toUpperCase();
+        const target = mobileProof.canonicalPath(body.path);
+        const digest = String(body.bodySha256 || '').trim();
+        const usage = target ? mobileProof.proofUsage(method, target) : null;
+        if (!target || !usage || !mobileProof.decodeSha256(digest)
+            || (body.usage !== undefined && String(body.usage) !== usage)) {
+            return sendError(res, 400, 'invalid_request', 'proof challenge target is invalid', { requestId });
+        }
+        try {
+            const issued = this.store.issueProofChallenge({
+                ownerUserId: auth.user.userId,
+                deviceId: auth.device.device_id,
+                method,
+                canonicalPath: target,
+                bodySha256: digest,
+                usage,
+            });
+            noStore(res);
+            return res.json({
+                ok: true,
+                challenge: {
+                    nonce: issued.nonce,
+                    timestamp: issued.timestamp,
+                    expiresAt: issued.expiresAt,
+                    method,
+                    canonicalPath: target,
+                    bodySha256: digest,
+                    usage,
+                    algorithm: mobileProof.PROOF_ALGORITHM,
+                    signatureFormat: 'P1363',
+                    proofVersion: mobileProof.PROOF_VERSION,
+                },
+            });
+        } catch (err) {
+            return sendThrown(res, err, requestId);
+        }
+    }
+
     handleListDevices(req, res) {
         const auth = this.requireSid(req, res);
         if (!auth) return undefined;
@@ -574,6 +1119,7 @@ class MobileV1Api {
         if (!auth) return undefined;
         try {
             const row = this.store.patchDevice(auth.userId, req.params.deviceId, req.body || {});
+            if (!row.enabled) this.wake.disconnectDevice(row.device_id);
             return res.json({ ok: true, ...this.store.devicePublic(row) });
         } catch (err) {
             return sendThrown(res, err, requestId);
@@ -605,6 +1151,7 @@ class MobileV1Api {
                 grant,
             });
             this.store.revokeDevice(auth.userId, deviceId, 'revoked_by_user');
+            this.wake.disconnectDevice(deviceId);
             return res.json({ ok: true });
         } catch (err) {
             return sendThrown(res, err, requestId);
@@ -615,37 +1162,79 @@ class MobileV1Api {
 
     handleSensitiveVerify(req, res) {
         const requestId = req.mobileRequestId;
-        const auth = this.requireSid(req, res);
+        const auth = this.requireSid(req, res, { passwordReady: true });
         if (!auth) return undefined;
 
         const body = req.body || {};
         const action = String(body.action || '');
-        const targetIds = Array.isArray(body.targetIds) ? body.targetIds.map(String) : [];
-        if (!SENSITIVE_ACTIONS.has(action)) {
-            return sendError(res, 400, 'invalid_request', '\u4e0d\u652f\u6301\u7684\u654f\u611f\u64cd\u4f5c', { requestId, details: { action } });
+        if (!SENSITIVE_ACTIONS.includes(action)) {
+            return sendError(res, 400, 'invalid_request', '\u4e0d\u652f\u6301\u7684\u654f\u611f\u64cd\u4f5c', { requestId });
+        }
+        const targetIds = normalizeSensitiveTargets(action, body.targetIds);
+        if (!targetIds) {
+            return sendError(res, 400, 'invalid_request', '\u654f\u611f\u64cd\u4f5c\u76ee\u6807\u65e0\u6548', { requestId });
+        }
+        if (body.bindingProtocolVersion != null && Number(body.bindingProtocolVersion) !== 2) {
+            return sendError(res, 400, 'invalid_request', 'bindingProtocolVersion is unsupported', { requestId });
         }
         if (!this.verifySensitive) {
             return sendError(res, 503, 'server_unavailable', '\u654f\u611f\u9a8c\u8bc1\u6682\u4e0d\u53ef\u7528', { retryable: true, requestId });
         }
         try {
+            this.store.takeSensitiveVerificationAttempt(auth.userId);
+        } catch (err) {
+            return sendThrown(res, err, requestId);
+        }
+        let bindAttempt = null;
+        if (action === 'device.bind') {
+            try {
+                bindAttempt = this.store.beginBindAttempt({
+                    ownerUserId: auth.userId,
+                    tokenId: targetIds[0],
+                    deviceId: targetIds[1],
+                    requestId,
+                });
+            } catch (err) {
+                return sendThrown(res, err, requestId);
+            }
+        }
+        try {
             // Throws on a wrong password / TOTP code.
-            this.verifySensitive(auth, String(body.secret || ''));
+            const verified = this.verifySensitive(auth, String(body.secret || ''));
+            if (!verified) throw new Error('verification rejected');
         } catch {
+            if (bindAttempt) this.store.cancelBindAttempt(auth.userId, bindAttempt.attemptHash);
             return sendError(res, 403, 'sensitive_verification_failed', '\u9a8c\u8bc1\u5931\u8d25', { requestId });
         }
-        const created = this.store.createGrant({
-            ownerUserId: auth.userId,
-            action,
-            targetIds,
-            requestId,
-        });
-        return res.json({
-            ok: true,
-            grant: created.grant,
-            expiresAt: created.expiresAt,
-            action,
-            targetHash: created.targetHash,
-        });
+        try {
+            const created = this.store.createGrant({
+                ownerUserId: auth.userId,
+                action,
+                targetIds,
+                requestId,
+                bindAttemptHash: bindAttempt?.attemptHash || null,
+            });
+            noStore(res);
+            return res.json({
+                ok: true,
+                grant: created.grant,
+                expiresAt: created.expiresAt,
+                action,
+                targetHash: created.targetHash,
+                ...(bindAttempt ? {
+                    bindingProtocolVersion: 2,
+                    bindAttempt: {
+                        receipt: bindAttempt.receipt,
+                        expectedBindingRevision: bindAttempt.expectedBindingRevision,
+                        expectedRefreshGeneration: bindAttempt.expectedRefreshGeneration,
+                        expiresAt: bindAttempt.expiresAt,
+                    },
+                } : {}),
+            });
+        } catch (err) {
+            if (bindAttempt) this.store.cancelBindAttempt(auth.userId, bindAttempt.attemptHash);
+            return sendThrown(res, err, requestId);
+        }
     }
 
     // -------------------------------------------------------------- sync ----
@@ -679,7 +1268,10 @@ class MobileV1Api {
         if (size > MAX_BLOB_BYTES) {
             throw new MobileStoreError('payload_too_large', 'blob exceeds the server size limit', 413, { details: { maxBlobBytes: MAX_BLOB_BYTES } });
         }
-        const mime = String(body.mime || 'application/octet-stream').slice(0, 200);
+        const mime = String(body.mime || 'application/octet-stream');
+        if (mime.length > 200 || /[\0\r\n]/.test(mime)) {
+            throw new MobileStoreError('invalid_request', 'mime contains invalid characters', 400);
+        }
         if (!Array.isArray(body.chunks)) {
             throw new MobileStoreError('invalid_request', 'chunks must be an array of per-chunk SHA-256 digests', 400);
         }
@@ -696,12 +1288,12 @@ class MobileV1Api {
         return { sha256: digest, size, mime, chunkHashes, encrypted: !!body.encrypted };
     }
 
-    handleBlobUploadCreate(req, res) {
+    async handleBlobUploadCreate(req, res) {
         const auth = this.requireDevice(req, res);
         if (!auth) return undefined;
         try {
             const manifest = this.validateBlobManifest(req.body || {});
-            const status = this.store.createBlobUpload({
+            const status = await this.blobs.createUpload({
                 ownerUserId: auth.user.userId,
                 deviceId: auth.device.device_id,
                 ...manifest,
@@ -716,24 +1308,29 @@ class MobileV1Api {
         }
     }
 
-    handleBlobUploadStatus(req, res) {
+    async handleBlobUploadStatus(req, res) {
         const auth = this.requireDevice(req, res);
         if (!auth) return undefined;
-        const row = this.store.getBlobUpload(String(req.params.uploadId || ''));
-        if (!row || String(row.owner_user_id) !== String(auth.user.userId)) {
-            return sendError(res, 404, 'resource_not_found_or_inaccessible', 'upload session not found', { requestId: req.mobileRequestId });
+        try {
+            const status = await this.blobs.getUploadStatus({
+                ownerUserId: auth.user.userId,
+                deviceId: auth.device.device_id,
+                uploadId: String(req.params.uploadId || ''),
+            });
+            return res.json({ ok: true, upload: status });
+        } catch (err) {
+            return sendThrown(res, err, req.mobileRequestId);
         }
-        return res.json({ ok: true, upload: this.store.blobUploadStatus(row) });
     }
 
-    handleBlobChunkUpload(req, res) {
+    async handleBlobChunkUpload(req, res) {
         const auth = this.requireDevice(req, res);
         if (!auth) return undefined;
         if (!Buffer.isBuffer(req.body)) {
             return sendError(res, 400, 'invalid_request', 'chunk must be sent as application/octet-stream', { requestId: req.mobileRequestId });
         }
         try {
-            const status = this.store.recordBlobChunk({
+            const status = await this.blobs.uploadChunk({
                 ownerUserId: auth.user.userId,
                 deviceId: auth.device.device_id,
                 uploadId: String(req.params.uploadId || ''),
@@ -792,17 +1389,21 @@ class MobileV1Api {
         const chunkBytes = Number(row.chunk_bytes);
         const offset = index * chunkBytes;
         const length = Math.min(chunkBytes, Number(row.size) - offset);
-        try {
-            const bytes = this.store.readBlobRange(row, offset, length);
-            res.setHeader('Content-Type', 'application/octet-stream');
-            res.setHeader('Content-Length', String(bytes.length));
-            res.setHeader('X-Zephyr-Blob-Sha256', row.sha256);
-            res.setHeader('X-Zephyr-Blob-Chunk-Index', String(index));
-            res.setHeader('Cache-Control', 'no-store');
-            return res.end(bytes);
-        } catch (err) {
-            return sendThrown(res, err, req.mobileRequestId);
-        }
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Length', String(length));
+        res.setHeader('X-Zephyr-Blob-Sha256', row.sha256);
+        res.setHeader('X-Zephyr-Blob-Chunk-Index', String(index));
+        res.setHeader('Cache-Control', 'no-store');
+        const stream = this.store.createBlobReadStream(row, { start: offset, end: offset + length - 1 });
+        stream.on('error', () => {
+            if (!res.headersSent) {
+                sendError(res, 500, 'internal_error', 'blob read failed', { retryable: true, requestId: req.mobileRequestId });
+            } else {
+                res.destroy();
+            }
+        });
+        stream.pipe(res);
+        return undefined;
     }
 
     handleBootstrap(req, res) {
@@ -811,81 +1412,137 @@ class MobileV1Api {
         if (!auth) return undefined;
 
         const pageSize = clampPageSize(req.query.pageSize);
-        let cursorState;
         try {
-            cursorState = req.query.pageToken
-                ? this.store.openBootstrapToken(String(req.query.pageToken), auth.user.userId)
-                : {
+            const binding = {
+                ownerUserId: auth.user.userId,
+                deviceId: auth.device.device_id,
+                generation: Number(auth.device.refresh_generation || 1),
+                registryHash: this.store.registryHash,
+                typeOrder: this.bootstrapTypes,
+            };
+            const firstPageRows = new Map();
+            const readRows = (typeIndex) => {
+                if (firstPageRows.has(typeIndex)) return firstPageRows.get(typeIndex);
+                const entityType = this.bootstrapTypes[typeIndex];
+                const spec = this.entityByType.get(entityType);
+                const adapter = this.adapters.get(entityType);
+                const listed = adapter.list(auth.user);
+                if (listed != null && !Array.isArray(listed)) {
+                    throw new Error('bootstrap adapter list must return an array');
+                }
+                const seen = new Set();
+                const rows = (listed || []).map((row) => {
+                    const rawId = adapter.idOf(row);
+                    if (rawId == null || String(rawId).length === 0 || String(rawId).length > 2048) {
+                        throw new Error('bootstrap adapter returned an invalid stable id');
+                    }
+                    const id = String(rawId);
+                    if (seen.has(id)) throw new Error('bootstrap adapter returned a duplicate stable id');
+                    seen.add(id);
+
+                    const ownerField = String(spec.ownerField || 'ownerUserId');
+                    const rowOwnerUserId = row && (row[ownerField] ?? row.ownerUserId ?? row.owner_user_id);
+                    const expectedOwner = ownerField === 'serverId'
+                        ? this.store.serverId()
+                        : auth.user.userId;
+                    if (String(rowOwnerUserId || '') !== String(expectedOwner)) {
+                        throw new MobileStoreError(
+                            'shared_residency_violation',
+                            '\u5171\u4eab\u8d44\u6e90\u4e0d\u80fd\u8fdb\u5165\u79bb\u7ebf\u955c\u50cf',
+                            409,
+                        );
+                    }
+                    return { id, row };
+                });
+                rows.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+                return rows;
+            };
+
+            let cursorState;
+            if (req.query.pageToken) {
+                cursorState = this.store.openBootstrapToken(String(req.query.pageToken), binding);
+            } else {
+                const snapshotCursor = this.store.latestCursor(auth.user.userId);
+                const upperBounds = this.bootstrapTypes.map((_, typeIndex) => {
+                    const rows = readRows(typeIndex);
+                    firstPageRows.set(typeIndex, rows);
+                    return rows.length ? rows[rows.length - 1].id : null;
+                });
+                cursorState = this.store.beginBootstrapSnapshot({
                     bootstrapId: 'bs-' + crypto.randomUUID(),
-                    snapshotCursor: this.store.latestCursor(auth.user.userId),
-                    typeIndex: 0,
-                    offset: 0,
-                };
+                    snapshotCursor,
+                    typeOrder: this.bootstrapTypes,
+                    upperBounds,
+                    ownerUserId: binding.ownerUserId,
+                    deviceId: binding.deviceId,
+                    generation: binding.generation,
+                });
+            }
+
+            const entities = [];
+            let typeIndex = cursorState.typeIndex;
+            let afterEntityId = cursorState.afterEntityId;
+
+            while (typeIndex < this.bootstrapTypes.length && entities.length < pageSize) {
+                const entityType = this.bootstrapTypes[typeIndex];
+                const spec = this.entityByType.get(entityType);
+                const adapter = this.adapters.get(entityType);
+                const upperBound = cursorState.upperBounds[typeIndex];
+                if (upperBound == null) {
+                    typeIndex += 1;
+                    afterEntityId = null;
+                    continue;
+                }
+
+                const rows = readRows(typeIndex).filter(({ id }) => (
+                    (afterEntityId == null || id > afterEntityId) && id <= upperBound
+                ));
+                let consumedType = true;
+                for (const { id: rowId, row } of rows) {
+                    if (entities.length >= pageSize) {
+                        consumedType = false;
+                        break;
+                    }
+                    entities.push({
+                        changeSeq: cursorState.snapshotCursor,
+                        entityType,
+                        entityId: rowId,
+                        action: 'upsert',
+                        revision: adapter.revisionOf(row),
+                        actorDeviceId: null,
+                        changedAt: Number(row.updatedAt || row.createdAt || 0),
+                        /* fieldMask is the full editable set: a bootstrap row is the
+                         * complete entity, not a patch. */
+                        fieldMask: adapter.fieldMaskOf
+                            ? adapter.fieldMaskOf(row)
+                            : (spec.editableFields || []).slice(),
+                        payload: projectPayload(spec, row),
+                    });
+                    afterEntityId = rowId;
+                }
+
+                if (consumedType) {
+                    typeIndex += 1;
+                    afterEntityId = null;
+                }
+            }
+
+            const complete = typeIndex >= this.bootstrapTypes.length;
+            return res.json({
+                ok: true,
+                bootstrapId: cursorState.bootstrapId,
+                snapshotCursor: cursorState.snapshotCursor,
+                nextPageToken: complete ? null : this.store.sealBootstrapToken({
+                    ...cursorState,
+                    typeIndex,
+                    afterEntityId,
+                }),
+                complete,
+                entities,
+            });
         } catch (err) {
             return sendThrown(res, err, requestId);
         }
-
-        const entities = [];
-        let typeIndex = cursorState.typeIndex;
-        let offset = cursorState.offset;
-
-        while (typeIndex < this.bootstrapTypes.length && entities.length < pageSize) {
-            const entityType = this.bootstrapTypes[typeIndex];
-            const spec = this.entityByType.get(entityType);
-            const adapter = this.adapters.get(entityType);
-
-            let rows;
-            try {
-                rows = adapter.list(auth.user) || [];
-            } catch {
-                /* A single service failing must not abort the whole bootstrap;
-                 * an empty slice for this type is recoverable on the next run,
-                 * whereas a 500 here would loop the client forever. */
-                rows = [];
-            }
-            /* Stable order so a page boundary lands in the same place if the
-             * client has to retry the same token. */
-            rows = rows.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
-
-            while (offset < rows.length && entities.length < pageSize) {
-                const row = rows[offset];
-                entities.push({
-                    changeSeq: cursorState.snapshotCursor,
-                    entityType,
-                    entityId: String(row.id),
-                    action: 'upsert',
-                    revision: adapter.revisionOf(row),
-                    actorDeviceId: null,
-                    changedAt: Number(row.updatedAt || row.createdAt || 0),
-                    /* fieldMask is the full editable set: a bootstrap row is the
-                     * complete entity, not a patch. */
-                    fieldMask: (spec.editableFields || []).slice(),
-                    payload: projectPayload(spec, row),
-                });
-                offset += 1;
-            }
-
-            if (offset >= rows.length) {
-                typeIndex += 1;
-                offset = 0;
-            }
-        }
-
-        const complete = typeIndex >= this.bootstrapTypes.length;
-        return res.json({
-            ok: true,
-            bootstrapId: cursorState.bootstrapId,
-            snapshotCursor: cursorState.snapshotCursor,
-            nextPageToken: complete ? null : this.store.sealBootstrapToken({
-                bootstrapId: cursorState.bootstrapId,
-                snapshotCursor: cursorState.snapshotCursor,
-                typeIndex,
-                offset,
-                ownerUserId: auth.user.userId,
-            }),
-            complete,
-            entities,
-        });
     }
 
     handleChanges(req, res) {
@@ -894,22 +1551,41 @@ class MobileV1Api {
         if (!auth) return undefined;
 
         const sinceCursor = Number(req.query.sinceCursor || 0);
-        if (!Number.isFinite(sinceCursor) || sinceCursor < 0) {
+        if (!Number.isSafeInteger(sinceCursor) || sinceCursor < 0) {
             return sendError(res, 400, 'invalid_request', 'sinceCursor \u5fc5\u987b\u662f\u975e\u8d1f\u6574\u6570', { requestId });
+        }
+        const latestCursor = this.store.latestCursor(auth.user.userId);
+        if (sinceCursor > latestCursor) {
+            return sendError(res, 409, 'cursor_invalid', '\u6e38\u6807\u8d85\u8fc7\u670d\u52a1\u7aef\u6700\u65b0\u4f4d\u7f6e', {
+                requestId,
+                details: { bootstrapRequired: true, latestCursor },
+            });
         }
         /* A cursor whose successor rows have been garbage collected cannot be
          * served: skipping the gap would leave the mirror permanently wrong, so
          * the device is told to bootstrap again instead. */
         if (this.store.isCursorExpired(auth.user.userId, sinceCursor)) {
-            return sendError(res, 410, 'cursor_expired', '\u6e38\u6807\u5df2\u8fc7\u671f\uff0c\u9700\u91cd\u65b0\u5f15\u5bfc', { requestId });
+            return sendError(res, 410, 'cursor_expired', '\u6e38\u6807\u5df2\u8fc7\u671f\uff0c\u9700\u91cd\u65b0\u5f15\u5bfc', {
+                requestId,
+                details: { bootstrapRequired: true, latestCursor },
+            });
         }
         const page = this.store.changePage(auth.user.userId, sinceCursor, clampPageSize(req.query.limit));
+        let changes;
+        try {
+            changes = page.changes.map((change) => this.hydrateChange(auth.user, change));
+        } catch (err) {
+            /* A foreign row aborts the entire page before nextCursor reaches the
+             * device. Advancing past it would leave shared data resident or the
+             * owned mirror silently incomplete. */
+            return sendThrown(res, err, requestId);
+        }
         return res.json({
             ok: true,
             fromCursor: page.fromCursor,
             nextCursor: page.nextCursor,
             hasMore: page.hasMore,
-            changes: page.changes.map((change) => this.hydrateChange(auth.user, change)),
+            changes,
         });
     }
 
@@ -942,19 +1618,15 @@ class MobileV1Api {
      * A field the registry does not classify as a secret is refused rather than
      * written: secretEnvelopes is not a second, unchecked write channel.
      */
-    openSecretEnvelopes({ spec, entityType, entityId, deviceRow, envelopes, entityRevision }) {
-        const values = {};
-        const buffers = [];
-        const release = () => { for (const buffer of buffers) buffer.fill(0); };
-
-        if (!envelopes || typeof envelopes !== 'object') return { values, release };
-
-        const secretFields = new Set(spec.secretFields || []);
-        const serverKey = this.serverEncryptionKey();
-
-        for (const [fieldName, envelope] of Object.entries(envelopes)) {
-            if (!secretFields.has(fieldName)) {
-                release();
+    secretEnvelopeFields(spec, envelopes) {
+        if (envelopes == null) return [];
+        if (typeof envelopes !== 'object' || Array.isArray(envelopes)) {
+            throw new MobileStoreError('invalid_request', 'secretEnvelopes \u5fc5\u987b\u662f\u5bf9\u8c61', 400);
+        }
+        const allowed = new Set(spec.secretFields || []);
+        const fields = Object.keys(envelopes);
+        for (const fieldName of fields) {
+            if (!allowed.has(fieldName)) {
                 throw new MobileStoreError(
                     'invalid_request',
                     '\u5b57\u6bb5 ' + fieldName + ' \u4e0d\u662f\u5bc6\u94a5\u5b57\u6bb5',
@@ -962,6 +1634,62 @@ class MobileV1Api {
                     { details: { field: fieldName } },
                 );
             }
+        }
+        return fields;
+    }
+
+    /**
+     * Validates the explicit intent to remove already-stored secret fields.
+     *
+     * A clear is intentionally not represented by an absent envelope: an
+     * interrupted local deletion must still be able to revoke the old
+     * canonical value on a later retry.  Field names are public protocol
+     * metadata, but the values are never accepted outside a sealed envelope.
+     */
+    secretClearFields(spec, fields) {
+        if (fields == null) return [];
+        if (!Array.isArray(fields)) {
+            throw new MobileStoreError('invalid_request', 'clearSecretFields must be an array', 400);
+        }
+        const allowed = new Set(spec.secretFields || []);
+        const unique = new Set();
+        for (const fieldName of fields) {
+            if (typeof fieldName !== 'string' || !fieldName || !allowed.has(fieldName)) {
+                throw new MobileStoreError('invalid_request', 'clearSecretFields contains an undeclared secret field', 400);
+            }
+            if (unique.has(fieldName)) {
+                throw new MobileStoreError('invalid_request', 'clearSecretFields must not contain duplicates', 400);
+            }
+            unique.add(fieldName);
+        }
+        return [...unique];
+    }
+
+    /** Reject clear-text secret smuggling even when the key is not masked. */
+    assertNoSecretPayload(spec, payload) {
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+        const secretFields = new Set(spec.secretFields || []);
+        for (const fieldName of Object.keys(payload)) {
+            if (secretFields.has(fieldName)) {
+                throw new MobileStoreError('invalid_request', 'secret fields must use secretEnvelopes or clearSecretFields', 400, {
+                    details: { field: fieldName },
+                });
+            }
+        }
+    }
+
+    openSecretEnvelopes({ spec, entityType, entityId, deviceRow, envelopes, entityRevision }) {
+        const values = {};
+        const buffers = [];
+        const release = () => { for (const buffer of buffers) buffer.fill(0); };
+
+        const envelopeFields = this.secretEnvelopeFields(spec, envelopes);
+        if (!envelopeFields.length) return { values, release };
+
+        const serverKey = this.serverEncryptionKey();
+
+        for (const fieldName of envelopeFields) {
+            const envelope = envelopes[fieldName];
             if (!serverKey) {
                 release();
                 throw new MobileStoreError(
@@ -975,10 +1703,20 @@ class MobileV1Api {
             /* entityRevision is the revision this write is *creating*, which is
              * what the client sealed against. Accepting any other value would
              * let an envelope from an older revision be replayed forward. */
-            const declared = Number(envelope && envelope.entityRevision);
-            if (!Number.isFinite(declared) || declared <= 0) {
+            const declared = envelope && envelope.entityRevision;
+            if (!Number.isSafeInteger(declared) || declared <= 0 || declared !== entityRevision) {
                 release();
-                throw new MobileStoreError('invalid_request', 'envelope entityRevision \u65e0\u6548', 400);
+                throw new MobileStoreError(
+                    'revision_conflict',
+                    'envelope entityRevision \u4e0e\u670d\u52a1\u7aef\u4e0b\u4e00\u7248\u672c\u4e0d\u4e00\u81f4',
+                    409,
+                    { details: { expectedRevision: entityRevision } },
+                );
+            }
+            const declaredKeyVersion = envelope && envelope.keyVersion;
+            if (!Number.isSafeInteger(declaredKeyVersion) || declaredKeyVersion !== serverKey.keyVersion) {
+                release();
+                throw new MobileStoreError('invalid_request', 'envelope keyVersion \u65e0\u6548', 400);
             }
 
             let aad;
@@ -991,7 +1729,7 @@ class MobileV1Api {
                     entityId,
                     fieldName,
                     entityRevision: declared,
-                    keyVersion: Number(envelope.keyVersion),
+                    keyVersion: declaredKeyVersion,
                 });
             } catch (err) {
                 release();
@@ -1026,8 +1764,6 @@ class MobileV1Api {
     }
 
     hydrateChange(user, change) {
-        if (change.action === 'delete') return change;
-
         const spec = this.entityByType.get(change.entityType);
         const adapter = this.adapters.get(change.entityType);
         if (!spec || !adapter) {
@@ -1036,6 +1772,20 @@ class MobileV1Api {
              * the gap lets the client skip the row instead of mirroring nothing. */
             return { ...change, payload: {}, unsupported: true };
         }
+
+        const tombstoneOwner = change.tombstone && String(change.tombstone.ownerUserId || '');
+        const residency = typeof adapter.residency === 'function'
+            ? adapter.residency(user, change.entityId)
+            : 'missing';
+        if (residency === 'foreign'
+            || (tombstoneOwner && tombstoneOwner !== String(user.userId))) {
+            throw new MobileStoreError(
+                'shared_residency_violation',
+                '\u5171\u4eab\u8d44\u6e90\u4e0d\u80fd\u8fdb\u5165\u79bb\u7ebf\u955c\u50cf',
+                409,
+            );
+        }
+        if (change.action === 'delete') return change;
 
         let row = null;
         try {
@@ -1055,29 +1805,52 @@ class MobileV1Api {
      */
     handlePush(req, res) {
         const requestId = req.mobileRequestId;
+        try {
+            const bodyBytes = pushBodyByteLength(req);
+            if (bodyBytes > MAX_PUSH_BODY_BYTES) {
+                throw new MobileStoreError('payload_too_large', 'push request body is too large', 413, {
+                    details: { maxBytes: MAX_PUSH_BODY_BYTES },
+                });
+            }
+        } catch (err) {
+            return sendThrown(res, err, requestId);
+        }
+
         const auth = this.requireDevice(req, res);
         if (!auth) return undefined;
 
-        const body = req.body || {};
-        if (Number(body.protocolVersion) !== 1) {
+        const body = req.body;
+        try {
+            assertOwnJsonData(body, 'push request');
+        } catch (err) {
+            return sendThrown(res, err, requestId);
+        }
+        if (!body || typeof body !== 'object' || Array.isArray(body) || body.protocolVersion !== 1) {
             return sendError(res, 400, 'unsupported_protocol_version', '\u4e0d\u652f\u6301\u7684\u534f\u8bae\u7248\u672c', { requestId });
         }
+        try {
+            validatePushRequest(body);
+        } catch (err) {
+            return sendThrown(res, err, requestId);
+        }
         if (!this.assertRegistry(res, body.registryHash, requestId)) return undefined;
-        if (String(body.deviceId || '') !== auth.device.device_id) {
+        if (body.deviceId !== auth.device.device_id) {
             return sendError(res, 400, 'invalid_request', 'deviceId \u4e0e\u51ed\u636e\u4e0d\u4e00\u81f4', { requestId });
         }
-        const operations = Array.isArray(body.operations) ? body.operations : [];
-        if (operations.length > MAX_OPS_PER_BATCH) {
-            return sendError(res, 413, 'payload_too_large', '\u5355\u6279\u64cd\u4f5c\u8d85\u8fc7\u4e0a\u9650', { requestId });
+        const operations = body.operations;
+        try {
+            this.preflightPushOperations(operations);
+        } catch (err) {
+            return sendThrown(res, err, requestId);
         }
 
         const ownerUserId = auth.user.userId;
-        const batchId = String(body.batchId || 'batch-' + crypto.randomUUID());
+        const batchId = body.batchId;
         const runId = this.store.startRun({
             ownerUserId,
             deviceId: auth.device.device_id,
             trigger: 'push',
-            fromCursor: Number(body.baseCursor) || 0,
+            fromCursor: body.baseCursor,
             requestId,
         });
 
@@ -1100,19 +1873,29 @@ class MobileV1Api {
                     operation,
                 }))();
             } catch (err) {
+                const safe = publicError(err);
                 result = {
                     opId: String(operation && operation.opId || ''),
                     status: 'rejected',
                     error: {
                         ok: false,
                         error: {
-                            code: err.code || 'internal_error',
-                            message: err.message || '',
-                            retryable: !!err.retryable,
+                            code: safe.code,
+                            message: safe.message,
+                            retryable: safe.retryable,
+                            details: safe.details,
                             requestId,
                         },
                     },
                 };
+            }
+            /* This point is outside the per-operation transaction. Canonical
+             * adapters normally queued the same cursor through their bridge;
+             * the bridge/runtime dedupe it. The explicit post-commit seam also
+             * covers adapters whose fallback feed append did not call a
+             * canonical bridge, without ever publishing a rejected rollback. */
+            if (result.status === 'accepted' && Number(result.changeSeq) > 0) {
+                publishAcceptedPushWake(this.changeBridge, ownerUserId, result);
             }
             if (result.status === 'conflict') conflicts += 1;
             if (result.status === 'accepted') accepted += 1;
@@ -1138,16 +1921,156 @@ class MobileV1Api {
         });
     }
 
+    /** Registry-dependent validation is also completed before startRun/BEGIN. */
+    preflightPushOperations(operations) {
+        for (const operation of operations) {
+            const spec = this.entityByType.get(operation.entityType);
+            if (!spec) continue;
+            if (operation.action === 'upsert') assertMaskAllowed(spec, operation.fieldMask);
+            this.assertNoSecretPayload(spec, operation.payload);
+            this.secretEnvelopeFields(spec, operation.secretEnvelopes);
+            this.secretClearFields(spec, operation.clearSecretFields);
+        }
+    }
+
+    conflictServerPayload({ spec, adapter, user, entityId, current }) {
+        if (!current) return null;
+        try {
+            if (typeof adapter.residency === 'function'
+                && adapter.residency(user, entityId) !== 'owned') return null;
+        } catch {
+            return null;
+        }
+        return safeConflictPayload(spec, current, user?.userId);
+    }
+
+    /**
+     * A deleted row has no live canonical projection. The version ledger is
+     * owner-scoped, so the only safe conflict projection is the typed owner;
+     * tombstones must never retain editable or secret values just to improve a
+     * conflict response.
+     */
+    tombstoneConflictServerPayload(spec, ownerUserId) {
+        const ownerField = String(spec?.ownerField || 'ownerUserId');
+        return safeConflictPayload(spec, { [ownerField]: String(ownerUserId) }, ownerUserId);
+    }
+
+    /**
+     * Delete and restore are whole-entity compare-and-set operations. Keep
+     * their stale result on the existing conflict wire shape so current mobile
+     * clients can persist it, but expose only an owner-scoped safe projection.
+     */
+    recordRevisionConflict({
+        ownerUserId, user, deviceId, opId, batchId, entityType, entityId,
+        spec, adapter, current, baseRevision, currentRevision,
+    }) {
+        const serverPayload = current
+            ? this.conflictServerPayload({ spec, adapter, user, entityId, current })
+            : this.tombstoneConflictServerPayload(spec, ownerUserId);
+        if (!serverPayload) this.conflictPayloadUnavailable();
+        const serverChangedFields = this.serverChangedFields(
+            ownerUserId,
+            entityType,
+            entityId,
+            baseRevision,
+            [],
+            spec,
+        );
+        return this.recordResult({ ownerUserId, deviceId, opId, batchId, result: {
+            opId,
+            status: 'conflict',
+            entityId,
+            revision: currentRevision,
+            conflict: {
+                /* Frozen clients currently accept this standard conflict kind.
+                 * An empty field set denotes a whole-entity CAS conflict. */
+                reason: 'field_overlap',
+                fields: [],
+                currentRevision,
+                serverChangedFields,
+                serverPayload,
+            },
+        } });
+    }
+
+    hasFieldOverlap(ownerUserId, entityType, entityId, baseRevision, incomingFields) {
+        if (typeof this.store.hasOverlap === 'function'
+            && this.store.hasOverlap(ownerUserId, entityType, entityId, baseRevision, incomingFields)) return true;
+        if (typeof this.store.fieldRevisions !== 'function') return false;
+        const base = Number(baseRevision) || 0;
+        const incoming = incomingFields.map(String);
+        for (const [serverField, revision] of this.store.fieldRevisions(ownerUserId, entityType, entityId)) {
+            if (Number(revision) <= base) continue;
+            if (incoming.some((field) => fieldPathsOverlap(field, serverField))) return true;
+        }
+        return false;
+    }
+
+    serverChangedFields(ownerUserId, entityType, entityId, baseRevision, fallback, spec) {
+        const declared = [
+            ...((spec?.editableFields || []).map(String)),
+            ...((spec?.secretFields || []).map(String)),
+        ];
+        const isDeclared = (field) => declared.some((candidate) => (
+            field === candidate || field.startsWith(candidate + '.')
+        ));
+        const safeFallback = fallback.map(String).filter(isDeclared).slice(0, 200);
+        if (typeof this.store.fieldRevisions !== 'function') return safeFallback;
+        try {
+            const base = Number(baseRevision) || 0;
+            const fields = [...this.store.fieldRevisions(ownerUserId, entityType, entityId)]
+                .filter(([, revision]) => Number(revision) > base)
+                .map(([field]) => String(field))
+                .filter(isDeclared)
+                .sort()
+                .slice(0, 200);
+            return fields.length ? fields : safeFallback;
+        } catch {
+            return safeFallback;
+        }
+    }
+
+    conflictPayloadUnavailable() {
+        throw new MobileStoreError(
+            'cursor_invalid',
+            'Conflict state cannot be projected safely; restart bootstrap',
+            409,
+            {
+                details: {
+                    reason: 'conflict_payload_unavailable',
+                    bootstrapRequired: true,
+                },
+            },
+        );
+    }
+
     /**
      * Decides and applies a single operation. Runs inside a transaction.
      *
-     * Ordering matters: the replay check comes first, because a duplicate must
-     * not even be validated against a registry that may have changed since the
-     * original apply.
+     * Ordering matters: after the immutable account/device tuple is verified,
+     * the replay check precedes registry and payload validation. A duplicate
+     * must not be reinterpreted under a registry that changed after its first
+     * apply.
      */
     applyOperation({ ownerUserId, user, deviceId, deviceRow, batchId, operation }) {
         const opId = String(operation && operation.opId || '');
         if (!opId) throw new MobileStoreError('invalid_request', 'opId \u5fc5\u586b', 400);
+
+        const hasSecretEnvelopes = Object.prototype.hasOwnProperty.call(operation, 'secretEnvelopes');
+        const hasSecretClears = Object.prototype.hasOwnProperty.call(operation, 'clearSecretFields');
+        const hasSecretIntent = hasSecretEnvelopes || hasSecretClears;
+        const hasCompleteDeviceIdentity = !!String(deviceRow?.owner_user_id || '')
+            && !!String(deviceRow?.device_id || '');
+        const identityMatches = String(ownerUserId || '') === String(user?.userId || '')
+            && String(ownerUserId || '') === String(deviceRow?.owner_user_id || '')
+            && String(deviceId || '') === String(deviceRow?.device_id || '');
+        /* The HTTP gate already resolves these values from one authenticated
+         * device row. Keep the invariant explicit for every secret intent:
+         * envelope AAD must never be rebuilt from a mixed account/device tuple
+         * supplied by an alternate host or a future internal caller. */
+        if ((hasSecretIntent || hasCompleteDeviceIdentity) && !identityMatches) {
+            throw new MobileStoreError('device_proof_invalid', '\u8bbe\u5907\u7ed1\u5b9a\u4e0e\u8d26\u53f7\u4e0d\u5339\u914d', 401);
+        }
 
         const replayed = this.store.findAppliedOp(ownerUserId, deviceId, opId);
         if (replayed) return { ...replayed, status: replayed.status === 'accepted' ? 'duplicate' : replayed.status };
@@ -1168,51 +2091,123 @@ class MobileV1Api {
         }
 
         const fieldMask = Array.isArray(operation.fieldMask) ? operation.fieldMask.map(String) : [];
+        if (hasSecretEnvelopes && hasSecretClears) {
+            throw new MobileStoreError('invalid_request', 'secretEnvelopes and clearSecretFields are mutually exclusive', 400);
+        }
+        const secretFieldMask = this.secretEnvelopeFields(spec, operation.secretEnvelopes);
+        const clearSecretFields = this.secretClearFields(spec, operation.clearSecretFields);
+        if (action !== 'upsert' && (secretFieldMask.length || clearSecretFields.length)) {
+            throw new MobileStoreError('invalid_request', 'delete/restore cannot carry secret operations', 400);
+        }
+        const mutationFieldMask = [...new Set([...fieldMask, ...secretFieldMask, ...clearSecretFields])];
         if (action === 'upsert') {
-            if (!fieldMask.length) {
-                throw new MobileStoreError('invalid_request', 'upsert \u5fc5\u987b\u643a\u5e26 fieldMask', 400);
+            if (!fieldMask.length && !secretFieldMask.length && !clearSecretFields.length) {
+                throw new MobileStoreError('invalid_request', 'upsert requires fieldMask or an explicit secret operation', 400);
             }
             assertMaskAllowed(spec, fieldMask);
         }
 
         const baseRevision = Number(operation.baseRevision || 0);
+        const residency = typeof adapter.residency === 'function'
+            ? adapter.residency(user, entityId)
+            : null;
+        if ((secretFieldMask.length || clearSecretFields.length) && residency === 'foreign') {
+            throw new MobileStoreError(
+                'resource_not_found_or_inaccessible',
+                '\u8d44\u6e90\u4e0d\u5b58\u5728\u6216\u4e0d\u53ef\u8bbf\u95ee',
+                404,
+            );
+        }
         const current = adapter.read(user, entityId);
+        if ((secretFieldMask.length || clearSecretFields.length) && current) {
+            const ownerField = String(spec.ownerField || 'ownerUserId');
+            const currentOwner = payloadValueAtPath(current, ownerField);
+            if (!currentOwner.present || String(currentOwner.value || '') !== String(ownerUserId)) {
+                throw new MobileStoreError(
+                    'resource_not_found_or_inaccessible',
+                    '\u8d44\u6e90\u4e0d\u5b58\u5728\u6216\u4e0d\u53ef\u8bbf\u95ee',
+                    404,
+                );
+            }
+        }
         const version = this.store.getEntityVersion(ownerUserId, entityType, entityId);
         const currentRevision = current ? adapter.revisionOf(current) : Number(version && version.revision || 0);
 
-        /* A tombstone outranks an edit that was based on a revision older than
-         * the delete: SYNC_STATE_MACHINE.md 9 makes delete win, and an explicit
-         * restore is a new revision rather than an undo of history. */
-        if (version && version.deleted_at && action !== 'restore') {
-            return this.recordResult({ ownerUserId, deviceId, opId, batchId, result: {
-                opId,
-                status: 'conflict',
-                entityId,
-                revision: currentRevision,
-                conflict: { reason: 'deleted_on_server', deletedAt: Number(version.deleted_at) },
-            } });
-        }
-
-        if (action === 'upsert' && current && baseRevision > currentRevision) {
-            /* The client claims a revision the server has never issued, which
-             * means its mirror is ahead of reality - a rebind or a restored
-             * backup. Accepting it would write a revision number backwards. */
+        /* Every action is revision-bounded. In particular, delete/restore must
+         * not accept a mirror revision the canonical server never issued. This
+         * check remains after the replay lookup and inside the operation
+         * transaction, preserving an already-issued receipt verbatim. */
+        if (baseRevision > currentRevision) {
             throw new MobileStoreError('revision_conflict', 'baseRevision \u9ad8\u4e8e\u670d\u52a1\u7aef\u5f53\u524d\u7248\u672c', 409, {
                 details: { baseRevision, currentRevision },
             });
         }
 
-        if (action === 'upsert' && current && this.store.hasOverlap(ownerUserId, entityType, entityId, baseRevision, fieldMask)) {
+        /* A version row without its canonical entity cannot produce a safe
+         * conflict snapshot. The device must rebuild from bootstrap instead of
+         * treating an empty object as authoritative or recreating a stale row. */
+        if (!current && version && !version.deleted_at) {
+            this.conflictPayloadUnavailable();
+        }
+
+        /* A tombstone outranks an edit that was based on a revision older than
+         * the delete: SYNC_STATE_MACHINE.md 9 makes delete win, and an explicit
+         * restore is a new revision rather than an undo of history. */
+        if (version && version.deleted_at && action !== 'restore') {
+            if (action === 'delete') {
+                return this.recordRevisionConflict({
+                    ownerUserId, user, deviceId, opId, batchId, entityType, entityId,
+                    spec, adapter, current, baseRevision, currentRevision,
+                });
+            }
+            this.conflictPayloadUnavailable();
+        }
+
+        if ((action === 'delete' || action === 'restore') && baseRevision < currentRevision) {
+            return this.recordRevisionConflict({
+                ownerUserId, user, deviceId, opId, batchId, entityType, entityId,
+                spec, adapter, current, baseRevision, currentRevision,
+            });
+        }
+
+        if (action === 'upsert' && current && this.hasFieldOverlap(
+            ownerUserId,
+            entityType,
+            entityId,
+            baseRevision,
+            mutationFieldMask,
+        )) {
+            const serverPayload = this.conflictServerPayload({ spec, adapter, user, entityId, current });
+            if (!serverPayload) this.conflictPayloadUnavailable();
+            const serverChangedFields = this.serverChangedFields(
+                ownerUserId,
+                entityType,
+                entityId,
+                baseRevision,
+                mutationFieldMask,
+                spec,
+            );
+            const overlapFields = mutationFieldMask.filter((field) => (
+                serverChangedFields.some((serverField) => fieldPathsOverlap(field, serverField))
+            ));
             return this.recordResult({ ownerUserId, deviceId, opId, batchId, result: {
                 opId,
                 status: 'conflict',
                 entityId,
                 revision: currentRevision,
-                conflict: { reason: 'field_overlap', fields: fieldMask, currentRevision },
+                conflict: {
+                    reason: 'field_overlap',
+                    fields: overlapFields.length ? overlapFields : mutationFieldMask,
+                    currentRevision,
+                    serverChangedFields,
+                    serverPayload,
+                },
             } });
         }
 
         // ---- the write itself goes through the canonical service ----
+        const mutationReceipt = {};
+        const mutationContext = { actorDeviceId: deviceId, mutationReceipt };
         let saved;
         if (action === 'delete') {
             if (!current) {
@@ -1220,20 +2215,22 @@ class MobileV1Api {
                     opId, status: 'duplicate', entityId, revision: currentRevision,
                 } });
             }
-            adapter.remove(user, entityId);
+            adapter.remove(user, entityId, mutationContext);
         } else if (action === 'restore') {
             if (!adapter.restore) {
                 throw new MobileStoreError('unsupported_scope', '\u8be5\u5b9e\u4f53\u7c7b\u578b\u4e0d\u652f\u6301\u6062\u590d', 400);
             }
-            saved = adapter.restore(user, entityId);
+            saved = adapter.restore(user, entityId, mutationContext);
         } else {
-            const patch = {};
+            const patch = Object.create(null);
             const payload = operation.payload && typeof operation.payload === 'object' ? operation.payload : {};
+            this.assertNoSecretPayload(spec, payload);
             /* Only masked fields are applied. An unmasked key in the payload is
              * ignored rather than written, so a client cannot smuggle a field it
              * did not declare - which is what makes the overlap check sound. */
             for (const field of fieldMask) {
-                if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
+                const selected = payloadValueAtPath(payload, field);
+                if (selected.present) setPatchValueAtPath(patch, field, selected.value);
             }
             /* Secret fields never travel in the payload. They arrive as
              * per-field ML-KEM envelopes sealed to this server's public key, so
@@ -1251,15 +2248,24 @@ class MobileV1Api {
                 entityRevision: currentRevision + 1,
             });
             Object.assign(patch, openedSecrets.values);
+            /* All currently declared secret fields are textual values in their
+             * canonical services. Clearing them in the same patch as the
+             * revisioned write prevents an envelope-less retry from leaving a
+             * stale server secret behind. */
+            for (const field of clearSecretFields) patch[field] = '';
 
-            saved = current
-                ? adapter.update(user, entityId, patch)
-                : adapter.create(user, entityId, patch);
-
-            /* Zero the plaintext as soon as the service has written it. The
-             * strings themselves are immutable in JS, so the honest thing is to
-             * drop the references rather than pretend they were scrubbed. */
-            openedSecrets.release();
+            try {
+                mutationContext.forceMobileChange = secretFieldMask.length > 0 || clearSecretFields.length > 0;
+                saved = current
+                    ? adapter.update(user, entityId, patch, mutationContext)
+                    : adapter.create(user, entityId, patch, mutationContext);
+            } finally {
+                /* Zero mutable plaintext and drop the immutable String
+                 * references even when the canonical service rejects the write. */
+                openedSecrets.release();
+                for (const field of [...secretFieldMask, ...clearSecretFields]) delete patch[field];
+                for (const field of secretFieldMask) delete openedSecrets.values[field];
+            }
         }
 
         const revision = action === 'delete'
@@ -1267,26 +2273,29 @@ class MobileV1Api {
             : (saved ? adapter.revisionOf(saved) : currentRevision + 1);
 
         // ---- feed + version bookkeeping, same transaction ----
-        const changeSeq = this.store.appendChange({
-            ownerUserId,
-            entityType,
-            entityId,
-            action: action === 'delete' ? 'delete' : 'upsert',
-            revision,
-            fieldMask: action === 'delete' ? [] : fieldMask,
-            actorDeviceId: deviceId,
-            tombstone: action === 'delete' ? {
+        const canonicalChangeSeq = Number(mutationReceipt.changeSeq || 0);
+        const changeSeq = Number.isSafeInteger(canonicalChangeSeq) && canonicalChangeSeq > 0
+            ? canonicalChangeSeq
+            : this.store.appendChange({
+                ownerUserId,
                 entityType,
                 entityId,
-                ownerUserId,
-                deletedRevision: revision,
-                deletedAt: Date.now(),
-                deletedBy: deviceId,
-                /* Name only: a tombstone must carry no secret, and the client
-                 * needs something human-readable for the conflict UI. */
-                lastKnownName: String(current && (current.name || current.title) || ''),
-            } : null,
-        });
+                action: action === 'delete' ? 'delete' : 'upsert',
+                revision,
+                fieldMask: action === 'delete' ? [] : fieldMask,
+                actorDeviceId: deviceId,
+                tombstone: action === 'delete' ? {
+                    entityType,
+                    entityId,
+                    ownerUserId,
+                    deletedRevision: revision,
+                    deletedAt: Date.now(),
+                    deletedBy: deviceId,
+                    /* Name only: a tombstone must carry no secret, and the client
+                     * needs something human-readable for the conflict UI. */
+                    lastKnownName: String(current && (current.name || current.title) || ''),
+                } : null,
+            });
 
         this.store.setEntityVersion({
             ownerUserId,
@@ -1295,8 +2304,12 @@ class MobileV1Api {
             revision,
             deletedAt: action === 'delete' ? Date.now() : null,
         });
-        if (action !== 'delete' && fieldMask.length) {
-            this.store.setFieldRevisions({ ownerUserId, entityType, entityId, fields: fieldMask, revision });
+        /* Secret field names stay in the internal revision ledger so a stale
+         * clear and a concurrent replace conflict deterministically. They are
+         * deliberately absent from the public change fieldMask. */
+        const revisionFields = mutationFieldMask;
+        if (action !== 'delete' && revisionFields.length) {
+            this.store.setFieldRevisions({ ownerUserId, entityType, entityId, fields: revisionFields, revision });
         }
 
         return this.recordResult({ ownerUserId, deviceId, opId, batchId, result: {
@@ -1332,26 +2345,10 @@ class MobileV1Api {
 
     handleSyncNow(req, res) {
         const requestId = req.mobileRequestId;
-        /* Either plane may ask: the phone triggers its own sync, and the desktop
-         * settings page triggers a bound device's sync. */
-        const viaDevice = req.headers.authorization ? this.requireDevice(req, res) : null;
-        if (req.headers.authorization && !viaDevice) return undefined;
-
-        let ownerUserId;
-        let deviceId;
-        if (viaDevice) {
-            ownerUserId = viaDevice.user.userId;
-            deviceId = viaDevice.device.device_id;
-        } else {
-            const auth = this.requireSid(req, res);
-            if (!auth) return undefined;
-            ownerUserId = auth.userId;
-            deviceId = String((req.body || {}).deviceId || '');
-            const row = this.store.getDeviceRow(deviceId);
-            if (!row || row.owner_user_id !== ownerUserId) {
-                return sendError(res, 404, 'client_not_found', '\u8bbe\u5907\u4e0d\u5b58\u5728', { requestId });
-            }
-        }
+        const auth = this.requireDevice(req, res);
+        if (!auth) return undefined;
+        const ownerUserId = auth.user.userId;
+        const deviceId = auth.device.device_id;
 
         /* The server does not pull on the device's behalf; it records the
          * request so the next round is attributable. The device is the only
@@ -1361,26 +2358,48 @@ class MobileV1Api {
         return res.json({ ok: true });
     }
 
+    /**
+     * Holds an authenticated SSE stream carrying cursor-only wake hints.
+     * The proof is consumed during the HTTP upgrade; the stream then keeps
+     * re-checking the mutable access, account and Client Token authorities.
+     */
+    handleWake(req, res) {
+        const requestId = req.mobileRequestId;
+        const auth = this.requireDevice(req, res);
+        if (!auth) return undefined;
+
+        const match = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+        const accessCredential = match ? match[1].trim() : '';
+        try {
+            const accepted = this.wake.subscribe({
+                req,
+                res,
+                ownerUserId: auth.user.userId,
+                deviceId: auth.device.device_id,
+                currentCursor: () => this.store.latestCursor(auth.user.userId),
+                isAuthorized: () => this.isDeviceSessionLive(
+                    accessCredential,
+                    auth.device.device_id,
+                    auth.user.userId,
+                ),
+            });
+            if (!accepted) {
+                return sendError(res, 429, 'rate_limited', '\u8bbe\u5907\u5b9e\u65f6\u8fde\u63a5\u6570\u5df2\u8fbe\u4e0a\u9650', {
+                    retryable: true,
+                    requestId,
+                });
+            }
+            return undefined;
+        } catch (err) {
+            return sendThrown(res, err, requestId);
+        }
+    }
+
     handleSyncStatus(req, res) {
         const requestId = req.mobileRequestId;
-        const viaDevice = req.headers.authorization ? this.requireDevice(req, res) : null;
-        if (req.headers.authorization && !viaDevice) return undefined;
-
-        let ownerUserId;
-        let row;
-        if (viaDevice) {
-            ownerUserId = viaDevice.user.userId;
-            row = viaDevice.device;
-        } else {
-            const auth = this.requireSid(req, res);
-            if (!auth) return undefined;
-            ownerUserId = auth.userId;
-            const deviceId = String(req.query.deviceId || '');
-            row = this.store.getDeviceRow(deviceId);
-            if (!row || row.owner_user_id !== ownerUserId) {
-                return sendError(res, 404, 'client_not_found', '\u8bbe\u5907\u4e0d\u5b58\u5728', { requestId });
-            }
-        }
+        const auth = this.requireDevice(req, res);
+        if (!auth) return undefined;
+        const row = auth.device;
 
         const last = this.store.lastRun(row.device_id);
         return res.json({
@@ -1421,6 +2440,7 @@ class MobileV1Api {
         // ---- devices ----
         app.post('/api/mobile/v1/devices/bind', (req, res) => self.handleBind(req, res));
         app.post('/api/mobile/v1/devices/refresh', (req, res) => self.handleRefresh(req, res));
+        app.post('/api/mobile/v1/devices/proof-challenge', (req, res) => self.handleProofChallenge(req, res));
         app.get('/api/mobile/v1/devices', (req, res) => self.handleListDevices(req, res));
         app.patch('/api/mobile/v1/devices/:deviceId', (req, res) => self.handlePatchDevice(req, res));
         app.delete('/api/mobile/v1/devices/:deviceId', (req, res) => self.handleDeleteDevice(req, res));
@@ -1428,7 +2448,10 @@ class MobileV1Api {
         // ---- sync ----
         app.get('/api/mobile/v1/sync/bootstrap', (req, res) => self.handleBootstrap(req, res));
         app.get('/api/mobile/v1/sync/changes', (req, res) => self.handleChanges(req, res));
-        app.post('/api/mobile/v1/sync/push', (req, res) => self.handlePush(req, res));
+        app.get('/api/mobile/v1/sync/wake', (req, res) => self.handleWake(req, res));
+        app.post('/api/mobile/v1/sync/push',
+            createPushJsonBodyParser(),
+            (req, res) => self.handlePush(req, res));
         app.post('/api/mobile/v1/sync/ack', (req, res) => self.handleAck(req, res));
         app.post('/api/mobile/v1/sync/now', (req, res) => self.handleSyncNow(req, res));
         app.get('/api/mobile/v1/sync/status', (req, res) => self.handleSyncStatus(req, res));
@@ -1578,10 +2601,20 @@ module.exports = {
     MobileV1Api,
     PROTOCOL_VERSIONS,
     MAX_OPS_PER_BATCH,
+    MAX_PUSH_BODY_BYTES,
+    MAX_PUSH_OPERATION_PAYLOAD_BYTES,
+    MAX_PUSH_ID_LENGTH,
     BLOB_CHUNK_BYTES,
     MAX_BLOB_BYTES,
     MAX_PAGE_SIZE,
     DEFAULT_PAGE_SIZE,
     PROOF_SKEW_SEC,
+    SENSITIVE_ACTIONS,
+    assertOwnJsonData,
+    validatePushRequest,
+    fieldPathsOverlap,
+    setPatchValueAtPath,
+    createPushJsonBodyParser,
     sendError,
+    publishAcceptedPushWake,
 };

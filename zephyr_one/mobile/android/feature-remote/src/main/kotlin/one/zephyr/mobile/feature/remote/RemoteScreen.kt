@@ -1259,7 +1259,10 @@ private fun AuthDialog(
     var password by remember { mutableStateOf("") }
     val exhausted = prompt.attemptsExhausted
     AlertDialog(
-        onDismissRequest = { onIntent(RemoteIntent.CancelAuth) },
+        onDismissRequest = {
+            password = ""
+            onIntent(RemoteIntent.CancelAuth)
+        },
         title = { Text(text = stringResource(R.string.remote_auth_title)) },
         text = {
             Column {
@@ -1304,14 +1307,23 @@ private fun AuthDialog(
             } else {
                 TextButton(
                     enabled = password.isNotEmpty(),
-                    onClick = { onIntent(RemoteIntent.SubmitPassword(password.toCharArray())) },
+                    onClick = {
+                        val submitted = password.toCharArray()
+                        password = ""
+                        onIntent(RemoteIntent.SubmitPassword(submitted))
+                    },
                 ) {
                     Text(text = stringResource(R.string.remote_auth_submit))
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = { onIntent(RemoteIntent.CancelAuth) }) {
+            TextButton(
+                onClick = {
+                    password = ""
+                    onIntent(RemoteIntent.CancelAuth)
+                },
+            ) {
                 Text(text = stringResource(R.string.remote_cancel))
             }
         },

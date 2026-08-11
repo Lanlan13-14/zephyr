@@ -65,6 +65,7 @@ import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.Residency
 import one.zephyr.mobile.model.SecretRef
+import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SyncStatus
 import one.zephyr.mobile.protocol.rdp.UnavailableRdpEngine
 import one.zephyr.mobile.protocol.vnc.UnavailableVncEngine
@@ -234,6 +235,8 @@ private fun BoundRoot(account: AccountContainer) {
                         ownerUserId = ownerUserId,
                         connectionId = current.connectionId,
                         newIdFactory = { UUID.randomUUID().toString() },
+                        registerSensitiveSink = account::registerSensitiveSink,
+                        unregisterSensitiveSink = account::unregisterSensitiveSink,
                     ),
                 ),
                 onDismiss = { route = RootRoute.Root(IslandDestination.HOME) },
@@ -436,6 +439,8 @@ private fun RemoteDestination(
                     secretProvider = { connection ->
                         RemoteCredentials(password = account.passwordChars(connection))
                     },
+                    registerSensitiveSink = account::registerSensitiveSink,
+                    unregisterSensitiveSink = account::unregisterSensitiveSink,
                 ),
             ),
             nowMs = nowMs,
@@ -481,34 +486,45 @@ private fun RemoteDestination(
             },
         )
 
-        RdpRemoteRoute(
-            viewModel = viewModel(
-                key = "rdp:" + route.sessionId,
-                factory = RdpViewModel.Factory(
-                    sessionId = route.sessionId,
-                    connectionId = route.connectionId,
-                    registry = account.sessions,
-                    connections = account.connections,
-                    engine = UnavailableRdpEngine(),
-                    secretProvider = { connection -> account.passwordChars(connection) },
-                    /* The real grant, re-derived on every resolution.
-                     *
-                     * Previously a hardcoded null, which made RdpDrivePolicy answer
-                     * file_share_unavailable no matter what the user had authorised and left the SAF
-                     * provider unreachable. The coordinator returns null only when no directory is
-                     * chosen, and a profile with grantValid=false when one is chosen but its grant
-                     * died -- the policy renders those differently, and the second is the one that
-                     * tells the user to re-authorise. */
-                    driveProfileProvider = { candidate ->
-                        account.fileSyncShares.profile(candidate.id)
-                    },
-                ),
+        val rdpViewModel: RdpViewModel = viewModel(
+            key = "rdp:" + route.sessionId,
+            factory = RdpViewModel.Factory(
+                sessionId = route.sessionId,
+                connectionId = route.connectionId,
+                registry = account.sessions,
+                connections = account.connections,
+                engine = UnavailableRdpEngine(),
+                secretProvider = { candidate -> account.passwordChars(candidate) },
+                /* The real grant, re-derived on every resolution.
+                 *
+                 * Previously a hardcoded null, which made RdpDrivePolicy answer
+                 * file_share_unavailable no matter what the user had authorised and left the SAF
+                 * provider unreachable. The coordinator returns null only when no directory is
+                 * chosen, and a profile with grantValid=false when one is chosen but its grant
+                 * died -- the policy renders those differently, and the second is the one that
+                 * tells the user to re-authorise. */
+                driveProfileProvider = { candidate ->
+                    account.fileSyncShares.profile(candidate.id)
+                },
             ),
+        )
+        val permissionActions = rememberRdpChannelPermissionActions(
+            onObserved = rdpViewModel::onPermissionStateObserved,
+            onResult = rdpViewModel::onPermissionResult,
+        )
+
+        // Querying existing grants is safe on entry; only the channel-row actions below launch UI.
+        LaunchedEffect(rdpViewModel, permissionActions) {
+            permissionActions.refreshExisting()
+        }
+
+        RdpRemoteRoute(
+            viewModel = rdpViewModel,
             nowMs = nowMs,
             online = online,
             onBack = onBack,
-            onRequestPermission = { onNotice(PENDING_RDP_PERMISSION) },
-            onOpenAppSettings = { onNotice(PENDING_RDP_PERMISSION) },
+            onRequestPermission = permissionActions.request,
+            onOpenAppSettings = permissionActions.openSettings,
             onPickDriveDirectory = pickDirectory,
             onMessage = onMessage,
         )
@@ -627,17 +643,39 @@ private fun BatchExecutionViewModel.dispatch(intent: BatchIntent) {
  * written before the ref was persisted still has its secret under the derived name.
  */
 private fun AccountContainer.passwordChars(connection: Connection): CharArray? {
-    val ref = connection.password.secretRef?.let { SecretRef(it) }
-        ?: SecretRef.of(Connection.ENTITY_TYPE, connection.id, FIELD_PASSWORD)
+    val ref = secretRefForPresence(
+        presence = connection.password,
+        entityType = Connection.ENTITY_TYPE,
+        entityId = connection.id,
+        fieldName = FIELD_PASSWORD,
+    ) ?: return null
     return secretStore.getText(ref)?.toCharArray()
 }
 
 private fun AccountContainer.terminalCredentials(connection: Connection): TerminalCredentials =
     TerminalCredentials(
         password = passwordChars(connection),
-        privateKey = connection.privateKey.secretRef
-            ?.let { secretStore.getText(SecretRef(it))?.toCharArray() },
+        privateKey = secretRefForPresence(
+            presence = connection.privateKey,
+            entityType = Connection.ENTITY_TYPE,
+            entityId = connection.id,
+            fieldName = FIELD_PRIVATE_KEY,
+        )?.let { secretStore.getText(it)?.toCharArray() },
     )
+
+/** Presence is the authorization gate; an explicit ref must also name this exact field. */
+internal fun secretRefForPresence(
+    presence: SecretPresence,
+    entityType: String,
+    entityId: String,
+    fieldName: String,
+): SecretRef? {
+    if (!presence.hasValue) return null
+    val explicit = presence.secretRef?.let(::SecretRef) ?: return SecretRef.of(entityType, entityId, fieldName)
+    val parts = explicit.partsOrNull() ?: return null
+    if (parts.entityType != entityType || parts.entityId != entityId || parts.fieldName != fieldName) return null
+    return explicit.canonical()
+}
 
 private const val TAG_ROOT = "root"
 private const val TAG_EDITOR = "editor"
@@ -645,6 +683,7 @@ private const val TAG_TERMINAL = "terminal"
 private const val TAG_REMOTE = "remote"
 
 private const val FIELD_PASSWORD = "password"
+private const val FIELD_PRIVATE_KEY = "privateKey"
 
 private const val NOT_BOUND =
     "尚未绑定账号。请先在主端创建 Client Token，再在本机完成绑定（S01/S02 界面尚未实现）。"
@@ -657,7 +696,6 @@ private const val PENDING_SESSION_DETAILS = "会话详情界面尚未实现。"
 private const val PENDING_SFTP = "SFTP 浏览界面尚未实现。"
 private const val PENDING_SNIPPETS = "代码片段界面尚未实现。"
 private const val PENDING_NOTES = "笔记界面尚未实现。"
-private const val PENDING_RDP_PERMISSION = "设备权限申请尚未实现。"
 /* The SAF picker is wired (see RemoteDestination), so the placeholder is gone. These two report
  * its outcomes; cancelling deliberately has no message. */
 private const val DRIVE_AUTHORIZED = "已授权目录，远端共享名："

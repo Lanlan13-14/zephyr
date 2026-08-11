@@ -41,6 +41,7 @@ test('motion opt-in set covers dashboard filters + settings/appearance/terminal 
         'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
         // 设置 → 语言 与 代理弹窗 → 类型
         'languageSelect', 'proxyType',
+        'adminUserRole',
     ];
     assert.deepEqual(ids.sort(), expected.sort());
     for (const id of ['connProtocol', 'connSshKey', 'connEncoding', 'connRoute']) {

@@ -93,7 +93,7 @@ class WorkspaceStatePersistence(context: Context) {
     }
 
     fun clear() {
-        prefs.edit().remove(KEY_SESSIONS).apply()
+        check(prefs.edit().remove(KEY_SESSIONS).commit()) { "workspace state could not be erased" }
     }
 
     private companion object {

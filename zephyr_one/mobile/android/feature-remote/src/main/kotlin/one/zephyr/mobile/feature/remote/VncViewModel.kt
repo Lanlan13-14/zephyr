@@ -29,6 +29,7 @@ import one.zephyr.mobile.protocol.vnc.RfbSecurityType
 import one.zephyr.mobile.protocol.vnc.VncConnectOutcome
 import one.zephyr.mobile.protocol.vnc.VncConnectRequest
 import one.zephyr.mobile.protocol.vnc.VncEngine
+import one.zephyr.mobile.security.LockSensitiveSink
 
 /**
  * Colour depth, as S23's 画质/颜色 tool presents it.
@@ -65,7 +66,9 @@ class VncViewModel(
     private val engine: VncEngine,
     private val secretProvider: suspend (Connection) -> RemoteCredentials,
     private val clock: () -> Long = System::currentTimeMillis,
-) : ViewModel() {
+    private val registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
+    private val unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
+) : ViewModel(), LockSensitiveSink {
 
     private val adapter = VncProtocolAdapter(engine)
 
@@ -200,6 +203,7 @@ class VncViewModel(
     }
 
     init {
+        registerSensitiveSink(this)
         viewModelScope.launch {
             val connection = findConnection(connectionId)
             connectionState.value = connection
@@ -228,8 +232,10 @@ class VncViewModel(
 
         viewModelScope.launch {
             val stored = runCatching { secretProvider(connection) }.getOrDefault(RemoteCredentials())
-            val password = (interactivePassword ?: stored.password)?.copyOf()
-            val request = VncConnectRequest(
+            val interactive = interactivePassword
+            val password = (interactive ?: stored.password)?.copyOf()
+            try {
+                val request = VncConnectRequest(
                 sessionId = sessionId,
                 host = connection.host,
                 port = connection.port,
@@ -240,7 +246,7 @@ class VncViewModel(
                 viewOnly = !connection.capabilities.canControl,
                 preferredPixelFormat = depthState.value.format,
             )
-            when (val outcome = engine.connect(request)) {
+                when (val outcome = engine.connect(request)) {
                 is VncConnectOutcome.Connected -> {
                     securityLabel = RfbSecurityType.name(outcome.securityType) + " · " + outcome.version.wire.trim()
                     depthState.value = VncColourDepth.of(outcome.pixelFormat)
@@ -268,9 +274,13 @@ class VncViewModel(
                 }
 
                 is VncConnectOutcome.Failed -> fail(outcome.error)
+                }
+            } finally {
+                password?.fill('\u0000')
+                stored.wipe()
+                interactive?.fill('\u0000')
+                if (interactivePassword === interactive) interactivePassword = null
             }
-            password?.fill('\u0000')
-            stored.wipe()
         }
     }
 
@@ -288,6 +298,8 @@ class VncViewModel(
     }
 
     fun cancelAuth() {
+        interactivePassword?.fill('\u0000')
+        interactivePassword = null
         authState.value = null
         errorState.value = MobileError.local(
             code = "rfb_password_required",
@@ -306,6 +318,8 @@ class VncViewModel(
     }
 
     fun disconnect() {
+        interactivePassword?.fill('\u0000')
+        interactivePassword = null
         stopStreams()
         reconnectJob?.cancel()
         registry.close(sessionId, clock())
@@ -473,11 +487,19 @@ class VncViewModel(
     }
 
     override fun onCleared() {
+        unregisterSensitiveSink(this)
         stopStreams()
         reconnectJob?.cancel()
         interactivePassword?.fill('\u0000')
         interactivePassword = null
         super.onCleared()
+    }
+
+    override fun onLocked() {
+        interactivePassword?.fill('\u0000')
+        interactivePassword = null
+        authState.value = null
+        pendingRemoteClipboard = null
     }
 
     class Factory(
@@ -487,6 +509,8 @@ class VncViewModel(
         private val connections: ConnectionRepository,
         private val engine: VncEngine,
         private val secretProvider: suspend (Connection) -> RemoteCredentials,
+        private val registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
+        private val unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = VncViewModel(
@@ -496,6 +520,8 @@ class VncViewModel(
             findConnection = { id -> connections.find(id) },
             engine = engine,
             secretProvider = secretProvider,
+            registerSensitiveSink = registerSensitiveSink,
+            unregisterSensitiveSink = unregisterSensitiveSink,
         ) as T
     }
 

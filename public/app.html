@@ -6,9 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
-    <link rel="modulepreload" href="app.js?v=20260807-notes-enabled-persist1-mobile-ime2-shell5-splitgrid1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260811-webdav1">
+    <link rel="modulepreload" href="app.js?v=20260811-webdav1">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
-    <link rel="stylesheet" href="style.css?v=20260807-ai-edit-cancel1-terminal-shell3-splitgrid1">
+    <link rel="stylesheet" href="style.css?v=20260811-webdav1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -749,7 +750,82 @@
                             <p class="muted" id="agentReleaseHint"><span data-i18n="镜像构建时自动解析最新">镜像构建时自动解析最新</span> <code>agent-v*</code> / <code>one-v*</code> Release。</p>
                             <p id="agentReleaseLine"><a class="muted-link" id="agentReleaseLink" href="https://github.com/Lanlan13-14/zephyr-ssh/releases" target="_blank" rel="noopener noreferrer" data-i18n="查看 Zephyr Client 发布页">查看 Zephyr Client 发布页</a></p>
                         </div>
-                        <div class="settings-panel" id="settings-data"><h2 data-i18n="数据导入导出">数据导入导出</h2><p class="muted" data-i18n="导出文件使用 data/.env 中 ENCRYPTION_KEY 加密；敏感字段在数据库中使用 ML-KEM-768 + AES-256-GCM 混合加密保存。">导出文件使用 data/.env 中 ENCRYPTION_KEY 加密；敏感字段在数据库中使用 ML-KEM-768 + AES-256-GCM 混合加密保存。</p><button class="btn btn-primary" id="exportDataBtn" data-i18n="开始导出">开始导出</button><form id="importDataForm" class="settings-form"><input type="file" id="backupFile" accept=".enc"><input type="password" id="importLoginPassword" placeholder="当前登录密码" data-i18n-placeholder="当前登录密码"><input type="password" id="backupPassword" placeholder="备份解密密码（ENCRYPTION_KEY）" data-i18n-placeholder="备份解密密码（ENCRYPTION_KEY）"><button class="btn danger" data-i18n="导入备份">导入备份</button></form></div>
+                        <div class="settings-panel" id="settings-data">
+                            <div class="data-settings-stack">
+                                <section class="data-settings-section" aria-labelledby="dataTransferTitle">
+                                    <h2 id="dataTransferTitle" data-i18n="数据导入导出">数据导入导出</h2>
+                                    <p class="muted" data-i18n="导出文件使用 data/.env 中 ENCRYPTION_KEY 加密；敏感字段在数据库中使用 ML-KEM-768 + AES-256-GCM 混合加密保存。">导出文件使用 data/.env 中 ENCRYPTION_KEY 加密；敏感字段在数据库中使用 ML-KEM-768 + AES-256-GCM 混合加密保存。</p>
+                                    <button class="btn btn-primary" id="exportDataBtn" data-i18n="开始导出">开始导出</button>
+                                    <form id="importDataForm" class="settings-form data-import-form" aria-busy="false" aria-describedby="importDataStatus">
+                                        <input type="file" id="backupFile" accept=".enc" required aria-describedby="importDataStatus">
+                                        <input type="password" id="importLoginPassword" placeholder="当前登录密码" data-i18n-placeholder="当前登录密码" required aria-describedby="importDataStatus">
+                                        <input type="password" id="backupPassword" placeholder="备份解密密码（ENCRYPTION_KEY）" data-i18n-placeholder="备份解密密码（ENCRYPTION_KEY）">
+                                        <button class="btn danger" id="importDataBtn" type="submit" aria-describedby="importDataStatus" data-i18n="导入备份">导入备份</button>
+                                    </form>
+                                    <p class="field-hint" id="importDataStatus" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+                                </section>
+
+                                <section class="data-settings-section webdav-settings-section" id="webDavSettingsSection" aria-labelledby="webDavSettingsTitle" aria-busy="true">
+                                    <div class="webdav-heading">
+                                        <div>
+                                            <h2 id="webDavSettingsTitle">WebDAV</h2>
+                                            <p class="muted" data-i18n="将当前账号的数据加密备份到独立的 WebDAV 目录。仅支持 HTTPS。">将当前账号的数据加密备份到独立的 WebDAV 目录。仅支持 HTTPS。</p>
+                                        </div>
+                                        <span class="webdav-config-badge" id="webDavConfigBadge" data-state="loading" data-i18n="正在读取">正在读取</span>
+                                    </div>
+
+                                    <form id="webDavSettingsForm" class="settings-form webdav-settings-form" aria-describedby="webDavPasswordState webDavStatusText">
+                                        <label class="settings-switch-option" for="webDavEnabled">
+                                            <span class="settings-switch-copy"><strong data-i18n="启用 WebDAV 备份">启用 WebDAV 备份</strong><small data-i18n="启用后可手动验证连接并立即创建账号级加密备份。">启用后可手动验证连接并立即创建账号级加密备份。</small></span>
+                                            <span class="connection-share-switch"><input type="checkbox" id="webDavEnabled" data-webdav-lock><span aria-hidden="true"></span></span>
+                                        </label>
+
+                                        <div class="webdav-field-grid">
+                                            <div class="form-group webdav-field-wide">
+                                                <label for="webDavBaseUrl" data-i18n="WebDAV HTTPS 地址">WebDAV HTTPS 地址</label>
+                                                <input id="webDavBaseUrl" type="url" inputmode="url" autocomplete="url" spellcheck="false" maxlength="2048" placeholder="https://dav.example.com/remote.php/dav/files/user/" required aria-describedby="webDavBaseUrlHint" data-webdav-lock>
+                                                <p class="field-hint" id="webDavBaseUrlHint" data-i18n="地址中不要包含用户名、密码、查询参数或片段。">地址中不要包含用户名、密码、查询参数或片段。</p>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="webDavUsername" data-i18n="WebDAV 用户名">WebDAV 用户名</label>
+                                                <input id="webDavUsername" autocomplete="username" maxlength="512" data-webdav-lock>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="webDavRemotePath" data-i18n="远程目录">远程目录</label>
+                                                <input id="webDavRemotePath" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="Zephyr" data-i18n-placeholder="Zephyr" data-webdav-lock>
+                                            </div>
+                                            <div class="form-group webdav-field-wide">
+                                                <label for="webDavPassword" data-i18n="新 WebDAV 密码（仅更改时输入）">新 WebDAV 密码（仅更改时输入）</label>
+                                                <input id="webDavPassword" type="password" autocomplete="new-password" maxlength="4096" aria-describedby="webDavPasswordState" data-webdav-lock>
+                                                <p class="field-hint" id="webDavPasswordState" aria-live="polite" data-i18n="尚未读取密码状态">尚未读取密码状态</p>
+                                            </div>
+                                        </div>
+
+                                        <div class="webdav-actions">
+                                            <button class="btn btn-primary" id="webDavSaveBtn" type="submit" aria-describedby="webDavStatusText" data-webdav-action data-i18n="保存 WebDAV 设置">保存 WebDAV 设置</button>
+                                            <button class="btn" id="webDavTestBtn" type="button" aria-describedby="webDavStatusText" data-webdav-action data-i18n="测试连接">测试连接</button>
+                                            <button class="btn" id="webDavSyncNowBtn" type="button" aria-describedby="webDavStatusText" data-webdav-action data-i18n="立即备份">立即备份</button>
+                                            <button class="btn force-hidden" id="webDavCancelBtn" type="button" aria-describedby="webDavStatusText" data-i18n="取消当前操作">取消当前操作</button>
+                                        </div>
+                                    </form>
+
+                                    <div class="webdav-danger-actions force-hidden" id="webDavDangerActions">
+                                        <p class="field-hint" data-i18n="仅删除 Zephyr 保存的 WebDAV 设置和凭据，不会删除远程备份文件。">仅删除 Zephyr 保存的 WebDAV 设置和凭据，不会删除远程备份文件。</p>
+                                        <button class="btn danger" id="webDavDeleteBtn" type="button" aria-describedby="webDavStatusText" data-i18n="删除 WebDAV 设置">删除 WebDAV 设置</button>
+                                    </div>
+
+                                    <div class="webdav-status-band" id="webDavStatusBand" role="status" aria-live="polite" aria-atomic="true" tabindex="-1">
+                                        <strong id="webDavStatusText" data-i18n="正在读取 WebDAV 设置">正在读取 WebDAV 设置</strong>
+                                        <dl class="webdav-status-meta">
+                                            <div><dt data-i18n="最近成功">最近成功</dt><dd id="webDavLastSuccess" data-i18n="暂无">暂无</dd></div>
+                                            <div><dt data-i18n="远程状态">远程状态</dt><dd id="webDavRemoteStatus" data-i18n="尚未验证">尚未验证</dd></div>
+                                        </dl>
+                                    </div>
+                                    <div class="webdav-error force-hidden" id="webDavError" role="alert" aria-live="assertive" aria-atomic="true" tabindex="-1"></div>
+                                    <button class="btn webdav-retry force-hidden" id="webDavRetryBtn" type="button" data-i18n="重试上次操作">重试上次操作</button>
+                                </section>
+                            </div>
+                        </div>
                         <div class="settings-panel" id="settings-mail"><h2 data-i18n="邮件通知">邮件通知</h2><form id="mailForm" class="settings-form"><label class="check-line"><input type="checkbox" id="mailEnabled"> <span data-i18n="启用邮件通知">启用邮件通知</span></label><input id="mailHost" placeholder="SMTP Host"><input id="mailPort" type="number" placeholder="SMTP Port"><label class="check-line"><input type="checkbox" id="mailSecure"> SSL/TLS</label><input id="mailUser" placeholder="SMTP 用户名" data-i18n-placeholder="SMTP 用户名"><div class="form-group password-field"><input id="mailPass" type="password" placeholder="SMTP 密码" data-i18n-placeholder="SMTP 密码"><button type="button" id="toggleMailPassword" title="显示/隐藏 SMTP 密码" data-i18n-title="显示/隐藏 SMTP 密码">👁️</button></div><button type="button" class="link-btn" id="revealMailPass" data-i18n="查看已保存 SMTP 密码">查看已保存 SMTP 密码</button><p class="field-hint" data-i18n="默认隐藏已保存 SMTP 密码；留空或保持星号不会覆盖已保存密码。">默认隐藏已保存 SMTP 密码；留空或保持星号不会覆盖已保存密码。</p><input id="mailFrom" placeholder="发件人" data-i18n-placeholder="发件人"><input id="mailAdminEmail" type="email" placeholder="后台管理员邮箱" data-i18n-placeholder="后台管理员邮箱"><label class="check-line"><input type="checkbox" id="notifyLoginSuccess"> <span data-i18n="登录成功通知">登录成功通知</span></label><label class="check-line"><input type="checkbox" id="notifyLoginFailure"> <span data-i18n="登录失败通知">登录失败通知</span></label><label class="check-line"><input type="checkbox" id="notifyLoginToUser"> <span data-i18n="给登录用户发送通知">给登录用户发送通知</span></label><label class="check-line"><input type="checkbox" id="geoLookupEnabled"> <span data-i18n="IP 地区查询">IP 地区查询</span></label><button class="btn btn-primary" type="submit" data-i18n="保存邮件设置">保存邮件设置</button><button class="btn" type="button" id="testMailBtn" data-i18n="测试邮件">测试邮件</button></form></div>
                         <div class="settings-panel" id="settings-notes"><h2 data-i18n="笔记功能">笔记功能</h2><form id="notesSettingsForm" class="settings-form"><label class="check-line"><input type="checkbox" id="notesEnabledInput"> <span data-i18n="启用笔记功能">启用笔记功能</span></label><p class="field-hint" data-i18n="关闭后导航栏不显示笔记入口，AI 笔记工具也一并禁用。">关闭后导航栏不显示笔记入口，AI 笔记工具也一并禁用。</p><button class="btn btn-primary" type="submit" data-i18n="保存">保存</button></form></div>
                         <div class="settings-panel force-hidden" id="settings-admin"><h2 id="adminPanelTitle" data-i18n="多用户管理">多用户管理</h2><div class="admin-toolbar"><button class="btn btn-primary admin-add-btn" type="button" id="adminAddUserBtn"><span class="admin-icon-inline"></span><span data-i18n="添加用户">添加用户</span></button></div><div class="admin-user-list" id="adminUserList"></div></div>
@@ -1227,9 +1303,9 @@
     </div>
 
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
-    <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
+<script src="preview-mock.js?v=20260811-webdav1" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260807-notes-enabled-persist1-mobile-ime2-shell5-splitgrid1" type="module"></script>
+<script src="app.js?v=20260811-webdav1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

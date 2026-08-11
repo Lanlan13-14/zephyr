@@ -17,6 +17,96 @@
 
 const { MobileStoreError } = require('./mobile-v1-store');
 
+const INACCESSIBLE_CODE = 'resource_not_found_or_inaccessible';
+const INACCESSIBLE_MESSAGE = '\u8d44\u6e90\u4e0d\u5b58\u5728\u6216\u4e0d\u53ef\u8bbf\u95ee';
+
+function inaccessible() {
+    return new MobileStoreError(INACCESSIBLE_CODE, INACCESSIBLE_MESSAGE, 404);
+}
+
+function ownerId(row) {
+    return row && String(row.ownerUserId || row.owner_user_id || '');
+}
+
+function isOwnedBy(row, user) {
+    return !!row && ownerId(row) !== '' && ownerId(row) === String(user && user.userId || '');
+}
+
+/**
+ * Reads ownership without going through the discover/share ACL projection.
+ *
+ * Sync has a stricter boundary than the regular Web library: an object another
+ * account shared with this user is still not part of this user's offline
+ * mirror. Keeping the raw lookup here also prevents an editable share from
+ * reaching update/delete through an adapter.
+ */
+function createRawLookup(storage) {
+    const ownerStatements = new Map();
+    const definitions = {
+        connection: 'SELECT id, ownerUserId, revision FROM connections WHERE id = ?',
+        proxy: 'SELECT id, ownerUserId, revision FROM proxies WHERE id = ?',
+        sshKey: 'SELECT id, ownerUserId, revision FROM ssh_keys WHERE id = ?',
+        jumpHost: 'SELECT id, ownerUserId, revision FROM jump_hosts WHERE id = ?',
+        note: 'SELECT note_id AS id, owner_user_id AS ownerUserId, revision, deleted_at AS deletedAt FROM notes WHERE note_id = ?',
+    };
+    let db = null;
+    try {
+        db = storage && typeof storage.rawDb === 'function' ? storage.rawDb() : null;
+    } catch {
+        db = null;
+    }
+    if (db && typeof db.prepare === 'function') {
+        for (const [type, sql] of Object.entries(definitions)) {
+            try {
+                ownerStatements.set(type, db.prepare(sql));
+            } catch {
+                // Alternate hosts may intentionally omit an unsupported table.
+            }
+        }
+    }
+
+    return (type, id) => {
+        const statement = ownerStatements.get(type);
+        if (statement) return statement.get(String(id)) || null;
+        /* Falling back to the ordinary raw getters would decrypt password,
+         * private-key or note-content columns just to compare an owner id. A
+         * host without the narrow query fails closed instead. */
+        throw new MobileStoreError(
+            'server_unavailable',
+            '\u540c\u6b65\u6240\u6709\u6743\u6821\u9a8c\u4e0d\u53ef\u7528',
+            503,
+            { retryable: true },
+        );
+    };
+}
+
+function requireOwned(rawLookup, type, user, id) {
+    const row = rawLookup(type, id);
+    if (!isOwnedBy(row, user)) throw inaccessible();
+    return row;
+}
+
+function requireVacant(rawLookup, type, id) {
+    if (rawLookup(type, id)) throw inaccessible();
+}
+
+function readOwned(rawLookup, type, user, id, readCanonical) {
+    if (!isOwnedBy(rawLookup(type, id), user)) return null;
+    try {
+        const row = readCanonical();
+        return isOwnedBy(row, user) ? row : null;
+    } catch (err) {
+        if (err && err.code === INACCESSIBLE_CODE) return null;
+        throw err;
+    }
+}
+
+function residencyOf(rawLookup, type, user, id) {
+    const row = rawLookup(type, id);
+    if (!row) return 'missing';
+    return isOwnedBy(row, user) ? 'owned' : 'foreign';
+}
+
 /**
  * Strips every field One must never receive or name in a fieldMask.
  *
@@ -52,24 +142,37 @@ function assertMaskAllowed(spec, fieldMask) {
         ...(spec.deviceLocalFields || []),
     ]);
     for (const field of fieldMask) {
-        // Root of a dotted path: the registry declares whole fields, and
-        // SYNC_STATE_MACHINE.md 7 treats an object as one atomic field path
-        // unless the registry says otherwise.
-        const root = String(field).split(/[.\[]/)[0];
-        if (forbidden.has(root)) {
+        const path = String(field);
+        const segments = path.split(/[.\[\]]/).filter(Boolean);
+        if (segments.some((segment) => (
+            segment === '__proto__' || segment === 'prototype' || segment === 'constructor'
+        ))) {
             throw new MobileStoreError(
                 'invalid_request',
-                '\u5b57\u6bb5 ' + field + ' \u4e0d\u5141\u8bb8\u7531\u79fb\u52a8\u7aef\u4fee\u6539',
+                '\u5b57\u6bb5 ' + path + ' \u5305\u542b\u4e0d\u5b89\u5168\u8def\u5f84',
                 400,
-                { details: { field } },
+                { details: { field: path } },
             );
         }
-        if (!editable.has(root)) {
+        const root = segments[0] || '';
+        if (forbidden.has(path) || forbidden.has(root)) {
             throw new MobileStoreError(
                 'invalid_request',
-                '\u5b57\u6bb5 ' + field + ' \u4e0d\u5728\u53ef\u540c\u6b65\u5b57\u6bb5\u8868\u4e2d',
+                '\u5b57\u6bb5 ' + path + ' \u4e0d\u5141\u8bb8\u7531\u79fb\u52a8\u7aef\u4fee\u6539',
                 400,
-                { details: { field } },
+                { details: { field: path } },
+            );
+        }
+        /* Object members are editable only when the registry declares that
+         * exact path. Treating every child of an editable root as editable
+         * defeats the registry when a later canonical object grows a secret or
+         * server-authority member. */
+        if (!editable.has(path)) {
+            throw new MobileStoreError(
+                'invalid_request',
+                '\u5b57\u6bb5 ' + path + ' \u4e0d\u5728\u53ef\u540c\u6b65\u5b57\u6bb5\u8868\u4e2d',
+                400,
+                { details: { field: path } },
             );
         }
     }
@@ -83,77 +186,230 @@ function assertMaskAllowed(spec, fieldMask) {
  * NotesService. The remaining 15 registry types have no mobile-writable
  * canonical path yet and are reported as unsupported.
  */
-function createEntityAdapters({ resourceService, notesService, storage }) {
+function createEntityAdapters({
+    resourceService,
+    notesService,
+    userSettingsService,
+    storage,
+    db,
+    store,
+    changeBridge,
+    fileSyncConfigService,
+    entityRegistry,
+    aiProviderService,
+    aiKnowledgeService,
+    aiHistoryService,
+    workspacePortableSyncService,
+    serverMetadataServices,
+    serverMetadataAuthorize,
+    serverId,
+    resourceAclService,
+    clientTokenService,
+}) {
+    /* These adapters depend on canonical services that themselves load the
+     * change bridge. Resolve them lazily after this module has finished
+     * exporting projectPayload, otherwise Node's circular module cache leaves
+     * the bridge with an undefined projector. */
+    const { createPersonalEntityAdapters } = require('./mobile-v1-personal-entities');
+    const { createFileSyncConfigAdapter } = require('./mobile-v1-file-config-entity');
+    const { createAiProviderEntityAdapters } = require('./mobile-v1-ai-provider-entities');
+    const { createAiKnowledgeEntityAdapters } = require('./mobile-v1-ai-knowledge-entities');
+    const { createAiHistoryEntityAdapters } = require('./mobile-v1-ai-history-entities');
+    const { createWorkspacePortableEntityAdapters } = require('./mobile-v1-workspace-entity');
+    const { createServerMetadataEntityAdapters } = require('./mobile-v1-server-metadata-entities');
+    const { createAclTokenMetadataAdapters } = require('./mobile-v1-acl-token-metadata');
     const adapters = new Map();
+    const rawLookup = createRawLookup(storage);
 
     adapters.set('connection', {
+        idOf: (row) => row.id,
+        residency: (user, id) => residencyOf(rawLookup, 'connection', user, id),
         list: (user) => resourceService.listConnections(user, { includeEphemeral: false })
             .filter((row) => row.ownerUserId === user.userId),
-        read: (user, id) => {
-            try {
-                return resourceService.getConnection(user, id);
-            } catch {
-                return null;
-            }
-        },
-        revisionOf: (row) => Math.max(1, Number(row.revision) || 1),
-        create: (user, id, patch) => resourceService.createConnection(
+        read: (user, id) => readOwned(
+            rawLookup,
+            'connection',
             user,
-            /* Full row, not just the patch.
-             *
-             * storage.insertConnection binds every column by name, so a partial
-             * object makes SQLite reject the statement with "Missing named
-             * parameters" rather than defaulting. The canonical Web route
-             * (POST /api/connections) builds the same complete shape before
-             * calling the service, so this mirrors it instead of teaching the
-             * storage layer a second, laxer contract. */
-            connectionDefaults(id, patch),
+            id,
+            () => resourceService.getConnection(user, id),
         ),
-        update: (user, id, patch) => resourceService.updateConnection(user, id, (current) => ({ ...current, ...patch })),
-        remove: (user, id) => resourceService.deleteConnection(user, id),
+        revisionOf: (row) => Math.max(1, Number(row.revision) || 1),
+        create: (user, id, patch, mutationContext) => {
+            requireVacant(rawLookup, 'connection', id);
+            return resourceService.createConnection(
+                user,
+                /* Full row, not just the patch.
+                 *
+                 * storage.insertConnection binds every column by name, so a partial
+                 * object makes SQLite reject the statement with "Missing named
+                 * parameters" rather than defaulting. The canonical Web route
+                 * (POST /api/connections) builds the same complete shape before
+                 * calling the service, so this mirrors it instead of teaching the
+                 * storage layer a second, laxer contract. */
+                connectionDefaults(id, patch),
+                mutationContext,
+            );
+        },
+        update: (user, id, patch, mutationContext) => {
+            requireOwned(rawLookup, 'connection', user, id);
+            return resourceService.updateConnection(
+                user,
+                id,
+                (current) => ({ ...current, ...patch }),
+                mutationContext,
+            );
+        },
+        remove: (user, id, mutationContext) => {
+            requireOwned(rawLookup, 'connection', user, id);
+            return resourceService.deleteConnection(user, id, mutationContext);
+        },
     });
 
     for (const type of ['proxy', 'sshKey', 'jumpHost']) {
         adapters.set(type, {
+            idOf: (row) => row.id,
+            residency: (user, id) => residencyOf(rawLookup, type, user, id),
             list: (user) => resourceService.listOwned(user, type)
                 .filter((row) => row.ownerUserId === user.userId),
-            read: (user, id) => {
-                try {
-                    return resourceService.getRawAuthorized(user, type, id, 'view');
-                } catch {
-                    return null;
-                }
-            },
+            read: (user, id) => readOwned(
+                rawLookup,
+                type,
+                user,
+                id,
+                () => resourceService.getRawAuthorized(user, type, id, 'view'),
+            ),
             revisionOf: (row) => Math.max(1, Number(row.revision) || 1),
-            create: (user, id, patch) => resourceService.createOwned(user, type, { ...patch, id }),
-            update: (user, id, patch) => resourceService.updateOwned(user, type, id, patch),
-            remove: (user, id) => resourceService.deleteOwned(user, type, id),
+            create: (user, id, patch, mutationContext) => {
+                /* saveProxy/saveSshKey/saveJumpHost use INSERT OR REPLACE. A raw
+                 * collision check is therefore a security boundary: without it,
+                 * a mobile create could replace another account's row. */
+                requireVacant(rawLookup, type, id);
+                return resourceService.createOwned(user, type, { ...patch, id }, mutationContext);
+            },
+            update: (user, id, patch, mutationContext) => {
+                requireOwned(rawLookup, type, user, id);
+                return resourceService.updateOwned(user, type, id, patch, mutationContext);
+            },
+            remove: (user, id, mutationContext) => {
+                requireOwned(rawLookup, type, user, id);
+                return resourceService.deleteOwned(user, type, id, mutationContext);
+            },
         });
     }
 
     if (notesService) {
         adapters.set('note', {
-            list: (user) => notesService.list(user, { limit: 500 }).items || [],
-            read: (user, id) => {
-                try {
-                    return notesService.get(user, id);
-                } catch {
-                    return null;
-                }
+            idOf: (row) => row.noteId,
+            residency: (user, id) => residencyOf(rawLookup, 'note', user, id),
+            list: (user) => {
+                const result = notesService.list(user, { limit: 500 });
+                const rows = result.items || result.notes || [];
+                return rows.filter((row) => row.ownerUserId === user.userId);
             },
+            read: (user, id) => readOwned(
+                rawLookup,
+                'note',
+                user,
+                id,
+                () => notesService.get(user, id),
+            ),
             revisionOf: (row) => Math.max(1, Number(row.revision) || 1),
-            create: (user, id, patch) => notesService.create(user, { ...patch, id }),
-            update: (user, id, patch) => notesService.update(user, id, patch),
+            create: (user, id, patch, mutationContext) => {
+                requireVacant(rawLookup, 'note', id);
+                return notesService.create(user, { ...patch, id }, mutationContext);
+            },
+            update: (user, id, patch, mutationContext) => {
+                const current = requireOwned(rawLookup, 'note', user, id);
+                return notesService.update(user, id, {
+                    ...patch,
+                    expectedRevision: Number(current.revision),
+                }, mutationContext);
+            },
             /* Soft delete: notes already have trash/restore, and the registry
              * records deleteMode `tombstone` for this type. A purge here would
              * make the client's restore action impossible to honour. */
-            remove: (user, id) => notesService.delete(user, id),
+            remove: (user, id, mutationContext) => {
+                requireOwned(rawLookup, 'note', user, id);
+                return notesService.delete(user, id, mutationContext);
+            },
             /* The registry's `restore` action exists precisely because delete is
              * soft here. SYNC_STATE_MACHINE.md 9 says a restore is a new
              * revision rather than an undo of the tombstone, which is what
              * NotesService.restore already does. */
-            restore: (user, id) => notesService.restore(user, id),
+            restore: (user, id, mutationContext) => {
+                requireOwned(rawLookup, 'note', user, id);
+                return notesService.restore(user, id, mutationContext);
+            },
         });
+    }
+
+    for (const [type, adapter] of createPersonalEntityAdapters({ userSettingsService })) {
+        adapters.set(type, adapter);
+    }
+
+    if (fileSyncConfigService || (db && typeof db.prepare === 'function'
+        && typeof db.exec === 'function' && store)) {
+        adapters.set('fileSyncConfig', createFileSyncConfigAdapter({
+            db,
+            store,
+            changeBridge,
+            service: fileSyncConfigService,
+        }));
+    }
+
+    for (const [type, adapter] of createAiProviderEntityAdapters({
+        registry: entityRegistry,
+        service: aiProviderService,
+    })) {
+        adapters.set(type, adapter);
+    }
+
+    /* AI memories, skills, and environment metadata share the same account
+     * canonical service as the Web settings facade and AI runtime. Passing
+     * the service instance preserves its bridge transaction and prevents a
+     * mobile-only table or an ownerless settings.ai fallback. */
+    const sharedAiKnowledgeService = aiKnowledgeService || userSettingsService?.aiKnowledgeService;
+    if (sharedAiKnowledgeService) {
+        for (const [type, adapter] of createAiKnowledgeEntityAdapters({
+            db,
+            store,
+            changeBridge,
+            registry: entityRegistry,
+            service: sharedAiKnowledgeService,
+        })) {
+            adapters.set(type, adapter);
+        }
+    }
+
+    for (const [type, adapter] of createAiHistoryEntityAdapters({
+        registry: entityRegistry,
+        service: aiHistoryService,
+    })) {
+        adapters.set(type, adapter);
+    }
+
+    for (const [type, adapter] of createWorkspacePortableEntityAdapters({
+        service: workspacePortableSyncService,
+    })) {
+        adapters.set(type, adapter);
+    }
+
+    for (const [type, adapter] of createServerMetadataEntityAdapters({
+        registry: entityRegistry,
+        serverSettings: serverMetadataServices?.serverSettings,
+        backupMetadata: serverMetadataServices?.backupMetadata,
+        activityEvents: serverMetadataServices?.activityEvents,
+        authorize: serverMetadataAuthorize,
+        serverId,
+    })) {
+        adapters.set(type, adapter);
+    }
+
+    for (const [type, adapter] of createAclTokenMetadataAdapters({
+        resourceAclService,
+        clientTokenService,
+    })) {
+        adapters.set(type, adapter);
     }
 
     return adapters;

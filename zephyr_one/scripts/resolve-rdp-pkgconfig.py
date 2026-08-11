@@ -57,7 +57,7 @@ def freerdp_pc_dir():
     default, so both are checked before falling back to a real search.
     """
     here = Path(__file__).resolve().parent
-    crate = here.parent / "native" / "zephyr-one-rdp"
+    crate = here.parent / "native" / "freerdp-core"
     prefix = Path(os.environ.get("ZEPHYR_FREERDP_PREFIX") or (crate / ".freerdp-dist"))
     install = prefix / "install"
 

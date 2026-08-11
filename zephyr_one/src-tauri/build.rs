@@ -20,15 +20,16 @@
 //!   claims native RDP while shipping the same Go/WASM pipeline as the browser,
 //!   which is the exact dishonesty NATIVE_ENGINE_DECISIONS.md ADR-004 forbids.
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-/// FreeRDP 3 first, then 2. The shim is written entirely against the accessor
-/// API (`freerdp_settings_get/set_*`), which both majors expose, so whichever is
-/// installed is the one we link.
-const CANDIDATES: [&[&str]; 2] = [
-    &["freerdp3", "freerdp-client3", "winpr3"],
-    &["freerdp2", "freerdp-client2", "winpr2"],
-];
+/// Zephyr One ships exactly the FreeRDP 3 ABI. These names are also a packaging
+/// contract: accepting an older ABI here could produce an installer whose
+/// runtime libraries do not match the headers used to compile the C shim.
+const FREERDP3_PACKAGES: [&str; 3] = ["freerdp3", "freerdp-client3", "winpr3"];
+const MIN_FREERDP3_VERSION: &str = "3.0.0";
+const PATCHED_FREERDP_STAMP: &str = "3.30.0+cliprdr-reassembly-limit-v1";
+const PATCHED_FREERDP_DEFINE: &str = "#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1";
 
 fn main() {
     tauri_build::build();
@@ -44,9 +45,17 @@ fn main() {
         .parent()
         .expect("src-tauri must have a parent")
         .join("native/freerdp-core");
-    println!("cargo:rerun-if-changed={}", native.join("zephyr_rdp.c").display());
-    println!("cargo:rerun-if-changed={}", native.join("zephyr_rdp.h").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        native.join("zephyr_rdp.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        native.join("zephyr_rdp.h").display()
+    );
     println!("cargo:rerun-if-env-changed=ZEPHYR_ONE_SKIP_NATIVE_RDP");
+    println!("cargo:rerun-if-env-changed=ZEPHYR_ONE_REQUIRE_PATCHED_FREERDP");
+    println!("cargo:rerun-if-env-changed=ZEPHYR_ONE_RDP_STATIC");
 
     /* Escape hatch for environments that genuinely cannot provide FreeRDP ?
      * a docs build, or a contributor checking that the rest of the shell
@@ -80,46 +89,35 @@ fn main() {
         );
     }
 
-    /* Probe with cargo_metadata OFF first. A half-installed major (freerdp3
-     * present, winpr3 missing) must not leak its partial link flags into a
-     * build that then falls back to freerdp2; only the winning set is
-     * re-probed with metadata on, which is what emits the
-     * cargo:rustc-link-lib / -link-search lines. */
-    let mut errors = Vec::new();
-    let found = CANDIDATES.iter().find_map(|pkgs| match probe(pkgs, false) {
-        Ok(includes) => Some((pkgs, includes)),
-        Err(error) => {
-            errors.push(error);
-            None
-        }
-    });
-    let Some((pkgs, include_paths)) = found else {
+    /* Probe with cargo_metadata OFF first. A half-installed FreeRDP 3 set must
+     * not leak partial link flags into the build. Only the complete, versioned
+     * set is re-probed with metadata on, which emits the cargo link directives. */
+    let include_paths = probe(&FREERDP3_PACKAGES, false).unwrap_or_else(|error| {
         panic!(
-            "FreeRDP development files not found (tried freerdp3, then freerdp2).\n\
+            "FreeRDP 3 development files were not found or are too old.\n\
              \n\
              Zephyr One's RDP engine is FreeRDP linked in-process; there is no\n\
-             WASM fallback in the desktop product. Install the dev package:\n\
+             WASM or FreeRDP 2 fallback in the desktop product. Install FreeRDP\n\
+             3.0.0 or newer with all three pkg-config modules:\n\
              \n\
              \x20 Debian/Ubuntu : sudo apt-get install freerdp3-dev\n\
              \x20 Alpine        : apk add freerdp-dev\n\
              \x20 macOS         : brew install freerdp\n\
              \x20 Windows       : vcpkg install freerdp:x64-windows\n\
              \n\
+             Required modules: freerdp3, freerdp-client3, winpr3\n\
              pkg-config reported:\n  {}\n\
              \n\
              To build the shell without RDP, set ZEPHYR_ONE_SKIP_NATIVE_RDP=1.\n\
              That build reports native_rdp_unavailable instead of connecting.",
-            errors.join("\n  ")
+            error
         );
-    };
-    // The winning set was probed a moment ago; a failure here means pkg-config
+    });
+    enforce_patched_freerdp(&include_paths);
+    // The complete set was probed a moment ago; a failure here means pkg-config
     // results changed mid-build, which deserves a loud abort, not a retry.
-    for &name in *pkgs {
-        pkg_config::Config::new()
-            .cargo_metadata(true)
-            .probe(name)
-            .unwrap_or_else(|error| panic!("FreeRDP package {name} vanished between probes: {error}"));
-    }
+    probe(&FREERDP3_PACKAGES, true)
+        .unwrap_or_else(|error| panic!("FreeRDP 3 package set changed between probes: {error}"));
 
     let mut build = cc::Build::new();
     build
@@ -135,6 +133,14 @@ fn main() {
         .flag_if_supported("-Wno-deprecated-declarations")
         .flag_if_supported("-D_POSIX_C_SOURCE=200809L");
 
+    // FreeRDP 3.30's public Windows header unconditionally marks consumers
+    // `dllimport`, including when CMake produced static archives. Its own
+    // static objects use this export macro, which makes declarations normal
+    // external references for the final link rather than `__imp_*` imports.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        build.define("FREERDP_EXPORTS", None);
+    }
+
     for path in include_paths {
         build.include(path);
     }
@@ -146,7 +152,7 @@ fn main() {
     println!("cargo:rustc-cfg=zephyr_native_rdp");
 }
 
-/// Locate one FreeRDP major through pkg-config.
+/// Locate the complete FreeRDP 3 ABI through pkg-config.
 ///
 /// Returns the include paths on success so the shim compiles against the same
 /// headers the library was built from. On failure the error names the package
@@ -155,15 +161,126 @@ fn main() {
 fn probe(pkgs: &[&str], cargo_metadata: bool) -> Result<Vec<PathBuf>, String> {
     let mut includes = Vec::new();
     for name in pkgs {
-        match pkg_config::Config::new()
-            .cargo_metadata(cargo_metadata)
-            .probe(name)
-        {
-            Ok(lib) => includes.extend(lib.include_paths),
+        match pkg_config(cargo_metadata).probe(name) {
+            Ok(lib) => {
+                let forbidden = lib
+                    .libs
+                    .iter()
+                    .filter(|linked| is_freerdp2_link_name(linked))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !forbidden.is_empty() {
+                    return Err(format!(
+                        "{name}: pkg-config resolved forbidden FreeRDP 2 libraries: {}",
+                        forbidden.join(", ")
+                    ));
+                }
+                includes.extend(lib.include_paths);
+            }
             Err(error) => return Err(format!("{name}: {error}")),
         }
     }
     Ok(includes)
+}
+
+fn pkg_config(cargo_metadata: bool) -> pkg_config::Config {
+    let mut config = pkg_config::Config::new();
+    config
+        .cargo_metadata(cargo_metadata)
+        .atleast_version(MIN_FREERDP3_VERSION);
+    if std::env::var("ZEPHYR_ONE_RDP_STATIC").as_deref() == Ok("1") {
+        config.statik(true);
+    }
+    config
+}
+
+fn enforce_patched_freerdp(include_paths: &[PathBuf]) {
+    let required = std::env::var("PROFILE").as_deref() == Ok("release")
+        || std::env::var("ZEPHYR_ONE_REQUIRE_PATCHED_FREERDP").as_deref() == Ok("1");
+
+    match find_patched_freerdp(include_paths) {
+        Ok((header, stamp)) => {
+            println!("cargo:rerun-if-changed={}", header.display());
+            println!("cargo:rerun-if-changed={}", stamp.display());
+        }
+        Err(error) if required => panic!(
+            "release/native CI requires Zephyr's pinned, patched FreeRDP 3.30.0 build: {error}.\n\
+             Run native/freerdp-core/scripts/build-freerdp.sh and then\n\
+             scripts/resolve-rdp-pkgconfig.py before invoking Cargo."
+        ),
+        Err(error) => println!(
+            "cargo:warning=unpatched FreeRDP 3 accepted for a non-release local build ({error}); \
+             clipboard redirection remains unavailable"
+        ),
+    }
+}
+
+fn find_patched_freerdp(include_paths: &[PathBuf]) -> Result<(PathBuf, PathBuf), String> {
+    let mut inspected = Vec::new();
+    for include in include_paths {
+        for relative in [
+            Path::new("freerdp/client/channels.h"),
+            Path::new("freerdp3/freerdp/client/channels.h"),
+        ] {
+            let header = include.join(relative);
+            if !header.is_file() {
+                continue;
+            }
+            inspected.push(header.display().to_string());
+            let source = fs::read_to_string(&header)
+                .map_err(|error| format!("could not read {}: {error}", header.display()))?;
+            if !source
+                .lines()
+                .any(|line| line.trim() == PATCHED_FREERDP_DEFINE)
+            {
+                continue;
+            }
+
+            for root in include.ancestors().take(4) {
+                let stamp = root.join(".zephyr-freerdp-tag");
+                if !stamp.is_file() {
+                    continue;
+                }
+                let value = fs::read_to_string(&stamp)
+                    .map_err(|error| format!("could not read {}: {error}", stamp.display()))?;
+                if value.trim() == PATCHED_FREERDP_STAMP {
+                    return Ok((header, stamp));
+                }
+                return Err(format!(
+                    "{} contains {:?}, expected {:?}",
+                    stamp.display(),
+                    value.trim(),
+                    PATCHED_FREERDP_STAMP
+                ));
+            }
+            return Err(format!(
+                "{} has the patch macro but no .zephyr-freerdp-tag stamp",
+                header.display()
+            ));
+        }
+    }
+    Err(format!(
+        "patch marker not found in FreeRDP include paths ({})",
+        if inspected.is_empty() {
+            include_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            inspected.join(", ")
+        }
+    ))
+}
+
+fn is_freerdp2_link_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("freerdp2")
+        || name.starts_with("freerdp-client2")
+        || name.starts_with("winpr2")
+        || name.starts_with("libfreerdp2")
+        || name.starts_with("libfreerdp-client2")
+        || name.starts_with("libwinpr2")
 }
 
 /// pkg-config is a separate binary from the libraries it describes; a missing

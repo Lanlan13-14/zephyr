@@ -6,6 +6,7 @@ import one.zephyr.mobile.model.FileSyncDirectoryIntent
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SecretState
+import one.zephyr.mobile.model.wipePlaintext
 import one.zephyr.mobile.model.TerminalEncoding
 
 /**
@@ -100,6 +101,7 @@ data class ConnectionDraft(
         } else {
             privateKey
         }
+        if (nextPrivateKey !== privateKey) privateKey.wipePlaintext()
         return copy(current = moved, privateKey = nextPrivateKey)
     }
 
@@ -164,12 +166,31 @@ data class ConnectionDraft(
      * A blank replacement is folded to [SecretState.Clear]: the user emptied the field, and sending
      * an empty plaintext as a new secret would store a credential that cannot authenticate.
      */
-    fun withPassword(state: SecretState): ConnectionDraft = copy(password = foldSecret(state))
+    fun withPassword(state: SecretState): ConnectionDraft {
+        val next = foldSecret(state)
+        if (password !== next) password.wipePlaintext()
+        return copy(password = next)
+    }
 
-    fun withPrivateKey(state: SecretState): ConnectionDraft = copy(privateKey = foldSecret(state))
+    fun withPrivateKey(state: SecretState): ConnectionDraft {
+        val next = foldSecret(state)
+        if (privateKey !== next) privateKey.wipePlaintext()
+        return copy(privateKey = next)
+    }
 
     private fun foldSecret(state: SecretState): SecretState =
-        if (state is SecretState.Replace && state.plaintext.isBlank()) SecretState.Clear else state
+        if (state is SecretState.Replace && state.isBlank) {
+            state.wipe()
+            SecretState.Clear
+        } else {
+            state
+        }
+
+    fun wipeSecretBuffers(): ConnectionDraft {
+        password.wipePlaintext()
+        privateKey.wipePlaintext()
+        return copy(password = SecretState.Unchanged, privateKey = SecretState.Unchanged)
+    }
 
     // ---- normalisation and mask ----------------------------------------------------------------
 
@@ -389,7 +410,6 @@ data class ConnectionDraft(
             "rdpTouchSensitivity" to { c: Connection -> c.rdp.touchSensitivity },
             "rdpDomain" to { c: Connection -> c.rdp.domain },
             "encoding" to { c: Connection -> c.encoding },
-            "visibility" to { c: Connection -> c.visibility },
         )
 
         private val RDP_ONLY_FIELDS = setOf(

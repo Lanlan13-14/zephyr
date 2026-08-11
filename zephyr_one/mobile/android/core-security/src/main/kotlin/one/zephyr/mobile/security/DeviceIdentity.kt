@@ -27,11 +27,11 @@ import one.zephyr.mobile.model.SecretRef
 class DeviceIdentity(
     private val blobs: SecretBlobStore,
     private val scope: Scope,
-    private val wrapAlias: String = KeystoreMasterKey.ALIAS_DEVICE_KEY_WRAP,
-    private val signingAlias: String = ALIAS_SIGNING,
+    private val wrapAlias: String = deviceIdentityAlias(KeystoreMasterKey.ALIAS_DEVICE_KEY_WRAP, scope),
+    private val signingAlias: String = deviceIdentityAlias(ALIAS_SIGNING, scope),
 ) {
 
-    data class Scope(val serverId: String, val deviceId: String)
+    data class Scope(val serverId: String, val userId: String, val deviceId: String)
 
     /** What the bind request sends. Public material only. */
     data class PublicKeys(
@@ -56,7 +56,7 @@ class DeviceIdentity(
      */
     fun ensureKeys(): PublicKeys {
         val kem = MlKem.require()
-        if (blobs.read(refPrivate) == null || blobs.read(refPublic) == null) {
+        if (blobs.readMigratingLegacyRef(refPrivate) == null || blobs.readMigratingLegacyRef(refPublic) == null) {
             val pair = kem.generateKeyPair()
             MlKem.requirePublicKeyLength(pair.publicKey)
             val wrapKey = KeystoreMasterKey.getOrCreate(wrapAlias)
@@ -75,17 +75,22 @@ class DeviceIdentity(
         )
     }
 
-    fun hasKeys(): Boolean = blobs.read(refPublic) != null && keyStore().containsAlias(signingAlias)
+    fun hasKeys(): Boolean =
+        blobs.readMigratingLegacyRef(refPrivate) != null &&
+            blobs.readMigratingLegacyRef(refPublic) != null &&
+            keyStore().containsAlias(signingAlias)
 
     fun encryptionPublicKey(): ByteArray =
-        blobs.read(refPublic) ?: error("device encryption key is missing; rebind is required")
+        blobs.readMigratingLegacyRef(refPublic)
+            ?: error("device encryption key is missing; rebind is required")
 
     /**
      * Runs [block] with the unwrapped ML-KEM private key and zeroes it afterwards, so the key is
      * never left in a long-lived field.
      */
     fun <T> withPrivateKey(block: (ByteArray) -> T): T {
-        val blob = blobs.read(refPrivate) ?: error("device encryption key is missing; rebind is required")
+        val blob = blobs.readMigratingLegacyRef(refPrivate)
+            ?: error("device encryption key is missing; rebind is required")
         val wrapKey = KeystoreMasterKey.getOrCreate(wrapAlias)
         val privateKey = KeystoreMasterKey.open(wrapKey, blob, aad("mlkem-private"))
         return try {
@@ -96,37 +101,37 @@ class DeviceIdentity(
     }
 
     /**
-     * ES256 device proof over method, path, body hash, timestamp and server nonce
-     * (openapi-mobile-v1.json security scheme DeviceProof).
+     * Signs the challenge-bound v2 proof used by data-plane transports such as sync wake SSE.
      *
-     * The signed string is NUL-joined for the same reason the envelope AAD is: no field can be
-     * shifted into its neighbour to forge a different request.
+     * AndroidKeyStore emits ASN.1 DER ECDSA signatures. The mobile-v1 contract deliberately uses
+     * fixed-width IEEE P1363, so conversion happens before the signature crosses the wire.
      */
-    fun signRequestProof(
+    fun signChallengeProof(
         method: String,
-        path: String,
-        body: ByteArray,
+        canonicalPath: String,
+        bodySha256: String,
+        usage: String,
         timestampSeconds: Long,
         serverNonce: String,
     ): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(body)
         val signed = buildString {
-            append(PROOF_PREFIX).append('\u0000')
+            append(PROOF_V2_PREFIX).append('\u0000')
             append(scope.deviceId).append('\u0000')
             append(method.uppercase()).append('\u0000')
-            append(path).append('\u0000')
-            append(Base64Codec.encode(digest)).append('\u0000')
+            append(canonicalPath).append('\u0000')
+            append(bodySha256).append('\u0000')
+            append(usage).append('\u0000')
             append(timestampSeconds).append('\u0000')
             append(serverNonce)
         }.toByteArray(Charsets.UTF_8)
 
         val entry = keyStore().getEntry(signingAlias, null) as? KeyStore.PrivateKeyEntry
             ?: error("device signing key is missing; rebind is required")
-        val signature = Signature.getInstance("SHA256withECDSA").apply {
+        val der = Signature.getInstance("SHA256withECDSA").apply {
             initSign(entry.privateKey)
             update(signed)
         }.sign()
-        return Base64Codec.encode(signature)
+        return Base64Codec.encode(derEcdsaToP1363(der))
     }
 
     fun attestation(): Attestation {
@@ -140,8 +145,8 @@ class DeviceIdentity(
 
     /** Unbind, device revoke or instance epoch change: identity must not survive. */
     fun wipe() {
-        blobs.delete(refPrivate)
-        blobs.delete(refPublic)
+        blobs.deleteCurrentAndLegacyRef(refPrivate)
+        blobs.deleteCurrentAndLegacyRef(refPublic)
         val store = keyStore()
         if (store.containsAlias(signingAlias)) store.deleteEntry(signingAlias)
         KeystoreMasterKey.delete(wrapAlias)
@@ -205,7 +210,10 @@ class DeviceIdentity(
     private fun keyStore(): KeyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
 
     private fun aad(purpose: String): ByteArray =
-        (AAD_PREFIX + "\u0000" + scope.serverId + "\u0000" + scope.deviceId + "\u0000" + purpose)
+        (
+            AAD_PREFIX + "\u0000" + scope.serverId + "\u0000" + scope.userId +
+                "\u0000" + scope.deviceId + "\u0000" + purpose
+            )
             .toByteArray(Charsets.UTF_8)
 
     /**
@@ -219,8 +227,10 @@ class DeviceIdentity(
         return Base64Codec.encodeUrlNoPad(padded)
     }
 
-    private val refPrivate: SecretRef get() = SecretRef.of(RESERVED_ENTITY, scope.deviceId, "mlkemPrivateKey")
-    private val refPublic: SecretRef get() = SecretRef.of(RESERVED_ENTITY, scope.deviceId, "mlkemPublicKey")
+    private val refPrivate: SecretRef
+        get() = SecretRef.of(RESERVED_ENTITY, deviceIdentityScopeDigest(scope), "mlkemPrivateKey")
+    private val refPublic: SecretRef
+        get() = SecretRef.of(RESERVED_ENTITY, deviceIdentityScopeDigest(scope), "mlkemPublicKey")
 
     companion object {
         const val ALIAS_SIGNING: String = "zephyr.one.device.es256.v1"
@@ -228,6 +238,82 @@ class DeviceIdentity(
         private const val PROVIDER = "AndroidKeyStore"
         private const val RESERVED_ENTITY = "__deviceIdentity"
         private const val AAD_PREFIX = "zephyr-one-device-identity-v1"
-        private const val PROOF_PREFIX = "zephyr-one-device-proof-v1"
+        private const val PROOF_V2_PREFIX = "zephyr-one-device-proof-v2"
     }
+}
+
+/** Device identity ciphertext has ref-independent AAD, so its historical key can migrate as-is. */
+internal fun SecretBlobStore.readMigratingLegacyRef(ref: SecretRef): ByteArray? {
+    read(ref)?.let { return it }
+    val legacy = ref.legacyValueOrNull()?.takeIf { it != ref.value }?.let(::SecretRef) ?: return null
+    val blob = read(legacy) ?: return null
+    write(ref, blob)
+    delete(legacy)
+    return blob
+}
+
+internal fun SecretBlobStore.deleteCurrentAndLegacyRef(ref: SecretRef) {
+    delete(ref)
+    ref.legacyValueOrNull()
+        ?.takeIf { it != ref.value }
+        ?.let { delete(SecretRef(it)) }
+}
+
+internal fun deviceIdentityAlias(base: String, scope: DeviceIdentity.Scope): String =
+    base + "." + deviceIdentityScopeDigest(scope)
+
+private fun deviceIdentityScopeDigest(scope: DeviceIdentity.Scope): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest(
+            (scope.serverId + "\u0000" + scope.userId + "\u0000" + scope.deviceId)
+                .toByteArray(Charsets.UTF_8),
+        )
+        .take(16)
+        .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+
+/** Converts the two positive DER INTEGERs into fixed-width r || s. */
+internal fun derEcdsaToP1363(der: ByteArray, fieldBytes: Int = 32): ByteArray {
+    var offset = 0
+
+    fun readByte(): Int {
+        require(offset < der.size) { "truncated ECDSA signature" }
+        return der[offset++].toInt() and 0xff
+    }
+
+    fun readLength(): Int {
+        val first = readByte()
+        if (first < 0x80) return first
+        val count = first and 0x7f
+        require(count in 1..2) { "unsupported ECDSA DER length" }
+        var value = 0
+        repeat(count) { value = (value shl 8) or readByte() }
+        return value
+    }
+
+    fun readInteger(): ByteArray {
+        require(readByte() == 0x02) { "invalid ECDSA DER integer" }
+        val length = readLength()
+        require(length > 0 && offset + length <= der.size) { "invalid ECDSA DER integer length" }
+        var start = offset
+        val end = offset + length
+        offset = end
+        require(der[start].toInt() and 0x80 == 0) { "negative ECDSA DER integer" }
+        if (end - start > 1 && der[start] == 0.toByte()) {
+            require(der[start + 1].toInt() and 0x80 != 0) { "non-canonical ECDSA DER integer" }
+            start += 1
+        }
+        val valueLength = end - start
+        require(valueLength <= fieldBytes) { "ECDSA integer exceeds field width" }
+        return ByteArray(fieldBytes).also { output ->
+            der.copyInto(output, fieldBytes - valueLength, start, end)
+        }
+    }
+
+    require(readByte() == 0x30) { "invalid ECDSA DER sequence" }
+    val sequenceLength = readLength()
+    require(sequenceLength == der.size - offset) { "invalid ECDSA DER sequence length" }
+    val r = readInteger()
+    val s = readInteger()
+    require(offset == der.size) { "trailing ECDSA DER bytes" }
+    return r + s
 }

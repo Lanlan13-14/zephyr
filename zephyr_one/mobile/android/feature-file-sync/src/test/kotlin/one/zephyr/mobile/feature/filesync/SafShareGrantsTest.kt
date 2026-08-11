@@ -88,18 +88,20 @@ class SafShareGrantsTest {
     }
 
     @Test
-    fun revokingOneOfTwoSharesOverTheSameTreeKeepsTheGrant() {
+    fun revokingOneOfTwoSharesOverTheSameTreeKeepsOnlyTheModesStillNeeded() {
         /* Multiple profiles over one directory is legal (DEVELOPMENT.md 13.2). Releasing on the first
          * removal would silently break the second. */
         grants.authorize("p1", "PHONE", tree, requestWrite = true)
         grants.authorize("p2", "DOCUMENTS", tree, requestWrite = false)
 
         grants.revoke("p1")
-        assertEquals(emptyList<String>(), permissions.released)
+        /* p2 is read-only, so the shared URI stays readable but no unexplained write authority is
+         * retained after the sole writable profile is removed. */
+        assertEquals(UriGrant(tree, canRead = true, canWrite = false), permissions.persisted().single())
         assertEquals(true, grants.grant("p2")?.grantValid)
 
         grants.revoke("p2")
-        assertEquals(listOf(tree), permissions.released)
+        assertTrue(permissions.persisted().isEmpty())
     }
 
     @Test

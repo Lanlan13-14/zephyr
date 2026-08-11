@@ -9,6 +9,7 @@ android {
 dependencies {
     implementation(project(":core-ui"))
     implementation(project(":core-sync"))
+    implementation(project(":core-security"))
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

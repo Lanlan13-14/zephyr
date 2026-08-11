@@ -2,15 +2,30 @@ package one.zephyr.mobile.app.di
 
 import android.content.Context
 import android.net.Uri
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import one.zephyr.mobile.app.binding.AccountDatabaseReadiness
+import one.zephyr.mobile.app.binding.BindingGeneration
+import one.zephyr.mobile.app.binding.BindingTeardownScope
+import one.zephyr.mobile.app.binding.ManagedBindingGraph
+import one.zephyr.mobile.app.binding.isDeviceRevocationError
 import one.zephyr.mobile.app.session.WorkspaceStatePersistence
 import one.zephyr.mobile.app.sync.SyncWorker
 import one.zephyr.mobile.data.LocalWriteGateway
 import one.zephyr.mobile.data.MirrorWriter
+import one.zephyr.mobile.data.SecretMutationJournal
+import one.zephyr.mobile.data.db.AccountDatabaseScope
+import one.zephyr.mobile.data.db.DevicePreferenceRow
 import one.zephyr.mobile.data.db.ZephyrDatabase
 import one.zephyr.mobile.data.repository.ConflictRepository
 import one.zephyr.mobile.data.repository.ConnectionRepository
@@ -31,14 +46,19 @@ import one.zephyr.mobile.model.AccountBinding
 import one.zephyr.mobile.network.ApiEndpoint
 import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.network.CredentialStore
+import one.zephyr.mobile.network.CredentialScope
+import one.zephyr.mobile.network.DeviceProofSigner
 import one.zephyr.mobile.network.MobileApi
 import one.zephyr.mobile.network.MobileApiClient
+import one.zephyr.mobile.network.MobileWakeStreamTransport
 import one.zephyr.mobile.network.NetworkMonitor
 import one.zephyr.mobile.network.NetworkState
 import one.zephyr.mobile.network.SharedResourceClient
+import one.zephyr.mobile.network.WakeProofSigner
 import one.zephyr.mobile.security.DeviceIdentity
 import one.zephyr.mobile.security.SecretStore
 import one.zephyr.mobile.security.SessionSecretArena
+import one.zephyr.mobile.security.LockSensitiveSink
 import one.zephyr.mobile.sync.ApiSharedResourceFetcher
 import one.zephyr.mobile.sync.BlobTransferPort
 import one.zephyr.mobile.sync.DeviceEnvelopeOpener
@@ -49,8 +69,25 @@ import one.zephyr.mobile.sync.ServerEncryptionKey
 import one.zephyr.mobile.sync.SharedResourceCoordinator
 import one.zephyr.mobile.sync.SyncActor
 import one.zephyr.mobile.sync.SyncEngine
+import one.zephyr.mobile.sync.SyncRoundResult
 import one.zephyr.mobile.sync.SyncScheduler
 import one.zephyr.mobile.sync.SyncSettings
+import one.zephyr.mobile.sync.WakeBindingIdentity
+import one.zephyr.mobile.sync.WakeCoordinator
+
+/** The only application-wide side effect allowed when an account graph becomes durable. */
+internal class AccountContainerShareActivation(
+    private val grants: SafShareGrants,
+) {
+    private var activated = false
+
+    @Synchronized
+    fun activate() {
+        if (activated) return
+        grants.reconcilePersistedPermissions()
+        activated = true
+    }
+}
 
 /**
  * Everything that only exists once an account is bound.
@@ -70,9 +107,11 @@ import one.zephyr.mobile.sync.SyncSettings
 class AccountContainer(
     private val context: Context,
     /** The account this graph belongs to. Every scope below is derived from it, never invented. */
-    val binding: AccountBinding,
+    override val binding: AccountBinding,
     endpoint: ApiEndpoint,
     private val appContainer: AppContainer,
+    private val databaseScope: AccountDatabaseScope,
+    val database: ZephyrDatabase,
     appVersion: String,
     /**
      * Sync preferences as persisted for this binding.
@@ -81,10 +120,32 @@ class AccountContainer(
      * silently re-enable automatic sync for a user who turned it off.
      */
     initialSyncSettings: SyncSettings,
-) {
+) : ManagedBindingGraph {
 
     /** Identifies this binding's rows in `sync_state` / `bootstrap_progress`. */
-    val bindingKey: String = bindingKeyOf(binding)
+    override val bindingKey: String = bindingKeyOf(binding)
+
+    /**
+     * Stable across process recreation, but different after a fresh bind of the same account.
+     * WorkManager persists it with each request so work left by an older graph fails closed.
+     */
+    override val generation: String = generationOf(binding)
+
+    init {
+        require(databaseScope.serverId == binding.serverProfileId) { "database server scope mismatch" }
+        require(databaseScope.userId == binding.userId) { "database user scope mismatch" }
+        require(databaseScope.generation == generation) { "database generation scope mismatch" }
+    }
+
+    private val accountJob = SupervisorJob()
+    private val accountScope = CoroutineScope(accountJob + Dispatchers.Default)
+    private val syncJob = SupervisorJob(accountJob)
+    private val syncScope = CoroutineScope(syncJob + Dispatchers.Default)
+    private val wakeJob = SupervisorJob(accountJob)
+    private val wakeScope = CoroutineScope(wakeJob + Dispatchers.Default)
+    private val started = AtomicBoolean(false)
+    private val preparedDiscarded = AtomicBoolean(false)
+    private val networkEnabled = AtomicBoolean(false)
 
     /**
      * Scoped to the bound triple, not to the install.
@@ -98,17 +159,29 @@ class AccountContainer(
             serverId = binding.serverProfileId,
             userId = binding.userId,
             deviceId = binding.deviceId,
+            generation = generation,
         ),
     )
 
-    val database: ZephyrDatabase = appContainer.database
+    val journal: SecretMutationJournal = SecretMutationJournal(
+        db = database,
+        secretStore = secretStore,
+        serverId = binding.serverProfileId,
+        ownerUserId = binding.userId,
+        deviceId = binding.deviceId,
+        bindingGeneration = generation,
+    )
 
-    val credentials: CredentialStore = CredentialStore(secretStore)
+    val credentials: CredentialStore = CredentialStore(
+        secretStore = secretStore,
+        scope = CredentialScope(bindingKey = bindingKey, generation = generation),
+    )
 
     val deviceIdentity: DeviceIdentity = DeviceIdentity(
         blobs = appContainer.secretBlobs,
         scope = DeviceIdentity.Scope(
             serverId = binding.serverProfileId,
+            userId = binding.userId,
             deviceId = binding.deviceId,
         ),
     )
@@ -117,33 +190,34 @@ class AccountContainer(
      * Session-scoped plaintext for shared resources.
      *
      * Shared material must not reach the mirror at all (SHARED_RESOURCE_RESIDENCY.md), so it lives
-     * here and dies with the session. Registered as a lock sink in [start] so a device lock wipes it
+     * here and dies with the session. Registered as a lock sink in [activate] so a device lock wipes it
      * without waiting for the session to end.
      */
     val sessionSecrets: SessionSecretArena = SessionSecretArena()
 
+    internal fun registerSensitiveSink(sink: LockSensitiveSink) = appContainer.appLock.register(sink)
+
+    internal fun unregisterSensitiveSink(sink: LockSensitiveSink) = appContainer.appLock.unregister(sink)
+
     // -- network --
+
+    private val deviceProofSigner = DeviceProofSigner { challenge ->
+        deviceIdentity.signChallengeProof(
+            method = challenge.method,
+            canonicalPath = challenge.canonicalPath,
+            bodySha256 = challenge.bodySha256,
+            usage = challenge.usage,
+            timestampSeconds = challenge.timestamp,
+            serverNonce = challenge.nonce,
+        )
+    }
 
     val apiClient: MobileApiClient = MobileApiClient(
         endpoint = endpoint,
         credentials = credentials,
         refresher = { refreshAccess() },
         appVersion = appVersion,
-        proofSigner = { method, path, body, nonce ->
-            /* Unsigned rather than a fabricated signature when the server sent no nonce: the proof
-             * binds one request to this device's signing key, and a proof computed over an invented
-             * nonce would be replayable. Returning null makes the interceptor omit the header, which
-             * the server can reject explicitly. */
-            nonce?.let { serverNonce ->
-                deviceIdentity.signRequestProof(
-                    method = method,
-                    path = path,
-                    body = body,
-                    timestampSeconds = System.currentTimeMillis() / 1000L,
-                    serverNonce = serverNonce,
-                )
-            }
-        },
+        proofSigner = deviceProofSigner,
     )
 
     val api: MobileApi = MobileApi(apiClient)
@@ -157,7 +231,7 @@ class AccountContainer(
 
     // -- local data --
 
-    val writeGateway: LocalWriteGateway = LocalWriteGateway(database, secretStore)
+    val writeGateway: LocalWriteGateway = LocalWriteGateway(database, secretStore, journal)
 
     val connections: ConnectionRepository = ConnectionRepository(database, writeGateway)
 
@@ -171,7 +245,7 @@ class AccountContainer(
 
     val conflicts: ConflictRepository = ConflictRepository(database)
 
-    val mirror: MirrorWriter = MirrorWriter(database, secretStore)
+    val mirror: MirrorWriter = MirrorWriter(database, secretStore, secretJournal = journal)
 
     /** Online-only and memory resident: shared-to-me resources have no mirror by contract. */
     val sharedResources: SharedResourceStore = SharedResourceStore()
@@ -210,6 +284,13 @@ class AccountContainer(
         context.getSharedPreferences(PersistentShareStore.PREFERENCES, Context.MODE_PRIVATE),
     )
 
+    private val fileSyncOwnerId = PersistentShareStore.ownerId(
+        binding.serverProfileId,
+        binding.userId,
+        binding.deviceId,
+        generation,
+    )
+
     /**
      * The directories the user has authorised for file sync.
      *
@@ -219,11 +300,17 @@ class AccountContainer(
      */
     val shareGrants: SafShareGrants = SafShareGrants(
         permissions = ContentResolverUriPermissions(context.contentResolver),
-        store = PersistentShareStore(fileSyncStore),
+        store = PersistentShareStore(fileSyncStore, ownerId = fileSyncOwnerId),
+        reconcileOnInit = false,
     )
 
+    private val shareActivation = AccountContainerShareActivation(shareGrants)
+
     /** Which authorised directory each connection uses. Device-local, per DEVELOPMENT.md 13.2. */
-    val connectionShares: ConnectionSharePreferences = ConnectionSharePreferences(fileSyncStore)
+    val connectionShares: ConnectionSharePreferences = ConnectionSharePreferences(
+        store = fileSyncStore,
+        ownerId = fileSyncOwnerId,
+    )
 
     /**
      * Resolves a connection to the drive profile an RDP session can map.
@@ -303,6 +390,7 @@ class AccountContainer(
         bindingKey = bindingKey,
         boundUserId = binding.userId,
         envelopeOpener = envelopeOpener,
+        secretJournal = journal,
     )
 
     val transport: MobileApiTransport = MobileApiTransport(api, binding.deviceId)
@@ -334,7 +422,12 @@ class AccountContainer(
         },
     )
 
-    val scheduler: SyncScheduler = SyncScheduler(context, SyncWorker::class.java)
+    val scheduler: SyncScheduler = SyncScheduler(
+        context = context,
+        workerClass = SyncWorker::class.java,
+        bindingKey = bindingKey,
+        generation = generation,
+    )
 
     private val syncSettings = MutableStateFlow(initialSyncSettings)
 
@@ -356,15 +449,141 @@ class AccountContainer(
         localWriteSignals = writeGateway.writeSignals,
     )
 
+    internal val wakeIdentity = WakeBindingIdentity(
+        serverId = binding.serverProfileId,
+        userId = binding.userId,
+        deviceId = binding.deviceId,
+        generation = generation,
+    )
+
+    private val wakeCoordinator = WakeCoordinator(
+        identity = wakeIdentity,
+        transport = MobileWakeStreamTransport(
+            client = apiClient,
+            proofSigner = WakeProofSigner(deviceProofSigner::sign),
+        ),
+        currentIdentity = appContainer::currentWakeIdentity,
+        appliedCursor = { syncState.state(bindingKey)?.appliedCursor ?: 0L },
+        requestSync = {
+            val results = syncEngine.onServerWake()
+            results.isNotEmpty() && results.all { it.complete }
+        },
+        onTerminal = { code ->
+            if (isDeviceRevocationError(code)) {
+                // No new producer may start once the server has made a terminal decision. Persist
+                // the fence before waiting on cleanup so process death can only resume teardown.
+                networkEnabled.set(false)
+                if (appContainer.persistWakeDeviceRevocationFence(bindingKey, generation)) {
+                    syncJob.cancelAndJoin()
+                    scheduler.cancelAllAndAwait()
+                    appContainer.completeWakeDeviceRevocation()
+                }
+            }
+        },
+    )
+
     /**
      * Starts the long-lived collectors and arms the lock sink.
      *
      * Separate from construction so a test can build the graph without spawning coroutines, and so
      * the scope is the application's rather than one screen's.
      */
-    fun start(scope: CoroutineScope) {
+    override suspend fun activate() {
+        check(!preparedDiscarded.get()) { "discarded account graph cannot be activated" }
+        shareActivation.activate()
+        if (!started.compareAndSet(false, true)) return
+        journal.recover()
+        syncState.ensure(bindingKey)
+        networkEnabled.set(true)
+        appContainer.appLock.register(secretStore)
         appContainer.appLock.register(sessionSecrets)
-        syncEngine.start(scope)
+        syncEngine.start(syncScope)
+        syncScope.launch {
+            syncEngine.lastRoundResult.collect { round ->
+                if (isDeviceRevocationError(round?.error?.code)) {
+                    appContainer.onDeviceRevoked(bindingKey, generation)
+                }
+            }
+        }
+        wakeCoordinator.start(wakeScope)
+        wakeCoordinator.onForegroundChanged(appContainer.isProcessForeground())
+        wakeScope.launch {
+            network.collect { state -> wakeCoordinator.onNetworkChanged(state.connected) }
+        }
+    }
+
+    /** Runs the first bootstrap inside this account's cancellable lifetime. */
+    override suspend fun bootstrapAfterBind(): List<SyncRoundResult> =
+        if (networkEnabled.get()) syncScope.async { syncEngine.onBindComplete() }.await() else emptyList()
+
+    /** Runs only when the worker's persisted identity has already matched this graph. */
+    override suspend fun runScheduledRound(): List<SyncRoundResult> =
+        if (networkEnabled.get()) syncScope.async { syncEngine.runScheduledRound() }.await() else emptyList()
+
+    override suspend fun accountDatabaseRequiresBootstrap(): Boolean =
+        AccountDatabaseReadiness.requiresBootstrap(
+            database.devicePreferenceDao().find(AccountDatabaseReadiness.MARKER_KEY)?.valueJson,
+            binding,
+        )
+
+    override suspend fun markAccountDatabaseReady() {
+        database.devicePreferenceDao().upsert(
+            DevicePreferenceRow(
+                key = AccountDatabaseReadiness.MARKER_KEY,
+                valueJson = AccountDatabaseReadiness.marker(binding),
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /**
+     * Quiesces the graph before its reference or secrets are cleared.
+     *
+     * Cancelling this job waits for actor rounds and collectors started by this account. WorkManager
+     * cancellation follows, so no queued worker can reacquire the graph during teardown.
+     */
+    override suspend fun stopAndJoin() {
+        networkEnabled.set(false)
+        wakeCoordinator.stopAndJoin()
+        wakeJob.cancelAndJoin()
+        syncJob.cancelAndJoin()
+        accountJob.cancelAndJoin()
+        scheduler.cancelAllAndAwait()
+        dispose()
+    }
+
+    internal fun onProcessForegroundChanged(foreground: Boolean) {
+        wakeCoordinator.onForegroundChanged(foreground)
+    }
+
+    /** Silent-push fallback: identity is checked again by the persisted worker after process death. */
+    internal fun onPushWake(expectedBindingKey: String, expectedGeneration: String) {
+        if (!networkEnabled.get() || bindingKey != expectedBindingKey || generation != expectedGeneration) return
+        scheduler.requestBackgroundRound(syncSettings.value.networkPolicy, expedited = true)
+    }
+
+    /** Erases every credential, key and device-local handle owned by this binding. */
+    override fun wipeBindingState() {
+        appContainer.wipeBindingScope(BindingTeardownScope.of(binding))
+    }
+
+    override fun isRecoverable(): Boolean =
+        credentials.refreshCredential() != null && deviceIdentity.hasKeys()
+
+    override fun storeCredentials(access: String, accessExpiresAt: Long?, refresh: String) {
+        credentials.replaceBindingCredentials(access, accessExpiresAt, refresh)
+    }
+
+    override fun discardPreparedState() {
+        check(!started.get()) { "active account graph requires full binding teardown" }
+        if (!preparedDiscarded.compareAndSet(false, true)) return
+        networkEnabled.set(false)
+        accountJob.cancel()
+        secretStore.evictPlaintextCache()
+        sessionSecrets.purgeAll()
+        sharedResourceCoordinator.clear()
+        sessions.clear()
+        appContainer.discardPreparedBindingScope(BindingTeardownScope.of(binding))
     }
 
     /**
@@ -374,8 +593,10 @@ class AccountContainer(
      * so failing to unregister would keep an unbound account's arena reachable - exactly what an
      * unbind is supposed to prevent.
      */
-    fun dispose() {
+    private fun dispose() {
+        appContainer.appLock.unregister(secretStore)
         appContainer.appLock.unregister(sessionSecrets)
+        secretStore.evictPlaintextCache()
         sessionSecrets.purgeAll()
         sharedResourceCoordinator.clear()
         sessions.clear()
@@ -404,8 +625,11 @@ class AccountContainer(
         return when (val result = api.refresh(binding.deviceId, refresh)) {
             is ApiResult.Success -> {
                 val body = result.value
-                credentials.storeAccess(body.accessCredential, body.accessExpiresAt)
-                credentials.storeRefresh(body.refreshCredential)
+                credentials.replaceBindingCredentials(
+                    access = body.accessCredential,
+                    expiresAt = body.accessExpiresAt,
+                    refresh = body.refreshCredential,
+                )
                 true
             }
             is ApiResult.Failure -> false
@@ -421,5 +645,14 @@ class AccountContainer(
          */
         fun bindingKeyOf(binding: AccountBinding): String =
             binding.serverProfileId + "/" + binding.userId + "/" + binding.deviceId
+
+        fun generationOf(binding: AccountBinding): String =
+            BindingGeneration.of(binding)
+
+        fun databaseScopeOf(binding: AccountBinding): AccountDatabaseScope = AccountDatabaseScope(
+            serverId = binding.serverProfileId,
+            userId = binding.userId,
+            generation = generationOf(binding),
+        )
     }
 }

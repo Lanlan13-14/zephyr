@@ -3,12 +3,14 @@ package one.zephyr.mobile.network
 import one.zephyr.mobile.contracts.MobileApiPaths
 import one.zephyr.mobile.model.BootstrapPage
 import one.zephyr.mobile.model.ChangePage
+import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.PendingOperation
 import one.zephyr.mobile.model.PushResponse
 import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.SensitiveGrant
 import one.zephyr.mobile.model.ServerCapabilities
 import one.zephyr.mobile.network.dto.AckRequestDto
+import one.zephyr.mobile.network.dto.AckResponseDto
 import one.zephyr.mobile.network.dto.BindRequestDto
 import one.zephyr.mobile.network.dto.BindResponseDto
 import one.zephyr.mobile.network.dto.BootstrapPageDto
@@ -23,6 +25,8 @@ import one.zephyr.mobile.network.dto.LoginRequestDto
 import one.zephyr.mobile.network.dto.LoginResponseDto
 import one.zephyr.mobile.network.dto.PushRequestDto
 import one.zephyr.mobile.network.dto.PushResponseDto
+import one.zephyr.mobile.network.dto.RefreshRequestDto
+import one.zephyr.mobile.network.dto.RefreshResponseDto
 import one.zephyr.mobile.network.dto.SensitiveGrantDto
 import one.zephyr.mobile.network.dto.SensitiveVerifyRequestDto
 import one.zephyr.mobile.network.dto.SyncStatusDto
@@ -47,18 +51,19 @@ class MobileApi(private val client: MobileApiClient) {
     suspend fun login(username: String, password: String): ApiResult<LoginResponseDto> =
         client.post(
             path = MobileApiPaths.POST_AUTH_LOGIN,
-            body = LoginRequestDto(username = username, password = password),
+            body = LoginRequestDto(username = username, password = password, returnSid = true),
             bodySerializer = LoginRequestDto.serializer(),
             responseSerializer = LoginResponseDto.serializer(),
             authenticated = false,
         )
 
-    suspend fun verifyTotp(code: String): ApiResult<LoginResponseDto> =
+    suspend fun verifyTotp(tempToken: String, code: String): ApiResult<LoginResponseDto> =
         client.post(
             path = MobileApiPaths.POST_AUTH_TOTP_VERIFY,
-            body = TotpRequestDto(code = code),
+            body = TotpRequestDto(tempToken = tempToken, code = code, returnSid = true),
             bodySerializer = TotpRequestDto.serializer(),
             responseSerializer = LoginResponseDto.serializer(),
+            authenticated = false,
         )
 
     /**
@@ -72,12 +77,13 @@ class MobileApi(private val client: MobileApiClient) {
             authenticated = false,
         ).map { it.toDomain() }
 
-    suspend fun bind(request: BindRequestDto): ApiResult<BindResponseDto> =
+    suspend fun bind(request: BindRequestDto, sensitiveGrant: String): ApiResult<BindResponseDto> =
         client.post(
             path = MobileApiPaths.POST_MOBILE_V1_DEVICES_BIND,
             body = request,
             bodySerializer = BindRequestDto.serializer(),
             responseSerializer = BindResponseDto.serializer(),
+            sensitiveGrant = sensitiveGrant,
         )
 
     /**
@@ -86,12 +92,12 @@ class MobileApi(private val client: MobileApiClient) {
      * [MobileApiClient.AccessRefresher] calls this, and the refresh credential travels in the body
      * rather than as a bearer header so it can never be replayed from a captured Authorization line.
      */
-    suspend fun refresh(deviceId: String, refreshCredential: String): ApiResult<BindResponseDto> =
+    suspend fun refresh(deviceId: String, refreshCredential: String): ApiResult<RefreshResponseDto> =
         client.post(
             path = MobileApiPaths.POST_MOBILE_V1_DEVICES_REFRESH,
             body = RefreshRequestDto(deviceId = deviceId, refreshCredential = refreshCredential),
             bodySerializer = RefreshRequestDto.serializer(),
-            responseSerializer = BindResponseDto.serializer(),
+            responseSerializer = RefreshResponseDto.serializer(),
             authenticated = false,
         )
 
@@ -147,7 +153,7 @@ class MobileApi(private val client: MobileApiClient) {
                 pageToken?.let { put("pageToken", it) }
                 pageSize?.let { put("pageSize", it.toString()) }
             },
-        ).map { it.toDomain() }
+        ).mapSyncWire { it.toDomain() }
 
     suspend fun changes(sinceCursor: Long, limit: Int?): ApiResult<ChangePage> =
         client.get(
@@ -157,7 +163,7 @@ class MobileApi(private val client: MobileApiClient) {
                 put("sinceCursor", sinceCursor.toString())
                 limit?.let { put("limit", it.toString()) }
             },
-        ).map { it.toDomain() }
+        ).mapSyncWire { it.toDomain() }
 
     suspend fun push(
         deviceId: String,
@@ -166,8 +172,19 @@ class MobileApi(private val client: MobileApiClient) {
         registryHash: String,
         operations: List<PendingOperation>,
         envelopes: Map<String, Map<String, SecretEnvelope>> = emptyMap(),
-    ): ApiResult<PushResponse> =
-        client.post(
+    ): ApiResult<PushResponse> {
+        val operationDtos = try {
+            operations.map { op -> op.toDto(envelopes[op.opId]) }
+        } catch (_: IllegalArgumentException) {
+            return ApiResult.Failure(
+                MobileError.local(
+                    code = "invalid_request",
+                    message = "queued sync operation violates the secret wire contract",
+                    retryable = false,
+                ),
+            )
+        }
+        return client.post(
             path = MobileApiPaths.POST_MOBILE_V1_SYNC_PUSH,
             body = PushRequestDto(
                 protocolVersion = MobileApiPaths.PROTOCOL_VERSION,
@@ -175,11 +192,28 @@ class MobileApi(private val client: MobileApiClient) {
                 batchId = batchId,
                 baseCursor = baseCursor,
                 registryHash = registryHash,
-                operations = operations.map { op -> op.toDto(envelopes[op.opId]) },
+                operations = operationDtos,
             ),
             bodySerializer = PushRequestDto.serializer(),
             responseSerializer = PushResponseDto.serializer(),
-        ).map { it.toDomain() }
+        ).mapSyncWire { it.toDomain() }
+    }
+
+    private inline fun <T, R> ApiResult<T>.mapSyncWire(transform: (T) -> R): ApiResult<R> = when (this) {
+        is ApiResult.Success -> try {
+            ApiResult.Success(transform(value), requestId)
+        } catch (_: IllegalArgumentException) {
+            ApiResult.Failure(
+                MobileError.local(
+                    code = "malformed_response",
+                    message = "server returned an invalid sync wire payload",
+                    retryable = false,
+                ).copy(requestId = requestId),
+            )
+        }
+
+        is ApiResult.Failure -> this
+    }
 
     /**
      * Acknowledges an applied cursor.
@@ -187,13 +221,13 @@ class MobileApi(private val client: MobileApiClient) {
      * Sent only after the page has been committed locally (SYNC_STATE_MACHINE.md 6.4): acking first
      * would let a crash skip changes permanently, because the server would never resend them.
      */
-    suspend fun ack(deviceId: String, cursor: Long, appliedOpIds: List<String>): ApiResult<Boolean> =
+    suspend fun ack(deviceId: String, cursor: Long, appliedOpIds: List<String>): ApiResult<ValidatedAck> =
         client.post(
             path = MobileApiPaths.POST_MOBILE_V1_SYNC_ACK,
             body = AckRequestDto(deviceId = deviceId, cursor = cursor, appliedOpIds = appliedOpIds),
             bodySerializer = AckRequestDto.serializer(),
-            responseSerializer = OkResponseDto.serializer(),
-        ).map { it.ok }
+            responseSerializer = AckResponseDto.serializer(),
+        ).toValidatedAck()
 
     suspend fun syncStatus(): ApiResult<SyncStatusDto> =
         client.get(MobileApiPaths.GET_MOBILE_V1_SYNC_STATUS, SyncStatusDto.serializer())
@@ -236,11 +270,19 @@ class MobileApi(private val client: MobileApiClient) {
         )
 }
 
-@kotlinx.serialization.Serializable
-data class SyncNowRequestDto(val deviceId: String)
+/** Reachable from [MobileApi.ack] only after the complete ACK receipt passed strict decoding. */
+data object ValidatedAck
+
+private fun ApiResult<AckResponseDto>.toValidatedAck(): ApiResult<ValidatedAck> = when (this) {
+    is ApiResult.Success -> ApiResult.Success(ValidatedAck, requestId)
+    is ApiResult.Failure -> {
+        val protocolFailure = error.code == "malformed_response" || error.code == "response_too_large"
+        ApiResult.Failure(if (protocolFailure) error.copy(retryable = true) else error)
+    }
+}
 
 @kotlinx.serialization.Serializable
-data class RefreshRequestDto(val deviceId: String, val refreshCredential: String)
+data class SyncNowRequestDto(val deviceId: String)
 
 @kotlinx.serialization.Serializable
 data class OkResponseDto(val ok: Boolean = false)

@@ -37,6 +37,7 @@ function setup(now = () => 1_000_000) {
         alice: { userId: 'alice', role: 'user', status: 'active' },
         admin: { userId: 'admin', role: 'admin', status: 'active' },
         suspended: { userId: 'sus', role: 'user', status: 'suspended' },
+        deleted: { userId: 'deleted-owner', role: 'user', status: 'deleted' },
     };
     const authz = new Authz(db, { getUserById: (id) => Object.values(users).find((u) => u.userId === id) || null, now });
     return { db, authz, users };
@@ -65,6 +66,27 @@ test('strangers get nothing; suspended users get nothing even when owning', () =
     assert.equal(authz.effectiveCapabilities(users.alice, 'connection', 'c1', resource).size, 0);
     const ownResource = { ownerUserId: 'sus' };
     assert.equal(authz.effectiveCapabilities(users.suspended, 'connection', 'cX', ownResource).size, 0, 'suspended user loses all effective access');
+});
+
+test('missing or inactive owners invalidate ACL, visibility and admin capabilities', () => {
+    const { authz, users } = setup();
+    const orphaned = [
+        { id: 'missing-owner', ownerUserId: 'does-not-exist', visibility: 'shared_all' },
+        { id: 'deleted-owner', ownerUserId: users.deleted.userId, visibility: 'shared_all' },
+        { id: 'suspended-owner', ownerUserId: users.suspended.userId, visibility: 'shared_all' },
+    ];
+    for (const row of orphaned) {
+        authz.grant({
+            resourceType: 'note',
+            resourceId: row.id,
+            subjectId: users.alice.userId,
+            capabilities: [CAP.DISCOVER, CAP.VIEW, CAP.EDIT],
+            grantedByUserId: row.ownerUserId,
+        });
+        assert.equal(authz.effectiveCapabilities(users.alice, 'note', row.id, row).size, 0);
+        assert.equal(authz.effectiveCapabilities(users.admin, 'note', row.id, row).size, 0);
+    }
+    assert.deepEqual([...authz.visibleIds(users.alice, 'note', orphaned)], []);
 });
 
 test('grant → effective capabilities; expiry and revocation apply', () => {

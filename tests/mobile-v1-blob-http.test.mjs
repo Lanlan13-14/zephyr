@@ -6,11 +6,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createProofClient } from "../zephyr_one/mobile/tests/mobile-v1-proof-client.mjs";
+import { createSecureTestDataDir, removeSecureTestDataDir } from "./helpers/secure-data-dir.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
@@ -18,9 +18,16 @@ const ADMIN_PASSWORD = "mv1-blob-http-pass";
 const CHUNK = 4 * 1024 * 1024; // server-pinned, from /capabilities limits
 
 const state = {
-  child: null, base: "", dataDir: "", cookie: "", sid: "",
-  tokenId: "", deviceId: "", access: "", log: "",
+  child: null, base: "", dataDir: "", dataFixture: null, cookie: "", sid: "",
+  tokenId: "", deviceId: "", access: "", log: "", signingPrivateKey: null,
 };
+
+const proofDevice = createProofClient({
+  base: () => state.base,
+  access: () => state.access,
+  deviceId: () => state.deviceId,
+  privateKey: () => state.signingPrivateKey,
+});
 
 async function waitHealthy(budgetMs) {
   const until = Date.now() + budgetMs;
@@ -43,7 +50,7 @@ function device(pathname, init) {
     "x-zephyr-one-platform": "android",
     "x-zephyr-protocol-version": "1",
   }, opts.headers || {});
-  return fetch(state.base + pathname, Object.assign({}, opts, { headers }));
+  return proofDevice(pathname, Object.assign({}, opts, { headers }));
 }
 
 function sha256(buf) {
@@ -51,7 +58,8 @@ function sha256(buf) {
 }
 
 test("boot a server, rotate the admin password, bind a device", async () => {
-  state.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-blob-http-"));
+  state.dataFixture = createSecureTestDataDir("mv1-blob-http-");
+  state.dataDir = state.dataFixture.dataDir;
   const port = 23100 + Math.floor(Math.random() * 300);
   state.base = "http://127.0.0.1:" + port;
 
@@ -112,11 +120,28 @@ test("boot a server, rotate the admin password, bind a device", async () => {
   const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
   const kem = ml_kem768.keygen();
   const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  state.signingPrivateKey = ec.privateKey;
   const jwk = ec.publicKey.export({ format: "jwk" });
   state.deviceId = "dev-" + crypto.randomUUID();
-  const bind = await fetch(state.base + "/api/mobile/v1/devices/bind", {
+  const verify = await fetch(state.base + "/api/mobile/v1/sensitive/verify", {
     method: "POST",
     headers: { "content-type": "application/json", "x-zephyr-sid": state.sid },
+    body: JSON.stringify({
+      action: "device.bind",
+      targetIds: [state.tokenId, state.deviceId],
+      secret: ADMIN_PASSWORD,
+    }),
+  });
+  const verifyBody = await verify.json();
+  assert.equal(verify.status, 200, "sensitive verify failed: " + JSON.stringify(verifyBody).slice(0, 300));
+  assert.ok(verifyBody.grant);
+  const bind = await fetch(state.base + "/api/mobile/v1/devices/bind", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-zephyr-sid": state.sid,
+      "x-zephyr-sensitive-grant": verifyBody.grant,
+    },
     body: JSON.stringify({
       deviceId: state.deviceId, deviceName: "Blob HTTP", platform: "android",
       appVersion: "0.1.0", tokenId: state.tokenId, syncIntervalSec: 300,
@@ -229,8 +254,19 @@ test("a two-chunk upload completes out of order and becomes downloadable", async
   });
   const headBody = await head.json();
   assert.equal(head.status, 200);
-  assert.equal(headBody.upload.state, "complete");
+  assert.ok(["finalizing", "complete"].includes(headBody.upload.state));
   assert.deepEqual(headBody.upload.missing, []);
+
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const finalized = await device("/api/mobile/v1/blobs/uploads/" + uploadId);
+    const finalizedBody = await finalized.json();
+    assert.equal(finalized.status, 200);
+    if (finalizedBody.upload.state === "complete") return;
+    assert.equal(finalizedBody.upload.state, "finalizing");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail("blob did not leave finalizing state before the deadline");
 });
 
 test("the completed blob downloads whole and per chunk", async () => {
@@ -300,12 +336,39 @@ test("another user's upload session is a 404, never a 403 that confirms it exist
   assert.equal((await res.json()).error.code, "resource_not_found_or_inaccessible");
 });
 
+test("in-flight upload limits return 429 with Retry-After", async () => {
+  let limited = null;
+  for (let index = 0; index < 8; index += 1) {
+    const bytes = Buffer.from("limit-" + index);
+    const res = await device("/api/mobile/v1/blobs/uploads", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sha256: sha256(bytes),
+        size: bytes.length,
+        mime: "application/octet-stream",
+        chunks: [sha256(bytes)],
+      }),
+    });
+    if (res.status === 429) {
+      limited = res;
+      break;
+    }
+    assert.equal(res.status, 200);
+  }
+  assert.ok(limited, "server must bound active uploads per device");
+  assert.match(limited.headers.get("retry-after") || "", /^\d+$/);
+  const body = await limited.json();
+  assert.equal(body.error.code, "rate_limited");
+  assert.equal(body.error.retryable, true);
+});
+
 test("stop the server", async () => {
   if (state.child) {
     state.child.kill("SIGKILL");
     await new Promise((r) => setTimeout(r, 500));
   }
-  if (state.dataDir) {
-    try { fs.rmSync(state.dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
+  if (state.dataFixture) {
+    try { removeSecureTestDataDir(state.dataFixture); } catch (err) { /* windows lock */ }
   }
 });

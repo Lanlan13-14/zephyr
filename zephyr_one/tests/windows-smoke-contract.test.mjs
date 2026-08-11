@@ -14,6 +14,8 @@ describe('Windows install smoke harness', () => {
     assert.match(smoke, /HoldSec|ReadyTimeoutSec/);
     assert.match(smoke, /diagnostics\.txt/);
     assert.match(smoke, /zephyr-node\.log/);
+    assert.match(smoke, /runtime-autostart\.log/);
+    assert.match(smoke, /\[System\.IO\.Path\]::GetTempPath/);
     // Must not claim success without an HTTP ready signal
     assert.match(smoke, /Zephyr HTTP.*localhost/);
   });
@@ -28,9 +30,13 @@ describe('Windows install smoke harness', () => {
 
   it('keeps Windows verbatim path stripping in the runtime', () => {
     const runtime = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'runtime', 'mod.rs'), 'utf8');
+    const lib = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'lib.rs'), 'utf8');
     assert.match(runtime, /fn node_compatible_path/);
     assert.match(runtime, /strip_prefix\(r"\\\\?\\/);
     assert.match(runtime, /windows_verbatim_paths_are_safe_for_node/);
     assert.match(runtime, /EISDIR|verbatim/);
+    assert.match(lib, /cfg!\(target_os = "windows"\).*cfg!\(debug_assertions\)/);
+    assert.match(lib, /RunEvent::Ready/);
+    assert.match(runtime, /windows_release_autostarts_without_a_webview/);
   });
 });

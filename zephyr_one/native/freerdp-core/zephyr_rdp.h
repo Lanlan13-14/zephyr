@@ -34,7 +34,13 @@ typedef struct zephyr_rdp_session zephyr_rdp_session;
 #define ZEPHYR_RDP_EV_DISCONNECTED  2
 #define ZEPHYR_RDP_EV_ERROR         3
 #define ZEPHYR_RDP_EV_RESIZE        4
-#define ZEPHYR_RDP_EV_CLIPBOARD     5  /* utf8 text from the remote clipboard */
+/*
+ * For EV_CLIPBOARD, `text` borrows `a` bytes of validated UTF-16LE for the
+ * duration of the callback. The payload includes one final UTF-16 NUL. Keeping
+ * it in its wire encoding avoids allocating a second full clipboard buffer in
+ * the shim before the Rust owner makes its one bounded String allocation.
+ */
+#define ZEPHYR_RDP_EV_CLIPBOARD     5
 /*
  * EV_LOG carries the TLS certificate fingerprint from VerifyCertificateEx, and
  * nothing else. It is deliberately narrow: the fingerprint is the only record of
@@ -56,6 +62,9 @@ typedef struct zephyr_rdp_session zephyr_rdp_session;
  * means the server accepted the redirection channel.
  */
 #define ZEPHYR_RDP_EV_CHANNEL       8
+
+/* CF_UNICODETEXT wire bytes, including the final UTF-16 NUL code unit. */
+#define ZEPHYR_RDP_MAX_CLIPBOARD_UTF16_BYTES (4u * 1024u * 1024u)
 
 /* ── Audio modes ─────────────────────────────────────────────────────────── */
 #define ZEPHYR_RDP_AUDIO_LOCAL   0 /* play on this device (rdpsnd, OS backend) */
@@ -91,8 +100,9 @@ typedef struct zephyr_rdp_session zephyr_rdp_session;
 #define ZEPHYR_RDP_DRIVE_BAD_NAME (-5)
 
 /* ── Security negotiation ────────────────────────────────────────────────── */
-#define ZEPHYR_RDP_SEC_AUTO  0
+#define ZEPHYR_RDP_SEC_AUTO  0 /* compatibility spelling; resolves to NLA-only */
 #define ZEPHYR_RDP_SEC_NLA   1
+/* Retained as ABI values for old saved records; the core rejects both. */
 #define ZEPHYR_RDP_SEC_TLS   2
 #define ZEPHYR_RDP_SEC_RDP   3
 
@@ -205,6 +215,10 @@ int32_t zephyr_rdp_validate_drive(const char* drive_name, const char* drive_path
 /* FreeRDP major version this shim was compiled against. */
 int32_t zephyr_rdp_freerdp_major(void);
 
+/* True only when the linked FreeRDP rejects oversized cliprdr messages before
+ * its generic static-channel reassembler allocates `totalLength` bytes. */
+int32_t zephyr_rdp_clipboard_available(void);
+
 /*
  * Move the process's stdout out of the way and hand back a private handle to
  * the original.
@@ -299,6 +313,11 @@ int32_t zephyr_rdp_probe_settings(const zephyr_rdp_config* cfg, int32_t* nla,
                                   int32_t* clipboard, int32_t* device_redirection,
                                   int32_t* dynamic_res, int32_t* gfx);
 
+/* Defense-in-depth check used after negotiation. Only HYBRID/HYBRID_EX (NLA)
+ * are accepted; TLS-only, Standard RDP Security, and unknown values fail. */
+int32_t zephyr_rdp_security_protocol_allowed(const zephyr_rdp_config* cfg,
+                                             uint32_t selected_protocol);
+
 /*
  * UTF-8 ↔ UTF-16LE, exported for the conversion tests.
  *
@@ -315,6 +334,8 @@ int32_t zephyr_rdp_probe_settings(const zephyr_rdp_config* cfg, int32_t* nla,
 long zephyr_rdp_test_utf8_to_utf16le(const char* in, uint16_t* out, size_t units);
 long zephyr_rdp_test_utf16le_to_utf8(const uint16_t* in, size_t units, char* out,
                                      size_t cap);
+/* Validate one complete CF_UNICODETEXT payload without allocating. */
+int32_t zephyr_rdp_test_clipboard_payload(const uint8_t* data, size_t bytes);
 /* Round-trips UTF-8 → UTF-16LE → UTF-8 in one call. Returns bytes written or
  * -1. Byte equality with the input is the property the tests assert. */
 int32_t zephyr_rdp_utf_roundtrip(const char* in, char* out, size_t out_cap);

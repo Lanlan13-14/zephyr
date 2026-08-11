@@ -12,6 +12,7 @@ import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.ServerCapabilities
 import one.zephyr.mobile.model.SyncChange
 import one.zephyr.mobile.network.ApiResult
+import one.zephyr.mobile.network.ValidatedAck
 
 /**
  * Scriptable transport.
@@ -29,7 +30,7 @@ class FakeSyncTransport : SyncTransport {
     val bootstrapPages = ArrayDeque<ApiResult<BootstrapPage>>()
     val changePages = ArrayDeque<ApiResult<ChangePage>>()
     val pushResponses = ArrayDeque<ApiResult<PushResponse>>()
-    var ackResult: ApiResult<Boolean> = ApiResult.Success(true, requestId = null)
+    var ackResult: ApiResult<ValidatedAck> = ApiResult.Success(ValidatedAck, requestId = null)
 
     val bootstrapTokens = mutableListOf<String?>()
     val changeCursors = mutableListOf<Long>()
@@ -71,7 +72,7 @@ class FakeSyncTransport : SyncTransport {
             )
     }
 
-    override suspend fun ack(cursor: Long, appliedOpIds: List<String>): ApiResult<Boolean> {
+    override suspend fun ack(cursor: Long, appliedOpIds: List<String>): ApiResult<ValidatedAck> {
         ackedCursors.add(cursor)
         ackedOpIds.add(appliedOpIds)
         return ackResult
@@ -87,6 +88,7 @@ class FakeSyncTransport : SyncTransport {
  */
 class FakeSyncLocalStore(
     initialState: BindingState = BindingState.IDLE,
+    private val boundUserId: String = "user-1",
 ) : SyncLocalStore {
 
     var state: BindingState = initialState
@@ -100,13 +102,17 @@ class FakeSyncLocalStore(
     val queue = mutableListOf<PendingOperation>()
     val conflicts = mutableListOf<DetectedConflict>()
     val completed = mutableListOf<AcceptedOperation>()
+    val retainedJournalOpIds = mutableSetOf<String>()
+    val acknowledgementCommits = mutableListOf<Pair<Long, List<String>>>()
     val droppedOpIds = mutableListOf<String>()
     val failures = mutableListOf<Pair<String, String?>>()
     val dispatched = mutableListOf<List<String>>()
     val stagedGenerations = mutableListOf<Long>()
     val promotedGenerations = mutableListOf<Long>()
+    val bootstrapCommits = mutableListOf<Pair<Long, Long>>()
     val bindingStates = mutableListOf<BindingState>()
     val snapshotCursorWrites = mutableListOf<Long>()
+    val localOverlay = mutableMapOf<String, String>()
     var checkpoint: BootstrapCheckpoint? = null
     var stagingCleared = 0
     var successes = 0
@@ -115,6 +121,9 @@ class FakeSyncLocalStore(
     var appliedPages = mutableListOf<List<SyncChange>>()
     /** Set to make applyChanges report envelope rejections. */
     var envelopeFailuresPerPage: List<String> = emptyList()
+    var applyChangesFailure: RuntimeException? = null
+    var stageBootstrapFailure: RuntimeException? = null
+    var acknowledgementCommitFault: RuntimeException? = null
 
     override suspend fun cursors(): SyncCursors = SyncCursors(
         bindingState = state,
@@ -134,8 +143,6 @@ class FakeSyncLocalStore(
     override suspend fun saveRegistryHash(hash: String) { registryHash = hash }
 
     override suspend fun saveAppliedCursor(cursor: Long) { appliedCursor = cursor }
-
-    override suspend fun saveAckedCursor(cursor: Long) { ackedCursor = cursor }
 
     override suspend fun saveSnapshotCursor(cursor: Long) {
         snapshotCursor = cursor
@@ -192,9 +199,36 @@ class FakeSyncLocalStore(
         }
     }
 
-    override suspend fun completeOperations(accepted: List<AcceptedOperation>) {
-        completed.addAll(accepted)
-        queue.removeAll { op -> accepted.any { it.opId == op.opId } }
+    override suspend fun commitAcknowledgement(cursor: Long, accepted: List<AcceptedOperation>) {
+        require(cursor in ackedCursor..appliedCursor)
+        val acceptedIds = accepted.map { it.opId }
+        require(acceptedIds.distinct().size == acceptedIds.size)
+        require(queue.map { it.opId }.containsAll(acceptedIds))
+
+        // Publish the staged values only after the injected transaction fault point has passed.
+        val nextCompleted = completed + accepted
+        val nextQueue = queue.filterNot { it.opId in acceptedIds }
+        val nextJournal = retainedJournalOpIds - acceptedIds.toSet()
+        acknowledgementCommitFault?.let { throw it }
+
+        completed.clear()
+        completed.addAll(nextCompleted)
+        queue.clear()
+        queue.addAll(nextQueue)
+        retainedJournalOpIds.clear()
+        retainedJournalOpIds.addAll(nextJournal)
+        ackedCursor = cursor
+        acknowledgementCommits.add(cursor to acceptedIds)
+    }
+
+    override suspend fun enterBootstrapRequiredAfterPush(
+        accepted: List<AcceptedOperation>,
+        retainedErrors: Map<String, String>,
+    ) {
+        require(retainedErrors.keys.intersect(accepted.mapTo(hashSetOf()) { it.opId }).isEmpty())
+        for ((opId, error) in retainedErrors) markFailed(opId, error)
+        resetBootstrap()
+        saveBindingState(BindingState.BOUND_NEEDS_BOOTSTRAP)
     }
 
     override suspend fun dropOperations(opIds: List<String>) {
@@ -202,9 +236,19 @@ class FakeSyncLocalStore(
         queue.removeAll { opIds.contains(it.opId) }
     }
 
-    override suspend fun recordConflict(conflict: DetectedConflict) { conflicts.add(conflict) }
+    override fun validateConflictPayload(entityType: String, payload: JsonObject) {
+        ConflictPayloadValidator.requireSafe(entityType, payload, boundUserId)
+    }
+
+    override suspend fun recordConflictAndDrop(conflict: DetectedConflict, opId: String) {
+        validateConflictPayload(conflict.entityType, conflict.serverPayload)
+        conflicts.add(conflict)
+        droppedOpIds.add(opId)
+        queue.removeAll { it.opId == opId }
+    }
 
     override suspend fun applyChanges(changes: List<SyncChange>, startCursor: Long): ApplyPageResult {
+        applyChangesFailure?.let { throw it }
         appliedPages.add(changes)
         val cursor = changes.maxOfOrNull { it.changeSeq } ?: startCursor
         return ApplyPageResult(
@@ -217,19 +261,26 @@ class FakeSyncLocalStore(
     }
 
     override suspend fun stageBootstrap(generation: Long, entities: List<SyncChange>): Int {
+        stageBootstrapFailure?.let { throw it }
         stagedGenerations.add(generation)
         return entities.size
     }
 
-    override suspend fun promoteBootstrap(generation: Long) { promotedGenerations.add(generation) }
-
-    override suspend fun clearBootstrapStaging() { stagingCleared += 1 }
+    override suspend fun resetBootstrap() {
+        stagingCleared += 1
+        checkpoint = null
+    }
 
     override suspend fun bootstrapCheckpoint(): BootstrapCheckpoint? = checkpoint
 
     override suspend fun saveBootstrapCheckpoint(checkpoint: BootstrapCheckpoint) { this.checkpoint = checkpoint }
 
-    override suspend fun clearBootstrapCheckpoint() { checkpoint = null }
+    override suspend fun commitBootstrap(generation: Long, snapshotCursor: Long) {
+        bootstrapCommits.add(generation to snapshotCursor)
+        promotedGenerations.add(generation)
+        appliedCursor = snapshotCursor
+        checkpoint = null
+    }
 
     override suspend fun pruneRetention(nowMs: Long) { pruned += 1 }
 }
@@ -288,6 +339,7 @@ fun pendingOp(
     createdAt: Long = 1,
     createdLocally: Boolean = false,
     secretFields: List<String> = emptyList(),
+    clearSecretFields: List<String> = emptyList(),
     dispatchedAt: Long? = null,
 ): PendingOperation = PendingOperation(
     opId = opId,
@@ -300,5 +352,6 @@ fun pendingOp(
     createdAt = createdAt,
     createdLocally = createdLocally,
     secretFields = secretFields,
+    clearSecretFields = clearSecretFields,
     dispatchedAt = dispatchedAt,
 )

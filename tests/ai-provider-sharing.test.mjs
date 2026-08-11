@@ -76,4 +76,13 @@ test('shareWithUsers exposes provider to all authenticated users', async () => {
     assert.ok(list.body.providers.some((p) => p.id === providerId));
     assert.ok(!JSON.stringify(list.body).includes('PRIVATE-AI-KEY'));
   }
+
+  const deleted = await s.api(superCookie, 'DELETE', `/api/admin/users/${encodeURIComponent(userAId)}`, {
+    resourcePolicy: 'delete-resources',
+  });
+  assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+  for (const cookie of [superCookie, adminCookie, userBCookie]) {
+    const list = await s.api(cookie, 'GET', '/api/ai/providers');
+    assert.ok(!list.body.providers.some((p) => p.id === providerId));
+  }
 });

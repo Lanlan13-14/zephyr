@@ -203,7 +203,9 @@ HTTPS_PORT=3443
 | `TERMINAL_HISTORY_INDEX_INTERVAL_MS` | 服务端将原始 PTY journal 增量索引成逻辑行页的周期 | `5000` |
 | `ZEPHYR_HTTPS_DIR` | 自签证书默认生成目录；也可以单独挂载为自有证书目录 | `$ZEPHYR_DATA_DIR/https` |
 | `HTTPS_CERT_CN` / `PUBLIC_HOST` | 自动自签证书的 CN；SAN 会自动包含本机局域网 IPv4、`localhost`、`127.0.0.1`，也可用 `HTTPS_CERT_ALT_NAMES` 追加 | `localhost` |
-| `ENCRYPTION_KEY` | 备份导出/导入加密密钥，生产环境必须改为强随机字符串 | `please-change-this-key` |
+| `ENCRYPTION_KEY` | 备份导出/导入加密密钥；只接受 32 随机字节的规范 Base64URL（43 字符）或十六进制（64 字符）编码 | 新安装首启随机生成 256 位密钥 |
+| `ZEPHYR_BACKUP_KEY_PROVENANCE` | 外部注入备份密钥时必须显式声明 `operator-attested-csprng-v1`；这是运维声明，不是随机性证明 | 内部生成时自动写入 `zephyr-generated-csprng-v1` |
+| `ZEPHYR_ALLOW_LEGACY_BACKUP_IMPORT` | 仅用于一次性尝试解封 `ZEPHYR3` 旧备份；还必须在导入表单显式填写旧备份密码，完成后立即移除 | `false` |
 | `ZEPHYR_DATA_MLKEM768_PUBLIC_KEY_B64` / `ZEPHYR_DATA_MLKEM768_SECRET_KEY_B64` | 可选：外部注入 ML-KEM-768 数据字段加密密钥对；未设置时会自动生成到 `data/crypto/ml-kem-768-keypair.json` | 自动生成 |
 | `ZEPHYR_DATA_MLKEM768_KEY_FILE` | 可选：自动生成/读取 ML-KEM-768 数据字段加密密钥文件路径 | `data/crypto/ml-kem-768-keypair.json` |
 | `PUBLIC_ORIGIN` | Passkey / WebAuthn 使用的固定站点来源，也用于同源校验和 HTTPS Cookie 判断；应与浏览器访问地址一致 | `http://localhost:3000` |
@@ -219,9 +221,9 @@ HTTPS_PORT=3443
 - `PUBLIC_ORIGIN` 必须与实际访问地址一致，例如 `https://ssh.example.com`。生产环境配置为 HTTPS 后，登录 Cookie 会自动带 `Secure`。
 - Zephyr 会校验非 GET 请求的 `Origin` / `Referer` 与 `PUBLIC_ORIGIN` 同源，反代后的公开域名、协议配置不一致会导致写操作返回 403。
 - 终端历史采用分层存储：浏览器/WASM 仅保留最近 1000 行实时窗口；Node/Go Worker 将原始 PTY 字节、resize 与 close 事件写入分段 journal，Node 后台增量索引为带样式 run 的逻辑行页。滚到本地窗口顶部时，浏览器按 200 行分页加载，客户端最多缓存 2000 行。Worker 作为独立容器运行时，必须把 `TERMINAL_HISTORY_DIR` 与 Node 的 `$ZEPHYR_DATA_DIR/terminal-history` 挂到同一持久卷。
-- `ENCRYPTION_KEY` 用于加密备份文件。旧备份需要使用导出时的旧密钥才能解密导入。
+- `ENCRYPTION_KEY` 用于加密备份文件，必须是 32 随机字节的规范编码，普通文本口令、可识别重复值和公开默认口令摘要会被拒绝。外部密钥还必须设置 `ZEPHYR_BACKUP_KEY_PROVENANCE=operator-attested-csprng-v1`；应用无法仅凭 32 字节样本验证其随机来源。新导出使用每归档随机盐的 scrypt 派生密钥和 AES-256-GCM。`ZEPHYR3` 外层兼容默认禁用，只能通过一次性开关和显式旧备份密码尝试迁移；解密后仍必须通过当前版本化 manifest 校验。
 - Zephyr 首次启动会生成 ML-KEM-768 数据字段加密密钥对，默认保存在 `data/crypto/ml-kem-768-keypair.json`。数据库内的敏感字段会使用该密钥派生的混合加密方案落盘；迁移、备份或恢复时必须同时保留该密钥文件，或通过 `ZEPHYR_DATA_MLKEM768_PUBLIC_KEY_B64` / `ZEPHYR_DATA_MLKEM768_SECRET_KEY_B64` 外部注入同一密钥对。使用默认文件密钥时，后台导出的 `.zip.enc` 备份会把该密钥文件一起放入 `ENCRYPTION_KEY` 加密包中，便于跨机器恢复。
-- 程序首次启动如果发现 `data/.env` 不存在，会生成默认占位文件；生产环境不要长期使用默认密钥。
+- 程序首次启动如果发现 `data/.env` 不存在且未外部注入 `ENCRYPTION_KEY`，会原子创建配置文件并生成 256 位随机密钥；POSIX 必须验证为 `0600`，Windows 会锁定并验证数据目录和 `.env` 的 owner、文件身份与服务专属 DACL，再从同一文件句柄读取。已有的缺失、过短、弱密钥或公开默认值不会自动迁移；必须由管理员显式轮换，否则导入/导出会拒绝执行。详见 `docs/BACKUP_ENCRYPTION.md`。
 
 ---
 
@@ -804,7 +806,7 @@ zephyr-ssh/
 ## 安全建议
 
 1. 首次登录后立即修改默认管理员密码。
-2. 生产环境必须修改 `ENCRYPTION_KEY`。
+2. 确保 `ENCRYPTION_KEY` 是 32 随机字节的规范 Base64URL/十六进制编码；外部密钥设置 `ZEPHYR_BACKUP_KEY_PROVENANCE=operator-attested-csprng-v1`，旧版公开默认值必须显式轮换。
 3. 妥善备份 `data/crypto/ml-kem-768-keypair.json`（或外部注入的 ML-KEM-768 密钥对）；丢失后已加密的连接密码、私钥、TOTP Secret 等敏感字段无法解密。
 4. 启用 Passkey / TOTP 前，确认服务器系统时间准确。
 5. Passkey / WebAuthn 推荐在 HTTPS 环境下使用。

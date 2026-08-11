@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { assertAssetVersion, singleAssetVersion } from './helpers/cache-version.mjs';
 
 const appHtml = fs.readFileSync(new URL('../public/app.html', import.meta.url), 'utf8');
 const notesJs = fs.readFileSync(new URL('../public/notes.js', import.meta.url), 'utf8');
@@ -84,9 +85,9 @@ test('notes CSS covers glass chrome, mode thumb, dialogs, mobile master-detail',
 });
 
 test('app wires craft notes module and current app cache-bust', () => {
-  assert.match(appJs, /notes\.js\?v=20260729-ai-notes-switches1/);
-  assert.match(appHtml, /style\.css\?v=20260801-dock-notes-fullscreen1/);
-  assert.match(appHtml, /app\.js\?v=20260801-dock-notes-fullscreen1/);
+  const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
+  assertAssetVersion(appHtml, 'style.css', appVersion, 'app shell style.css');
+  assertAssetVersion(appJs, 'notes.js', appVersion, 'app.js notes import');
 });
 
 test('keyboard shortcuts exist for high-frequency notes actions', () => {

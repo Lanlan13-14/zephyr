@@ -15,9 +15,9 @@
  * The iOS jail differs from Android's in a way worth stating once: SAF addresses
  * documents by opaque id and has no symlinks, so the Android provider resolves by
  * walking children and traversal is unreachable. A security-scoped root is a real
- * directory, so here every path is canonicalised and re-checked for containment.
- * Those are different mechanisms for the same guarantee, and the assertions below
- * are about this one.
+ * directory, so here every operation starts from a held root descriptor and walks
+ * validated components with descriptor-relative syscalls. Those are different
+ * mechanisms for the same guarantee, and the assertions below are about this one.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -93,79 +93,58 @@ test('SecurityScopedFileProvider implements the whole provider protocol', () => 
   }
 });
 
-test('the jail canonicalises and re-checks containment rather than trusting the string', () => {
-  /* The security property on this platform. A link in the MIDDLE of a path is the
-   * case a prefix test on the unresolved string misses entirely: with
-   * `/root/link -> /etc`, the string `/root/link/passwd` is inside `/root` by any
-   * textual measure and resolves to `/etc/passwd`. */
-  assert.match(PROVIDER, /private func canonicalHostPath\(for normalized: String\) throws -> String/);
-  assert.match(
-    PROVIDER,
-    /guard VirtualPath\.isWithin\(root: root, candidate: canonical\) else \{/,
-    'the containment test must be on the canonical path, not the joined one',
-  );
-  /* Pinned inside canonicalHostPath itself, and counted.
-   *
-   * The same refusal appears in canonicalHostPathForMissing, so a file-wide
-   * match stayed green when the one in canonicalHostPath was deleted -- the
-   * mutation that matters most, because it is the check every existing path
-   * flows through. Verified by mutation. */
-  const canonicalBody = codeOf(PROVIDER).slice(
-    codeOf(PROVIDER).indexOf('func canonicalHostPath(for'),
-    codeOf(PROVIDER).indexOf('func canonicalHostPathForMissing'),
-  );
-  assert.ok(canonicalBody.length > 0, 'canonicalHostPath must be locatable');
-  assert.match(
-    canonicalBody,
-    /throw Zft2Error\(code: "invalid_path", message: "Path escapes the shared directory"\)/,
-    'canonicalHostPath must refuse an escape, not just report it elsewhere',
-  );
-  const escapeRefusals = (codeOf(PROVIDER).match(/Path escapes the shared directory/g) || []).length;
-  assert.equal(
-    escapeRefusals,
-    2,
-    'both the existing-path and the missing-path resolvers must refuse an escape',
-  );
+test('the jail anchors every operation to a held root descriptor', () => {
+  /* A realpath-plus-prefix decision has a TOCTOU gap: an attacker can replace the
+   * checked ancestor before the later open, create, delete, rename, or truncate.
+   * The production path instead duplicates the held root descriptor, verifies every
+   * directory component without following it, then invokes the final *at syscall
+   * through that descriptor. This refuses a link in the middle of a path and keeps
+   * a concurrent rename from redirecting the subsequent operation outside the grant. */
+  assert.match(PROVIDER, /protocol DescriptorRelativeSecurityScopedFileSystem: SecurityScopedFileSystem \{/);
+  assert.match(PROVIDER, /private let descriptorFileSystem: DescriptorRelativeSecurityScopedFileSystem\?/);
+  for (const method of [
+    'descriptorCreateDirectory',
+    'descriptorDelete',
+    'descriptorMove',
+    'descriptorTruncate',
+  ]) {
+    assert.match(PROVIDER, new RegExp('requireDescriptorFileSystem\\(\\)\\.' + method + '\\('));
+  }
+  assert.doesNotMatch(codeOf(PROVIDER), /canonicalPath\(|rootPath/, 'the provider must not authorise a later absolute-path syscall');
 
-  /* A node that does not exist yet still has to have a contained parent chain, or
-   * `/root/link/new` would be created under the link's target. */
-  assert.match(PROVIDER, /private func canonicalHostPathForMissing\(_ normalized: String\) throws -> String/);
-  const missing = codeOf(PROVIDER).slice(
-    codeOf(PROVIDER).indexOf('func canonicalHostPathForMissing'),
-  );
-  assert.match(
-    missing.slice(0, 1200),
-    /VirtualPath\.isWithin\(root: root, candidate: ancestor\)/,
-    'the deepest existing ancestor must also be checked for containment',
-  );
+  assert.match(POSIX, /private func duplicateRootDescriptor\(\) throws -> Int32/);
+  assert.match(POSIX, /fcntl\(rootDescriptor, F_DUPFD_CLOEXEC, 0\)/);
+  assert.match(POSIX, /private func openDirectory\(_ components: \[String\]\) throws -> Int32/);
+  assert.match(POSIX, /fstatat\(current, component, &status, AT_SYMLINK_NOFOLLOW\)/);
+  assert.match(POSIX, /openat\(\s*current,\s*component,\s*O_RDONLY \| O_DIRECTORY \| O_NOFOLLOW \| O_CLOEXEC/s);
+  assert.match(POSIX, /private func openParent\(of components: \[String\]\) throws -> Parent/);
+  assert.match(POSIX, /try Self\.rejectSymlink\(status\)/);
 
-  /* realpath(3) resolves every component. A last-component-only resolution is the
-   * shape that misses a link in the middle. */
-  assert.match(POSIX, /Darwin\.realpath\(path, nil\)/);
-  assert.doesNotMatch(
-    codeOf(POSIX),
-    /resolvingSymlinksInPath/,
-    'URL.resolvingSymlinksInPath does not resolve a path that does not exist and is not equivalent',
-  );
+  /* `realpath` is retained only for the bookmark root identity and the obsolete
+   * compatibility seam; it is not authority for a live provider operation. */
+  assert.doesNotMatch(codeOf(POSIX), /resolvingSymlinksInPath/);
 });
 
 test('the write path refuses an escape as well as the read path', () => {
-  /* `try?` would discard the invalid_path raised by an escape and report whatever
-   * the create attempt then failed with. The typed catch keeps the refusal. */
+  /* The same descriptor walk is used for a missing final entry. `openParent` has
+   * already rejected every existing ancestor, so O_CREAT can only create beneath
+   * the held root descriptor. A final entry raced to a link is refused by both the
+   * no-follow open and the pre-open lstat-style check. */
   assert.match(
     PROVIDER,
-    /\} catch let failure as Zft2Error where failure\.code == "not_found" \{/,
-    'only not_found may mean "absent"',
+    /descriptorOpen\(\s*components: Self\.components\(of: normalized\),\s*write: wantsWrite,\s*createIfMissing: wantsWrite,/s,
+    'open() must pass write creation through the descriptor-relative boundary',
   );
-  const writePath = codeOf(PROVIDER).slice(
-    codeOf(PROVIDER).indexOf('func resolveForWrite'),
-    codeOf(PROVIDER).indexOf('func canonicalHostPath('),
+  const openBody = codeOf(POSIX).slice(
+    codeOf(POSIX).indexOf('func descriptorOpen('),
+    codeOf(POSIX).indexOf('func descriptorCreateDirectory('),
   );
-  assert.ok(writePath.length > 0, 'resolveForWrite must be locatable');
-  assert.doesNotMatch(writePath, /try\?/, 'resolveForWrite must not swallow errors');
-  /* The new file is built from the parent's CANONICAL path, so it lands inside the
-   * root even when the virtual parent was reached through a contained link. */
-  assert.match(writePath, /parent\.hostPath \+ "\/" \+ name/);
+  assert.match(openBody, /let parent = try openParent\(of: components\)/);
+  assert.match(openBody, /fstatat\(parent\.descriptor, parent\.name, &before, AT_SYMLINK_NOFOLLOW\)/);
+  assert.match(openBody, /try Self\.rejectSymlink\(before\)/);
+  assert.match(openBody, /O_NOFOLLOW/);
+  assert.match(openBody, /if createIfMissing \{ flags \|= O_CREAT \}/);
+  assert.doesNotMatch(openBody, /try\?/, 'the secure open must not swallow a refusal');
 });
 
 test('the shared virtual-path rule is ported, not reinvented', () => {
@@ -299,9 +278,10 @@ test('resource limits bound what a hostile peer can force', () => {
   assert.match(codeOf(PROVIDER), /throw Zft2Error\(code: "too_many_handles"/);
   assert.match(
     PROVIDER,
-    /if entries\.count > maxListEntries \{ break \}/,
-    'the listing must be bounded while building, not after it is all in memory',
+    /let limit = maxListEntries == Int\.max \? Int\.max : maxListEntries \+ 1/,
+    'the provider asks for only the protocol limit plus its overflow sentinel',
   );
+  assert.match(POSIX, /while output\.count < limit \{/, 'readdir must stop before materialising an unbounded directory');
 
   /* Bounded twice on open: the cheap early rejection, then again after the actor
    * suspends at an await, because two concurrent opens both pass a check made
@@ -310,24 +290,27 @@ test('resource limits bound what a hostile peer can force', () => {
     codeOf(PROVIDER).indexOf('public func open('),
     codeOf(PROVIDER).indexOf('public func read('),
   );
-  const checks = openBody.match(/handles\.count >= maxOpenHandles/g) || [];
-  assert.equal(checks.length, 2, 'open() must re-check the handle limit after awaiting');
-  assert.match(openBody, /await access\.close\(\)/, 'a descriptor refused after opening must not leak');
+  assert.match(openBody, /guard handles\.count < maxOpenHandles else \{/, 'open() must reject before it opens a descriptor');
+  assert.match(openBody, /if handles\.count >= maxOpenHandles \{/, 'open() must re-check the limit after awaiting');
+  assert.match(openBody, /await opened\.access\.close\(\)/, 'a descriptor refused after opening must not leak');
 });
 
 test('destructive operations refuse the cases that lose data silently', () => {
   const code = codeOf(PROVIDER);
   assert.match(code, /Cannot delete the share root/,
     'deleting the granted root would revoke the share from inside a file operation');
-  assert.match(code, /throw Zft2Error\(code: "not_empty"/,
-    'a non-recursive delete over a non-empty directory must be refused explicitly');
+  assert.match(POSIX, /if unlinkat\(parentDescriptor, name, AT_REMOVEDIR\) != 0 \{/,
+    'a non-recursive directory delete must use rmdir semantics');
+  assert.match(POSIX, /case ENOTEMPTY:\s*wire = "not_empty"/,
+    'a non-empty directory must be reported without falling back to recursive deletion');
   assert.match(PROVIDER, /if VirtualPath\.isWithin\(root: from, candidate: to\) \{/,
     'moving a directory into itself detaches the subtree');
 
   /* rename(2), not FileManager.moveItem: moveItem can fall back to copy-then-
    * delete, and a copy that fails halfway leaves two partial files while the peer
    * believes it moved one. A cross-volume move is refused instead. */
-  assert.match(POSIX, /if rename\(absolutePath, destinationPath\) != 0 \{/);
+  assert.match(POSIX, /renameatx_np\(/);
+  assert.match(POSIX, /RENAME_EXCL \| RENAME_NOFOLLOW_ANY/);
   /* Word-anchored: `removeItem` contains the substring `moveItem`, so a bare
    * /moveItem/ matches the legitimate recursive-delete call instead. */
   assert.doesNotMatch(codeOf(POSIX), /\bmoveItem/, 'a move must not fall back to copy-then-delete');
@@ -340,21 +323,18 @@ test('canWrite is the real platform answer, narrowed by the share', () => {
    * advertising true and refusing later is what leaves a half-copied file. */
   assert.match(PROVIDER, /canWrite: info\.canWrite && !readOnly/,
     'a read-only share must advertise canWrite=false even for a writable file');
-  assert.match(codeOf(PROVIDER), /throw Zft2Error\(code: "permission_denied", message: "Not writable: "/);
-
-  /* access(2), not the mode bits: mode bits ignore ACLs, a read-only mount and the
-   * sandbox itself. */
-  assert.match(POSIX, /canRead: access\(absolutePath, R_OK\) == 0/);
-  assert.match(POSIX, /canWrite: access\(absolutePath, W_OK\) == 0/);
+  /* Descriptor-relative faccessat, not mode bits or a reopened absolute path: mode
+   * bits ignore ACLs and opening an absolute path would reintroduce the jail race. */
+  assert.match(POSIX, /canRead:\s*knownReadable\s*\?\? \(faccessat\(parentDescriptor, entryName, R_OK, AT_SYMLINK_NOFOLLOW\) == 0\)/s);
+  assert.match(POSIX, /canWrite:\s*knownWritable\s*\?\? \(faccessat\(parentDescriptor, entryName, W_OK, AT_SYMLINK_NOFOLLOW\) == 0\)/s);
   assert.doesNotMatch(codeOf(POSIX), /canWrite: true/, 'never a constant');
 });
 
 test('a symlink is detected without following it', () => {
-  /* lstat, not stat: FileManager.attributesOfItem and stat(2) both follow the final
-   * link, so neither can answer "is this node itself a link" -- the question the
-   * jail turns on. */
-  assert.match(POSIX, /guard lstat\(absolutePath, &status\) == 0 else \{ return nil \}/);
-  assert.match(POSIX, /let isSymlink = mode == S_IFLNK/);
+  /* fstatat with AT_SYMLINK_NOFOLLOW is the descriptor-relative equivalent of
+   * lstat. It answers about the link itself without reopening an absolute path. */
+  assert.match(POSIX, /fstatat\([^\n]+AT_SYMLINK_NOFOLLOW\)/);
+  assert.match(POSIX, /\(status\.st_mode & S_IFMT\) == S_IFLNK/);
   assert.match(SEAM, /public let isSymlink: Bool/, 'the seam must carry the link flag');
 
   /* And the provider must act on it: an escaping link is dropped from a listing
@@ -363,8 +343,8 @@ test('a symlink is detected without following it', () => {
     codeOf(PROVIDER).indexOf('public func list('),
     codeOf(PROVIDER).indexOf('public func stat('),
   );
-  assert.match(listBody, /if child\.isSymlink \{/);
-  assert.match(listBody, /VirtualPath\.isWithin\(root: fileSystem\.rootPath, candidate: resolved\)/);
+  assert.match(listBody, /guard !child\.isSymlink else \{ continue \}/);
+  assert.match(POSIX, /if \(status\.st_mode & S_IFMT\) == S_IFLNK \{ continue \}/);
 });
 
 test('reads and writes are positional so parallel reads cannot corrupt each other', () => {
@@ -372,15 +352,15 @@ test('reads and writes are positional so parallel reads cannot corrupt each othe
    * descriptor, so a shared stream position would interleave readers into each
    * other's data: corruption that looks like a network fault and only appears
    * under parallel readahead. */
-  assert.match(POSIX, /pread\(descriptor,/);
-  assert.match(POSIX, /pwrite\(descriptor,/);
+  assert.match(POSIX, /pread\(\s*descriptor,/s);
+  assert.match(POSIX, /pwrite\(\s*descriptor,/s);
   assert.doesNotMatch(codeOf(POSIX), /lseek|seek\(toOffset/, 'a seeking descriptor would race itself');
 
-  /* No O_TRUNC. RDPDR delivers a large file as sequential writes on one handle, so
-   * truncating on open would discard everything already written at a non-zero
-   * offset. Truncation is an explicit operation. */
-  assert.match(POSIX, /let flags = write \? O_RDWR : O_RDONLY/);
-  assert.doesNotMatch(codeOf(POSIX), /O_TRUNC/);
+  /* O_TRUNC is allowed only for the explicit writeTruncate mode. Ordinary write
+   * handles preserve the non-zero-offset portions of a file. */
+  assert.match(POSIX, /var flags: Int32 = \(write \? O_RDWR : O_RDONLY\)/);
+  assert.match(POSIX, /if truncate \{ flags \|= O_TRUNC \}/);
+  assert.match(PROVIDER, /truncate: openMode == \.writeTruncate/);
 
   /* A zero-byte write is not progress; reporting it as such leaves the file
    * silently short. */
@@ -473,7 +453,7 @@ test('the platform seam keeps the provider logic testable off-device', () => {
   assert.doesNotMatch(codeOf(PROVIDER), /FileManager/, 'nor the filesystem directly');
   assert.doesNotMatch(codeOf(SEAM), /import Darwin/, 'the seam must stay platform-free');
   assert.match(POSIX, /import Darwin/);
-  assert.match(POSIX, /public final class PosixSecurityScopedFileSystem: SecurityScopedFileSystem \{/);
+  assert.match(POSIX, /public final class PosixSecurityScopedFileSystem:\s*SecurityScopedFileSystem,\s*DescriptorRelativeSecurityScopedFileSystem/s);
 });
 
 test('the XCTest suites cover the attacks DEVELOPMENT.md 19.6 names', () => {
@@ -485,7 +465,7 @@ test('the XCTest suites cover the attacks DEVELOPMENT.md 19.6 names', () => {
     'testTraversalIsRejectedBeforeAnythingIsJoined',
     'testASymlinkOutOfTheRootIsRefusedNotFollowed',
     'testALinkInTheMiddleOfAPathCannotCarryTheResolutionOut',
-    'testAContainedSymlinkStillWorks',
+    'testAContainedSymlinkIsAlsoRefusedFailClosed',
     'testCreatingThroughAnEscapingLinkIsRefused',
     'testASiblingOfTheRootIsNotReachableEvenWhenItsNamePrefixMatches',
     'testListSkipsNamesTheWireCouldNotAddress',
@@ -498,6 +478,8 @@ test('the XCTest suites cover the attacks DEVELOPMENT.md 19.6 names', () => {
     'testCloseAllReleasesEveryDescriptorAndClaim',
     'testWriteDoesNotTruncateUnlessAskedTo',
     'testDeleteRefusesANonEmptyDirectoryUnlessRecursive',
+    'testReplacingCanonicalisedAncestorCannotRedirectSensitiveOperations',
+    'testPosixListStopsReaddirAtTheProviderLimit',
   ]) {
     assert.match(providerTests, new RegExp('func ' + name + '\\('), 'missing coverage: ' + name);
   }

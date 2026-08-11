@@ -14,16 +14,26 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createProofClient } from "./mobile-v1-proof-client.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
 const ADMIN_PASSWORD = "mv1-roundtrip-pass";
+const AI_PROVIDER_SECRET = "mv1-provider-secret-canary";
 
 const state = {
   child: null, base: "", dataDir: "", cookie: "", sid: "",
-  tokenId: "", deviceId: "", access: "", refresh: "", registryHash: "",
-  entityId: "", firstChangeSeq: 0, cursor: 0, log: "",
+  tokenId: "", tokenSecret: "", deviceId: "", access: "", refresh: "", registryHash: "",
+  bindGrant: "", bindAttempt: null, bindPayload: null, bindingRevision: 0, bindingToken: "",
+  entityId: "", providerId: "", firstChangeSeq: 0, cursor: 0, log: "", signingPrivateKey: null,
 };
+
+const proofDevice = createProofClient({
+  base: () => state.base,
+  access: () => state.access,
+  deviceId: () => state.deviceId,
+  privateKey: () => state.signingPrivateKey,
+});
 
 async function waitHealthy(budgetMs) {
   const until = Date.now() + budgetMs;
@@ -47,7 +57,7 @@ function device(pathname, init) {
     "x-zephyr-one-platform": "android",
     "x-zephyr-protocol-version": "1",
   }, opts.headers || {});
-  return fetch(state.base + pathname, Object.assign({}, opts, { headers }));
+  return proofDevice(pathname, Object.assign({}, opts, { headers }));
 }
 
 function connectionRows(body) {
@@ -70,6 +80,35 @@ function pushBody(batchId, operations, overrides) {
     registryHash: state.registryHash,
     operations,
   }, overrides || {}));
+}
+
+/**
+ * Device binding is an account-management action.  Keep the fixture on the
+ * production path: verify the password for the exact Client Token/device pair
+ * first, then send the short-lived authority only as a request header.
+ */
+async function createBindGrant(tokenId, deviceId) {
+  const verified = await fetch(state.base + "/api/mobile/v1/sensitive/verify", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-zephyr-sid": state.sid },
+    body: JSON.stringify({
+      action: "device.bind",
+      secret: ADMIN_PASSWORD,
+      targetIds: [tokenId, deviceId],
+    }),
+  });
+  const body = await verified.json();
+  assert.equal(verified.status, 200, "sensitive verification failed: " + JSON.stringify(body).slice(0, 300));
+  assert.equal(body.action, "device.bind");
+  assert.match(body.grant, /^[A-Za-z0-9_-]{43}$/, "the grant has the frozen opaque form");
+  assert.equal(body.secret, undefined, "the verification response must not echo the password");
+  assert.equal(body.targetIds, undefined, "the verification response exposes only a target hash");
+  assert.match(body.targetHash, /^[0-9a-f]{64}$/);
+  assert.equal(body.bindingProtocolVersion, 2);
+  assert.match(body.bindAttempt.receipt, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(typeof body.bindAttempt.expectedBindingRevision, "number");
+  assert.equal(typeof body.bindAttempt.expectedRefreshGeneration, "number");
+  return body;
 }
 
 test("boot a server and rotate the default admin password", async () => {
@@ -157,17 +196,57 @@ test("create a Client Token through the normal main-end API", async () => {
   const id = body.id || (body.token && body.token.id) || (body.record && body.record.id);
   assert.ok(id, "no token id in " + JSON.stringify(body).slice(0, 300));
   state.tokenId = id;
+  state.tokenSecret = String(body.token?.token || body.record?.token || "");
+  assert.ok(state.tokenSecret, "the one-time create response must contain the Client Token secret");
+});
+
+test("create a secret-bearing AI provider through the canonical main-end API", async () => {
+  const res = await fetch(state.base + "/api/ai/providers", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: state.cookie },
+    body: JSON.stringify({
+      name: "Mobile-safe provider",
+      type: "openai-compatible",
+      baseUrl: "https://api.example.invalid/v1",
+      apiKey: AI_PROVIDER_SECRET,
+      apiMode: "responses",
+      extraHeaders: JSON.stringify({ Authorization: "Bearer " + AI_PROVIDER_SECRET }),
+      models: [{
+        id: "model-safe",
+        label: "Model Safe",
+        userAgent: "Zephyr-Server-Only/1",
+        extra: { accessToken: AI_PROVIDER_SECRET },
+      }],
+      defaultModel: "model-safe",
+      options: {
+        vision: true,
+        max_tokens: 4096,
+        extraJson: JSON.stringify({ access_token: AI_PROVIDER_SECRET }),
+      },
+    }),
+  });
+  const raw = await res.text();
+  assert.equal(res.status, 200, "provider creation failed: " + raw.slice(0, 400));
+  const body = JSON.parse(raw);
+  state.providerId = body.provider?.id || "";
+  assert.ok(state.providerId, "canonical provider creation returned no id");
 });
 
 test("a bind with a malformed device key is refused", async () => {
   // ML-KEM-768 public keys are exactly 1184 bytes. A short key would mean the
   // server could never seal an openable envelope, and the failure would only
   // surface later as an undecryptable secret.
+  const deviceId = "dev-badkey-000000000001";
+  const verification = await createBindGrant(state.tokenId, deviceId);
   const res = await fetch(state.base + "/api/mobile/v1/devices/bind", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-zephyr-sid": state.sid },
+    headers: {
+      "content-type": "application/json",
+      "x-zephyr-sid": state.sid,
+      "x-zephyr-sensitive-grant": verification.grant,
+    },
     body: JSON.stringify({
-      deviceId: "dev-badkey-000000000001", deviceName: "Bad Key", platform: "android",
+      deviceId, deviceName: "Bad Key", platform: "android",
       appVersion: "0.1.0", tokenId: state.tokenId, syncIntervalSec: 300,
       keys: {
         encryption: { alg: "ML-KEM-768", publicKey: Buffer.from("short").toString("base64") },
@@ -183,20 +262,42 @@ test("bind issues access and refresh credentials and demands bootstrap", async (
   const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
   const kem = ml_kem768.keygen();
   const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  state.signingPrivateKey = ec.privateKey;
   const jwk = ec.publicKey.export({ format: "jwk" });
 
   state.deviceId = "dev-" + crypto.randomUUID();
+  state.bindPayload = {
+    deviceId: state.deviceId, deviceName: "Pixel Roundtrip", platform: "android",
+    appVersion: "0.1.0", tokenId: state.tokenId, syncIntervalSec: 300,
+    keys: {
+      encryption: { alg: "ML-KEM-768", publicKey: Buffer.from(kem.publicKey).toString("base64") },
+      signing: { alg: "ES256", jwk: { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y } },
+    },
+  };
+  const verification = await createBindGrant(state.tokenId, state.deviceId);
+  state.bindGrant = verification.grant;
+  state.bindAttempt = verification.bindAttempt;
+
+  const wrongTarget = await fetch(state.base + "/api/mobile/v1/devices/bind", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-zephyr-sid": state.sid,
+      "x-zephyr-sensitive-grant": state.bindGrant,
+    },
+    body: JSON.stringify({ ...state.bindPayload, deviceId: "dev-" + crypto.randomUUID() }),
+  });
+  assert.equal(wrongTarget.status, 403, "a grant cannot bind a different device");
+  assert.equal((await wrongTarget.json()).error.code, "sensitive_verification_required");
+
   const res = await fetch(state.base + "/api/mobile/v1/devices/bind", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-zephyr-sid": state.sid },
-    body: JSON.stringify({
-      deviceId: state.deviceId, deviceName: "Pixel Roundtrip", platform: "android",
-      appVersion: "0.1.0", tokenId: state.tokenId, syncIntervalSec: 300,
-      keys: {
-        encryption: { alg: "ML-KEM-768", publicKey: Buffer.from(kem.publicKey).toString("base64") },
-        signing: { alg: "ES256", jwk: { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y } },
-      },
-    }),
+    headers: {
+      "content-type": "application/json",
+      "x-zephyr-sid": state.sid,
+      "x-zephyr-sensitive-grant": state.bindGrant,
+    },
+    body: JSON.stringify(state.bindPayload),
   });
   const raw = await res.text();
   assert.equal(res.status, 200, "bind failed: " + raw.slice(0, 400));
@@ -217,6 +318,117 @@ test("bind issues access and refresh credentials and demands bootstrap", async (
   state.access = body.accessCredential;
   state.refresh = body.refreshCredential;
   state.registryHash = body.registryHash;
+  state.bindingRevision = body.bindingRevision;
+  state.bindingToken = body.bindingToken;
+  assert.equal(body.grant, undefined, "a consumed sensitive grant must never be returned by bind");
+  assert.ok(!raw.includes(ADMIN_PASSWORD), "bind must not echo the verification secret");
+});
+
+test("a successful bind is idempotent for the same receipt and request", async () => {
+  const replay = await fetch(state.base + "/api/mobile/v1/devices/bind", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-zephyr-sid": state.sid,
+      "x-zephyr-sensitive-grant": state.bindGrant,
+    },
+    body: JSON.stringify({
+      ...state.bindPayload,
+      bindingProtocolVersion: 2,
+      bindReceipt: state.bindAttempt.receipt,
+    }),
+  });
+  const raw = await replay.text();
+  assert.equal(replay.status, 200, "the same bind receipt must be an idempotent replay");
+  const body = JSON.parse(raw);
+  assert.equal(body.bindingRevision, state.bindingRevision);
+  assert.equal(body.bindingToken, state.bindingToken);
+  assert.equal(body.refreshCredential, state.refresh);
+  assert.equal(body.grant, undefined, "a replay must not return the sensitive grant");
+  assert.ok(!raw.includes(state.bindGrant), "the grant must stay header-only");
+});
+
+test("a bind receipt cannot authorize a modified request", async () => {
+  const replay = await fetch(state.base + "/api/mobile/v1/devices/bind", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-zephyr-sid": state.sid,
+      "x-zephyr-sensitive-grant": state.bindGrant,
+    },
+    body: JSON.stringify({
+      ...state.bindPayload,
+      deviceName: "Modified replay",
+      bindingProtocolVersion: 2,
+      bindReceipt: state.bindAttempt.receipt,
+    }),
+  });
+  const body = await replay.json();
+  assert.equal(replay.status, 409);
+  assert.equal(body.error.code, "revision_conflict");
+  assert.equal(body.error.details.reason, "bind_receipt_mismatch");
+  assert.ok(!JSON.stringify(body).includes(state.bindGrant), "a conflict must not leak the grant");
+  assert.ok(!JSON.stringify(body).includes(state.bindAttempt.receipt),
+    "a conflict must not leak the bind receipt");
+});
+
+test("an older bind attempt cannot overwrite a newer winner", async () => {
+  const attemptA = await createBindGrant(state.tokenId, state.deviceId);
+  const attemptB = await createBindGrant(state.tokenId, state.deviceId);
+  assert.equal(attemptA.bindAttempt.expectedBindingRevision, state.bindingRevision);
+  assert.equal(attemptB.bindAttempt.expectedBindingRevision, state.bindingRevision);
+
+  const winnerPayload = {
+    ...state.bindPayload,
+    deviceName: "Pixel Roundtrip Winner",
+    bindingProtocolVersion: 2,
+    bindReceipt: attemptB.bindAttempt.receipt,
+  };
+  const winner = await fetch(state.base + "/api/mobile/v1/devices/bind", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-zephyr-sid": state.sid,
+      "x-zephyr-sensitive-grant": attemptB.grant,
+    },
+    body: JSON.stringify(winnerPayload),
+  });
+  const winnerRaw = await winner.text();
+  assert.equal(winner.status, 200, "newer bind attempt failed: " + winnerRaw.slice(0, 400));
+  const winnerBody = JSON.parse(winnerRaw);
+  assert.equal(winnerBody.bindingRevision, state.bindingRevision + 1);
+
+  const stale = await fetch(state.base + "/api/mobile/v1/devices/bind", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-zephyr-sid": state.sid,
+      "x-zephyr-sensitive-grant": attemptA.grant,
+    },
+    body: JSON.stringify({
+      ...state.bindPayload,
+      deviceName: "Pixel Roundtrip Stale",
+      bindingProtocolVersion: 2,
+      bindReceipt: attemptA.bindAttempt.receipt,
+    }),
+  });
+  const staleBody = await stale.json();
+  assert.equal(stale.status, 409);
+  assert.equal(staleBody.error.code, "revision_conflict");
+  assert.equal(staleBody.error.details.reason, "bind_attempt_stale");
+  assert.equal(staleBody.error.details.expectedBindingRevision, state.bindingRevision);
+  assert.equal(staleBody.error.details.currentBindingRevision, winnerBody.bindingRevision);
+  assert.equal(staleBody.error.details.expectedRefreshGeneration,
+    attemptA.bindAttempt.expectedRefreshGeneration);
+  assert.equal(staleBody.error.details.currentRefreshGeneration,
+    attemptA.bindAttempt.expectedRefreshGeneration + 1);
+
+  state.bindPayload = winnerPayload;
+  state.access = winnerBody.accessCredential;
+  state.refresh = winnerBody.refreshCredential;
+  state.registryHash = winnerBody.registryHash;
+  state.bindingRevision = winnerBody.bindingRevision;
+  state.bindingToken = winnerBody.bindingToken;
 });
 
 test("the bound device can now use the DeviceAccess plane", async () => {
@@ -234,6 +446,8 @@ test("bootstrap streams the owned mirror and terminates", async () => {
   let pages = 0;
   let total = 0;
   let snapshotCursor = null;
+  let providerEntity = null;
+  let clientTokenEntity = null;
 
   for (;;) {
     const q = token
@@ -255,6 +469,12 @@ test("bootstrap streams the owned mirror and terminates", async () => {
       assert.ok(change.payload && typeof change.payload === "object");
       assert.equal(change.payload.password, undefined, "a secret leaked into a bootstrap payload");
       assert.equal(change.payload.privateKey, undefined, "a secret leaked into a bootstrap payload");
+      if (change.entityType === "aiProvider" && change.entityId === state.providerId) {
+        providerEntity = change;
+      }
+      if (change.entityType === "clientToken" && change.entityId === state.tokenId) {
+        clientTokenEntity = change;
+      }
     }
     total += body.entities.length;
     pages += 1;
@@ -270,6 +490,86 @@ test("bootstrap streams the owned mirror and terminates", async () => {
 
   assert.ok(pages >= 1);
   assert.equal(typeof total, "number");
+  assert.ok(providerEntity, "the canonical AI provider was absent from bootstrap");
+  assert.equal(providerEntity.payload.baseUrl, "https://api.example.invalid/v1");
+  assert.equal(providerEntity.payload.config.apiMode, "responses");
+  assert.equal(providerEntity.payload.config.options.vision, true);
+  assert.equal(providerEntity.payload.config.options.max_tokens, 4096);
+  assert.equal(providerEntity.payload.models[0].id, "model-safe");
+  assert.equal(providerEntity.payload.models[0].userAgent, undefined);
+  assert.equal(providerEntity.payload.models[0].extra, undefined);
+  assert.equal(providerEntity.payload.apiKey, undefined);
+  assert.equal(providerEntity.payload.hasApiKey, undefined);
+  assert.equal(providerEntity.payload.config.extraHeaders, undefined);
+  assert.equal(providerEntity.payload.config.options.extraJson, undefined);
+  assert.ok(!JSON.stringify(providerEntity).includes(AI_PROVIDER_SECRET),
+    "the AI provider secret canary leaked into bootstrap");
+  assert.ok(clientTokenEntity, "the canonical Client Token metadata was absent from bootstrap");
+  assert.deepEqual(Object.keys(clientTokenEntity.payload).sort(), [
+    "createdAt", "id", "lastUsedAt", "name", "ownerUserId", "revision", "updatedAt",
+  ]);
+  assert.deepEqual(clientTokenEntity.fieldMask, ["name"]);
+  assert.equal(clientTokenEntity.payload.name, "mobile-roundtrip");
+  assert.ok(!JSON.stringify(clientTokenEntity).includes(state.tokenSecret),
+    "the Client Token secret leaked into bootstrap");
+});
+
+test("Client Token metadata writes use one canonical actor-bound change and reject secret masks", async () => {
+  const res = await device("/api/mobile/v1/sync/push", {
+    method: "POST",
+    body: pushBody("batch-token-metadata", [{
+      opId: "op-token-rename",
+      entityType: "clientToken",
+      entityId: state.tokenId,
+      action: "upsert",
+      baseRevision: 1,
+      clientModifiedAt: Date.now(),
+      fieldMask: ["name"],
+      payload: { name: "mobile-roundtrip-renamed" },
+    }]),
+  });
+  const raw = await res.text();
+  assert.equal(res.status, 200, "Client Token rename failed: " + raw.slice(0, 400));
+  assert.ok(!raw.includes(state.tokenSecret), "push response leaked the Client Token secret");
+  const result = JSON.parse(raw).results[0];
+  assert.equal(result.status, "accepted");
+  assert.equal(result.revision, 2);
+  assert.ok(Number.isSafeInteger(result.changeSeq) && result.changeSeq > 0);
+
+  const feed = await device("/api/mobile/v1/sync/changes?sinceCursor=0&limit=100");
+  const feedRaw = await feed.text();
+  assert.equal(feed.status, 200, feedRaw.slice(0, 400));
+  assert.ok(!feedRaw.includes(state.tokenSecret), "change feed leaked the Client Token secret");
+  const changes = JSON.parse(feedRaw).changes.filter((change) => (
+    change.entityType === "clientToken" && change.entityId === state.tokenId
+  ));
+  assert.equal(changes.length, 2, "Web create and mobile rename must each emit one metadata change");
+  assert.equal(changes[0].revision, 1);
+  assert.equal(changes[0].actorDeviceId, null, "the main-end create has no mobile actor");
+  const renameChanges = changes.filter((change) => change.revision === 2);
+  assert.equal(renameChanges.length, 1, "mobile rename must not double-write the change feed");
+  assert.equal(renameChanges[0].changeSeq, result.changeSeq);
+  assert.equal(renameChanges[0].actorDeviceId, state.deviceId);
+  assert.deepEqual(renameChanges[0].fieldMask, ["name"]);
+  assert.equal(renameChanges[0].payload.name, "mobile-roundtrip-renamed");
+  assert.equal(renameChanges[0].payload.token, undefined);
+
+  const forbidden = await device("/api/mobile/v1/sync/push", {
+    method: "POST",
+    body: pushBody("batch-token-secret-mask", [{
+      opId: "op-token-secret-mask",
+      entityType: "clientToken",
+      entityId: state.tokenId,
+      action: "upsert",
+      baseRevision: 2,
+      fieldMask: ["token"],
+      payload: { token: "MUST_NOT_BE_ACCEPTED" },
+    }]),
+  });
+  assert.equal(forbidden.status, 400);
+  const forbiddenBody = await forbidden.json();
+  assert.equal(forbiddenBody.error.code, "invalid_request");
+  assert.equal(JSON.stringify(forbiddenBody).includes("MUST_NOT_BE_ACCEPTED"), false);
 });
 
 test("a forged bootstrap page token is refused", async () => {
@@ -329,6 +629,8 @@ test("the pushed write returns through the change feed", async () => {
   assert.ok(mine, "a device own write must still appear in its feed");
   assert.equal(mine.entityType, "connection");
   assert.equal(mine.action, "upsert");
+  assert.equal(mine.changeSeq, state.firstChangeSeq,
+    "the push result must reference the exact canonical change row");
   assert.equal(mine.actorDeviceId, state.deviceId,
     "the feed must name the actor so a client can dedupe its own writes");
   assert.equal(mine.payload.name, "Roundtrip Host");
@@ -401,9 +703,9 @@ test("a fieldMask naming a secret or a server-authority field is refused", async
         payload,
       }]),
     });
-    assert.equal(res.status, 200, "push transport failed for " + field);
-    const result = (await res.json()).results[0];
-    assert.equal(result.status, "rejected",
+    assert.equal(res.status, 400, "push preflight must reject " + field);
+    const result = await res.json();
+    assert.equal(result.error.code, "invalid_request",
       field + " must be rejected: " + JSON.stringify(result).slice(0, 250));
   }
 });
@@ -528,7 +830,7 @@ test("the device list shows the bound device to the SID plane", async () => {
   assert.equal(body.ok, true);
   const mine = body.devices.find((d) => d.deviceId === state.deviceId);
   assert.ok(mine, "the bound device must be listed");
-  assert.equal(mine.deviceName, "Pixel Roundtrip");
+  assert.equal(mine.deviceName, state.bindPayload.deviceName);
   const text = JSON.stringify(body);
   assert.equal(/refresh_token_hash|refreshCredential|accessCredential/.test(text), false,
     "the device list must never expose credential material");

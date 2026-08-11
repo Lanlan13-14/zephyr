@@ -29,6 +29,7 @@
 #include <freerdp/settings.h>
 #include <freerdp/version.h>
 #include <winpr/crt.h>
+#include <winpr/interlocked.h>
 #include <winpr/synch.h>
 #include <winpr/user.h>
 
@@ -78,6 +79,17 @@
 #define Z_EVENT_CONST
 #endif
 
+/* This marker is added by the pinned FreeRDP patch. Without it the upstream
+ * cliprdr callback runs only after the generic channel code has allocated the
+ * server-controlled `totalLength`, so enabling the channel would leave an OOM
+ * path even if the response callback below rejected the payload. */
+#if defined(FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT) && \
+    FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT == 1
+#define ZEPHYR_RDP_SAFE_CLIPRDR 1
+#else
+#define ZEPHYR_RDP_SAFE_CLIPRDR 0
+#endif
+
 /* ── input queue ──────────────────────────────────────────────────────────── */
 
 #define ZQ_MOUSE     1
@@ -88,6 +100,73 @@
 #define ZQ_RESIZE    6
 #define ZQ_CLIPBOARD 7
 #define ZQ_FULLFRAME 8
+
+/* MS-RDPBCGR 2.2.1.1.1 negotiation protocol values. The core negotiation
+ * header that defines these is private to FreeRDP, so keep the small wire
+ * constants here rather than reaching into an unshipped internal header. */
+#define ZEPHYR_PROTOCOL_RDP       0x00000000u
+#define ZEPHYR_PROTOCOL_SSL       0x00000001u
+#define ZEPHYR_PROTOCOL_HYBRID    0x00000002u
+#define ZEPHYR_PROTOCOL_HYBRID_EX 0x00000008u
+
+#ifdef ZEPHYR_RDP_TESTING
+#define ZEPHYR_RDP_TEST_FAIL_HOST        1
+#define ZEPHYR_RDP_TEST_FAIL_USERNAME    2
+#define ZEPHYR_RDP_TEST_FAIL_PASSWORD    3
+#define ZEPHYR_RDP_TEST_FAIL_DOMAIN      4
+#define ZEPHYR_RDP_TEST_FAIL_DRIVE_NAME  5
+#define ZEPHYR_RDP_TEST_FAIL_DRIVE_PATH  6
+#define ZEPHYR_RDP_TEST_FAIL_LOCK        7
+#define ZEPHYR_RDP_TEST_FAIL_WAKE        8
+#define ZEPHYR_RDP_TEST_FAIL_CONTEXT     9
+#define ZEPHYR_RDP_TEST_FAIL_CONFIG     10
+#define ZEPHYR_RDP_TEST_FAIL_READY      11
+
+int32_t zephyr_rdp_test_new_failure_cleanup(const zephyr_rdp_config* cfg,
+                                            int32_t failpoint);
+int32_t zephyr_rdp_test_password_wipe_cleanup(const zephyr_rdp_config* cfg,
+                                              int32_t failpoint);
+
+static int32_t zrdp_test_failpoint;
+static BOOL zrdp_test_failpoint_hit;
+static int32_t zrdp_test_live_sessions;
+static int32_t zrdp_test_live_strings;
+static int32_t zrdp_test_live_locks;
+static int32_t zrdp_test_live_wakes;
+static int32_t zrdp_test_live_contexts;
+static int32_t zrdp_test_password_wipe_failures;
+static int32_t zrdp_test_owned_password_wipes;
+static int32_t zrdp_test_settings_password_wipes;
+static BOOL zrdp_test_wiping_owned_password;
+
+static BOOL zrdp_test_fail_now(int32_t failpoint) {
+    if (zrdp_test_failpoint != failpoint) return FALSE;
+    zrdp_test_failpoint_hit = TRUE;
+    return TRUE;
+}
+
+static void zrdp_test_record_password_wipe(const char* bytes, size_t len,
+                                           BOOL settings_copy) {
+    for (size_t i = 0; i < len; i++) {
+        if (bytes[i] != '\0') {
+            zrdp_test_password_wipe_failures++;
+            break;
+        }
+    }
+    if (settings_copy)
+        zrdp_test_settings_password_wipes++;
+    else
+        zrdp_test_owned_password_wipes++;
+}
+
+#define ZRDP_TEST_FAIL_NOW(v) zrdp_test_fail_now(v)
+#define ZRDP_TEST_TRACK_ACQUIRE(v) ((v)++)
+#define ZRDP_TEST_TRACK_RELEASE(v) ((v)--)
+#else
+#define ZRDP_TEST_FAIL_NOW(v) FALSE
+#define ZRDP_TEST_TRACK_ACQUIRE(v) ((void)0)
+#define ZRDP_TEST_TRACK_RELEASE(v) ((void)0)
+#endif
 
 /* Bounded so a stalled server cannot turn UI input into unbounded memory
  * growth. On overflow the *oldest* entry is dropped: newer input is always
@@ -121,13 +200,14 @@ struct zephyr_rdp_session {
     char* own_drive_path;
 
     CRITICAL_SECTION lock;
+    BOOL             lock_initialized;
     HANDLE           wake;
     zq_item          queue[ZQ_CAPACITY];
     int              q_head;
     int              q_count;
     uint64_t         q_dropped;
 
-    volatile BOOL stopping;
+    volatile LONG stopping;
     BOOL          connected;
 
     /* Channel contexts captured from ChannelConnected. */
@@ -142,6 +222,29 @@ struct zephyr_rdp_session {
     uint8_t* pack;
     size_t   pack_cap;
 };
+
+static BOOL security_mode_supported(const zephyr_rdp_config* cfg) {
+    return cfg && (cfg->security == ZEPHYR_RDP_SEC_AUTO ||
+                   cfg->security == ZEPHYR_RDP_SEC_NLA);
+}
+
+static BOOL security_protocol_allowed(const zephyr_rdp_config* cfg,
+                                      UINT32 selected_protocol) {
+    if (!security_mode_supported(cfg)) return FALSE;
+    return selected_protocol == ZEPHYR_PROTOCOL_HYBRID ||
+           selected_protocol == ZEPHYR_PROTOCOL_HYBRID_EX;
+}
+
+static BOOL session_is_stopping(zephyr_rdp_session* s) {
+    if (!s) return TRUE;
+    return InterlockedCompareExchange(&s->stopping, 0, 0) != 0;
+}
+
+static void session_request_stop(zephyr_rdp_session* s) {
+    if (!s) return;
+    const LONG previous = InterlockedExchange(&s->stopping, 1);
+    (void)previous;
+}
 
 /* FreeRDP allocates the context; this is how the callbacks find us back. */
 typedef struct {
@@ -161,6 +264,29 @@ static char* dup_or_null(const char* s) {
     if (!out) return NULL;
     memcpy(out, s, n + 1);
     return out;
+}
+
+static BOOL copy_config_string(const char* source, char** destination) {
+    if (!destination) return FALSE;
+    *destination = dup_or_null(source);
+    if (source && *source && !*destination) return FALSE;
+#ifdef ZEPHYR_RDP_TESTING
+    if (*destination) ZRDP_TEST_TRACK_ACQUIRE(zrdp_test_live_strings);
+#endif
+    return TRUE;
+}
+
+static void free_config_string(char** value) {
+    if (!value || !*value) return;
+    const size_t len = strlen(*value);
+    (void)SecureZeroMemory(*value, len);
+#ifdef ZEPHYR_RDP_TESTING
+    if (zrdp_test_wiping_owned_password)
+        zrdp_test_record_password_wipe(*value, len, FALSE);
+    ZRDP_TEST_TRACK_RELEASE(zrdp_test_live_strings);
+#endif
+    free(*value);
+    *value = NULL;
 }
 
 static void emit_event(zephyr_rdp_session* s, int32_t code, int32_t a, int32_t b,
@@ -238,6 +364,16 @@ static long utf8_to_utf16le(const char* in, uint16_t* out, size_t out_units) {
     return n;
 }
 
+static char* dup_clipboard_or_null(const char* utf8) {
+    if (!utf8 || !*utf8) return NULL;
+    long units = utf8_to_utf16le(utf8, NULL, 0);
+    if (units <= 0 ||
+        (size_t)units >
+            (size_t)ZEPHYR_RDP_MAX_CLIPBOARD_UTF16_BYTES / sizeof(uint16_t))
+        return NULL;
+    return dup_or_null(utf8);
+}
+
 /* `units` counts available UTF-16 code units; conversion stops at a NUL unit.
  * Returns bytes written excluding the NUL, or -1 on bad input. */
 static long utf16le_to_utf8(const uint16_t* in, size_t units, char* out,
@@ -288,6 +424,37 @@ static long utf16le_to_utf8(const uint16_t* in, size_t units, char* out,
     }
 #undef PUTB
     return n;
+}
+
+static uint16_t read_utf16le_unit(const uint8_t* bytes) {
+    return (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8));
+}
+
+/* Validate a complete CF_UNICODETEXT payload without allocating. Length is
+ * checked before touching `data`, including for SIZE_MAX supplied by tests, so
+ * no multiply/add can wrap into an apparently small allocation. */
+static BOOL validate_clipboard_payload(const uint8_t* data, size_t bytes) {
+    if (bytes < sizeof(uint16_t) ||
+        bytes > (size_t)ZEPHYR_RDP_MAX_CLIPBOARD_UTF16_BYTES ||
+        (bytes % sizeof(uint16_t)) != 0 || !data)
+        return FALSE;
+
+    if (read_utf16le_unit(data + bytes - sizeof(uint16_t)) != 0) return FALSE;
+
+    const size_t text_bytes = bytes - sizeof(uint16_t);
+    for (size_t offset = 0; offset < text_bytes; offset += sizeof(uint16_t)) {
+        uint16_t unit = read_utf16le_unit(data + offset);
+        if (unit == 0) return FALSE; /* embedded NUL / ignored trailing data */
+        if (unit >= 0xD800 && unit <= 0xDBFF) {
+            if (text_bytes - offset < 2u * sizeof(uint16_t)) return FALSE;
+            uint16_t low = read_utf16le_unit(data + offset + sizeof(uint16_t));
+            if (low < 0xDC00 || low > 0xDFFF) return FALSE;
+            offset += sizeof(uint16_t);
+        } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+            return FALSE;
+        }
+    }
+    return TRUE;
 }
 
 /* Exposed for the test suite: proves the converters round-trip real payloads
@@ -468,21 +635,15 @@ static UINT on_server_format_data_response(
     CliprdrClientContext* ctx, const CLIPRDR_FORMAT_DATA_RESPONSE* resp) {
     zephyr_rdp_session* s = (zephyr_rdp_session*)ctx->custom;
     if (!s || !resp || (CLIP_FLAGS_P(resp) & CB_RESPONSE_FAIL)) return CHANNEL_RC_OK;
-    if (!resp->requestedFormatData || CLIP_LEN_P(resp) < 2) return CHANNEL_RC_OK;
-
-    size_t units = CLIP_LEN_P(resp) / 2u;
-    long need = utf16le_to_utf8((const uint16_t*)resp->requestedFormatData, units,
-                                NULL, 0);
-    if (need < 0) return CHANNEL_RC_OK; /* malformed: drop, never guess */
-    char* text = (char*)malloc((size_t)need + 1);
-    if (!text) return CHANNEL_RC_OK;
-    if (utf16le_to_utf8((const uint16_t*)resp->requestedFormatData, units, text,
-                        (size_t)need + 1) < 0) {
-        free(text);
+    const size_t bytes = (size_t)CLIP_LEN_P(resp);
+    if (!validate_clipboard_payload(resp->requestedFormatData, bytes))
         return CHANNEL_RC_OK;
-    }
-    emit_event(s, ZEPHYR_RDP_EV_CLIPBOARD, 0, 0, text);
-    free(text);
+
+    /* `bytes` is at most 4 MiB, hence representable by the callback's int32.
+     * The FreeRDP buffer stays alive for this synchronous callback. Rust makes
+     * the sole owned copy after independently checking the same boundary. */
+    emit_event(s, ZEPHYR_RDP_EV_CLIPBOARD, (int32_t)bytes, 0,
+               (const char*)resp->requestedFormatData);
     return CHANNEL_RC_OK;
 }
 
@@ -501,16 +662,23 @@ static UINT on_server_format_data_request(
     }
 
     long units = utf8_to_utf16le(s->clip_pending, NULL, 0);
-    if (units < 0) {
+    if (units <= 0 ||
+        (size_t)units >
+            (size_t)ZEPHYR_RDP_MAX_CLIPBOARD_UTF16_BYTES / sizeof(uint16_t)) {
         CLIP_FLAGS(resp) = CB_RESPONSE_FAIL;
         return ctx->ClientFormatDataResponse(ctx, &resp);
     }
-    uint16_t* wide = (uint16_t*)calloc((size_t)units, sizeof(uint16_t));
+    const size_t wide_units = (size_t)units;
+    if (wide_units > SIZE_MAX / sizeof(uint16_t)) {
+        CLIP_FLAGS(resp) = CB_RESPONSE_FAIL;
+        return ctx->ClientFormatDataResponse(ctx, &resp);
+    }
+    uint16_t* wide = (uint16_t*)calloc(wide_units, sizeof(uint16_t));
     if (!wide) {
         CLIP_FLAGS(resp) = CB_RESPONSE_FAIL;
         return ctx->ClientFormatDataResponse(ctx, &resp);
     }
-    long w = utf8_to_utf16le(s->clip_pending, wide, (size_t)units);
+    long w = utf8_to_utf16le(s->clip_pending, wide, wide_units);
     if (w < 0) {
         free(wide);
         CLIP_FLAGS(resp) = CB_RESPONSE_FAIL;
@@ -609,6 +777,18 @@ static BOOL zephyr_post_connect(freerdp* instance) {
     rdpContext* context = instance->context;
     zephyr_rdp_session* s = owner_of(context);
     if (!s) return FALSE;
+
+    /* FreeRDP already rejects protocols disabled in rdpSettings. Recheck the
+     * negotiated wire value before initializing graphics so a future library
+     * regression, or a server response that selects protocol 0, still fails
+     * closed at Zephyr's own trust boundary. */
+    UINT32 selected_protocol =
+        freerdp_settings_get_uint32(context->settings, FreeRDP_SelectedProtocol);
+    if (!security_protocol_allowed(&s->cfg, selected_protocol)) {
+        emit_event(s, ZEPHYR_RDP_EV_ERROR, (int32_t)selected_protocol, 0,
+                   "insecure RDP security negotiation rejected");
+        return FALSE;
+    }
 
     /* BGRA32 is the format every shipped FreeRDP client uses, so it is the
      * best-tested path through the GDI/codec layers. emit_rect() converts to
@@ -722,6 +902,11 @@ static void fill_entry_points(RDP_CLIENT_ENTRY_POINTS* ep) {
 static BOOL apply_config(rdpSettings* settings, const zephyr_rdp_config* cfg) {
     if (!settings || !cfg) return FALSE;
 
+    /* AUTO is an ABI/UI compatibility spelling for the same NLA-only policy.
+     * TLS-only, Standard RDP Security, and unknown values are rejected before
+     * credentials are copied into the FreeRDP settings object. */
+    if (!security_mode_supported(cfg)) return FALSE;
+
     if (!freerdp_settings_set_string(settings, FreeRDP_ServerHostname,
                                      cfg->host ? cfg->host : ""))
         return FALSE;
@@ -759,32 +944,16 @@ static BOOL apply_config(rdpSettings* settings, const zephyr_rdp_config* cfg) {
      * and forward. A hardware/X11 path would draw into a window we do not have. */
     if (!freerdp_settings_set_bool(settings, FreeRDP_SoftwareGdi, TRUE)) return FALSE;
 
-    /* Security negotiation. AUTO leaves FreeRDP's own negotiation in place
-     * (NLA→TLS→RDP); the explicit modes pin exactly one so a downgrade cannot
-     * happen silently. */
-    switch (cfg->security) {
-        case ZEPHYR_RDP_SEC_NLA:
-            if (!freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, TRUE) ||
-                !freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, FALSE) ||
-                !freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, FALSE))
-                return FALSE;
-            break;
-        case ZEPHYR_RDP_SEC_TLS:
-            if (!freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, FALSE) ||
-                !freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, TRUE) ||
-                !freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, FALSE))
-                return FALSE;
-            break;
-        case ZEPHYR_RDP_SEC_RDP:
-            if (!freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, FALSE) ||
-                !freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, FALSE) ||
-                !freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, TRUE) ||
-                !freerdp_settings_set_bool(settings, FreeRDP_UseRdpSecurityLayer, TRUE))
-                return FALSE;
-            break;
-        default:
-            break; /* AUTO: leave FreeRDP defaults */
-    }
+    /* NLA is the sole offered authentication protocol regardless of whether
+     * the password is empty. TlsSecurity means TLS *without* CredSSP in
+     * FreeRDP, so it must stay disabled even though NLA itself uses TLS as its
+     * transport. */
+    if (!freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, TRUE) ||
+        !freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, FALSE) ||
+        !freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, FALSE) ||
+        !freerdp_settings_set_bool(settings, FreeRDP_UseRdpSecurityLayer, FALSE) ||
+        !freerdp_settings_set_bool(settings, FreeRDP_NegotiateSecurityLayer, TRUE))
+        return FALSE;
 
     if (cfg->ignore_certificate) {
         if (!freerdp_settings_set_bool(settings, FreeRDP_IgnoreCertificate, TRUE))
@@ -805,8 +974,14 @@ static BOOL apply_config(rdpSettings* settings, const zephyr_rdp_config* cfg) {
                                    cfg->microphone ? TRUE : FALSE))
         return FALSE;
 
-    if (!freerdp_settings_set_bool(settings, FreeRDP_RedirectClipboard,
-                                   cfg->clipboard ? TRUE : FALSE))
+    const BOOL clipboard =
+        (cfg->clipboard && ZEPHYR_RDP_SAFE_CLIPRDR) ? TRUE : FALSE;
+    if (!freerdp_settings_set_bool(settings, FreeRDP_RedirectClipboard, clipboard))
+        return FALSE;
+    if (clipboard &&
+        !freerdp_settings_set_uint32(
+            settings, FreeRDP_ClipboardFeatureMask,
+            CLIPRDR_FLAG_LOCAL_TO_REMOTE | CLIPRDR_FLAG_REMOTE_TO_LOCAL))
         return FALSE;
 
     /* ── folder mapping (RDPDR drive redirection) ──
@@ -956,13 +1131,94 @@ int32_t zephyr_rdp_validate_drive(const char* drive_name, const char* drive_path
 
 /* ── construction ─────────────────────────────────────────────────────────── */
 
+static void clear_freerdp_password(zephyr_rdp_session* s) {
+    if (!s || !s->context || !s->context->settings) return;
+
+    const char* password = freerdp_settings_get_string(
+        s->context->settings, FreeRDP_Password);
+    if (!password) return;
+
+    const size_t len = strlen(password);
+    (void)SecureZeroMemory((void*)password, len);
+#ifdef ZEPHYR_RDP_TESTING
+    zrdp_test_record_password_wipe(password, len, TRUE);
+#endif
+    /* Release FreeRDP's owned copy now. Its generated teardown currently uses
+     * ordinary memset, which does not provide the same optimization-resistant
+     * guarantee as SecureZeroMemory. */
+    (void)freerdp_settings_set_string(s->context->settings, FreeRDP_Password,
+                                      NULL);
+}
+
+static void destroy_session(zephyr_rdp_session* s) {
+    if (!s) return;
+
+    if (s->context) {
+        clear_freerdp_password(s);
+        freerdp_client_context_free(s->context);
+        s->context = NULL;
+        s->instance = NULL;
+#ifdef ZEPHYR_RDP_TESTING
+        ZRDP_TEST_TRACK_RELEASE(zrdp_test_live_contexts);
+#endif
+    }
+    if (s->wake) {
+        CloseHandle(s->wake);
+        s->wake = NULL;
+#ifdef ZEPHYR_RDP_TESTING
+        ZRDP_TEST_TRACK_RELEASE(zrdp_test_live_wakes);
+#endif
+    }
+
+    /* No producer may race free (the public contract requires run to have
+     * returned), so the remaining owned queue payloads can be drained before
+     * deleting the lock. */
+    while (s->q_count > 0) {
+        free(s->queue[s->q_head].text);
+        s->queue[s->q_head].text = NULL;
+        s->q_head = (s->q_head + 1) % ZQ_CAPACITY;
+        s->q_count--;
+    }
+    if (s->lock_initialized) {
+        DeleteCriticalSection(&s->lock);
+        s->lock_initialized = FALSE;
+#ifdef ZEPHYR_RDP_TESTING
+        ZRDP_TEST_TRACK_RELEASE(zrdp_test_live_locks);
+#endif
+    }
+
+    free(s->clip_pending);
+    free(s->pack);
+    free_config_string(&s->own_host);
+    free_config_string(&s->own_user);
+#ifdef ZEPHYR_RDP_TESTING
+    zrdp_test_wiping_owned_password = TRUE;
+#endif
+    free_config_string(&s->own_pass);
+#ifdef ZEPHYR_RDP_TESTING
+    zrdp_test_wiping_owned_password = FALSE;
+#endif
+    free_config_string(&s->own_domain);
+    free_config_string(&s->own_drive_name);
+    free_config_string(&s->own_drive_path);
+#ifdef ZEPHYR_RDP_TESTING
+    ZRDP_TEST_TRACK_RELEASE(zrdp_test_live_sessions);
+#endif
+    free(s);
+}
+
 zephyr_rdp_session* zephyr_rdp_new(const zephyr_rdp_config* cfg,
                                    zephyr_rdp_frame_cb frame_cb,
                                    zephyr_rdp_event_cb event_cb, void* user) {
-    if (!cfg) return NULL;
+    /* Refuse legacy/invalid modes before allocating or copying credentials. */
+    if (!cfg || !security_mode_supported(cfg)) return NULL;
 
     zephyr_rdp_session* s = (zephyr_rdp_session*)calloc(1, sizeof(*s));
     if (!s) return NULL;
+#ifdef ZEPHYR_RDP_TESTING
+    ZRDP_TEST_TRACK_ACQUIRE(zrdp_test_live_sessions);
+#endif
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_HOST)) goto fail;
 
     s->frame_cb = frame_cb;
     s->event_cb = event_cb;
@@ -971,12 +1227,17 @@ zephyr_rdp_session* zephyr_rdp_new(const zephyr_rdp_config* cfg,
 
     /* Own every string. The caller's pointers may be freed the moment this
      * returns, but FreeRDP reads drive_name/drive_path during PreConnect. */
-    s->own_host = dup_or_null(cfg->host);
-    s->own_user = dup_or_null(cfg->username);
-    s->own_pass = dup_or_null(cfg->password);
-    s->own_domain = dup_or_null(cfg->domain);
-    s->own_drive_name = dup_or_null(cfg->drive_name);
-    s->own_drive_path = dup_or_null(cfg->drive_path);
+    if (!copy_config_string(cfg->host, &s->own_host)) goto fail;
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_USERNAME)) goto fail;
+    if (!copy_config_string(cfg->username, &s->own_user)) goto fail;
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_PASSWORD)) goto fail;
+    if (!copy_config_string(cfg->password, &s->own_pass)) goto fail;
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_DOMAIN)) goto fail;
+    if (!copy_config_string(cfg->domain, &s->own_domain)) goto fail;
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_DRIVE_NAME)) goto fail;
+    if (!copy_config_string(cfg->drive_name, &s->own_drive_name)) goto fail;
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_DRIVE_PATH)) goto fail;
+    if (!copy_config_string(cfg->drive_path, &s->own_drive_path)) goto fail;
     s->cfg.host = s->own_host;
     s->cfg.username = s->own_user;
     s->cfg.password = s->own_pass;
@@ -984,20 +1245,13 @@ zephyr_rdp_session* zephyr_rdp_new(const zephyr_rdp_config* cfg,
     s->cfg.drive_name = s->own_drive_name;
     s->cfg.drive_path = s->own_drive_path;
 
-    /* Every early return past this point must release the strings duplicated
-     * above. Centralising that in one label keeps a future added failure path
-     * from reintroducing the leak that existed here. */
-#define ZRDP_NEW_FREE_STRINGS()                                      \
-    do {                                                             \
-        free(s->own_host); free(s->own_user); free(s->own_pass);           \
-        free(s->own_domain); free(s->own_drive_name); free(s->own_drive_path); \
-    } while (0)
-
-    if (!InitializeCriticalSectionAndSpinCount(&s->lock, 4000)) {
-        ZRDP_NEW_FREE_STRINGS();
-        free(s);
-        return NULL;
-    }
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_LOCK) ||
+        !InitializeCriticalSectionAndSpinCount(&s->lock, 4000))
+        goto fail;
+    s->lock_initialized = TRUE;
+#ifdef ZEPHYR_RDP_TESTING
+    ZRDP_TEST_TRACK_ACQUIRE(zrdp_test_live_locks);
+#endif
     /* Manual-reset, drained explicitly by the loop.
      *
      * An auto-reset event would be the natural choice, but WinPR on POSIX logs
@@ -1009,24 +1263,18 @@ zephyr_rdp_session* zephyr_rdp_new(const zephyr_rdp_config* cfg,
      * Asking for manual-reset and calling ResetEvent ourselves is not a
      * workaround for one platform: it is the same behaviour on real Windows, so
      * there is one code path rather than two. */
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_WAKE)) goto fail;
     s->wake = CreateEvent(NULL, TRUE, FALSE, NULL);
-    if (!s->wake) {
-        DeleteCriticalSection(&s->lock);
-        ZRDP_NEW_FREE_STRINGS();
-        free(s);
-        return NULL;
-    }
+    if (!s->wake) goto fail;
+#ifdef ZEPHYR_RDP_TESTING
+    ZRDP_TEST_TRACK_ACQUIRE(zrdp_test_live_wakes);
+#endif
 
     RDP_CLIENT_ENTRY_POINTS ep;
     fill_entry_points(&ep);
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_CONTEXT)) goto fail;
     rdpContext* context = freerdp_client_context_new(&ep);
-    if (!context) {
-        CloseHandle(s->wake);
-        DeleteCriticalSection(&s->lock);
-        ZRDP_NEW_FREE_STRINGS();
-        free(s);
-        return NULL;
-    }
+    if (!context) goto fail;
 
     /* Set before freerdp_connect so every callback can find the session. The
      * ClientNew callback already ran inside context_new, but it only installs
@@ -1034,18 +1282,19 @@ zephyr_rdp_session* zephyr_rdp_new(const zephyr_rdp_config* cfg,
     ((zephyr_client_context*)context)->owner = s;
     s->context = context;
     s->instance = context->instance;
+#ifdef ZEPHYR_RDP_TESTING
+    ZRDP_TEST_TRACK_ACQUIRE(zrdp_test_live_contexts);
+#endif
 
-    if (!apply_config(context->settings, &s->cfg)) {
-        freerdp_client_context_free(context);
-        CloseHandle(s->wake);
-        DeleteCriticalSection(&s->lock);
-        ZRDP_NEW_FREE_STRINGS();
-        free(s);
-        return NULL;
-    }
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_CONFIG)) goto fail;
+    if (!apply_config(context->settings, &s->cfg)) goto fail;
+    if (ZRDP_TEST_FAIL_NOW(ZEPHYR_RDP_TEST_FAIL_READY)) goto fail;
 
-#undef ZRDP_NEW_FREE_STRINGS
     return s;
+
+fail:
+    destroy_session(s);
+    return NULL;
 }
 
 /* ── input queue ──────────────────────────────────────────────────────────── */
@@ -1101,7 +1350,7 @@ void zephyr_rdp_resize(zephyr_rdp_session* s, uint32_t width, uint32_t height) {
     enqueue(s, ZQ_RESIZE, (uint16_t)width, (uint16_t)height, 0, 0, NULL);
 }
 void zephyr_rdp_set_clipboard(zephyr_rdp_session* s, const char* utf8) {
-    enqueue(s, ZQ_CLIPBOARD, 0, 0, 0, 0, dup_or_null(utf8));
+    enqueue(s, ZQ_CLIPBOARD, 0, 0, 0, 0, dup_clipboard_or_null(utf8));
 }
 
 /* ── loop-thread side effects for queued non-input items ─────────────────────
@@ -1170,7 +1419,7 @@ static void send_monitor_layout(zephyr_rdp_session* s, uint32_t width,
  * drain_input as soon as this returns. */
 static void set_local_clipboard(zephyr_rdp_session* s, const char* text) {
     if (!s) return;
-    char* copy = dup_or_null(text);
+    char* copy = dup_clipboard_or_null(text);
     free(s->clip_pending);
     s->clip_pending = copy;
     if (!copy) return;
@@ -1239,7 +1488,7 @@ int32_t zephyr_rdp_run(zephyr_rdp_session* s) {
     }
 
     int32_t rc = 0;
-    while (!s->stopping) {
+    while (!session_is_stopping(s)) {
         HANDLE handles[64];
         /* Slot 0 is the input wake event so queued input is serviced in the
          * same iteration it arrives, instead of waiting out a poll interval. */
@@ -1260,7 +1509,7 @@ int32_t zephyr_rdp_run(zephyr_rdp_session* s) {
             break;
         }
 
-        if (s->stopping) break;
+        if (session_is_stopping(s)) break;
 
         /* Reset *before* draining, not after. If an enqueue lands between the
          * drain and the reset, resetting afterwards would erase its SetEvent
@@ -1296,7 +1545,7 @@ int32_t zephyr_rdp_run(zephyr_rdp_session* s) {
 
 void zephyr_rdp_stop(zephyr_rdp_session* s) {
     if (!s) return;
-    s->stopping = TRUE;
+    session_request_stop(s);
     /* Breaks a connect that is still in TLS/NLA negotiation, where the loop has
      * not started and SetEvent alone would not be observed. */
     if (s->instance) {
@@ -1310,32 +1559,16 @@ void zephyr_rdp_stop(zephyr_rdp_session* s) {
 }
 
 void zephyr_rdp_free(zephyr_rdp_session* s) {
-    if (!s) return;
-    if (s->context) freerdp_client_context_free(s->context);
-    if (s->wake) CloseHandle(s->wake);
-
-    /* Drain remaining payloads before destroying the lock. */
-    while (s->q_count > 0) {
-        free(s->queue[s->q_head].text);
-        s->q_head = (s->q_head + 1) % ZQ_CAPACITY;
-        s->q_count--;
-    }
-    DeleteCriticalSection(&s->lock);
-
-    free(s->clip_pending);
-    free(s->pack);
-    free(s->own_host);
-    free(s->own_user);
-    free(s->own_pass);
-    free(s->own_domain);
-    free(s->own_drive_name);
-    free(s->own_drive_path);
-    free(s);
+    destroy_session(s);
 }
 
 /* ── introspection ───────────────────────────────────────────────────────── */
 
 int32_t zephyr_rdp_freerdp_major(void) { return FREERDP_VERSION_MAJOR; }
+
+int32_t zephyr_rdp_clipboard_available(void) {
+    return ZEPHYR_RDP_SAFE_CLIPRDR;
+}
 
 intptr_t zephyr_rdp_isolate_stdout(void) {
 #ifdef _WIN32
@@ -1480,6 +1713,11 @@ int32_t zephyr_rdp_probe_settings(const zephyr_rdp_config* cfg, int32_t* nla,
     return 0;
 }
 
+int32_t zephyr_rdp_security_protocol_allowed(const zephyr_rdp_config* cfg,
+                                             uint32_t selected_protocol) {
+    return security_protocol_allowed(cfg, (UINT32)selected_protocol) ? 1 : 0;
+}
+
 /* ── exported for the UTF conversion unit tests ──────────────────────────── */
 
 long zephyr_rdp_test_utf8_to_utf16le(const char* in, uint16_t* out, size_t units) {
@@ -1490,3 +1728,71 @@ long zephyr_rdp_test_utf16le_to_utf8(const uint16_t* in, size_t units, char* out
                                      size_t cap) {
     return utf16le_to_utf8(in, units, out, cap);
 }
+
+int32_t zephyr_rdp_test_clipboard_payload(const uint8_t* data, size_t bytes) {
+    return validate_clipboard_payload(data, bytes) ? 1 : 0;
+}
+
+#ifdef ZEPHYR_RDP_TESTING
+int32_t zephyr_rdp_test_new_failure_cleanup(const zephyr_rdp_config* cfg,
+                                            int32_t failpoint) {
+    if (!cfg || failpoint < ZEPHYR_RDP_TEST_FAIL_HOST ||
+        failpoint > ZEPHYR_RDP_TEST_FAIL_READY)
+        return 0;
+
+    const int32_t sessions_before = zrdp_test_live_sessions;
+    const int32_t strings_before = zrdp_test_live_strings;
+    const int32_t locks_before = zrdp_test_live_locks;
+    const int32_t wakes_before = zrdp_test_live_wakes;
+    const int32_t contexts_before = zrdp_test_live_contexts;
+
+    zrdp_test_failpoint_hit = FALSE;
+    zrdp_test_failpoint = failpoint;
+    zephyr_rdp_session* s = zephyr_rdp_new(cfg, NULL, NULL, NULL);
+    zrdp_test_failpoint = 0;
+    if (s) {
+        zephyr_rdp_free(s);
+        return 0;
+    }
+
+    return zrdp_test_failpoint_hit &&
+           zrdp_test_live_sessions == sessions_before &&
+           zrdp_test_live_strings == strings_before &&
+           zrdp_test_live_locks == locks_before &&
+           zrdp_test_live_wakes == wakes_before &&
+           zrdp_test_live_contexts == contexts_before;
+}
+
+int32_t zephyr_rdp_test_password_wipe_cleanup(const zephyr_rdp_config* cfg,
+                                              int32_t failpoint) {
+    if (!cfg || !cfg->password || !*cfg->password || failpoint < 0 ||
+        failpoint > ZEPHYR_RDP_TEST_FAIL_READY)
+        return 0;
+
+    zrdp_test_password_wipe_failures = 0;
+    zrdp_test_owned_password_wipes = 0;
+    zrdp_test_settings_password_wipes = 0;
+    zrdp_test_failpoint_hit = FALSE;
+    zrdp_test_failpoint = failpoint;
+
+    zephyr_rdp_session* s = zephyr_rdp_new(cfg, NULL, NULL, NULL);
+    zrdp_test_failpoint = 0;
+    if (failpoint == 0) {
+        if (!s) return 0;
+        zephyr_rdp_free(s);
+    } else {
+        if (s) {
+            zephyr_rdp_free(s);
+            return 0;
+        }
+        if (!zrdp_test_failpoint_hit) return 0;
+    }
+
+    if (zrdp_test_password_wipe_failures != 0) return -1;
+
+    int32_t mask = 0;
+    if (zrdp_test_owned_password_wipes > 0) mask |= 1;
+    if (zrdp_test_settings_password_wipes > 0) mask |= 2;
+    return mask;
+}
+#endif
