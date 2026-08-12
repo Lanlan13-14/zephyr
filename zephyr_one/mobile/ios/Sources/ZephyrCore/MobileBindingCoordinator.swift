@@ -426,6 +426,7 @@ private final class ProductionMobileBindingEnvironment: MobileBindingEnvironment
             eraseEncryptedStorage: {
                 try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
                     at: databaseURL,
+                    legacyDatabaseURL: legacyDatabaseURL,
                     identity: identity,
                     keyStore: databaseKeyStore
                 )

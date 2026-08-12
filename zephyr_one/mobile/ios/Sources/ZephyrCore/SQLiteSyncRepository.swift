@@ -119,9 +119,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
 
         try filePolicy.prepare(databaseURL: databaseURL)
         let hasTargetArtifacts = Self.hasDatabaseArtifacts(at: databaseURL)
-        let legacyExists = legacyDatabaseURL.map {
-            FileManager.default.fileExists(atPath: $0.path)
-        } ?? false
+        let legacyExists = legacyDatabaseURL.map(Self.hasDatabaseArtifacts(at:)) ?? false
 
         if requireExistingBinding && !hasTargetArtifacts && !legacyExists {
             throw SQLiteSyncRepositoryError.inactiveBinding
@@ -181,7 +179,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         }
         if let legacyDatabaseURL,
            legacyDatabaseURL.standardizedFileURL != databaseURL.standardizedFileURL,
-           FileManager.default.fileExists(atPath: legacyDatabaseURL.path) {
+           Self.hasDatabaseArtifacts(at: legacyDatabaseURL) {
             try filePolicy.prepare(databaseURL: legacyDatabaseURL)
             try Self.removeLegacyDatabaseIfOwned(at: legacyDatabaseURL, identity: identity)
         }
@@ -1743,13 +1741,37 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         }
     }
 
-    /// Cryptographic-erasure fallback for a mirror that cannot be opened or purged normally.
+    private static func removeLegacyDatabaseArtifacts(at url: URL) throws {
+        // Preserve the owner-bearing main file until every sidecar is gone. If
+        // cleanup is interrupted, the next attempt can still prove ownership.
+        for suffix in ["-wal", "-shm", "-journal", ""] {
+            let artifact = URL(fileURLWithPath: url.path + suffix)
+            if FileManager.default.fileExists(atPath: artifact.path) {
+                try FileManager.default.removeItem(at: artifact)
+            }
+        }
+        guard !hasDatabaseArtifacts(at: url) else {
+            throw SQLiteSyncRepositoryError.legacyOwnerMismatch
+        }
+    }
+
+    /// Erasure fallback for a mirror that cannot be opened or purged normally.
     /// The database URL and key scope must both be derived from the same trusted binding identity.
+    /// An account-scoped plaintext predecessor is erased only after its persisted owner tuple
+    /// proves that it belongs to the same binding generation.
     static func eraseEncryptedStorageForCleanup(
         at databaseURL: URL,
+        legacyDatabaseURL: URL?,
         identity: SyncBindingIdentity,
         keyStore: any SyncDatabaseKeyStoring
     ) throws {
+        if let legacyDatabaseURL, hasDatabaseArtifacts(at: legacyDatabaseURL) {
+            guard legacyDatabaseURL.standardizedFileURL != databaseURL.standardizedFileURL else {
+                throw SQLiteSyncRepositoryError.legacyOwnerMismatch
+            }
+            try removeLegacyDatabaseIfOwned(at: legacyDatabaseURL, identity: identity)
+        }
+
         var firstFailure: Error?
         do { try removeDatabaseArtifacts(at: databaseURL) }
         catch { firstFailure = error }
@@ -1793,8 +1815,14 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             }
 
             let existingTables = Set(try database.query(
-                "SELECT name FROM sqlite_master WHERE type = 'table';"
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%';
+                """
             ).map { $0.text(0) })
+            guard existingTables.isSubset(of: scopedTables.union(["sync_state"])) else {
+                throw SQLiteSyncRepositoryError.legacyOwnerMismatch
+            }
             for table in scopedTables where existingTables.contains(table) {
                 let owners = try database.query(
                     "SELECT DISTINCT server_id, account_id, device_id, generation FROM \(table);"
@@ -1845,14 +1873,26 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                 throw error
             }
 
-            try FileManager.default.copyItem(at: legacyURL, to: stagingURL)
             try filePolicy.prepare(databaseURL: stagingURL)
 
-            let staged = try SQLiteDatabase.plaintext(url: stagingURL)
+            let exportSource = try SQLiteDatabase.plaintext(url: legacyURL)
             do {
-                // Re-prove the copied bytes before the irreversible rekey.
+                // Re-prove the source immediately before SQLCipher reads it
+                // into a separately keyed database. PRAGMA rekey is only for
+                // changing the key of an already-encrypted database.
+                try requireLegacyOwner(identity, in: exportSource)
+                try exportSource.exportEncryptedCopy(to: stagingURL, key: key)
+                try exportSource.close()
+            } catch {
+                try? exportSource.close()
+                throw error
+            }
+            try filePolicy.refresh(databaseURL: stagingURL)
+
+            let staged = try SQLiteDatabase(url: stagingURL, key: key)
+            do {
+                // Re-prove the exported bytes before promotion.
                 try requireLegacyOwner(identity, in: staged)
-                try staged.rekey(to: key)
                 try staged.verifyCipherIntegrity()
                 try staged.prepareEncryptedForPromotion()
             } catch {
@@ -1891,7 +1931,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             try? legacy.close()
             throw error
         }
-        try removeDatabaseArtifacts(at: legacyURL)
+        try removeLegacyDatabaseArtifacts(at: legacyURL)
     }
 
     private static func migrate(_ database: SQLiteDatabase) throws {
@@ -2375,6 +2415,7 @@ private struct SQLiteRow {
 private final class SQLiteDatabase {
     private static let expectedCipherVersion = "4.10.0"
     private static let expectedSQLiteVersion = "3.50.4"
+    private static let sqliteNotADatabasePrimaryCode: Int32 = 26
     private var handle: OpaquePointer?
     private var isInMemory = false
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -2439,9 +2480,15 @@ private final class SQLiteDatabase {
             try execute("PRAGMA foreign_keys = ON;")
             try execute("PRAGMA secure_delete = ON;")
             try execute("PRAGMA busy_timeout = 5000;")
-        } catch {
+        } catch let error {
             sqlite3_close_v2(opened)
             handle = nil
+            if key != nil,
+               let repositoryError = error as? SQLiteSyncRepositoryError,
+               case .database(let code, _) = repositoryError,
+               (code & 0xFF) == Self.sqliteNotADatabasePrimaryCode {
+                throw SQLiteSyncRepositoryError.databaseAuthenticationFailed
+            }
             throw error
         }
     }
@@ -2457,12 +2504,30 @@ private final class SQLiteDatabase {
         self.handle = nil
     }
 
-    func rekey(to key: Data) throws {
+    func exportEncryptedCopy(to url: URL, key: Data) throws {
         guard key.count == KeychainSyncDatabaseKeyStore.keyByteCount else {
             throw SyncDatabaseKeyStoreError.invalidStoredKey
         }
-        let hexadecimal = key.map { String(format: "%02x", $0) }.joined()
-        try rawExecute("PRAGMA rekey = \"x'\(hexadecimal)'\";")
+        try execute("PRAGMA cipher_memory_security = ON;")
+        let digits = Array("0123456789abcdef".utf8)
+        var rawKeySpec = Data([0x78, 0x27])
+        rawKeySpec.reserveCapacity((key.count * 2) + 3)
+        for byte in key {
+            rawKeySpec.append(digits[Int(byte >> 4)])
+            rawKeySpec.append(digits[Int(byte & 0x0F)])
+        }
+        rawKeySpec.append(0x27)
+        try execute(
+            "ATTACH DATABASE ? AS encrypted KEY ?;",
+            [.text(url.path), .blob(rawKeySpec)]
+        )
+        do {
+            _ = try query("SELECT sqlcipher_export('encrypted');")
+            try execute("DETACH DATABASE encrypted;")
+        } catch {
+            try? execute("DETACH DATABASE encrypted;")
+            throw error
+        }
     }
 
     func verifyCipherIntegrity() throws {
@@ -2476,11 +2541,7 @@ private final class SQLiteDatabase {
               sqliteVersion[0].text(0) == Self.expectedSQLiteVersion else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unexpected_sqlite_version")
         }
-        do {
-            _ = try query("SELECT count(*) FROM sqlite_master;")
-        } catch {
-            throw SQLiteSyncRepositoryError.databaseAuthenticationFailed
-        }
+        _ = try query("SELECT count(*) FROM sqlite_master;")
         let result = try query("PRAGMA cipher_integrity_check;")
         guard result.isEmpty || result.allSatisfy({ $0.text(0).lowercased() == "ok" }) else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("cipher_integrity_check")

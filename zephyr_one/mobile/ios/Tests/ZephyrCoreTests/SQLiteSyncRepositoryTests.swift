@@ -686,6 +686,112 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         )
     }
 
+    func testOwnerProvenMigrationFailureCleanupErasesLegacyTargetAndKey() throws {
+        let identity = binding()
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let targetURL = databaseURL(for: identity)
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        try createLegacyDatabase(at: legacyURL, identity: identity)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(
+                databaseURL: targetURL,
+                identity: identity,
+                keyStore: keyStore,
+                legacyDatabaseURL: legacyURL,
+                migrationHooks: SQLiteSyncMigrationHooks { stage in
+                    if stage == .beforePromotion { throw MigrationInterruption.simulatedCrash }
+                }
+            )
+        ) { error in
+            XCTAssertEqual(error as? MigrationInterruption, .simulatedCrash)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertNotNil(keyStore.key(for: scope))
+
+        try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
+            at: targetURL,
+            legacyDatabaseURL: legacyURL,
+            identity: identity,
+            keyStore: keyStore
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path + ".migrating"))
+        XCTAssertNil(keyStore.key(for: scope))
+    }
+
+    func testCleanupFallbackRejectsUnprovenLegacyAndPreservesGenerationKey() throws {
+        let identity = binding()
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let other = SyncBindingIdentity(
+            serverID: identity.serverID,
+            accountID: identity.accountID,
+            deviceID: identity.deviceID,
+            generation: "different-generation",
+            bindingRecordVersion: leaseVersion(0x23)
+        )
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        try createLegacyDatabase(at: legacyURL, identity: other)
+        _ = try keyStore.loadOrCreateKey(for: scope)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
+                at: databaseURL(for: identity),
+                legacyDatabaseURL: legacyURL,
+                identity: identity,
+                keyStore: keyStore
+            )
+        ) { error in
+            XCTAssertEqual(error as? SQLiteSyncRepositoryError, .legacyOwnerMismatch)
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertEqual(
+            Data(try Data(contentsOf: legacyURL).prefix(16)),
+            Data("SQLite format 3\u{0}".utf8)
+        )
+        XCTAssertNotNil(keyStore.key(for: scope))
+    }
+
+    func testCleanupFallbackTreatsOrphanLegacySidecarAsUnresolved() throws {
+        let identity = binding()
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let orphanWAL = URL(fileURLWithPath: legacyURL.path + "-wal")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        try FileManager.default.createDirectory(
+            at: legacyURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data([0x01, 0x02, 0x03]).write(to: orphanWAL, options: .atomic)
+        _ = try keyStore.loadOrCreateKey(for: scope)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
+                at: databaseURL(for: identity),
+                legacyDatabaseURL: legacyURL,
+                identity: identity,
+                keyStore: keyStore
+            )
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: orphanWAL.path))
+        XCTAssertNotNil(keyStore.key(for: scope))
+    }
+
     func testPlaintextMigrationRejectsUnprovenOwnerWithoutTouchingLegacy() throws {
         let identity = binding()
         let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(

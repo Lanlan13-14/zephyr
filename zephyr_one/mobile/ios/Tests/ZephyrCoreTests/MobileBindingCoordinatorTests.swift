@@ -117,10 +117,14 @@ final class MobileBindingCoordinatorTests: XCTestCase {
             _ = try await harness.coordinator.restore()
             XCTFail("Expected the SQLite generation fence to reject restore")
         } catch let error as MobileBindingCoordinatorError {
-            XCTAssertEqual(error, .incompleteBinding)
+            XCTAssertEqual(error, .cleanupFailed([.repository]))
         }
         let calls = await harness.api.recordedCalls()
         XCTAssertTrue(calls.isEmpty)
+        XCTAssertEqual(try harness.recordStore.load()?.phase, .cleanupPending)
+        XCTAssertNil(try harness.credentials.credentials())
+        XCTAssertEqual(harness.environment.repositoryPurgeAttemptCount, 0)
+        XCTAssertEqual(harness.environment.encryptedStorageEraseAttemptCount, 0)
     }
 
     func testRestoreRejectsMissingMLKEMIdentityBeforeRefresh() async throws {
@@ -705,6 +709,28 @@ final class MobileBindingCoordinatorTests: XCTestCase {
         XCTAssertTrue(calls.isEmpty)
     }
 
+    func testLegacyMigrationCleanupFailureRetainsCleanupMarker() async throws {
+        let harness = try BindingHarness()
+        let record = BindingFixtures.record()
+        try harness.recordStore.save(record)
+        try harness.credentials.storeInitial(BindingFixtures.credentials)
+        harness.environment.repositoryOpenFails = true
+        harness.environment.rejectEncryptedStorageErase()
+
+        do {
+            _ = try await harness.coordinator.restore()
+            XCTFail("Unproven legacy cleanup must fail closed")
+        } catch let error as MobileBindingCoordinatorError {
+            XCTAssertEqual(error, .cleanupFailed([.repository]))
+        }
+
+        XCTAssertEqual(try harness.recordStore.load()?.phase, .cleanupPending)
+        XCTAssertNil(try harness.credentials.credentials())
+        XCTAssertGreaterThan(harness.environment.encryptedStorageEraseAttemptCount, 0)
+        let calls = await harness.api.recordedCalls()
+        XCTAssertTrue(calls.isEmpty)
+    }
+
     func testTerminalSyncCleanupFailureRetainsMarkerAndRetriesInProcess() async throws {
         let recorder = CleanupRecorder()
         let retryGate = StartGate()
@@ -903,8 +929,12 @@ final class MobileBindingCoordinatorTests: XCTestCase {
         await startGate.release()
         try await logout.value
 
-        let restoredAfterLogout = try await restoring.value
-        XCTAssertNil(restoredAfterLogout)
+        do {
+            _ = try await restoring.value
+            XCTFail("The restore loser must report loss of its cleanup-marker CAS")
+        } catch let error as MobileBindingCoordinatorError {
+            XCTAssertEqual(error, .cleanupFailed([.bindingRecord]))
+        }
         let currentAfterLogout = await harness.coordinator.currentRuntime()
         XCTAssertNil(currentAfterLogout)
         XCTAssertNil(try harness.recordStore.load())
@@ -2088,6 +2118,7 @@ private final class FakeBindingEnvironment: MobileBindingEnvironment, @unchecked
     private var lastRepositoryPurgeIdentity: SyncBindingIdentity?
     private var repositoryPurgeFailuresRemaining = 0
     private var encryptedStorageEraseFailuresRemaining = 0
+    private var encryptedStorageEraseRejected = false
     private var encryptedStorageEraseAttempts = 0
     private var runtimeCreationFailuresRemaining = 0
     private var serverRevocationHandler: MobileServerRevocationHandler?
@@ -2119,6 +2150,10 @@ private final class FakeBindingEnvironment: MobileBindingEnvironment, @unchecked
 
     func failNextEncryptedStorageErase() {
         synchronized { encryptedStorageEraseFailuresRemaining += 1 }
+    }
+
+    func rejectEncryptedStorageErase() {
+        synchronized { encryptedStorageEraseRejected = true }
     }
 
     func failNextRuntimeCreation() {
@@ -2182,6 +2217,7 @@ private final class FakeBindingEnvironment: MobileBindingEnvironment, @unchecked
             eraseEncryptedStorage: { [self] in
                 let shouldFail = synchronized {
                     encryptedStorageEraseAttempts += 1
+                    if encryptedStorageEraseRejected { return true }
                     guard encryptedStorageEraseFailuresRemaining > 0 else { return false }
                     encryptedStorageEraseFailuresRemaining -= 1
                     return true

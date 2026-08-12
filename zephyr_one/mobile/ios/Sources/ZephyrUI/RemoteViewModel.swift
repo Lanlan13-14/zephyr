@@ -238,6 +238,7 @@ public final class RemoteViewModel: ObservableObject {
         } else {
             status = status.advance(.disconnected, clock())
             registry.setTransport(sessionId, .disconnected, clock())
+            message = RemoteViewModel.msgCertificateRejected
             recompute()
         }
     }

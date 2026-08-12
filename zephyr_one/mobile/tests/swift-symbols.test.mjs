@@ -186,7 +186,15 @@ test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-eras
 
   assert.match(repository, /SELECT server_id, account_id, device_id, generation FROM sync_state/);
   assert.match(repository, /\.migrating/);
-  assert.match(repository, /PRAGMA rekey =/);
+  assert.doesNotMatch(repository, /PRAGMA rekey =/);
+  assert.match(repository, /ATTACH DATABASE \? AS encrypted KEY \?/);
+  assert.match(repository, /SELECT sqlcipher_export\('encrypted'\)/);
+  assert.match(repository, /SQLiteDatabase\(url: stagingURL, key: key\)/);
+  assert.match(
+    repository,
+    /requireEncryptedHeader\(at: stagingURL\)[\s\S]{0,160}hooks\(\.encryptedCopyReady\)/,
+    'the encrypted staging header must be verified before any crash hook can promote it',
+  );
   assert.match(repository, /encryptedCopyReady/);
   assert.match(repository, /beforePromotion/);
 

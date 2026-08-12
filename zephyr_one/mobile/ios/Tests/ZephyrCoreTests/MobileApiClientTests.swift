@@ -562,7 +562,12 @@ final class MobileApiClientTests: XCTestCase {
             XCTAssertNotNil(request.value(forHTTPHeaderField: "X-Zephyr-Server-Nonce"))
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Zephyr-Proof-Timestamp"), "1725000000")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Zephyr-Device-Proof"), signer.proof)
-            let transmittedBody = request.httpBody ?? Data()
+            let transmittedBody: Data
+            if request.httpBody != nil || request.httpBodyStream != nil {
+                transmittedBody = try Self.requestBody(request)
+            } else {
+                transmittedBody = Data()
+            }
             XCTAssertEqual(
                 try XCTUnwrap(expectedBodyDigest),
                 Data(SHA256.hash(data: transmittedBody)).base64EncodedString()
@@ -594,7 +599,7 @@ final class MobileApiClientTests: XCTestCase {
                     """
                 )
             case "/api/mobile/v1/sync/push":
-                let body = try Self.jsonBody(request)
+                let body = try Self.jsonBody(transmittedBody)
                 XCTAssertEqual(body["protocolVersion"] as? Int, 1)
                 XCTAssertEqual(body["deviceId"] as? String, "device-1")
                 XCTAssertEqual((body["operations"] as? [[String: Any]])?.first?["opId"] as? String, "op-1")
@@ -607,7 +612,7 @@ final class MobileApiClientTests: XCTestCase {
                     """
                 )
             case "/api/mobile/v1/sync/ack":
-                let body = try Self.jsonBody(request)
+                let body = try Self.jsonBody(transmittedBody)
                 XCTAssertEqual(Set(body.keys), ["cursor"])
                 XCTAssertEqual(body["cursor"] as? Int, 6)
                 return Self.response(request, json: "{\"ok\":true}")
@@ -616,7 +621,7 @@ final class MobileApiClientTests: XCTestCase {
                 return Self.response(request, json: Self.statusJSON(cursor: 6))
             case "/api/mobile/v1/sync/now":
                 XCTAssertEqual(request.httpMethod, "POST")
-                XCTAssertEqual(try Self.jsonBody(request).count, 0)
+                XCTAssertEqual(try Self.jsonBody(transmittedBody).count, 0)
                 return Self.response(request, json: Self.statusJSON(cursor: 7))
             default:
                 XCTFail("Unexpected path \(components.path)")
@@ -870,7 +875,13 @@ final class MobileApiClientTests: XCTestCase {
 
     func testGzipLimitCountsURLSessionsDecompressedBytes() async throws {
         let compressed = try XCTUnwrap(Data(base64Encoded: "H4sIAAAAAAAEAKtWys9WsiopKk3VUSouSSxJVbJS8nTxcVXSUcpJLC5xLClJzS0AUkpWeaU5ORDB4NLk5NTiYpCgoYGBjlJyaVFxfpGSlZmOUkFqXkpmXrpzfmkeUBYkl5+XlpOZXIIQAZngWlQE0gAyslYBLwAA7/I8SKAAAAA="))
+        let decompressed = Data(
+            ("{\"ok\":true,\"state\":\"IDLE\",\"lastAttemptAt\":null,\"lastSuccessAt\":100," +
+             "\"cursor\":6,\"pendingCount\":0,\"conflictCount\":0,\"lastError\":null}" +
+             String(repeating: " ", count: 30)).utf8
+        )
         XCTAssertEqual(compressed.count, 128)
+        XCTAssertEqual(decompressed.count, 160)
         URLProtocolStub.handler = { request in
             Self.response(
                 request,
@@ -878,7 +889,9 @@ final class MobileApiClientTests: XCTestCase {
                     "Content-Encoding": "gzip",
                     "Content-Length": String(compressed.count),
                 ],
-                data: compressed
+                // URLSessionDataDelegate receives decoded chunks. URLProtocol
+                // fixtures must model that layer explicitly.
+                data: decompressed
             )
         }
 
@@ -1288,7 +1301,10 @@ final class MobileApiClientTests: XCTestCase {
     }
 
     private static func jsonBody(_ request: URLRequest) throws -> [String: Any] {
-        let data = try requestBody(request)
+        try jsonBody(requestBody(request))
+    }
+
+    private static func jsonBody(_ data: Data) throws -> [String: Any] {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
