@@ -51,9 +51,9 @@ final class RemoteSessionPhaseTests: XCTestCase {
     }
 
     func testReconnectDelayBackoff() {
-        XCTAssertEqual(RemotePhasePolicy.reconnectDelayMs(1), 1_000)
-        XCTAssertEqual(RemotePhasePolicy.reconnectDelayMs(3), 5_000)
-        XCTAssertEqual(RemotePhasePolicy.reconnectDelayMs(9), 15_000)
+        XCTAssertEqual(RemotePhasePolicy.reconnectDelayMs(attempt: 1), 1_000)
+        XCTAssertEqual(RemotePhasePolicy.reconnectDelayMs(attempt: 3), 5_000)
+        XCTAssertEqual(RemotePhasePolicy.reconnectDelayMs(attempt: 9), 15_000)
     }
 
     func testTimeoutErrorIsRetryable() {

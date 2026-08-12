@@ -6,7 +6,8 @@ import XCTest
 final class RemoteViewModelTests: XCTestCase {
 
     private final class FakeEngine: RemoteEnginePort {
-        var available: Bool = true
+        var available: Bool
+        init(available: Bool = true) { self.available = available }
         var outcome: RemoteConnectOutcome = .connected(RemoteSessionStatus(phase: .connected, phaseSince: 1))
         var answeredTrust: Bool?
 
