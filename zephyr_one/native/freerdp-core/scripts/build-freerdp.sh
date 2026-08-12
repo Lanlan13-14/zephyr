@@ -36,6 +36,7 @@ TAG="3.30.0"
 COMMIT="6b107f0aadbabc47941c5a5b893b88c01792af6d"
 PATCH_REV="cliprdr-reassembly-limit-v1"
 PATCH_FILE=""
+PATCH_LF_SHA256="745004c7fb6bfaaa9640518409ddfe588547922689fc88f4a133babc4622b809"
 ADDIN_UPSTREAM_LF_SHA256="92efc5c0f3b2c16ee304ef290c5bc3ee528806fe939060dd1a09da8540f36ae4"
 CHANNELS_UPSTREAM_LF_SHA256="6c78a8896421495230bea71ec57afd1f9942e539782e7e84c7e3bcb1e0cd1e95"
 # Git for Windows may have checked an already-existing source tree out with
@@ -54,6 +55,7 @@ CRATE="$(CDPATH= cd -- "$HERE/.." && pwd)"
 PATCH_FILE="$CRATE/patches/freerdp-3.30.0-cliprdr-reassembly-limit.patch"
 PREFIX="${ZEPHYR_FREERDP_PREFIX:-$CRATE/.freerdp-dist}"
 JOBS="${ZEPHYR_FREERDP_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+PATCH_INPUT="$PREFIX/freerdp-3.30.0-cliprdr-reassembly-limit.lf.patch"
 
 SRC="$PREFIX/src"
 BUILD="$PREFIX/build"
@@ -104,6 +106,13 @@ matches_hash_pair() {
 }
 
 [ -f "$PATCH_FILE" ] || { echo "ERROR: missing FreeRDP security patch: $PATCH_FILE" >&2; exit 2; }
+tr -d '\015' < "$PATCH_FILE" > "$PATCH_INPUT"
+patch_hash="$(hash_file "$PATCH_INPUT")"
+[ "$patch_hash" = "$PATCH_LF_SHA256" ] || {
+  echo "ERROR: normalized FreeRDP security patch differs from audited LF input" >&2
+  echo "patch=$patch_hash" >&2
+  exit 2
+}
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" ] || {
   echo "ERROR: FreeRDP $TAG source is not pinned commit $COMMIT" >&2
   exit 2
@@ -117,8 +126,8 @@ if matches_hash_pair "$ADDIN_UPSTREAM_LF_SHA256" "$CHANNELS_UPSTREAM_LF_SHA256" 
    matches_hash_pair "$ADDIN_UPSTREAM_CRLF_SHA256" "$CHANNELS_UPSTREAM_CRLF_SHA256"; then
   # --check makes an upstream context/offset change a hard build failure. The
   # patch is never applied with fuzz or silently skipped.
-  git -C "$SRC" apply --check --unidiff-zero --whitespace=error-all "$PATCH_FILE"
-  git -C "$SRC" apply --unidiff-zero --whitespace=error-all "$PATCH_FILE"
+  git -C "$SRC" apply --check --unidiff-zero --whitespace=error-all "$PATCH_INPUT"
+  git -C "$SRC" apply --unidiff-zero --whitespace=error-all "$PATCH_INPUT"
 elif ! matches_hash_pair "$ADDIN_PATCHED_LF_SHA256" "$CHANNELS_PATCHED_LF_SHA256" &&
      ! matches_hash_pair "$ADDIN_PATCHED_CRLF_SHA256" "$CHANNELS_PATCHED_CRLF_SHA256"; then
   echo "ERROR: pinned FreeRDP files differ from both audited upstream and patched hashes" >&2

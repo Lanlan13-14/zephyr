@@ -37,6 +37,14 @@ test('pinned FreeRDP rejects cliprdr totalLength before generic reassembly alloc
 
   assert.match(build, /TAG="3\.30\.0"/);
   assert.match(build, /COMMIT="6b107f0aadbabc47941c5a5b893b88c01792af6d"/);
+  assert.match(build, /PATCH_LF_SHA256="[a-f0-9]{64}"/);
+  assert.ok(
+    build.includes(String.raw`tr -d '\015' < "$PATCH_FILE" > "$PATCH_INPUT"`),
+    'Windows CRLF checkouts must be normalized before applying the audited patch',
+  );
+  assert.match(build, /patch_hash="\$\(hash_file "\$PATCH_INPUT"\)"/);
+  assert.match(build, /\[ "\$patch_hash" = "\$PATCH_LF_SHA256" \]/,
+    'normalization must preserve the exact audited LF patch bytes');
   for (const state of ['UPSTREAM', 'PATCHED']) {
     for (const lineEnding of ['LF', 'CRLF']) {
       assert.match(build, new RegExp(`ADDIN_${state}_${lineEnding}_SHA256="[a-f0-9]{64}"`));
@@ -65,12 +73,14 @@ test('pinned FreeRDP rejects cliprdr totalLength before generic reassembly alloc
   );
   assert.match(
     build,
-    /git -C "\$SRC" apply --check --unidiff-zero --whitespace=error-all "\$PATCH_FILE"/,
+    /git -C "\$SRC" apply --check --unidiff-zero --whitespace=error-all "\$PATCH_INPUT"/,
   );
   assert.match(
     build,
-    /git -C "\$SRC" apply --unidiff-zero --whitespace=error-all "\$PATCH_FILE"/,
+    /git -C "\$SRC" apply --unidiff-zero --whitespace=error-all "\$PATCH_INPUT"/,
   );
+  assert.doesNotMatch(build, /git -C "\$SRC" apply[^\n]*"\$PATCH_FILE"/,
+    'git apply must never consume checkout-dependent line endings directly');
   assert.match(build, /FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1/);
 });
 
