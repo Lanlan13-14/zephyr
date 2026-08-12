@@ -5,14 +5,14 @@
 // and drives the endpoints over HTTP, because a unit test on the route module
 // cannot prove express actually mounts the paths or that the auth planes are
 // wired to the right middleware.
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { startChildOnLoopback, stopChild } from "./mobile-v1-live-server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -21,65 +21,50 @@ let child = null;
 let base = "";
 let dataDir = "";
 
-async function freePort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const port = server.address().port;
-  await new Promise((resolve) => server.close(resolve));
-  return port;
+async function cleanup() {
+  await stopChild(child);
+  child = null;
+  if (dataDir) {
+    try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
+    dataDir = "";
+  }
 }
 
-async function waitUp(url, budgetMs) {
-  const until = Date.now() + budgetMs;
-  while (Date.now() < until) {
-    try {
-      const res = await fetch(url);
-      if (res.status > 0) return res;
-    } catch (err) {
-      // not listening yet
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return null;
-}
+after(cleanup);
 
 test("boot the server with mobile v1 mounted", async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-api-"));
-  const port = await freePort();
-  const aiPort = await freePort();
-  base = "http://127.0.0.1:" + port;
-
-  child = spawn(process.execPath, ["server.js"], {
-    cwd: repoRoot,
-    env: Object.assign({}, process.env, {
-      /* HTTP is off by default in this product, so a plain PORT is not enough:
-       * the server boots, mounts every route and then listens on nothing. */
-      HTTP_ENABLED: "true",
-      HTTPS_ENABLED: "false",
-      PORT: String(port),
-      /* The AI tool host binds a loopback port of its own. Two suites running
-       * in parallel would otherwise fight over the default. */
-      ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + aiPort,
-      ZEPHYR_AI_PLATFORM_HOST_URL: "http://127.0.0.1:" + aiPort,
-      ZEPHYR_DATA_DIR: dataDir,
-      ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(dataDir, "crypto", "key.json"),
-      ENCRYPTION_KEY: "mobile-v1-api-test-key",
-      /* better-sqlite3 is a native addon that is absent in some environments;
-       * the builtin driver is the same path the desktop build takes. */
-      ZEPHYR_ONE_USE_BUILTIN_SQLITE: "1",
-      NODE_ENV: "production",
-    }),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
   let log = "";
-  child.stdout.on("data", (b) => { log += b.toString(); });
-  child.stderr.on("data", (b) => { log += b.toString(); });
-
-  const res = await waitUp(base + "/api/mobile/v1/capabilities", 60000);
-  assert.ok(res, "server never answered /api/mobile/v1/capabilities:\n" + log.slice(-3000));
+  const started = await startChildOnLoopback({
+    healthPath: "/api/mobile/v1/capabilities",
+    log: () => log,
+    spawnChild: ({ httpPort, aiPort, attempt }) => {
+      base = "http://127.0.0.1:" + httpPort;
+      log += `[startup attempt ${attempt}: http=${httpPort} ai=${aiPort}]\n`;
+      child = spawn(process.execPath, ["server.js"], {
+        cwd: repoRoot,
+        env: Object.assign({}, process.env, {
+          HTTP_ENABLED: "true",
+          HTTPS_ENABLED: "false",
+          PORT: String(httpPort),
+          ZEPHYR_BIND_HOST: "127.0.0.1",
+          ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + aiPort,
+          ZEPHYR_AI_PLATFORM_HOST_URL: "http://127.0.0.1:" + aiPort,
+          ZEPHYR_DATA_DIR: dataDir,
+          ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(dataDir, "crypto", "key.json"),
+          ENCRYPTION_KEY: "mobile-v1-api-test-key",
+          ZEPHYR_ONE_USE_BUILTIN_SQLITE: "1",
+          NODE_ENV: "production",
+        }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      child.stdout.on("data", (b) => { log += b.toString(); });
+      child.stderr.on("data", (b) => { log += b.toString(); });
+      return child;
+    },
+  });
+  child = started.child;
+  const res = started.response;
   assert.equal(res.status, 200, "capabilities is unauthenticated by contract");
 });
 
@@ -284,11 +269,5 @@ test("the mounted push parser rejects oversized JSON before the auth plane", asy
 });
 
 test("stop the server", async () => {
-  if (child) {
-    child.kill("SIGKILL");
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  if (dataDir) {
-    try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
-  }
+  await cleanup();
 });

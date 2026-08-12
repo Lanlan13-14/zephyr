@@ -1725,7 +1725,9 @@ public final class MobileApiClient: @unchecked Sendable {
         configuration.allowsConstrainedNetworkAccess = template.allowsConstrainedNetworkAccess
         configuration.allowsExpensiveNetworkAccess = template.allowsExpensiveNetworkAccess
         configuration.networkServiceType = template.networkServiceType
+        #if os(iOS)
         configuration.multipathServiceType = template.multipathServiceType
+        #endif
         configuration.httpMaximumConnectionsPerHost = template.httpMaximumConnectionsPerHost
         configuration.httpShouldUsePipelining = template.httpShouldUsePipelining
         configuration.timeoutIntervalForResource = template.timeoutIntervalForResource

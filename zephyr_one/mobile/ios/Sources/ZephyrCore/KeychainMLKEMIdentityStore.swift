@@ -73,7 +73,7 @@ public final class KeychainMLKEMIdentityStore:
         )
     }
 
-    init(
+    convenience init(
         servicePrefix: String,
         engine: any MLKEM768Engine,
         keychain: any MLKEMKeychainAccessing
@@ -581,6 +581,14 @@ struct OpenSSLMLKEM768Engine: MLKEM768Engine {
     private static let publicParameter = "pub"
     private static let privateParameter = "priv"
 
+    // Swift does not import OpenSSL's compound EVP_PKEY_* selection macros.
+    private static let publicKeySelection =
+        OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS |
+        OSSL_KEYMGMT_SELECT_OTHER_PARAMETERS |
+        OSSL_KEYMGMT_SELECT_PUBLIC_KEY
+    private static let keyPairSelection =
+        publicKeySelection | OSSL_KEYMGMT_SELECT_PRIVATE_KEY
+
     func generateKeyPair() throws -> MLKEM768KeyPair {
         ERR_clear_error()
         let context = try Self.makeAlgorithmContext()
@@ -616,7 +624,7 @@ struct OpenSSLMLKEM768Engine: MLKEM768Engine {
         return try Self.withImportedKey(
             privateKey,
             parameter: Self.privateParameter,
-            selection: EVP_PKEY_KEYPAIR,
+            selection: Self.keyPairSelection,
             importError: .invalidPrivateKey
         ) { key in
             try Self.export(
@@ -635,7 +643,7 @@ struct OpenSSLMLKEM768Engine: MLKEM768Engine {
         return try Self.withImportedKey(
             publicKey,
             parameter: Self.publicParameter,
-            selection: EVP_PKEY_PUBLIC_KEY,
+            selection: Self.publicKeySelection,
             importError: .invalidPublicKey
         ) { key in
             guard let context = EVP_PKEY_CTX_new_from_pkey(nil, key, nil) else {
@@ -696,7 +704,7 @@ struct OpenSSLMLKEM768Engine: MLKEM768Engine {
         return try Self.withImportedKey(
             privateKey,
             parameter: Self.privateParameter,
-            selection: EVP_PKEY_KEYPAIR,
+            selection: Self.keyPairSelection,
             importError: .invalidPrivateKey
         ) { key in
             guard let context = EVP_PKEY_CTX_new_from_pkey(nil, key, nil) else {

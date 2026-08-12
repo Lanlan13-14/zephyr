@@ -64,8 +64,22 @@ jobs:
       - name: Install server dependencies
         working-directory: .
         run: npm ci --ignore-scripts
+      - name: Verify public diagnostic sanitizer
+        run: node "$GITHUB_WORKSPACE/.github/scripts/annotate-mobile-contract-failure.test.mjs"
       - name: Contract drift and contract tests
-        run: npm test
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          npm test 2>&1 | tee /tmp/mobile-contracts.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            node "$GITHUB_WORKSPACE/.github/scripts/annotate-mobile-contract-failure.mjs" \
+              --log /tmp/mobile-contracts.log \
+              --exit "$status" \
+              --platform "${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}" || \
+              echo '::error title=Zephyr One mobile contracts::Contract suite failed; sanitized diagnostics were unavailable.'
+            exit "$status"
+          fi
 
   android:
     runs-on: ubuntu-latest

@@ -15,7 +15,7 @@
 // It also asserts the failure modes, because a secret path that fails open is
 // worse than one that does not work: a wrong AAD, a tampered ciphertext and a
 // non-secret field name must all be refused.
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -24,6 +24,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createProofClient } from "./mobile-v1-proof-client.mjs";
+import { startChildOnLoopback, stopChild } from "./mobile-v1-live-server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -36,6 +37,17 @@ const state = {
   serverLog: "", secretCanaries: [], envelopeArtifacts: [],
 };
 
+async function cleanup() {
+  await stopChild(state.child);
+  state.child = null;
+  if (state.dataDir) {
+    try { fs.rmSync(state.dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
+    state.dataDir = "";
+  }
+}
+
+after(cleanup);
+
 const proofDevice = createProofClient({
   base: () => state.base,
   access: () => state.access,
@@ -44,18 +56,6 @@ const proofDevice = createProofClient({
 });
 
 const ADMIN_PASSWORD = "mv1-secret-e2e-pass";
-
-async function waitUp(url, budgetMs) {
-  const until = Date.now() + budgetMs;
-  while (Date.now() < until) {
-    try {
-      const res = await fetch(url);
-      if (res.status > 0) return res;
-    } catch (err) { /* not listening yet */ }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return null;
-}
 
 function device(pathname, init) {
   const options = init || {};
@@ -166,31 +166,35 @@ async function seal(plaintext, aad, keyVersion, entityRevision) {
 
 test("boot a server and bind a device", async () => {
   state.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-secret-"));
-  const port = 22600 + Math.floor(Math.random() * 300);
-  const aiPort = port + 1200;
-  state.base = "http://127.0.0.1:" + port;
-
-  state.child = spawn(process.execPath, ["server.js"], {
-    cwd: repoRoot,
-    env: Object.assign({}, process.env, {
-      HTTP_ENABLED: "true",
-      HTTPS_ENABLED: "false",
-      PORT: String(port),
-      ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + aiPort,
-      ZEPHYR_AI_PLATFORM_HOST_URL: "http://127.0.0.1:" + aiPort,
-      ZEPHYR_DATA_DIR: state.dataDir,
-      ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(state.dataDir, "crypto", "key.json"),
-      ENCRYPTION_KEY: "mv1-secret-e2e-key",
-      NODE_ENV: "production",
-      ZEPHYR_ONE_USE_BUILTIN_SQLITE: "1",
-    }),
-    stdio: ["ignore", "pipe", "pipe"],
+  const started = await startChildOnLoopback({
+    healthPath: "/api/mobile/v1/capabilities",
+    log: () => state.serverLog,
+    spawnChild: ({ httpPort, aiPort, attempt }) => {
+      state.base = "http://127.0.0.1:" + httpPort;
+      state.serverLog += `[startup attempt ${attempt}: http=${httpPort} ai=${aiPort}]\n`;
+      state.child = spawn(process.execPath, ["server.js"], {
+        cwd: repoRoot,
+        env: Object.assign({}, process.env, {
+          HTTP_ENABLED: "true",
+          HTTPS_ENABLED: "false",
+          PORT: String(httpPort),
+          ZEPHYR_BIND_HOST: "127.0.0.1",
+          ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + aiPort,
+          ZEPHYR_AI_PLATFORM_HOST_URL: "http://127.0.0.1:" + aiPort,
+          ZEPHYR_DATA_DIR: state.dataDir,
+          ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(state.dataDir, "crypto", "key.json"),
+          ENCRYPTION_KEY: "mv1-secret-e2e-key",
+          NODE_ENV: "production",
+          ZEPHYR_ONE_USE_BUILTIN_SQLITE: "1",
+        }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      state.child.stdout.on("data", (b) => { state.serverLog += b.toString(); });
+      state.child.stderr.on("data", (b) => { state.serverLog += b.toString(); });
+      return state.child;
+    },
   });
-  state.child.stdout.on("data", (b) => { state.serverLog += b.toString(); });
-  state.child.stderr.on("data", (b) => { state.serverLog += b.toString(); });
-
-  const up = await waitUp(state.base + "/api/mobile/v1/capabilities", 60000);
-  assert.ok(up, "server never came up:\n" + state.serverLog.slice(-3000));
+  state.child = started.child;
 
   const login = await fetch(state.base + "/api/auth/login", {
     method: "POST",
@@ -661,11 +665,5 @@ test("secret plaintext and envelope contents never enter server logs", async () 
 });
 
 test("stop the server", async () => {
-  if (state.child) {
-    state.child.kill("SIGKILL");
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  if (state.dataDir) {
-    try { fs.rmSync(state.dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
-  }
+  await cleanup();
 });

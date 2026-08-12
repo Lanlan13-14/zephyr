@@ -6,7 +6,7 @@
 // through the change feed with a cursor it can acknowledge. That is the point of
 // the 22 frozen operations, so it is driven here over HTTP with real ML-KEM and
 // ES256 device keys.
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -15,6 +15,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createProofClient } from "./mobile-v1-proof-client.mjs";
+import { startChildOnLoopback, stopChild } from "./mobile-v1-live-server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -28,25 +29,23 @@ const state = {
   entityId: "", providerId: "", firstChangeSeq: 0, cursor: 0, log: "", signingPrivateKey: null,
 };
 
+async function cleanup() {
+  await stopChild(state.child);
+  state.child = null;
+  if (state.dataDir) {
+    try { fs.rmSync(state.dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
+    state.dataDir = "";
+  }
+}
+
+after(cleanup);
+
 const proofDevice = createProofClient({
   base: () => state.base,
   access: () => state.access,
   deviceId: () => state.deviceId,
   privateKey: () => state.signingPrivateKey,
 });
-
-async function waitHealthy(budgetMs) {
-  const until = Date.now() + budgetMs;
-  while (Date.now() < until) {
-    if (state.child && state.child.exitCode !== null) return false;
-    try {
-      const res = await fetch(state.base + "/healthz");
-      if (res.ok) return true;
-    } catch (err) { /* not listening yet */ }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return false;
-}
 
 function device(pathname, init) {
   const opts = init || {};
@@ -113,28 +112,36 @@ async function createBindGrant(tokenId, deviceId) {
 
 test("boot a server and rotate the default admin password", async () => {
   state.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-rt-"));
-  const port = 22400 + Math.floor(Math.random() * 300);
-  state.base = "http://127.0.0.1:" + port;
-
-  state.child = spawn(process.execPath, ["server.js"], {
-    cwd: repoRoot,
-    env: Object.assign({}, process.env, {
-      HTTP_ENABLED: "true",
-      HTTPS_ENABLED: "false",
-      PORT: String(port),
-      ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + (port + 1000),
-      ZEPHYR_DATA_DIR: state.dataDir,
-      ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(state.dataDir, "crypto", "key.json"),
-      ENCRYPTION_KEY: "mv1-roundtrip-key",
-      ZEPHYR_ONE_USE_BUILTIN_SQLITE: "1",
-      NODE_ENV: "production",
-    }),
-    stdio: ["ignore", "pipe", "pipe"],
+  const started = await startChildOnLoopback({
+    healthPath: "/healthz",
+    log: () => state.log,
+    accept: (response) => response.ok,
+    spawnChild: ({ httpPort, aiPort, attempt }) => {
+      state.base = "http://127.0.0.1:" + httpPort;
+      state.log += `[startup attempt ${attempt}: http=${httpPort} ai=${aiPort}]\n`;
+      state.child = spawn(process.execPath, ["server.js"], {
+        cwd: repoRoot,
+        env: Object.assign({}, process.env, {
+          HTTP_ENABLED: "true",
+          HTTPS_ENABLED: "false",
+          PORT: String(httpPort),
+          ZEPHYR_BIND_HOST: "127.0.0.1",
+          ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + aiPort,
+          ZEPHYR_AI_PLATFORM_HOST_URL: "http://127.0.0.1:" + aiPort,
+          ZEPHYR_DATA_DIR: state.dataDir,
+          ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(state.dataDir, "crypto", "key.json"),
+          ENCRYPTION_KEY: "mv1-roundtrip-key",
+          ZEPHYR_ONE_USE_BUILTIN_SQLITE: "1",
+          NODE_ENV: "production",
+        }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      state.child.stdout.on("data", (b) => { state.log += b.toString(); });
+      state.child.stderr.on("data", (b) => { state.log += b.toString(); });
+      return state.child;
+    },
   });
-  state.child.stdout.on("data", (b) => { state.log += b.toString(); });
-  state.child.stderr.on("data", (b) => { state.log += b.toString(); });
-
-  assert.ok(await waitHealthy(60000), "server never became healthy:\n" + state.log.slice(-3000));
+  state.child = started.child;
 
   const login = await fetch(state.base + "/api/auth/login", {
     method: "POST",
@@ -837,11 +844,5 @@ test("the device list shows the bound device to the SID plane", async () => {
 });
 
 test("stop the server", async () => {
-  if (state.child && state.child.exitCode === null) {
-    state.child.kill("SIGKILL");
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  if (state.dataDir) {
-    try { fs.rmSync(state.dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
-  }
+  await cleanup();
 });

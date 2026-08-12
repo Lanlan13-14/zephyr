@@ -11,7 +11,7 @@
 // broker never hands a secret to a relay-strict caller, a direct envelope is
 // bound to one device and one nonce and cannot be replayed, and revoking the
 // grant takes effect on the very next request rather than at cache expiry.
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -20,6 +20,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createProofClient } from "./mobile-v1-proof-client.mjs";
+import { startChildOnLoopback, stopChild } from "./mobile-v1-live-server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -29,6 +30,17 @@ const ACCOUNT_PASSWORDS = Object.freeze({
 });
 
 const state = {};
+
+async function cleanup() {
+  await stopChild(state.child);
+  state.child = null;
+  if (state.dataDir) {
+    try { fs.rmSync(state.dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
+    state.dataDir = "";
+  }
+}
+
+after(cleanup);
 const borrowerProof = createProofClient({
   base: () => state.base,
   access: () => state.access,
@@ -41,18 +53,6 @@ const ownerProof = createProofClient({
   deviceId: () => state.ownerDevice.deviceId,
   privateKey: () => state.ownerDevice.signingPrivateKey,
 });
-
-async function waitUp(url, budgetMs) {
-  const until = Date.now() + budgetMs;
-  while (Date.now() < until) {
-    try {
-      const res = await fetch(url);
-      if (res.status > 0) return res;
-    } catch (err) { /* not listening yet */ }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return null;
-}
 
 /** Owner-plane request: the SID of whichever account is named. */
 function sid(who, url, init = {}) {
@@ -100,30 +100,36 @@ async function login(username, password) {
 
 test("boot a server with an owner and a borrower account", async () => {
   state.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-shared-"));
-  const port = 23100 + Math.floor(Math.random() * 300);
-  state.base = "http://127.0.0.1:" + port;
-
-  state.child = spawn(process.execPath, ["server.js"], {
-    cwd: repoRoot,
-    env: Object.assign({}, process.env, {
-      HTTP_ENABLED: "true",
-      HTTPS_ENABLED: "false",
-      PORT: String(port),
-      ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + (port + 1000),
-      ZEPHYR_DATA_DIR: state.dataDir,
-      ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(state.dataDir, "crypto", "key.json"),
-      ENCRYPTION_KEY: "mobile-v1-shared-test-key",
-      NODE_ENV: "production",
-      ZEPHYR_ONE_USE_BUILTIN_SQLITE: "1",
-    }),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
   let log = "";
-  state.child.stdout.on("data", (b) => { log += b.toString(); });
-  state.child.stderr.on("data", (b) => { log += b.toString(); });
-
-  const up = await waitUp(state.base + "/api/mobile/v1/capabilities", 60000);
-  assert.ok(up, "server never came up:\n" + log.slice(-3000));
+  const started = await startChildOnLoopback({
+    healthPath: "/api/mobile/v1/capabilities",
+    log: () => log,
+    spawnChild: ({ httpPort, aiPort, attempt }) => {
+      state.base = "http://127.0.0.1:" + httpPort;
+      log += `[startup attempt ${attempt}: http=${httpPort} ai=${aiPort}]\n`;
+      state.child = spawn(process.execPath, ["server.js"], {
+        cwd: repoRoot,
+        env: Object.assign({}, process.env, {
+          HTTP_ENABLED: "true",
+          HTTPS_ENABLED: "false",
+          PORT: String(httpPort),
+          ZEPHYR_BIND_HOST: "127.0.0.1",
+          ZEPHYR_AI_HOST_LISTEN: "127.0.0.1:" + aiPort,
+          ZEPHYR_AI_PLATFORM_HOST_URL: "http://127.0.0.1:" + aiPort,
+          ZEPHYR_DATA_DIR: state.dataDir,
+          ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(state.dataDir, "crypto", "key.json"),
+          ENCRYPTION_KEY: "mobile-v1-shared-test-key",
+          NODE_ENV: "production",
+          ZEPHYR_ONE_USE_BUILTIN_SQLITE: "1",
+        }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      state.child.stdout.on("data", (b) => { log += b.toString(); });
+      state.child.stderr.on("data", (b) => { log += b.toString(); });
+      return state.child;
+    },
+  });
+  state.child = started.child;
 
   // Default admin becomes the resource owner.
   const first = await login("admin", "admin");
@@ -979,12 +985,5 @@ test("the anonymous caller cannot reach any shared endpoint", async () => {
 });
 
 test("stop the server", async () => {
-  if (state.child && state.child.exitCode === null) {
-    state.child.kill("SIGTERM");
-    await new Promise((resolve) => {
-      const t = setTimeout(() => { try { state.child.kill("SIGKILL"); } catch (e) {} resolve(); }, 8000);
-      state.child.once("exit", () => { clearTimeout(t); resolve(); });
-    });
-  }
-  if (state.dataDir) fs.rmSync(state.dataDir, { recursive: true, force: true });
+  await cleanup();
 });

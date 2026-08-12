@@ -347,7 +347,8 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'EVP_PKEY_get_octet_string_param', 'EVP_PKEY_fromdata_init', 'EVP_PKEY_fromdata',
     'EVP_PKEY_encapsulate_init', 'EVP_PKEY_encapsulate',
     'EVP_PKEY_decapsulate_init', 'EVP_PKEY_decapsulate',
-    'EVP_PKEY_KEYPAIR', 'EVP_PKEY_PUBLIC_KEY',
+    'OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS', 'OSSL_KEYMGMT_SELECT_OTHER_PARAMETERS',
+    'OSSL_KEYMGMT_SELECT_PUBLIC_KEY', 'OSSL_KEYMGMT_SELECT_PRIVATE_KEY',
     'OSSL_PARAM_construct_octet_string', 'OSSL_PARAM_construct_end',
     // SQLite3 C module used by the durable, actor-isolated sync repository.
     'SQLITE_OPEN_CREATE', 'SQLITE_OPEN_READWRITE', 'SQLITE_OPEN_FULLMUTEX',
