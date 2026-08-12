@@ -285,6 +285,17 @@ test('every release build uses the pinned patched static FreeRDP', () => {
         'Windows must resolve the pinned vcpkg baseline from the dependency manifest');
     assert.match(windows, /git -C \$vcpkgRoot fetch --no-tags --depth=1 origin \$baseline/,
         'runner images older than the pin must fetch the exact baseline commit');
+    assert.match(windows, /git -C \$vcpkgRoot checkout --detach --force \$baseline/,
+        'ports and the version database must be checked out from the same commit as the baseline');
+    assert.match(windows, /git -C \$vcpkgRoot diff-index --quiet \$baseline -- versions ports/,
+        'the checked-out ports and version database must remain identical to the manifest pin');
+    const fetchBaselineAt = windows.indexOf('git -C $vcpkgRoot fetch --no-tags --depth=1 origin $baseline');
+    const checkoutBaselineAt = windows.indexOf('git -C $vcpkgRoot checkout --detach --force $baseline');
+    const verifyTreeAt = windows.indexOf('git -C $vcpkgRoot diff-index --quiet $baseline -- versions ports');
+    const installDependenciesAt = windows.indexOf('& C:/vcpkg/vcpkg.exe install');
+    assert.ok(fetchBaselineAt < checkoutBaselineAt && checkoutBaselineAt < verifyTreeAt
+        && verifyTreeAt < installDependenciesAt,
+    'the pinned vcpkg tree must be fetched, checked out and verified before dependency resolution');
     assert.match(windows, /C:\/vcpkg\/vcpkg\.exe/,
         'Windows must not select the mismatched Visual Studio vcpkg executable from PATH');
     assert.match(windows, /--vcpkg-root=\$vcpkgRoot/);

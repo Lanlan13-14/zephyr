@@ -190,11 +190,25 @@ jobs:
           }
 
           # windows-2022 may ship a vcpkg checkout older than the manifest pin.
-          # Fetch the exact object so manifest resolution never follows runner-image drift.
+          # Fetch and check out the exact tree so the baseline, ports and version
+          # database never split across the runner image and the manifest pin.
           git -C $vcpkgRoot fetch --no-tags --depth=1 origin $baseline
           if ($LASTEXITCODE -ne 0) { throw "failed to fetch pinned vcpkg baseline $baseline" }
           git -C $vcpkgRoot cat-file -e "$baseline`:versions/baseline.json"
           if ($LASTEXITCODE -ne 0) { throw "pinned vcpkg baseline lacks versions/baseline.json: $baseline" }
+          git -C $vcpkgRoot checkout --detach --force $baseline
+          if ($LASTEXITCODE -ne 0) { throw "failed to check out pinned vcpkg baseline $baseline" }
+          $checkedOutBaseline = (git -C $vcpkgRoot rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $checkedOutBaseline -ne $baseline) {
+            throw "vcpkg checkout does not match manifest baseline: $checkedOutBaseline"
+          }
+          if (-not (Test-Path "$vcpkgRoot/versions/baseline.json")) {
+            throw "checked-out vcpkg tree has no versions/baseline.json"
+          }
+          git -C $vcpkgRoot diff-index --quiet $baseline -- versions ports
+          if ($LASTEXITCODE -ne 0) {
+            throw "vcpkg ports or version database differ from manifest baseline $baseline"
+          }
 
           # msvc-dev-cmd exports the Visual Studio vcpkg path. Keep the command,
           # environment, cache and CMake toolchain on the same standalone checkout.
