@@ -223,9 +223,12 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         // Validate every existing ancestor before createDirectory can follow
         // one. A missing tail is allowed here, then strictly re-proved after
         // creation. Final database paths remain untouched until lstat below.
-        _ = try trustedSQLiteLocation(for: databaseURL, allowMissingParentTail: true)
-        if let legacyDatabaseURL {
-            _ = try trustedSQLiteLocation(for: legacyDatabaseURL, allowMissingParentTail: true)
+        let trustedDatabaseLocation = try trustedSQLiteLocation(
+            for: databaseURL,
+            allowMissingParentTail: true
+        )
+        let trustedLegacyLocation = try legacyDatabaseURL.map {
+            try trustedSQLiteLocation(for: $0, allowMissingParentTail: true)
         }
         // Prepare only the trusted parent before opening. Final database paths
         // are not passed through URL resource APIs until SQLite has opened
@@ -331,7 +334,11 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             try Self.requireEncryptedHeader(at: databaseURL)
         }
         if let legacyDatabaseURL,
-           legacyDatabaseURL.standardizedFileURL != databaseURL.standardizedFileURL,
+           let trustedLegacyLocation,
+           !(try Self.sqliteLocationsReferToSameFile(
+               trustedLegacyLocation,
+               trustedDatabaseLocation
+           )),
            Self.hasDatabaseArtifacts(at: legacyDatabaseURL) {
             try filePolicy.prepare(databaseURL: legacyDatabaseURL)
             try Self.removeLegacyDatabaseIfOwned(at: legacyDatabaseURL, identity: identity)
@@ -1042,6 +1049,12 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             throw SQLiteSyncRepositoryError.bindingChanged
         }
         if fullyPurged { return }
+
+        // Reject hostile path replacements before SQLite can create or switch
+        // journals through them. The same classification is repeated by
+        // removeDatabaseArtifacts after close to cover replacements racing
+        // between this check and unlink.
+        try Self.requireRemovableDatabaseArtifacts(at: databaseURL)
 
         // Classify crash staging before mutating the live database. An
         // unowned collision must fail closed while both target and key are
@@ -1937,6 +1950,19 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         }
     }
 
+    private static func sqliteLocationsReferToSameFile(
+        _ first: String,
+        _ second: String
+    ) throws -> Bool {
+        if first == second { return true }
+        guard let firstStatus = try artifactStatus(at: first),
+              let secondStatus = try artifactStatus(at: second) else {
+            return false
+        }
+        return firstStatus.st_dev == secondStatus.st_dev
+            && firstStatus.st_ino == secondStatus.st_ino
+    }
+
     private static func removeDatabaseArtifacts(at url: URL) throws {
         // Preserve the main encrypted file until all direct sidecars are gone.
         // Every path is unlinked as one leaf; never hand a caller-controlled
@@ -1963,6 +1989,17 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             of: url.path,
             failure: "database_artifact_removal"
         )
+    }
+
+    private static func requireRemovableDatabaseArtifacts(at url: URL) throws {
+        for suffix in ["-wal", "-shm", "-journal", ""] {
+            guard let status = try artifactStatus(at: url.path + suffix) else { continue }
+            guard (status.st_mode & S_IFMT) == S_IFREG else {
+                throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                    "database_artifact_removal"
+                )
+            }
+        }
     }
 
     private static func migrationStagingURL(for targetURL: URL) -> URL {
@@ -2283,15 +2320,16 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         // Validate every caller-provided location before observing or mutating
         // either store. The returned path resolves only the trusted top-level
         // compatibility alias and preserves the caller's final file name.
+        let trustedDatabaseLocation = try trustedSQLiteLocation(for: databaseURL)
         let trustedDatabaseURL = URL(
-            fileURLWithPath: try trustedSQLiteLocation(for: databaseURL),
+            fileURLWithPath: trustedDatabaseLocation,
             isDirectory: false
         )
-        let trustedLegacyDatabaseURL = try legacyDatabaseURL.map { rawURL in
-            URL(
-                fileURLWithPath: try trustedSQLiteLocation(for: rawURL),
-                isDirectory: false
-            )
+        let trustedLegacyLocation = try legacyDatabaseURL.map { rawURL in
+            try trustedSQLiteLocation(for: rawURL)
+        }
+        let trustedLegacyDatabaseURL = trustedLegacyLocation.map {
+            URL(fileURLWithPath: $0, isDirectory: false)
         }
 
         let scope = try SyncDatabaseKeyScope(identity: identity)
@@ -2301,8 +2339,11 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             identity: identity
         )
 
-        if let trustedLegacyDatabaseURL {
-            guard trustedLegacyDatabaseURL != trustedDatabaseURL else {
+        if let trustedLegacyDatabaseURL, let trustedLegacyLocation {
+            guard !(try sqliteLocationsReferToSameFile(
+                trustedLegacyLocation,
+                trustedDatabaseLocation
+            )) else {
                 throw SQLiteSyncRepositoryError.legacyOwnerMismatch
             }
             if hasDatabaseArtifacts(at: trustedLegacyDatabaseURL) {
@@ -2392,7 +2433,12 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         filePolicy: SQLiteSyncDatabaseFilePolicy,
         hooks: SQLiteSyncMigrationHooks
     ) throws {
-        guard legacyURL.standardizedFileURL != targetURL.standardizedFileURL else {
+        let trustedLegacyLocation = try trustedSQLiteLocation(for: legacyURL)
+        let trustedTargetLocation = try trustedSQLiteLocation(for: targetURL)
+        guard !(try sqliteLocationsReferToSameFile(
+            trustedLegacyLocation,
+            trustedTargetLocation
+        )) else {
             throw SQLiteSyncRepositoryError.plaintextDatabaseRejected
         }
         guard !hasDatabaseArtifacts(at: targetURL) else { return }
