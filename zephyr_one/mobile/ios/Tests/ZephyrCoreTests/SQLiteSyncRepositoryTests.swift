@@ -567,6 +567,101 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         }
     }
 
+    func testNewEncryptedDatabasePassesIntegrityAfterInitialization() async throws {
+        let identity = binding()
+        var store: SQLiteSyncRepository? = try repository(identity)
+        let initialized = try await store?.snapshot()
+        XCTAssertEqual(initialized?.identity, identity)
+        store = nil
+
+        let reopened = try SQLiteSyncRepository(
+            databaseURL: databaseURL(for: identity),
+            identity: identity,
+            requireExistingBinding: true,
+            keyStore: keyStore
+        )
+        let reopenedSnapshot = try await reopened.snapshot()
+        XCTAssertEqual(reopenedSnapshot?.identity, identity)
+    }
+
+    func testUnsafePreexistingDatabaseArtifactsFailClosedWithoutChangingKeyOrFiles() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let unsafeArtifact = SQLiteSyncRepositoryError.databaseIntegrityFailed(
+            "unsafe_database_artifact"
+        )
+
+        let zeroIdentity = binding(generation: "zero-main")
+        let zeroURL = databaseURL(for: zeroIdentity)
+        let zeroKey = Data(repeating: 0x31, count: KeychainSyncDatabaseKeyStore.keyByteCount)
+        try keyStore.set(zeroKey, for: SyncDatabaseKeyScope(identity: zeroIdentity))
+        try Data().write(to: zeroURL)
+        XCTAssertThrowsError(try repository(zeroIdentity)) { error in
+            XCTAssertEqual(error as? SQLiteSyncRepositoryError, unsafeArtifact)
+        }
+        XCTAssertEqual(keyStore.key(for: try SyncDatabaseKeyScope(identity: zeroIdentity)), zeroKey)
+        XCTAssertEqual(try Data(contentsOf: zeroURL), Data())
+
+        let sidecarIdentity = binding(generation: "sidecar-only")
+        let sidecarURL = databaseURL(for: sidecarIdentity)
+        let sidecarKey = Data(repeating: 0x32, count: KeychainSyncDatabaseKeyStore.keyByteCount)
+        let orphanWAL = URL(fileURLWithPath: sidecarURL.path + "-wal")
+        try keyStore.set(sidecarKey, for: SyncDatabaseKeyScope(identity: sidecarIdentity))
+        try Data([0xA5]).write(to: orphanWAL)
+        XCTAssertThrowsError(try repository(sidecarIdentity)) { error in
+            XCTAssertEqual(error as? SQLiteSyncRepositoryError, unsafeArtifact)
+        }
+        XCTAssertEqual(
+            keyStore.key(for: try SyncDatabaseKeyScope(identity: sidecarIdentity)),
+            sidecarKey
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sidecarURL.path))
+        XCTAssertEqual(try Data(contentsOf: orphanWAL), Data([0xA5]))
+
+        let symlinkIdentity = binding(generation: "symlink-main")
+        let symlinkURL = databaseURL(for: symlinkIdentity)
+        let symlinkKey = Data(repeating: 0x33, count: KeychainSyncDatabaseKeyStore.keyByteCount)
+        let symlinkTarget = directory.appendingPathComponent("symlink-target")
+        try Data([0x5A]).write(to: symlinkTarget)
+        try FileManager.default.createSymbolicLink(
+            atPath: symlinkURL.path,
+            withDestinationPath: symlinkTarget.path
+        )
+        try keyStore.set(symlinkKey, for: SyncDatabaseKeyScope(identity: symlinkIdentity))
+        XCTAssertThrowsError(try repository(symlinkIdentity)) { error in
+            XCTAssertEqual(error as? SQLiteSyncRepositoryError, unsafeArtifact)
+        }
+        XCTAssertEqual(
+            keyStore.key(for: try SyncDatabaseKeyScope(identity: symlinkIdentity)),
+            symlinkKey
+        )
+        XCTAssertEqual(try Data(contentsOf: symlinkTarget), Data([0x5A]))
+        XCTAssertEqual(
+            try FileManager.default.destinationOfSymbolicLink(atPath: symlinkURL.path),
+            symlinkTarget.path
+        )
+
+        let danglingIdentity = binding(generation: "dangling-main")
+        let danglingURL = databaseURL(for: danglingIdentity)
+        let danglingKey = Data(repeating: 0x34, count: KeychainSyncDatabaseKeyStore.keyByteCount)
+        let missingTarget = directory.appendingPathComponent("missing-target")
+        try FileManager.default.createSymbolicLink(
+            atPath: danglingURL.path,
+            withDestinationPath: missingTarget.path
+        )
+        try keyStore.set(danglingKey, for: SyncDatabaseKeyScope(identity: danglingIdentity))
+        XCTAssertThrowsError(try repository(danglingIdentity)) { error in
+            XCTAssertEqual(error as? SQLiteSyncRepositoryError, unsafeArtifact)
+        }
+        XCTAssertEqual(
+            keyStore.key(for: try SyncDatabaseKeyScope(identity: danglingIdentity)),
+            danglingKey
+        )
+        XCTAssertEqual(
+            try FileManager.default.destinationOfSymbolicLink(atPath: danglingURL.path),
+            missingTarget.path
+        )
+    }
+
     func testPurgeClosesAndRemovesEncryptedDatabaseSidecarsBeforeDeletingKey() async throws {
         let identity = binding()
         let store = try repository(identity)
@@ -615,6 +710,39 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         )
         try await retry.purgeAll(for: identity)
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertNil(keyStore.key(for: scope))
+    }
+
+    func testEncryptedDatabaseSecondPageTamperingFailsCipherIntegrityCheck() async throws {
+        let identity = binding()
+        do {
+            let store = try repository(identity)
+            _ = try await store.snapshot()
+        }
+
+        let url = databaseURL(for: identity)
+        var encrypted = try Data(contentsOf: url)
+        // SQLCipher 4's pinned default is a 4096-byte page with its HMAC at
+        // the end. Page 1 holds sqlite_master and is read before the explicit
+        // integrity PRAGMA; corrupt page 2 so this regression specifically
+        // proves the complete file scan remains mandatory for disk databases.
+        let secondPageLastByte = (4096 * 2) - 1
+        XCTAssertGreaterThan(encrypted.count, secondPageLastByte)
+        encrypted[secondPageLastByte] ^= 0x01
+        try encrypted.write(to: url, options: .atomic)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(
+                databaseURL: url,
+                identity: identity,
+                keyStore: keyStore
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("cipher_integrity_check")
+            )
+        }
     }
 
     func testOwnerProvenPlaintextMigrationIsAtomicAndCrashRetryable() async throws {
@@ -679,6 +807,7 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         let migratedSnapshot = try await migrated.snapshot()
         XCTAssertEqual(migratedSnapshot?.identity, identity)
         XCTAssertEqual(migratedSnapshot?.runtimeLeaseState, .runnable)
+        XCTAssertEqual(migratedSnapshot?.bindingState, .idle)
         XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
         XCTAssertNotEqual(
             Data(try Data(contentsOf: targetURL).prefix(16)),
@@ -1046,7 +1175,7 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
             server_id, account_id, device_id, generation, binding_state
         ) VALUES (
             '\(identity.serverID)', '\(identity.accountID)', '\(identity.deviceID)',
-            '\(identity.generation)', 'idle'
+            '\(identity.generation)', '\(BindingState.idle.rawValue)'
         );
         """
         var message: UnsafeMutablePointer<CChar>?

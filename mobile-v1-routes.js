@@ -79,8 +79,8 @@ const PUSH_REQUEST_FIELDS = new Set([
     'operations',
 ]);
 const PUSH_REQUEST_REQUIRED_FIELDS = [...PUSH_REQUEST_FIELDS];
-/** Kept in capabilities for old clients; v2 uses the server-issued timestamp. */
-const PROOF_SKEW_SEC = 0;
+/** Kept in capabilities for old clients; v2 uses an exact server-issued timestamp. */
+const PROOF_SKEW_SEC = PROOF_CHALLENGE_TTL_SEC;
 /** Account-level operations that may exchange a password/TOTP for a grant. */
 const SENSITIVE_ACTIONS = Object.freeze([
     'device.bind',

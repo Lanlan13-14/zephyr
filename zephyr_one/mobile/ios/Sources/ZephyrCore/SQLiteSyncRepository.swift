@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import SQLCipher
 import ZephyrContracts
@@ -34,6 +35,11 @@ public struct SQLiteSyncDatabaseFilePolicy: Sendable {
     public init() {}
 
     public func prepare(databaseURL: URL) throws {
+        try prepareDirectory(databaseURL: databaseURL)
+        try refresh(databaseURL: databaseURL)
+    }
+
+    fileprivate func prepareDirectory(databaseURL: URL) throws {
         let directory = databaseURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
@@ -45,7 +51,6 @@ public struct SQLiteSyncDatabaseFilePolicy: Sendable {
         #endif
 
         try excludeFromBackup(directory)
-        try refresh(databaseURL: databaseURL)
     }
 
     fileprivate func refresh(databaseURL: URL) throws {
@@ -117,8 +122,11 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         let resolvedKeyScope = try SyncDatabaseKeyScope(identity: identity)
         self.keyScope = resolvedKeyScope
 
-        try filePolicy.prepare(databaseURL: databaseURL)
-        let hasTargetArtifacts = Self.hasDatabaseArtifacts(at: databaseURL)
+        // Prepare only the trusted parent before opening. Final database paths
+        // are not passed through URL resource APIs until SQLite has opened
+        // them with SQLITE_OPEN_NOFOLLOW.
+        try filePolicy.prepareDirectory(databaseURL: databaseURL)
+        let hasTargetArtifacts = try Self.requireSafeTargetArtifacts(at: databaseURL)
         let legacyExists = legacyDatabaseURL.map(Self.hasDatabaseArtifacts(at:)) ?? false
 
         if requireExistingBinding && !hasTargetArtifacts && !legacyExists {
@@ -152,11 +160,19 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             )
         }
 
+        // Owner-proven migration can promote an absent target. Re-classify the
+        // final path so promoted databases are opened existing-only, while a
+        // genuinely absent target is the sole path allowed to use CREATE.
+        let targetExistsAfterMigration = try Self.requireSafeTargetArtifacts(at: databaseURL)
         let opened: SQLiteDatabase
-        if cleanupOnly && !Self.hasDatabaseArtifacts(at: databaseURL) {
+        if cleanupOnly && !targetExistsAfterMigration {
             opened = try SQLiteDatabase.inMemory(key: databaseKey)
         } else {
-            opened = try SQLiteDatabase(url: databaseURL, key: databaseKey)
+            opened = try SQLiteDatabase(
+                url: databaseURL,
+                key: databaseKey,
+                createNew: !targetExistsAfterMigration
+            )
         }
         self.database = opened
         try Self.migrate(opened)
@@ -172,6 +188,16 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             try Self.recoverInterruptedWork(identity, in: opened)
             try Self.requireAllMirrorOwners(identity, in: opened)
             try Self.requireAllTombstoneOwners(identity, in: opened)
+        }
+        do {
+            // Opening verifies every existing disk page before migration or
+            // binding access. Checkpoint and re-check after initialization so
+            // pages written by schema and recovery work cannot remain only in
+            // WAL and escape the complete encrypted-file scan.
+            try opened.verifyInitializedCipherIntegrity()
+        } catch {
+            try? opened.close()
+            throw error
         }
         try filePolicy.refresh(databaseURL: databaseURL)
         if FileManager.default.fileExists(atPath: databaseURL.path) {
@@ -1719,6 +1745,42 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
 
     private static let sqlitePlaintextHeader = Data("SQLite format 3\u{0}".utf8)
 
+    private static func requireSafeTargetArtifacts(at url: URL) throws -> Bool {
+        let main = try artifactStatus(at: url.path)
+        let sidecars = try ["-wal", "-shm", "-journal"].map {
+            try artifactStatus(at: url.path + $0)
+        }
+
+        guard let main else {
+            guard sidecars.allSatisfy({ status in
+                if case nil = status { return true }
+                return false
+            }) else {
+                throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_artifact")
+            }
+            return false
+        }
+        guard (main.st_mode & S_IFMT) == S_IFREG, main.st_size > 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_artifact")
+        }
+        guard sidecars.allSatisfy({ status in
+            guard let status else { return true }
+            return (status.st_mode & S_IFMT) == S_IFREG
+        }) else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_artifact")
+        }
+        return true
+    }
+
+    private static func artifactStatus(at path: String) throws -> stat? {
+        var status = stat()
+        if lstat(path, &status) == 0 { return status }
+        guard errno == ENOENT else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("database_artifact_metadata")
+        }
+        return nil
+    }
+
     private static func hasDatabaseArtifacts(at url: URL) -> Bool {
         ["", "-wal", "-shm", "-journal"].contains {
             FileManager.default.fileExists(atPath: url.path + $0)
@@ -1736,8 +1798,11 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             url.path + ".migrating-shm",
             url.path + ".migrating-journal",
         ]
-        for path in paths where FileManager.default.fileExists(atPath: path) {
+        for path in paths where try artifactStatus(at: path) != nil {
             try FileManager.default.removeItem(at: URL(fileURLWithPath: path))
+        }
+        guard try paths.allSatisfy({ try artifactStatus(at: $0) == nil }) else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("database_artifact_removal")
         }
     }
 
@@ -1772,12 +1837,11 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             try removeLegacyDatabaseIfOwned(at: legacyDatabaseURL, identity: identity)
         }
 
-        var firstFailure: Error?
-        do { try removeDatabaseArtifacts(at: databaseURL) }
-        catch { firstFailure = error }
-        do { try keyStore.deleteKey(for: try SyncDatabaseKeyScope(identity: identity)) }
-        catch { if firstFailure == nil { firstFailure = error } }
-        if let firstFailure { throw firstFailure }
+        // Keep the only usable key whenever any artifact cannot be removed.
+        // The durable cleanup marker can then retry without stranding an
+        // encrypted database that no longer has decrypting key material.
+        try removeDatabaseArtifacts(at: databaseURL)
+        try keyStore.deleteKey(for: try SyncDatabaseKeyScope(identity: identity))
     }
 
     private static func header(at url: URL) throws -> Data {
@@ -1889,7 +1953,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             }
             try filePolicy.refresh(databaseURL: stagingURL)
 
-            let staged = try SQLiteDatabase(url: stagingURL, key: key)
+            let staged = try SQLiteDatabase(url: stagingURL, key: key, createNew: false)
             do {
                 // Re-prove the exported bytes before promotion.
                 try requireLegacyOwner(identity, in: staged)
@@ -2420,31 +2484,34 @@ private final class SQLiteDatabase {
     private var isInMemory = false
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    init(url: URL, key: Data) throws {
-        try open(location: url.path, key: key)
+    init(url: URL, key: Data, createNew: Bool) throws {
+        try open(location: url.path, key: key, createNew: createNew)
     }
 
     static func inMemory(key: Data) throws -> SQLiteDatabase {
         let database = SQLiteDatabase()
-        try database.open(location: ":memory:", key: key)
+        try database.open(location: ":memory:", key: key, createNew: true)
         return database
     }
 
     static func plaintext(url: URL) throws -> SQLiteDatabase {
         let database = SQLiteDatabase()
-        try database.open(location: url.path, key: nil)
+        try database.open(location: url.path, key: nil, createNew: false)
         return database
     }
 
     private init() {}
 
-    private func open(location: String, key: Data?) throws {
+    private func open(location: String, key: Data?, createNew: Bool) throws {
         isInMemory = location == ":memory:"
         var opened: OpaquePointer?
+        var flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
+        if createNew { flags |= SQLITE_OPEN_CREATE }
+        if !isInMemory { flags |= SQLITE_OPEN_NOFOLLOW }
         let code = sqlite3_open_v2(
             location,
             &opened,
-            SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+            flags,
             nil
         )
         guard code == SQLITE_OK, let opened else {
@@ -2542,10 +2609,21 @@ private final class SQLiteDatabase {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unexpected_sqlite_version")
         }
         _ = try query("SELECT count(*) FROM sqlite_master;")
+        // SQLCipher 4.10 reports "database file is undefined" for this
+        // file-level check on :memory: databases. The version and schema-read
+        // checks above still prove the keyed cleanup-only handle is usable.
+        guard !isInMemory else { return }
         let result = try query("PRAGMA cipher_integrity_check;")
-        guard result.isEmpty || result.allSatisfy({ $0.text(0).lowercased() == "ok" }) else {
+        guard result.isEmpty else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("cipher_integrity_check")
         }
+    }
+
+    func verifyInitializedCipherIntegrity() throws {
+        if !isInMemory {
+            try checkpointTruncate()
+        }
+        try verifyCipherIntegrity()
     }
 
     func preparePlaintextForCopy() throws {

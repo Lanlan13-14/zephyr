@@ -189,7 +189,11 @@ test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-eras
   assert.doesNotMatch(repository, /PRAGMA rekey =/);
   assert.match(repository, /ATTACH DATABASE \? AS encrypted KEY \?/);
   assert.match(repository, /SELECT sqlcipher_export\('encrypted'\)/);
-  assert.match(repository, /SQLiteDatabase\(url: stagingURL, key: key\)/);
+  assert.match(
+    repository,
+    /SQLiteDatabase\(url: stagingURL, key: key, createNew: false\)/,
+    'validated migration staging must be reopened without CREATE',
+  );
   assert.match(
     repository,
     /requireEncryptedHeader\(at: stagingURL\)[\s\S]{0,160}hooks\(\.encryptedCopyReady\)/,
@@ -360,6 +364,7 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'OSSL_PARAM_construct_octet_string', 'OSSL_PARAM_construct_end',
     // SQLite3 C module used by the durable, actor-isolated sync repository.
     'SQLITE_OPEN_CREATE', 'SQLITE_OPEN_READWRITE', 'SQLITE_OPEN_FULLMUTEX',
+    'SQLITE_OPEN_NOFOLLOW',
     'SQLITE_OK', 'SQLITE_DONE', 'SQLITE_ROW',
     'SQLITE_INTEGER', 'SQLITE_FLOAT', 'SQLITE_TEXT', 'SQLITE_BLOB',
     /* #filePath / #line default arguments in the XCTest helpers, so a failure is

@@ -209,6 +209,15 @@ test('all device data-plane routes require Bearer AND a one-time ES256 proof', a
     headers: { authorization: 'Bearer access-1', ...withoutTimestamp },
   })).status, 401);
 
+  const shiftedTimestamp = await challengeFor();
+  const shiftedHeaders = proofHeaders(pair1.privateKey, 'device-1', {
+    ...shiftedTimestamp,
+    timestamp: shiftedTimestamp.timestamp + 1,
+  });
+  assert.equal((await fetch(base + '/api/mobile/v1/sync/status', {
+    headers: { authorization: 'Bearer access-1', ...shiftedHeaders },
+  })).status, 401, 'v2 proof timestamps must exactly match the server-issued challenge');
+
   const crossRoute = await challengeFor({ target: '/api/mobile/v1/sync/changes?sinceCursor=0' });
   assert.equal((await fetch(base + '/api/mobile/v1/sync/status', {
     headers: {

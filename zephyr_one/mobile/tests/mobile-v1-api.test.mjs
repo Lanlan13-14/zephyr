@@ -94,6 +94,8 @@ test("capabilities negotiates protocol, registry and limits", async () => {
   assert.equal(body.auth.signingAlg, "ES256");
   assert.equal(body.auth.encryptionAlg, "ML-KEM-768");
   assert.equal(body.auth.sidHeader, "X-Zephyr-Sid");
+  assert.equal(body.auth.proofSkewSec, body.auth.challengeTtlSec);
+  assert.ok(body.auth.proofSkewSec > 0, "mobile clients reject a non-positive proof timing capability");
 
   // Unimplemented surfaces are declared false rather than omitted: an absent
   // key reads as unknown and makes the client probe a dead endpoint.
