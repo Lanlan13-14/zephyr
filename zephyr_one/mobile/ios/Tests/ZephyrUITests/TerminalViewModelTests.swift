@@ -1,9 +1,44 @@
 import XCTest
+import Combine
 @testable import ZephyrUI
 
 /// S21 terminal view model: connect flow, host-key gate, reconnect policy and
 /// the Telnet/encoding rules.
 final class TerminalViewModelTests: XCTestCase {
+
+    /// Holds the task started by `connect()` at the host boundary. This lets
+    /// the test inspect the observable connecting state before a successful
+    /// dial is allowed to update it, without racing task scheduling.
+    private actor OpenGate {
+        private var hasOpened = false
+        private var hasReleased = false
+        private var earlyOutcome: TerminalOpenOutcome?
+        private var outcomeContinuation: CheckedContinuation<TerminalOpenOutcome, Never>?
+
+        func open() async -> TerminalOpenOutcome {
+            precondition(!hasOpened, "OpenGate supports exactly one open")
+            hasOpened = true
+            if let earlyOutcome {
+                self.earlyOutcome = nil
+                return earlyOutcome
+            }
+            return await withCheckedContinuation {
+                outcomeContinuation = $0
+            }
+        }
+
+        func release(_ outcome: TerminalOpenOutcome) {
+            precondition(!hasReleased, "OpenGate supports exactly one release")
+            hasReleased = true
+            guard let continuation = outcomeContinuation else {
+                earlyOutcome = outcome
+                return
+            }
+            outcomeContinuation = nil
+            continuation.resume(returning: outcome)
+        }
+
+    }
 
     private final class FakeEmulator: TerminalEmulatorPort {
         var available: Bool
@@ -16,11 +51,22 @@ final class TerminalViewModelTests: XCTestCase {
         var outcome: TerminalOpenOutcome = .opened
         var openedRequest: TerminalOpenRequest?
         var answeredTrust: Bool?
+        let openGate: OpenGate?
+        let onOpenStarted: () -> Void
+
+        init(openGate: OpenGate? = nil, onOpenStarted: @escaping () -> Void = {}) {
+            self.openGate = openGate
+            self.onOpenStarted = onOpenStarted
+        }
 
         var isAvailable: Bool { available }
 
         func open(_ request: TerminalOpenRequest) async -> TerminalOpenOutcome {
             openedRequest = request
+            if let openGate {
+                onOpenStarted()
+                return await openGate.open()
+            }
             return outcome
         }
 
@@ -68,14 +114,23 @@ final class TerminalViewModelTests: XCTestCase {
 
     func testConnectRegistersConnectingThenConnected() async {
         let registry = SessionRegistry()
-        let host = FakeHost()
-        host.outcome = .opened
+        let openStarted = expectation(description: "connect task reaches the host")
+        let gate = OpenGate()
+        let host = FakeHost(openGate: gate) { openStarted.fulfill() }
         let vm = makeVM(registry: registry, host: host, connection: UiTestData.connection())
         vm.load()
         vm.connect()
+        await fulfillment(of: [openStarted], timeout: 1)
         XCTAssertEqual(registry.row("s-1")?.transport, .connecting)
 
-        await vm.performOpen(UiTestData.connection())
+        let connected = expectation(description: "connect task marks the row connected")
+        registry.addObserver {
+            if registry.row("s-1")?.transport == .connected {
+                connected.fulfill()
+            }
+        }
+        await gate.release(.opened)
+        await fulfillment(of: [connected], timeout: 1)
         XCTAssertEqual(registry.row("s-1")?.transport, .connected)
         guard case let .content(value, _, _, _) = vm.page else {
             return XCTFail("expected content, got \(vm.page)")
@@ -85,24 +140,43 @@ final class TerminalViewModelTests: XCTestCase {
 
     func testSharedRelayExecution() async {
         let registry = SessionRegistry()
-        let host = FakeHost()
-        host.outcome = .opened
+        let openStarted = expectation(description: "relay connect reaches the host")
+        let gate = OpenGate()
+        let host = FakeHost(openGate: gate) { openStarted.fulfill() }
         let relay = UiTestData.connection(residency: .sharedOnlineOnly, sharedUsePolicy: .relayOnly)
         let vm = makeVM(registry: registry, host: host, connection: relay)
         vm.load()
         vm.connect()
-        await vm.performOpen(relay)
+        await fulfillment(of: [openStarted], timeout: 1)
+        let connected = expectation(description: "relay connect task completes")
+        registry.addObserver {
+            if registry.row("s-1")?.transport == .connected {
+                connected.fulfill()
+            }
+        }
+        await gate.release(.opened)
+        await fulfillment(of: [connected], timeout: 1)
         XCTAssertEqual(registry.row("s-1")?.execution, .relay)
     }
 
     func testHostKeyGate() async {
         let registry = SessionRegistry()
-        let host = FakeHost()
-        host.outcome = .hostKeyRequired(HostKeyPrompt(fingerprint: "AA:BB", changed: true))
+        let openStarted = expectation(description: "host-key connect reaches the host")
+        let gate = OpenGate()
+        let host = FakeHost(openGate: gate) { openStarted.fulfill() }
         let vm = makeVM(registry: registry, host: host, connection: UiTestData.connection())
         vm.load()
         vm.connect()
-        await vm.performOpen(UiTestData.connection())
+        await fulfillment(of: [openStarted], timeout: 1)
+        let promptShown = expectation(description: "host-key prompt is published")
+        let pageObservation = vm.$page.sink { page in
+            if case let .content(value, _, _, _) = page, value.hostKeyPrompt?.changed == true {
+                promptShown.fulfill()
+            }
+        }
+        defer { pageObservation.cancel() }
+        await gate.release(.hostKeyRequired(HostKeyPrompt(fingerprint: "AA:BB", changed: true)))
+        await fulfillment(of: [promptShown], timeout: 1)
 
         // Prompt is surfaced and the row stays connecting.
         guard case let .content(value, _, _, _) = vm.page else {
@@ -121,12 +195,22 @@ final class TerminalViewModelTests: XCTestCase {
 
     func testRejectHostKeyDisconnects() async {
         let registry = SessionRegistry()
-        let host = FakeHost()
-        host.outcome = .hostKeyRequired(HostKeyPrompt(fingerprint: "AA:BB", changed: false))
+        let openStarted = expectation(description: "rejected host-key connect reaches the host")
+        let gate = OpenGate()
+        let host = FakeHost(openGate: gate) { openStarted.fulfill() }
         let vm = makeVM(registry: registry, host: host, connection: UiTestData.connection())
         vm.load()
         vm.connect()
-        await vm.performOpen(UiTestData.connection())
+        await fulfillment(of: [openStarted], timeout: 1)
+        let promptShown = expectation(description: "host-key prompt is published")
+        let pageObservation = vm.$page.sink { page in
+            if case let .content(value, _, _, _) = page, value.hostKeyPrompt?.changed == false {
+                promptShown.fulfill()
+            }
+        }
+        defer { pageObservation.cancel() }
+        await gate.release(.hostKeyRequired(HostKeyPrompt(fingerprint: "AA:BB", changed: false)))
+        await fulfillment(of: [promptShown], timeout: 1)
         await vm.performAnswerHostKey(trust: false)
         XCTAssertEqual(host.answeredTrust, false)
         XCTAssertEqual(registry.row("s-1")?.transport, .disconnected)
@@ -152,13 +236,24 @@ final class TerminalViewModelTests: XCTestCase {
     }
 
     func testTelnetSetEncodingIsAppliedToRequest() async {
-        let host = FakeHost()
+        let openStarted = expectation(description: "Telnet connect reaches the host")
+        let gate = OpenGate()
+        let host = FakeHost(openGate: gate) { openStarted.fulfill() }
+        let registry = SessionRegistry()
         let telnet = UiTestData.connection(`protocol`: .telnet)
-        let vm = makeVM(registry: SessionRegistry(), host: host, connection: telnet)
+        let vm = makeVM(registry: registry, host: host, connection: telnet)
         vm.load()
         vm.setEncoding(.gbk)
         vm.connect()
-        await vm.performOpen(telnet)
+        await fulfillment(of: [openStarted], timeout: 1)
+        let connected = expectation(description: "telnet connect task completes")
+        registry.addObserver {
+            if registry.row("s-1")?.transport == .connected {
+                connected.fulfill()
+            }
+        }
+        await gate.release(.opened)
+        await fulfillment(of: [connected], timeout: 1)
         XCTAssertEqual(host.openedRequest?.encoding, .gbk)
     }
 
