@@ -191,6 +191,78 @@ test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-eras
   assert.match(repository, /SELECT sqlcipher_export\('encrypted'\)/);
   assert.match(
     repository,
+    /Darwin\.open\([\s\S]{0,240}O_CREAT \| O_EXCL \| O_WRONLY \| O_NOFOLLOW \| O_CLOEXEC[\s\S]{0,80}mode_t\(0o600\)/,
+    'migration staging must first be reserved as a private non-symlink temporary leaf',
+  );
+  assert.match(repository, /fsetxattr\(/, 'published migration staging must carry an owner proof');
+  assert.match(repository, /HMAC<SHA256>/, 'the owner proof must be keyed by durable key material');
+  assert.match(repository, /Darwin\.renamex_np\([\s\S]{0,180}RENAME_EXCL/, 'staging publish must not clobber');
+  const stagingCreate = repository.indexOf('private static func publishOwnedMigrationStaging');
+  const encryptedAttach = repository.indexOf('ATTACH DATABASE ? AS encrypted KEY ?');
+  assert.ok(
+    stagingCreate >= 0 && encryptedAttach > stagingCreate,
+    'existing-only SQLCipher ATTACH requires authenticated staging publication first',
+  );
+  assert.match(repositoryTests, /testLegacyMigrationRefusesToOverwritePreexistingStaging/);
+  assert.match(
+    repositoryTests,
+    /testLegacyMigrationFailsClosedForCrashReservedZeroByteStagingWithoutCreatingKey/,
+    'a crash-reserved but unprovable zero-byte staging file must fail closed before key creation',
+  );
+  assert.match(
+    repositoryTests,
+    /testLegacyMigrationCrashExportedOwnedStagingRecoversAndRebuilds/,
+    'an owner-proven encrypted staging export must be retryable after process death',
+  );
+  assert.match(
+    repositoryTests,
+    /testLegacyMigrationRejectsExportedStagingForDifferentOwnerAndPreservesExistingKey/,
+    'a decryptable staging file for another binding must not be reclaimed',
+  );
+  assert.match(
+    repositoryTests,
+    /testStagingRecoveryRevalidatesLegacyBeforeDiscardingOwnedExport/,
+    'recovery must re-prove the plaintext source before it discards an interrupted export',
+  );
+  assert.match(
+    repositoryTests,
+    /testMigrationFailurePreservesNestedStagingArtifactsAndSentinelDirectory/,
+    'failure cleanup must not recurse through nested staging lookalikes',
+  );
+  assert.match(
+    repositoryTests,
+    /testExistingTargetRecoversOwnedCrashStagingBeforeOpening/,
+    'a valid crash staging file must be recovered even when a target already exists',
+  );
+  assert.match(
+    repositoryTests,
+    /testExistingTargetRejectsUnownedCrashStagingWithoutTouchingTargetOrKey/,
+    'an unowned staging collision must not be ignored just because a target exists',
+  );
+  assert.match(
+    repositoryTests,
+    /testCleanupFallbackErasesOwnedCrashStagingBeforeDeletingKey/,
+    'cleanup must prove and erase crash staging before it deletes the Keychain key',
+  );
+  assert.match(
+    repositoryTests,
+    /testCleanupFallbackRejectsUnownedCrashStagingAndRetainsTargetAndKey/,
+    'cleanup must fail closed for unowned staging and retain recoverable key material',
+  );
+  assert.match(
+    repositoryTests,
+    /testPurgeRejectsDirectoryReplacementSidecarWithoutRecursingOrDeletingKey/,
+    'runtime purge must not recurse into a replacement sidecar directory',
+  );
+  assert.match(
+    repositoryTests,
+    /testCleanupFallbackRejectsDirectoryReplacementSidecarWithoutRecursingOrDeletingKey/,
+    'fallback cleanup must keep the key when a replacement sidecar cannot be safely unlinked',
+  );
+  assert.match(repositoryTests, /testLegacyMigrationRefusesOrphanStagingSidecar/);
+  assert.match(repositoryTests, /testLegacyMigrationWritesEncryptedStagingBeforePromotion/);
+  assert.match(
+    repository,
     /SQLiteDatabase\(url: stagingURL, key: key, createNew: false\)/,
     'validated migration staging must be reopened without CREATE',
   );
@@ -201,11 +273,73 @@ test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-eras
   );
   assert.match(repository, /encryptedCopyReady/);
   assert.match(repository, /beforePromotion/);
+  assert.match(repository, /recoverOwnedMigrationStagingIfPresent/);
+  assert.match(repository, /removeOwnedMigrationStagingArtifacts/);
 
   const checkpoint = repository.indexOf('PRAGMA wal_checkpoint(TRUNCATE)');
   const fileDelete = repository.indexOf('removeDatabaseArtifacts(at: databaseURL)');
   const keyDelete = repository.indexOf('keyStore.deleteKey(for: keyScope)');
   assert.ok(checkpoint >= 0 && checkpoint < fileDelete && fileDelete < keyDelete);
+
+  const artifactRemovalStart = repository.indexOf('private static func removeDatabaseArtifacts');
+  const artifactRemovalEnd = repository.indexOf('private static func migrationStagingURL', artifactRemovalStart);
+  const artifactRemoval = repository.slice(artifactRemovalStart, artifactRemovalEnd);
+  assert.match(artifactRemoval, /url\.path \+ "-wal"/);
+  assert.match(artifactRemoval, /url\.path \+ "-shm"/);
+  assert.match(artifactRemoval, /url\.path \+ "-journal"/);
+  assert.match(artifactRemoval, /Darwin\.unlink\(path\)/);
+  assert.match(artifactRemoval, /paths\.allSatisfy\(\{ try artifactStatus\(at: \$0\) == nil \}\)/);
+  assert.match(artifactRemoval, /synchronizeContainingDirectory\(/);
+  assert.doesNotMatch(
+    artifactRemoval,
+    /FileManager\.default\.removeItem/,
+    'main database cleanup must unlink exact leaf names rather than recursively remove replacements',
+  );
+  const unlink = artifactRemoval.indexOf('Darwin.unlink(path)');
+  const verifyAbsent = artifactRemoval.indexOf('paths.allSatisfy');
+  const parentFsync = artifactRemoval.indexOf('synchronizeContainingDirectory');
+  assert.ok(
+    unlink >= 0 && verifyAbsent > unlink && parentFsync > verifyAbsent,
+    'database cleanup must verify all four leaves are absent and fsync their parent after unlinking',
+  );
+
+  const cleanupStart = repository.indexOf('static func eraseEncryptedStorageForCleanup');
+  const cleanupEnd = repository.indexOf('private static func header', cleanupStart);
+  const cleanup = repository.slice(cleanupStart, cleanupEnd);
+  const targetValidation = cleanup.indexOf('try trustedSQLiteLocation(for: databaseURL)');
+  const legacyValidation = cleanup.indexOf('try trustedSQLiteLocation(for: rawURL)');
+  const legacyObservation = cleanup.indexOf(
+    'hasDatabaseArtifacts(at: trustedLegacyDatabaseURL)',
+  );
+  const trustedTargetDelete = cleanup.indexOf(
+    'removeDatabaseArtifacts(at: trustedDatabaseURL)',
+  );
+  const cleanupKeyDelete = cleanup.indexOf('keyStore.deleteKey');
+  const cleanupStagingRecovery = cleanup.indexOf('recoverOwnedMigrationStagingIfPresent');
+  assert.ok(
+    targetValidation >= 0
+      && legacyValidation > targetValidation
+      && legacyObservation > legacyValidation
+      && trustedTargetDelete > legacyValidation
+      && cleanupStagingRecovery > legacyValidation
+      && trustedTargetDelete > cleanupStagingRecovery
+      && cleanupKeyDelete > trustedTargetDelete,
+    'cleanup validates paths, clears authenticated staging and target artifacts, then deletes the key last',
+  );
+  assert.doesNotMatch(
+    cleanup,
+    /hasDatabaseArtifacts\(at: legacyDatabaseURL\)|removeDatabaseArtifacts\(at: databaseURL\)/,
+    'cleanup must never inspect or remove through a raw caller-provided URL',
+  );
+  assert.match(
+    repositoryTests,
+    /testCleanupFallbackRejectsSymlinkedTargetParentWithoutDeletingExternalFileOrKey/,
+  );
+  assert.match(
+    repositoryTests,
+    /testCleanupFallbackRejectsLegacyParentTraversalBeforeDeletingTargetOrKey/,
+  );
+  assert.match(repositoryTests, /rawLegacyPath = directory\.path \+ "\/\.\.\/"/);
   assert.match(
     binding,
     /prepared\.credentials\.terminateLease\(cleanupLease\)[\s\S]{0,1600}try await prepared\.cleanupFailedRuntimeCreation\(cleanupIdentity\)/,
@@ -290,7 +424,7 @@ test('every type the Swift references is declared somewhere in the tree', () => 
      * against the KeyValueStore seam so it can be tested without a container. */
     'UserDefaults',
     // CryptoKit
-    'SHA256', 'P256', 'Signing', 'ECDSASignature',
+    'SHA256', 'Digest', 'HMAC', 'SymmetricKey', 'P256', 'Signing', 'ECDSASignature',
     /* Security/CoreFoundation used by the device-local Keychain, Secure
      * Enclave signing identity and URLSession server-trust delegate. */
     'OSStatus', 'CFTypeRef', 'CFDictionary', 'CFString', 'CFData', 'CFError', 'Unmanaged',
@@ -342,7 +476,7 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'R_OK', 'W_OK',
     'O_CREAT', 'O_EXCL', 'O_WRONLY', 'O_RDWR', 'O_RDONLY', 'O_NOFOLLOW',
     'O_CLOEXEC', 'O_NONBLOCK', 'O_TRUNC', 'O_DIRECTORY',
-    'AT_SYMLINK_NOFOLLOW', 'AT_REMOVEDIR', 'RENAME_EXCL', 'RENAME_NOFOLLOW_ANY',
+    'AT_SYMLINK_NOFOLLOW', 'AT_REMOVEDIR', 'RENAME_EXCL', 'RENAME_NOFOLLOW_ANY', 'XATTR_CREATE',
     'F_DUPFD_CLOEXEC', 'MAXNAMLEN',
     'EACCES', 'EPERM', 'EROFS', 'ENOENT', 'EEXIST', 'ENOSPC', 'EDQUOT',
     'ELOOP',

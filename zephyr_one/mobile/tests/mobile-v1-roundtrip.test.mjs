@@ -17,6 +17,8 @@ import { createProofClient } from "./mobile-v1-proof-client.mjs";
 import {
   createSecureTestDataDir,
   removeSecureTestDataDir,
+} from "../../../tests/helpers/secure-data-dir.mjs";
+import {
   startChildOnLoopback,
   stopChild,
 } from "./mobile-v1-live-server.mjs";

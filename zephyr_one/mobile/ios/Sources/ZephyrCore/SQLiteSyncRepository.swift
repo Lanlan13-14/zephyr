@@ -4,8 +4,73 @@ import Foundation
 import SQLCipher
 import ZephyrContracts
 
+private func trustedSQLiteLocation(
+    for url: URL,
+    allowMissingParentTail: Bool = false
+) throws -> String {
+    guard !url.path.contains("\u{0}"),
+          url.path == url.standardizedFileURL.path else {
+        throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+    }
+    let parent = url.deletingLastPathComponent()
+    let components = parent.pathComponents
+    guard url.isFileURL, components.first == "/", components.count > 1,
+          !url.lastPathComponent.isEmpty else {
+        throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+    }
+
+    var trustedParent = URL(fileURLWithPath: "/", isDirectory: true)
+    let topLevel = trustedParent.appendingPathComponent(components[1], isDirectory: true)
+    var topLevelStatus = stat()
+    guard lstat(topLevel.path, &topLevelStatus) == 0 else {
+        throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+    }
+    if (topLevelStatus.st_mode & S_IFMT) == S_IFLNK {
+        // Darwin exposes root-owned compatibility aliases such as /var ->
+        // /private/var. Resolve only this privileged boundary; resolving any
+        // caller-controlled descendant would bypass SQLite's NOFOLLOW jail.
+        guard topLevelStatus.st_uid == 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+        }
+        trustedParent = topLevel.resolvingSymlinksInPath()
+        var resolvedStatus = stat()
+        guard lstat(trustedParent.path, &resolvedStatus) == 0,
+              (resolvedStatus.st_mode & S_IFMT) == S_IFDIR else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+        }
+    } else {
+        guard (topLevelStatus.st_mode & S_IFMT) == S_IFDIR else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+        }
+        trustedParent = topLevel
+    }
+
+    for component in components.dropFirst(2) {
+        trustedParent.appendPathComponent(component, isDirectory: true)
+        var status = stat()
+        if lstat(trustedParent.path, &status) == 0 {
+            guard (status.st_mode & S_IFMT) == S_IFDIR else {
+                throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+            }
+            continue
+        }
+        if allowMissingParentTail, errno == ENOENT {
+            continue
+        } else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+        }
+    }
+    return trustedParent
+        .appendingPathComponent(url.lastPathComponent, isDirectory: false)
+        .path
+}
+
 public struct SQLiteSyncMigrationHooks: Sendable {
     public enum Stage: Equatable, Sendable {
+        /// The authenticated, empty staging inode is durably visible. Throwing
+        /// from this hook models process death and intentionally leaves it for
+        /// the next initializer's ownership-verified recovery path.
+        case stagingPublished
         case encryptedCopyReady
         case beforePromotion
         case promoted
@@ -122,18 +187,47 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         let resolvedKeyScope = try SyncDatabaseKeyScope(identity: identity)
         self.keyScope = resolvedKeyScope
 
+        // Validate every existing ancestor before createDirectory can follow
+        // one. A missing tail is allowed here, then strictly re-proved after
+        // creation. Final database paths remain untouched until lstat below.
+        _ = try trustedSQLiteLocation(for: databaseURL, allowMissingParentTail: true)
+        if let legacyDatabaseURL {
+            _ = try trustedSQLiteLocation(for: legacyDatabaseURL, allowMissingParentTail: true)
+        }
         // Prepare only the trusted parent before opening. Final database paths
         // are not passed through URL resource APIs until SQLite has opened
         // them with SQLITE_OPEN_NOFOLLOW.
         try filePolicy.prepareDirectory(databaseURL: databaseURL)
+        try Self.requireSafeDatabaseDirectory(at: databaseURL)
         let hasTargetArtifacts = try Self.requireSafeTargetArtifacts(at: databaseURL)
-        let legacyExists = legacyDatabaseURL.map(Self.hasDatabaseArtifacts(at:)) ?? false
+        let legacyExists: Bool
+        if let legacyDatabaseURL {
+            legacyExists = try Self.requireSafeTargetArtifacts(at: legacyDatabaseURL)
+            if legacyExists {
+                try Self.requireSafeDatabaseDirectory(at: legacyDatabaseURL)
+            }
+        } else {
+            legacyExists = false
+        }
 
         if requireExistingBinding && !hasTargetArtifacts && !legacyExists {
             throw SQLiteSyncRepositoryError.inactiveBinding
         }
 
         let existingKey = try keyStore.loadKey(for: resolvedKeyScope)
+        // A fixed staging name is an untrusted collision until its xattr
+        // authenticates the canonical path and complete binding identity with
+        // the already-durable SQLCipher key. Classify it even when the final
+        // target exists, and deliberately do so before loadOrCreateKey: hostile
+        // leftovers must neither manufacture fresh Keychain state nor persist
+        // unnoticed beside a successfully promoted target.
+        try Self.recoverOwnedMigrationStagingIfPresent(
+            for: databaseURL,
+            key: existingKey,
+            identity: identity,
+            legacyURL: legacyExists ? legacyDatabaseURL : nil,
+            requiresLegacyOwner: !hasTargetArtifacts
+        )
         let databaseKey: Data
         if hasTargetArtifacts {
             guard let existingKey else {
@@ -916,6 +1010,16 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         }
         if fullyPurged { return }
 
+        // Classify crash staging before mutating the live database. An
+        // unowned collision must fail closed while both target and key are
+        // still intact; an owned leftover is disposable for this explicit
+        // erasure operation.
+        try Self.recoverOwnedMigrationStagingIfPresent(
+            for: databaseURL,
+            key: try keyStore.loadKey(for: keyScope),
+            identity: identity
+        )
+
         if !databasePreparedForDeletion {
             try database.transaction {
                 let active = try database.queryOne(
@@ -954,6 +1058,11 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
 
         // Files are removed before the key. If deletion fails, cleanupPending
         // retains the only key capable of retrying the erasure safely.
+        try Self.recoverOwnedMigrationStagingIfPresent(
+            for: databaseURL,
+            key: try keyStore.loadKey(for: keyScope),
+            identity: identity
+        )
         try Self.removeDatabaseArtifacts(at: databaseURL)
         try keyStore.deleteKey(for: keyScope)
         fullyPurged = true
@@ -1744,6 +1853,14 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
     }
 
     private static let sqlitePlaintextHeader = Data("SQLite format 3\u{0}".utf8)
+    private static let migrationStagingOwnershipXattr =
+        "com.zephyr.one.sync-migration-owner.v1"
+    private static let migrationStagingProofDomain =
+        Data("zephyr-one/sqlcipher-migration-owner/v1\u{0}".utf8)
+
+    private static func requireSafeDatabaseDirectory(at url: URL) throws {
+        _ = try trustedSQLiteLocation(for: url)
+    }
 
     private static func requireSafeTargetArtifacts(at url: URL) throws -> Bool {
         let main = try artifactStatus(at: url.path)
@@ -1788,22 +1905,318 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
     }
 
     private static func removeDatabaseArtifacts(at url: URL) throws {
+        // Preserve the main encrypted file until all direct sidecars are gone.
+        // Every path is unlinked as one leaf; never hand a caller-controlled
+        // replacement to FileManager, whose directory behavior is recursive.
         let paths = [
-            url.path,
             url.path + "-wal",
             url.path + "-shm",
             url.path + "-journal",
-            url.path + ".migrating",
-            url.path + ".migrating-wal",
-            url.path + ".migrating-shm",
-            url.path + ".migrating-journal",
+            url.path,
         ]
-        for path in paths where try artifactStatus(at: path) != nil {
-            try FileManager.default.removeItem(at: URL(fileURLWithPath: path))
+        for path in paths {
+            guard let status = try artifactStatus(at: path) else { continue }
+            guard (status.st_mode & S_IFMT) == S_IFREG,
+                  Darwin.unlink(path) == 0 else {
+                throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                    "database_artifact_removal"
+                )
+            }
         }
         guard try paths.allSatisfy({ try artifactStatus(at: $0) == nil }) else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("database_artifact_removal")
         }
+        try synchronizeContainingDirectory(
+            of: url.path,
+            failure: "database_artifact_removal"
+        )
+    }
+
+    private static func migrationStagingURL(for targetURL: URL) -> URL {
+        URL(fileURLWithPath: targetURL.path + ".migrating", isDirectory: false)
+    }
+
+    private static func migrationStagingPaths(at stagingURL: URL) -> [String] {
+        ["", "-wal", "-shm", "-journal"].map { stagingURL.path + $0 }
+    }
+
+    private static func migrationStagingProofPayload(
+        stagingLocation: String,
+        identity: SyncBindingIdentity
+    ) -> Data {
+        var payload = migrationStagingProofDomain
+        for value in [
+            stagingLocation,
+            identity.serverID,
+            identity.accountID,
+            identity.deviceID,
+            identity.generation,
+        ] {
+            let bytes = Data(value.utf8)
+            var length = UInt64(bytes.count).bigEndian
+            withUnsafeBytes(of: &length) { payload.append(contentsOf: $0) }
+            payload.append(bytes)
+        }
+        return payload
+    }
+
+    private static func migrationStagingProof(
+        stagingLocation: String,
+        key: Data,
+        identity: SyncBindingIdentity
+    ) -> Data {
+        let payload = migrationStagingProofPayload(
+            stagingLocation: stagingLocation,
+            identity: identity
+        )
+        return Data(HMAC<SHA256>.authenticationCode(
+            for: payload,
+            using: SymmetricKey(data: key)
+        ))
+    }
+
+    private static func writeMigrationStagingProof(
+        to descriptor: Int32,
+        stagingLocation: String,
+        key: Data,
+        identity: SyncBindingIdentity
+    ) throws {
+        let proof = migrationStagingProof(
+            stagingLocation: stagingLocation,
+            key: key,
+            identity: identity
+        )
+        let result = proof.withUnsafeBytes { bytes in
+            migrationStagingOwnershipXattr.withCString { name in
+                fsetxattr(
+                    descriptor,
+                    name,
+                    bytes.baseAddress,
+                    bytes.count,
+                    0,
+                    XATTR_CREATE
+                )
+            }
+        }
+        guard result == 0, Darwin.fsync(descriptor) == 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                "migration_staging_owner"
+            )
+        }
+    }
+
+    private static func hasValidMigrationStagingProof(
+        descriptor: Int32,
+        stagingLocation: String,
+        key: Data,
+        identity: SyncBindingIdentity
+    ) -> Bool {
+        let expectedProof = migrationStagingProof(
+            stagingLocation: stagingLocation,
+            key: key,
+            identity: identity
+        )
+        var proof = Data(count: expectedProof.count)
+        let bytesRead = proof.withUnsafeMutableBytes { bytes in
+            migrationStagingOwnershipXattr.withCString { name in
+                fgetxattr(
+                    descriptor,
+                    name,
+                    bytes.baseAddress,
+                    bytes.count,
+                    0,
+                    0
+                )
+            }
+        }
+        guard bytesRead == expectedProof.count else { return false }
+        let payload = migrationStagingProofPayload(
+            stagingLocation: stagingLocation,
+            identity: identity
+        )
+        return HMAC<SHA256>.isValidAuthenticationCode(
+            proof,
+            authenticating: payload,
+            using: SymmetricKey(data: key)
+        )
+    }
+
+    private static func publishOwnedMigrationStaging(
+        at stagingURL: URL,
+        key: Data,
+        identity: SyncBindingIdentity
+    ) throws {
+        let stagingLocation = try trustedSQLiteLocation(for: stagingURL)
+        let temporaryURL = URL(
+            fileURLWithPath: stagingURL.path + ".owner-" + UUID().uuidString,
+            isDirectory: false
+        )
+        let temporaryLocation = try trustedSQLiteLocation(for: temporaryURL)
+        let descriptor = Darwin.open(
+            temporaryLocation,
+            O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC,
+            mode_t(0o600)
+        )
+        guard descriptor >= 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                "migration_staging_create"
+            )
+        }
+        var temporaryExists = true
+        defer {
+            _ = Darwin.close(descriptor)
+            if temporaryExists { _ = Darwin.unlink(temporaryLocation) }
+        }
+
+        try writeMigrationStagingProof(
+            to: descriptor,
+            stagingLocation: stagingLocation,
+            key: key,
+            identity: identity
+        )
+        guard Darwin.renamex_np(
+            temporaryLocation,
+            stagingLocation,
+            UInt32(RENAME_EXCL)
+        ) == 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                "migration_staging_create"
+            )
+        }
+        temporaryExists = false
+        try synchronizeContainingDirectory(
+            of: stagingLocation,
+            failure: "migration_staging_publish"
+        )
+    }
+
+    private static func synchronizeContainingDirectory(
+        of location: String,
+        failure: String
+    ) throws {
+        let parent = URL(fileURLWithPath: location, isDirectory: false)
+            .deletingLastPathComponent()
+            .path
+        let descriptor = Darwin.open(
+            parent,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(failure)
+        }
+        defer { _ = Darwin.close(descriptor) }
+        guard Darwin.fsync(descriptor) == 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(failure)
+        }
+    }
+
+    private static func requireOwnedMigrationStaging(
+        at stagingURL: URL,
+        key: Data?,
+        identity: SyncBindingIdentity
+    ) throws {
+        guard let key else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                "migration_staging_create"
+            )
+        }
+        let stagingLocation = try trustedSQLiteLocation(for: stagingURL)
+        let descriptor = Darwin.open(
+            stagingLocation,
+            O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                "migration_staging_create"
+            )
+        }
+        defer { _ = Darwin.close(descriptor) }
+
+        var status = stat()
+        guard Darwin.fstat(descriptor, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG,
+              status.st_nlink == 1,
+              hasValidMigrationStagingProof(
+                  descriptor: descriptor,
+                  stagingLocation: stagingLocation,
+                  key: key,
+                  identity: identity
+              ) else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                "migration_staging_create"
+            )
+        }
+    }
+
+    private static func removeOwnedMigrationStagingArtifacts(
+        at stagingURL: URL
+    ) throws {
+        // Main is removed last so its authenticated owner proof survives every
+        // retry until all direct SQLite sidecars have been removed. unlink(2)
+        // never recursively traverses a hostile directory or a nested
+        // `.migrating.migrating*` name.
+        let paths = ["-wal", "-shm", "-journal", ""].map {
+            stagingURL.path + $0
+        }
+        for path in paths {
+            guard let status = try artifactStatus(at: path) else { continue }
+            guard (status.st_mode & S_IFMT) == S_IFREG,
+                  Darwin.unlink(path) == 0 else {
+                throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                    "migration_staging_cleanup"
+                )
+            }
+        }
+        guard try paths.allSatisfy({ try artifactStatus(at: $0) == nil }) else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                "migration_staging_cleanup"
+            )
+        }
+        try synchronizeContainingDirectory(
+            of: stagingURL.path,
+            failure: "migration_staging_cleanup"
+        )
+    }
+
+    private static func recoverOwnedMigrationStagingIfPresent(
+        for targetURL: URL,
+        key: Data?,
+        identity: SyncBindingIdentity,
+        legacyURL: URL? = nil,
+        requiresLegacyOwner: Bool = false
+    ) throws {
+        let stagingURL = migrationStagingURL(for: targetURL)
+        let paths = migrationStagingPaths(at: stagingURL)
+        let statuses = try paths.map(artifactStatus(at:))
+        guard statuses.contains(where: { $0 != nil }) else { return }
+        guard statuses[0] != nil else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                "unsafe_database_artifact"
+            )
+        }
+        guard statuses.dropFirst().allSatisfy({ status in
+            guard let status else { return true }
+            return (status.st_mode & S_IFMT) == S_IFREG
+        }) else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                "unsafe_database_artifact"
+            )
+        }
+        try requireOwnedMigrationStaging(
+            at: stagingURL,
+            key: key,
+            identity: identity
+        )
+        if let legacyURL {
+            // The authenticated staging may contain the only complete export
+            // after a real power loss. Before discarding it for a clean retry,
+            // prove that the plaintext source is still intact and owned by the
+            // same binding. This is an existing-only, read-only check.
+            try requireOwnedLegacyDatabase(at: legacyURL, identity: identity)
+        } else if requiresLegacyOwner {
+            throw SQLiteSyncRepositoryError.legacyOwnerMismatch
+        }
+        try removeOwnedMigrationStagingArtifacts(at: stagingURL)
     }
 
     private static func removeLegacyDatabaseArtifacts(at url: URL) throws {
@@ -1818,6 +2231,10 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         guard !hasDatabaseArtifacts(at: url) else {
             throw SQLiteSyncRepositoryError.legacyOwnerMismatch
         }
+        try synchronizeContainingDirectory(
+            of: url.path,
+            failure: "legacy_artifact_removal"
+        )
     }
 
     /// Erasure fallback for a mirror that cannot be opened or purged normally.
@@ -1830,18 +2247,44 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         identity: SyncBindingIdentity,
         keyStore: any SyncDatabaseKeyStoring
     ) throws {
-        if let legacyDatabaseURL, hasDatabaseArtifacts(at: legacyDatabaseURL) {
-            guard legacyDatabaseURL.standardizedFileURL != databaseURL.standardizedFileURL else {
+        // Validate every caller-provided location before observing or mutating
+        // either store. The returned path resolves only the trusted top-level
+        // compatibility alias and preserves the caller's final file name.
+        let trustedDatabaseURL = URL(
+            fileURLWithPath: try trustedSQLiteLocation(for: databaseURL),
+            isDirectory: false
+        )
+        let trustedLegacyDatabaseURL = try legacyDatabaseURL.map { rawURL in
+            URL(
+                fileURLWithPath: try trustedSQLiteLocation(for: rawURL),
+                isDirectory: false
+            )
+        }
+
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        try recoverOwnedMigrationStagingIfPresent(
+            for: trustedDatabaseURL,
+            key: try keyStore.loadKey(for: scope),
+            identity: identity
+        )
+
+        if let trustedLegacyDatabaseURL {
+            guard trustedLegacyDatabaseURL != trustedDatabaseURL else {
                 throw SQLiteSyncRepositoryError.legacyOwnerMismatch
             }
-            try removeLegacyDatabaseIfOwned(at: legacyDatabaseURL, identity: identity)
+            if hasDatabaseArtifacts(at: trustedLegacyDatabaseURL) {
+                try removeLegacyDatabaseIfOwned(
+                    at: trustedLegacyDatabaseURL,
+                    identity: identity
+                )
+            }
         }
 
         // Keep the only usable key whenever any artifact cannot be removed.
         // The durable cleanup marker can then retry without stranding an
         // encrypted database that no longer has decrypting key material.
-        try removeDatabaseArtifacts(at: databaseURL)
-        try keyStore.deleteKey(for: try SyncDatabaseKeyScope(identity: identity))
+        try removeDatabaseArtifacts(at: trustedDatabaseURL)
+        try keyStore.deleteKey(for: scope)
     }
 
     private static func header(at url: URL) throws -> Data {
@@ -1925,9 +2368,36 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         try filePolicy.prepare(databaseURL: legacyURL)
         try requirePlaintextHeader(at: legacyURL)
 
-        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
-        try removeDatabaseArtifacts(at: stagingURL)
+        let stagingURL = migrationStagingURL(for: targetURL)
+        var ownsStaging = false
+        var preservePublishedStaging = false
         do {
+            let stagingStatuses = try migrationStagingPaths(at: stagingURL)
+                .map(artifactStatus(at:))
+            guard stagingStatuses.allSatisfy({ $0 == nil }) else {
+                throw SQLiteSyncRepositoryError.databaseIntegrityFailed(
+                    "migration_staging_create"
+                )
+            }
+            // Publish a zero-byte staging inode only after its owner proof is
+            // durable. RENAME_EXCL makes the fixed name an all-or-nothing
+            // claim: a kill before publish leaves no blocking fixed path, and
+            // a kill after publish is recoverable with the retained key.
+            try publishOwnedMigrationStaging(
+                at: stagingURL,
+                key: key,
+                identity: identity
+            )
+            ownsStaging = true
+            do {
+                try hooks(.stagingPublished)
+            } catch {
+                // This hook is the deterministic equivalent of power loss:
+                // normal stack cleanup must not erase crash-recovery state.
+                preservePublishedStaging = true
+                throw error
+            }
+
             let legacy = try SQLiteDatabase.plaintext(url: legacyURL)
             do {
                 try requireLegacyOwner(identity, in: legacy)
@@ -1968,6 +2438,10 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             try hooks(.encryptedCopyReady)
             try hooks(.beforePromotion)
             try FileManager.default.moveItem(at: stagingURL, to: targetURL)
+            try synchronizeContainingDirectory(
+                of: targetURL.path,
+                failure: "migration_promotion"
+            )
             try hooks(.promoted)
 
             // The plaintext source remains untouched until the encrypted copy
@@ -1977,7 +2451,18 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             // A failed or interrupted migration never destroys the only
             // owner-proven plaintext copy. Disposable encrypted staging is
             // retried with the same durable Keychain key on the next launch.
-            try? removeDatabaseArtifacts(at: stagingURL)
+            if ownsStaging && !preservePublishedStaging {
+                // Re-authenticate the main inode immediately before deleting
+                // the four exact staging artifacts. A path substitution cannot
+                // turn this catch into deletion of an unowned collision.
+                if (try? requireOwnedMigrationStaging(
+                    at: stagingURL,
+                    key: key,
+                    identity: identity
+                )) != nil {
+                    try? removeOwnedMigrationStagingArtifacts(at: stagingURL)
+                }
+            }
             throw error
         }
     }
@@ -1996,6 +2481,21 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             throw error
         }
         try removeLegacyDatabaseArtifacts(at: legacyURL)
+    }
+
+    private static func requireOwnedLegacyDatabase(
+        at legacyURL: URL,
+        identity: SyncBindingIdentity
+    ) throws {
+        try requirePlaintextHeader(at: legacyURL)
+        let legacy = try SQLiteDatabase.plaintext(url: legacyURL)
+        do {
+            try requireLegacyOwner(identity, in: legacy)
+            try legacy.close()
+        } catch {
+            try? legacy.close()
+            throw error
+        }
     }
 
     private static func migrate(_ database: SQLiteDatabase) throws {
@@ -2485,7 +2985,7 @@ private final class SQLiteDatabase {
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     init(url: URL, key: Data, createNew: Bool) throws {
-        try open(location: url.path, key: key, createNew: createNew)
+        try open(location: Self.sqliteLocation(for: url), key: key, createNew: createNew)
     }
 
     static func inMemory(key: Data) throws -> SQLiteDatabase {
@@ -2496,11 +2996,15 @@ private final class SQLiteDatabase {
 
     static func plaintext(url: URL) throws -> SQLiteDatabase {
         let database = SQLiteDatabase()
-        try database.open(location: url.path, key: nil, createNew: false)
+        try database.open(location: sqliteLocation(for: url), key: nil, createNew: false)
         return database
     }
 
     private init() {}
+
+    private static func sqliteLocation(for url: URL) throws -> String {
+        try trustedSQLiteLocation(for: url)
+    }
 
     private func open(location: String, key: Data?, createNew: Bool) throws {
         isInMemory = location == ":memory:"
@@ -2584,9 +3088,10 @@ private final class SQLiteDatabase {
             rawKeySpec.append(digits[Int(byte & 0x0F)])
         }
         rawKeySpec.append(0x27)
+        let location = try Self.sqliteLocation(for: url)
         try execute(
             "ATTACH DATABASE ? AS encrypted KEY ?;",
-            [.text(url.path), .blob(rawKeySpec)]
+            [.text(location), .blob(rawKeySpec)]
         )
         do {
             _ = try query("SELECT sqlcipher_export('encrypted');")

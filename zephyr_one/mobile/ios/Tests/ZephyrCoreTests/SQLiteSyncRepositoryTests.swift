@@ -1,3 +1,5 @@
+import CryptoKit
+import Darwin
 import Foundation
 import SQLCipher
 import XCTest
@@ -584,6 +586,34 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         XCTAssertEqual(reopenedSnapshot?.identity, identity)
     }
 
+    #if os(macOS)
+    func testMacOSTemporaryDirectoryDatabaseCanBeCreatedAndReopenedExistingOnly() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zephyr-sqlite-cantopen-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let identity = binding(generation: "macos-temporary-directory")
+        let url = SQLiteSyncRepository.bindingDatabaseURL(in: temporaryRoot, identity: identity)
+        var created: SQLiteSyncRepository? = try SQLiteSyncRepository(
+            databaseURL: url,
+            identity: identity,
+            keyStore: keyStore
+        )
+        let createdSnapshot = try await created?.snapshot()
+        XCTAssertEqual(createdSnapshot?.identity, identity)
+        created = nil
+
+        let reopened = try SQLiteSyncRepository(
+            databaseURL: url,
+            identity: identity,
+            requireExistingBinding: true,
+            keyStore: keyStore
+        )
+        let reopenedSnapshot = try await reopened.snapshot()
+        XCTAssertEqual(reopenedSnapshot?.identity, identity)
+    }
+    #endif
+
     func testUnsafePreexistingDatabaseArtifactsFailClosedWithoutChangingKeyOrFiles() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let unsafeArtifact = SQLiteSyncRepositoryError.databaseIntegrityFailed(
@@ -660,6 +690,136 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
             try FileManager.default.destinationOfSymbolicLink(atPath: danglingURL.path),
             missingTarget.path
         )
+
+        let sidecarSymlinkIdentity = binding(generation: "symlink-sidecar")
+        let sidecarSymlinkURL = databaseURL(for: sidecarSymlinkIdentity)
+        var initialized: SQLiteSyncRepository? = try repository(sidecarSymlinkIdentity)
+        initialized = nil
+        let initializedMain = try Data(contentsOf: sidecarSymlinkURL)
+        let initializedKey = keyStore.key(
+            for: try SyncDatabaseKeyScope(identity: sidecarSymlinkIdentity)
+        )
+        let sidecarTarget = directory.appendingPathComponent("sidecar-symlink-target")
+        try Data([0xA6]).write(to: sidecarTarget)
+        let linkedWAL = sidecarSymlinkURL.path + "-wal"
+        if FileManager.default.fileExists(atPath: linkedWAL) {
+            try FileManager.default.removeItem(atPath: linkedWAL)
+        }
+        try FileManager.default.createSymbolicLink(
+            atPath: linkedWAL,
+            withDestinationPath: sidecarTarget.path
+        )
+
+        XCTAssertThrowsError(try repository(sidecarSymlinkIdentity)) { error in
+            XCTAssertEqual(error as? SQLiteSyncRepositoryError, unsafeArtifact)
+        }
+        XCTAssertEqual(try Data(contentsOf: sidecarSymlinkURL), initializedMain)
+        XCTAssertEqual(
+            keyStore.key(for: try SyncDatabaseKeyScope(identity: sidecarSymlinkIdentity)),
+            initializedKey
+        )
+        XCTAssertEqual(try Data(contentsOf: sidecarTarget), Data([0xA6]))
+        XCTAssertEqual(
+            try FileManager.default.destinationOfSymbolicLink(atPath: linkedWAL),
+            sidecarTarget.path
+        )
+    }
+
+    func testDatabaseDirectorySymlinkFailsClosedBeforeCreatingAKey() throws {
+        let realDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zephyr-sync-real-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: realDirectory) }
+        try FileManager.default.createSymbolicLink(
+            atPath: directory.path,
+            withDestinationPath: realDirectory.path
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let identity = binding(generation: "symlink-directory")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        XCTAssertThrowsError(try repository(identity)) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("unsafe_database_directory")
+            )
+        }
+        XCTAssertNil(keyStore.key(for: scope))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: databaseURL(for: identity).path))
+    }
+
+    func testIntermediateDatabaseDirectorySymlinkCannotEscapeBeforeCreatingAKey() throws {
+        let trustedRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zephyr-sync-trusted-\(UUID().uuidString)", isDirectory: true)
+        let outsideRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zephyr-sync-outside-\(UUID().uuidString)", isDirectory: true)
+        let outsideNested = outsideRoot.appendingPathComponent("nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: trustedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outsideRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: trustedRoot)
+            try? FileManager.default.removeItem(at: outsideRoot)
+        }
+        let escape = trustedRoot.appendingPathComponent("escape", isDirectory: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: escape.path,
+            withDestinationPath: outsideRoot.path
+        )
+
+        let identity = binding(generation: "intermediate-symlink-directory")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        let hostileDirectory = escape.appendingPathComponent("nested", isDirectory: true)
+        let url = SQLiteSyncRepository.bindingDatabaseURL(in: hostileDirectory, identity: identity)
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(databaseURL: url, identity: identity, keyStore: keyStore)
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("unsafe_database_directory")
+            )
+        }
+        XCTAssertNil(keyStore.key(for: scope))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outsideNested.path))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: SQLiteSyncRepository.bindingDatabaseURL(
+                    in: outsideNested,
+                    identity: identity
+                ).path
+            )
+        )
+    }
+
+    func testParentTraversalFailsBeforeCreatingOutsideDirectoryOrKey() throws {
+        let trustedRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zephyr-sync-traversal-\(UUID().uuidString)", isDirectory: true)
+        let outsideName = "zephyr-sync-traversal-outside-\(UUID().uuidString)"
+        let outsideRoot = trustedRoot.deletingLastPathComponent()
+            .appendingPathComponent(outsideName, isDirectory: true)
+        let outsideNested = outsideRoot.appendingPathComponent("nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: trustedRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: trustedRoot)
+            try? FileManager.default.removeItem(at: outsideRoot)
+        }
+
+        let identity = binding(generation: "parent-traversal")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        let rawDirectoryPath = trustedRoot.path + "/../" + outsideName + "/nested"
+        let rawDatabasePath = rawDirectoryPath + "/sync-parent-traversal.sqlite3"
+        let url = URL(fileURLWithPath: rawDatabasePath, isDirectory: false)
+        XCTAssertNotEqual(url.path, url.standardizedFileURL.path)
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(databaseURL: url, identity: identity, keyStore: keyStore)
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("unsafe_database_directory")
+            )
+        }
+        XCTAssertNil(keyStore.key(for: scope))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outsideNested.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rawDatabasePath))
     }
 
     func testPurgeClosesAndRemovesEncryptedDatabaseSidecarsBeforeDeletingKey() async throws {
@@ -711,6 +871,53 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         try await retry.purgeAll(for: identity)
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertNil(keyStore.key(for: scope))
+    }
+
+    func testPurgeRejectsDirectoryReplacementSidecarWithoutRecursingOrDeletingKey() async throws {
+        let identity = binding(generation: "purge-directory-sidecar")
+        let store = try repository(identity)
+        let url = databaseURL(for: identity)
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        let sidecarDirectory = URL(fileURLWithPath: url.path + "-wal", isDirectory: true)
+        let sentinel = sidecarDirectory.appendingPathComponent("must-survive")
+        try FileManager.default.createDirectory(at: sidecarDirectory, withIntermediateDirectories: false)
+        try Data("purge sentinel".utf8).write(to: sentinel)
+
+        await assertRepositoryError(.databaseIntegrityFailed("database_artifact_removal")) {
+            try await store.purgeAll(for: identity)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(try Data(contentsOf: sentinel), Data("purge sentinel".utf8))
+        XCTAssertNotNil(keyStore.key(for: scope))
+    }
+
+    func testCleanupFallbackRejectsDirectoryReplacementSidecarWithoutRecursingOrDeletingKey() throws {
+        let identity = binding(generation: "fallback-directory-sidecar")
+        let url = databaseURL(for: identity)
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        var initialized: SQLiteSyncRepository? = try repository(identity)
+        initialized = nil
+        let sidecarDirectory = URL(fileURLWithPath: url.path + "-wal", isDirectory: true)
+        let sentinel = sidecarDirectory.appendingPathComponent("must-survive")
+        try FileManager.default.createDirectory(at: sidecarDirectory, withIntermediateDirectories: false)
+        try Data("fallback sentinel".utf8).write(to: sentinel)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
+                at: url,
+                legacyDatabaseURL: nil,
+                identity: identity,
+                keyStore: keyStore
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("database_artifact_removal")
+            )
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(try Data(contentsOf: sentinel), Data("fallback sentinel".utf8))
+        XCTAssertNotNil(keyStore.key(for: scope))
     }
 
     func testEncryptedDatabaseSecondPageTamperingFailsCipherIntegrityCheck() async throws {
@@ -815,6 +1022,409 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         )
     }
 
+    func testLegacyMigrationRefusesToOverwritePreexistingStaging() throws {
+        let identity = binding(generation: "preexisting-migration-staging")
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let sentinel = Data("unowned staging must survive".utf8)
+        try createLegacyDatabase(at: legacyURL, identity: identity)
+        try sentinel.write(to: stagingURL)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(
+                databaseURL: targetURL,
+                identity: identity,
+                keyStore: keyStore,
+                legacyDatabaseURL: legacyURL
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("migration_staging_create")
+            )
+        }
+
+        XCTAssertEqual(try Data(contentsOf: stagingURL), sentinel)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
+    }
+
+    func testLegacyMigrationFailsClosedForCrashReservedZeroByteStagingWithoutCreatingKey() throws {
+        let identity = binding(generation: "crash-reserved-zero-byte-staging")
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        try createLegacyDatabase(at: legacyURL, identity: identity)
+        FileManager.default.createFile(atPath: stagingURL.path, contents: Data())
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(
+                databaseURL: targetURL,
+                identity: identity,
+                keyStore: keyStore,
+                legacyDatabaseURL: legacyURL
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("migration_staging_create")
+            )
+        }
+
+        XCTAssertEqual(try Data(contentsOf: stagingURL), Data())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
+        XCTAssertNil(keyStore.key(for: scope))
+    }
+
+    func testLegacyMigrationCrashExportedOwnedStagingRecoversAndRebuilds() async throws {
+        let identity = binding(generation: "crash-exported-owned-staging")
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        try createLegacyDatabase(at: legacyURL, identity: identity)
+        let crashKey = try keyStore.loadOrCreateKey(for: scope)
+        try await createOwnedEncryptedMigrationStaging(
+            at: stagingURL,
+            identity: identity,
+            key: crashKey
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stagingURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+
+        let recovered = try SQLiteSyncRepository(
+            databaseURL: targetURL,
+            identity: identity,
+            keyStore: keyStore,
+            legacyDatabaseURL: legacyURL
+        )
+        let recoveredSnapshot = try await recovered.snapshot()
+        XCTAssertEqual(recoveredSnapshot?.identity, identity)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: targetURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagingURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertEqual(keyStore.key(for: scope), crashKey)
+    }
+
+    func testLegacyMigrationRejectsExportedStagingForDifferentOwnerAndPreservesExistingKey() async throws {
+        let identity = binding(generation: "crash-exported-wrong-owner")
+        let other = SyncBindingIdentity(
+            serverID: identity.serverID,
+            accountID: "other-account",
+            deviceID: "other-device",
+            generation: "crash-exported-other-owner",
+            bindingRecordVersion: identity.bindingRecordVersion
+        )
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        try createLegacyDatabase(at: legacyURL, identity: identity)
+        let existingKey = Data(repeating: 0x5a, count: KeychainSyncDatabaseKeyStore.keyByteCount)
+        try keyStore.set(existingKey, for: scope)
+        try keyStore.set(existingKey, for: try SyncDatabaseKeyScope(identity: other))
+        try await createOwnedEncryptedMigrationStaging(
+            at: stagingURL,
+            identity: other,
+            key: existingKey
+        )
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(
+                databaseURL: targetURL,
+                identity: identity,
+                keyStore: keyStore,
+                legacyDatabaseURL: legacyURL
+            )
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stagingURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
+        XCTAssertEqual(keyStore.key(for: scope), existingKey)
+    }
+
+    func testStagingRecoveryRevalidatesLegacyBeforeDiscardingOwnedExport() async throws {
+        let identity = binding(generation: "crash-revalidate-legacy")
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        try createLegacyDatabase(at: legacyURL, identity: identity)
+        let crashKey = try keyStore.loadOrCreateKey(for: scope)
+        try await createOwnedEncryptedMigrationStaging(
+            at: stagingURL,
+            identity: identity,
+            key: crashKey
+        )
+        try replaceLegacyOwner(at: legacyURL, with: binding(generation: "replaced-legacy-owner"))
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(
+                databaseURL: targetURL,
+                identity: identity,
+                keyStore: keyStore,
+                legacyDatabaseURL: legacyURL
+            )
+        ) { error in
+            XCTAssertEqual(error as? SQLiteSyncRepositoryError, .legacyOwnerMismatch)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stagingURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
+        XCTAssertEqual(keyStore.key(for: scope), crashKey)
+    }
+
+    func testMigrationFailurePreservesNestedStagingArtifactsAndSentinelDirectory() throws {
+        let identity = binding(generation: "nested-staging-artifacts")
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let nested = [".migrating", ".migrating-wal", ".migrating-shm", ".migrating-journal"]
+            .map { URL(fileURLWithPath: stagingURL.path + $0) }
+        let sentinelDirectory = nested[0]
+        try createLegacyDatabase(at: legacyURL, identity: identity)
+        let sentinel = sentinelDirectory.appendingPathComponent("must-survive")
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(
+                databaseURL: targetURL,
+                identity: identity,
+                keyStore: keyStore,
+                legacyDatabaseURL: legacyURL,
+                migrationHooks: SQLiteSyncMigrationHooks { stage in
+                    guard stage == .encryptedCopyReady else { return }
+                    try FileManager.default.createDirectory(
+                        at: sentinelDirectory,
+                        withIntermediateDirectories: false
+                    )
+                    try Data("sentinel".utf8).write(to: sentinel)
+                    for artifact in nested.dropFirst() {
+                        try Data(artifact.lastPathComponent.utf8).write(to: artifact)
+                    }
+                    throw MigrationInterruption.leaveNestedArtifacts
+                }
+            )
+        ) { error in
+            XCTAssertEqual(error as? MigrationInterruption, .leaveNestedArtifacts)
+        }
+        XCTAssertEqual(try Data(contentsOf: sentinel), Data("sentinel".utf8))
+        for artifact in nested.dropFirst() {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: artifact.path))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
+    }
+
+    func testExistingTargetRecoversOwnedCrashStagingBeforeOpening() async throws {
+        let identity = binding(generation: "target-with-owned-crash-staging")
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        let target = try repository(identity)
+        let durableKey = try XCTUnwrap(keyStore.key(for: scope))
+        try await createOwnedEncryptedMigrationStaging(
+            at: stagingURL,
+            identity: identity,
+            key: durableKey
+        )
+        for suffix in ["-wal", "-shm", "-journal"] {
+            try Data(suffix.utf8).write(to: URL(fileURLWithPath: stagingURL.path + suffix))
+        }
+
+        let reopened = try repository(identity)
+        let targetSnapshot = try await target.snapshot()
+        let reopenedSnapshot = try await reopened.snapshot()
+        XCTAssertEqual(targetSnapshot?.identity, identity)
+        XCTAssertEqual(reopenedSnapshot?.identity, identity)
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: stagingURL.path + suffix))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: targetURL.path))
+        XCTAssertEqual(keyStore.key(for: scope), durableKey)
+    }
+
+    func testExistingTargetRejectsUnownedCrashStagingWithoutTouchingTargetOrKey() throws {
+        let identity = binding(generation: "target-with-unowned-crash-staging")
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        var initialized: SQLiteSyncRepository? = try repository(identity)
+        initialized = nil
+        let targetBytes = try Data(contentsOf: targetURL)
+        let durableKey = try XCTUnwrap(keyStore.key(for: scope))
+        let sentinel = Data("unowned existing-target staging".utf8)
+        try sentinel.write(to: stagingURL)
+
+        XCTAssertThrowsError(try repository(identity)) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("migration_staging_create")
+            )
+        }
+        XCTAssertEqual(try Data(contentsOf: targetURL), targetBytes)
+        XCTAssertEqual(try Data(contentsOf: stagingURL), sentinel)
+        XCTAssertEqual(keyStore.key(for: scope), durableKey)
+    }
+
+    func testCleanupFallbackErasesOwnedCrashStagingBeforeDeletingKey() async throws {
+        let identity = binding(generation: "cleanup-owned-crash-staging")
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        var target: SQLiteSyncRepository? = try repository(identity)
+        _ = try await target?.snapshot()
+        target = nil
+        let durableKey = try XCTUnwrap(keyStore.key(for: scope))
+        try await createOwnedEncryptedMigrationStaging(
+            at: stagingURL,
+            identity: identity,
+            key: durableKey
+        )
+        for suffix in ["-wal", "-shm", "-journal"] {
+            try Data(suffix.utf8).write(to: URL(fileURLWithPath: stagingURL.path + suffix))
+        }
+
+        try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
+            at: targetURL,
+            legacyDatabaseURL: nil,
+            identity: identity,
+            keyStore: keyStore
+        )
+
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path + suffix))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: stagingURL.path + suffix))
+        }
+        XCTAssertNil(keyStore.key(for: scope))
+    }
+
+    func testCleanupFallbackRejectsUnownedCrashStagingAndRetainsTargetAndKey() throws {
+        let identity = binding(generation: "cleanup-unowned-crash-staging")
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        var initialized: SQLiteSyncRepository? = try repository(identity)
+        initialized = nil
+        let targetBytes = try Data(contentsOf: targetURL)
+        let durableKey = try XCTUnwrap(keyStore.key(for: scope))
+        let sentinel = Data("unowned cleanup staging".utf8)
+        try sentinel.write(to: stagingURL)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
+                at: targetURL,
+                legacyDatabaseURL: nil,
+                identity: identity,
+                keyStore: keyStore
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("migration_staging_create")
+            )
+        }
+        XCTAssertEqual(try Data(contentsOf: targetURL), targetBytes)
+        XCTAssertEqual(try Data(contentsOf: stagingURL), sentinel)
+        XCTAssertEqual(keyStore.key(for: scope), durableKey)
+    }
+
+    func testLegacyMigrationRefusesOrphanStagingSidecar() throws {
+        let identity = binding(generation: "orphan-migration-sidecar")
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let orphanWAL = URL(fileURLWithPath: stagingURL.path + "-wal")
+        let sentinel = Data("unowned sidecar must survive".utf8)
+        try createLegacyDatabase(at: legacyURL, identity: identity)
+        try sentinel.write(to: orphanWAL)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(
+                databaseURL: targetURL,
+                identity: identity,
+                keyStore: keyStore,
+                legacyDatabaseURL: legacyURL
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("unsafe_database_artifact")
+            )
+        }
+
+        XCTAssertEqual(try Data(contentsOf: orphanWAL), sentinel)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagingURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
+    }
+
+    func testLegacyMigrationWritesEncryptedStagingBeforePromotion() throws {
+        let identity = binding(generation: "encrypted-migration-staging")
+        let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
+            in: directory,
+            serverID: identity.serverID,
+            accountID: identity.accountID
+        )
+        let targetURL = databaseURL(for: identity)
+        let stagingURL = URL(fileURLWithPath: targetURL.path + ".migrating")
+        let plaintextHeader = Data("SQLite format 3\u{0}".utf8)
+        try createLegacyDatabase(at: legacyURL, identity: identity)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository(
+                databaseURL: targetURL,
+                identity: identity,
+                keyStore: keyStore,
+                legacyDatabaseURL: legacyURL,
+                migrationHooks: SQLiteSyncMigrationHooks { stage in
+                    guard stage == .encryptedCopyReady else { return }
+                    let header = Data(try Data(contentsOf: stagingURL).prefix(16))
+                    guard header != plaintextHeader else {
+                        throw MigrationInterruption.plaintextStaging
+                    }
+                    throw MigrationInterruption.simulatedCrash
+                }
+            )
+        ) { error in
+            XCTAssertEqual(error as? MigrationInterruption, .simulatedCrash)
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagingURL.path))
+    }
+
     func testOwnerProvenMigrationFailureCleanupErasesLegacyTargetAndKey() throws {
         let identity = binding()
         let legacyURL = SQLiteSyncRepository.legacyAccountDatabaseURL(
@@ -854,6 +1464,87 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: targetURL.path + ".migrating"))
         XCTAssertNil(keyStore.key(for: scope))
+    }
+
+    func testCleanupFallbackRejectsSymlinkedTargetParentWithoutDeletingExternalFileOrKey() throws {
+        let identity = binding(generation: "cleanup-symlink-parent")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        let trustedRoot = directory.appendingPathComponent("trusted", isDirectory: true)
+        let outsideRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zephyr-cleanup-outside-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: trustedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outsideRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outsideRoot) }
+
+        let externalDatabaseURL = outsideRoot.appendingPathComponent("external.sqlite3")
+        let externalBytes = Data([0x45, 0x58, 0x54])
+        try externalBytes.write(to: externalDatabaseURL)
+        let escape = trustedRoot.appendingPathComponent("escape", isDirectory: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: escape.path,
+            withDestinationPath: outsideRoot.path
+        )
+        let hostileDatabaseURL = escape.appendingPathComponent(
+            externalDatabaseURL.lastPathComponent,
+            isDirectory: false
+        )
+        _ = try keyStore.loadOrCreateKey(for: scope)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
+                at: hostileDatabaseURL,
+                legacyDatabaseURL: nil,
+                identity: identity,
+                keyStore: keyStore
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("unsafe_database_directory")
+            )
+        }
+
+        XCTAssertEqual(try Data(contentsOf: externalDatabaseURL), externalBytes)
+        XCTAssertNotNil(keyStore.key(for: scope))
+    }
+
+    func testCleanupFallbackRejectsLegacyParentTraversalBeforeDeletingTargetOrKey() throws {
+        let identity = binding(generation: "cleanup-parent-traversal")
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        let targetURL = databaseURL(for: identity)
+        var initialized: SQLiteSyncRepository? = try repository(identity)
+        initialized = nil
+        let targetBytes = try Data(contentsOf: targetURL)
+
+        let outsideRoot = directory.deletingLastPathComponent()
+            .appendingPathComponent("zephyr-cleanup-outside-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outsideRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outsideRoot) }
+        let externalLegacyURL = outsideRoot.appendingPathComponent("legacy.sqlite3")
+        try createLegacyDatabase(at: externalLegacyURL, identity: identity)
+        let externalLegacyBytes = try Data(contentsOf: externalLegacyURL)
+        let rawLegacyPath = directory.path + "/../" + outsideRoot.lastPathComponent
+            + "/" + externalLegacyURL.lastPathComponent
+        let hostileLegacyURL = URL(fileURLWithPath: rawLegacyPath, isDirectory: false)
+        XCTAssertNotEqual(hostileLegacyURL.path, hostileLegacyURL.standardizedFileURL.path)
+
+        XCTAssertThrowsError(
+            try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
+                at: targetURL,
+                legacyDatabaseURL: hostileLegacyURL,
+                identity: identity,
+                keyStore: keyStore
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteSyncRepositoryError,
+                .databaseIntegrityFailed("unsafe_database_directory")
+            )
+        }
+
+        XCTAssertEqual(try Data(contentsOf: targetURL), targetBytes)
+        XCTAssertEqual(try Data(contentsOf: externalLegacyURL), externalLegacyBytes)
+        XCTAssertNotNil(keyStore.key(for: scope))
     }
 
     func testCleanupFallbackRejectsUnprovenLegacyAndPreservesGenerationKey() throws {
@@ -1187,6 +1878,105 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         }
     }
 
+    private func replaceLegacyOwner(at url: URL, with identity: SyncBindingIdentity) throws {
+        var handle: OpaquePointer?
+        let openCode = sqlite3_open_v2(
+            url.path,
+            &handle,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        )
+        guard openCode == SQLITE_OK, let handle else {
+            throw SQLiteSyncRepositoryError.database(code: openCode, message: "legacy fixture reopen")
+        }
+        defer { sqlite3_close_v2(handle) }
+        let sql = """
+        UPDATE sync_state SET server_id = '\(identity.serverID)', account_id = '\(identity.accountID)',
+            device_id = '\(identity.deviceID)', generation = '\(identity.generation)';
+        """
+        var message: UnsafeMutablePointer<CChar>?
+        let code = sqlite3_exec(handle, sql, nil, nil, &message)
+        if code != SQLITE_OK {
+            let text = message.map { String(cString: $0) } ?? "legacy fixture owner replacement"
+            sqlite3_free(message)
+            throw SQLiteSyncRepositoryError.database(code: code, message: text)
+        }
+    }
+
+    private func createOwnedEncryptedMigrationStaging(
+        at stagingURL: URL,
+        identity: SyncBindingIdentity,
+        key: Data
+    ) async throws {
+        // A real interrupted export is an encrypted, owner-bound SQLite file.
+        // Build it through the repository, then attach the same durable proof
+        // format used by migration before the fixed name becomes observable.
+        let stagingRepository = try SQLiteSyncRepository(
+            databaseURL: stagingURL,
+            identity: identity,
+            keyStore: keyStore
+        )
+        _ = try await stagingRepository.snapshot()
+        let descriptor = Darwin.open(stagingURL.path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("migration staging fixture open")
+        }
+        defer { _ = Darwin.close(descriptor) }
+
+        var payload = Data("zephyr-one/sqlcipher-migration-owner/v1\u{0}".utf8)
+        for value in [
+            try canonicalStagingLocation(stagingURL),
+            identity.serverID,
+            identity.accountID,
+            identity.deviceID,
+            identity.generation,
+        ] {
+            let bytes = Data(value.utf8)
+            var length = UInt64(bytes.count).bigEndian
+            withUnsafeBytes(of: &length) { payload.append(contentsOf: $0) }
+            payload.append(bytes)
+        }
+        let proof = Data(HMAC<SHA256>.authenticationCode(
+            for: payload,
+            using: SymmetricKey(data: key)
+        ))
+        let result = proof.withUnsafeBytes { bytes in
+            "com.zephyr.one.sync-migration-owner.v1".withCString { name in
+                fsetxattr(descriptor, name, bytes.baseAddress, bytes.count, 0, XATTR_CREATE)
+            }
+        }
+        guard result == 0, Darwin.fsync(descriptor) == 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("migration staging fixture proof")
+        }
+    }
+
+    private func canonicalStagingLocation(_ stagingURL: URL) throws -> String {
+        let parent = stagingURL.deletingLastPathComponent()
+        let components = parent.pathComponents
+        guard components.count > 1 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("migration staging fixture path")
+        }
+        let topLevel = URL(fileURLWithPath: "/", isDirectory: true)
+            .appendingPathComponent(components[1], isDirectory: true)
+        var status = stat()
+        guard lstat(topLevel.path, &status) == 0 else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("migration staging fixture path")
+        }
+        var canonicalParent = topLevel
+        if (status.st_mode & S_IFMT) == S_IFLNK {
+            guard status.st_uid == 0 else {
+                throw SQLiteSyncRepositoryError.databaseIntegrityFailed("migration staging fixture path")
+            }
+            canonicalParent = topLevel.resolvingSymlinksInPath()
+        }
+        for component in components.dropFirst(2) {
+            canonicalParent.appendPathComponent(component, isDirectory: true)
+        }
+        return canonicalParent
+            .appendingPathComponent(stagingURL.lastPathComponent, isDirectory: false)
+            .path
+    }
+
     private func binding(generation: String = "generation-1") -> SyncBindingIdentity {
         SyncBindingIdentity(
             serverID: "server-1",
@@ -1275,6 +2065,9 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
 
 private enum MigrationInterruption: Error, Equatable {
     case simulatedCrash
+    case plaintextStaging
+    case leaveExportedStaging
+    case leaveNestedArtifacts
 }
 
 private enum MemoryDatabaseKeyStoreError: Error, Equatable {

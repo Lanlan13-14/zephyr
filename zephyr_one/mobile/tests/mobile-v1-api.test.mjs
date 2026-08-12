@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 import {
   createSecureTestDataDir,
   removeSecureTestDataDir,
+} from "../../../tests/helpers/secure-data-dir.mjs";
+import {
   startChildOnLoopback,
   stopChild,
 } from "./mobile-v1-live-server.mjs";
