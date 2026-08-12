@@ -8698,6 +8698,16 @@ oneClientManager.mountRoutes(app, {
     resolveUserById: (id) => storage.getUserById(id),
     resolveUserByUsername: (name) => storage.getUser(name),
 });
+app.get('/zephyr-one-embed.css', (req, res, next) => {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    res.type('text/css');
+    res.setHeader('Cache-Control', 'no-store');
+    const sourcePath = path.join(__dirname, 'zephyr-one-embed.css');
+    const stagedPath = path.join(__dirname, 'public', 'zephyr-one-embed.css');
+    res.sendFile(fs.existsSync(sourcePath) ? sourcePath : stagedPath, (error) => {
+        if (error) next(error);
+    });
+});
 
 function requireWebDavSensitiveVerification(req, res, next) {
     try {

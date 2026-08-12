@@ -4,11 +4,9 @@
  * Zephyr One only. Injected into app.html by zephyr-one-embed-surface.js and
  * served by the core at /zephyr-one-rdp-settings.js in embedded mode.
  *
- * The markup (#rdpStorage, #rdpStorageFolder, #rdpStorageDeviceName,
- * #rdpStorageFolderPickBtn) already exists in the shared app.html but is purely
- * presentational there: the pick button has no handler and neither field is ever
- * read or written. tests/rdp-folder-mapping-ui.test.mjs records that boundary.
- * This file connects all three ends for One.
+ * The embed transform replaces browser Zephyr's Agent-backed storage row with
+ * #rdpStorageFolder / #rdpStorageDeviceName / #rdpStorageFolderPickBtn. These
+ * controls and their behaviour never exist in the browser product.
  *
  * The native shell sends the selected directory directly to the embedded core.
  * This page receives only a display label and whether a mapping exists.
@@ -324,6 +322,21 @@
         inner.appendChild(hint);
     }
 
+    function updateStorageDetailUi() {
+        var toggle = $('#rdpStorage');
+        var detail = $('#rdpStorageDetail');
+        if (!toggle || !detail) return;
+        var open = !!toggle.checked;
+        detail.classList.toggle('is-open', open);
+        var row = toggle.closest('.rdp-toggle-row');
+        if (row) row.classList.toggle('is-open', open);
+        var inner = detail.querySelector('.rdp-storage-detail-inner');
+        if (inner) {
+            inner.inert = !open;
+            inner.setAttribute('aria-hidden', open ? 'false' : 'true');
+        }
+    }
+
     function init() {
         var button = $('#rdpStorageFolderPickBtn');
         if (!button) return; /* not the connection form */
@@ -338,8 +351,10 @@
         if (toggle) {
             toggle.addEventListener('change', function () {
                 if (!toggle.checked) setHint('');
+                updateStorageDetailUi();
             });
         }
+        updateStorageDetailUi();
 
         installSaveObserver();
 
@@ -356,7 +371,10 @@
                 var open = !modal.hidden
                     && !modal.classList.contains('force-hidden')
                     && !modal.classList.contains('hidden');
-                if (open && !wasOpen) loadMapping(currentConnectionId());
+                if (open && !wasOpen) {
+                    loadMapping(currentConnectionId());
+                    updateStorageDetailUi();
+                }
                 wasOpen = open;
             });
             observer.observe(modal, {

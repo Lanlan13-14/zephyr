@@ -278,6 +278,17 @@ test('desktop build metadata requires the complete FreeRDP 3 ABI', () => {
     /grep -q '\^CMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF\$'[\s\S]*"\$BUILD\/CMakeCache\.txt"/,
     'a stamped install built with LTO must be rebuilt',
   );
+  const darwinPostInstall = nativeBuild.match(/\n  Darwin\)\n([\s\S]*?)\n    ;;/)?.[1] || '';
+  assert.match(
+    darwinPostInstall,
+    /sed -E 's\/\(\^\|\[\[:space:\]\]\)-lrt\(\[\[:space:\]\]\|\$\)\/\\1\\2\/g'/,
+    'macOS must remove FreeRDP 3.30\'s Linux-only standalone -lrt pkg-config token',
+  );
+  assert.doesNotMatch(
+    darwinPostInstall,
+    /-l\(dl\|rt\|pthread\|m\)/,
+    'macOS must preserve every static dependency except the unavailable standalone -lrt token',
+  );
 
   const tauriConfig = JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8'));
   assert.equal(tauriConfig.bundle.linux, undefined, 'static FreeRDP must not create distro runtime dependencies');
@@ -322,6 +333,13 @@ test('release workflow verifies the staged tree and every desktop bundle type', 
   assert.ok(
     (workflow.match(/-lsystemd/g) || []).length >= 4,
     'every desktop CI platform must explicitly reject libsystemd from the static FreeRDP closure',
+  );
+  const macosJob =
+    workflow.match(/\r?\n  build-macos:\r?\n([\s\S]*?)\r?\n  build-linux:/)?.[1] || '';
+  assert.match(
+    macosJob,
+    /--libs --static freerdp-client3 freerdp3 winpr3 \| grep -Eq -- '\(\^\|\[\[:space:\]\]\)-lrt\(\[\[:space:\]\]\|\$\)'/,
+    'macOS CI must reject a standalone -lrt token before Cargo links the native FreeRDP engine',
   );
   assert.match(
     workflow,

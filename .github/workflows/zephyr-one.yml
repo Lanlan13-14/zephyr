@@ -182,7 +182,30 @@ jobs:
       - name: Install static FreeRDP dependencies via vcpkg
         shell: pwsh
         run: |
-          vcpkg install --x-manifest-root=native/freerdp-core --triplet x64-windows-static-md
+          $vcpkgRoot = "C:/vcpkg"
+          $manifest = Get-Content native/freerdp-core/vcpkg.json -Raw | ConvertFrom-Json
+          $baseline = [string]$manifest.'builtin-baseline'
+          if ($baseline -notmatch '^[0-9a-f]{40}$') {
+            throw "native/freerdp-core/vcpkg.json has an invalid builtin-baseline: $baseline"
+          }
+
+          # windows-2022 may ship a vcpkg checkout older than the manifest pin.
+          # Fetch the exact object so manifest resolution never follows runner-image drift.
+          git -C $vcpkgRoot fetch --no-tags --depth=1 origin $baseline
+          if ($LASTEXITCODE -ne 0) { throw "failed to fetch pinned vcpkg baseline $baseline" }
+          git -C $vcpkgRoot cat-file -e "$baseline`:versions/baseline.json"
+          if ($LASTEXITCODE -ne 0) { throw "pinned vcpkg baseline lacks versions/baseline.json: $baseline" }
+
+          # msvc-dev-cmd exports the Visual Studio vcpkg path. Keep the command,
+          # environment, cache and CMake toolchain on the same standalone checkout.
+          $env:VCPKG_ROOT = $vcpkgRoot
+          & C:/vcpkg/vcpkg.exe install `
+            "--vcpkg-root=$vcpkgRoot" `
+            --x-manifest-root=native/freerdp-core `
+            "--x-install-root=$vcpkgRoot/installed" `
+            --triplet x64-windows-static-md
+          if ($LASTEXITCODE -ne 0) { throw "static FreeRDP dependency install failed" }
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
           "VCPKG_INSTALLED_DIR=C:/vcpkg/installed" >> $env:GITHUB_ENV
           "VCPKG_DEFAULT_TRIPLET=x64-windows-static-md" >> $env:GITHUB_ENV
       - name: Build and verify pinned patched FreeRDP 3
@@ -321,6 +344,7 @@ jobs:
           "$PKG_CONFIG" --atleast-version=3.0.0 freerdp3 freerdp-client3 winpr3
           "$PKG_CONFIG" --modversion freerdp3 freerdp-client3 winpr3
           ! "$PKG_CONFIG" --libs --static freerdp-client3 freerdp3 winpr3 | grep -Eq -- '(^|[[:space:]])-lsystemd([[:space:]]|$)'
+          ! "$PKG_CONFIG" --libs --static freerdp-client3 freerdp3 winpr3 | grep -Eq -- '(^|[[:space:]])-lrt([[:space:]]|$)'
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs

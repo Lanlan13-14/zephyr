@@ -3886,7 +3886,6 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     if ($('#rdpTouchMode')) $('#rdpTouchMode').value = conn?.rdpTouchMode === 'relative' ? 'relative' : 'direct';
     if ($('#rdpTouchSensitivity')) $('#rdpTouchSensitivity').value = String(Math.max(0.5, Math.min(3, Number(conn?.rdpTouchSensitivity) || 1.5)));
     updateRdpTouchSettingsUi();
-    updateRdpStorageDetailUi();
     if ($('#rdpDomain')) $('#rdpDomain').value = conn?.rdpDomain || '';
     updateProtocolFields({ preservePort: !!conn });
     // Connection/RDP selects: toggle-select so re-tap closes the menu.
@@ -4108,38 +4107,6 @@ function updateRdpTouchSettingsUi() {
     if (group) group.classList.toggle('rdp-range-disabled', mode !== 'relative');
     if (input) input.disabled = mode !== 'relative';
     if (output) output.textContent = `${sensitivity.toFixed(1)}×`;
-}
-
-/* Open/close the folder-mapping fields under their own toggle.
- *
- * A class toggle rather than the `:has()` rule alone. Not because `:has()` is
- * broken — tests/rdp-folder-mapping-browser-smoke.html asserts the `:has()`
- * path opens to the same height with no class applied. It is because `:has()`
- * requires Safari 15.4+ / WebKitGTK 2.42+, and Zephyr One ships on WKWebView
- * (macOS) and WebKitGTK (Linux) whose versions track the OS rather than this
- * repo. The class carries the behaviour on every engine; the CSS keeps the
- * `:has()` rule as a no-JS bonus. Same pattern as .rdp-range-disabled above.
- *
- * `inert` is toggled too: the collapsed region still occupies a 0px grid track,
- * so without it the folder and device-name inputs stay keyboard-reachable and
- * screen-reader visible while invisible.
- *
- * Presentation only. Nothing here reads or writes a connection field yet. */
-function updateRdpStorageDetailUi() {
-    const open = !!$('#rdpStorage')?.checked;
-    const detail = $('#rdpStorageDetail');
-    if (!detail) return;
-    detail.classList.toggle('is-open', open);
-    /* The toggle row carries a border-bottom that would otherwise draw a
-     * hairline between the switch and its own fields, making them read as
-     * unrelated rows. CSS hides it via :has() too; this class keeps that
-     * working on engines where :has() support is unverified here. */
-    $('#rdpStorage')?.closest('.rdp-toggle-row')?.classList.toggle('is-open', open);
-    const inner = detail.querySelector('.rdp-storage-detail-inner');
-    if (inner) {
-        inner.inert = !open;
-        inner.setAttribute('aria-hidden', open ? 'false' : 'true');
-    }
 }
 
 function connectionPayload({ forTest = false } = {}) {
@@ -13077,7 +13044,6 @@ function bindEvents() {
     $('#connProtocol').addEventListener('change', () => updateProtocolFields({ preservePort: false }));
     $('#rdpTouchMode')?.addEventListener('change', updateRdpTouchSettingsUi);
     $('#rdpTouchSensitivity')?.addEventListener('input', updateRdpTouchSettingsUi);
-    $('#rdpStorage')?.addEventListener('change', updateRdpStorageDetailUi);
     $('#connectionForm').addEventListener('submit', saveConnection);
     // Toggle-select shells before restore so faces pick up saved values.
     enhanceAllToggleSelects();

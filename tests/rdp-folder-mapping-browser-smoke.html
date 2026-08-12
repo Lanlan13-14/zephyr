@@ -6,6 +6,7 @@
 <!-- The real stylesheet. The collapse rules must survive the full cascade,
      not just work in isolation. -->
 <link rel="stylesheet" href="/public/style.css">
+<link rel="stylesheet" href="/zephyr-one-embed.css">
 </head>
 <body class="app-body">
 <div class="app-shell">
@@ -30,8 +31,9 @@
  *    `currentTime`, then read the computed value. That is frame-rate
  *    independent and gives the same numbers on every run.
  *
- * The markup and the toggle function are sliced out of the shipped
- * public/app.html and public/app.js. Copies would only prove the copies.
+ * The markup is sliced out of the shipped app.html after its real Zephyr One
+ * embed transform. Browser Zephyr intentionally keeps the Agent-backed row and
+ * has no local folder fields. The toggle function still comes from app.js.
  */
 (function () {
     const out = [];
@@ -52,7 +54,7 @@
     }
 
     /* ── Pull the real panel markup ─────────────────────────────────────── */
-    const appHtml = getSync('/public/app.html');
+    const appHtml = getSync('/__zephyr-one-app.html');
     const panelAt = appHtml.indexOf('id="rdpSettingsPanel"');
     const sectionAt = appHtml.lastIndexOf('<section', panelAt);
     const sectionEnd = appHtml.indexOf('</section>', panelAt) + '</section>'.length;
@@ -62,13 +64,13 @@
     document.getElementById('host').innerHTML = panel;
 
     /* ── Pull the real toggle function ──────────────────────────────────── */
-    const appJs = getSync('/public/app.js');
-    const fnAt = appJs.indexOf('function updateRdpStorageDetailUi()');
-    const fnEnd = appJs.indexOf('\n}', fnAt) + 2;
-    const fnSrc = appJs.slice(fnAt, fnEnd);
+    const overlayJs = getSync('/zephyr-one-rdp-settings.js');
+    const fnAt = overlayJs.indexOf('function updateStorageDetailUi()');
+    const fnEnd = overlayJs.indexOf('\n    }', fnAt) + '\n    }'.length;
+    const fnSrc = overlayJs.slice(fnAt, fnEnd);
     const $ = (sel) => document.querySelector(sel);
     // eslint-disable-next-line no-eval
-    const updateRdpStorageDetailUi = eval(`(${fnSrc.replace('function updateRdpStorageDetailUi()', 'function ()')})`);
+    const updateRdpStorageDetailUi = eval(`(${fnSrc.replace('function updateStorageDetailUi()', 'function ()')})`);
 
     check('sliced real panel markup', panel.includes('id="rdpStorageDetail"'), panel.length);
     check('sliced real toggle function', /classList\.toggle\('is-open'/.test(fnSrc), fnSrc.length);

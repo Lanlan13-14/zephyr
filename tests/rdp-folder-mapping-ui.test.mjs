@@ -49,28 +49,33 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
 
 const APP_HTML = read('public/app.html');
+const ONE_HTML = applyEmbeddedSurface(APP_HTML).html;
 const APP_JS = read('public/app.js');
 const STYLE_CSS = read('public/style.css');
+const ONE_CSS = read('zephyr-one-embed.css');
+const ONE_RDP_SETTINGS = read('zephyr-one-rdp-settings.js');
+const BROWSER_SMOKE = read('tests/rdp-folder-mapping-browser-smoke.html');
+const STATIC_SMOKE_SERVER = read('tests/static-smoke-server.mjs');
 const ZH = JSON.parse(read('public/i18n/locales/zh-CN.json'));
 const EN = JSON.parse(read('public/i18n/locales/en.json'));
 
 /** Slice the #rdpSettingsPanel element out of app.html by tag balance. */
-function rdpPanel() {
-    const at = APP_HTML.indexOf('id="rdpSettingsPanel"');
+function rdpPanel(html = ONE_HTML) {
+    const at = html.indexOf('id="rdpSettingsPanel"');
     assert.ok(at > 0, '#rdpSettingsPanel must exist');
-    const open = APP_HTML.lastIndexOf('<section', at);
+    const open = html.lastIndexOf('<section', at);
     let i = open;
     let depth = 0;
-    while (i < APP_HTML.length) {
-        const nextOpen = APP_HTML.indexOf('<section', i + 1);
-        const nextClose = APP_HTML.indexOf('</section>', i + 1);
+    while (i < html.length) {
+        const nextOpen = html.indexOf('<section', i + 1);
+        const nextClose = html.indexOf('</section>', i + 1);
         assert.ok(nextClose !== -1, '#rdpSettingsPanel must be closed');
         if (nextOpen !== -1 && nextOpen < nextClose) {
             depth += 1;
             i = nextOpen;
             continue;
         }
-        if (depth === 0) return APP_HTML.slice(open, nextClose + '</section>'.length);
+        if (depth === 0) return html.slice(open, nextClose + '</section>'.length);
         depth -= 1;
         i = nextClose;
     }
@@ -103,23 +108,32 @@ function panelChildren() {
     return out;
 }
 
-test('the RDP panel no longer names Zephyr Agent anywhere', () => {
-    /* Product contract: Zephyr One must not display a setting named "Zephyr
-     * Agent". The RDP panel is served from the same app.html that One embeds,
-     * so the rename has to happen in the source, not only in One's transform. */
+test('browser RDP storage keeps the v1.1.500 online Zephyr Agent contract', () => {
+    const panel = rdpPanel(APP_HTML);
+
+    assert.match(panel, /data-i18n="Zephyr Agent 存储（磁盘映射）">Zephyr Agent 存储（磁盘映射）</);
+    assert.match(panel, /data-i18n="需 Agent 在线">需 Agent 在线</);
+    assert.match(panel, /id="rdpStorage"/);
+    for (const oneOnlyId of ['rdpStorageDetail', 'rdpStorageFolder', 'rdpStorageFolderPickBtn', 'rdpStorageDeviceName']) {
+        assert.equal(panel.includes(oneOnlyId), false, `${oneOnlyId} must stay out of browser Zephyr`);
+    }
+    assert.equal(panel.includes('data-i18n="文件夹映射"'), false);
+    assert.equal(panel.includes('data-i18n="会话内以磁盘形式访问"'), false);
+});
+
+test('Zephyr One replaces the Agent row with its native folder controls', () => {
     const panel = rdpPanel();
     assert.equal(panel.includes('Zephyr Agent'), false, 'RDP panel must not say "Zephyr Agent"');
     assert.equal(panel.includes('需 Agent 在线'), false, 'the Agent-online hint must be gone');
-
-    // And the old strings are not referenced from anywhere else either, so the
-    // now-orphaned catalogue entries are genuinely unused.
-    assert.equal(APP_HTML.includes('Zephyr Agent 存储（磁盘映射）'), false);
-    assert.equal(APP_HTML.includes('需 Agent 在线'), false);
-
-    // The replacement label is in place on the same toggle.
     assert.match(panel, /data-i18n="文件夹映射">文件夹映射</);
     assert.match(panel, /data-i18n="会话内以磁盘形式访问"/);
     assert.match(panel, /id="rdpStorage"/);
+});
+
+test('the layout smoke exercises transformed One markup, not browser markup', () => {
+    assert.match(BROWSER_SMOKE, /getSync\('\/__zephyr-one-app\.html'\)/);
+    assert.match(STATIC_SMOKE_SERVER, /applyEmbeddedSurface\(source\)\.html/);
+    assert.equal(BROWSER_SMOKE.includes("getSync('/public/app.html')"), false);
 });
 
 test('the detail block carries exactly the two fields that transfer from Agent', () => {
@@ -176,9 +190,9 @@ test('the detail block is the immediate next sibling of its own toggle row', () 
 });
 
 test('collapse is animated, and animatable — not a display toggle', () => {
-    const at = STYLE_CSS.indexOf('.rdp-storage-detail {');
+    const at = ONE_CSS.indexOf('.rdp-storage-detail {');
     assert.ok(at > 0, '.rdp-storage-detail rule must exist');
-    const block = STYLE_CSS.slice(at, at + 2600);
+    const block = ONE_CSS.slice(at, at + 2600);
 
     // `display:none` is not animatable, which is why the other conditional
     // rows in this panel snap. grid-template-rows 0fr→1fr gives a real
@@ -200,20 +214,21 @@ test('collapse is animated, and animatable — not a display toggle', () => {
     assert.match(block, /\.rdp-storage-detail-inner \{[^}]*min-height: 0/);
 
     // Reduced motion collapses the duration rather than removing the mechanism.
-    const rm = STYLE_CSS.slice(at, at + 3200);
+    const rm = ONE_CSS.slice(at, at + 3200);
     assert.match(rm, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,200}\.rdp-storage-detail/);
 });
 
-test('the JS toggle exists and runs on both change and populate', () => {
+test('the JS toggle exists only in the One overlay', () => {
     /* :has() alone was not trusted here: it is the only place in this panel
      * where a *sibling* is restyled from a checkbox, and the repo's own
      * precedent for conditional rows (updateRdpTouchSettingsUi) is an explicit
      * classList.toggle. The class path is primary; :has() is a fallback. */
-    assert.match(APP_JS, /function updateRdpStorageDetailUi\(\) \{/);
-    const body = APP_JS.slice(APP_JS.indexOf('function updateRdpStorageDetailUi()'));
-    const fn = body.slice(0, body.indexOf('\n}\n') + 3);
+    assert.equal(APP_JS.includes('updateRdpStorageDetailUi'), false);
+    assert.match(ONE_RDP_SETTINGS, /function updateStorageDetailUi\(\) \{/);
+    const body = ONE_RDP_SETTINGS.slice(ONE_RDP_SETTINGS.indexOf('function updateStorageDetailUi()'));
+    const fn = body.slice(0, body.indexOf('\n    }\n') + '\n    }'.length);
 
-    assert.match(fn, /\$\('#rdpStorage'\)\?\.checked/);
+    assert.match(fn, /var open = !!toggle\.checked/);
     assert.match(fn, /classList\.toggle\('is-open', open\)/);
     // Collapsed fields must leave the tab order, or focus scrolls a clipped
     // region into view and traps the user in invisible inputs.
@@ -221,12 +236,8 @@ test('the JS toggle exists and runs on both change and populate', () => {
     assert.match(fn, /aria-hidden/);
 
     // Wired at both points: live toggling, and restoring a saved connection.
-    assert.match(APP_JS, /\$\('#rdpStorage'\)\?\.addEventListener\('change', updateRdpStorageDetailUi\)/);
-    const populateAt = APP_JS.indexOf("if ($('#rdpStorage')) $('#rdpStorage').checked = !!conn?.rdpStorage;");
-    assert.ok(populateAt > 0, 'populate must still set the checkbox');
-    const afterPopulate = APP_JS.slice(populateAt, populateAt + 900);
-    assert.match(afterPopulate, /updateRdpStorageDetailUi\(\)/,
-        'populate must re-sync the panel, or an edited connection opens with a stale collapse state');
+    assert.match(ONE_RDP_SETTINGS, /toggle\.addEventListener\('change'/);
+    assert.match(ONE_RDP_SETTINGS, /if \(open && !wasOpen\) \{[\s\S]{0,160}updateStorageDetailUi\(\)/);
 });
 
 /** Assert one key is present in both catalogues and correctly shaped. */
@@ -261,8 +272,9 @@ test('every i18n key the One transform introduces resolves in both locales', () 
     for (const key of introduced) assertKeyResolves(key);
 });
 
-test('every new i18n key in app.html resolves in both locales', () => {
+test('browser and One storage labels resolve in both locales', () => {
     const keys = [
+        'Zephyr Agent 存储（磁盘映射）', '需 Agent 在线',
         '文件夹映射', '会话内以磁盘形式访问', '映射文件夹',
         '尚未选择文件夹', '选择文件夹', '设备名称', '例如：我的电脑',
         '远程会话里显示的磁盘名称。',
@@ -317,7 +329,7 @@ test('opening the detail hides only its own row hairline, without reflow', () =>
     assert.match(base[0], /border-bottom:\s*1px solid/,
         'the fix assumes the row draws a 1px bottom border');
 
-    const rule = STYLE_CSS.match(
+    const rule = ONE_CSS.match(
         /\.rdp-toggle-row\.is-open,\s*\n\.rdp-toggle-row:has\(#rdpStorage:checked\) \{[^}]*\}/,
     );
     assert.ok(rule, 'the open-row rule must cover both the class and :has() paths');
@@ -334,16 +346,17 @@ test('opening the detail hides only its own row hairline, without reflow', () =>
     // Scoped: a bare `.rdp-toggle-row { border-bottom-color: transparent }`
     // would erase every divider in the panel, not just this one.
     assert.equal(
-        /(^|\n)\.rdp-toggle-row \{[^}]*border-bottom-color:\s*transparent/.test(STYLE_CSS),
+        /(^|\n)\.rdp-toggle-row \{[^}]*border-bottom-color:\s*transparent/.test(ONE_CSS),
         false,
         'the base row rule must not be the one going transparent',
     );
 
     // The JS path must reach the row, not only the detail, or the class half of
     // the rule above is dead on engines where :has() is unavailable.
-    const fnAt = APP_JS.indexOf('function updateRdpStorageDetailUi()');
-    const fn = APP_JS.slice(fnAt, APP_JS.indexOf('\n}', fnAt));
-    assert.match(fn, /closest\('\.rdp-toggle-row'\)\?\.classList\.toggle\('is-open', open\)/,
+    const fnAt = ONE_RDP_SETTINGS.indexOf('function updateStorageDetailUi()');
+    const fn = ONE_RDP_SETTINGS.slice(fnAt, ONE_RDP_SETTINGS.indexOf('\n    }', fnAt));
+    assert.match(fn, /closest\('\.rdp-toggle-row'\)/);
+    assert.match(fn, /row\.classList\.toggle\('is-open', open\)/,
         'the toggle must put is-open on the row that owns the checkbox');
     /* closest() rather than previousElementSibling: if the markup ever drifts so
      * the detail is no longer adjacent, closest() still finds the right row,

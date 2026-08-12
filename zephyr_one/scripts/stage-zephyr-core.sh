@@ -124,18 +124,7 @@ fi
 # returns 200 with a zip.enc attachment, and import still demands the account
 # password (wrong password -> 403), which is what contract §8 requires of a
 # sensitive operation.
-cat > "$OUT/public/zephyr-one-embed.css" <<'CSS'
-/* Zephyr One local product surface */
-#adminSettingsTab,
-#settings-admin,
-.settings-tab[data-settings="admin"],
-.settings-tab[data-settings="mail"],
-#settings-mail,
-.settings-tab[data-settings="beian"],
-#settings-beian {
-  display: none !important;
-}
-CSS
+cp "$ROOT/zephyr-one-embed.css" "$OUT/public/zephyr-one-embed.css"
 
 cat > "$OUT/ZEPHYR_ONE_CORE.json" <<EOF
 {

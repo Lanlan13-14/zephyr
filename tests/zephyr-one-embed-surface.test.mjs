@@ -30,6 +30,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const APP_HTML = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const SERVER_JS = readFileSync(path.join(root, 'server.js'), 'utf8');
 const STAGE_SH = readFileSync(path.join(root, 'zephyr_one/scripts/stage-zephyr-core.sh'), 'utf8');
+const EMBED_CSS = readFileSync(path.join(root, 'zephyr-one-embed.css'), 'utf8');
 const APP_JS = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 
 /**
@@ -193,6 +194,12 @@ test('embed stylesheet is injected once, inside head', () => {
     assert.ok(linkAt > 0 && linkAt < html.indexOf('</head>'), 'stylesheet must land inside <head>');
 });
 
+test('embed stylesheet route supports source and staged layouts', () => {
+    assert.match(SERVER_JS, /const sourcePath = path\.join\(__dirname, 'zephyr-one-embed\.css'\)/);
+    assert.match(SERVER_JS, /const stagedPath = path\.join\(__dirname, 'public', 'zephyr-one-embed\.css'\)/);
+    assert.match(SERVER_JS, /fs\.existsSync\(sourcePath\) \? sourcePath : stagedPath/);
+});
+
 test('a markup change that defeats the transform throws instead of degrading', () => {
     /* Source absent AND result absent -> app.html changed shape. Asserted on
      * `rename-agent-tab`, which is a real remaining edit; the language-promotion
@@ -254,11 +261,10 @@ test('embedded mode skips the login page only after one-time bootstrap', () => {
 });
 
 test('stage script still hides the web-only settings tabs it owns', () => {
-    // The transform removes the security tab structurally; the stylesheet
-    // covers the multi-user / deployment tabs that stay in the DOM.
+    assert.match(STAGE_SH, /cp "\$ROOT\/zephyr-one-embed\.css" "\$OUT\/public\/zephyr-one-embed\.css"/);
     for (const selector of ['admin', 'mail', 'beian']) {
         assert.ok(
-            STAGE_SH.includes(`.settings-tab[data-settings="${selector}"]`),
+            EMBED_CSS.includes(`.settings-tab[data-settings="${selector}"]`),
             `embed CSS should hide the ${selector} settings tab`,
         );
     }
@@ -270,11 +276,11 @@ test('backup / restore stays reachable in One', () => {
      * 主端执行就擅自从One移除". The tab acts on the local core's own
      * zephyr.db, so hiding it removed a contract capability. */
     assert.ok(
-        !STAGE_SH.includes('.settings-tab[data-settings="data"]'),
+        !EMBED_CSS.includes('.settings-tab[data-settings="data"]'),
         'embed CSS must not hide the data (backup/restore) tab button',
     );
     assert.ok(
-        !STAGE_SH.includes('#settings-data'),
+        !EMBED_CSS.includes('#settings-data'),
         'embed CSS must not hide the data (backup/restore) panel',
     );
 

@@ -245,6 +245,15 @@ cmake --build "$BUILD" --parallel "$JOBS"
 cmake --install "$BUILD"
 
 case "$(uname -s)" in
+  Darwin)
+    # FreeRDP 3.30 hard-codes Linux's librt in winpr3.pc even though macOS
+    # provides the required APIs in libSystem and has no separate librt.
+    # Remove only that standalone token; keep every other static dependency.
+    for pc in "$INSTALL"/lib/pkgconfig/*.pc; do
+      sed -E 's/(^|[[:space:]])-lrt([[:space:]]|$)/\1\2/g' "$pc" > "$pc.tmp"
+      mv "$pc.tmp" "$pc"
+    done
+    ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
     # FreeRDP 3.30's static client pkg-config module references these private
     # channel archives but its install target omits them on MSVC.

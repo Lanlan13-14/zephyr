@@ -91,6 +91,28 @@ const FILE_SYNC_HEADING = '<h2 data-i18n="文件同步">文件同步</h2>';
 const AGENT_PANEL_ANCHOR = 'id="settings-agent"';
 const DATA_PANEL_ANCHOR = '<div class="settings-panel" id="settings-data"';
 
+/* Browser Zephyr keeps the v1.1.500 Agent-backed storage switch. Only One has
+ * a native picker, so its local folder controls are introduced by this embed
+ * transform and never shipped as part of the browser product's form. */
+const BROWSER_AGENT_STORAGE_ROW = '<div class="rdp-toggle-row"><span><span data-i18n="Zephyr Agent 存储（磁盘映射）">Zephyr Agent 存储（磁盘映射）</span><em style="font-size:0.8em;color:var(--text-secondary,#888);margin-left:6px" data-i18n="需 Agent 在线">需 Agent 在线</em></span><label class="rdp-toggle"><input type="checkbox" id="rdpStorage"><span class="rdp-toggle-slider"></span></label></div>';
+const ONE_FOLDER_STORAGE_CONTROLS = [
+    '<div class="rdp-toggle-row"><span><span data-i18n="文件夹映射">文件夹映射</span><em style="font-size:0.8em;color:var(--text-secondary,#888);margin-left:6px" data-i18n="会话内以磁盘形式访问">会话内以磁盘形式访问</em></span><label class="rdp-toggle"><input type="checkbox" id="rdpStorage"><span class="rdp-toggle-slider"></span></label></div>',
+    '<div class="rdp-storage-detail" id="rdpStorageDetail">',
+    '<div class="rdp-storage-detail-inner">',
+    '<div class="form-group">',
+    '<label for="rdpStorageFolder" data-i18n="映射文件夹">映射文件夹</label>',
+    '<input id="rdpStorageFolder" type="text" readonly placeholder="尚未选择文件夹" data-i18n-placeholder="尚未选择文件夹">',
+    '<button type="button" class="link-btn" id="rdpStorageFolderPickBtn" data-i18n="选择文件夹">选择文件夹</button>',
+    '</div>',
+    '<div class="form-group">',
+    '<label for="rdpStorageDeviceName" data-i18n="设备名称">设备名称</label>',
+    '<input id="rdpStorageDeviceName" type="text" placeholder="例如：我的电脑" data-i18n-placeholder="例如：我的电脑">',
+    '<p class="field-hint" data-i18n="远程会话里显示的磁盘名称。">远程会话里显示的磁盘名称。</p>',
+    '</div>',
+    '</div>',
+    '</div>',
+].join('');
+
 /**
  * Structural edits, in order. Each entry is asserted to apply exactly once.
  * `required: false` marks an edit that is allowed to be already applied
@@ -220,6 +242,11 @@ const EDITS = [
         to: FILE_SYNC_HEADING,
         within: AGENT_PANEL_ANCHOR,
         until: DATA_PANEL_ANCHOR,
+    },
+    {
+        name: 'use-one-folder-mapping-controls',
+        from: BROWSER_AGENT_STORAGE_ROW,
+        to: ONE_FOLDER_STORAGE_CONTROLS,
     },
 ];
 
@@ -387,6 +414,8 @@ module.exports = {
     EMBED_NATIVE_RDP_SCRIPT,
     EMBED_SECURITY_SCRIPT,
     ONE_SECURITY_PANEL_BODY,
+    BROWSER_AGENT_STORAGE_ROW,
+    ONE_FOLDER_STORAGE_CONTROLS,
     replaceSecurityPanelBody,
     EDITS,
 };

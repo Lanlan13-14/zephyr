@@ -1,0 +1,46 @@
+/* Zephyr One local product surface */
+#adminSettingsTab,
+#settings-admin,
+.settings-tab[data-settings="admin"],
+.settings-tab[data-settings="mail"],
+#settings-mail,
+.settings-tab[data-settings="beian"],
+#settings-beian {
+  display: none !important;
+}
+
+/* One-only native folder mapping controls. Browser Zephyr uses an online
+ * Zephyr Agent and therefore never renders this block. */
+.rdp-storage-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .28s cubic-bezier(.16, 1, .3, 1), opacity .2s ease;
+}
+.rdp-storage-detail-inner {
+  overflow: hidden;
+  min-height: 0;
+  padding-left: 2px;
+}
+.rdp-storage-detail.is-open,
+.rdp-toggle-row:has(#rdpStorage:checked) + .rdp-storage-detail {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.rdp-storage-detail .form-group:last-child { margin-bottom: 2px; }
+.rdp-storage-detail input[readonly] {
+  cursor: default;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+.rdp-storage-detail .link-btn { margin-top: 6px; }
+.rdp-toggle-row.is-open,
+.rdp-toggle-row:has(#rdpStorage:checked) {
+  border-bottom-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rdp-storage-detail {
+    transition: grid-template-rows .01ms linear, opacity .01ms linear;
+  }
+}

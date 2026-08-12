@@ -281,6 +281,16 @@ test('every release build uses the pinned patched static FreeRDP', () => {
      * accidental reversion to an unverified dynamic build. */
     const windows = job('build-windows', 'build-macos');
     assert.match(windows, /ilammy\/msvc-dev-cmd@v1/);
+    assert.match(windows, /\$manifest\.'builtin-baseline'/,
+        'Windows must resolve the pinned vcpkg baseline from the dependency manifest');
+    assert.match(windows, /git -C \$vcpkgRoot fetch --no-tags --depth=1 origin \$baseline/,
+        'runner images older than the pin must fetch the exact baseline commit');
+    assert.match(windows, /C:\/vcpkg\/vcpkg\.exe/,
+        'Windows must not select the mismatched Visual Studio vcpkg executable from PATH');
+    assert.match(windows, /--vcpkg-root=\$vcpkgRoot/);
+    assert.match(windows, /--x-install-root=\$vcpkgRoot\/installed/,
+        'the manifest install must populate the directory consumed by CMake and the cache');
+    assert.match(windows, /--triplet x64-windows-static-md/);
     assert.match(windows, /verify-rdp-packaging\.mjs windows-static/);
     assert.doesNotMatch(windows, /stage-windows-freerdp|tauri\.freerdp\.windows\.json/);
 });
