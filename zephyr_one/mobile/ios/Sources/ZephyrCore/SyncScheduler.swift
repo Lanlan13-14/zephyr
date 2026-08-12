@@ -462,21 +462,21 @@ public actor SyncScheduler {
             return syncTask
         }
 
-        pendingSyncTrigger = trigger
-        let task = Task { await self.drainSyncRequests() }
+        let task = Task { await self.drainSyncRequests(initialTrigger: trigger) }
         syncTask = task
         return task
     }
 
-    private func drainSyncRequests() async -> Bool {
+    private func drainSyncRequests(initialTrigger: SyncTrigger) async -> Bool {
         var succeeded = true
-        while !Task.isCancelled, !invalidated, let trigger = pendingSyncTrigger {
-            pendingSyncTrigger = nil
+        var nextTrigger: SyncTrigger? = initialTrigger
+        while !Task.isCancelled, !invalidated, let trigger = nextTrigger {
             switch await bindingCheck() {
             case .current:
                 break
             case .unavailable:
                 succeeded = false
+                nextTrigger = takePendingSyncTrigger()
                 continue
             case .ended:
                 await invalidateFromActiveTask(reason: .accountSwitch)
@@ -488,6 +488,7 @@ public actor SyncScheduler {
                 break
             case .unavailable:
                 succeeded = false
+                nextTrigger = takePendingSyncTrigger()
                 continue
             case .ended:
                 await invalidateFromActiveTask(reason: .accountSwitch)
@@ -500,9 +501,15 @@ public actor SyncScheduler {
                     highestWakeCursor = snapshot.appliedCursor
                 }
             }
+            nextTrigger = takePendingSyncTrigger()
         }
         syncTask = nil
         return succeeded
+    }
+
+    private func takePendingSyncTrigger() -> SyncTrigger? {
+        defer { pendingSyncTrigger = nil }
+        return pendingSyncTrigger
     }
 
     private func invalidateFromActiveTask(reason: SyncSchedulerCancellationReason) async {

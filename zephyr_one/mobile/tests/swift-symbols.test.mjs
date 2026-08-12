@@ -177,12 +177,29 @@ test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-eras
   assert.match(repository, /FileProtectionType\.complete/);
   assert.doesNotMatch(repository, /completeUntilFirstUserAuthentication/);
 
+  const lexicalValidatorStart = repository.indexOf('private func strictPOSIXPathComponents');
   const trustedLocationStart = repository.indexOf('private func trustedSQLiteLocation');
   const migrationHooksStart = repository.indexOf('public struct SQLiteSyncMigrationHooks');
+  const lexicalValidator = repository.slice(lexicalValidatorStart, trustedLocationStart);
   const trustedLocation = repository.slice(trustedLocationStart, migrationHooksStart);
   assert.match(
+    lexicalValidator,
+    /Array\(path\.utf8\)[\s\S]*!bytes\.contains\(0\)[\s\S]*bytes\.first == 0x2F[\s\S]*bytes\.count > 1[\s\S]*bytes\.last != 0x2F[\s\S]*split\([\s\S]*separator: 0x2F,[\s\S]*omittingEmptySubsequences: false[\s\S]*!component\.isEmpty[\s\S]*!component\.elementsEqual\(\[0x2E\]\)[\s\S]*!component\.elementsEqual\(\[0x2E, 0x2E\]\)/,
+    'all SQLite locations must be absolute, non-root and canonical by POSIX byte components',
+  );
+  assert.match(
     trustedLocation,
-    /let topLevelPath = "\/" \+ components\[1\][\s\S]*lstat\(topLevelPath, &topLevelStatus\)[\s\S]*topLevelStatus\.st_uid == 0[\s\S]*Darwin\.realpath\(topLevelPath, nil\)[\s\S]*lstat\(resolvedTopLevelPath, &resolvedStatus\)/,
+    /let components = try strictPOSIXPathComponents\(url\.path\)/,
+    'the caller path must use the strict POSIX lexical validator',
+  );
+  assert.doesNotMatch(
+    trustedLocation,
+    /url\.standardizedFileURL|url\.resolvingSymlinksInPath/,
+    'Foundation must not rewrite caller-provided physical canonical paths',
+  );
+  assert.match(
+    trustedLocation,
+    /let topLevelPath = "\/" \+ components\[0\][\s\S]*lstat\(topLevelPath, &topLevelStatus\)[\s\S]*topLevelStatus\.st_uid == 0[\s\S]*Darwin\.realpath\(topLevelPath, nil\)[\s\S]*lstat\(resolvedTopLevelPath, &resolvedStatus\)/,
     'only a root-owned top-level alias may be resolved to its physical directory',
   );
   assert.doesNotMatch(
@@ -212,12 +229,12 @@ test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-eras
   );
   assert.match(
     realpathValidation,
-    /Array\(resolvedTopLevelPath\.utf8\)[\s\S]*\.first == 0x2F[\s\S]*\.count > 1[\s\S]*\.last != 0x2F[\s\S]*split\([\s\S]*separator: 0x2F,[\s\S]*omittingEmptySubsequences: false[\s\S]*!component\.isEmpty[\s\S]*!component\.elementsEqual\(\[0x2E\]\)[\s\S]*!component\.elementsEqual\(\[0x2E, 0x2E\]\)/,
-    'realpath results must stay absolute, non-root and canonical by POSIX byte components',
+    /strictPOSIXPathComponents\(resolvedTopLevelPath\)/,
+    'realpath results must use the same strict POSIX lexical validator as caller paths',
   );
   assert.match(
     trustedLocation,
-    /for component in components\.dropFirst\(2\)[\s\S]*let candidatePath = trustedParentPath \+ "\/" \+ component[\s\S]*lstat\(candidatePath, &status\)/,
+    /for component in components\.dropFirst\(\)\.dropLast\(\)[\s\S]*let candidatePath = trustedParentPath \+ "\/" \+ component[\s\S]*lstat\(candidatePath, &status\)/,
     'caller-controlled descendants must remain individually lstat-verified without link following',
   );
 

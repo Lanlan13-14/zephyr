@@ -40,6 +40,57 @@ final class SyncSchedulerTests: XCTestCase {
         XCTAssertTrue(streamCancelled)
     }
 
+    func testWakeQueuedBeforeInitialDrainRunsAsOneTrailingRecovery() async {
+        let identity = schedulerIdentity()
+        let state = SchedulerTestState(snapshot: schedulerSnapshot(identity: identity, cursor: 4))
+        let gate = SchedulerSyncGate()
+        let transport = ScriptedWakeTransport(
+            events: [
+                WakeStreamEvent(cursor: 5, epoch: "epoch-a", reason: .change, eventID: "epoch-a:5"),
+                WakeStreamEvent(cursor: 6, epoch: "epoch-a", reason: .change, eventID: "epoch-a:6"),
+            ],
+            outcome: WakeStreamOutcome(connected: true, serverRetryMilliseconds: 7_000)
+        )
+        let scheduler = SyncScheduler(
+            identity: identity,
+            wakeTransport: transport,
+            clock: RecordingWakeClock(immediateDelaysBelow: 30_000),
+            intervalSeconds: 86_400,
+            jitter: { 1 },
+            snapshotProvider: { await state.currentSnapshot() },
+            syncRequest: { trigger in await gate.run(trigger) }
+        )
+
+        await scheduler.connectivityDidChange(ConnectivityStatus(isReachable: true))
+        await scheduler.applicationDidEnterForeground()
+
+        let initialEntered = await eventually {
+            let entered = await gate.hasEntered()
+            let triggers = await gate.recordedTriggers()
+            return entered && triggers == [.foreground]
+        }
+        XCTAssertTrue(initialEntered)
+        let wakesQueuedWhileInitialWasBlocked = await eventually {
+            await transport.openCount() >= 2
+        }
+        XCTAssertTrue(wakesQueuedWhileInitialWasBlocked)
+        await gate.release(result: true)
+
+        let trailingEntered = await eventually {
+            let entered = await gate.hasEntered()
+            let triggers = await gate.recordedTriggers()
+            return entered && triggers == [.foreground, .recovery]
+        }
+        XCTAssertTrue(trailingEntered)
+        await gate.release(result: true)
+
+        let exactlyTwoRounds = await eventually {
+            await gate.recordedTriggers() == [.foreground, .recovery]
+        }
+        XCTAssertTrue(exactlyTwoRounds)
+        await scheduler.applicationDidEnterBackground()
+    }
+
     func testCancelAndJoinStopsBindingWorkBeforeAccountReplacement() async {
         let identity = schedulerIdentity()
         let state = SchedulerTestState(snapshot: schedulerSnapshot(identity: identity, cursor: 1))

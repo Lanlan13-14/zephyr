@@ -4,24 +4,43 @@ import Foundation
 import SQLCipher
 import ZephyrContracts
 
+private func strictPOSIXPathComponents(_ path: String) throws -> [String] {
+    let bytes = Array(path.utf8)
+    guard !bytes.contains(0),
+          bytes.first == 0x2F,
+          bytes.count > 1,
+          bytes.last != 0x2F else {
+        throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+    }
+    let byteComponents = bytes.dropFirst().split(
+        separator: 0x2F,
+        omittingEmptySubsequences: false
+    )
+    guard byteComponents.allSatisfy({ component in
+        !component.isEmpty
+            && !component.elementsEqual([0x2E])
+            && !component.elementsEqual([0x2E, 0x2E])
+    }) else {
+        throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+    }
+    return byteComponents.map { String(decoding: $0, as: UTF8.self) }
+}
+
 private func trustedSQLiteLocation(
     for url: URL,
     allowMissingParentTail: Bool = false
 ) throws -> String {
-    guard !url.path.contains("\u{0}"),
-          url.path == url.standardizedFileURL.path else {
+    guard url.isFileURL else {
         throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
     }
-    let parent = url.deletingLastPathComponent()
-    let components = parent.pathComponents
-    guard url.isFileURL, components.first == "/", components.count > 1,
-          !url.lastPathComponent.isEmpty else {
+    let components = try strictPOSIXPathComponents(url.path)
+    guard components.count > 1, let databaseName = components.last else {
         throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
     }
 
     // URL directory paths may gain a trailing slash, which makes lstat follow
     // a final symlink. Keep every path passed to lstat as an explicit string.
-    let topLevelPath = "/" + components[1]
+    let topLevelPath = "/" + components[0]
     var topLevelStatus = stat()
     guard lstat(topLevelPath, &topLevelStatus) == 0 else {
         throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
@@ -43,24 +62,9 @@ private func trustedSQLiteLocation(
         }
         // realpath already returned the physical canonical path. Foundation
         // may rewrite it to a compatibility alias (for example /private/var
-        // back to /var), so validate its POSIX bytes without URL round-trips.
-        let resolvedBytes = Array(resolvedTopLevelPath.utf8)
-        guard resolvedBytes.first == 0x2F,
-              resolvedBytes.count > 1,
-              resolvedBytes.last != 0x2F else {
-            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
-        }
-        let resolvedComponents = resolvedBytes.dropFirst().split(
-            separator: 0x2F,
-            omittingEmptySubsequences: false
-        )
-        guard resolvedComponents.allSatisfy({ component in
-            !component.isEmpty
-                && !component.elementsEqual([0x2E])
-                && !component.elementsEqual([0x2E, 0x2E])
-        }) else {
-            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
-        }
+        // back to /var), so apply the same POSIX lexical validation used at
+        // the public boundary without a URL round-trip.
+        _ = try strictPOSIXPathComponents(resolvedTopLevelPath)
         var resolvedStatus = stat()
         guard lstat(resolvedTopLevelPath, &resolvedStatus) == 0,
               (resolvedStatus.st_mode & S_IFMT) == S_IFDIR else {
@@ -74,7 +78,7 @@ private func trustedSQLiteLocation(
         trustedParentPath = topLevelPath
     }
 
-    for component in components.dropFirst(2) {
+    for component in components.dropFirst().dropLast() {
         let candidatePath = trustedParentPath + "/" + component
         var status = stat()
         if lstat(candidatePath, &status) == 0 {
@@ -91,7 +95,7 @@ private func trustedSQLiteLocation(
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
         }
     }
-    return trustedParentPath + "/" + url.lastPathComponent
+    return trustedParentPath + "/" + databaseName
 }
 
 public struct SQLiteSyncMigrationHooks: Sendable {

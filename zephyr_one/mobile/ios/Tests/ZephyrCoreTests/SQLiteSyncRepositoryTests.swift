@@ -777,6 +777,50 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         XCTAssertEqual(snapshot?.identity, identity)
     }
 
+    func testPhysicalCanonicalDatabaseURLCanBeReopenedWithoutFoundationAliasRewriting() async throws {
+        let identity = binding(generation: "physical-canonical-reopen")
+        let logicalURL = databaseURL(for: identity)
+        let physicalURL = try physicalDatabaseURLThroughRootOwnedAlias(for: identity)
+        XCTAssertNotEqual(physicalURL.path, physicalURL.standardizedFileURL.path)
+
+        let initial = try repository(identity)
+        let initialSnapshot = try await initial.snapshot()
+        XCTAssertEqual(initialSnapshot?.identity, identity)
+
+        let reopened = try SQLiteSyncRepository(
+            databaseURL: physicalURL,
+            identity: identity,
+            keyStore: keyStore
+        )
+        let reopenedSnapshot = try await reopened.snapshot()
+        XCTAssertEqual(reopenedSnapshot?.identity, identity)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: logicalURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: physicalURL.path))
+    }
+
+    func testCleanupCanRevalidatePhysicalCanonicalURLProducedFromTopLevelAlias() async throws {
+        let identity = binding(generation: "physical-canonical-cleanup")
+        let logicalURL = databaseURL(for: identity)
+        let physicalURL = try physicalDatabaseURLThroughRootOwnedAlias(for: identity)
+        let scope = try SyncDatabaseKeyScope(identity: identity)
+        var store: SQLiteSyncRepository? = try repository(identity)
+        let snapshot = try await store?.snapshot()
+        XCTAssertEqual(snapshot?.identity, identity)
+        store = nil
+        XCTAssertNotNil(keyStore.key(for: scope))
+
+        try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
+            at: logicalURL,
+            legacyDatabaseURL: nil,
+            identity: identity,
+            keyStore: keyStore
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: logicalURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: physicalURL.path))
+        XCTAssertNil(keyStore.key(for: scope))
+    }
+
     func testIntermediateDatabaseDirectorySymlinkCannotEscapeBeforeCreatingAKey() throws {
         let trustedRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("zephyr-sync-trusted-\(UUID().uuidString)", isDirectory: true)
@@ -907,7 +951,7 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         let store = try repository(identity)
         let url = databaseURL(for: identity)
         let scope = try SyncDatabaseKeyScope(identity: identity)
-        let sidecarDirectory = URL(fileURLWithPath: url.path + "-wal", isDirectory: true)
+        let sidecarDirectory = URL(fileURLWithPath: url.path + "-journal", isDirectory: true)
         let sentinel = sidecarDirectory.appendingPathComponent("must-survive")
         try FileManager.default.createDirectory(at: sidecarDirectory, withIntermediateDirectories: false)
         try Data("purge sentinel".utf8).write(to: sentinel)
@@ -1853,6 +1897,36 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
 
     private func databaseURL(for identity: SyncBindingIdentity) -> URL {
         SQLiteSyncRepository.bindingDatabaseURL(in: directory, identity: identity)
+    }
+
+    private func physicalDatabaseURLThroughRootOwnedAlias(
+        for identity: SyncBindingIdentity
+    ) throws -> URL {
+        let components = directory.pathComponents
+        guard components.count > 1 else {
+            throw XCTSkip("temporary directory has no top-level component")
+        }
+        let topLevelPath = "/" + components[1]
+        var status = stat()
+        guard lstat(topLevelPath, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFLNK,
+              status.st_uid == 0 else {
+            throw XCTSkip("platform has no root-owned top-level temporary-directory alias")
+        }
+        guard let resolvedTopLevel = Darwin.realpath(topLevelPath, nil) else {
+            throw XCTSkip("platform top-level temporary-directory alias cannot be resolved")
+        }
+        defer { free(resolvedTopLevel) }
+        guard var physicalDirectoryPath = String(validatingUTF8: resolvedTopLevel) else {
+            throw XCTSkip("platform top-level temporary-directory alias is not valid UTF-8")
+        }
+        for component in components.dropFirst(2) {
+            physicalDirectoryPath += "/" + component
+        }
+        return URL(
+            fileURLWithPath: physicalDirectoryPath + "/" + databaseURL(for: identity).lastPathComponent,
+            isDirectory: false
+        )
     }
 
     private func createLegacyDatabase(at url: URL, identity: SyncBindingIdentity) throws {
