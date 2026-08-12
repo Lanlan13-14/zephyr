@@ -10,12 +10,16 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createProofClient } from "./mobile-v1-proof-client.mjs";
-import { startChildOnLoopback, stopChild } from "./mobile-v1-live-server.mjs";
+import {
+  createSecureTestDataDir,
+  removeSecureTestDataDir,
+  startChildOnLoopback,
+  stopChild,
+} from "./mobile-v1-live-server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -23,7 +27,7 @@ const ADMIN_PASSWORD = "mv1-roundtrip-pass";
 const AI_PROVIDER_SECRET = "mv1-provider-secret-canary";
 
 const state = {
-  child: null, base: "", dataDir: "", cookie: "", sid: "",
+  child: null, base: "", dataFixture: null, dataDir: "", cookie: "", sid: "",
   tokenId: "", tokenSecret: "", deviceId: "", access: "", refresh: "", registryHash: "",
   bindGrant: "", bindAttempt: null, bindPayload: null, bindingRevision: 0, bindingToken: "",
   entityId: "", providerId: "", firstChangeSeq: 0, cursor: 0, log: "", signingPrivateKey: null,
@@ -32,10 +36,9 @@ const state = {
 async function cleanup() {
   await stopChild(state.child);
   state.child = null;
-  if (state.dataDir) {
-    try { fs.rmSync(state.dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
-    state.dataDir = "";
-  }
+  removeSecureTestDataDir(state.dataFixture);
+  state.dataFixture = null;
+  state.dataDir = "";
 }
 
 after(cleanup);
@@ -111,7 +114,8 @@ async function createBindGrant(tokenId, deviceId) {
 }
 
 test("boot a server and rotate the default admin password", async () => {
-  state.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-rt-"));
+  state.dataFixture = createSecureTestDataDir("mv1-rt-");
+  state.dataDir = state.dataFixture.dataDir;
   const started = await startChildOnLoopback({
     healthPath: "/healthz",
     log: () => state.log,

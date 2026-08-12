@@ -36,16 +36,18 @@ TAG="3.30.0"
 COMMIT="6b107f0aadbabc47941c5a5b893b88c01792af6d"
 PATCH_REV="cliprdr-reassembly-limit-v1"
 PATCH_FILE=""
-ADDIN_UPSTREAM_SHA256="92efc5c0f3b2c16ee304ef290c5bc3ee528806fe939060dd1a09da8540f36ae4"
-CHANNELS_UPSTREAM_SHA256="6c78a8896421495230bea71ec57afd1f9942e539782e7e84c7e3bcb1e0cd1e95"
+ADDIN_UPSTREAM_LF_SHA256="92efc5c0f3b2c16ee304ef290c5bc3ee528806fe939060dd1a09da8540f36ae4"
+CHANNELS_UPSTREAM_LF_SHA256="6c78a8896421495230bea71ec57afd1f9942e539782e7e84c7e3bcb1e0cd1e95"
 # Git for Windows may have checked an already-existing source tree out with
 # CRLF before this script began enforcing LF for new clones. These are the same
-# audited blobs with only line endings converted; git apply normalizes the two
-# patched files and the post-patch hashes below remain singular.
+# audited files with only line endings converted, so both the upstream and
+# patched states have an exact hash pair for each line-ending convention.
 ADDIN_UPSTREAM_CRLF_SHA256="8e7043fac321dbfc1f918abb922076f7824d4d668927876b4a2cdad97dd88469"
 CHANNELS_UPSTREAM_CRLF_SHA256="d718329cff2136a89951554ff53e991a52a92d63ae1f7548e857c4eb13b61e0f"
-ADDIN_PATCHED_SHA256="d3e5ec1cb9b267540b52f921df146104b13144dc486e10996b239dbe70191ae0"
-CHANNELS_PATCHED_SHA256="972e7de531580d53a164912e6544c0a34d3eca8f9a4e5aaad17cef98e0b33b34"
+ADDIN_PATCHED_LF_SHA256="55f9aeb7714e4c52200a42fa346361068abcd0a3d3eeb17ac7a77e4e268438f8"
+CHANNELS_PATCHED_LF_SHA256="74d177e563ed86e6efc25952b792fbe8df424a4c2209e082bf4b7921dc0dfcb0"
+ADDIN_PATCHED_CRLF_SHA256="d3e5ec1cb9b267540b52f921df146104b13144dc486e10996b239dbe70191ae0"
+CHANNELS_PATCHED_CRLF_SHA256="972e7de531580d53a164912e6544c0a34d3eca8f9a4e5aaad17cef98e0b33b34"
 
 HERE="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 CRATE="$(CDPATH= cd -- "$HERE/.." && pwd)"
@@ -82,15 +84,19 @@ fi
 
 hash_file() {
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{ print tolower($1) }'
+    sha256sum < "$1" | awk '{ print tolower($1) }'
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{ print tolower($1) }'
+    shasum -a 256 < "$1" | awk '{ print tolower($1) }'
   elif command -v openssl >/dev/null 2>&1; then
-    openssl dgst -sha256 "$1" | awk '{ print tolower($NF) }'
+    openssl dgst -sha256 < "$1" | awk '{ print tolower($NF) }'
   else
     echo "ERROR: SHA-256 tool required to verify pinned FreeRDP sources" >&2
     exit 2
   fi
+}
+
+matches_hash_pair() {
+  [ "$addin_hash" = "$1" ] && [ "$channels_hash" = "$2" ]
 }
 
 [ -f "$PATCH_FILE" ] || { echo "ERROR: missing FreeRDP security patch: $PATCH_FILE" >&2; exit 2; }
@@ -103,27 +109,29 @@ ADDIN="$SRC/channels/client/addin.c"
 CHANNELS="$SRC/include/freerdp/client/channels.h"
 addin_hash="$(hash_file "$ADDIN")"
 channels_hash="$(hash_file "$CHANNELS")"
-if { [ "$addin_hash" = "$ADDIN_UPSTREAM_SHA256" ] ||
-     [ "$addin_hash" = "$ADDIN_UPSTREAM_CRLF_SHA256" ]; } &&
-   { [ "$channels_hash" = "$CHANNELS_UPSTREAM_SHA256" ] ||
-     [ "$channels_hash" = "$CHANNELS_UPSTREAM_CRLF_SHA256" ]; }; then
+if matches_hash_pair "$ADDIN_UPSTREAM_LF_SHA256" "$CHANNELS_UPSTREAM_LF_SHA256" ||
+   matches_hash_pair "$ADDIN_UPSTREAM_CRLF_SHA256" "$CHANNELS_UPSTREAM_CRLF_SHA256"; then
   # --check makes an upstream context/offset change a hard build failure. The
   # patch is never applied with fuzz or silently skipped.
-  git -C "$SRC" apply --check "$PATCH_FILE"
-  git -C "$SRC" apply "$PATCH_FILE"
-elif [ "$addin_hash" != "$ADDIN_PATCHED_SHA256" ] ||
-     [ "$channels_hash" != "$CHANNELS_PATCHED_SHA256" ]; then
+  git -C "$SRC" apply --check --unidiff-zero --whitespace=error-all "$PATCH_FILE"
+  git -C "$SRC" apply --unidiff-zero --whitespace=error-all "$PATCH_FILE"
+elif ! matches_hash_pair "$ADDIN_PATCHED_LF_SHA256" "$CHANNELS_PATCHED_LF_SHA256" &&
+     ! matches_hash_pair "$ADDIN_PATCHED_CRLF_SHA256" "$CHANNELS_PATCHED_CRLF_SHA256"; then
   echo "ERROR: pinned FreeRDP files differ from both audited upstream and patched hashes" >&2
   echo "addin.c=$addin_hash channels.h=$channels_hash" >&2
   exit 2
 fi
 
-[ "$(hash_file "$ADDIN")" = "$ADDIN_PATCHED_SHA256" ] &&
-[ "$(hash_file "$CHANNELS")" = "$CHANNELS_PATCHED_SHA256" ] &&
-grep -q '^#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1$' "$CHANNELS" || {
+addin_hash="$(hash_file "$ADDIN")"
+channels_hash="$(hash_file "$CHANNELS")"
+if { matches_hash_pair "$ADDIN_PATCHED_LF_SHA256" "$CHANNELS_PATCHED_LF_SHA256" ||
+     matches_hash_pair "$ADDIN_PATCHED_CRLF_SHA256" "$CHANNELS_PATCHED_CRLF_SHA256"; } &&
+   grep -q '^#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1$' "$CHANNELS"; then
+  :
+else
   echo "ERROR: FreeRDP cliprdr pre-allocation limit was not applied exactly" >&2
   exit 2
-}
+fi
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD"

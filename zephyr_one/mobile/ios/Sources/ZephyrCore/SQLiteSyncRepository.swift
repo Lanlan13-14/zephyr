@@ -314,7 +314,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         try mutate(for: identity) {
             try database.execute(
                 "UPDATE sync_state SET last_attempt_at = ? WHERE " + Self.bindingKeyWhere,
-                [.integer(milliseconds)] + scopeBindings(identity, includeGeneration: false)
+                [.integer(milliseconds)] + Self.scopeBindings(identity, includeGeneration: false)
             )
         }
     }
@@ -323,7 +323,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         try mutate(for: identity) {
             try database.execute(
                 "UPDATE sync_state SET binding_state = ? WHERE " + Self.bindingKeyWhere,
-                [.text(state.rawValue)] + scopeBindings(identity, includeGeneration: false)
+                [.text(state.rawValue)] + Self.scopeBindings(identity, includeGeneration: false)
             )
         }
     }
@@ -332,7 +332,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         try mutate(for: identity) {
             try database.execute(
                 "UPDATE sync_state SET registry_hash = ? WHERE " + Self.bindingKeyWhere,
-                [.text(hash)] + scopeBindings(identity, includeGeneration: false)
+                [.text(hash)] + Self.scopeBindings(identity, includeGeneration: false)
             )
         }
     }
@@ -398,7 +398,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                     try database.execute(
                         "DELETE FROM bootstrap_entities WHERE " + Self.scopeWhere
                             + " AND staging_generation = ? AND entity_type = ? AND entity_id = ?",
-                        scopeBindings(identity) + [
+                        Self.scopeBindings(identity) + [
                             .text(stagingGeneration), .text(change.entityType), .text(change.entityId),
                         ]
                     )
@@ -416,7 +416,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                                   field_mask = excluded.field_mask, payload = excluded.payload,
                                   secret_envelopes = excluded.secret_envelopes
                     """,
-                    scopeBindings(identity) + [
+                    Self.scopeBindings(identity) + [
                         .text(stagingGeneration),
                         .text(change.entityType),
                         .text(change.entityId),
@@ -449,7 +449,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                               expires_at = excluded.expires_at,
                               complete = excluded.complete
                 """,
-                scopeBindings(identity) + [
+                Self.scopeBindings(identity) + [
                     .text(stagingGeneration),
                     .text(page.bootstrapId),
                     .integer(page.snapshotCursor),
@@ -490,7 +490,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             let rows = try database.query(
                 "SELECT operation FROM pending_operations WHERE " + Self.scopeWhere
                     + " ORDER BY created_at, op_id LIMIT ?",
-                scopeBindings(identity) + [.integer(Int64(limit))]
+                Self.scopeBindings(identity) + [.integer(Int64(limit))]
             )
             return try rows.map { try Self.decode(MobileSyncOperation.self, from: $0.blob(0)) }
         }
@@ -511,7 +511,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                     SET batch_id = ?, dispatched_at = ?, attempt_count = attempt_count + 1
                     WHERE \(Self.scopeWhere) AND op_id = ?
                     """,
-                    [.text(batchId), .integer(milliseconds)] + scopeBindings(identity) + [.text(opId)]
+                    [.text(batchId), .integer(milliseconds)] + Self.scopeBindings(identity) + [.text(opId)]
                 )
             }
         }
@@ -538,7 +538,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                             entity_type, entity_id, revision, applied_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        scopeBindings(identity) + [
+                        Self.scopeBindings(identity) + [
                             .text(opId), .text(operation.entityType), .text(operation.entityId),
                             .integer(revision), .integer(operation.clientModifiedAt ?? 0),
                         ]
@@ -547,7 +547,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                     try database.execute(
                         "UPDATE mirror_entities SET revision = ? WHERE " + Self.scopeWhere
                             + " AND entity_type = ? AND entity_id = ?",
-                        [.integer(revision)] + scopeBindings(identity)
+                        [.integer(revision)] + Self.scopeBindings(identity)
                             + [.text(operation.entityType), .text(operation.entityId)]
                     )
                     try refreshPendingFlag(operation.entityType, operation.entityId, identity: identity)
@@ -562,7 +562,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                                 entity_id, owner_id, revision, deleted_at, authoritative
                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
-                            scopeBindings(identity) + [
+                            Self.scopeBindings(identity) + [
                                 .text(conflict.entityType), .text(conflict.entityId),
                                 .text(try Self.ownerValue(
                                     entityType: conflict.entityType,
@@ -585,7 +585,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                     } else {
                         try database.execute(
                             "UPDATE pending_operations SET last_error = ? WHERE " + Self.scopeWhere + " AND op_id = ?",
-                            [.text(errorCode)] + scopeBindings(identity) + [.text(opId)]
+                            [.text(errorCode)] + Self.scopeBindings(identity) + [.text(opId)]
                         )
                     }
                 }
@@ -686,7 +686,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
 
             try database.execute(
                 "UPDATE sync_state SET applied_cursor = ? WHERE " + Self.bindingKeyWhere,
-                [.integer(page.nextCursor)] + scopeBindings(identity, includeGeneration: false)
+                [.integer(page.nextCursor)] + Self.scopeBindings(identity, includeGeneration: false)
             )
         }
         return SyncApplyResult(applied: applied, skipped: skipped)
@@ -703,7 +703,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             }
             try database.execute(
                 "UPDATE sync_state SET acknowledged_cursor = ? WHERE " + Self.bindingKeyWhere,
-                [.integer(cursor)] + scopeBindings(identity, includeGeneration: false)
+                [.integer(cursor)] + Self.scopeBindings(identity, includeGeneration: false)
             )
         }
     }
@@ -717,7 +717,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                     consecutive_failures = 0, next_eligible_at = NULL
                 WHERE \(Self.bindingKeyWhere)
                 """,
-                [.integer(milliseconds)] + scopeBindings(identity, includeGeneration: false)
+                [.integer(milliseconds)] + Self.scopeBindings(identity, includeGeneration: false)
             )
         }
     }
@@ -739,7 +739,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                 [
                     .integer(milliseconds), .text(error.code), .text(error.description),
                     nextEligibleAtMilliseconds.map(SQLiteValue.integer) ?? .null,
-                ] + scopeBindings(identity, includeGeneration: false)
+                ] + Self.scopeBindings(identity, includeGeneration: false)
             )
         }
     }
@@ -769,7 +769,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                 WHERE \(Self.scopeWhere) AND entity_type = ?
                 ORDER BY entity_id
                 """,
-                scopeBindings(identity) + [.text(type)]
+                Self.scopeBindings(identity) + [.text(type)]
             )
             return try rows.map { row in
                 let decoded = try Self.decodeMirrorRow(row)
@@ -788,7 +788,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                        overlap_fields, server_deleted, acl_revoked
                 FROM conflicts WHERE \(Self.scopeWhere) ORDER BY created_at, op_id
                 """,
-                scopeBindings(identity)
+                Self.scopeBindings(identity)
             )
             return try rows.map { row in
                 SyncConflictRecord(
@@ -820,7 +820,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                        consecutive_failures, next_eligible_at
                 FROM sync_state WHERE \(Self.bindingKeyWhere)
                 """,
-                scopeBindings(identity, includeGeneration: false)
+                Self.scopeBindings(identity, includeGeneration: false)
             )
             guard let row else { throw SQLiteSyncRepositoryError.inactiveBinding }
             return SyncRunState(
@@ -860,7 +860,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                     action, base_revision, field_mask, operation, created_at, attempt_count
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                 """,
-                scopeBindings(identity) + [
+                Self.scopeBindings(identity) + [
                     .text(operation.opId), .text(operation.entityType), .text(operation.entityId),
                     .text(operation.action.rawValue), .integer(operation.baseRevision),
                     .blob(try Self.encode(operation.fieldMask)),
@@ -899,7 +899,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                     SELECT generation, binding_record_version
                     FROM sync_state WHERE \(Self.bindingKeyWhere)
                     """,
-                    scopeBindings(identity, includeGeneration: false)
+                    Self.scopeBindings(identity, includeGeneration: false)
                 )
                 if let active,
                    (active.text(0) != identity.generation ||
@@ -914,7 +914,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                     DELETE FROM sync_state WHERE \(Self.bindingKeyWhere)
                       AND generation = ? AND binding_record_version = ?
                     """,
-                    scopeBindings(identity) + [.blob(identity.bindingRecordVersion)]
+                    Self.scopeBindings(identity) + [.blob(identity.bindingRecordVersion)]
                 )
             }
             // Logout/revocation is an erasure boundary, not a logical hide.
@@ -1022,7 +1022,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
     private func currentAppliedCursor(_ identity: SyncBindingIdentity) throws -> Int64 {
         let row = try database.queryOne(
             "SELECT applied_cursor FROM sync_state WHERE " + Self.bindingKeyWhere,
-            scopeBindings(identity, includeGeneration: false)
+            Self.scopeBindings(identity, includeGeneration: false)
         )
         guard let row else { throw SQLiteSyncRepositoryError.inactiveBinding }
         return row.integer(0)
@@ -1066,7 +1066,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                    pages_fetched, entities_staged, expires_at, complete
             FROM bootstrap_runs WHERE \(Self.scopeWhere)
             """,
-            scopeBindings(identity)
+            Self.scopeBindings(identity)
         ) else { return nil }
         return BootstrapRunRow(
             stagingGeneration: row.text(0),
@@ -1086,7 +1086,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
     ) throws -> MobileSyncOperation? {
         guard let data = try database.queryOne(
             "SELECT operation FROM pending_operations WHERE " + Self.scopeWhere + " AND op_id = ?",
-            scopeBindings(identity) + [.text(opId)]
+            Self.scopeBindings(identity) + [.text(opId)]
         )?.blob(0) else { return nil }
         return try Self.decode(MobileSyncOperation.self, from: data)
     }
@@ -1094,7 +1094,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
     private func deletePending(_ opId: String, identity: SyncBindingIdentity) throws {
         try database.execute(
             "DELETE FROM pending_operations WHERE " + Self.scopeWhere + " AND op_id = ?",
-            scopeBindings(identity) + [.text(opId)]
+            Self.scopeBindings(identity) + [.text(opId)]
         )
     }
 
@@ -1110,7 +1110,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             FROM mirror_entities
             WHERE \(Self.scopeWhere) AND entity_type = ? AND entity_id = ?
             """,
-            scopeBindings(identity) + [.text(type), .text(id)]
+            Self.scopeBindings(identity) + [.text(type), .text(id)]
         ) else { return nil }
         let decoded = try Self.decodeMirrorRow(row)
         try Self.requireMirrorOwner(decoded, identity: identity)
@@ -1228,7 +1228,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                 entity_id, owner_id, revision, deleted_at, authoritative
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            scopeBindings(identity) + [
+            Self.scopeBindings(identity) + [
                 .text(type), .text(id),
                 .text(try Self.ownerValue(entityType: type, identity: identity).value),
                 .integer(revision), .integer(deletedAt),
@@ -1240,7 +1240,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
     private func deleteTombstone(type: String, id: String, identity: SyncBindingIdentity) throws {
         try database.execute(
             "DELETE FROM tombstones WHERE " + Self.scopeWhere + " AND entity_type = ? AND entity_id = ?",
-            scopeBindings(identity) + [.text(type), .text(id)]
+            Self.scopeBindings(identity) + [.text(type), .text(id)]
         )
     }
 
@@ -1248,7 +1248,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         for table in ["mirror_entities", "pending_operations", "conflicts"] {
             try database.execute(
                 "DELETE FROM " + table + " WHERE " + Self.scopeWhere + " AND entity_type = ? AND entity_id = ?",
-                scopeBindings(identity) + [.text(type), .text(id)]
+                Self.scopeBindings(identity) + [.text(type), .text(id)]
             )
         }
     }
@@ -1257,7 +1257,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
         precondition(Self.scopedTables.contains(table))
         try database.execute(
             "DELETE FROM " + table + " WHERE " + Self.scopeWhere,
-            scopeBindings(identity)
+            Self.scopeBindings(identity)
         )
     }
 
@@ -1280,7 +1280,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             ) THEN 1 ELSE 0 END
             WHERE \(Self.scopeWhere) AND entity_type = ? AND entity_id = ?
             """,
-            scopeBindings(identity) + [.text(type), .text(id)]
+            Self.scopeBindings(identity) + [.text(type), .text(id)]
         )
     }
 
@@ -1291,7 +1291,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
             WHERE \(Self.scopeWhere) AND entity_type = ? AND entity_id = ?
             ORDER BY created_at, op_id
             """,
-            scopeBindings(identity) + [.text(type), .text(id)]
+            Self.scopeBindings(identity) + [.text(type), .text(id)]
         )
         for row in rows {
             try Self.applyLocalOperation(
@@ -1316,7 +1316,7 @@ public actor SQLiteSyncRepository: SyncRepository, SyncMirrorStore {
                 server_revision, server_payload, overlap_fields, server_deleted, acl_revoked, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            scopeBindings(identity) + [
+            Self.scopeBindings(identity) + [
                 .text(conflict.opId), .text(conflict.entityType), .text(conflict.entityId),
                 .integer(conflict.localBaseRevision), .blob(try Self.encode(conflict.localFieldMask)),
                 .blob(try Self.encode(conflict.localPayload)),

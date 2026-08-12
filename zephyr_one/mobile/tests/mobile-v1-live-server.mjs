@@ -1,4 +1,10 @@
 import net from "node:net";
+import {
+  createSecureTestDataDir,
+  removeSecureTestDataDir,
+} from "../../../tests/helpers/secure-data-dir.mjs";
+
+export { createSecureTestDataDir, removeSecureTestDataDir };
 
 export async function freeLoopbackPorts(count) {
   if (!Number.isInteger(count) || count < 1) throw new RangeError("port count must be a positive integer");

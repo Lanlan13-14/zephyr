@@ -8,11 +8,15 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { startChildOnLoopback, stopChild } from "./mobile-v1-live-server.mjs";
+import {
+  createSecureTestDataDir,
+  removeSecureTestDataDir,
+  startChildOnLoopback,
+  stopChild,
+} from "./mobile-v1-live-server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -20,20 +24,21 @@ const repoRoot = path.resolve(here, "..", "..", "..");
 let child = null;
 let base = "";
 let dataDir = "";
+let dataFixture = null;
 
 async function cleanup() {
   await stopChild(child);
   child = null;
-  if (dataDir) {
-    try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
-    dataDir = "";
-  }
+  removeSecureTestDataDir(dataFixture);
+  dataFixture = null;
+  dataDir = "";
 }
 
 after(cleanup);
 
 test("boot the server with mobile v1 mounted", async () => {
-  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-api-"));
+  dataFixture = createSecureTestDataDir("mv1-api-");
+  dataDir = dataFixture.dataDir;
   let log = "";
   const started = await startChildOnLoopback({
     healthPath: "/api/mobile/v1/capabilities",

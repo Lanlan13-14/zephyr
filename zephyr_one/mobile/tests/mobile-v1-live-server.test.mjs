@@ -1,12 +1,51 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import {
+  createSecureTestDataDir,
   freeLoopbackPorts,
+  removeSecureTestDataDir,
   startChildOnLoopback,
   stopChild,
   waitForChildHttp,
 } from "./mobile-v1-live-server.mjs";
+
+const LIVE_SERVER_SUITES = [
+  "mobile-v1-api.test.mjs",
+  "mobile-v1-roundtrip.test.mjs",
+  "mobile-v1-secrets.test.mjs",
+  "mobile-v1-shared.test.mjs",
+];
+
+test("mobile server data has a private wrapper instead of using the shared temp parent", () => {
+  const fixture = createSecureTestDataDir("mv1-private-contract-");
+  try {
+    assert.equal(path.dirname(fixture.dataDir), fixture.root);
+    assert.notEqual(path.dirname(fixture.root), fixture.root);
+    assert.equal(fs.lstatSync(fixture.root).isSymbolicLink(), false);
+    assert.equal(fs.lstatSync(fixture.dataDir).isSymbolicLink(), false);
+    if (process.platform !== "win32") {
+      for (const directory of [fixture.root, fixture.dataDir]) {
+        const stat = fs.statSync(directory);
+        assert.equal(stat.uid, process.geteuid());
+        assert.equal(stat.mode & 0o777, 0o700);
+      }
+    }
+  } finally {
+    removeSecureTestDataDir(fixture);
+  }
+  assert.equal(fs.existsSync(fixture.root), false, "cleanup removes the private wrapper root");
+});
+
+test("all mobile live-server suites use the private data fixture", () => {
+  for (const suite of LIVE_SERVER_SUITES) {
+    const source = fs.readFileSync(path.join(import.meta.dirname, suite), "utf8");
+    assert.match(source, /createSecureTestDataDir\(/, suite);
+    assert.doesNotMatch(source, /mkdtempSync\(path\.join\(os\.tmpdir\(\)/, suite);
+  }
+});
 
 test("loopback allocation returns distinct HTTP and AI ports", async () => {
   const ports = await freeLoopbackPorts(2);

@@ -1,1 +1,2 @@
 public/editor/zephyr-editor.bundle.js -whitespace
+*.sh text eol=lf

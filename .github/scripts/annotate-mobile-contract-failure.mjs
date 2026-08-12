@@ -3,14 +3,21 @@
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-const MAX_ITEMS = 20;
+const MAX_TESTS = 4;
 const MAX_TEXT = 500;
-const FIELD_PATTERN = /^\s+(error|code|name|failureType):\s*(.*?)\s*$/;
-const TEST_PATTERN = /^\s*not ok\s+\d+\s+-\s+(.+?)(?:\s+#\s+(?:SKIP|TODO).*)?$/i;
+const FIELD_ORDER = ['error', 'code', 'name', 'failureType'];
+const FIELD_PATTERN = /^(\s+)(error|code|name|failureType):(?:\s*(.*?))?\s*$/;
+const TEST_PATTERN = /^\s*not ok\s+\d+\s+-\s+(.+?)\s*$/i;
+const BLOCK_SCALAR_PATTERN = /^[|>][+-]?$/;
+const SERVER_OUTPUT_MARKER = '--- server output ---';
 
 function redactCredentials(value) {
   let text = value;
 
+  text = text.replace(
+    /([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi,
+    '$1[REDACTED]@',
+  );
   text = text.replace(
     /\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*[:=]\s*(?:(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+|"[^"]*"|'[^']*'|[^\s,;]*)/gi,
     (match) => `${match.split(/[:=]/, 1)[0]}=[REDACTED]`,
@@ -42,6 +49,7 @@ function redactAbsolutePaths(value) {
   text = text.replace(/file:\/{2,3}(?:[A-Za-z]:)?\/[^\s'"<>|]*/gi, '[PATH]');
   text = text.replace(/(?:[A-Za-z]:[\\/]|\\\\)[^\s'"<>|]*/g, '[PATH]');
   text = text.replace(/(^|[\s('"=])\/(?!\/)[^\s'"<>|]*/g, '$1[PATH]');
+  text = text.replace(/(^|[\s('"=])\.\.?[\\/][^\s'"<>|]*/g, '$1[PATH]');
 
   return text;
 }
@@ -70,29 +78,109 @@ export function sanitizePublicText(value) {
   return text.slice(0, MAX_TEXT);
 }
 
-function unique(items) {
-  return [...new Set(items.filter(Boolean))].slice(0, MAX_ITEMS);
+function unique(items, limit = items.length) {
+  return [...new Set(items.filter(Boolean))].slice(0, limit);
+}
+
+function indentation(line) {
+  return line.match(/^\s*/)[0].length;
+}
+
+function readBlockScalar(lines, start, parentIndent) {
+  const block = [];
+  let index = start;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    if (line.trim() !== '' && indentation(line) <= parentIndent) break;
+    block.push(line);
+    index += 1;
+  }
+
+  const contentIndent = block
+    .filter((line) => line.trim() !== '')
+    .reduce((minimum, line) => Math.min(minimum, indentation(line)), Infinity);
+  const value = block
+    .map((line) => Number.isFinite(contentIndent) ? line.slice(contentIndent) : '')
+    .join('\n')
+    .trim();
+
+  return { value, nextIndex: index };
+}
+
+function firstMessageLine(value) {
+  return String(value ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean) ?? '';
+}
+
+function isAllowedServerCause(value) {
+  return [
+    /^(?:Error|TypeError|ReferenceError|SyntaxError|RangeError)(?:\s*\[[A-Z0-9_]+\])?:\s+.*\b(?:cannot|could not|failed|missing|not found|unsupported|unavailable|invalid|load|binding|module|package|listen|E[A-Z]{3,})\b.*$/i,
+    /^(?:Cannot find (?:module|package)|Could not (?:find|load)|Failed to (?:find|load|initialize|start)|No native build was found|Module did not self-register|The module .+ was compiled against|listen E(?:ADDRINUSE|ACCES)\b).+$/i,
+  ].some((pattern) => pattern.test(value));
+}
+
+function extractServerCause(errorValue) {
+  const lines = String(errorValue ?? '').split(/\r?\n/);
+  const markerIndex = lines.findIndex((line) => line.trim() === SERVER_OUTPUT_MARKER);
+  if (markerIndex < 0) return '';
+
+  for (const line of lines.slice(markerIndex + 1)) {
+    const candidate = line.trim().replace(/^\[[^\]\r\n]{1,40}\]\s*/, '');
+    if (!candidate || !isAllowedServerCause(candidate)) continue;
+    return sanitizePublicText(candidate);
+  }
+  return '';
 }
 
 export function extractPublicDiagnostics(logText) {
+  const lines = String(logText ?? '').split(/\r?\n/);
   const tests = [];
-  const reasons = [];
+  let firstFailureIndex = -1;
 
-  for (const line of String(logText ?? '').split(/\r?\n/)) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const testMatch = line.match(TEST_PATTERN);
-    if (testMatch) {
-      tests.push(sanitizePublicText(testMatch[1]));
-      continue;
-    }
-
-    const fieldMatch = line.match(FIELD_PATTERN);
-    if (fieldMatch) {
-      const value = sanitizePublicText(fieldMatch[2]);
-      if (value) reasons.push(`${fieldMatch[1]}: ${value}`);
-    }
+    if (!testMatch || /\s+#\s+(?:SKIP|TODO)\b/i.test(testMatch[1])) continue;
+    if (firstFailureIndex < 0) firstFailureIndex = index;
+    tests.push(sanitizePublicText(testMatch[1]));
   }
 
-  return { tests: unique(tests), reasons: unique(reasons) };
+  if (firstFailureIndex < 0) return { tests: [], reasons: [] };
+
+  const fields = new Map();
+  let errorValue = '';
+  for (let index = firstFailureIndex + 1; index < lines.length;) {
+    if (TEST_PATTERN.test(lines[index])) break;
+
+    const fieldMatch = lines[index].match(FIELD_PATTERN);
+    if (fieldMatch) {
+      const [, whitespace, field, inlineValue = ''] = fieldMatch;
+      let value = inlineValue;
+      let nextIndex = index + 1;
+      if (BLOCK_SCALAR_PATTERN.test(inlineValue)) {
+        const scalar = readBlockScalar(lines, nextIndex, whitespace.length);
+        value = scalar.value;
+        nextIndex = scalar.nextIndex;
+      }
+      if (!fields.has(field) && value) fields.set(field, firstMessageLine(value));
+      if (field === 'error' && !errorValue) errorValue = value;
+      index = nextIndex;
+      continue;
+    }
+    index += 1;
+  }
+
+  const reasons = FIELD_ORDER.flatMap((field) => {
+    const value = sanitizePublicText(fields.get(field));
+    return value ? [`${field}: ${value}`] : [];
+  });
+  const serverCause = extractServerCause(errorValue);
+  if (serverCause) reasons.push(`server startup reason: ${serverCause}`);
+
+  return { tests: unique(tests, MAX_TESTS), reasons: unique(reasons) };
 }
 
 function escapeWorkflowData(value) {
@@ -138,12 +226,10 @@ export async function main(argv = process.argv.slice(2)) {
   const platform = safePlatform(args.get('--platform'));
   const logPath = args.get('--log');
 
-  emitError(
-    'Zephyr One mobile contracts',
-    `Contract suite failed (exit ${exitCode}; platform ${platform}).`,
-  );
-
-  if (!logPath) return;
+  if (!logPath) {
+    emitError('Zephyr One mobile contracts', 'Sanitized diagnostics were unavailable.');
+    return;
+  }
 
   let logText;
   try {
@@ -154,15 +240,18 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const diagnostics = extractPublicDiagnostics(logText);
-  for (const test of diagnostics.tests) {
-    emitError('Mobile contract test failed', test);
-  }
   for (const reason of diagnostics.reasons) {
     emitError('Mobile contract failure reason', reason);
   }
+  for (const test of diagnostics.tests) {
+    emitError('Mobile contract test failed', test);
+  }
 
   if (diagnostics.tests.length === 0 && diagnostics.reasons.length === 0) {
-    emitError('Zephyr One mobile contracts', 'No allowlisted diagnostic was available.');
+    emitError(
+      'Zephyr One mobile contracts',
+      `Contract suite failed (exit ${exitCode}; platform ${platform}); no allowlisted diagnostic was available.`,
+    );
   }
 }
 

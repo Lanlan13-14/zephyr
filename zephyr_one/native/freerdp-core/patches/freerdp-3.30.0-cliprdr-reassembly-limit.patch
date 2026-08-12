@@ -1,19 +1,9 @@
-diff --git a/include/freerdp/client/channels.h b/include/freerdp/client/channels.h
---- a/include/freerdp/client/channels.h
-+++ b/include/freerdp/client/channels.h
-@@ -28,0 +28,8 @@
-+/* Zephyr One security contract: cliprdr static-channel messages are rejected
-+ * before the generic reassembler allocates its server-controlled totalLength. */
-+#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1
-+#define FREERDP_ZEPHYR_CLIPRDR_MAX_PAYLOAD_BYTES (4U * 1024U * 1024U)
-+#define FREERDP_ZEPHYR_CLIPRDR_HEADER_BYTES 8U
-+#define FREERDP_ZEPHYR_CLIPRDR_MAX_MESSAGE_BYTES \
-+	(FREERDP_ZEPHYR_CLIPRDR_MAX_PAYLOAD_BYTES + FREERDP_ZEPHYR_CLIPRDR_HEADER_BYTES)
-+
 diff --git a/channels/client/addin.c b/channels/client/addin.c
+index 6ba1697..c6e8e4b 100644
 --- a/channels/client/addin.c
 +++ b/channels/client/addin.c
-@@ -669,0 +669,16 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLen
+@@ -669 +669,17 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLeng
+-	if (dataFlags & CHANNEL_FLAG_FIRST)
 +	const BOOL boundedCliprdr =
 +	    internals->channel_name && (strcmp(internals->channel_name, "cliprdr") == 0);
 +	if (boundedCliprdr &&
@@ -30,7 +20,9 @@ diff --git a/channels/client/addin.c b/channels/client/addin.c
 +		return ERROR_INVALID_DATA;
 +	}
 +
-@@ -686,0 +702,14 @@ if (dataFlags & CHANNEL_FLAG_FIRST)
++	if (dataFlags & CHANNEL_FLAG_FIRST)
+@@ -686 +702,15 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLeng
+-	if (!Stream_EnsureRemainingCapacity(data_in, dataLength))
 +	if (boundedCliprdr)
 +	{
 +		const size_t position = Stream_GetPosition(data_in);
@@ -45,3 +37,23 @@ diff --git a/channels/client/addin.c b/channels/client/addin.c
 +		}
 +	}
 +
++	if (!Stream_EnsureRemainingCapacity(data_in, dataLength))
+diff --git a/include/freerdp/client/channels.h b/include/freerdp/client/channels.h
+index e27ce43..8e290d2 100644
+--- a/include/freerdp/client/channels.h
++++ b/include/freerdp/client/channels.h
+@@ -27,3 +27,11 @@
+-#include <freerdp/channels/channels.h>
+-
+-#ifdef __cplusplus
++#include <freerdp/channels/channels.h>
++
++/* Zephyr One security contract: cliprdr static-channel messages are rejected
++ * before the generic reassembler allocates its server-controlled totalLength. */
++#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1
++#define FREERDP_ZEPHYR_CLIPRDR_MAX_PAYLOAD_BYTES (4U * 1024U * 1024U)
++#define FREERDP_ZEPHYR_CLIPRDR_HEADER_BYTES 8U
++#define FREERDP_ZEPHYR_CLIPRDR_MAX_MESSAGE_BYTES \
++	(FREERDP_ZEPHYR_CLIPRDR_MAX_PAYLOAD_BYTES + FREERDP_ZEPHYR_CLIPRDR_HEADER_BYTES)
++
++#ifdef __cplusplus

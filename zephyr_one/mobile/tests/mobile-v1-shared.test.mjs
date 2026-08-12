@@ -14,13 +14,17 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createProofClient } from "./mobile-v1-proof-client.mjs";
-import { startChildOnLoopback, stopChild } from "./mobile-v1-live-server.mjs";
+import {
+  createSecureTestDataDir,
+  removeSecureTestDataDir,
+  startChildOnLoopback,
+  stopChild,
+} from "./mobile-v1-live-server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -34,10 +38,9 @@ const state = {};
 async function cleanup() {
   await stopChild(state.child);
   state.child = null;
-  if (state.dataDir) {
-    try { fs.rmSync(state.dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
-    state.dataDir = "";
-  }
+  removeSecureTestDataDir(state.dataFixture);
+  state.dataFixture = null;
+  state.dataDir = "";
 }
 
 after(cleanup);
@@ -99,7 +102,8 @@ async function login(username, password) {
 }
 
 test("boot a server with an owner and a borrower account", async () => {
-  state.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-shared-"));
+  state.dataFixture = createSecureTestDataDir("mv1-shared-");
+  state.dataDir = state.dataFixture.dataDir;
   let log = "";
   const started = await startChildOnLoopback({
     healthPath: "/api/mobile/v1/capabilities",

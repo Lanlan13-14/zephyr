@@ -18,19 +18,23 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createProofClient } from "./mobile-v1-proof-client.mjs";
-import { startChildOnLoopback, stopChild } from "./mobile-v1-live-server.mjs";
+import {
+  createSecureTestDataDir,
+  removeSecureTestDataDir,
+  startChildOnLoopback,
+  stopChild,
+} from "./mobile-v1-live-server.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
 
 const state = {
-  child: null, base: "", dataDir: "", sid: "", tokenId: "",
+  child: null, base: "", dataFixture: null, dataDir: "", sid: "", tokenId: "",
   deviceId: "", access: "", registryHash: "",
   serverId: "", serverKey: null, serverKeyVersion: 0,
   entityId: "", revision: 0, signingPrivateKey: null, ownerUserId: "",
@@ -40,10 +44,9 @@ const state = {
 async function cleanup() {
   await stopChild(state.child);
   state.child = null;
-  if (state.dataDir) {
-    try { fs.rmSync(state.dataDir, { recursive: true, force: true }); } catch (err) { /* windows lock */ }
-    state.dataDir = "";
-  }
+  removeSecureTestDataDir(state.dataFixture);
+  state.dataFixture = null;
+  state.dataDir = "";
 }
 
 after(cleanup);
@@ -165,7 +168,8 @@ async function seal(plaintext, aad, keyVersion, entityRevision) {
 }
 
 test("boot a server and bind a device", async () => {
-  state.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "mv1-secret-"));
+  state.dataFixture = createSecureTestDataDir("mv1-secret-");
+  state.dataDir = state.dataFixture.dataDir;
   const started = await startChildOnLoopback({
     healthPath: "/api/mobile/v1/capabilities",
     log: () => state.serverLog,
