@@ -177,6 +177,30 @@ test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-eras
   assert.match(repository, /FileProtectionType\.complete/);
   assert.doesNotMatch(repository, /completeUntilFirstUserAuthentication/);
 
+  const trustedLocationStart = repository.indexOf('private func trustedSQLiteLocation');
+  const migrationHooksStart = repository.indexOf('public struct SQLiteSyncMigrationHooks');
+  const trustedLocation = repository.slice(trustedLocationStart, migrationHooksStart);
+  assert.match(
+    trustedLocation,
+    /let topLevelPath = "\/" \+ components\[1\][\s\S]*lstat\(topLevelPath, &topLevelStatus\)[\s\S]*topLevelStatus\.st_uid == 0[\s\S]*Darwin\.realpath\(topLevelPath, nil\)[\s\S]*lstat\(resolvedTopLevelPath, &resolvedStatus\)/,
+    'only a root-owned top-level alias may be resolved to its physical directory',
+  );
+  assert.doesNotMatch(
+    trustedLocation,
+    /lstat\([^\n]*\.path/,
+    'lstat inputs must not be URL directory paths, which may end in a slash and follow links',
+  );
+  assert.doesNotMatch(
+    trustedLocation,
+    /resolvingSymlinksInPath/,
+    'Foundation must not rewrite a physical top-level alias back to its compatibility name',
+  );
+  assert.match(
+    trustedLocation,
+    /for component in components\.dropFirst\(2\)[\s\S]*let candidatePath = trustedParentPath \+ "\/" \+ component[\s\S]*lstat\(candidatePath, &status\)/,
+    'caller-controlled descendants must remain individually lstat-verified without link following',
+  );
+
   for (const component of ['serverID', 'accountID', 'deviceID', 'generation']) {
     assert.match(keyStore, new RegExp('public let ' + component + ': String'));
   }
@@ -238,6 +262,11 @@ test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-eras
     repositoryTests,
     /testExistingTargetRejectsUnownedCrashStagingWithoutTouchingTargetOrKey/,
     'an unowned staging collision must not be ignored just because a target exists',
+  );
+  assert.match(
+    repositoryTests,
+    /testRootOwnedTopLevelTemporaryAliasResolvesToPhysicalDirectory/,
+    'the macOS temporary-directory compatibility alias must remain usable without trusting descendants',
   );
   assert.match(
     repositoryTests,
@@ -508,7 +537,7 @@ test('every type the Swift references is declared somewhere in the tree', () => 
      * which DEVELOPMENT.md 13.3 requires to be unguessable. */
     'SystemRandomNumberGenerator',
     // XCTest API surface used by the suites
-    'XCTestCase', 'XCTUnwrap', 'XCTFail',
+    'XCTestCase', 'XCTSkip', 'XCTUnwrap', 'XCTFail',
     'XCTAssertEqual', 'XCTAssertNotEqual', 'XCTAssertTrue', 'XCTAssertFalse',
     'XCTAssertNil', 'XCTAssertNotNil', 'XCTAssertThrowsError', 'XCTAssertNoThrow',
     'XCTAssertGreaterThan', 'XCTAssertGreaterThanOrEqual',

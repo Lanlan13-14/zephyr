@@ -19,12 +19,14 @@ private func trustedSQLiteLocation(
         throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
     }
 
-    var trustedParent = URL(fileURLWithPath: "/", isDirectory: true)
-    let topLevel = trustedParent.appendingPathComponent(components[1], isDirectory: true)
+    // URL directory paths may gain a trailing slash, which makes lstat follow
+    // a final symlink. Keep every path passed to lstat as an explicit string.
+    let topLevelPath = "/" + components[1]
     var topLevelStatus = stat()
-    guard lstat(topLevel.path, &topLevelStatus) == 0 else {
+    guard lstat(topLevelPath, &topLevelStatus) == 0 else {
         throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
     }
+    var trustedParentPath: String
     if (topLevelStatus.st_mode & S_IFMT) == S_IFLNK {
         // Darwin exposes root-owned compatibility aliases such as /var ->
         // /private/var. Resolve only this privileged boundary; resolving any
@@ -32,37 +34,50 @@ private func trustedSQLiteLocation(
         guard topLevelStatus.st_uid == 0 else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
         }
-        trustedParent = topLevel.resolvingSymlinksInPath()
+        guard let resolvedTopLevel = Darwin.realpath(topLevelPath, nil) else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+        }
+        defer { free(resolvedTopLevel) }
+        let resolvedTopLevelPath = String(cString: resolvedTopLevel)
+        let standardizedResolvedTopLevelPath = URL(
+            fileURLWithPath: resolvedTopLevelPath,
+            isDirectory: false
+        ).standardizedFileURL.path
+        guard resolvedTopLevelPath.hasPrefix("/"),
+              resolvedTopLevelPath == standardizedResolvedTopLevelPath else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+        }
         var resolvedStatus = stat()
-        guard lstat(trustedParent.path, &resolvedStatus) == 0,
+        guard lstat(resolvedTopLevelPath, &resolvedStatus) == 0,
               (resolvedStatus.st_mode & S_IFMT) == S_IFDIR else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
         }
+        trustedParentPath = resolvedTopLevelPath
     } else {
         guard (topLevelStatus.st_mode & S_IFMT) == S_IFDIR else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
         }
-        trustedParent = topLevel
+        trustedParentPath = topLevelPath
     }
 
     for component in components.dropFirst(2) {
-        trustedParent.appendPathComponent(component, isDirectory: true)
+        let candidatePath = trustedParentPath + "/" + component
         var status = stat()
-        if lstat(trustedParent.path, &status) == 0 {
+        if lstat(candidatePath, &status) == 0 {
             guard (status.st_mode & S_IFMT) == S_IFDIR else {
                 throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
             }
+            trustedParentPath = candidatePath
             continue
         }
         if allowMissingParentTail, errno == ENOENT {
+            trustedParentPath = candidatePath
             continue
         } else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
         }
     }
-    return trustedParent
-        .appendingPathComponent(url.lastPathComponent, isDirectory: false)
-        .path
+    return trustedParentPath + "/" + url.lastPathComponent
 }
 
 public struct SQLiteSyncMigrationHooks: Sendable {

@@ -748,6 +748,24 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: databaseURL(for: identity).path))
     }
 
+    func testRootOwnedTopLevelTemporaryAliasResolvesToPhysicalDirectory() async throws {
+        let components = directory.pathComponents
+        guard components.count > 1 else {
+            throw XCTSkip("temporary directory has no top-level component")
+        }
+        let topLevelPath = "/" + components[1]
+        var status = stat()
+        guard lstat(topLevelPath, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFLNK,
+              status.st_uid == 0 else {
+            throw XCTSkip("platform has no root-owned top-level temporary-directory alias")
+        }
+
+        let identity = binding(generation: "root-top-level-alias")
+        let store = try repository(identity)
+        XCTAssertEqual(try await store.snapshot()?.identity, identity)
+    }
+
     func testIntermediateDatabaseDirectorySymlinkCannotEscapeBeforeCreatingAKey() throws {
         let trustedRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("zephyr-sync-trusted-\(UUID().uuidString)", isDirectory: true)
@@ -1956,25 +1974,26 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
         guard components.count > 1 else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("migration staging fixture path")
         }
-        let topLevel = URL(fileURLWithPath: "/", isDirectory: true)
-            .appendingPathComponent(components[1], isDirectory: true)
+        let topLevelPath = "/" + components[1]
         var status = stat()
-        guard lstat(topLevel.path, &status) == 0 else {
+        guard lstat(topLevelPath, &status) == 0 else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("migration staging fixture path")
         }
-        var canonicalParent = topLevel
+        var canonicalParentPath = topLevelPath
         if (status.st_mode & S_IFMT) == S_IFLNK {
             guard status.st_uid == 0 else {
                 throw SQLiteSyncRepositoryError.databaseIntegrityFailed("migration staging fixture path")
             }
-            canonicalParent = topLevel.resolvingSymlinksInPath()
+            guard let resolvedTopLevel = Darwin.realpath(topLevelPath, nil) else {
+                throw SQLiteSyncRepositoryError.databaseIntegrityFailed("migration staging fixture path")
+            }
+            defer { free(resolvedTopLevel) }
+            canonicalParentPath = String(cString: resolvedTopLevel)
         }
         for component in components.dropFirst(2) {
-            canonicalParent.appendPathComponent(component, isDirectory: true)
+            canonicalParentPath += "/" + component
         }
-        return canonicalParent
-            .appendingPathComponent(stagingURL.lastPathComponent, isDirectory: false)
-            .path
+        return canonicalParentPath + "/" + stagingURL.lastPathComponent
     }
 
     private func binding(generation: String = "generation-1") -> SyncBindingIdentity {
