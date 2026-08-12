@@ -13,7 +13,7 @@ diff --git a/include/freerdp/client/channels.h b/include/freerdp/client/channels
 diff --git a/channels/client/addin.c b/channels/client/addin.c
 --- a/channels/client/addin.c
 +++ b/channels/client/addin.c
-@@ -670,0 +670,16 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLen
+@@ -669,0 +669,16 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLen
 +	const BOOL boundedCliprdr =
 +	    internals->channel_name && (strcmp(internals->channel_name, "cliprdr") == 0);
 +	if (boundedCliprdr &&
@@ -30,7 +30,7 @@ diff --git a/channels/client/addin.c b/channels/client/addin.c
 +		return ERROR_INVALID_DATA;
 +	}
 +
-@@ -687,0 +703,14 @@ UINT channel_client_post_message(void* MsgsHandle, LPVOID pData, UINT32 dataLen
+@@ -686,0 +702,14 @@ if (dataFlags & CHANNEL_FLAG_FIRST)
 +	if (boundedCliprdr)
 +	{
 +		const size_t position = Stream_GetPosition(data_in);

@@ -1,6 +1,6 @@
 import Foundation
 
-#if canImport(BackgroundTasks)
+#if os(iOS) && canImport(BackgroundTasks)
 import BackgroundTasks
 #endif
 
@@ -119,7 +119,7 @@ public final class PushNotificationCoordinator: @unchecked Sendable {
     }
 }
 
-#if canImport(BackgroundTasks)
+#if os(iOS) && canImport(BackgroundTasks)
 private final class BackgroundTaskCompletion: @unchecked Sendable {
     private let lock = NSLock()
     private var completed = false

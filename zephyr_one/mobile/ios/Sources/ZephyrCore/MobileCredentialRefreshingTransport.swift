@@ -1,4 +1,5 @@
 import Foundation
+import ZephyrContracts
 
 public protocol MobileBindingAPI: SyncTransport {
     func login(
