@@ -657,10 +657,10 @@ final class MobileApiClientTests: XCTestCase {
 
         let ack = try await client.ack(MobileAckRequest(cursor: 6))
         let status = try await client.status()
-        let now = try await client.now()
+        let nowResponse = try await client.now()
         XCTAssertEqual(ack.ok, true)
         XCTAssertEqual(status.cursor, 6)
-        XCTAssertEqual(now.cursor, 7)
+        XCTAssertEqual(nowResponse.cursor, 7)
         XCTAssertEqual(challengeCount, 6)
         XCTAssertEqual(
             paths,
@@ -1462,7 +1462,7 @@ private final class URLProtocolStub: URLProtocol {
 
         let end = min(offset + chunkSize, data.count)
         client?.urlProtocol(self, didLoad: data.subdata(in: offset..<end))
-        let sendNext = { [weak self] in
+        let sendNext: () -> Void = { [weak self] in
             self?.send(data, offset: end, chunkSize: chunkSize)
         }
         if Self.chunkDelay > 0 {
