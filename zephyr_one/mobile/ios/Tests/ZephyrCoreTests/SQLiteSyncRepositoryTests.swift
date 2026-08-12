@@ -704,13 +704,14 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
                 keyStore: keyStore,
                 legacyDatabaseURL: legacyURL,
                 migrationHooks: SQLiteSyncMigrationHooks { stage in
-                    if stage == .beforePromotion { throw MigrationInterruption.simulatedCrash }
+                    if stage == .promoted { throw MigrationInterruption.simulatedCrash }
                 }
             )
         ) { error in
             XCTAssertEqual(error as? MigrationInterruption, .simulatedCrash)
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: targetURL.path))
         XCTAssertNotNil(keyStore.key(for: scope))
 
         try SQLiteSyncRepository.eraseEncryptedStorageForCleanup(
