@@ -38,13 +38,27 @@ private func trustedSQLiteLocation(
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
         }
         defer { free(resolvedTopLevel) }
-        let resolvedTopLevelPath = String(cString: resolvedTopLevel)
-        let standardizedResolvedTopLevelPath = URL(
-            fileURLWithPath: resolvedTopLevelPath,
-            isDirectory: false
-        ).standardizedFileURL.path
-        guard resolvedTopLevelPath.hasPrefix("/"),
-              resolvedTopLevelPath == standardizedResolvedTopLevelPath else {
+        guard let resolvedTopLevelPath = String(validatingUTF8: resolvedTopLevel) else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+        }
+        // realpath already returned the physical canonical path. Foundation
+        // may rewrite it to a compatibility alias (for example /private/var
+        // back to /var), so validate its POSIX bytes without URL round-trips.
+        let resolvedBytes = Array(resolvedTopLevelPath.utf8)
+        guard resolvedBytes.first == 0x2F,
+              resolvedBytes.count > 1,
+              resolvedBytes.last != 0x2F else {
+            throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
+        }
+        let resolvedComponents = resolvedBytes.dropFirst().split(
+            separator: 0x2F,
+            omittingEmptySubsequences: false
+        )
+        guard resolvedComponents.allSatisfy({ component in
+            !component.isEmpty
+                && !component.elementsEqual([0x2E])
+                && !component.elementsEqual([0x2E, 0x2E])
+        }) else {
             throw SQLiteSyncRepositoryError.databaseIntegrityFailed("unsafe_database_directory")
         }
         var resolvedStatus = stat()

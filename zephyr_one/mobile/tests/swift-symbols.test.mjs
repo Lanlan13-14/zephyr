@@ -190,10 +190,30 @@ test('the iOS sync mirror is SQLCipher keyed, owner-migrated, and lifecycle-eras
     /lstat\([^\n]*\.path/,
     'lstat inputs must not be URL directory paths, which may end in a slash and follow links',
   );
+  const realpathValidationStart = trustedLocation.indexOf(
+    'guard let resolvedTopLevel = Darwin.realpath',
+  );
+  const realpathValidationEnd = trustedLocation.indexOf(
+    'trustedParentPath = resolvedTopLevelPath',
+    realpathValidationStart,
+  );
+  assert.ok(
+    realpathValidationStart >= 0 && realpathValidationEnd > realpathValidationStart,
+    'the physical top-level alias validation must be locatable',
+  );
+  const realpathValidation = trustedLocation.slice(
+    realpathValidationStart,
+    realpathValidationEnd,
+  );
   assert.doesNotMatch(
-    trustedLocation,
-    /resolvingSymlinksInPath/,
-    'Foundation must not rewrite a physical top-level alias back to its compatibility name',
+    realpathValidation,
+    /standardizedFileURL|resolvingSymlinksInPath/,
+    'Foundation must not rewrite a realpath result back to its compatibility alias',
+  );
+  assert.match(
+    realpathValidation,
+    /Array\(resolvedTopLevelPath\.utf8\)[\s\S]*\.first == 0x2F[\s\S]*\.count > 1[\s\S]*\.last != 0x2F[\s\S]*split\([\s\S]*separator: 0x2F,[\s\S]*omittingEmptySubsequences: false[\s\S]*!component\.isEmpty[\s\S]*!component\.elementsEqual\(\[0x2E\]\)[\s\S]*!component\.elementsEqual\(\[0x2E, 0x2E\]\)/,
+    'realpath results must stay absolute, non-root and canonical by POSIX byte components',
   );
   assert.match(
     trustedLocation,

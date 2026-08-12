@@ -760,6 +760,16 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
               status.st_uid == 0 else {
             throw XCTSkip("platform has no root-owned top-level temporary-directory alias")
         }
+        guard let resolvedTopLevel = Darwin.realpath(topLevelPath, nil) else {
+            throw XCTSkip("platform top-level temporary-directory alias cannot be resolved")
+        }
+        defer { free(resolvedTopLevel) }
+        let resolvedTopLevelPath = String(cString: resolvedTopLevel)
+        XCTAssertNotEqual(
+            resolvedTopLevelPath,
+            URL(fileURLWithPath: resolvedTopLevelPath).standardizedFileURL.path,
+            "the fixture must exercise Foundation rewriting the physical path to an alias"
+        )
 
         let identity = binding(generation: "root-top-level-alias")
         let store = try repository(identity)
