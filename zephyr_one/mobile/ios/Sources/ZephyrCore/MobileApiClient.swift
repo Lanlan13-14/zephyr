@@ -1506,6 +1506,7 @@ public final class MobileApiClient: @unchecked Sendable {
         }
 
         let attemptCount = proofBinding == nil ? 1 : 2
+        var sensitiveValues = baseSensitiveValues
         for attempt in 0..<attemptCount {
             try Task.checkCancellation()
             let requestId = attempt == 0 ? initialRequestId : safeRequestId()
@@ -1519,7 +1520,6 @@ public final class MobileApiClient: @unchecked Sendable {
                 sensitiveGrant: sensitiveGrant,
                 requestId: requestId
             )
-            var sensitiveValues = baseSensitiveValues
             if let proofBinding, let proofCoordinator {
                 let authorization = try await proofAuthorization(
                     coordinator: proofCoordinator,

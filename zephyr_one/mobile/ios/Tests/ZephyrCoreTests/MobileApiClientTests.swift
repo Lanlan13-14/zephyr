@@ -940,6 +940,7 @@ final class MobileApiClientTests: XCTestCase {
         var challengeCount = 0
         var targetCount = 0
         var issuedNonces = [String]()
+        var issuedProofs = [String]()
 
         URLProtocolStub.handler = { request in
             let path = try XCTUnwrap(request.url?.path)
@@ -974,14 +975,19 @@ final class MobileApiClientTests: XCTestCase {
             let proof = try XCTUnwrap(request.value(forHTTPHeaderField: "X-Zephyr-Device-Proof"))
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Zephyr-Proof-Timestamp"), "1725000000")
             XCTAssertEqual(nonce, issuedNonces.last)
+            issuedProofs.append(proof)
+            let reflectedNonces = issuedNonces.joined(separator: " ")
+            let reflectedProofs = issuedProofs.joined(separator: " ")
             return Self.response(
                 request,
                 status: 401,
-                headers: ["X-Zephyr-Request-Id": "response-" + nonce + "-" + proof],
+                headers: [
+                    "X-Zephyr-Request-Id": "response-" + reflectedNonces + "-" + reflectedProofs
+                ],
                 json: """
                 {"ok":false,"error":{"code":"device_proof_invalid",
-                 "message":"\(proof) \(nonce)","retryable":false,
-                 "details":{"leak":"\(nonce) \(proof)"}}}
+                 "message":"\(reflectedNonces) \(reflectedProofs)","retryable":false,
+                 "details":{"leak":"\(reflectedProofs) \(reflectedNonces)"}}}
                 """
             )
         }
@@ -991,18 +997,30 @@ final class MobileApiClientTests: XCTestCase {
             XCTFail("Expected proof rejection")
         } catch let error as MobileApiError {
             XCTAssertEqual(error.code, "device_proof_invalid")
-            XCTAssertEqual(error.message, "[REDACTED] [REDACTED]")
-            XCTAssertEqual(error.details["leak"], "[REDACTED] [REDACTED]")
-            for nonce in issuedNonces {
-                XCTAssertFalse(error.description.contains(nonce))
-                XCTAssertFalse(error.message.contains(nonce))
+            XCTAssertEqual(
+                error.requestId,
+                "response-[REDACTED] [REDACTED]-[REDACTED] [REDACTED]"
+            )
+            XCTAssertEqual(
+                error.message,
+                "[REDACTED] [REDACTED] [REDACTED] [REDACTED]"
+            )
+            XCTAssertEqual(
+                error.details["leak"],
+                "[REDACTED] [REDACTED] [REDACTED] [REDACTED]"
+            )
+            for secret in issuedNonces + issuedProofs {
+                XCTAssertFalse(error.requestId?.contains(secret) == true)
+                XCTAssertFalse(error.description.contains(secret))
+                XCTAssertFalse(error.message.contains(secret))
+                XCTAssertFalse(error.details.values.contains { $0.contains(secret) })
             }
-            XCTAssertFalse(error.description.contains(signer.proof))
-            XCTAssertFalse(error.message.contains(signer.proof))
         }
         XCTAssertEqual(challengeCount, 2)
         XCTAssertEqual(targetCount, 2)
         XCTAssertEqual(Set(issuedNonces).count, 2)
+        XCTAssertEqual(Set(issuedProofs).count, 2)
+        XCTAssertEqual(issuedProofs, signer.proofs)
         XCTAssertEqual(signer.signCount, 2)
     }
 
@@ -1148,7 +1166,7 @@ final class MobileApiClientTests: XCTestCase {
             password: "password-secret",
             captchaToken: "captcha-secret"
         )
-        let totpRequest = MobileTotpRequest(tempToken: "temp-secret", code: "123456")
+        let totpRequest = MobileTotpRequest(tempToken: "temp-secret", code: "654321")
         let session = MobileAuthenticatedSession(
             sid: "sid-secret",
             user: MobileAuthUser(userId: "user-1", username: "alice")
@@ -1205,7 +1223,7 @@ final class MobileApiClientTests: XCTestCase {
             refreshed,
         ]
         let secrets = [
-            "username-secret", "password-secret", "captcha-secret", "temp-secret", "123456",
+            "username-secret", "password-secret", "captcha-secret", "temp-secret", "654321",
             "sid-secret", "verify-secret", "token-secret", "refresh-secret", "grant-secret",
             "access-new", "refresh-new", "access-refreshed", "refresh-refreshed",
             "encryption-key-secret", "signing-key-secret", "nonce-secret", "proof-secret",
@@ -1270,8 +1288,29 @@ final class MobileApiClientTests: XCTestCase {
     }
 
     private static func jsonBody(_ request: URLRequest) throws -> [String: Any] {
-        let data = try XCTUnwrap(request.httpBody)
+        let data = try requestBody(request)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private static func requestBody(_ request: URLRequest) throws -> Data {
+        if let data = request.httpBody {
+            return data
+        }
+
+        let stream = try XCTUnwrap(request.httpBodyStream)
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4_096)
+        while true {
+            let bytesRead = stream.read(&buffer, maxLength: buffer.count)
+            if bytesRead < 0 {
+                throw stream.streamError ?? URLError(.cannotDecodeRawData)
+            }
+            guard bytesRead > 0 else { break }
+            data.append(contentsOf: buffer.prefix(bytesRead))
+        }
+        return data
     }
 
     private static func statusJSON(cursor: Int) -> String {
@@ -1380,9 +1419,21 @@ final class MobileApiClientTests: XCTestCase {
 }
 
 private final class MobileClientProofSigner: DeviceProofSigning, @unchecked Sendable {
-    let proof = Data(repeating: 0x33, count: 64).base64EncodedString()
     private let lock = NSLock()
     private var count = 0
+    private var signedProofs = [String]()
+
+    var proof: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return signedProofs.last ?? Data(repeating: 0x33, count: 64).base64EncodedString()
+    }
+
+    var proofs: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return signedProofs
+    }
 
     var signCount: Int {
         lock.lock()
@@ -1392,7 +1443,9 @@ private final class MobileClientProofSigner: DeviceProofSigning, @unchecked Send
 
     func sign(_ challenge: DeviceProofChallenge) throws -> String {
         lock.lock()
+        let proof = Data(repeating: UInt8(0x33 + count), count: 64).base64EncodedString()
         count += 1
+        signedProofs.append(proof)
         lock.unlock()
         return proof
     }

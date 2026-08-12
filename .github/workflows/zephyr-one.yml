@@ -125,6 +125,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          if [ -n "${PKG_CONFIG_ALL_STATIC:-}" ]; then
+            echo 'PKG_CONFIG_ALL_STATIC must not be set before Cargo probes native dependencies' >&2
+            exit 1
+          fi
           status=0
           cargo test --lib -- --nocapture 2>&1 | tee /tmp/cargo-test.log || status=$?
           if [ "$status" -ne 0 ]; then

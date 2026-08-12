@@ -231,6 +231,7 @@ test('Windows staging rejects a mixed FreeRDP 2 and 3 DLL source', (t) => {
 
 test('desktop build metadata requires the complete FreeRDP 3 ABI', () => {
   const buildScript = fs.readFileSync(path.join(ROOT, 'src-tauri', 'build.rs'), 'utf8');
+  const pkgConfigResolver = fs.readFileSync(path.join(ROOT, 'scripts', 'resolve-rdp-pkgconfig.py'), 'utf8');
   const nativeBuild = fs.readFileSync(
     path.join(ROOT, 'native', 'freerdp-core', 'scripts', 'build-freerdp.sh'),
     'utf8',
@@ -240,6 +241,12 @@ test('desktop build metadata requires the complete FreeRDP 3 ABI', () => {
   assert.match(buildScript, /3\.30\.0\+cliprdr-reassembly-limit-v1/);
   assert.match(buildScript, /ZEPHYR_ONE_REQUIRE_PATCHED_FREERDP/);
   assert.match(buildScript, /ZEPHYR_ONE_RDP_STATIC/);
+  assert.match(pkgConfigResolver, /ZEPHYR_ONE_RDP_STATIC/);
+  assert.doesNotMatch(
+    pkgConfigResolver,
+    /PKG_CONFIG_ALL_STATIC/,
+    'the FreeRDP-only static setting must not affect GTK, DBus, or other Cargo pkg-config probes',
+  );
   assert.doesNotMatch(buildScript, /CANDIDATES|&\["freerdp2", "freerdp-client2", "winpr2"\]/);
   assert.match(
     nativeBuild,
@@ -315,6 +322,11 @@ test('release workflow verifies the staged tree and every desktop bundle type', 
   assert.ok(
     (workflow.match(/-lsystemd/g) || []).length >= 4,
     'every desktop CI platform must explicitly reject libsystemd from the static FreeRDP closure',
+  );
+  assert.match(
+    workflow,
+    /PKG_CONFIG_ALL_STATIC:-.*must not be set before Cargo probes native dependencies/s,
+    'the native Cargo test must fail before GTK or DBus pkg-config probes can inherit global static mode',
   );
   assert.match(workflow, /dylibbundler -od -b/);
   assert.match(workflow, /verify-rdp-packaging\.mjs macos-static/);

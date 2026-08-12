@@ -25,7 +25,6 @@ platforms that have no system copy:
 Emits to $GITHUB_ENV (or stdout when run outside Actions):
     PKG_CONFIG            absolute path to a pkgconf/pkg-config binary
     PKG_CONFIG_PATH       vendored FreeRDP pkgconfig dir, then vcpkg's
-    PKG_CONFIG_ALL_STATIC 1
     ZEPHYR_ONE_RDP_STATIC 1   (build.rs uses this to force .statik(true))
 """
 
@@ -146,7 +145,6 @@ def main():
     values = {
         "PKG_CONFIG": str(pkgconf).replace("\\", "/"),
         "PKG_CONFIG_PATH": os.pathsep.join(parts),
-        "PKG_CONFIG_ALL_STATIC": "1",
         "ZEPHYR_ONE_RDP_STATIC": "1",
     }
 
