@@ -763,7 +763,8 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
 
         let identity = binding(generation: "root-top-level-alias")
         let store = try repository(identity)
-        XCTAssertEqual(try await store.snapshot()?.identity, identity)
+        let snapshot = try await store.snapshot()
+        XCTAssertEqual(snapshot?.identity, identity)
     }
 
     func testIntermediateDatabaseDirectorySymlinkCannotEscapeBeforeCreatingAKey() throws {
