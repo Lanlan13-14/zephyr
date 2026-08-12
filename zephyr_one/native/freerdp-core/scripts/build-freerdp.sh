@@ -21,7 +21,7 @@
 # Environment:
 #   ZEPHYR_FREERDP_PREFIX      install prefix (default: <crate>/.freerdp-dist)
 #   ZEPHYR_FREERDP_JOBS        parallel jobs (default: nproc)
-#   ZEPHYR_FREERDP_CMAKE_ARGS  extra cmake args, appended last so they win
+#   ZEPHYR_FREERDP_CMAKE_ARGS  extra cmake args; the final no-LTO invariant wins
 #
 # ZEPHYR_FREERDP_CMAKE_ARGS exists because OpenSSL is not a system library on
 # Windows or macOS (Apple removed it), so those targets must point FreeRDP at a
@@ -59,12 +59,14 @@ SRC="$PREFIX/src"
 BUILD="$PREFIX/build"
 INSTALL="$PREFIX/install"
 
-# Already built and complete? Skip only when both the patch revision and the
-# installed public marker agree. A tag-only stamp could silently reuse an old,
-# allocation-vulnerable build of the same upstream release.
+# Already built and complete? Skip only when the patch revision, no-LTO build
+# contract, and installed public marker agree. A tag-only stamp could silently
+# reuse an old allocation-vulnerable or LTO-enabled build of this release.
 STAMP="$INSTALL/.zephyr-freerdp-tag"
 STAMP_VALUE="$TAG+$PATCH_REV"
 if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$STAMP_VALUE" ] &&
+   grep -q '^CMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF$' \
+     "$BUILD/CMakeCache.txt" 2>/dev/null &&
    grep -q '^#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1$' \
      "$INSTALL/include/freerdp3/freerdp/client/channels.h"; then
   printf 'FreeRDP %s already built at %s\n' "$TAG" "$INSTALL"
@@ -225,7 +227,8 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCHANNEL_CLIPRDR=ON -DCHANNEL_CLIPRDR_CLIENT=ON \
   -DCHANNEL_DISP=ON -DCHANNEL_DISP_CLIENT=ON \
   -DCHANNEL_RDPGFX=ON -DCHANNEL_RDPGFX_CLIENT=ON \
-  ${ZEPHYR_FREERDP_CMAKE_ARGS:-}
+  ${ZEPHYR_FREERDP_CMAKE_ARGS:-} \
+  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
   # Unquoted on purpose: the caller passes several -D flags in one variable and
   # they must word-split into separate cmake arguments. Guarded with :- because
   # this script runs under `set -u`.

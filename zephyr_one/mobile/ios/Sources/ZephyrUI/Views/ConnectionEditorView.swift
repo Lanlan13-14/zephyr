@@ -108,8 +108,8 @@ public struct ConnectionEditorView: View {
             .zephyrInlineTitle()
             .zephyrNavigationBackButtonHidden(!dismissCoordinator.allowsSystemDismissal)
             .toolbar {
-                if !dismissCoordinator.allowsSystemDismissal {
-                    ToolbarItem(placement: .zephyrNavLeading) {
+                ToolbarItem(placement: .zephyrNavLeading) {
+                    if !dismissCoordinator.allowsSystemDismissal {
                         Button(action: requestClose) {
                             Label("返回", systemImage: "chevron.backward")
                         }

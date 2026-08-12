@@ -246,12 +246,29 @@ test('desktop build metadata requires the complete FreeRDP 3 ABI', () => {
     /MINGW\*\|MSYS\*\|CYGWIN\*\|Windows_NT\)[\s\S]*CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL/,
     'Windows static FreeRDP must use the /MD CRT used by static-md dependencies and Rust',
   );
+  assert.match(
+    nativeBuild,
+    /-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF/,
+    'vendored FreeRDP archives must not carry LTO into the shim link',
+  );
+  assert.ok(
+    nativeBuild.lastIndexOf('-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF') >
+      nativeBuild.indexOf('${ZEPHYR_FREERDP_CMAKE_ARGS:-}'),
+    'callers must not be able to override the no-LTO invariant',
+  );
+  assert.match(
+    nativeBuild,
+    /grep -q '\^CMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF\$'[\s\S]*"\$BUILD\/CMakeCache\.txt"/,
+    'a stamped install built with LTO must be rebuilt',
+  );
 
   const tauriConfig = JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8'));
   assert.equal(tauriConfig.bundle.linux, undefined, 'static FreeRDP must not create distro runtime dependencies');
 
   const ctest = fs.readFileSync(path.join(ROOT, 'native', 'freerdp-core', 'run-ctests.sh'), 'utf8');
   assert.match(ctest, /pkg-config --atleast-version=3\.0\.0 \$PKGS/);
+  assert.match(ctest, /-Wall -Wextra -Werror/);
+  assert.doesNotMatch(ctest, /(?:^|\s)-Wno-error(?:\s|\\|$)/m);
   assert.doesNotMatch(ctest, /--exists freerdp2|PKGS="freerdp2/);
 });
 
