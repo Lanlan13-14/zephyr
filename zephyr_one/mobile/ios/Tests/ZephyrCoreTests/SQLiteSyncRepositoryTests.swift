@@ -2056,14 +2056,16 @@ final class SQLiteSyncRepositoryTests: XCTestCase {
     ) {
         var firstStatus = stat()
         var secondStatus = stat()
-        guard Darwin.stat(first.path, &firstStatus) == 0 else {
+        guard lstat(first.path, &firstStatus) == 0 else {
             XCTFail("cannot stat logical database path: \(errno)", file: file, line: line)
             return
         }
-        guard Darwin.stat(second.path, &secondStatus) == 0 else {
+        guard lstat(second.path, &secondStatus) == 0 else {
             XCTFail("cannot stat physical database path: \(errno)", file: file, line: line)
             return
         }
+        XCTAssertEqual(firstStatus.st_mode & S_IFMT, S_IFREG, file: file, line: line)
+        XCTAssertEqual(secondStatus.st_mode & S_IFMT, S_IFREG, file: file, line: line)
         XCTAssertEqual(firstStatus.st_dev, secondStatus.st_dev, file: file, line: line)
         XCTAssertEqual(firstStatus.st_ino, secondStatus.st_ino, file: file, line: line)
     }
