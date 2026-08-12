@@ -41,7 +41,7 @@ test('change-password captures pre-change hash, notifies by email, and exposes l
 
 test('password-rollback API is public, rate-limited, single-use and kills all sessions', () => {
     const server = read('server.js');
-    assert.match(server, /app\.post\('\/api\/auth\/password-rollback', async \(req, res\) => \{/);
+    assert.match(server, /app\.post\('\/api\/auth\/password-rollback', rejectEmbeddedBrowserLogin, async \(req, res\) => \{/);
     const start = server.indexOf("app.post('/api/auth/password-rollback'");
     const body = server.slice(start, start + 4000);
     assert.match(body, /takeRollbackVerifySlot\(ip\)/);

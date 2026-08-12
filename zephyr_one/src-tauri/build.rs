@@ -92,7 +92,7 @@ fn main() {
     /* Probe with cargo_metadata OFF first. A half-installed FreeRDP 3 set must
      * not leak partial link flags into the build. Only the complete, versioned
      * set is re-probed with metadata on, which emits the cargo link directives. */
-    let include_paths = probe(&FREERDP3_PACKAGES, false).unwrap_or_else(|error| {
+    let (include_paths, _) = probe(&FREERDP3_PACKAGES, false).unwrap_or_else(|error| {
         panic!(
             "FreeRDP 3 development files were not found or are too old.\n\
              \n\
@@ -114,11 +114,6 @@ fn main() {
         );
     });
     enforce_patched_freerdp(&include_paths);
-    // The complete set was probed a moment ago; a failure here means pkg-config
-    // results changed mid-build, which deserves a loud abort, not a retry.
-    probe(&FREERDP3_PACKAGES, true)
-        .unwrap_or_else(|error| panic!("FreeRDP 3 package set changed between probes: {error}"));
-
     let mut build = cc::Build::new();
     build
         .file(native.join("zephyr_rdp.c"))
@@ -147,6 +142,13 @@ fn main() {
 
     build.compile("zephyr_rdp");
 
+    // The complete set was probed above, so a failure here means pkg-config
+    // results changed mid-build and must abort loudly.
+    let (_, linked_libraries) = probe(&FREERDP3_PACKAGES, true)
+        .unwrap_or_else(|error| panic!("FreeRDP 3 package set changed between probes: {error}"));
+    emit_windows_bin_link_closure(&linked_libraries)
+        .unwrap_or_else(|error| panic!("Windows FreeRDP bin link closure is invalid: {error}"));
+
     // The consumer gates on this, so a skipped build cannot link against
     // symbols that were never compiled.
     println!("cargo:rustc-cfg=zephyr_native_rdp");
@@ -158,8 +160,12 @@ fn main() {
 /// headers the library was built from. On failure the error names the package
 /// that was missing, so the panic message blames the right thing rather than
 /// the whole set.
-fn probe(pkgs: &[&str], cargo_metadata: bool) -> Result<Vec<PathBuf>, String> {
+fn probe(
+    pkgs: &[&str],
+    cargo_metadata: bool,
+) -> Result<(Vec<PathBuf>, Vec<pkg_config::Library>), String> {
     let mut includes = Vec::new();
+    let mut libraries = Vec::new();
     for name in pkgs {
         match pkg_config(cargo_metadata).probe(name) {
             Ok(lib) => {
@@ -175,12 +181,45 @@ fn probe(pkgs: &[&str], cargo_metadata: bool) -> Result<Vec<PathBuf>, String> {
                         forbidden.join(", ")
                     ));
                 }
-                includes.extend(lib.include_paths);
+                includes.extend(lib.include_paths.iter().cloned());
+                libraries.push(lib);
             }
             Err(error) => return Err(format!("{name}: {error}")),
         }
     }
-    Ok(includes)
+    Ok((includes, libraries))
+}
+
+fn emit_windows_bin_link_closure(libraries: &[pkg_config::Library]) -> Result<(), String> {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return Ok(());
+    }
+
+    for library in libraries {
+        if !library.frameworks.is_empty()
+            || !library.framework_paths.is_empty()
+            || !library.ld_args.is_empty()
+        {
+            return Err("Windows pkg-config closure contains non-MSVC linker options".into());
+        }
+        for file in &library.link_files {
+            println!("cargo:rustc-link-arg-bin=zephyr-one={}", file.display());
+        }
+        for name in &library.libs {
+            if is_freerdp2_link_name(name) {
+                return Err(format!("forbidden FreeRDP 2 library: {name}"));
+            }
+            let filename = format!("{name}.lib");
+            let argument = library
+                .link_paths
+                .iter()
+                .map(|directory| directory.join(&filename))
+                .find(|candidate| candidate.is_file())
+                .unwrap_or_else(|| PathBuf::from(&filename));
+            println!("cargo:rustc-link-arg-bin=zephyr-one={}", argument.display());
+        }
+    }
+    Ok(())
 }
 
 fn pkg_config(cargo_metadata: bool) -> pkg_config::Config {

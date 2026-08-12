@@ -63,7 +63,7 @@ async function rawJsonRequest(base, route, body, { contentLength = true } = {}) 
   });
 }
 
-async function startServer({ configured = true } = {}) {
+async function startServer({ configured = true, allowHttpLoopback = false } = {}) {
   const dataFixture = createSecureTestDataDir('zephyr-webdav-server-');
   const dir = dataFixture.dataDir;
   const port = await freePort();
@@ -85,6 +85,8 @@ async function startServer({ configured = true } = {}) {
   };
   delete env.WEBDAV_BACKUP_KEY;
   delete env.WEBDAV_CREDENTIAL_KEY;
+  delete env.WEBDAV_ALLOW_HTTP_LOOPBACK;
+  if (allowHttpLoopback) env.WEBDAV_ALLOW_HTTP_LOOPBACK = 'true';
   if (configured) {
     env.WEBDAV_BACKUP_KEY = strongKey();
     env.WEBDAV_CREDENTIAL_KEY = strongKey();
@@ -158,6 +160,136 @@ async function startServer({ configured = true } = {}) {
   }
 
   return { api, base, bootstrapAdmin, child, dir, login, output: () => output, stop };
+}
+
+function readDavRequest(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => resolve(Buffer.concat(chunks)));
+    request.on('error', reject);
+  });
+}
+
+class SharedPrincipalDav {
+  constructor({ username, password }) {
+    this.username = username;
+    this.password = password;
+    this.collections = new Set(['/dav/']);
+    this.files = new Map();
+    this.calls = [];
+    this.etagCounter = 0;
+    this.server = http.createServer((request, response) => this.handle(request, response).catch(() => {
+      if (!response.headersSent) response.writeHead(500);
+      response.end();
+    }));
+  }
+
+  async start() {
+    await new Promise((resolve) => this.server.listen(0, '127.0.0.1', resolve));
+    this.baseUrl = `http://127.0.0.1:${this.server.address().port}/dav/`;
+    return this;
+  }
+
+  async close() {
+    await new Promise((resolve) => this.server.close(resolve));
+  }
+
+  parent(pathname) {
+    const trimmed = pathname.replace(/\/$/, '');
+    return `${trimmed.slice(0, trimmed.lastIndexOf('/') + 1)}`;
+  }
+
+  nextEtag() {
+    this.etagCounter += 1;
+    return `"shared-${this.etagCounter}"`;
+  }
+
+  async handle(request, response) {
+    const url = new URL(request.url, this.baseUrl);
+    const pathname = url.pathname;
+    const method = request.method.toUpperCase();
+    const body = await readDavRequest(request);
+    this.calls.push({ method, pathname, headers: { ...request.headers }, body });
+
+    const expectedAuth = `Basic ${Buffer.from(`${this.username}:${this.password}`).toString('base64')}`;
+    if (request.headers.authorization !== expectedAuth) {
+      response.writeHead(401);
+      response.end();
+      return;
+    }
+
+    if (method === 'OPTIONS') {
+      response.writeHead(204, { DAV: '1', Allow: 'OPTIONS, PROPFIND, MKCOL, GET, PUT, MOVE, DELETE' });
+      response.end();
+      return;
+    }
+    if (method === 'PROPFIND') {
+      const file = this.files.get(pathname);
+      const exists = !!file || this.collections.has(pathname.endsWith('/') ? pathname : `${pathname}/`);
+      if (!exists) {
+        response.writeHead(404);
+      } else {
+        response.writeHead(207, { 'content-type': 'application/xml', ...(file ? { etag: file.etag } : {}) });
+      }
+      response.end('<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>');
+      return;
+    }
+    if (method === 'MKCOL') {
+      const collection = pathname.endsWith('/') ? pathname : `${pathname}/`;
+      if (this.collections.has(collection)) response.writeHead(405);
+      else if (!this.collections.has(this.parent(collection))) response.writeHead(409);
+      else {
+        this.collections.add(collection);
+        response.writeHead(201);
+      }
+      response.end();
+      return;
+    }
+    if (method === 'PUT') {
+      if (!this.collections.has(this.parent(pathname))) {
+        response.writeHead(409);
+      } else if (request.headers['if-none-match'] === '*' && this.files.has(pathname)) {
+        response.writeHead(412);
+      } else {
+        const etag = this.nextEtag();
+        this.files.set(pathname, { body, etag });
+        response.writeHead(201, { etag });
+      }
+      response.end();
+      return;
+    }
+    if (method === 'MOVE') {
+      const source = this.files.get(pathname);
+      let destination = '';
+      try { destination = new URL(request.headers.destination).pathname; } catch {}
+      if (!source || !destination) {
+        response.writeHead(404);
+      } else {
+        const etag = this.nextEtag();
+        this.files.set(destination, { ...source, etag });
+        this.files.delete(pathname);
+        response.writeHead(201, { etag });
+      }
+      response.end();
+      return;
+    }
+    if (method === 'GET') {
+      const file = this.files.get(pathname);
+      if (!file) response.writeHead(404);
+      else response.writeHead(200, { etag: file.etag, 'content-type': 'application/octet-stream' });
+      response.end(file?.body);
+      return;
+    }
+    if (method === 'DELETE') {
+      this.files.delete(pathname);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    response.writeHead(405);
+    response.end();
+  }
 }
 
 test('real server mounts user-scoped WebDAV routes and deletion prevents same-name inheritance', async () => {
@@ -260,6 +392,94 @@ test('real server mounts user-scoped WebDAV routes and deletion prevents same-na
     assert.equal(deniedSync.status, 403, deniedSync.text);
   } finally {
     await server.stop();
+  }
+});
+
+test('two accounts sharing one WebDAV principal keep configs, status, namespaces, and encrypted uploads isolated', async () => {
+  const principal = { username: 'shared-dav-principal', password: 'shared-dav-credential' };
+  const dav = await new SharedPrincipalDav(principal).start();
+  const server = await startServer({ configured: true, allowHttpLoopback: true });
+  const alicePassword = 'alice-webdav-isolation-pass-1';
+  const bobPassword = 'bob-webdav-isolation-pass-1';
+  try {
+    const adminCookie = await server.bootstrapAdmin();
+    const alice = await server.api(adminCookie, 'POST', '/api/admin/users', {
+      username: 'webdav-isolation-alice', password: alicePassword, role: 'user', mustChangePassword: false,
+    });
+    const bob = await server.api(adminCookie, 'POST', '/api/admin/users', {
+      username: 'webdav-isolation-bob', password: bobPassword, role: 'user', mustChangePassword: false,
+    });
+    assert.equal(alice.status, 200, alice.text);
+    assert.equal(bob.status, 200, bob.text);
+    const aliceCookie = await server.login('webdav-isolation-alice', alicePassword);
+    const bobCookie = await server.login('webdav-isolation-bob', bobPassword);
+
+    const aliceConfigBefore = await server.api(aliceCookie, 'GET', '/api/webdav-sync/config');
+    const bobConfigBefore = await server.api(bobCookie, 'GET', '/api/webdav-sync/config');
+    assert.deepEqual(aliceConfigBefore.body.config, bobConfigBefore.body.config);
+    assert.equal(aliceConfigBefore.body.config.configured, false);
+
+    const aliceConfigured = await server.api(aliceCookie, 'PATCH', '/api/webdav-sync/config', {
+      baseUrl: dav.baseUrl, remotePath: 'shared-principal-root', ...principal, enabled: true, secret: alicePassword,
+    });
+    assert.equal(aliceConfigured.status, 200, aliceConfigured.text);
+    const bobUnconfiguredSync = await server.api(bobCookie, 'POST', '/api/webdav-sync/sync-now', { secret: bobPassword });
+    assert.equal(bobUnconfiguredSync.status, 400, bobUnconfiguredSync.text);
+    assert.equal(bobUnconfiguredSync.body?.error?.code, 'webdav_not_configured');
+    for (const privateValue of [alice.body.user.userId, 'webdav-isolation-alice', alicePassword, principal.password]) {
+      assert.equal(bobUnconfiguredSync.text.includes(privateValue), false, 'other account identity or credentials must not affect public errors');
+    }
+
+    const bobConfigured = await server.api(bobCookie, 'PATCH', '/api/webdav-sync/config', {
+      baseUrl: dav.baseUrl, remotePath: 'shared-principal-root', ...principal, enabled: true, secret: bobPassword,
+    });
+    assert.equal(bobConfigured.status, 200, bobConfigured.text);
+    const [aliceSync, bobSync] = await Promise.all([
+      server.api(aliceCookie, 'POST', '/api/webdav-sync/sync-now', { secret: alicePassword }),
+      server.api(bobCookie, 'POST', '/api/webdav-sync/sync-now', { secret: bobPassword }),
+    ]);
+    assert.equal(aliceSync.status, 200, aliceSync.text);
+    assert.equal(bobSync.status, 200, bobSync.text);
+    assert.equal(aliceSync.body.result.status, 'completed');
+    assert.equal(bobSync.body.result.status, 'completed');
+    assert.notEqual(aliceSync.body.result.etag, bobSync.body.result.etag);
+
+    const aliceStatus = await server.api(aliceCookie, 'GET', '/api/webdav-sync/config');
+    const bobStatus = await server.api(bobCookie, 'GET', '/api/webdav-sync/config');
+    assert.equal(aliceStatus.status, 200);
+    assert.equal(bobStatus.status, 200);
+    assert.equal(aliceStatus.body.config.lastEtag, aliceSync.body.result.etag);
+    assert.equal(bobStatus.body.config.lastEtag, bobSync.body.result.etag);
+    assert.notEqual(aliceStatus.body.config.lastEtag, bobStatus.body.config.lastEtag);
+    for (const responseText of [aliceStatus.text, bobStatus.text]) {
+      assert.equal(responseText.includes(alicePassword), false);
+      assert.equal(responseText.includes(bobPassword), false);
+      assert.equal(responseText.includes(principal.password), false);
+      assert.equal(Object.hasOwn(JSON.parse(responseText).config, 'password'), false);
+    }
+
+    const publishedPaths = [...dav.files.keys()].filter((pathname) => pathname.endsWith('/zephyr-backup.bin'));
+    assert.equal(publishedPaths.length, 2);
+    assert.equal(new Set(publishedPaths.map((pathname) => pathname.replace(/\/zephyr-backup\.bin$/, ''))).size, 2);
+    for (const pathname of [...dav.files.keys()]) {
+      assert.match(pathname, /^\/dav\/shared-principal-root\/u-[A-Za-z0-9_-]{32}\/(?:zephyr-backup\.bin|\.zephyr-upload-[0-9a-f-]+\.tmp)$/);
+      for (const forbidden of [alice.body.user.userId, bob.body.user.userId, 'webdav-isolation-alice', 'webdav-isolation-bob']) {
+        assert.equal(pathname.includes(forbidden), false, 'remote paths must not expose account identities');
+      }
+    }
+    for (const [pathname, file] of dav.files) {
+      assert.ok(pathname.endsWith('/zephyr-backup.bin') || pathname.endsWith('.tmp'));
+      for (const forbidden of [
+        alice.body.user.userId, bob.body.user.userId, 'webdav-isolation-alice', 'webdav-isolation-bob',
+        alicePassword, bobPassword, principal.username, principal.password,
+      ]) {
+        assert.equal(file.body.includes(Buffer.from(forbidden)), false, `remote object ${pathname} must contain encrypted bytes only`);
+      }
+      assert.equal(file.body.subarray(0, 8).toString('ascii'), 'ZWUBK001');
+    }
+  } finally {
+    await server.stop();
+    await dav.close();
   }
 });
 

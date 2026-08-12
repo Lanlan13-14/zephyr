@@ -95,3 +95,7 @@ zephyr_one/vcpkg_installed/
 
 # Zephyr AI runtime archive database
 /zephyr-ai/internal/server/archive/*.sqlite
+
+# Zephyr One Windows smoke-test artifacts and previous-core backups (local only)
+/zephyr_one/dist-windows-smoke/
+/zephyr_one/zephyr-core-previous-*/

@@ -12,11 +12,11 @@ use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -24,7 +24,6 @@ use zeroize::Zeroizing;
 
 static RUNTIME: OnceCell<Mutex<RuntimeState>> = OnceCell::new();
 
-const AUTOSTART_LOG_NAME: &str = "runtime-autostart.log";
 const STARTUP_CHALLENGE_ENV: &str = "ZEPHYR_ONE_STARTUP_CHALLENGE";
 const READY_PROBE_HEADER: &str = "X-Zephyr-One-Ready-Probe";
 const READY_PROOF_HEADER: &str = "X-Zephyr-One-Ready-Proof";
@@ -54,39 +53,13 @@ impl Drop for StartupChallenge {
 
 #[derive(Clone)]
 struct AutostartLog {
-    path: PathBuf,
+    lines: Arc<Mutex<Vec<String>>>,
 }
 
 impl AutostartLog {
-    fn for_app(app: &AppHandle) -> Self {
-        let preferred = app
-            .path()
-            .app_data_dir()
-            .map(|dir| dir.join("zephyr-data").join(AUTOSTART_LOG_NAME));
-
-        match preferred {
-            Ok(path)
-                if path
-                    .parent()
-                    .is_some_and(|parent| std::fs::create_dir_all(parent).is_ok()) =>
-            {
-                Self { path }
-            }
-            Ok(path) => {
-                let fallback = std::env::temp_dir().join("zephyr-one-autostart.log");
-                let log = Self { path: fallback };
-                log.append(&format!(
-                    "app-data log unavailable preferred={}",
-                    path.display()
-                ));
-                log
-            }
-            Err(error) => {
-                let fallback = std::env::temp_dir().join("zephyr-one-autostart.log");
-                let log = Self { path: fallback };
-                log.append(&format!("app_data_dir resolution failed: {error}"));
-                log
-            }
+    fn for_app(_app: &AppHandle) -> Self {
+        Self {
+            lines: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -95,19 +68,16 @@ impl AutostartLog {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_millis())
             .unwrap_or(0);
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-        {
-            let thread = std::thread::current();
-            let thread_name = thread.name().unwrap_or("unnamed");
-            let _ = writeln!(
-                file,
-                "{millis} pid={} thread={thread_name} {message}",
-                std::process::id()
-            );
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("unnamed");
+        let mut lines = self.lines.lock();
+        if lines.len() == 64 {
+            lines.remove(0);
         }
+        lines.push(format!(
+            "{millis} pid={} thread={thread_name} {message}",
+            std::process::id()
+        ));
     }
 }
 
@@ -151,10 +121,7 @@ where
 /// an actionable cause in the app data directory.
 pub(crate) fn spawn_autostart(app: AppHandle) {
     let log = AutostartLog::for_app(&app);
-    log.append(&format!(
-        "ready event received; scheduling worker log={}",
-        log.path.display()
-    ));
+    log.append("ready event received; scheduling worker");
     let worker_log = log.clone();
     match spawn_logged_worker(worker_log, move |worker_log| {
         match ensure_started_inner(&app, false) {
@@ -210,6 +177,28 @@ fn encode_hex(bytes: &[u8]) -> String {
         encoded.push(HEX[(byte & 0x0f) as usize] as char);
     }
     encoded
+}
+
+fn capture_pipe<R: Read + Send + 'static>(mut pipe: R, log: Arc<Mutex<String>>) {
+    std::thread::spawn(move || {
+        let mut chunk = [0_u8; 2048];
+        while let Ok(count) = pipe.read(&mut chunk) {
+            if count == 0 {
+                break;
+            }
+            let text = String::from_utf8_lossy(&chunk[..count]);
+            let mut captured = log.lock();
+            captured.push_str(&text);
+            if captured.len() > 64 * 1024 {
+                let split = captured
+                    .char_indices()
+                    .find(|(index, _)| *index >= captured.len() - 64 * 1024)
+                    .map(|(index, _)| index)
+                    .unwrap_or(0);
+                captured.drain(..split);
+            }
+        }
+    });
 }
 
 fn decode_hex_32(value: &str) -> Option<[u8; 32]> {
@@ -542,7 +531,6 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("zephyr-data");
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
     let core = resolve_core_dir(app)?;
 
@@ -552,20 +540,39 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
     let startup_challenge = StartupChallenge::generate()?;
     let startup_challenge_encoded = startup_challenge.encoded();
 
-    let mut cmd = Command::new(&node);
-    cmd.current_dir(&core).arg(core.join("server.js"));
+    #[cfg(target_os = "windows")]
+    let launcher_auth = crate::windows_runtime_launcher::LauncherAuth::new()?;
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let system_drive = crate::windows_runtime_launcher::trusted_system_drive()?;
+        let mut command = Command::new(executable);
+        command
+            .arg(crate::windows_runtime_launcher::FLAG)
+            .arg(launcher_auth.command_arg())
+            .env_clear()
+            .env("SystemDrive", system_drive);
+        command
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = {
+        let mut command = Command::new(&node);
+        command.arg(core.join("server.js"));
+        command.current_dir(&core);
+        command
+    };
 
     // Process-local authentication for privileged shell handoffs. These values
     // are inherited only by the embedded core and must never enter RuntimeInfo,
     // boot markers, or diagnostics.
     let (shell_secret, shell_instance) = crate::unlock_bridge::shell_identity_env();
 
+    #[cfg(not(target_os = "windows"))]
     cmd.env("ZEPHYR_DATA_DIR", &data_dir)
         .env("HTTP_ENABLED", "true")
         .env("HTTPS_ENABLED", "false")
         .env("PORT", port.to_string())
         .env("PUBLIC_ORIGIN", &public_origin)
-        .env("ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN", "true")
         .env("TRUST_PROXY", "false")
         .env("ZEPHYR_ONE_EMBEDDED", "1")
         .env(STARTUP_CHALLENGE_ENV, &startup_challenge_encoded)
@@ -587,53 +594,9 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
          * its named-parameter semantics with better-sqlite3 in both directions. */
         .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1");
 
-    cmd.stdin(Stdio::null());
-
-    let log_path = data_dir.join("zephyr-node.log");
-    // Definitive breadcrumb for smoke tests: proves ensure_started chose this
-    // data_dir even when Node stdout never appears (fd redirect / hang).
-    {
-        let marker = data_dir.join("runtime-boot.json");
-        let body = format!(
-            "{{\"pid_parent\":{},\"node\":{},\"data_dir\":{},\"log\":{},\"ts_ms\":{}}}\n",
-            std::process::id(),
-            serde_json::to_string(&node.display().to_string()).unwrap_or_else(|_| "\"\"".into()),
-            serde_json::to_string(&data_dir.display().to_string())
-                .unwrap_or_else(|_| "\"\"".into()),
-            serde_json::to_string(&log_path.display().to_string())
-                .unwrap_or_else(|_| "\"\"".into()),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0),
-        );
-        let _ = std::fs::write(&marker, body);
-    }
-    // Truncate once, then share FDs for stdout+stderr. Prefer write so Node can
-    // flush progress as it boots. If open fails, fall back to null (marker still
-    // records the intended path).
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&log_path)
-    {
-        Ok(log) => {
-            if let Ok(stdout) = log.try_clone() {
-                cmd.stdout(Stdio::from(stdout));
-            } else {
-                cmd.stdout(Stdio::null());
-            }
-            cmd.stderr(Stdio::from(log));
-        }
-        Err(error) => {
-            let _ = std::fs::write(
-                data_dir.join("runtime-boot-log-open-error.txt"),
-                format!("open {log_path:?}: {error}\n"),
-            );
-            cmd.stdout(Stdio::null()).stderr(Stdio::null());
-        }
-    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     /* Windows: spawn the core without a console.
      *
@@ -650,6 +613,11 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
+    // The Windows launcher deliberately leaves this to Node's validated,
+    // exclusive creation path after changing its process TokenOwner.
+    #[cfg(not(target_os = "windows"))]
+    std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+
     let mut child = cmd.spawn().map_err(|e| {
         format!(
             "启动本地 Node/Zephyr 失败: {e}（node={} core={}）",
@@ -657,6 +625,27 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
             core.display()
         )
     })?;
+    #[cfg(target_os = "windows")]
+    {
+        let config = crate::windows_runtime_launcher::LaunchConfig {
+            port,
+            startup_challenge: startup_challenge_encoded.clone(),
+            shell_secret: shell_secret.to_owned(),
+            shell_instance: shell_instance.to_owned(),
+        };
+        if let Err(error) = launcher_auth.authenticate_and_send(&child, &config) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    }
+    let child_log = Arc::new(Mutex::new(String::new()));
+    if let Some(stdout) = child.stdout.take() {
+        capture_pipe(stdout, child_log.clone());
+    }
+    if let Some(stderr) = child.stderr.take() {
+        capture_pipe(stderr, child_log.clone());
+    }
 
     let health = format!("{public_origin}/healthz");
     if let Err(reason) = wait_http_ready(
@@ -668,17 +657,7 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
     ) {
         let _ = child.kill();
         let _ = child.wait();
-        let details = std::fs::read_to_string(&log_path)
-            .ok()
-            .map(|text| {
-                text.chars()
-                    .rev()
-                    .take(4000)
-                    .collect::<String>()
-                    .chars()
-                    .rev()
-                    .collect::<String>()
-            })
+        let details = Some(child_log.lock().clone())
             .filter(|text| !text.trim().is_empty())
             .map(|text| format!("\n\n运行日志：\n{text}"))
             .unwrap_or_default();
@@ -1190,18 +1169,10 @@ mod tests {
 
     #[test]
     fn logged_worker_records_that_it_reached_the_background_thread() {
-        let unique = format!(
-            "zephyr-one-autostart-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let dir = std::env::temp_dir().join(unique);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("autostart.log");
-        let log = AutostartLog { path: path.clone() };
+        let log = AutostartLog {
+            lines: Arc::new(parking_lot::Mutex::new(Vec::new())),
+        };
+        let observed = log.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
 
         let handle = spawn_logged_worker(log, move |worker_log| {
@@ -1212,10 +1183,9 @@ mod tests {
         receiver.recv_timeout(Duration::from_secs(2)).unwrap();
         handle.join().unwrap();
 
-        let contents = std::fs::read_to_string(&path).unwrap();
+        let contents = observed.lines.lock().join("\n");
         assert!(contents.contains("thread=zephyr-runtime-autostart worker entered"));
         assert!(contents.contains("simulated runtime ready"));
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[cfg(target_os = "windows")]

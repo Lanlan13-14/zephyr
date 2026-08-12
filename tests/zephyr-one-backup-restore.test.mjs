@@ -78,7 +78,9 @@ function startEmbeddedServer() {
                 return reject(new Error(`server exited early (${proc.exitCode}):\n${log.slice(-2000)}`));
             }
             try {
-                const r = await fetch(`http://127.0.0.1:${port}/healthz`);
+                const r = await fetch(`http://127.0.0.1:${port}/healthz`, {
+                    signal: AbortSignal.timeout(1000),
+                });
                 if (r.ok) return resolve(proc);
             } catch {}
             if (Date.now() > deadline) {
@@ -118,23 +120,6 @@ before(async () => {
     child = await startEmbeddedServer();
     base = `http://127.0.0.1:${port}`;
 
-    /* The auto-adopted session is cookie-less, but import verifies the login
-     * password, so the account needs a known one. First login forces rotation;
-     * do that through the normal API rather than touching the DB. */
-    const login = await fetch(`${base}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', origin: base },
-        body: JSON.stringify({ username: 'admin', password: 'admin' }),
-    });
-    assert.equal(login.status, 200, 'default admin login should succeed on a fresh data dir');
-    const cookie = (login.headers.get('set-cookie') || '').split(';')[0];
-    const rotate = await fetch(`${base}/api/auth/change-password`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', cookie, origin: base },
-        body: JSON.stringify({ currentPassword: 'admin', newPassword: ADMIN_PASSWORD }),
-    });
-    assert.equal(rotate.status, 200, 'first-login password rotation should succeed');
-
     const bootstrap = await fetch(`${base}/__zephyr_one/bootstrap`, {
         method: 'POST',
         headers: { 'x-zephyr-one-bootstrap-challenge': startupChallenge },
@@ -143,6 +128,16 @@ before(async () => {
     assert.equal(bootstrap.status, 204, 'the desktop bootstrap exchange should succeed');
     embeddedCookie = (bootstrap.headers.get('set-cookie') || '').split(';')[0];
     assert.match(embeddedCookie, /^zephyr_sid=/);
+
+    /* Import step-up still verifies the account password. Rotate the fresh
+     * default through the launcher-authenticated session; embedded browser
+     * login itself is deliberately disabled. */
+    const rotate = await fetch(`${base}/api/auth/change-password`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: embeddedCookie, origin: base },
+        body: JSON.stringify({ currentPassword: 'admin', newPassword: ADMIN_PASSWORD }),
+    });
+    assert.equal(rotate.status, 200, 'first-login password rotation should succeed');
 });
 
 after(async () => {

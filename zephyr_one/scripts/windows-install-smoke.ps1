@@ -1,6 +1,4 @@
-# Windows install + runtime smoke for Zephyr One.
-# Catches packaging bugs the pure build job never sees (verbatim \\?\ paths,
-# missing desktop-runtime/zephyr-core resources, Node early-exit, empty logs).
+# Windows installed-layout runtime smoke for Zephyr One.
 param(
   [string]$Root = "",
   [string]$OutDir = "",
@@ -11,287 +9,242 @@ param(
 $ErrorActionPreference = "Stop"
 if (-not $Root) { $Root = Split-Path -Parent $PSScriptRoot }
 if (-not $OutDir) { $OutDir = Join-Path $Root "dist-windows-smoke" }
+$Root = (Resolve-Path -LiteralPath $Root).Path
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+$OutDir = (Resolve-Path -LiteralPath $OutDir).Path
+$script:RunId = [Guid]::NewGuid().ToString("N")
+$script:LogPath = Join-Path $OutDir ("smoke-{0}.log" -f $script:RunId)
+$script:AppProcess = $null
+$script:AppPid = 0
+$script:InstallDir = $null
+$script:ExpectedNode = $null
+$script:ExpectedServer = $null
+$script:DataDir = Join-Path (Join-Path $env:APPDATA "com.zephyr.one") "zephyr-data"
 
-function Write-Log([string]$msg) {
-  $line = "[{0}] {1}" -f (Get-Date -Format "o"), $msg
-  $line | Tee-Object -FilePath (Join-Path $OutDir "smoke.log") -Append | Write-Host
+function Write-Log([string]$Message) {
+  $line = "[{0}] {1}" -f (Get-Date -Format "o"), $Message
+  $line | Tee-Object -FilePath $script:LogPath -Append | Write-Host
 }
 
-function Dump-Fail([string]$reason) {
-  Write-Log "FAIL: $reason"
-  $diag = Join-Path $OutDir "diagnostics.txt"
-  $lines = New-Object System.Collections.Generic.List[string]
-  $lines.Add("==== $reason ====") | Out-Null
-  $lines.Add("---- processes ----") | Out-Null
+function Get-RedirectLocation([string]$Uri) {
+  $request = [System.Net.HttpWebRequest]::Create($Uri)
+  $request.AllowAutoRedirect = $false
+  $request.Timeout = 15000
+  $response = $request.GetResponse()
   try {
-    $lines.Add((Get-Process -Name "zephyr-one","node" -ErrorAction SilentlyContinue | Format-List Id,ProcessName,Path,StartTime | Out-String)) | Out-Null
-  } catch { $lines.Add("$_") | Out-Null }
-  $lines.Add("---- install dir tree ----") | Out-Null
-  if ($script:InstallDir -and (Test-Path -LiteralPath $script:InstallDir)) {
-    try {
-      $lines.Add((Get-ChildItem -LiteralPath $script:InstallDir -Recurse -Force -ErrorAction SilentlyContinue |
-        Select-Object -First 120 FullName,Length |
-        Format-Table -AutoSize | Out-String)) | Out-Null
-    } catch { $lines.Add("$_") | Out-Null }
-  } else {
-    $lines.Add("(no install dir)") | Out-Null
+    if ([int]$response.StatusCode -ne 302) {
+      throw "expected HTTP 302 from $Uri, got $([int]$response.StatusCode)"
+    }
+    return [string]$response.Headers['Location']
+  } finally {
+    $response.Close()
   }
-  $lines.Add("---- app data scan under APPDATA+LOCALAPPDATA ----") | Out-Null
+}
+
+function Get-CapturedProcessTree {
+  if (-not $script:AppPid) { return @() }
+  $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+  $captured = [System.Collections.Generic.HashSet[uint32]]::new()
+  [void]$captured.Add([uint32]$script:AppPid)
+  do {
+    $changed = $false
+    foreach ($item in $all) {
+      if ($captured.Contains([uint32]$item.ParentProcessId) -and
+          $captured.Add([uint32]$item.ProcessId)) {
+        $changed = $true
+      }
+    }
+  } while ($changed)
+  return @($all | Where-Object { $captured.Contains([uint32]$_.ProcessId) })
+}
+
+function Stop-CapturedRuntime {
+  if (-not $script:AppProcess) { return }
+  $tree = @(Get-CapturedProcessTree)
+  if (-not $script:AppProcess.HasExited) {
+    try { $script:AppProcess.Kill() } catch {}
+    try { [void]$script:AppProcess.WaitForExit(10000) } catch {}
+  }
+  foreach ($item in @($tree | Where-Object { $_.ProcessId -ne $script:AppPid })) {
+    Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Dump-Fail([string]$Reason) {
+  Write-Log "FAIL: $Reason"
+  $diag = Join-Path $OutDir ("diagnostics-{0}.txt" -f $script:RunId)
+  $lines = [System.Collections.Generic.List[string]]::new()
+  $lines.Add("==== $Reason ====") | Out-Null
+  $lines.Add("runId=$($script:RunId)") | Out-Null
+  $lines.Add("appPid=$($script:AppPid)") | Out-Null
+  $lines.Add("expectedNode=$($script:ExpectedNode)") | Out-Null
+  $lines.Add("expectedServer=$($script:ExpectedServer)") | Out-Null
+  $lines.Add("dataDir=$($script:DataDir)") | Out-Null
+  $lines.Add("---- captured process tree ----") | Out-Null
   try {
-    $hits = Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue |
-      Where-Object { $_.Name -match 'zephyr-node\.log|runtime-boot\.json|zephyr-data' } |
-      Select-Object -First 60 FullName,Length,LastWriteTime
-    $lines.Add(($hits | Format-Table -AutoSize | Out-String)) | Out-Null
+    $lines.Add((Get-CapturedProcessTree |
+      Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine |
+      Format-List | Out-String)) | Out-Null
   } catch { $lines.Add("$_") | Out-Null }
-  $lines.Add("---- listening ports (node/zephyr-one) ----") | Out-Null
+  $lines.Add("---- captured listening ports ----") | Out-Null
   try {
-    $pids = @(Get-Process -Name "node","zephyr-one" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+    $capturedIds = @(Get-CapturedProcessTree | Select-Object -ExpandProperty ProcessId)
     $lines.Add((Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-      Where-Object { $pids -contains $_.OwningProcess } |
+      Where-Object { $capturedIds -contains $_.OwningProcess } |
       Select-Object LocalAddress,LocalPort,OwningProcess |
       Format-Table -AutoSize | Out-String)) | Out-Null
   } catch { $lines.Add("$_") | Out-Null }
-  $lines.Add("---- node log ----") | Out-Null
-  if ($script:NodeLog -and (Test-Path -LiteralPath $script:NodeLog)) {
-    $lines.Add((Get-Content -LiteralPath $script:NodeLog -Raw -ErrorAction SilentlyContinue)) | Out-Null
-    Copy-Item -LiteralPath $script:NodeLog -Destination (Join-Path $OutDir "zephyr-node.log") -Force
-  } else {
-    $lines.Add("(missing node log path=$($script:NodeLog))") | Out-Null
-  }
-  $lines.Add("---- autostart crumbs ----") | Out-Null
-  $crumbs = @()
-  foreach ($candidate in @($script:AppDataCrumbLog, $script:CrumbLog, $script:SystemTempCrumbLog)) {
-    if ($candidate -and (Test-Path -LiteralPath $candidate) -and ($crumbs -notcontains $candidate)) {
-      $crumbs += $candidate
+  $lines.Add("---- installed resource roots ----") | Out-Null
+  foreach ($path in @($script:InstallDir, (Split-Path -Parent $script:ExpectedNode), (Split-Path -Parent $script:ExpectedServer))) {
+    if ($path -and (Test-Path -LiteralPath $path)) {
+      try {
+        $lines.Add((Get-Item -LiteralPath $path -Force |
+          Select-Object FullName,Attributes,LastWriteTime |
+          Format-List | Out-String)) | Out-Null
+      } catch { $lines.Add("$_") | Out-Null }
     }
   }
-  try {
-    $discovered = @(Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA -Recurse -Filter "runtime-autostart.log" -ErrorAction SilentlyContinue |
-      Sort-Object LastWriteTime -Descending |
-      Select-Object -First 5 -ExpandProperty FullName)
-    foreach ($candidate in $discovered) {
-      if ($crumbs -notcontains $candidate) { $crumbs += $candidate }
-    }
-  } catch { $lines.Add("autostart log discovery failed: $_") | Out-Null }
-  if ($crumbs.Count -gt 0) {
-    foreach ($crumb in $crumbs) {
-      $lines.Add(("path={0}" -f $crumb)) | Out-Null
-      $lines.Add((Get-Content -LiteralPath $crumb -Raw -ErrorAction SilentlyContinue)) | Out-Null
-    }
-    Copy-Item -LiteralPath $crumbs[0] -Destination (Join-Path $OutDir "runtime-autostart.log") -Force
-  } else {
-    $lines.Add(("(no autostart log; env TEMP={0}; system temp={1})" -f $env:TEMP, ([System.IO.Path]::GetTempPath()))) | Out-Null
-  }
-  $lines.Add("---- env ----") | Out-Null
-  $lines.Add(("LOCALAPPDATA={0}" -f $env:LOCALAPPDATA)) | Out-Null
-  $lines.Add(("ZEPHYR_ONE_AUTOSTART_RUNTIME={0}" -f $env:ZEPHYR_ONE_AUTOSTART_RUNTIME)) | Out-Null
-  $lines | Set-Content -Encoding utf8 $diag
-  throw $reason
+  $lines | Set-Content -Encoding utf8 -LiteralPath $diag
+  $lines | ForEach-Object { Write-Host $_ }
+  Stop-CapturedRuntime
+  throw $Reason
 }
 
-# Prefer NSIS installer if present; else portable release layout next to built exe.
 $bundle = Join-Path $Root "src-tauri\target\release\bundle"
 $nsis = Get-ChildItem -Path $bundle -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue |
   Where-Object { $_.FullName -match '\\nsis\\' } |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
-$msi = Get-ChildItem -Path $bundle -Recurse -Filter "*.msi" -ErrorAction SilentlyContinue |
-  Sort-Object LastWriteTime -Descending |
-  Select-Object -First 1
-$releaseExe = Join-Path $Root "src-tauri\target\release\zephyr-one.exe"
+if (-not $nsis) { Dump-Fail "No NSIS installer was produced" }
 
-$launchExe = $null
-$installDir = $null
+Write-Log ("Installing NSIS: {0}" -f $nsis.FullName)
+$installer = Start-Process -FilePath $nsis.FullName -ArgumentList "/S" -Wait -PassThru
+if ($installer.ExitCode -ne 0) { Dump-Fail ("NSIS installer exit {0}" -f $installer.ExitCode) }
 
-if ($nsis) {
-  Write-Log ("Installing NSIS: {0}" -f $nsis.FullName)
-  # NSIS silent; product name "Zephyr One"
-  $p = Start-Process -FilePath $nsis.FullName -ArgumentList "/S" -Wait -PassThru
-  if ($p.ExitCode -ne 0) { Dump-Fail ("NSIS installer exit {0}" -f $p.ExitCode) }
-  # Force array (@(...)): a single pipeline string would make $x[0] == 'C' (first char).
-  $candidates = @(
-    @(
-      (Join-Path $env:LOCALAPPDATA "Zephyr One\zephyr-one.exe"),
-      (Join-Path $env:ProgramFiles "Zephyr One\zephyr-one.exe"),
-      (Join-Path ${env:ProgramFiles(x86)} "Zephyr One\zephyr-one.exe")
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
-  )
-  if ($candidates.Count -eq 0) {
-    $found = @(Get-ChildItem -Path $env:LOCALAPPDATA,$env:ProgramFiles -Recurse -Filter "zephyr-one.exe" -ErrorAction SilentlyContinue |
-      Select-Object -First 5)
-    foreach ($f in $found) { $candidates += $f.FullName }
-  }
-  if ($candidates.Count -eq 0) { Dump-Fail "NSIS finished but zephyr-one.exe not found under LocalAppData/Program Files" }
-  $launchExe = [string]$candidates[0]
-  if ($launchExe.Length -lt 8 -or -not (Test-Path -LiteralPath $launchExe)) {
-    Dump-Fail ("Resolved launch path looks wrong: '{0}' (candidates={1})" -f $launchExe, ($candidates -join '|'))
-  }
-  $installDir = Split-Path -Parent $launchExe
-  Write-Log ("Installed app: {0}" -f $launchExe)
-  Write-Log ("Install dir: {0}" -f $installDir)
-} elseif (Test-Path -LiteralPath $releaseExe) {
-  Write-Log ("No NSIS; using portable release exe: {0}" -f $releaseExe)
-  $launchExe = $releaseExe
-  $installDir = Split-Path -Parent $launchExe
-  $res = Join-Path $installDir "resources"
-  if (-not (Test-Path -LiteralPath $res)) {
-    Write-Log "WARN: portable layout missing resources/ next to exe — runtime may fail to find core"
-  }
-} else {
-  Dump-Fail "No NSIS installer and no release zephyr-one.exe"
+$knownCandidates = @(@(
+    (Join-Path $env:LOCALAPPDATA "Zephyr One\zephyr-one.exe"),
+    (Join-Path $env:ProgramFiles "Zephyr One\zephyr-one.exe"),
+    (Join-Path ${env:ProgramFiles(x86)} "Zephyr One\zephyr-one.exe")
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
+if ($knownCandidates.Count -ne 1) {
+  Dump-Fail ("Expected exactly one installed Zephyr executable, found {0}" -f $knownCandidates.Count)
 }
-
-# Tauri app_data_dir on Windows is typically under Roaming AppData (APPDATA),
-# not LocalAppData. Search both, plus product-name folders.
-function Find-ZephyrData {
-  $roots = @($env:APPDATA, $env:LOCALAPPDATA) | Where-Object { $_ }
-  foreach ($root in $roots) {
-    foreach ($name in @("com.zephyr.one", "Zephyr One", "zephyr-one")) {
-      $cand = Join-Path (Join-Path $root $name) "zephyr-data"
-      if (Test-Path -LiteralPath $cand) { return $cand }
-    }
+$launchExe = (Resolve-Path -LiteralPath $knownCandidates[0]).Path
+$script:InstallDir = Split-Path -Parent $launchExe
+$script:ExpectedNode = Join-Path $script:InstallDir "_up_\desktop-runtime\node.exe"
+$script:ExpectedServer = Join-Path $script:InstallDir "_up_\zephyr-core\server.js"
+foreach ($required in @($launchExe, $script:ExpectedNode, $script:ExpectedServer)) {
+  if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+    Dump-Fail ("Installed runtime file missing: {0}" -f $required)
   }
-  $hit = Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA -Recurse -Directory -Filter "zephyr-data" -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-  if ($hit) { return $hit.FullName }
-  return (Join-Path (Join-Path $env:APPDATA "com.zephyr.one") "zephyr-data")
 }
-$script:DataDir = Find-ZephyrData
-$script:NodeLog = Join-Path $script:DataDir "zephyr-node.log"
-Write-Log ("initial dataDir guess: {0}" -f $script:DataDir)
+$script:ExpectedNode = (Resolve-Path -LiteralPath $script:ExpectedNode).Path
+$script:ExpectedServer = (Resolve-Path -LiteralPath $script:ExpectedServer).Path
+Write-Log ("Installed app: {0}" -f $launchExe)
+Write-Log ("Expected Node: {0}" -f $script:ExpectedNode)
 
-# Kill leftovers from previous runs
-Get-Process -Name "zephyr-one" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 1
-if (Test-Path $script:NodeLog) { Remove-Item $script:NodeLog -Force -ErrorAction SilentlyContinue }
-
-if (-not $installDir -or -not (Test-Path -LiteralPath $installDir)) {
-  Dump-Fail ("installDir invalid: '{0}'" -f $installDir)
-}
-$script:InstallDir = $installDir
-# Release builds link the pinned, patched FreeRDP archives statically. Any
-# FreeRDP/WinPR DLL beside the installed executable means the package silently
-# fell back to an unverified dynamic runtime.
-$installedDlls = @(Get-ChildItem -LiteralPath $installDir -File -Filter "*.dll" -ErrorAction SilentlyContinue |
+$installedDlls = @(Get-ChildItem -LiteralPath $script:InstallDir -File -Filter "*.dll" -ErrorAction SilentlyContinue |
   Select-Object -ExpandProperty Name)
 $dynamicFreeRdp = @($installedDlls | Where-Object { $_ -match '^(?:lib)?(?:freerdp|winpr)' })
 if ($dynamicFreeRdp.Count -gt 0) {
-  Dump-Fail ("installed payload must statically link pinned FreeRDP but contains native DLLs: {0}" -f ($dynamicFreeRdp -join ', '))
+  Dump-Fail ("installed payload contains FreeRDP/WinPR DLLs: {0}" -f ($dynamicFreeRdp -join ', '))
 }
-# CI/headless: force the Rust Ready-event path without waiting on WebView JS.
-$env:ZEPHYR_ONE_AUTOSTART_RUNTIME = "1"
-Write-Log ("Launching '{0}' cwd='{1}' ZEPHYR_ONE_AUTOSTART_RUNTIME=1" -f $launchExe, $installDir)
-# Fresh crumb log so a stale one cannot masquerade as this run.
-$script:CrumbLog = Join-Path $env:TEMP "zephyr-one-autostart.log"
-$script:SystemTempCrumbLog = Join-Path ([System.IO.Path]::GetTempPath()) "zephyr-one-autostart.log"
-$script:AppDataCrumbLog = Join-Path $script:DataDir "runtime-autostart.log"
-foreach ($staleCrumb in @($script:CrumbLog, $script:SystemTempCrumbLog, $script:AppDataCrumbLog)) {
-  if ($staleCrumb -and (Test-Path -LiteralPath $staleCrumb)) {
-    Remove-Item -LiteralPath $staleCrumb -Force -ErrorAction SilentlyContinue
-  }
-}
-$proc = Start-Process -FilePath $launchExe -WorkingDirectory $installDir -PassThru
-if (-not $proc) { Dump-Fail "Start-Process returned null" }
-Write-Log ("pid={0}" -f $proc.Id)
 
-# Wait for log + Zephyr HTTP line (same contract as Android smoke)
+$env:ZEPHYR_ONE_AUTOSTART_RUNTIME = "1"
+Write-Log ("Launching installed app cwd='{0}'" -f $script:InstallDir)
+$script:AppProcess = Start-Process -FilePath $launchExe -WorkingDirectory $script:InstallDir -PassThru
+if (-not $script:AppProcess) { Dump-Fail "Start-Process returned null" }
+$script:AppPid = $script:AppProcess.Id
+Write-Log ("appPid={0}" -f $script:AppPid)
+
 $deadline = (Get-Date).AddSeconds($ReadyTimeoutSec)
 $ready = $false
 $port = $null
+$nodePid = $null
 while ((Get-Date) -lt $deadline) {
-  if ($proc.HasExited) {
-    Dump-Fail ("zephyr-one.exe exited early code={0}" -f $proc.ExitCode)
+  if ($script:AppProcess.HasExited) {
+    Dump-Fail ("zephyr-one.exe exited early code={0}" -f $script:AppProcess.ExitCode)
   }
-  # Refresh data dir: Tauri uses APPDATA (Roaming) more often than LocalAppData.
-  if (-not (Test-Path -LiteralPath $script:NodeLog)) {
-    $guess = Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA -Recurse -Filter "zephyr-node.log" -ErrorAction SilentlyContinue |
-      Sort-Object LastWriteTime -Descending |
-      Select-Object -First 1
-    if ($guess) {
-      $script:NodeLog = $guess.FullName
-      $script:DataDir = Split-Path -Parent $script:NodeLog
-      Write-Log ("found node log: {0}" -f $script:NodeLog)
-    }
-  }
-  if (Test-Path -LiteralPath $script:NodeLog) {
-    $text = Get-Content -LiteralPath $script:NodeLog -Raw -ErrorAction SilentlyContinue
-    if ($text) {
-      Set-Content -Encoding utf8 (Join-Path $OutDir "zephyr-node.log") $text
-      if ($text -match 'Zephyr HTTP.*localhost:(\d+)') {
-        $port = [int]$Matches[1]
-        $ready = $true
-        break
-      }
-      if ($text -match '\[startup\] Zephyr|EISDIR|ENOENT|未找到|失败') {
-        Dump-Fail "Node log reports startup failure (see zephyr-node.log)"
-      }
-      if ($text -match '\\\\\?\\C:' -or $text -match 'EISDIR') {
-        Dump-Fail "Node log suggests Windows verbatim path / EISDIR regression"
-      }
-    }
-  }
-  # Fallback: if Node is listening on a high port, probe /healthz directly.
-  if (-not $ready) {
-    try {
-      $nodePids = @(Get-Process -Name node -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
-      if ($nodePids.Count -gt 0) {
-        $conns = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-          Where-Object {
-            ($nodePids -contains $_.OwningProcess) -and
-            ($_.LocalAddress -in @('127.0.0.1', '::1', '0.0.0.0')) -and
-            ($_.LocalPort -gt 1024)
-          })
-        foreach ($c in $conns) {
-          try {
-            $probe = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $c.LocalPort) -TimeoutSec 2
-            if ($probe.StatusCode -ge 200 -and $probe.StatusCode -lt 500) {
-              $port = [int]$c.LocalPort
-              $ready = $true
-              Write-Log ("healthz via netstat port {0}" -f $port)
-              break
-            }
-          } catch {}
+  $tree = @(Get-CapturedProcessTree)
+  $nodes = @($tree | Where-Object {
+    $_.Name -eq "node.exe" -and
+    $_.ExecutablePath -and
+    [string]::Equals($_.ExecutablePath, $script:ExpectedNode, [StringComparison]::OrdinalIgnoreCase) -and
+    $_.CommandLine -and
+    $_.CommandLine.IndexOf($script:ExpectedServer, [StringComparison]::OrdinalIgnoreCase) -ge 0
+  })
+  if ($nodes.Count -gt 1) { Dump-Fail "Captured runtime tree contains multiple installed Node processes" }
+  if ($nodes.Count -eq 1) {
+    $candidatePid = [uint32]$nodes[0].ProcessId
+    $connections = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.OwningProcess -eq $candidatePid -and
+        $_.LocalAddress -in @('127.0.0.1', '::1') -and
+        $_.LocalPort -gt 1024
+      })
+    foreach ($connection in $connections) {
+      try {
+        $response = Invoke-WebRequest -UseBasicParsing `
+          -Uri ("http://127.0.0.1:{0}/healthz" -f $connection.LocalPort) -TimeoutSec 2
+        $body = $response.Content | ConvertFrom-Json -ErrorAction Stop
+        if ($response.StatusCode -eq 200 -and
+            $body.ok -eq $true -and
+            $body.instanceId -is [string] -and $body.instanceId.Length -ge 16 -and
+            $body.version -is [string] -and $body.version.Length -gt 0) {
+          $ready = $true
+          $port = [int]$connection.LocalPort
+          $nodePid = $candidatePid
+          $response.Content | Set-Content -Encoding utf8 -LiteralPath (Join-Path $OutDir ("healthz-{0}.json" -f $script:RunId))
+          break
         }
-      }
-    } catch {}
+      } catch {}
+    }
   }
   if ($ready) { break }
   Start-Sleep -Seconds 2
 }
-
-if (-not $ready -or -not $port) {
-  Dump-Fail ("core not ready within {0}s (no Zephyr HTTP line)" -f $ReadyTimeoutSec)
+if (-not $ready -or -not $port -or -not $nodePid) {
+  Dump-Fail ("captured installed core not ready within {0}s" -f $ReadyTimeoutSec)
 }
+Write-Log ("Exact installed Node health ready pid={0} port={1}" -f $nodePid, $port)
 
-Write-Log ("HTTP ready on port {0}" -f $port)
-# Do NOT use $home / $Host / $PID — automatic/read-only in PowerShell.
 try {
-  $healthResp = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $port) -TimeoutSec 10
-  $healthResp.Content | Set-Content -Encoding utf8 (Join-Path $OutDir "healthz.json")
-  if ($healthResp.StatusCode -lt 200 -or $healthResp.StatusCode -ge 500) {
-    Dump-Fail ("healthz status {0}" -f $healthResp.StatusCode)
+  $rootLocation = Get-RedirectLocation ("http://127.0.0.1:{0}/" -f $port)
+  $appLocation = Get-RedirectLocation ("http://127.0.0.1:{0}/app.html" -f $port)
+  if ($rootLocation -ne '/app.html' -or $appLocation -ne '/') {
+    Dump-Fail ("embedded auth redirect contract changed root={0} app={1}" -f $rootLocation, $appLocation)
   }
-  Write-Log ("healthz ok status={0} body={1}" -f $healthResp.StatusCode, $healthResp.Content)
-  $indexResp = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/" -f $port) -TimeoutSec 15
-  $snippetLen = [Math]::Min(500, $indexResp.Content.Length)
-  $indexResp.Content.Substring(0, $snippetLen) |
-    Set-Content -Encoding utf8 (Join-Path $OutDir "index-head.txt")
-  Write-Log ("index ok status={0} bytes={1}" -f $indexResp.StatusCode, $indexResp.Content.Length)
+  $assetResponse = Invoke-WebRequest -UseBasicParsing `
+    -Uri ("http://127.0.0.1:{0}/zephyr-one-embed.css" -f $port) -TimeoutSec 15
 } catch {
-  Dump-Fail ("HTTP probe failed: {0}" -f $_)
+  Dump-Fail ("embedded UI route probe failed: {0}" -f $_)
 }
+if ($assetResponse.StatusCode -ne 200 -or
+    $assetResponse.Content.Length -lt 100 -or
+    $assetResponse.Content -notmatch 'Zephyr One') {
+  Dump-Fail ("Zephyr One UI asset was not an expected product document status={0}" -f $assetResponse.StatusCode)
+}
+$snippetLength = [Math]::Min(500, $assetResponse.Content.Length)
+$assetResponse.Content.Substring(0, $snippetLength) |
+  Set-Content -Encoding utf8 -LiteralPath (Join-Path $OutDir ("ui-asset-head-{0}.txt" -f $script:RunId))
 
-# Hold: catch delayed Node death / path issues after first success
 $holdDeadline = (Get-Date).AddSeconds($HoldSec)
 while ((Get-Date) -lt $holdDeadline) {
-  if ($proc.HasExited) {
-    Dump-Fail ("app exited during hold window code={0}" -f $proc.ExitCode)
+  if ($script:AppProcess.HasExited) {
+    Dump-Fail ("app exited during hold window code={0}" -f $script:AppProcess.ExitCode)
   }
+  $tree = @(Get-CapturedProcessTree)
+  $sameNode = @($tree | Where-Object {
+    $_.ProcessId -eq $nodePid -and
+    $_.ExecutablePath -and
+    [string]::Equals($_.ExecutablePath, $script:ExpectedNode, [StringComparison]::OrdinalIgnoreCase)
+  })
+  if ($sameNode.Count -ne 1) { Dump-Fail "captured installed Node exited or changed during hold" }
   try {
-    $holdResp = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $port) -TimeoutSec 5
-    if ($holdResp.StatusCode -lt 200 -or $holdResp.StatusCode -ge 500) {
-      Dump-Fail ("healthz bad status during hold: {0}" -f $holdResp.StatusCode)
+    $response = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $port) -TimeoutSec 5
+    $body = $response.Content | ConvertFrom-Json -ErrorAction Stop
+    if ($response.StatusCode -ne 200 -or $body.ok -ne $true) {
+      Dump-Fail "exact Zephyr health response changed during hold"
     }
   } catch {
     Dump-Fail ("healthz failed during hold: {0}" -f $_)
@@ -299,18 +252,17 @@ while ((Get-Date) -lt $holdDeadline) {
   Start-Sleep -Seconds 5
 }
 
-# Resource layout note for artifact
 @(
+  "runId=$($script:RunId)",
   "launchExe=$launchExe",
-  "installDir=$installDir",
+  "installDir=$($script:InstallDir)",
   "dataDir=$($script:DataDir)",
-  "nodeLog=$($script:NodeLog)",
+  "node=$($script:ExpectedNode)",
+  "nodePid=$nodePid",
   "port=$port",
   "holdSec=$HoldSec"
-) | Set-Content -Encoding utf8 (Join-Path $OutDir "summary.txt")
+) | Set-Content -Encoding utf8 -LiteralPath (Join-Path $OutDir ("summary-{0}.txt" -f $script:RunId))
 
-Write-Log ("PASS: Windows smoke ok port={0} hold={1}s" -f $port, $HoldSec)
-
-# Clean stop so the runner can finish (app + embedded node child)
-Get-Process -Name "zephyr-one","node" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Write-Log ("PASS: installed Windows runtime pid={0} port={1} hold={2}s" -f $nodePid, $port, $HoldSec)
+Stop-CapturedRuntime
 exit 0

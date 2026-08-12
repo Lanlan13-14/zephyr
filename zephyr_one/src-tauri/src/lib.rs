@@ -9,6 +9,13 @@ mod rdp_surface;
 mod runtime;
 mod token;
 mod unlock_bridge;
+#[cfg(target_os = "windows")]
+mod windows_runtime_launcher;
+
+#[cfg(target_os = "windows")]
+pub fn try_run_windows_runtime_launcher() -> Option<i32> {
+    windows_runtime_launcher::try_run()
+}
 
 /// Desktop-only entry point (Windows / macOS / Linux). Zephyr One no longer
 /// ships Android or iOS: the core is a spawned Node child process, which iOS

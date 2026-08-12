@@ -36,6 +36,7 @@ async function startCore({ port, dataDir, startupChallenge, embedded = true }) {
             ZEPHYR_ONE_USE_BUILTIN_SQLITE: '1',
             ZEPHYR_ONE_EMBEDDED: embedded ? '1' : '0',
             ...(startupChallenge ? { ZEPHYR_ONE_STARTUP_CHALLENGE: startupChallenge } : {}),
+            ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN: 'true',
             ENCRYPTION_KEY: 'embedded-bootstrap-auth-test-key',
             NODE_ENV: 'test',
         },
@@ -51,7 +52,9 @@ async function startCore({ port, dataDir, startupChallenge, embedded = true }) {
             throw new Error(`server exited early (${child.exitCode}):\n${log.slice(-3000)}`);
         }
         try {
-            const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+            const response = await fetch(`http://127.0.0.1:${port}/healthz`, {
+                signal: AbortSignal.timeout(1000),
+            });
             if (response.ok) return { child, log: () => log };
         } catch {}
         await sleep(200);
@@ -121,6 +124,7 @@ test('embedded loopback requires a one-time bootstrap capability', { timeout: 18
     let core = null;
     let restarted = null;
     let hosted = null;
+    let sessionSeeder = null;
     let hostedDataDir = '';
     let hostedDataFixture = null;
 
@@ -153,6 +157,51 @@ test('embedded loopback requires a one-time bootstrap capability', { timeout: 18
             body: '{}',
         });
         assert.equal(anonymousReveal.status, 403, 'a raw no-Origin reveal must fail CSRF validation');
+
+        const browserLoginHeaders = {
+            'content-type': 'application/json',
+            origin: base,
+        };
+        const passwordLogin = await fetch(`${base}/api/auth/login`, {
+            method: 'POST',
+            headers: browserLoginHeaders,
+            body: JSON.stringify({ username: 'admin', password: 'admin', returnSid: true }),
+        });
+        assert.equal(passwordLogin.status, 403,
+            'matching loopback Host and Origin must not authenticate the fresh admin account');
+        assert.equal((await passwordLogin.json()).code, 'embedded_login_disabled');
+        assert.equal(passwordLogin.headers.get('set-cookie'), null,
+            'embedded password login must never mint a session cookie');
+        assert.match(passwordLogin.headers.get('cache-control') || '', /no-store/);
+
+        for (const [loginPath, body] of [
+            ['/api/auth/totp/verify', { tempToken: 'attacker-token', code: '000000', returnSid: true }],
+            ['/api/passkeys/login/options', { username: 'admin' }],
+            ['/api/passkeys/login/verify', { response: {}, returnSid: true }],
+        ]) {
+            const response = await fetch(`${base}${loginPath}`, {
+                method: 'POST',
+                headers: browserLoginHeaders,
+                body: JSON.stringify(body),
+            });
+            assert.equal(response.status, 403, `${loginPath} must be disabled in embedded mode`);
+            assert.equal((await response.json()).code, 'embedded_login_disabled');
+            assert.equal(response.headers.get('set-cookie'), null,
+                `${loginPath} must not mint a session cookie`);
+        }
+        for (const recoveryPath of [
+            '/api/auth/forgot-password/request',
+            '/api/auth/forgot-password/reset',
+            '/api/auth/password-rollback',
+        ]) {
+            const response = await fetch(`${base}${recoveryPath}`, {
+                method: 'POST',
+                headers: browserLoginHeaders,
+                body: '{}',
+            });
+            assert.equal(response.status, 403, `${recoveryPath} must be disabled in embedded mode`);
+            assert.equal((await response.json()).code, 'embedded_login_disabled');
+        }
 
         const wrong = await fetch(`${base}/__zephyr_one/bootstrap`, {
             method: 'POST',
@@ -191,6 +240,12 @@ test('embedded loopback requires a one-time bootstrap capability', { timeout: 18
         assert.equal(replay.status, 403, 'a consumed challenge must not be replayable');
         const authenticated = await fetch(`${base}/api/auth/me`, { headers: { cookie } });
         assert.equal(authenticated.status, 200, 'the exchanged Strict cookie must start the WebView session');
+        const createdUser = await fetch(`${base}/api/admin/users`, {
+            method: 'POST',
+            headers: { cookie, origin: base, 'content-type': 'application/json' },
+            body: JSON.stringify({ username: 'historical-user', password: 'historical-pass-1', role: 'user' }),
+        });
+        assert.equal(createdUser.status, 200, 'bootstrap session should create the persisted-session fixture user');
         const embeddedRdpProxy = await requestUpgrade(port, '/rdp-proxy?target=127.0.0.1%3A3389', {
             cookie,
             origin: base,
@@ -206,6 +261,18 @@ test('embedded loopback requires a one-time bootstrap capability', { timeout: 18
 
         await stopCore(core);
         core = null;
+        const seederPort = port + 700;
+        sessionSeeder = await startCore({ port: seederPort, dataDir, embedded: false });
+        const historicalLogin = await fetch(`http://127.0.0.1:${seederPort}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ username: 'historical-user', password: 'historical-pass-1' }),
+        });
+        assert.equal(historicalLogin.status, 200, 'hosted setup should seed a non-first-user session');
+        const historicalCookie = (historicalLogin.headers.get('set-cookie') || '').split(';')[0];
+        assert.match(historicalCookie, /^zephyr_sid=/);
+        await stopCore(sessionSeeder);
+        sessionSeeder = null;
         const secondChallenge = challenge();
         restarted = await startCore({ port, dataDir, startupChallenge: secondChallenge });
         const staleAfterRestart = await fetch(`${base}/__zephyr_one/bootstrap`, {
@@ -216,6 +283,11 @@ test('embedded loopback requires a one-time bootstrap capability', { timeout: 18
         const staleSessionAfterRestart = await fetch(`${base}/api/auth/me`, { headers: { cookie } });
         assert.equal(staleSessionAfterRestart.status, 401,
             'a persisted WebView cookie must not bypass OS unlock after a core restart');
+        const historicalSessionAfterRestart = await fetch(`${base}/api/auth/me`, {
+            headers: { cookie: historicalCookie },
+        });
+        assert.equal(historicalSessionAfterRestart.status, 401,
+            'embedded startup must reject persisted sessions for every user, not only the first user');
         const freshAfterRestart = await fetch(`${base}/__zephyr_one/bootstrap`, {
             method: 'POST',
             headers: { 'x-zephyr-one-bootstrap-challenge': secondChallenge },
@@ -235,8 +307,10 @@ test('embedded loopback requires a one-time bootstrap capability', { timeout: 18
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ username: 'admin', password: 'admin' }),
         });
-        assert.notEqual(hostedLogin.status, 403,
-            'hosted clients retain the existing no-Origin compatibility behavior');
+        assert.equal(hostedLogin.status, 200,
+            'hosted clients retain the existing password-login behavior');
+        assert.match(hostedLogin.headers.get('set-cookie') || '', /zephyr_sid=/,
+            'hosted password login must retain ordinary session issuance');
         const hostedRdpProxy = await requestUpgrade(
             hostedPort,
             '/rdp-proxy?target=127.0.0.1%3A3389',
@@ -247,6 +321,7 @@ test('embedded loopback requires a one-time bootstrap capability', { timeout: 18
         await stopCore(core);
         await stopCore(restarted);
         await stopCore(hosted);
+        await stopCore(sessionSeeder);
         try { removeSecureTestDataDir(dataFixture); } catch {}
         try { removeSecureTestDataDir(hostedDataFixture); } catch {}
     }

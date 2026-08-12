@@ -242,6 +242,7 @@ if (ZEPHYR_ONE_EMBEDDED && !/^[a-f0-9]{64}$/.test(embeddedStartupChallengeHex)) 
 let embeddedStartupChallenge = ZEPHYR_ONE_EMBEDDED
     ? Buffer.from(embeddedStartupChallengeHex, 'hex')
     : null;
+const embeddedSessionCapabilities = new Set();
 embeddedStartupChallengeHex = '';
 delete process.env.ZEPHYR_ONE_STARTUP_CHALLENGE;
 
@@ -426,6 +427,8 @@ function exchangeEmbeddedBootstrap(req, res, next) {
             ip: clientIp(req),
         });
         sessionStore.revokeAllForUser(user.userId, 'embedded-session-replaced', { exceptSid: sid });
+        embeddedSessionCapabilities.clear();
+        embeddedSessionCapabilities.add(sid);
         res.setHeader('Set-Cookie', `zephyr_sid=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(REMEMBER_ABSOLUTE_TTL_MS / 1000)}`);
         return res.status(204).end();
     } catch (error) {
@@ -1037,8 +1040,9 @@ let sessionStore = new SessionStore(storage.rawDb(), {
     rememberAbsoluteTtlMs: REMEMBER_ABSOLUTE_TTL_MS,
 });
 if (ZEPHYR_ONE_EMBEDDED) {
-    const embeddedUser = storage.getFirstUser();
-    if (embeddedUser) sessionStore.revokeAllForUser(embeddedUser.userId, 'embedded-core-restarted');
+    storage.rawDb().prepare(`UPDATE auth_sessions
+        SET revoked_at = ?, revoke_reason = ?
+        WHERE revoked_at IS NULL`).run(Date.now(), 'embedded-core-restarted');
 }
 setInterval(() => { try { sessionStore.gc(); } catch {} }, 10 * 60 * 1000).unref();
 
@@ -2132,6 +2136,7 @@ function currentSession(req) {
         || String(req.headers['x-zephyr-sid'] || '').trim()
         || '';
     if (!sid) return null;
+    if (ZEPHYR_ONE_EMBEDDED && !embeddedSessionCapabilities.has(sid)) return null;
     return sessionStore.resolve(sid);
 }
 
@@ -3646,6 +3651,15 @@ function sessionClearCookie(req) {
 }
 
 function createSession(req, res, user, { remember = false } = {}) {
+    /* Embedded sessions are capabilities minted only by
+     * exchangeEmbeddedBootstrap(). Loopback, Host and Origin checks do not
+     * identify the desktop user, so no browser credential flow may reach this
+     * generic session issuer while the core is machine-wide reachable. */
+    if (ZEPHYR_ONE_EMBEDDED) {
+        const error = new Error('browser session issuance is disabled in embedded mode');
+        error.code = 'embedded_login_disabled';
+        throw error;
+    }
     const { sid } = sessionStore.create({
         userId: user.userId,
         username: user.username,
@@ -3657,6 +3671,29 @@ function createSession(req, res, user, { remember = false } = {}) {
     const maxAgeSeconds = remember ? Math.floor(REMEMBER_ABSOLUTE_TTL_MS / 1000) : '';
     const maxAge = maxAgeSeconds ? `; Max-Age=${maxAgeSeconds}` : '';
     res.setHeader('Set-Cookie', `zephyr_sid=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax${secureCookieFlag(req)}${maxAge}`);
+    return sid;
+}
+
+function reissueEmbeddedSessionAfterImport(req, res, user) {
+    const priorSid = String(req.session?.sid || '');
+    if (!ZEPHYR_ONE_EMBEDDED || !req.user?.isSuperAdmin
+        || !priorSid || !embeddedSessionCapabilities.has(priorSid)) {
+        const error = new Error('embedded session continuation requires launcher authentication');
+        error.code = 'embedded_session_continuation_denied';
+        throw error;
+    }
+    const { sid } = sessionStore.create({
+        userId: user.userId,
+        username: user.username,
+        remember: true,
+        mustChangePassword: false,
+        userAgent: req.headers['user-agent'] || '',
+        ip: clientIp(req),
+    });
+    sessionStore.revokeAllForUser(user.userId, 'embedded-session-replaced', { exceptSid: sid });
+    embeddedSessionCapabilities.clear();
+    embeddedSessionCapabilities.add(sid);
+    res.setHeader('Set-Cookie', `zephyr_sid=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(REMEMBER_ABSOLUTE_TTL_MS / 1000)}`);
     return sid;
 }
 
@@ -4102,7 +4139,16 @@ app.use(express.json({
 app.use(requireSameOrigin);
 aiHostApp.use(express.json({ limit: '24mb' }));
 
-app.post('/api/auth/login', async (req, res) => {
+function rejectEmbeddedBrowserLogin(req, res, next) {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(403).json({
+        error: 'Browser login is disabled in embedded mode',
+        code: 'embedded_login_disabled',
+    });
+}
+
+app.post('/api/auth/login', rejectEmbeddedBrowserLogin, async (req, res) => {
     const { username, password, captchaToken, remember } = req.body || {};
     const guard = checkLoginGuards(req);
     const ua = req.headers['user-agent'] || '';
@@ -4162,7 +4208,7 @@ app.post('/api/auth/login', async (req, res) => {
     res.json(payload);
 });
 
-app.post('/api/auth/totp/verify', async (req, res) => {
+app.post('/api/auth/totp/verify', rejectEmbeddedBrowserLogin, async (req, res) => {
     const { tempToken, code } = req.body || {};
     const guard = checkLoginGuards(req);
     if (!guard.ok) return res.status(403).json({ error: guard.reason, code: 'login_guard_blocked' });
@@ -4211,7 +4257,7 @@ app.post('/api/auth/totp/verify', async (req, res) => {
     res.json(payload);
 });
 
-app.post('/api/auth/forgot-password/request', async (req, res) => {
+app.post('/api/auth/forgot-password/request', rejectEmbeddedBrowserLogin, async (req, res) => {
     const ip = clientIp(req), nowTs = Date.now();
     const hits = (resetRequestHits.get(ip) || []).filter((t) => nowTs - t < 10 * 60000);
     if (hits.length >= 5) return res.json({ ok: true, message: '如果邮箱匹配，重置令牌将发送到邮箱' });
@@ -4243,7 +4289,7 @@ app.post('/api/auth/forgot-password/request', async (req, res) => {
     res.json({ ok: true, message: '如果邮箱匹配，重置令牌将发送到邮箱' });
 });
 
-app.post('/api/auth/forgot-password/reset', (req, res) => {
+app.post('/api/auth/forgot-password/reset', rejectEmbeddedBrowserLogin, (req, res) => {
     const { email, code, newPassword } = req.body || {};
     const ip = clientIp(req);
     if (!newPassword || String(newPassword).length < 4) return res.status(400).json({ error: '新密码至少 4 位' });
@@ -4459,7 +4505,7 @@ app.post('/api/auth/change-password', requireUser, async (req, res) => {
 /* One-time rollback link from the password-change notification. Public: the
  * whole point is that the owner may be locked out while an attacker holds the
  * new password, so the token itself is the capability. */
-app.post('/api/auth/password-rollback', async (req, res) => {
+app.post('/api/auth/password-rollback', rejectEmbeddedBrowserLogin, async (req, res) => {
     const ip = clientIp(req);
     if (!takeRollbackVerifySlot(ip)) {
         return res.status(429).json({ error: '尝试过于频繁，请稍后再试', code: 'rollback_rate_limited' });
@@ -6171,7 +6217,7 @@ app.post('/api/passkeys/register/verify', requireUser, async (req, res) => {
     } catch (err) { res.status(400).json({ error: err.message || 'Passkey 注册失败' }); }
 });
 app.delete('/api/passkeys/:id', requireUser, (req, res) => { storage.deletePasskey(req.user.username, req.params.id); addActivity('删除 Passkey', req.user.userId, activityFromReq(req, { category: '账户', outcome: '成功' })); res.json({ ok: true }); });
-app.post('/api/passkeys/login/options', async (req, res) => {
+app.post('/api/passkeys/login/options', rejectEmbeddedBrowserLogin, async (req, res) => {
     const guard = checkLoginGuards(req);
     if (!guard.ok) return res.status(403).json({ error: guard.reason });
     const origin = publicOrigin(req);
@@ -6207,7 +6253,7 @@ app.post('/api/passkeys/login/options', async (req, res) => {
     });
     res.json(options);
 });
-app.post('/api/passkeys/login/verify', async (req, res) => {
+app.post('/api/passkeys/login/verify', rejectEmbeddedBrowserLogin, async (req, res) => {
     const guard = checkLoginGuards(req);
     const ua = req.headers['user-agent'] || '';
     if (!guard.ok) return res.status(403).json({ error: guard.reason });
@@ -6471,7 +6517,7 @@ app.post('/api/data/import', requireSuperAdmin, backupImportNoStore, requireBack
              * restore does not strand One behind its consumed bootstrap
              * challenge. Hosted clients must authenticate again. */
             const adoptedUser = storage.listUsers().find((candidate) => candidate.status === 'active');
-            if (adoptedUser) createSession(req, res, adoptedUser);
+            if (adoptedUser) reissueEmbeddedSessionAfterImport(req, res, adoptedUser);
             else res.setHeader('Set-Cookie', sessionClearCookie(req));
         } else {
             res.setHeader('Set-Cookie', sessionClearCookie(req));
@@ -9315,7 +9361,11 @@ function startSessionWatchdog(ws, req, intervalMs = 5 * 60 * 1000) {
     if (!sid) return () => {};
     const timer = setInterval(() => {
         let live = null;
-        try { live = sessionStore.resolve(sid, { touch: false }); } catch { live = null; }
+        try {
+            live = (!ZEPHYR_ONE_EMBEDDED || embeddedSessionCapabilities.has(sid))
+                ? sessionStore.resolve(sid, { touch: false })
+                : null;
+        } catch { live = null; }
         if (!live) closeWebSocketSafe(ws, 4001, 'app-session-expired');
     }, intervalMs);
     timer.unref?.();
