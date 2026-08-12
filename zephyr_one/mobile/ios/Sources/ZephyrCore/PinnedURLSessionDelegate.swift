@@ -66,7 +66,7 @@ public final class PinnedURLSessionDelegate: NSObject, URLSessionDataDelegate, @
               Self.normalizedPort(request.url?.port ?? 443) == origin.port else {
             throw URLError(.unsupportedURL)
         }
-        try await bounded.load(request, using: session, byteLimit: byteLimit)
+        return try await bounded.load(request, using: session, byteLimit: byteLimit)
     }
 
     public func urlSession(
