@@ -619,7 +619,7 @@ test('the stage stylesheet no longer hides the panel One now uses', () => {
         'utf8',
     );
     const block = fs.readFileSync(path.join(root, 'zephyr-one-embed.css'), 'utf8');
-    assert.match(stage, /cp "\$ROOT\/zephyr-one-embed\.css" "\$OUT\/public\/zephyr-one-embed\.css"/);
+    assert.match(stage, /cp "\$REPO\/zephyr-one-embed\.css" "\$OUT\/public\/zephyr-one-embed\.css"/);
     assert.equal(
         block.includes('#settings-security'),
         false,

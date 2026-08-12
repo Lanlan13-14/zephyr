@@ -124,7 +124,7 @@ fi
 # returns 200 with a zip.enc attachment, and import still demands the account
 # password (wrong password -> 403), which is what contract §8 requires of a
 # sensitive operation.
-cp "$ROOT/zephyr-one-embed.css" "$OUT/public/zephyr-one-embed.css"
+cp "$REPO/zephyr-one-embed.css" "$OUT/public/zephyr-one-embed.css"
 
 cat > "$OUT/ZEPHYR_ONE_CORE.json" <<EOF
 {

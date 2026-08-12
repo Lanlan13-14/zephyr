@@ -260,8 +260,8 @@ test('embedded mode skips the login page only after one-time bootstrap', () => {
     assert.match(SERVER_JS, /\? '127\.0\.0\.1'/);
 });
 
-test('stage script still hides the web-only settings tabs it owns', () => {
-    assert.match(STAGE_SH, /cp "\$ROOT\/zephyr-one-embed\.css" "\$OUT\/public\/zephyr-one-embed\.css"/);
+test('stage script stages the One stylesheet from the repository root', () => {
+    assert.match(STAGE_SH, /cp "\$REPO\/zephyr-one-embed\.css" "\$OUT\/public\/zephyr-one-embed\.css"/);
     for (const selector of ['admin', 'mail', 'beian']) {
         assert.ok(
             EMBED_CSS.includes(`.settings-tab[data-settings="${selector}"]`),
