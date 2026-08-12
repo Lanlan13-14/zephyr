@@ -126,7 +126,9 @@ final class DeviceIdentityStoreTests: XCTestCase {
         _ = try first.ensureIdentity()
 
         XCTAssertEqual(keys.successfulCreateCount, 1)
-        XCTAssertTrue(try XCTUnwrap(keys.current?.key) === try XCTUnwrap(winner))
+        let currentKey = try XCTUnwrap(keys.current?.key)
+        let winnerKey = try XCTUnwrap(winner)
+        XCTAssertTrue(currentKey === winnerKey)
         XCTAssertEqual(try leases.onlyEnvelope().state, .active)
     }
 
@@ -178,7 +180,9 @@ final class DeviceIdentityStoreTests: XCTestCase {
             XCTAssertEqual(error as? DeviceIdentityStoreError, .keyUnavailable)
         }
 
-        XCTAssertTrue(try XCTUnwrap(keys.current?.key) === try XCTUnwrap(winner))
+        let currentKey = try XCTUnwrap(keys.current?.key)
+        let winnerKey = try XCTUnwrap(winner)
+        XCTAssertTrue(currentKey === winnerKey)
         XCTAssertEqual(keys.successfulCreateCount, 2)
         XCTAssertEqual(try winnerStore.ensureIdentity().protection, .secureEnclave)
         XCTAssertEqual(keys.successfulCreateCount, 2)

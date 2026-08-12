@@ -60,18 +60,18 @@ final class DeviceProofTests: XCTestCase {
         let signer = RecordingDeviceProofSigner()
         let coordinator = DeviceProofCoordinator(signer: signer, nowMilliseconds: { self.now })
         let binding = try statusBinding()
-        var mutated = challenge(for: binding, nonce: String(repeating: "A", count: 43))
-        mutated = DeviceProofChallenge(
-            nonce: mutated.nonce,
-            timestamp: mutated.timestamp,
-            expiresAt: mutated.expiresAt,
-            method: mutated.method,
+        let original = challenge(for: binding, nonce: String(repeating: "A", count: 43))
+        let mutated = DeviceProofChallenge(
+            nonce: original.nonce,
+            timestamp: original.timestamp,
+            expiresAt: original.expiresAt,
+            method: original.method,
             canonicalPath: "/api/mobile/v1/sync/changes?cursor=0",
-            bodySha256: mutated.bodySha256,
-            usage: mutated.usage,
-            algorithm: mutated.algorithm,
-            signatureFormat: mutated.signatureFormat,
-            proofVersion: mutated.proofVersion
+            bodySha256: original.bodySha256,
+            usage: original.usage,
+            algorithm: original.algorithm,
+            signatureFormat: original.signatureFormat,
+            proofVersion: original.proofVersion
         )
 
         do {

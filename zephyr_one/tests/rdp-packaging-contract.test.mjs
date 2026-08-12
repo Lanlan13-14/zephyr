@@ -266,7 +266,12 @@ test('desktop build metadata requires the complete FreeRDP 3 ABI', () => {
   assert.equal(tauriConfig.bundle.linux, undefined, 'static FreeRDP must not create distro runtime dependencies');
 
   const ctest = fs.readFileSync(path.join(ROOT, 'native', 'freerdp-core', 'run-ctests.sh'), 'utf8');
-  assert.match(ctest, /pkg-config --atleast-version=3\.0\.0 \$PKGS/);
+  assert.match(ctest, /PKGS="freerdp-client3 freerdp3 winpr3"/);
+  assert.match(ctest, /PKG_CONFIG_BIN="\$\{PKG_CONFIG:-pkg-config\}"/);
+  assert.match(ctest, /"\$PKG_CONFIG_BIN" --atleast-version=3\.0\.0 \$PKGS/);
+  assert.match(ctest, /"\$PKG_CONFIG_BIN" --libs --static \$PKGS/);
+  assert.match(ctest, /Linux\) LIBS_LINK="-Wl,--start-group \$LIBS_PKG -Wl,--end-group"/);
+  assert.match(ctest, /-o "\$OUT\/zephyr_rdp_test" \$LIBS_LINK/);
   assert.match(ctest, /-Wall -Wextra -Werror/);
   assert.doesNotMatch(ctest, /(?:^|\s)-Wno-error(?:\s|\\|$)/m);
   assert.doesNotMatch(ctest, /--exists freerdp2|PKGS="freerdp2/);
