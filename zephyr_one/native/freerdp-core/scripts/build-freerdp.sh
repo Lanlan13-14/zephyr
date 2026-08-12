@@ -59,14 +59,16 @@ SRC="$PREFIX/src"
 BUILD="$PREFIX/build"
 INSTALL="$PREFIX/install"
 
-# Already built and complete? Skip only when the patch revision, no-LTO build
-# contract, and installed public marker agree. A tag-only stamp could silently
-# reuse an old allocation-vulnerable or LTO-enabled build of this release.
+# Already built and complete? Skip only when the patch revision, no-LTO and
+# no-systemd build contracts, and installed public marker agree. A tag-only
+# stamp could silently reuse an old allocation-vulnerable or LTO-enabled build
+# of this release.
 STAMP="$INSTALL/.zephyr-freerdp-tag"
 STAMP_VALUE="$TAG+$PATCH_REV"
 if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$STAMP_VALUE" ] &&
    grep -q '^CMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF$' \
      "$BUILD/CMakeCache.txt" 2>/dev/null &&
+   grep -q '^WITH_SYSTEMD:BOOL=OFF$' "$BUILD/CMakeCache.txt" 2>/dev/null &&
    grep -q '^#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1$' \
      "$INSTALL/include/freerdp3/freerdp/client/channels.h"; then
   printf 'FreeRDP %s already built at %s\n' "$TAG" "$INSTALL"
@@ -181,12 +183,18 @@ AUDIO_ARGS="$AUDIO_ARGS -DWITH_PULSE=OFF -DWITH_OSS=OFF -DWITH_SNDIO=OFF"
 #   opus    -> libopus.so.0       (optional audio codec; other codecs remain)
 #   fuse    -> libfuse3           (clipboard FILE streaming; shim is text-only,
 #              verified: no CB_FORMAT_TEXTURIZED file-group-descriptor use)
+#
+# WinPR's systemd integration is only a WLog journald appender. It is unrelated
+# to the RDP features above, but FreeRDP enables it by default when headers are
+# present, which makes static pkg-config consumers link libsystemd. Keep the
+# shipped static closure independent of that optional logging backend.
 # shellcheck disable=SC2086
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
   $AUDIO_ARGS \
   -DCHANNEL_URBDRC=OFF \
   -DCHANNEL_URBDRC_CLIENT=OFF \
   -DWITH_UNICODE_BUILTIN=ON \
+  -DWITH_SYSTEMD=OFF \
   -DWITH_TIMEZONE_ICU=OFF \
   -DWITH_OPUS=OFF \
   -DWITH_FUSE=OFF \

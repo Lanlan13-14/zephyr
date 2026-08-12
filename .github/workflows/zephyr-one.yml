@@ -90,6 +90,7 @@ jobs:
         run: |
           "$PKG_CONFIG" --atleast-version=3.0.0 freerdp3 freerdp-client3 winpr3
           "$PKG_CONFIG" --modversion freerdp3 freerdp-client3 winpr3
+          ! "$PKG_CONFIG" --libs --static freerdp-client3 freerdp3 winpr3 | grep -Eq -- '(^|[[:space:]])-lsystemd([[:space:]]|$)'
       # C-level tests first: they link the shim directly, so a failure here points
       # at the C ABI rather than at the Rust binding layer.
       - name: Test FreeRDP C core
@@ -197,6 +198,9 @@ jobs:
           & $env:PKG_CONFIG --atleast-version=3.0.0 freerdp3 freerdp-client3 winpr3
           if ($LASTEXITCODE -ne 0) { throw "pinned FreeRDP 3 pkg-config contract failed" }
           & $env:PKG_CONFIG --modversion freerdp3 freerdp-client3 winpr3
+          $staticLibs = & $env:PKG_CONFIG --libs --static freerdp-client3 freerdp3 winpr3
+          if ($LASTEXITCODE -ne 0) { throw "pinned FreeRDP 3 static pkg-config contract failed" }
+          if ($staticLibs -match '(^|\s)-lsystemd(\s|$)') { throw "pinned FreeRDP static closure must not require libsystemd" }
       - name: Install npm deps
         shell: pwsh
         run: npm install
@@ -312,6 +316,7 @@ jobs:
         run: |
           "$PKG_CONFIG" --atleast-version=3.0.0 freerdp3 freerdp-client3 winpr3
           "$PKG_CONFIG" --modversion freerdp3 freerdp-client3 winpr3
+          ! "$PKG_CONFIG" --libs --static freerdp-client3 freerdp3 winpr3 | grep -Eq -- '(^|[[:space:]])-lsystemd([[:space:]]|$)'
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
@@ -385,6 +390,7 @@ jobs:
         run: |
           "$PKG_CONFIG" --atleast-version=3.0.0 freerdp3 freerdp-client3 winpr3
           "$PKG_CONFIG" --modversion freerdp3 freerdp-client3 winpr3
+          ! "$PKG_CONFIG" --libs --static freerdp-client3 freerdp3 winpr3 | grep -Eq -- '(^|[[:space:]])-lsystemd([[:space:]]|$)'
       - run: npm install
       - run: npm run stage:core
       - run: node scripts/stage-desktop-runtime.mjs

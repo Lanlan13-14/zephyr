@@ -251,6 +251,16 @@ test('desktop build metadata requires the complete FreeRDP 3 ABI', () => {
     /-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF/,
     'vendored FreeRDP archives must not carry LTO into the shim link',
   );
+  assert.match(
+    nativeBuild,
+    /-DWITH_SYSTEMD=OFF/,
+    'the optional WinPR journald appender must not enter the static pkg-config closure',
+  );
+  assert.match(
+    nativeBuild,
+    /grep -q '\^WITH_SYSTEMD:BOOL=OFF\$'\s+"\$BUILD\/CMakeCache\.txt"/,
+    'a stamped install built with the optional journald appender must be rebuilt',
+  );
   assert.ok(
     nativeBuild.lastIndexOf('-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF') >
       nativeBuild.indexOf('${ZEPHYR_FREERDP_CMAKE_ARGS:-}'),
@@ -297,6 +307,14 @@ test('release workflow verifies the staged tree and every desktop bundle type', 
   assert.ok(
     (workflow.match(/--atleast-version=3\.0\.0 freerdp3 freerdp-client3 winpr3/g) || []).length >= 4,
     'every desktop CI platform must verify the FreeRDP 3 pkg-config modules before building',
+  );
+  assert.ok(
+    (workflow.match(/--libs --static freerdp-client3 freerdp3 winpr3/g) || []).length >= 4,
+    'every desktop CI platform must reject libsystemd from the static FreeRDP closure',
+  );
+  assert.ok(
+    (workflow.match(/-lsystemd/g) || []).length >= 4,
+    'every desktop CI platform must explicitly reject libsystemd from the static FreeRDP closure',
   );
   assert.match(workflow, /dylibbundler -od -b/);
   assert.match(workflow, /verify-rdp-packaging\.mjs macos-static/);

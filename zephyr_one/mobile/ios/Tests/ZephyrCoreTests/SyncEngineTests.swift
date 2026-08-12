@@ -492,7 +492,7 @@ private actor ScriptedSyncTransport: SyncTransport {
             }
             try Task.checkCancellation()
         }
-        if changeScripts.isEmpty { return changes(from: cursor, next: cursor) }
+        if changeScripts.isEmpty { return ZephyrCoreTests.changes(from: cursor, next: cursor) }
         return try changeScripts.removeFirst().get()
     }
 

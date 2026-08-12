@@ -1542,7 +1542,7 @@ private enum BindingFixtures {
                 "\"expectedBindingRevision\":0,\"expectedRefreshGeneration\":0," +
                 "\"expiresAt\":1725000030000}"
             : ""
-        try decode(
+        return try decode(
             MobileSensitiveGrantResponse.self,
             """
             {"ok":true,"grant":"grant-secret","expiresAt":1725000030000,
