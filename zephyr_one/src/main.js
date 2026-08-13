@@ -297,6 +297,27 @@ function openSecurity() {
   refreshCapabilityHints();
 }
 
+/* The iframe lives on the loopback core's origin and cannot invoke Tauri
+   commands, so a core that lost its session asks for a restart by message.
+   Only the exact origin of the runtime we started is trusted. */
+let coreRestartInFlight = null;
+window.addEventListener('message', (event) => {
+  if (event.data?.type !== 'zephyr-one:restart') return;
+  if (!state.runtime?.baseUrl || event.origin !== new URL(state.runtime.baseUrl).origin) return;
+  if (event.source !== $('#localAppFrame')?.contentWindow) return;
+  if (coreRestartInFlight) return;
+  coreRestartInFlight = (async () => {
+    try { await safeInvoke('runtime_stop'); } catch { /* best effort */ }
+    try {
+      await startAndEnter();
+      $('#localAppFrame')?.contentWindow?.postMessage(
+        { type: 'zephyr-one:restarted' },
+        new URL(state.runtime.baseUrl).origin,
+      );
+    } catch { /* startAndEnter already surfaces the error gate */ }
+    finally { coreRestartInFlight = null; }
+  })();
+});
 function wire() {
   $('#unlockBtn')?.addEventListener('click', () => unlockThenEnter($('#unlockBtn')));
   $('#retryBootBtn')?.addEventListener('click', () => startAndEnter($('#retryBootBtn')));

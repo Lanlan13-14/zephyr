@@ -232,6 +232,7 @@ let aiHostServer = null;
 const ZEPHYR_ONE_EMBEDDED = process.env.ZEPHYR_ONE_EMBEDDED === '1';
 const EMBEDDED_BOOTSTRAP_PATH = '/__zephyr_one/bootstrap';
 const EMBEDDED_BOOTSTRAP_HEADER = 'x-zephyr-one-bootstrap-challenge';
+const EMBEDDED_RECOVERY_PATH = '/__zephyr_one/recover';
 const EMBEDDED_READY_PROBE_HEADER = 'x-zephyr-one-ready-probe';
 const EMBEDDED_READY_PROOF_HEADER = 'X-Zephyr-One-Ready-Proof';
 const EMBEDDED_READY_CONTEXT = Buffer.from('zephyr-one-ready-v1\0', 'utf8');
@@ -436,6 +437,25 @@ function exchangeEmbeddedBootstrap(req, res, next) {
     }
 }
 app.post(EMBEDDED_BOOTSTRAP_PATH, exchangeEmbeddedBootstrap);
+
+/* The recovery document POSTs here when its cookie is capability-less but the
+ * underlying session is still live (pure in-memory capability loss, no core
+ * restart). Re-minting the capability lets the page walk straight into the app
+ * without a full restart. After a core restart every session is revoked, so
+ * this returns 404 and the document falls back to asking the shell to
+ * re-provision the core from scratch. */
+app.post(EMBEDDED_RECOVERY_PATH, (req, res, next) => {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    setBootstrapResponseHeaders(res);
+    const sid = parseCookies(req).zephyr_sid
+        || String(req.headers['x-zephyr-sid'] || '').trim();
+    if (!sid) return res.status(404).type('text/plain').send('Not Found');
+    let session = null;
+    try { session = sessionStore.resolve(sid, { touch: false }); } catch { session = null; }
+    if (!session) return res.status(404).type('text/plain').send('Not Found');
+    embeddedSessionCapabilities.add(sid);
+    return res.status(204).end();
+});
 
 const DATA_DIR = process.env.ZEPHYR_DATA_DIR
     ? path.resolve(process.env.ZEPHYR_DATA_DIR)
@@ -8584,6 +8604,33 @@ function serveMotionDemo(req, res) {
 }
 app.get('/motion-feel.html', requireMotionDemoEnabled, requireSuperAdmin, serveMotionDemo);
 app.get('/motion-feel', requireMotionDemoEnabled, requireSuperAdmin, serveMotionDemo);
+/* Served from "/" when no valid embedded session exists. Loading the normal
+ * pages would bounce "/" -> "/app.html" -> "/" forever (a WebView can outlive
+ * the core and carry a revoked cookie), so this tiny document breaks the loop:
+ * it first asks the core to re-mint a live-but-capability-less session and,
+ * failing that, asks the Tauri shell to restart and re-provision the core.
+ * Deliberately separate from sendEmbeddedAppPage - this page must never
+ * require auth. */
+function sendEmbeddedRecoveryPage(req, res) {
+    const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zephyr One</title>
+</head>
+<body>
+  <p id="msg"></p>
+  <script src="/zephyr-one-recovery.js"></script>
+</body>
+</html>
+`;
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.type('html').send(html);
+}
+
 async function sendEmbeddedAppPage(req, res, next) {
     try {
         const html = embeddedPublicAssets
@@ -8608,7 +8655,13 @@ async function sendEmbeddedAppPage(req, res, next) {
  * static handler, which would otherwise serve index.html for `/`. */
 app.get(['/', '/index.html'], (req, res, next) => {
     if (!ZEPHYR_ONE_EMBEDDED) return next();
-    return res.redirect('/app.html');
+    /* A dead embedded session must not bounce "/" -> "/app.html" -> "/"
+     * forever (ERR_TOO_MANY_REDIRECTS): a WebView can outlive the core it was
+     * bootstrapped by and its cookie is then revoked. In that state /app.html
+     * rejects and redirects home, so "/" serves the self-repair document
+     * instead of looping. */
+    if (currentSession(req)) return res.redirect('/app.html');
+    return sendEmbeddedRecoveryPage(req, res);
 });
 app.get(['/app.html', '/app'], requirePageAuth, (req, res, next) => {
     if (process.env.ZEPHYR_ONE_EMBEDDED === '1' || req.query.zephyrOne === '1') {
@@ -8641,6 +8694,14 @@ app.get('/zephyr-one-rdp-settings.js', (req, res, next) => {
     res.type('application/javascript');
     res.setHeader('Cache-Control', 'no-store');
     res.sendFile(path.join(__dirname, 'zephyr-one-rdp-settings.js'), (error) => {
+        if (error) next(error);
+    });
+});
+app.get('/zephyr-one-recovery.js', (req, res, next) => {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    res.type('application/javascript');
+    res.setHeader('Cache-Control', 'no-store');
+    res.sendFile(path.join(__dirname, 'zephyr-one-recovery.js'), (error) => {
         if (error) next(error);
     });
 });

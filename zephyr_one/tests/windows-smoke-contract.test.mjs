@@ -23,7 +23,7 @@ describe('Windows install smoke harness', () => {
     assert.match(smoke, /\$body\.ok -eq \$true/);
     assert.match(smoke, /\$body\.instanceId/);
     assert.match(smoke, /Get-RedirectLocation/);
-    assert.match(smoke, /rootLocation -ne '\/app\.html'/);
+    assert.match(smoke, /zephyr-one-recovery/); // '/' must serve the loop-breaking recovery doc
     assert.match(smoke, /appLocation -ne '\/'/);
     assert.match(smoke, /zephyr-one-embed\.css/);
     assert.match(smoke, /Content -notmatch 'Zephyr One'/);

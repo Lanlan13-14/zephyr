@@ -209,10 +209,16 @@ if (-not $ready -or -not $port -or -not $nodePid) {
 Write-Log ("Exact installed Node health ready pid={0} port={1}" -f $nodePid, $port)
 
 try {
-  $rootLocation = Get-RedirectLocation ("http://127.0.0.1:{0}/" -f $port)
+  # A dead embedded session must not bounce / -> /app.html -> / forever
+  # (ERR_TOO_MANY_REDIRECTS): "/" serves the self-repair document instead of
+  # looping, and /app.html still rejects an unauthenticated request home.
+  $rootResponse = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/" -f $port) -TimeoutSec 15
+  if ($rootResponse.StatusCode -ne 200 -or $rootResponse.Content -notmatch 'zephyr-one-recovery') {
+    Dump-Fail ("embedded root did not serve the recovery document (redirect loop guard missing) status={0}" -f $rootResponse.StatusCode)
+  }
   $appLocation = Get-RedirectLocation ("http://127.0.0.1:{0}/app.html" -f $port)
-  if ($rootLocation -ne '/app.html' -or $appLocation -ne '/') {
-    Dump-Fail ("embedded auth redirect contract changed root={0} app={1}" -f $rootLocation, $appLocation)
+  if ($appLocation -ne '/') {
+    Dump-Fail ("embedded auth redirect contract changed app={0}" -f $appLocation)
   }
   $assetResponse = Invoke-WebRequest -UseBasicParsing `
     -Uri ("http://127.0.0.1:{0}/zephyr-one-embed.css" -f $port) -TimeoutSec 15
