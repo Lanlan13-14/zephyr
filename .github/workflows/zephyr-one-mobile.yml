@@ -1,4 +1,4 @@
-name: Zephyr One Mobile
+﻿name: Zephyr One Mobile
 
 # The 46k+ lines of Kotlin under zephyr_one/mobile/android had never been
 # compiled once, because no workflow referenced the tree and there is no Gradle
@@ -33,9 +33,23 @@ on:
       - '.github/workflows/zephyr-one-mobile.yml'
       - '.github/scripts/**'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. zom-v1.0.0)'
+        required: false
+        default: 'zom-v1.0.0'
+      prerelease_label:
+        description: 'Pre-release suffix appended to the tag (e.g. pre1). Leave empty for a stable release.'
+        required: false
+        default: 'pre1'
+      validation_only:
+        description: 'Build and test both platforms without publishing a release'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   contracts:
@@ -143,6 +157,16 @@ jobs:
             exit "$status"
           fi
 
+      # assembleDebug produces a debug-signed APK that installs as-is. Upload it
+      # so a green run yields a testable build instead of leaving the binary on
+      # the discarded runner, and so the release job has something to attach.
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: zephyr_one/mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -194,3 +218,45 @@ jobs:
               /tmp/swift-test.log 'swift test'
             exit "$status"
           fi
+
+  release:
+    # Publish a mobile pre-release only on an explicit dispatch with a version
+    # (and not just validation), and only when every platform compiled and the
+    # contract suite passed. iOS is a hard gate: "both platforms compile" is the
+    # product contract, so a flaky macOS run must not silently ship a release.
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.version != '' && github.event.inputs.validation_only != 'true' && needs.contracts.result == 'success' && needs.android.result == 'success' && needs.ios.result == 'success' }}
+    needs: [contracts, android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: Pack release artifacts
+        working-directory: .
+        run: |
+          mkdir -p dist-mobile
+          find release-artifacts -type f \( -name '*.apk' -o -name '*.aab' -o -name '*.zip' \) -exec cp -v {} dist-mobile/ \; || true
+          ls -la dist-mobile || true
+          test "$(find dist-mobile -type f | wc -l)" -gt 0
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}${{ github.event.inputs.prerelease_label }}
+          name: "Zephyr One Mobile ${{ github.event.inputs.version }}${{ github.event.inputs.prerelease_label }}"
+          body: |
+            ## Zephyr One Mobile ${{ github.event.inputs.version }}${{ github.event.inputs.prerelease_label }}
+
+            Native Zephyr One client (Kotlin + Jetpack Compose / Swift + SwiftUI) that syncs with
+            Zephyr main. Sync is optional: the app is usable standalone on the device.
+
+            ### This pre-release
+            - Android debug APK (installs as-is)
+            - Contracts suite + Android compile + iOS compile all green
+
+            See the [mobile product contract](../../tree/main/FREEZE/zephyr%20one%20for%20mobile/README.md)
+            for scope, and IMPLEMENTATION_STATUS.md for the honest per-feature status.
+          files: dist-mobile/*
+          draft: false
+          prerelease: true
+          fail_on_unmatched_files: false
