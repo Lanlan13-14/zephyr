@@ -495,8 +495,11 @@ echo "IPA_STAGE=validated-device-executable"
 
 framework_queue=()
 embedded_frameworks=()
+framework_queue_count=0
+embedded_framework_count=0
 while IFS= read -r framework_name; do
-  framework_queue+=("$framework_name")
+  framework_queue[$framework_queue_count]="$framework_name"
+  framework_queue_count=$((framework_queue_count + 1))
 done < <(
   otool -L "$BUILT_EXECUTABLE" |
     sed -nE 's|^[[:space:]]+@rpath/([^/]+\.framework)/.*|\1|p' |
@@ -504,16 +507,19 @@ done < <(
 )
 
 framework_index=0
-while (( framework_index < ${#framework_queue[@]} )); do
+while (( framework_index < framework_queue_count )); do
   framework_name="${framework_queue[$framework_index]}"
   framework_index=$((framework_index + 1))
 
   already_embedded=false
-  for embedded_name in "${embedded_frameworks[@]}"; do
+  embedded_index=0
+  while (( embedded_index < embedded_framework_count )); do
+    embedded_name="${embedded_frameworks[$embedded_index]}"
     if [[ "$embedded_name" == "$framework_name" ]]; then
       already_embedded=true
       break
     fi
+    embedded_index=$((embedded_index + 1))
   done
   if [[ "$already_embedded" == true ]]; then
     continue
@@ -544,20 +550,28 @@ while (( framework_index < ${#framework_queue[@]} )); do
   fi
   mkdir -p "$APP_DIR/Frameworks"
   ditto "$framework_path" "$APP_DIR/Frameworks/$framework_name"
-  embedded_frameworks+=("$framework_name")
+  embedded_frameworks[$embedded_framework_count]="$framework_name"
+  embedded_framework_count=$((embedded_framework_count + 1))
 
   while IFS= read -r dependency_name; do
-    framework_queue+=("$dependency_name")
+    framework_queue[$framework_queue_count]="$dependency_name"
+    framework_queue_count=$((framework_queue_count + 1))
   done < <(
     otool -L "$framework_executable" |
       sed -nE 's|^[[:space:]]+@rpath/([^/]+\.framework)/.*|\1|p' |
       sort -u
   )
 done
-echo "IPA_STAGE=embedded-frameworks:${#embedded_frameworks[@]}"
+echo "IPA_STAGE=embedded-frameworks:$embedded_framework_count"
 
 linked_frameworks="$WORK_DIR/linked-frameworks.txt"
-printf '%s\n' "${embedded_frameworks[@]}" | sed '/^$/d' | sort -u > "$linked_frameworks"
+: > "$linked_frameworks"
+embedded_index=0
+while (( embedded_index < embedded_framework_count )); do
+  printf '%s\n' "${embedded_frameworks[$embedded_index]}" >> "$linked_frameworks"
+  embedded_index=$((embedded_index + 1))
+done
+sort -u -o "$linked_frameworks" "$linked_frameworks"
 
 while IFS= read -r framework_name; do
   framework_dir="$APP_DIR/Frameworks/$framework_name"

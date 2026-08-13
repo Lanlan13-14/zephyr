@@ -13,6 +13,8 @@ test('iOS packager emits a device executable without main.swift conflict', () =>
   assert.match(script, /platforms: \[\.iOS\(\.v17\), \.macOS\(\.v14\)\]/);
   assert.match(script, /arm64-apple-ios17\.0/);
   assert.match(script, /grep -Eq 'platform IOS\$'/);
+  assert.match(script, /framework_queue_count=0/);
+  assert.doesNotMatch(script, /\$\{#(?:framework_queue|embedded_frameworks)\[@\]\}/);
 });
 
 test('iOS local workspace persists rows and keeps secrets in Keychain', () => {
