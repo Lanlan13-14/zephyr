@@ -46,7 +46,7 @@ let zephyrPackagePath = ProcessInfo.processInfo.environment["ZEPHYR_IOS_PACKAGE_
 
 let package = Package(
     name: "ZephyrOneMobileHost",
-    platforms: [.iOS(.v17)],
+    platforms: [.iOS(.v17), .macOS(.v14)],
     dependencies: [
         .package(name: "ZephyrOne", path: zephyrPackagePath),
     ],

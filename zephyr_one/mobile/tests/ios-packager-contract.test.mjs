@@ -10,6 +10,7 @@ const script = fs.readFileSync(path.join(mobileRoot, 'tools', 'package-ios-unsig
 test('iOS packager emits a device executable without main.swift conflict', () => {
   assert.match(script, /ZephyrOneMobileApp\.swift/);
   assert.doesNotMatch(script, /\/main\.swift/);
+  assert.match(script, /platforms: \[\.iOS\(\.v17\), \.macOS\(\.v14\)\]/);
   assert.match(script, /arm64-apple-ios17\.0/);
   assert.match(script, /grep -Eq 'platform IOS\$'/);
 });
