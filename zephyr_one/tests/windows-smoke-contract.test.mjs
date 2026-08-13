@@ -89,9 +89,13 @@ describe('Windows install smoke harness', () => {
 
   it('propagates the full static RDP closure to the Windows application bin', () => {
     const build = fs.readFileSync(path.join(ROOT, 'src-tauri', 'build.rs'), 'utf8');
-    assert.match(build, /emit_windows_bin_link_closure\(&linked_libraries\)/);
+    assert.match(build, /probe\(&FREERDP3_PACKAGES, !windows\)/);
+    assert.match(build, /emit_windows_target_link_closure\(&linked_libraries\)/);
     assert.match(build, /cargo:rustc-link-arg-bin=zephyr-one=/);
+    assert.match(build, /cargo:rustc-link-arg-tests=/);
     assert.match(build, /for name in &library\.libs/);
+    assert.match(build, /if is_msvc_crt_link_name\(name\) \{\s+continue;/);
+    assert.match(build, /"msvcrt"[\s\S]*"ucrt"[\s\S]*"vcruntime"/);
     assert.match(build, /directory\.join\(&filename\)/);
     assert.match(build, /is_freerdp2_link_name\(name\)/);
   });

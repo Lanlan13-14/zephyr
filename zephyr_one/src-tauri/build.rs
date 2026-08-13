@@ -195,10 +195,11 @@ fn main() {
 
     // The complete set was probed above, so a failure here means pkg-config
     // results changed mid-build and must abort loudly.
-    let (_, linked_libraries) = probe(&FREERDP3_PACKAGES, true)
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    let (_, linked_libraries) = probe(&FREERDP3_PACKAGES, !windows)
         .unwrap_or_else(|error| panic!("FreeRDP 3 package set changed between probes: {error}"));
-    emit_windows_bin_link_closure(&linked_libraries)
-        .unwrap_or_else(|error| panic!("Windows FreeRDP bin link closure is invalid: {error}"));
+    emit_windows_target_link_closure(&linked_libraries)
+        .unwrap_or_else(|error| panic!("Windows FreeRDP target link closure is invalid: {error}"));
 
     // The consumer gates on this, so a skipped build cannot link against
     // symbols that were never compiled.
@@ -241,7 +242,7 @@ fn probe(
     Ok((includes, libraries))
 }
 
-fn emit_windows_bin_link_closure(libraries: &[pkg_config::Library]) -> Result<(), String> {
+fn emit_windows_target_link_closure(libraries: &[pkg_config::Library]) -> Result<(), String> {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return Ok(());
     }
@@ -254,11 +255,14 @@ fn emit_windows_bin_link_closure(libraries: &[pkg_config::Library]) -> Result<()
             return Err("Windows pkg-config closure contains non-MSVC linker options".into());
         }
         for file in &library.link_files {
-            println!("cargo:rustc-link-arg-bin=zephyr-one={}", file.display());
+            emit_windows_target_link_arg(file);
         }
         for name in &library.libs {
             if is_freerdp2_link_name(name) {
                 return Err(format!("forbidden FreeRDP 2 library: {name}"));
+            }
+            if is_msvc_crt_link_name(name) {
+                continue;
             }
             let filename = format!("{name}.lib");
             let argument = library
@@ -267,10 +271,22 @@ fn emit_windows_bin_link_closure(libraries: &[pkg_config::Library]) -> Result<()
                 .map(|directory| directory.join(&filename))
                 .find(|candidate| candidate.is_file())
                 .unwrap_or_else(|| PathBuf::from(&filename));
-            println!("cargo:rustc-link-arg-bin=zephyr-one={}", argument.display());
+            emit_windows_target_link_arg(&argument);
         }
     }
     Ok(())
+}
+
+fn emit_windows_target_link_arg(argument: &Path) {
+    println!("cargo:rustc-link-arg-bin=zephyr-one={}", argument.display());
+    println!("cargo:rustc-link-arg-tests={}", argument.display());
+}
+
+fn is_msvc_crt_link_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "msvcrt" | "msvcrtd" | "ucrt" | "ucrtd" | "vcruntime" | "vcruntimed" | "libcmt" | "libcmtd"
+    )
 }
 
 fn pkg_config(cargo_metadata: bool) -> pkg_config::Config {
