@@ -15,6 +15,10 @@ on:
     branches: [main]
     paths:
       - 'zephyr_one/**'
+      - 'public/**'
+      - 'server.js'
+      - 'one-client-manager.js'
+      - 'file-agent-manager.js'
       - '.github/workflows/zephyr-one.yml'
       - '.github/scripts/**'
   workflow_dispatch:
@@ -155,6 +159,15 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag != '' && github.event.inputs.tag || github.sha }}
+      - name: Verify release source tag
+        if: github.event.inputs.tag != ''
+        shell: bash
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 '${{ github.event.inputs.tag }}')"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
       - name: Stamp package version from release tag
         shell: bash
         run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
@@ -213,17 +226,9 @@ jobs:
           # msvc-dev-cmd exports the Visual Studio vcpkg path. Keep the command,
           # environment, cache and CMake toolchain on the same standalone checkout.
           $env:VCPKG_ROOT = $vcpkgRoot
-          $vcpkgArguments = @(
-            'install'
-            "--vcpkg-root=$vcpkgRoot"
-            '--x-manifest-root=native/freerdp-core'
-            "--x-install-root=$vcpkgRoot/installed"
-            '--triplet'
-            'x64-windows-static-md'
-          )
           $installed = $false
           foreach ($attempt in 1..3) {
-            & C:/vcpkg/vcpkg.exe @vcpkgArguments
+            & C:/vcpkg/vcpkg.exe install "--vcpkg-root=$vcpkgRoot" '--x-manifest-root=native/freerdp-core' "--x-install-root=$vcpkgRoot/installed" --triplet x64-windows-static-md
             if ($LASTEXITCODE -eq 0) {
               $installed = $true
               break
@@ -318,6 +323,9 @@ jobs:
             (cd src-tauri/target/release && 7z a "$OLDPWD/dist-out/zephyr-one-windows-x64-${{ github.event.inputs.tag }}.zip" zephyr-one.exe) || true
           fi
           ls -la dist-out || true
+          test -n "$(find dist-out -maxdepth 1 -type f -name '*.msi' -print -quit)"
+          test -n "$(find dist-out -maxdepth 1 -type f -name '*.exe' -print -quit)"
+          test -n "$(find dist-out -maxdepth 1 -type f -name '*.zip' -print -quit)"
       # Path/unit checks that only compile on Windows (verbatim \\?\ stripping).
       - name: Cargo test Windows path helpers
         shell: pwsh
@@ -344,7 +352,7 @@ jobs:
         with:
           name: windows-x64
           path: zephyr_one/dist-out/**
-          if-no-files-found: warn
+          if-no-files-found: error
 
   build-macos:
     if: github.event_name == 'workflow_dispatch' && (github.event.inputs.tag != '' || inputs.validation_only == true)
@@ -352,6 +360,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag != '' && github.event.inputs.tag || github.sha }}
+      - name: Verify release source tag
+        if: github.event.inputs.tag != ''
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 '${{ github.event.inputs.tag }}')"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
       - name: Stamp package version from release tag
         run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
       - uses: actions/setup-node@v4
@@ -425,11 +441,13 @@ jobs:
               "dist-out/zephyr-one-macos-${{ github.event.inputs.tag }}.dmg"
           fi
           ls -la dist-out || true
+          test -n "$(find dist-out -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "$(find dist-out -maxdepth 1 -type f -name '*.zip' -print -quit)"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-universal
           path: zephyr_one/dist-out/**
-          if-no-files-found: warn
+          if-no-files-found: error
 
   build-linux:
     if: github.event_name == 'workflow_dispatch' && (github.event.inputs.tag != '' || inputs.validation_only == true)
@@ -437,6 +455,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag != '' && github.event.inputs.tag || github.sha }}
+      - name: Verify release source tag
+        if: github.event.inputs.tag != ''
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 '${{ github.event.inputs.tag }}')"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
       - name: Stamp package version from release tag
         run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
       - uses: actions/setup-node@v4
@@ -491,12 +517,13 @@ jobs:
           mkdir -p dist-out
           find src-tauri/target/release/bundle -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) -exec cp -v {} dist-out/ \; || true
           ls -la dist-out || true
-          test "$(find dist-out -type f | wc -l)" -gt 0
+          test -n "$(find dist-out -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$(find dist-out -maxdepth 1 -type f -name '*.rpm' -print -quit)"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x64
           path: zephyr_one/dist-out/**
-          if-no-files-found: warn
+          if-no-files-found: error
 
   release:
     # A desktop release is one cross-platform version. Never update a tag with
@@ -506,19 +533,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag }}
+      - name: Verify release source tag
+        working-directory: .
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 '${{ github.event.inputs.tag }}')"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
       - uses: actions/download-artifact@v4
         with:
           path: release-artifacts
       - name: Pack all platforms
         working-directory: .
         run: |
+          set -eu
           mkdir -p dist-one
-          find release-artifacts -type f \( \
-            -name '*.msi' -o -name '*.exe' -o -name '*.zip' -o \
-            -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' \
-          \) -exec cp -v {} dist-one/ \; || true
+          require_one() {
+            platform=$1
+            pattern=$2
+            count=$(find "release-artifacts/$platform" -type f -name "$pattern" | wc -l | tr -d ' ')
+            test "$count" -eq 1 || {
+              echo "ERROR: expected exactly one $pattern in $platform, found $count" >&2
+              exit 1
+            }
+            find "release-artifacts/$platform" -type f -name "$pattern" -exec cp -v {} dist-one/ \;
+          }
+          require_one windows-x64 '*.msi'
+          require_one windows-x64 '*.exe'
+          require_one windows-x64 '*.zip'
+          require_one macos-universal '*.dmg'
+          require_one macos-universal '*.zip'
+          require_one linux-x64 '*.deb'
+          require_one linux-x64 '*.rpm'
           ls -la dist-one || true
-          test "$(find dist-one -type f | wc -l)" -gt 0
+          test "$(find dist-one -maxdepth 1 -type f | wc -l)" -eq 7
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
@@ -548,5 +597,5 @@ jobs:
             - Does **not** replace Zephyr Agent (`com.zephyr.agent`)
           files: dist-one/*
           draft: false
-          prerelease: false
-          fail_on_unmatched_files: false
+          prerelease: true
+          fail_on_unmatched_files: true

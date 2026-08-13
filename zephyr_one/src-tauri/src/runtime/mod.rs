@@ -16,10 +16,13 @@ use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use zeroize::Zeroizing;
 
 #[cfg(target_os = "windows")]
@@ -32,6 +35,36 @@ const READY_PROBE_HEADER: &str = "X-Zephyr-One-Ready-Probe";
 const READY_PROOF_HEADER: &str = "X-Zephyr-One-Ready-Proof";
 const BOOTSTRAP_HEADER: &str = "X-Zephyr-One-Bootstrap-Challenge";
 const READY_CONTEXT: &[u8] = b"zephyr-one-ready-v1\0";
+const LOCAL_APP_LABEL: &str = "local-app";
+const LOCAL_APP_PATH: &str = "/app.html?zephyrOne=1";
+const UI_READY_MARKER: &str = "zephyr-one-ui-ready.json";
+const LOCAL_APP_READY_SCRIPT: &str = r#"
+(() => {
+  if (window.top !== window || location.hostname !== '127.0.0.1') return;
+  if (location.pathname === '/' && location.search === '') {
+    window.addEventListener('message', (event) => {
+      if (event.source !== window || event.origin !== location.origin ||
+          event.data?.type !== 'zephyr-one:restart') return;
+      window.__TAURI_INTERNALS__?.invoke?.('local_app_restart').catch(() => {});
+    });
+    return;
+  }
+  if (location.pathname !== '/app.html' || location.search !== '?zephyrOne=1') return;
+  let reported = false;
+  const poll = () => {
+    if (reported) return;
+    if (document.documentElement.dataset.appReady === '1' && document.readyState === 'complete') {
+      reported = true;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        window.__TAURI_INTERNALS__?.invoke?.('local_app_ready').catch(() => {});
+      }));
+      return;
+    }
+    setTimeout(poll, 100);
+  };
+  poll();
+})();
+"#;
 
 struct StartupChallenge([u8; 32]);
 
@@ -165,6 +198,8 @@ struct RuntimeState {
     startup_challenge: Option<StartupChallenge>,
     session_ready: bool,
     session_id: Option<Zeroizing<String>>,
+    local_app_origin: String,
+    local_app_bootstrap_blank: Option<Arc<AtomicBool>>,
     data_dir: PathBuf,
     node_path: PathBuf,
 }
@@ -461,33 +496,116 @@ fn exchange_bootstrap(base_url: &str, challenge: &StartupChallenge) -> Result<St
         .ok_or_else(|| "embedded bootstrap returned an invalid session cookie".to_string())
 }
 
-fn install_session_cookie(app: &AppHandle, sid: &str) -> Result<(), String> {
-    let webviews = app.webview_windows();
-    if webviews.is_empty() {
-        return Err("embedded bootstrap cannot find the application webview".into());
+fn session_cookie(sid: &str) -> tauri::webview::cookie::Cookie<'static> {
+    tauri::webview::cookie::Cookie::build(("zephyr_sid", sid.to_owned()))
+        .domain("127.0.0.1")
+        .path("/")
+        .http_only(true)
+        .same_site(tauri::webview::cookie::SameSite::Strict)
+        .build()
+}
+
+fn local_app_url(base_url: &str) -> Result<Url, String> {
+    format!("{}{LOCAL_APP_PATH}", base_url.trim_end_matches('/'))
+        .parse()
+        .map_err(|error| format!("embedded product URL is invalid: {error}"))
+}
+
+fn local_app_origin(base_url: &str) -> Result<String, String> {
+    let url: Url = base_url
+        .parse()
+        .map_err(|error| format!("embedded product origin is invalid: {error}"))?;
+    Ok(url.origin().ascii_serialization())
+}
+
+fn ui_ready_marker(data_dir: &Path) -> PathBuf {
+    data_dir.join(UI_READY_MARKER)
+}
+
+fn navigation_allowed(url: &Url, origin: &Url, allow_bootstrap_blank: bool) -> bool {
+    (allow_bootstrap_blank && url.as_str() == "about:blank") || url.origin() == origin.origin()
+}
+
+fn recovery_url_allowed(url: &Url, expected_origin: &str) -> bool {
+    url.origin().ascii_serialization() == expected_origin
+        && url.path() == "/"
+        && url.query().is_none()
+}
+
+struct PreparedLocalApp {
+    origin: String,
+    bootstrap_blank: Arc<AtomicBool>,
+}
+
+fn prepare_local_app_window(
+    app: &AppHandle,
+    base_url: &str,
+    sid: &str,
+) -> Result<PreparedLocalApp, String> {
+    let origin: Url = base_url
+        .parse()
+        .map_err(|error| format!("embedded product origin is invalid: {error}"))?;
+
+    teardown_local_app_resources(app)?;
+
+    let allow_bootstrap_blank = Arc::new(AtomicBool::new(true));
+    let navigation_gate = allow_bootstrap_blank.clone();
+    let navigation_origin = origin.clone();
+    let webview = WebviewWindowBuilder::new(
+        app,
+        LOCAL_APP_LABEL,
+        WebviewUrl::External(
+            "about:blank"
+                .parse()
+                .expect("about:blank is a valid webview URL"),
+        ),
+    )
+    .title("Zephyr One")
+    .inner_size(1100.0, 760.0)
+    .resizable(true)
+    .visible(false)
+    .initialization_script(LOCAL_APP_READY_SCRIPT)
+    .on_navigation(move |url| {
+        navigation_allowed(
+            url,
+            &navigation_origin,
+            navigation_gate.load(Ordering::Acquire),
+        )
+    })
+    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+    .build()
+    .map_err(|error| format!("unable to create the local product window: {error}"))?;
+
+    let close_app = app.clone();
+    webview.on_window_event(move |event| {
+        if matches!(event, WindowEvent::CloseRequested { .. }) {
+            let _ = stop(&close_app);
+            close_app.exit(0);
+        }
+    });
+
+    let cookie = session_cookie(sid);
+    if let Err(error) = webview.set_cookie(cookie) {
+        let _ = webview.destroy();
+        return Err(format!(
+            "unable to install the embedded session cookie: {error}"
+        ));
     }
-    for webview in webviews.values() {
-        let cookie = tauri::webview::cookie::Cookie::build(("zephyr_sid", sid.to_owned()))
-            .domain("127.0.0.1")
-            .path("/")
-            .http_only(true)
-            .same_site(tauri::webview::cookie::SameSite::Strict)
-            .build();
-        webview
-            .set_cookie(cookie)
-            .map_err(|error| format!("unable to install the embedded session cookie: {error}"))?;
-    }
-    Ok(())
+
+    Ok(PreparedLocalApp {
+        origin: local_app_origin(base_url)?,
+        bootstrap_blank: allow_bootstrap_blank,
+    })
 }
 
 fn provision_session(
     app: &AppHandle,
     base_url: &str,
     challenge: &StartupChallenge,
-) -> Result<Zeroizing<String>, String> {
+) -> Result<(Zeroizing<String>, PreparedLocalApp), String> {
     let sid = exchange_bootstrap(base_url, challenge)?;
-    install_session_cookie(app, &sid)?;
-    Ok(Zeroizing::new(sid))
+    let prepared = prepare_local_app_window(app, base_url, &sid)?;
+    Ok((Zeroizing::new(sid), prepared))
 }
 
 fn clear_runtime_state(st: &mut RuntimeState) {
@@ -498,10 +616,42 @@ fn clear_runtime_state(st: &mut RuntimeState) {
     st.startup_challenge = None;
     st.session_ready = false;
     st.session_id = None;
+    st.local_app_origin.clear();
+    st.local_app_bootstrap_blank = None;
     st.port = 0;
     st.base_url.clear();
     st.data_dir.clear();
     st.node_path.clear();
+}
+
+fn teardown_local_app_resources(app: &AppHandle) -> Result<(), String> {
+    let mut errors = Vec::new();
+    if let Some(window) = app.get_webview_window(LOCAL_APP_LABEL) {
+        if let Err(error) = window.delete_cookie(session_cookie("")) {
+            errors.push(format!(
+                "unable to delete the embedded session cookie: {error}"
+            ));
+        }
+        if let Err(error) = window.destroy() {
+            errors.push(format!(
+                "unable to destroy the local product window: {error}"
+            ));
+        }
+    }
+    if let (Some(broker), Some(surfaces)) = (
+        app.try_state::<Arc<crate::rdp::broker::NativeRdpBroker>>(),
+        app.try_state::<Arc<crate::commands::NativeRdpSurfaceState>>(),
+    ) {
+        surfaces.close_owner_sessions(&broker, LOCAL_APP_LABEL);
+    }
+    if let Some(bridge) = app.try_state::<crate::commands::rdp_surface::RdpBridgeState>() {
+        bridge.clear_owner_captures(LOCAL_APP_LABEL);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 fn terminate_runtime(st: &mut RuntimeState) {
@@ -510,6 +660,12 @@ fn terminate_runtime(st: &mut RuntimeState) {
         let _ = child.wait();
     }
     clear_runtime_state(st);
+}
+
+fn teardown_and_terminate(app: &AppHandle, st: &mut RuntimeState) -> Result<(), String> {
+    let cleanup = teardown_local_app_resources(app);
+    terminate_runtime(st);
+    cleanup
 }
 
 pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
@@ -525,18 +681,20 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
     if child_running {
         if provision_webview && !st.session_ready {
             let Some(challenge) = st.startup_challenge.take() else {
-                terminate_runtime(&mut st);
+                let _ = teardown_and_terminate(app, &mut st);
                 return Err("embedded runtime lost its unconsumed startup challenge".into());
             };
             let base_url = st.base_url.clone();
-            let session_id = match provision_session(app, &base_url, &challenge) {
-                Ok(session_id) => session_id,
+            let (session_id, prepared) = match provision_session(app, &base_url, &challenge) {
+                Ok(provisioned) => provisioned,
                 Err(error) => {
-                    terminate_runtime(&mut st);
+                    let _ = teardown_and_terminate(app, &mut st);
                     return Err(error);
                 }
             };
             st.session_id = Some(session_id);
+            st.local_app_origin = prepared.origin;
+            st.local_app_bootstrap_blank = Some(prepared.bootstrap_blank);
             st.session_ready = true;
         }
         return Ok(RuntimeInfo {
@@ -549,7 +707,7 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         });
     }
     if st.child.is_some() {
-        terminate_runtime(&mut st);
+        let _ = teardown_and_terminate(app, &mut st);
     }
 
     let data_dir = app
@@ -626,6 +784,7 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
     }
 
     std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+    let _ = std::fs::remove_file(ui_ready_marker(&data_dir));
 
     let mut child = cmd.spawn().map_err(|e| {
         format!(
@@ -670,9 +829,9 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         return Err(format!("{reason}{details}"));
     }
 
-    let provisioned_session = if provision_webview {
-        let session_id = match provision_session(app, &public_origin, &startup_challenge) {
-            Ok(session_id) => session_id,
+    let provisioned = if provision_webview {
+        let provisioned = match provision_session(app, &public_origin, &startup_challenge) {
+            Ok(provisioned) => provisioned,
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -682,6 +841,7 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         match child.try_wait() {
             Ok(None) => {}
             Ok(Some(status)) => {
+                let _ = teardown_local_app_resources(app);
                 return Err(format!(
                     "embedded core exited after bootstrap before handoff ({status})"
                 ));
@@ -689,12 +849,13 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = teardown_local_app_resources(app);
                 return Err(format!(
                     "unable to verify embedded core after bootstrap: {error}"
                 ));
             }
         }
-        Some(session_id)
+        Some(provisioned)
     } else {
         None
     };
@@ -712,7 +873,15 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         Some(startup_challenge)
     };
     st.session_ready = provision_webview;
-    st.session_id = provisioned_session;
+    if let Some((session_id, prepared)) = provisioned {
+        st.session_id = Some(session_id);
+        st.local_app_origin = prepared.origin;
+        st.local_app_bootstrap_blank = Some(prepared.bootstrap_blank);
+    } else {
+        st.session_id = None;
+        st.local_app_origin.clear();
+        st.local_app_bootstrap_blank = None;
+    }
     st.data_dir = data_dir.clone();
     st.node_path = node.clone();
 
@@ -724,6 +893,207 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         mode: "local-node".into(),
         node_path: node.to_string_lossy().into_owned(),
     })
+}
+
+pub fn enter(app: &AppHandle) -> Result<RuntimeInfo, String> {
+    let (info, target, bootstrap_blank) = {
+        let mut st = state().lock();
+        let running = st
+            .child
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+        if !running || !st.session_ready || st.session_id.is_none() {
+            return Err("embedded product is not ready for trusted entry".into());
+        }
+        let target = local_app_url(&st.base_url)?;
+        let target_origin = local_app_origin(&st.base_url)?;
+        if target_origin != st.local_app_origin {
+            return Err("embedded product window is bound to a stale origin".into());
+        }
+        let bootstrap_blank = st
+            .local_app_bootstrap_blank
+            .clone()
+            .ok_or_else(|| "embedded product window entry gate is missing".to_string())?;
+        let info = RuntimeInfo {
+            running: true,
+            base_url: st.base_url.clone(),
+            port: st.port,
+            data_dir: st.data_dir.to_string_lossy().into_owned(),
+            mode: "local-node".into(),
+            node_path: st.node_path.to_string_lossy().into_owned(),
+        };
+        (info, target, bootstrap_blank)
+    };
+
+    let webview = app
+        .get_webview_window(LOCAL_APP_LABEL)
+        .ok_or_else(|| "embedded product window is missing".to_string())?;
+    bootstrap_blank.store(false, Ordering::Release);
+    let handoff = (|| {
+        webview
+            .navigate(target)
+            .map_err(|error| format!("unable to navigate the local product window: {error}"))?;
+        webview
+            .show()
+            .map_err(|error| format!("unable to show the local product window: {error}"))?;
+        webview
+            .set_focus()
+            .map_err(|error| format!("unable to focus the local product window: {error}"))?;
+        if let Some(main) = app.get_webview_window("main") {
+            main.hide()
+                .map_err(|error| format!("unable to hide the trusted shell: {error}"))?;
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = handoff {
+        let _ = stop(app);
+        return Err(error);
+    }
+    Ok(info)
+}
+
+pub fn restart_from_local_app(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+) -> Result<RuntimeInfo, String> {
+    authorize_local_app_recovery(window)?;
+    stop(app)?;
+    ensure_started(app)?;
+    enter(app)
+}
+
+pub fn mark_local_app_ready(_app: &AppHandle, window: &tauri::WebviewWindow) -> Result<(), String> {
+    let current_url = authorize_local_app_window(window)?;
+    let (marker, expected_origin, base_url, port, core_pid) = {
+        let mut st = state().lock();
+        let core_pid = st
+            .child
+            .as_mut()
+            .and_then(|child| match child.try_wait() {
+                Ok(None) => Some(child.id()),
+                _ => None,
+            })
+            .unwrap_or(0);
+        let running = core_pid != 0;
+        if !running || !st.session_ready || st.local_app_origin.is_empty() {
+            return Err("embedded product is not ready to report UI state".into());
+        }
+        (
+            ui_ready_marker(&st.data_dir),
+            st.local_app_origin.clone(),
+            st.base_url.clone(),
+            st.port,
+            core_pid,
+        )
+    };
+    if current_url.origin().ascii_serialization() != expected_origin {
+        return Err("local_app_ready was called from a stale or foreign origin".into());
+    }
+    if current_url.path() != "/app.html" || current_url.query() != Some("zephyrOne=1") {
+        return Err("local_app_ready requires the authenticated product page".into());
+    }
+    let configured_marker = std::env::var_os("ZEPHYR_ONE_UI_READY_MARKER");
+    let nonce = std::env::var("ZEPHYR_ONE_UI_READY_NONCE").unwrap_or_default();
+    if configured_marker.is_none() && nonce.is_empty() {
+        return Ok(());
+    }
+    if configured_marker.as_deref().map(Path::new) != Some(marker.as_path()) {
+        return Err("UI-ready marker path is not the current private runtime directory".into());
+    }
+    if nonce.len() != 64
+        || !nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("UI-ready launch nonce is invalid".into());
+    }
+    let health: serde_json::Value = serde_json::from_reader(
+        ureq::get(&format!("{base_url}/healthz"))
+            .timeout(Duration::from_secs(3))
+            .call()
+            .map_err(|error| format!("unable to verify the ready core instance: {error}"))?
+            .into_reader(),
+    )
+    .map_err(|error| format!("ready core health response is invalid: {error}"))?;
+    let instance_id = health
+        .get("instanceId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| value.len() >= 16)
+        .ok_or_else(|| "ready core health response has no instance id".to_string())?;
+    let created_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before the Unix epoch: {error}"))?
+        .as_millis() as u64;
+    let ready = serde_json::to_vec(&serde_json::json!({
+        "schemaVersion": 1,
+        "nonce": nonce,
+        "product": "zephyr-one",
+        "windowLabel": LOCAL_APP_LABEL,
+        "topLevel": true,
+        "authenticated": true,
+        "appReady": true,
+        "readyState": "complete",
+        "port": port,
+        "instanceId": instance_id,
+        "corePid": core_pid,
+        "url": current_url.as_str(),
+        "createdAtMs": created_at_ms,
+    }))
+    .map_err(|error| format!("unable to encode the UI-ready marker: {error}"))?;
+    let temporary = marker.with_extension("log.tmp");
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    use std::io::Write as _;
+    options
+        .open(&temporary)
+        .and_then(|mut file| file.write_all(&ready).and_then(|_| file.sync_all()))
+        .map_err(|error| format!("unable to write the UI-ready marker: {error}"))?;
+    std::fs::rename(&temporary, &marker)
+        .map_err(|error| format!("unable to publish the UI-ready marker: {error}"))
+}
+
+pub(crate) fn authorize_local_app_window(window: &tauri::WebviewWindow) -> Result<Url, String> {
+    if window.label() != LOCAL_APP_LABEL {
+        return Err("command is restricted to the local product window".into());
+    }
+    let current_url = window
+        .url()
+        .map_err(|error| format!("unable to inspect the local product URL: {error}"))?;
+    let mut st = state().lock();
+    let running = st
+        .child
+        .as_mut()
+        .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+    if !running || !st.session_ready || st.local_app_origin.is_empty() {
+        return Err("embedded product is not ready for native commands".into());
+    }
+    if current_url.origin().ascii_serialization() != st.local_app_origin {
+        return Err("native command came from a stale or foreign origin".into());
+    }
+    if current_url.path() != "/app.html" || current_url.query() != Some("zephyrOne=1") {
+        return Err("native command requires the authenticated product page".into());
+    }
+    Ok(current_url)
+}
+
+fn authorize_local_app_recovery(window: &tauri::WebviewWindow) -> Result<Url, String> {
+    if window.label() != LOCAL_APP_LABEL {
+        return Err("recovery is restricted to the local product window".into());
+    }
+    let current_url = window
+        .url()
+        .map_err(|error| format!("unable to inspect the local recovery URL: {error}"))?;
+    let st = state().lock();
+    if st.local_app_origin.is_empty() || !recovery_url_allowed(&current_url, &st.local_app_origin) {
+        return Err("recovery came from a stale or foreign origin".into());
+    }
+    Ok(current_url)
 }
 
 #[derive(Deserialize)]
@@ -890,9 +1260,9 @@ pub(crate) fn authorize_native_rdp(
     })
 }
 
-pub fn stop() {
+pub fn stop(app: &AppHandle) -> Result<(), String> {
     let mut st = state().lock();
-    terminate_runtime(&mut st);
+    teardown_and_terminate(app, &mut st)
 }
 
 pub fn info() -> RuntimeInfo {
@@ -903,8 +1273,10 @@ pub fn info() -> RuntimeInfo {
         .and_then(|child| child.try_wait().ok().flatten())
         .is_some();
     if exited {
+        let recovery_origin = st.local_app_origin.clone();
         st.child = None;
         clear_runtime_state(&mut st);
+        st.local_app_origin = recovery_origin;
     }
     RuntimeInfo {
         running: st.child.is_some(),
@@ -928,9 +1300,11 @@ mod tests {
     #[cfg(target_os = "windows")]
     use super::node_compatible_path;
     use super::{
-        encode_hex, readiness_mac, readiness_proof_matches, resource_candidates,
-        session_id_from_set_cookie, should_autostart, spawn_logged_worker,
-        wait_http_ready_with_probe, AutostartLog, StartupChallenge, STARTUP_CHALLENGE_ENV,
+        encode_hex, local_app_origin, local_app_url, navigation_allowed, readiness_mac,
+        readiness_proof_matches, recovery_url_allowed, resource_candidates, session_cookie,
+        session_id_from_set_cookie, should_autostart, spawn_logged_worker, ui_ready_marker,
+        wait_http_ready_with_probe, AutostartLog, StartupChallenge, LOCAL_APP_PATH,
+        STARTUP_CHALLENGE_ENV, UI_READY_MARKER,
     };
     use hmac::Mac;
     use std::io::{Read, Write};
@@ -1160,6 +1534,97 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn session_cookie_is_strict_httponly_and_usable_over_loopback_http() {
+        let sid = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
+        let cookie = session_cookie(sid);
+
+        assert_eq!(cookie.name(), "zephyr_sid");
+        assert_eq!(cookie.value(), sid);
+        assert_eq!(cookie.domain(), Some("127.0.0.1"));
+        assert_eq!(cookie.path(), Some("/"));
+        assert_ne!(cookie.secure(), Some(true));
+        assert_eq!(cookie.http_only(), Some(true));
+        assert_eq!(
+            cookie.same_site(),
+            Some(tauri::webview::cookie::SameSite::Strict)
+        );
+    }
+
+    #[test]
+    fn local_app_url_is_the_exact_top_level_product_entrypoint() {
+        let url = local_app_url("http://127.0.0.1:43123").unwrap();
+        assert_eq!(url.as_str(), "http://127.0.0.1:43123/app.html?zephyrOne=1");
+        assert_eq!(LOCAL_APP_PATH, "/app.html?zephyrOne=1");
+    }
+
+    #[test]
+    fn ui_ready_marker_lives_inside_the_private_runtime_data_directory() {
+        let data_dir = std::path::Path::new("private-data");
+        assert_eq!(ui_ready_marker(data_dir), data_dir.join(UI_READY_MARKER));
+    }
+
+    #[test]
+    fn local_app_navigation_is_confined_to_its_current_origin() {
+        let origin: tauri::Url = "http://127.0.0.1:43123".parse().unwrap();
+        assert!(navigation_allowed(
+            &"about:blank".parse().unwrap(),
+            &origin,
+            true
+        ));
+        assert!(!navigation_allowed(
+            &"about:blank".parse().unwrap(),
+            &origin,
+            false
+        ));
+        assert!(navigation_allowed(
+            &"http://127.0.0.1:43123/settings".parse().unwrap(),
+            &origin,
+            false
+        ));
+        for denied in [
+            "http://127.0.0.1:43124/app.html",
+            "http://localhost:43123/app.html",
+            "https://127.0.0.1:43123/app.html",
+            "https://example.com/",
+        ] {
+            assert!(!navigation_allowed(
+                &denied.parse().unwrap(),
+                &origin,
+                false
+            ));
+        }
+    }
+
+    #[test]
+    fn restarted_local_app_requires_the_new_port_origin() {
+        let old_origin: tauri::Url = "http://127.0.0.1:43123".parse().unwrap();
+        let new_origin: tauri::Url = "http://127.0.0.1:43124".parse().unwrap();
+        assert_ne!(
+            local_app_origin(old_origin.as_str()).unwrap(),
+            local_app_origin(new_origin.as_str()).unwrap()
+        );
+        assert!(!navigation_allowed(&new_origin, &old_origin, false));
+        assert!(navigation_allowed(&new_origin, &new_origin, false));
+    }
+
+    #[test]
+    fn recovery_accepts_only_the_exact_current_origin_root() {
+        let expected = "http://127.0.0.1:43123";
+        assert!(recovery_url_allowed(
+            &"http://127.0.0.1:43123/".parse().unwrap(),
+            expected
+        ));
+        for denied in [
+            "http://127.0.0.1:43123/?retry=1",
+            "http://127.0.0.1:43123/app.html",
+            "http://127.0.0.1:43124/",
+            "http://localhost:43123/",
+        ] {
+            assert!(!recovery_url_allowed(&denied.parse().unwrap(), expected));
+        }
     }
 
     #[test]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-fs-open"
+description = "Enables the agent_fs_open command without any pre-configured scope."
+commands.allow = ["agent_fs_open"]
+
+[[permission]]
+identifier = "deny-agent-fs-open"
+description = "Denies the agent_fs_open command without any pre-configured scope."
+commands.deny = ["agent_fs_open"]

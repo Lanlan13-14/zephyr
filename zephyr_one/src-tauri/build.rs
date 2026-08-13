@@ -32,7 +32,58 @@ const PATCHED_FREERDP_STAMP: &str = "3.30.0+cliprdr-reassembly-limit-v1";
 const PATCHED_FREERDP_DEFINE: &str = "#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1";
 
 fn main() {
-    tauri_build::build();
+    const APP_COMMANDS: &[&str] = &[
+        "get_platform",
+        "get_app_version",
+        "auth_capabilities",
+        "auth_unlock",
+        "set_theme_icon",
+        "runtime_start",
+        "runtime_enter",
+        "runtime_info",
+        "runtime_stop",
+        "local_app_ready",
+        "local_app_restart",
+        "agent_pick_directory",
+        "agent_default_share_path",
+        "agent_fs_list",
+        "agent_fs_stat",
+        "agent_fs_open",
+        "agent_fs_read",
+        "agent_fs_write",
+        "agent_fs_close",
+        "agent_fs_mkdir",
+        "agent_fs_delete",
+        "agent_fs_rename",
+        "agent_fs_truncate",
+        "token_list_local",
+        "token_add_local",
+        "token_remove_local",
+        "token_export_local",
+        "token_import_local",
+        "rdp_native_capabilities",
+        "rdp_native_connect",
+        "rdp_native_disconnect",
+        "rdp_native_sessions",
+        "rdp_native_send_mouse",
+        "rdp_native_send_key",
+        "rdp_native_send_text",
+        "rdp_native_resize",
+        "rdp_native_set_clipboard",
+        "rdp_native_request_full_frame",
+        "rdp_native_session_state",
+        "rdp_native_surface_create",
+        "rdp_native_surface_show",
+        "rdp_native_surface_close",
+        "rdp_native_surface_resize",
+        "rdp_native_surface_focus",
+        "rdp_native_surface_status",
+        "rdp_native_surface_capture",
+        "rdp_bridge",
+    ];
+    let attributes = tauri_build::Attributes::new()
+        .app_manifest(tauri_build::AppManifest::new().commands(APP_COMMANDS));
+    tauri_build::try_build(attributes).expect("failed to build Zephyr One Tauri manifest");
 
     // src/rdp gates on this cfg in ~40 places; declaring it keeps every use
     // warning-free (unexpected_cfgs, Rust >= 1.80) in BOTH build modes --

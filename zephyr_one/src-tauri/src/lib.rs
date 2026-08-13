@@ -24,6 +24,7 @@ pub fn run() {
         rdp_sessions.clone(),
         rdp_surfaces.clone(),
     ));
+    let rdp_bridge_state = commands::rdp_surface::RdpBridgeState::default();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -51,6 +52,7 @@ pub fn run() {
         /* Own the generation leases and serialize native-window lifecycle with
          * FreeRDP start/stop. It also keeps pixel-free session telemetry. */
         .manage(rdp_surface_state)
+        .manage(rdp_bridge_state)
         .invoke_handler(tauri::generate_handler![
             commands::get_platform,
             commands::get_app_version,
@@ -58,6 +60,9 @@ pub fn run() {
             commands::auth_unlock,
             commands::set_theme_icon,
             commands::runtime_start,
+            commands::runtime_enter,
+            commands::local_app_ready,
+            commands::local_app_restart,
             commands::runtime_info,
             commands::runtime_stop,
             commands::agent_pick_directory,
@@ -95,6 +100,7 @@ pub fn run() {
             commands::rdp_surface::rdp_native_surface_focus,
             commands::rdp_surface::rdp_native_surface_status,
             commands::rdp_surface::rdp_native_surface_capture,
+            commands::rdp_surface::rdp_bridge,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Zephyr One");
@@ -106,11 +112,13 @@ pub fn run() {
         runtime::spawn_autostart(app.handle().clone());
     }
 
-    app.run(move |_handle, event| match event {
+    app.run(move |handle, event| match event {
         /* Stop the child when the application exits, not whenever an
          * individual window is destroyed. Window recreation must not tear
          * down a healthy local core while the Tauri process is still alive. */
-        tauri::RunEvent::Exit => runtime::stop(),
+        tauri::RunEvent::Exit => {
+            let _ = runtime::stop(handle);
+        }
         _ => {}
     });
 }

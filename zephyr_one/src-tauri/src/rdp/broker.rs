@@ -234,6 +234,15 @@ impl NativeRdpBroker {
             .collect()
     }
 
+    pub fn owned_ids(&self, owner_label: &str) -> Vec<String> {
+        self.leases
+            .lock()
+            .iter()
+            .filter(|(_, lease)| lease.owner_label == owner_label)
+            .map(|(session_id, _)| session_id.clone())
+            .collect()
+    }
+
     #[cfg(test)]
     fn binding(&self, session_id: &str) -> Option<SessionBinding> {
         self.leases

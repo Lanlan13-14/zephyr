@@ -4,15 +4,18 @@
 //! to the attached platform surface. The explicit AI capture command is the
 //! only exception: after owner checks it returns a bounded, encoded PNG copy.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use serde::Serialize;
-use tauri::State;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, State};
 
 use crate::rdp::{self, FrameRect, FrameSink, SessionEvent};
 use crate::rdp_surface::NativeRdpSurfaceRegistry;
+use crate::runtime;
 
 #[cfg(target_os = "windows")]
 use crate::rdp_surface::windows::{
@@ -22,8 +25,6 @@ use crate::rdp_surface::windows::{
 use crate::rdp_surface::{PixelSize, SurfaceAttachment, SurfaceDpi, SurfaceMetrics};
 #[cfg(target_os = "windows")]
 use base64::Engine as _;
-#[cfg(target_os = "windows")]
-use std::collections::HashMap;
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
 #[cfg(target_os = "windows")]
@@ -234,6 +235,14 @@ impl NativeRdpSurfaceState {
                 entry.attachment.detach();
             }
             session_closed
+        }
+    }
+
+    pub fn close_owner_sessions(&self, broker: &rdp::broker::NativeRdpBroker, owner_label: &str) {
+        for session_id in broker.owned_ids(owner_label) {
+            let _ = broker.close_owned(owner_label, &session_id, || {
+                self.disconnect_session(&session_id)
+            });
         }
     }
 
@@ -802,9 +811,380 @@ pub fn rdp_native_surface_capture(
     }
 }
 
+const BRIDGE_CAPTURE_TTL: Duration = Duration::from_secs(10);
+
+#[derive(Default)]
+pub struct RdpBridgeState {
+    captures: Mutex<HashMap<String, BridgeCaptureTicket>>,
+}
+
+impl RdpBridgeState {
+    pub fn clear_owner_captures(&self, owner_label: &str) {
+        let prefix = format!("{owner_label}\0");
+        self.captures
+            .lock()
+            .retain(|key, _| !key.starts_with(&prefix));
+    }
+}
+
+struct BridgeCaptureTicket {
+    capture_id: String,
+    original_width: u32,
+    original_height: u32,
+    expires_at: Instant,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RdpBridgeRequest {
+    action: String,
+    #[serde(default)]
+    payload: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BridgeSessionRequest {
+    session_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BridgeOpenRequest {
+    session_id: String,
+    connection_id: String,
+    width: u32,
+    height: u32,
+    dpi: Option<u32>,
+    title: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BridgeResizeRequest {
+    session_id: String,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BridgeCaptureRequest {
+    session_id: String,
+    max_width: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BridgeInputRequest {
+    session_id: String,
+    capture_id: String,
+    control: String,
+    text: Option<String>,
+    x: Option<u32>,
+    y: Option<u32>,
+    button: Option<u8>,
+}
+
+fn bridge_payload<T: serde::de::DeserializeOwned>(payload: serde_json::Value) -> Result<T, String> {
+    serde_json::from_value(payload).map_err(|error| format!("rdp_bridge_invalid_payload: {error}"))
+}
+
+fn bridge_capture_key(owner: &str, session_id: &str) -> String {
+    format!("{owner}\0{session_id}")
+}
+
+fn bridge_snapshot(
+    owner: &str,
+    session_id: &str,
+    broker: &rdp::broker::NativeRdpBroker,
+    sessions: &rdp::SessionRegistry,
+    state: &NativeRdpSurfaceState,
+) -> Result<serde_json::Value, String> {
+    broker.assert_owner_or_unclaimed(owner, session_id)?;
+    #[cfg(target_os = "windows")]
+    let surface = state.surface_status(session_id);
+    #[cfg(not(target_os = "windows"))]
+    let surface = RdpSurfaceStatus::unsupported(session_id.to_owned());
+    let session = if broker.assert_active_owner(owner, session_id).is_ok() {
+        sessions.get(session_id).map(|handle| {
+            let telemetry = state.telemetry(session_id);
+            serde_json::json!({
+                "sessionId": session_id,
+                "live": handle.is_live(),
+                "stopping": handle.is_stopping(),
+                "frames": telemetry.frames,
+                "bytes": telemetry.bytes,
+                "events": telemetry.events,
+            })
+        })
+    } else {
+        None
+    };
+    let phase = if !surface.created {
+        "closed"
+    } else if !surface.attached {
+        "surface-detached"
+    } else if session
+        .as_ref()
+        .and_then(|value| value.get("live"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        "connected"
+    } else {
+        "disconnected"
+    };
+    Ok(serde_json::json!({ "surface": surface, "session": session, "phase": phase }))
+}
+
+#[tauri::command]
+pub fn rdp_bridge(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    broker: State<'_, Arc<rdp::broker::NativeRdpBroker>>,
+    sessions: State<'_, Arc<rdp::SessionRegistry>>,
+    surfaces: State<'_, Arc<NativeRdpSurfaceState>>,
+    bridge: State<'_, RdpBridgeState>,
+    request: RdpBridgeRequest,
+) -> Result<serde_json::Value, String> {
+    runtime::authorize_local_app_window(&window)?;
+    let owner = window.label();
+    match request.action.as_str() {
+        "capabilities" => {
+            let engine = super::rdp_native_capabilities();
+            Ok(serde_json::json!({
+                "available": engine.available && cfg!(target_os = "windows"),
+                "platformSupported": cfg!(target_os = "windows"),
+                "freerdpMajor": engine.freerdp_major,
+                "clipboardAvailable": engine.clipboard_available,
+                "folderMappingAvailable": false,
+                "reason": engine.reason,
+            }))
+        }
+        "open" => {
+            let mut payload: BridgeOpenRequest = bridge_payload(request.payload)?;
+            let dpi = payload.dpi.unwrap_or(96);
+            if !(320..=8192).contains(&payload.width)
+                || !(240..=8192).contains(&payload.height)
+                || !(72..=480).contains(&dpi)
+            {
+                return Err(
+                    "rdp_bridge_invalid_payload: dimensions or DPI are outside the supported range"
+                        .into(),
+                );
+            }
+            if payload
+                .title
+                .as_ref()
+                .is_some_and(|title| title.len() > 160)
+            {
+                return Err("rdp_bridge_invalid_payload: title is too long".into());
+            }
+            payload.title = payload.title.map(|title| title.trim().to_owned());
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = (app, broker, sessions, surfaces, bridge, payload);
+                Err(PLATFORM_UNSUPPORTED.to_owned())
+            }
+            #[cfg(target_os = "windows")]
+            {
+                broker.claim_surface(owner, &payload.session_id)?;
+                let created = surfaces.create_surface(
+                    &payload.session_id,
+                    payload.width,
+                    payload.height,
+                    dpi,
+                    payload.title,
+                    true,
+                );
+                if let Err(error) = created {
+                    broker.release_reserved(owner, &payload.session_id);
+                    return Err(error);
+                }
+                let connect = super::connect_native_rdp(
+                    &app,
+                    owner,
+                    &broker,
+                    &surfaces,
+                    super::RdpConnectRequest {
+                        connection_id: payload.connection_id,
+                        session_id: payload.session_id.clone(),
+                        width: Some(payload.width),
+                        height: Some(payload.height),
+                    },
+                );
+                if let Err(error) = connect {
+                    let _ = broker.close_owned(owner, &payload.session_id, || {
+                        surfaces.close_surface(&payload.session_id)
+                    });
+                    return Err(error);
+                }
+                let _ = surfaces.focus_surface(&payload.session_id);
+                bridge_snapshot(owner, &payload.session_id, &broker, &sessions, &surfaces)
+            }
+        }
+        "status" => {
+            let payload: BridgeSessionRequest = bridge_payload(request.payload)?;
+            bridge_snapshot(owner, &payload.session_id, &broker, &sessions, &surfaces)
+        }
+        "show" | "focus" => {
+            let payload: BridgeSessionRequest = bridge_payload(request.payload)?;
+            broker.assert_surface_owner(owner, &payload.session_id)?;
+            #[cfg(target_os = "windows")]
+            if request.action == "show" {
+                surfaces.show_surface(&payload.session_id)?;
+            } else {
+                surfaces.focus_surface(&payload.session_id)?;
+            }
+            #[cfg(not(target_os = "windows"))]
+            return Err(PLATFORM_UNSUPPORTED.to_owned());
+            bridge_snapshot(owner, &payload.session_id, &broker, &sessions, &surfaces)
+        }
+        "resize" => {
+            let payload: BridgeResizeRequest = bridge_payload(request.payload)?;
+            if !(320..=8192).contains(&payload.width) || !(240..=8192).contains(&payload.height) {
+                return Err(
+                    "rdp_bridge_invalid_payload: resize is outside the supported range".into(),
+                );
+            }
+            broker.assert_surface_owner(owner, &payload.session_id)?;
+            #[cfg(target_os = "windows")]
+            surfaces.resize_surface(&payload.session_id, payload.width, payload.height)?;
+            #[cfg(not(target_os = "windows"))]
+            return Err(PLATFORM_UNSUPPORTED.to_owned());
+            bridge_snapshot(owner, &payload.session_id, &broker, &sessions, &surfaces)
+        }
+        "capture" => {
+            let payload: BridgeCaptureRequest = bridge_payload(request.payload)?;
+            broker.assert_active_owner(owner, &payload.session_id)?;
+            #[cfg(not(target_os = "windows"))]
+            return Err(PLATFORM_UNSUPPORTED.to_owned());
+            #[cfg(target_os = "windows")]
+            {
+                let frame = surfaces.capture_surface(
+                    &payload.session_id,
+                    payload.max_width.unwrap_or(960).clamp(320, 1920),
+                )?;
+                let capture = encode_capture(&payload.session_id, frame)?;
+                bridge.captures.lock().insert(
+                    bridge_capture_key(owner, &payload.session_id),
+                    BridgeCaptureTicket {
+                        capture_id: capture.capture_id.clone(),
+                        original_width: capture.original_width,
+                        original_height: capture.original_height,
+                        expires_at: Instant::now() + BRIDGE_CAPTURE_TTL,
+                    },
+                );
+                serde_json::to_value(capture)
+                    .map_err(|error| format!("rdp_bridge_capture_encode_failed: {error}"))
+            }
+        }
+        "input" => {
+            let payload: BridgeInputRequest = bridge_payload(request.payload)?;
+            broker.assert_active_owner(owner, &payload.session_id)?;
+            let ticket = bridge
+                .captures
+                .lock()
+                .remove(&bridge_capture_key(owner, &payload.session_id))
+                .ok_or_else(|| {
+                    "rdp_bridge_stale_capture: capture is missing or was used".to_owned()
+                })?;
+            if ticket.expires_at <= Instant::now() || ticket.capture_id != payload.capture_id {
+                return Err("rdp_bridge_stale_capture: capture expired or does not match".into());
+            }
+            let handle = sessions.get(&payload.session_id).ok_or_else(|| {
+                "rdp_bridge_session_missing: native session is unavailable".to_owned()
+            })?;
+            match payload.control.as_str() {
+                "text" | "clipboard_send" => {
+                    let text = payload.text.unwrap_or_default();
+                    if text.is_empty() || text.len() > 32_768 {
+                        return Err("rdp_bridge_invalid_input: text length is invalid".into());
+                    }
+                    for unit in text.encode_utf16() {
+                        handle.send_unicode(0, unit);
+                        handle.send_unicode(0x8000, unit);
+                    }
+                    Ok(
+                        serde_json::json!({ "ok": true, "control": payload.control, "length": text.encode_utf16().count() }),
+                    )
+                }
+                "mouse_click" => {
+                    let (x, y) = (payload.x.unwrap_or(u32::MAX), payload.y.unwrap_or(u32::MAX));
+                    if x >= ticket.original_width
+                        || y >= ticket.original_height
+                        || x > u16::MAX as u32
+                        || y > u16::MAX as u32
+                    {
+                        return Err(
+                            "rdp_bridge_invalid_input: click is outside the captured surface"
+                                .into(),
+                        );
+                    }
+                    let button_flag = match payload.button.unwrap_or(1) {
+                        1 => 0x1000,
+                        2 => 0x4000,
+                        3 => 0x2000,
+                        _ => return Err("rdp_bridge_invalid_input: mouse button is invalid".into()),
+                    };
+                    handle.send_mouse(0x0800, x as u16, y as u16);
+                    handle.send_mouse(button_flag | 0x8000, x as u16, y as u16);
+                    std::thread::sleep(Duration::from_millis(45));
+                    handle.send_mouse(button_flag, x as u16, y as u16);
+                    Ok(serde_json::json!({ "ok": true, "control": "mouse_click", "x": x, "y": y }))
+                }
+                _ => Err("rdp_bridge_invalid_input: unsupported input action".into()),
+            }
+        }
+        "close" => {
+            let payload: BridgeSessionRequest = bridge_payload(request.payload)?;
+            bridge
+                .captures
+                .lock()
+                .remove(&bridge_capture_key(owner, &payload.session_id));
+            #[cfg(target_os = "windows")]
+            let closed = broker.close_owned(owner, &payload.session_id, || {
+                surfaces.close_surface(&payload.session_id)
+            })??;
+            #[cfg(not(target_os = "windows"))]
+            let closed = broker.close_owned(owner, &payload.session_id, || {
+                surfaces.disconnect_session(&payload.session_id)
+            })?;
+            Ok(serde_json::json!({ "closed": closed, "phase": "closed" }))
+        }
+        _ => Err("rdp_bridge_invalid_action: unsupported native RDP action".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridge_capture_cleanup_is_scoped_to_the_window_owner() {
+        let bridge = RdpBridgeState::default();
+        let ticket = |capture_id: &str| BridgeCaptureTicket {
+            capture_id: capture_id.to_owned(),
+            original_width: 1,
+            original_height: 1,
+            expires_at: Instant::now() + Duration::from_secs(1),
+        };
+        bridge
+            .captures
+            .lock()
+            .insert(bridge_capture_key("local-app", "one"), ticket("one"));
+        bridge
+            .captures
+            .lock()
+            .insert(bridge_capture_key("other", "two"), ticket("two"));
+
+        bridge.clear_owner_captures("local-app");
+
+        let captures = bridge.captures.lock();
+        assert!(!captures.contains_key(&bridge_capture_key("local-app", "one")));
+        assert!(captures.contains_key(&bridge_capture_key("other", "two")));
+    }
 
     #[test]
     fn connect_preconditions_reject_missing_surface_and_duplicate_session() {

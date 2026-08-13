@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-token-export-local"
+description = "Enables the token_export_local command without any pre-configured scope."
+commands.allow = ["token_export_local"]
+
+[[permission]]
+identifier = "deny-token-export-local"
+description = "Denies the token_export_local command without any pre-configured scope."
+commands.deny = ["token_export_local"]

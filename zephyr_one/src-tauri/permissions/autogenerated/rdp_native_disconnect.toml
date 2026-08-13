@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rdp-native-disconnect"
+description = "Enables the rdp_native_disconnect command without any pre-configured scope."
+commands.allow = ["rdp_native_disconnect"]
+
+[[permission]]
+identifier = "deny-rdp-native-disconnect"
+description = "Denies the rdp_native_disconnect command without any pre-configured scope."
+commands.deny = ["rdp_native_disconnect"]

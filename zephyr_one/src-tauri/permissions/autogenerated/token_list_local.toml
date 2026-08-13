@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-token-list-local"
+description = "Enables the token_list_local command without any pre-configured scope."
+commands.allow = ["token_list_local"]
+
+[[permission]]
+identifier = "deny-token-list-local"
+description = "Denies the token_list_local command without any pre-configured scope."
+commands.deny = ["token_list_local"]

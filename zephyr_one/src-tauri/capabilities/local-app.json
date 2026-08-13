@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "local-app-native-rdp",
+  "description": "The loopback product window can report readiness and control only owner-checked native RDP sessions.",
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*"]
+  },
+  "local": false,
+  "windows": ["local-app"],
+  "permissions": [
+    "allow-local-app-ready",
+    "allow-local-app-restart",
+    "allow-rdp-bridge"
+  ]
+}

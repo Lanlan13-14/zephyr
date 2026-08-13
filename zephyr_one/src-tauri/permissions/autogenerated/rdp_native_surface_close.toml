@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rdp-native-surface-close"
+description = "Enables the rdp_native_surface_close command without any pre-configured scope."
+commands.allow = ["rdp_native_surface_close"]
+
+[[permission]]
+identifier = "deny-rdp-native-surface-close"
+description = "Denies the rdp_native_surface_close command without any pre-configured scope."
+commands.deny = ["rdp_native_surface_close"]

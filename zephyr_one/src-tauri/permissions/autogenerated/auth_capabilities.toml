@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-auth-capabilities"
+description = "Enables the auth_capabilities command without any pre-configured scope."
+commands.allow = ["auth_capabilities"]
+
+[[permission]]
+identifier = "deny-auth-capabilities"
+description = "Denies the auth_capabilities command without any pre-configured scope."
+commands.deny = ["auth_capabilities"]

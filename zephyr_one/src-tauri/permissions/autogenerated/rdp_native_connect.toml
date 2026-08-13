@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rdp-native-connect"
+description = "Enables the rdp_native_connect command without any pre-configured scope."
+commands.allow = ["rdp_native_connect"]
+
+[[permission]]
+identifier = "deny-rdp-native-connect"
+description = "Denies the rdp_native_connect command without any pre-configured scope."
+commands.deny = ["rdp_native_connect"]

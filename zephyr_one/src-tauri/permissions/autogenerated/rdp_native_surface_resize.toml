@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rdp-native-surface-resize"
+description = "Enables the rdp_native_surface_resize command without any pre-configured scope."
+commands.allow = ["rdp_native_surface_resize"]
+
+[[permission]]
+identifier = "deny-rdp-native-surface-resize"
+description = "Denies the rdp_native_surface_resize command without any pre-configured scope."
+commands.deny = ["rdp_native_surface_resize"]

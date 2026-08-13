@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-token-import-local"
+description = "Enables the token_import_local command without any pre-configured scope."
+commands.allow = ["token_import_local"]
+
+[[permission]]
+identifier = "deny-token-import-local"
+description = "Denies the token_import_local command without any pre-configured scope."
+commands.deny = ["token_import_local"]

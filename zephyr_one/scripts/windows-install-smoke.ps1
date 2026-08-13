@@ -3,6 +3,7 @@ param(
   [string]$Root = "",
   [string]$OutDir = "",
   [int]$ReadyTimeoutSec = 120,
+  [int]$UiReadyTimeoutSec = 120,
   [int]$HoldSec = 60
 )
 
@@ -20,6 +21,18 @@ $script:InstallDir = $null
 $script:ExpectedNode = $null
 $script:ExpectedServer = $null
 $script:DataDir = Join-Path (Join-Path $env:APPDATA "com.zephyr.one") "zephyr-data"
+$script:UiReadyMarker = Join-Path $script:DataDir "zephyr-one-ui-ready.json"
+$script:UiReadyVerifier = Join-Path $Root "scripts\verify-ui-ready-marker.mjs"
+$script:HealthPath = Join-Path $OutDir ("healthz-{0}.json" -f $script:RunId)
+
+function New-HexNonce {
+  $bytes = [byte[]]::new(32)
+  $generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+  try { $generator.GetBytes($bytes) } finally { $generator.Dispose() }
+  return ([BitConverter]::ToString($bytes)).Replace("-", "").ToLowerInvariant()
+}
+
+$script:UiReadyNonce = New-HexNonce
 
 function Write-Log([string]$Message) {
   $line = "[{0}] {1}" -f (Get-Date -Format "o"), $Message
@@ -80,12 +93,19 @@ function Dump-Fail([string]$Reason) {
   $lines.Add("expectedNode=$($script:ExpectedNode)") | Out-Null
   $lines.Add("expectedServer=$($script:ExpectedServer)") | Out-Null
   $lines.Add("dataDir=$($script:DataDir)") | Out-Null
+  $lines.Add("uiReadyMarker=$($script:UiReadyMarker)") | Out-Null
   $autostartLog = Join-Path $script:DataDir "zephyr-autostart.log"
   $lines.Add("---- autostart log ----") | Out-Null
   if (Test-Path -LiteralPath $autostartLog -PathType Leaf) {
     try { $lines.Add((Get-Content -LiteralPath $autostartLog -Raw)) | Out-Null } catch { $lines.Add("$_") | Out-Null }
   } else {
     $lines.Add("missing: $autostartLog") | Out-Null
+  }
+  $lines.Add("---- UI-ready marker ----") | Out-Null
+  if (Test-Path -LiteralPath $script:UiReadyMarker -PathType Leaf) {
+    try { $lines.Add((Get-Content -LiteralPath $script:UiReadyMarker -Raw)) | Out-Null } catch { $lines.Add("$_") | Out-Null }
+  } else {
+    $lines.Add("missing: $($script:UiReadyMarker)") | Out-Null
   }
   $lines.Add("---- captured process tree ----") | Out-Null
   try {
@@ -145,6 +165,9 @@ foreach ($required in @($launchExe, $script:ExpectedNode, $script:ExpectedServer
     Dump-Fail ("Installed runtime file missing: {0}" -f $required)
   }
 }
+if (-not (Test-Path -LiteralPath $script:UiReadyVerifier -PathType Leaf)) {
+  Dump-Fail ("UI-ready marker verifier missing: {0}" -f $script:UiReadyVerifier)
+}
 $script:ExpectedNode = (Resolve-Path -LiteralPath $script:ExpectedNode).Path
 $script:ExpectedServer = (Resolve-Path -LiteralPath $script:ExpectedServer).Path
 Write-Log ("Installed app: {0}" -f $launchExe)
@@ -158,7 +181,12 @@ if ($dynamicFreeRdp.Count -gt 0) {
 }
 
 $env:ZEPHYR_ONE_AUTOSTART_RUNTIME = "1"
+$env:ZEPHYR_ONE_UI_READY_MARKER = $script:UiReadyMarker
+$env:ZEPHYR_ONE_UI_READY_NONCE = $script:UiReadyNonce
+New-Item -ItemType Directory -Force -Path $script:DataDir | Out-Null
+Remove-Item -LiteralPath $script:UiReadyMarker -Force -ErrorAction SilentlyContinue
 Write-Log ("Launching installed app cwd='{0}'" -f $script:InstallDir)
+Write-Log ("App data: {0}" -f $script:DataDir)
 $script:AppProcess = Start-Process -FilePath $launchExe -WorkingDirectory $script:InstallDir -PassThru
 if (-not $script:AppProcess) { Dump-Fail "Start-Process returned null" }
 $script:AppPid = $script:AppProcess.Id
@@ -201,7 +229,7 @@ while ((Get-Date) -lt $deadline) {
           $ready = $true
           $port = [int]$connection.LocalPort
           $nodePid = $candidatePid
-          $response.Content | Set-Content -Encoding utf8 -LiteralPath (Join-Path $OutDir ("healthz-{0}.json" -f $script:RunId))
+          $response.Content | Set-Content -Encoding utf8 -LiteralPath $script:HealthPath
           break
         }
       } catch {}
@@ -241,6 +269,32 @@ $snippetLength = [Math]::Min(500, $assetResponse.Content.Length)
 $assetResponse.Content.Substring(0, $snippetLength) |
   Set-Content -Encoding utf8 -LiteralPath (Join-Path $OutDir ("ui-asset-head-{0}.txt" -f $script:RunId))
 
+$uiDeadline = (Get-Date).AddSeconds($UiReadyTimeoutSec)
+$uiReady = $false
+while ((Get-Date) -lt $uiDeadline) {
+  if ($script:AppProcess.HasExited) {
+    Dump-Fail ("zephyr-one.exe exited before local-app became UI-ready code={0}" -f $script:AppProcess.ExitCode)
+  }
+  if (Test-Path -LiteralPath $script:UiReadyMarker -PathType Leaf) {
+    $verification = @(& $script:ExpectedNode $script:UiReadyVerifier `
+      --marker $script:UiReadyMarker `
+      --nonce $script:UiReadyNonce `
+      --port $port `
+      --core-pid $nodePid `
+      --health $script:HealthPath 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+      Dump-Fail ("local-app emitted an invalid UI-ready marker: {0}" -f ($verification -join " "))
+    }
+    $verification | ForEach-Object { Write-Log ([string]$_) }
+    $uiReady = $true
+    break
+  }
+  Start-Sleep -Milliseconds 500
+}
+if (-not $uiReady) {
+  Dump-Fail ("local-app did not emit its authenticated top-level UI-ready marker within {0}s" -f $UiReadyTimeoutSec)
+}
+
 $holdDeadline = (Get-Date).AddSeconds($HoldSec)
 while ((Get-Date) -lt $holdDeadline) {
   if ($script:AppProcess.HasExited) {
@@ -273,9 +327,10 @@ while ((Get-Date) -lt $holdDeadline) {
   "node=$($script:ExpectedNode)",
   "nodePid=$nodePid",
   "port=$port",
+  "uiReadyMarker=$($script:UiReadyMarker)",
   "holdSec=$HoldSec"
 ) | Set-Content -Encoding utf8 -LiteralPath (Join-Path $OutDir ("summary-{0}.txt" -f $script:RunId))
 
-Write-Log ("PASS: installed Windows runtime pid={0} port={1} hold={2}s" -f $nodePid, $port, $HoldSec)
+Write-Log ("PASS: installed Windows UI-ready runtime pid={0} port={1} hold={2}s" -f $nodePid, $port, $HoldSec)
 Stop-CapturedRuntime
 exit 0

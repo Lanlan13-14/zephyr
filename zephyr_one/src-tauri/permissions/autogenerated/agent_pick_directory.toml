@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-pick-directory"
+description = "Enables the agent_pick_directory command without any pre-configured scope."
+commands.allow = ["agent_pick_directory"]
+
+[[permission]]
+identifier = "deny-agent-pick-directory"
+description = "Denies the agent_pick_directory command without any pre-configured scope."
+commands.deny = ["agent_pick_directory"]

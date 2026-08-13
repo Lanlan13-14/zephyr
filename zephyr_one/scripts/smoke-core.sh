@@ -25,6 +25,40 @@ terminate_tree() {
   kill "$1" 2>/dev/null || true
 }
 
+descendant_pids() {
+  for child_pid in $(pgrep -P "$1" 2>/dev/null || true); do
+    printf '%s\n' "$child_pid"
+    descendant_pids "$child_pid"
+  done
+}
+
+process_executable() {
+  case "$(uname -s)" in
+    Linux) readlink "/proc/$1/exe" 2>/dev/null || true ;;
+    Darwin) /usr/sbin/lsof -a -p "$1" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 ;;
+    *) return 1 ;;
+  esac
+}
+
+capture_bundled_node_pid() {
+  expected_node="$1"
+  matched_pid=""
+  matched_count=0
+  for candidate_pid in $(descendant_pids "$SHELL_PID"); do
+    candidate_executable=$(process_executable "$candidate_pid")
+    if [ "$candidate_executable" = "$expected_node" ]; then
+      matched_pid="$candidate_pid"
+      matched_count=$((matched_count+1))
+    fi
+  done
+  if [ "$matched_count" -gt 1 ]; then
+    echo "FAIL: packaged shell process tree contains multiple exact bundled Node children" >&2
+    return 2
+  fi
+  [ "$matched_count" -eq 1 ] || return 1
+  PACKAGED_CORE_PID="$matched_pid"
+}
+
 cleanup() {
   status=$?
   trap - EXIT HUP INT TERM
@@ -67,15 +101,32 @@ smoke_packaged_shell() {
   mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$LAUNCH_DIR"
   chmod 700 "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$LAUNCH_DIR"
 
+  case "$(uname -s)" in
+    Darwin) UI_DATA_DIR="$HOME/Library/Application Support/com.zephyr.one/zephyr-data" ;;
+    Linux) UI_DATA_DIR="$XDG_DATA_HOME/com.zephyr.one/zephyr-data" ;;
+    *) echo "packaged shell UI-ready smoke supports only macOS and Linux" >&2; exit 2 ;;
+  esac
+  UI_READY_NONCE="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
+  UI_READY_MARKER="$UI_DATA_DIR/zephyr-one-ui-ready.json"
+  UI_READY_VERIFIER="$ROOT/scripts/verify-ui-ready-marker.mjs"
+  mkdir -p "$UI_DATA_DIR"
+  chmod 700 "$UI_DATA_DIR"
+  rm -f -- "$UI_READY_MARKER"
+
   (
     cd "$LAUNCH_DIR"
     HOME="$HOME" XDG_DATA_HOME="$XDG_DATA_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
       XDG_CACHE_HOME="$XDG_CACHE_HOME" TMPDIR="$TMP" ZEPHYR_ONE_AUTOSTART_RUNTIME=1 \
+      ZEPHYR_ONE_UI_READY_MARKER="$UI_READY_MARKER" \
+      ZEPHYR_ONE_UI_READY_NONCE="$UI_READY_NONCE" \
       "$shell_executable" >"$RUN_DIR/shell.log" 2>&1
   ) &
   SHELL_PID=$!
 
   i=0
+  runtime_ready=0
+  port=""
+  PACKAGED_CORE_PID=""
   while [ "$i" -lt 180 ]; do
     autostart_log=$(find "$RUN_DIR" -type f -name zephyr-autostart.log -print 2>/dev/null | head -n 1 || true)
     if [ -n "$autostart_log" ]; then
@@ -91,13 +142,48 @@ smoke_packaged_shell() {
             exit 1
             ;;
         esac
+        node_path=$(CDPATH= cd -- "$(dirname "$node_path")" && printf '%s/%s\n' "$(pwd -P)" "$(basename "$node_path")")
+        previous_core_pid="$PACKAGED_CORE_PID"
+        if capture_bundled_node_pid "$node_path"; then
+          if [ -n "$previous_core_pid" ] && [ "$PACKAGED_CORE_PID" != "$previous_core_pid" ]; then
+            echo "FAIL: packaged shell bundled Node child PID changed" >&2
+            exit 1
+          fi
+          if [ -z "$previous_core_pid" ]; then
+            echo "packaged Node child pid: $PACKAGED_CORE_PID"
+          fi
+        else
+          capture_status=$?
+          [ "$capture_status" -ne 2 ] || exit 1
+          if [ -n "$previous_core_pid" ]; then
+            echo "FAIL: captured bundled Node child exited or left the shell process tree" >&2
+            exit 1
+          fi
+        fi
         if [ -n "$port" ] && curl -fsS "http://127.0.0.1:$port/healthz" >"$HEALTH" 2>/dev/null; then
-          echo "packaged shell runtime ready on port $port"
-          echo "packaged Node: $node_path"
-          cat "$HEALTH"
-          echo
-          echo "PACKAGED SHELL SMOKE PASSED"
-          exit 0
+          if [ "$runtime_ready" -eq 0 ]; then
+            echo "packaged shell runtime ready on port $port"
+            echo "packaged Node: $node_path"
+            cat "$HEALTH"
+            echo
+            runtime_ready=1
+          fi
+          if [ -n "$PACKAGED_CORE_PID" ] && [ -f "$UI_READY_MARKER" ]; then
+            if ui_ready_output=$("$node_path" "$UI_READY_VERIFIER" \
+              --marker "$UI_READY_MARKER" \
+              --nonce "$UI_READY_NONCE" \
+              --port "$port" \
+              --core-pid "$PACKAGED_CORE_PID" \
+              --health "$HEALTH" 2>&1); then
+              echo "$ui_ready_output"
+              echo "PACKAGED SHELL UI-READY SMOKE PASSED"
+              exit 0
+            fi
+            echo "FAIL: packaged shell emitted an invalid UI-ready marker" >&2
+            echo "$ui_ready_output" >&2
+            cat "$UI_READY_MARKER" >&2 || true
+            exit 1
+          fi
         fi
       fi
       if grep -q 'runtime start failed:' "$autostart_log"; then
@@ -108,7 +194,11 @@ smoke_packaged_shell() {
       fi
     fi
     if ! kill -0 "$SHELL_PID" 2>/dev/null; then
-      echo "FAIL: packaged shell exited before its runtime became ready" >&2
+      if [ "$runtime_ready" -eq 1 ]; then
+        echo "FAIL: packaged shell exited before local-app became UI-ready" >&2
+      else
+        echo "FAIL: packaged shell exited before its runtime became ready" >&2
+      fi
       [ -z "$autostart_log" ] || cat "$autostart_log" >&2
       cat "$RUN_DIR/shell.log" >&2
       exit 1
@@ -117,8 +207,14 @@ smoke_packaged_shell() {
     sleep 0.5
   done
 
-  echo "FAIL: packaged shell runtime did not become ready" >&2
+  if [ "$runtime_ready" -eq 1 ]; then
+    echo "FAIL: local-app did not emit its authenticated top-level UI-ready marker" >&2
+    echo "expected marker: $UI_READY_MARKER" >&2
+  else
+    echo "FAIL: packaged shell runtime did not become ready" >&2
+  fi
   find "$RUN_DIR" -type f -name zephyr-autostart.log -exec cat {} \; >&2
+  [ ! -f "$UI_READY_MARKER" ] || cat "$UI_READY_MARKER" >&2
   cat "$RUN_DIR/shell.log" >&2
   exit 1
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-token-remove-local"
+description = "Enables the token_remove_local command without any pre-configured scope."
+commands.allow = ["token_remove_local"]
+
+[[permission]]
+identifier = "deny-token-remove-local"
+description = "Denies the token_remove_local command without any pre-configured scope."
+commands.deny = ["token_remove_local"]

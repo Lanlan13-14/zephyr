@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-default-share-path"
+description = "Enables the agent_default_share_path command without any pre-configured scope."
+commands.allow = ["agent_default_share_path"]
+
+[[permission]]
+identifier = "deny-agent-default-share-path"
+description = "Denies the agent_default_share_path command without any pre-configured scope."
+commands.deny = ["agent_default_share_path"]

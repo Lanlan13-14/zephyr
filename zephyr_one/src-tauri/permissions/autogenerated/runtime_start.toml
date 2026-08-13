@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-runtime-start"
+description = "Enables the runtime_start command without any pre-configured scope."
+commands.allow = ["runtime_start"]
+
+[[permission]]
+identifier = "deny-runtime-start"
+description = "Denies the runtime_start command without any pre-configured scope."
+commands.deny = ["runtime_start"]

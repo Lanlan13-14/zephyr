@@ -87,13 +87,39 @@ pub async fn runtime_start(app: AppHandle) -> Result<runtime::RuntimeInfo, Strin
 }
 
 #[tauri::command]
+pub fn runtime_enter(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<runtime::RuntimeInfo, String> {
+    if window.label() != "main" {
+        return Err("runtime_enter is restricted to the trusted main shell".into());
+    }
+    runtime::enter(&app)
+}
+
+#[tauri::command]
+pub fn local_app_ready(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    runtime::mark_local_app_ready(&app, &window)
+}
+
+#[tauri::command]
+pub async fn local_app_restart(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<runtime::RuntimeInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || runtime::restart_from_local_app(&app, &window))
+        .await
+        .map_err(|error| format!("local product recovery task failed: {error}"))?
+}
+
+#[tauri::command]
 pub fn runtime_info() -> runtime::RuntimeInfo {
     runtime::info()
 }
 
 #[tauri::command]
-pub fn runtime_stop() {
-    runtime::stop();
+pub fn runtime_stop(app: AppHandle) -> Result<(), String> {
+    runtime::stop(&app)
 }
 
 #[tauri::command]
@@ -359,18 +385,27 @@ pub fn rdp_native_connect(
     surfaces: State<'_, std::sync::Arc<NativeRdpSurfaceState>>,
     request: RdpConnectRequest,
 ) -> Result<RdpConnectResult, String> {
+    connect_native_rdp(&app, window.label(), &broker, &surfaces, request)
+}
+
+pub(super) fn connect_native_rdp(
+    app: &AppHandle,
+    owner_label: &str,
+    broker: &rdp::broker::NativeRdpBroker,
+    surfaces: &NativeRdpSurfaceState,
+    request: RdpConnectRequest,
+) -> Result<RdpConnectResult, String> {
     let intent = request.into_intent();
     let session_id = intent.session_id.clone();
-    let owner_label = window.label().to_owned();
     broker.authorize_and_open(
-        &owner_label,
+        owner_label,
         &intent,
         || {
             runtime::authorize_native_rdp(
                 &app,
                 &intent.connection_id,
                 &intent.session_id,
-                &owner_label,
+                owner_label,
             )
         },
         |binding| {

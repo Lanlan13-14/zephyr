@@ -24,9 +24,21 @@
         return window.parent && window.parent !== window;
     }
 
+    function tauriInvoke(command, args) {
+        var invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+        if (typeof invoke !== 'function') {
+            return Promise.reject(new Error('Native RDP requires the Zephyr One desktop runtime.'));
+        }
+        return invoke(command, args || {});
+    }
+
+    function directRequest(action, payload) {
+        return tauriInvoke('rdp_bridge', { request: { action: action, payload: payload || {} } });
+    }
+
     function shellRequest(action, payload, timeoutMs) {
         if (!parentAvailable()) {
-            return Promise.reject(new Error('Native RDP requires the Zephyr One desktop shell.'));
+            return directRequest(action, payload);
         }
         var id = requestId();
         return new Promise(function (resolve, reject) {

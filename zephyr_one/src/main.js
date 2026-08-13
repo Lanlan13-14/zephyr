@@ -119,7 +119,7 @@ async function safeInvoke(cmd, args = {}) {
     if (cmd === 'auth_unlock') {
       return { ok: false, error: '非 Tauri 运行时' };
     }
-    if (cmd === 'runtime_start' || cmd === 'runtime_info') {
+    if (cmd === 'runtime_start' || cmd === 'runtime_enter' || cmd === 'runtime_info') {
       // Dev browser: point at a local zephyr if developer runs npm start
       return {
         running: true,
@@ -228,7 +228,8 @@ function startAndEnter(control) {
     const cleanOrigin = new URL(bootstrapUrl).origin;
     state.runtime = { ...info, baseUrl: cleanOrigin };
     if (status) status.textContent = '本地核心就绪，正在进入完整界面…';
-    openLocalZephyr(bootstrapUrl);
+    await safeInvoke('runtime_enter');
+    if (!state.isTauri) openLocalZephyr(bootstrapUrl);
   } catch (e) {
     operationStatus.announce('Startup failed.');
     only($('#errorGate'));
