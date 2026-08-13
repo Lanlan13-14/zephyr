@@ -2,7 +2,7 @@
 
 Zephyr 是一套面向开发者、运维人员和企业用户打造的现代化远程管理生态系统。
 
-它不只是一个 SSH/RDP 客户端，而是通过 Zephyr Server、Zephyr Agent、Zephyr One 与 Zephyr Storage，把设备管理、远程控制、数据同步与安全存储整合为一个统一整体，让用户能够在任何设备、任何地点安全地管理自己的数字资产。
+它不只是一个 SSH/RDP 客户端，而是通过 Zephyr Server、Zephyr One、Zephyr Agent 与 Zephyr Storage，把设备管理、远程控制、数据同步与安全存储整合为一个统一整体，让用户能够在任何设备、任何地点安全地管理自己的数字资产。
 
 ---
 
@@ -19,6 +19,42 @@ Zephyr Server 是整个生态的核心，以容器化方式运行于你的服务
 - 数据备份与恢复
 
 通过 Zephyr Server，你可以集中管理所有服务器、设备和远程环境。数据、密钥和策略都保存在你自己的机器上。
+
+---
+
+## Zephyr One —— 为桌面与移动端打造的原生体验
+
+Zephyr One 是 Zephyr 面向具体设备形态的原生客户端。Web 体验不大改，主要功能用原生方式接管，让 Web 变得更好用。
+
+### 桌面端 · Windows / macOS / Linux
+
+桌面 One 在本机运行完整 Zephyr：仪表盘、SSH、RDP、VNC、笔记、AI、Client Token 全部在本地，不走远程 Web。
+
+它把浏览器够不到的东西交给系统：
+
+- 本地拉起核心，不需要先部署服务器
+- 可选系统解锁：Windows Hello、Touch ID、设备 PIN
+- 原生窗口、托盘、启动项与系统生命周期
+- 监听只对本机开放，没有应用自建密码墙
+
+打开就是完整 Zephyr，只是更像一个真正的桌面应用。
+
+### 移动端 · Android / iOS
+
+移动 One 采用原生技术开发：
+
+- Android：Kotlin + Jetpack Compose
+- iOS：Swift + SwiftUI
+
+针对触屏设备重新设计：
+
+- SSH 终端体验
+- RDP 远程桌面
+- 触控操作与外接键盘鼠标
+- 触控笔支持
+- 移动端快捷操作
+
+手机应急、平板并排，让你可以像使用本地电脑一样管理远程设备。
 
 ---
 
@@ -42,27 +78,6 @@ Zephyr Agent 部署在被管理设备上，用于扩展 Web 环境无法直接�
 - 本地能力调用
 
 让 Zephyr 从「网页控制台」升级为真正的设备管理平台。
-
----
-
-## Zephyr One —— 为移动端打造的专业终端体验
-
-Zephyr One 是 Zephyr 面向移动设备打造的原生客户端。
-
-不同于传统 Web 终端，Zephyr One 采用原生技术开发：
-
-- Android：Kotlin + Jetpack Compose
-- iOS：Swift + SwiftUI
-
-针对触屏设备重新设计：
-
-- SSH 终端体验
-- RDP 远程桌面
-- 触控操作与外接键盘鼠标
-- 触控笔支持
-- 移动端快捷操作
-
-让你可以像使用本地电脑一样管理远程设备。
 
 ---
 
