@@ -35,6 +35,7 @@ cleanup() {
   rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
+trap 'status=$?; echo "package-ios-unsigned failed at line $LINENO: $BASH_COMMAND" >&2; exit "$status"' ERR
 
 mkdir -p "$HOST_DIR/Sources/$EXECUTABLE_NAME" "$APP_DIR"
 
@@ -619,6 +620,7 @@ test ! -f "$ARCHIVED_APP_DIR/embedded.mobileprovision"
 test -s "$PACKAGED_IPA"
 
 trap - EXIT
+trap - ERR
 mkdir -p "$(dirname "$OUTPUT_PATH")"
 rm -f "$OUTPUT_PATH"
 install -m 0644 "$PACKAGED_IPA" "$OUTPUT_PATH"
