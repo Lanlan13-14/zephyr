@@ -482,6 +482,7 @@ SWIFT_BUILD_ARGS=(
 )
 
 swift build "${SWIFT_BUILD_ARGS[@]}" -v
+echo "IPA_STAGE=compiled-device-host"
 BIN_DIR="$(swift build "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)"
 BUILT_EXECUTABLE="$BIN_DIR/$EXECUTABLE_NAME"
 
@@ -490,6 +491,7 @@ file "$BUILT_EXECUTABLE" | grep -Eq 'Mach-O.*arm64'
 xcrun otool -hv "$BUILT_EXECUTABLE" | grep -q 'EXECUTE'
 xcrun vtool -show-build "$BUILT_EXECUTABLE" | grep -q 'platform IOS'
 install -m 0755 "$BUILT_EXECUTABLE" "$APP_DIR/$EXECUTABLE_NAME"
+echo "IPA_STAGE=validated-device-executable"
 
 framework_queue=()
 embedded_frameworks=()
@@ -552,6 +554,7 @@ while (( framework_index < ${#framework_queue[@]} )); do
       sort -u
   )
 done
+echo "IPA_STAGE=embedded-frameworks:${#embedded_frameworks[@]}"
 
 linked_frameworks="$WORK_DIR/linked-frameworks.txt"
 printf '%s\n' "${embedded_frameworks[@]}" | sed '/^$/d' | sort -u > "$linked_frameworks"
@@ -618,6 +621,7 @@ test ! -d "$ARCHIVED_APP_DIR/_CodeSignature"
 test ! -f "$ARCHIVED_APP_DIR/embedded.mobileprovision"
 ! codesign -dv "$ARCHIVED_APP_DIR" >/dev/null 2>&1
 test -s "$PACKAGED_IPA"
+echo "IPA_STAGE=verified-archive"
 
 trap - EXIT
 trap - ERR
@@ -625,6 +629,7 @@ mkdir -p "$(dirname "$OUTPUT_PATH")"
 rm -f "$OUTPUT_PATH"
 install -m 0644 "$PACKAGED_IPA" "$OUTPUT_PATH"
 test -s "$OUTPUT_PATH"
+echo "IPA_STAGE=installed-output:$OUTPUT_PATH"
 rm -rf "$WORK_DIR"
 
 echo "Created unsigned IPA: $OUTPUT_PATH"

@@ -257,11 +257,16 @@ jobs:
           ipa="$GITHUB_WORKSPACE/zephyr_one/mobile/build/zephyr-one-ios-unsigned.ipa"
           if [ ! -s "$ipa" ]; then
             {
+              echo 'Packager log tail:'
+              tail -n 70 /tmp/ios-package.log
               echo "Expected non-empty IPA at: $ipa"
+              echo 'Packager stage markers:'
+              grep -E '^(IPA_STAGE=|Created unsigned IPA:|package-ios-unsigned failed)' \
+                /tmp/ios-package.log || true
+              echo 'Expected output directory:'
+              ls -la "$(dirname "$ipa")" 2>&1 || true
               echo 'IPA files found under the workspace:'
               find "$GITHUB_WORKSPACE" -type f -name '*.ipa' -print
-              echo 'Packager log tail:'
-              tail -n 80 /tmp/ios-package.log
             } > /tmp/ios-package-diagnostic.log
             bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
               /tmp/ios-package-diagnostic.log 'locate unsigned iOS app'
