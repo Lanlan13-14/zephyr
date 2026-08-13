@@ -638,10 +638,11 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
     let child_job = match windows_child_job::ChildJob::assign(&child) {
         Ok(job) => Some(job),
         Err(error) => {
-            child_log
-                .lock()
-                .push_str(&format!("Windows child cleanup job unavailable: {error}\n"));
-            None
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "embedded Node cannot enter its Windows cleanup job: {error}"
+            ));
         }
     };
     if let Some(stdout) = child.stdout.take() {

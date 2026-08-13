@@ -77,6 +77,7 @@ describe('Windows install smoke harness', () => {
     assert.match(runtime, /\.stdout\(Stdio::piped\(\)\)/);
     assert.match(runtime, /\.stderr\(Stdio::piped\(\)\)/);
     assert.match(runtime, /ChildJob::assign\(&child\)/);
+    assert.match(runtime, /embedded Node cannot enter its Windows cleanup job/);
     assert.match(childJob, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/);
     assert.match(childJob, /AssignProcessToJobObject/);
     assert.doesNotMatch(runtime, /launcher_auth|windows_runtime_launcher::FLAG/);
