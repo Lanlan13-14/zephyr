@@ -23,6 +23,8 @@ describe('Windows install smoke harness', () => {
     assert.match(smoke, /\$body\.ok -eq \$true/);
     assert.match(smoke, /\$body\.instanceId/);
     assert.match(smoke, /Get-RedirectLocation/);
+    assert.match(smoke, /---- autostart log ----/);
+    assert.match(smoke, /zephyr-autostart\.log/);
     assert.match(smoke, /zephyr-one-recovery/); // '/' must serve the loop-breaking recovery doc
     assert.match(smoke, /appLocation -ne '\/'/);
     assert.match(smoke, /zephyr-one-embed\.css/);
@@ -48,7 +50,8 @@ describe('Windows install smoke harness', () => {
     assert.match(runtime, /windows_verbatim_paths_are_safe_for_node/);
     assert.match(runtime, /EISDIR|verbatim/);
     assert.match(lib, /cfg!\(target_os = "windows"\).*cfg!\(debug_assertions\)/);
-    assert.match(lib, /RunEvent::Ready/);
+    assert.match(lib, /if autostart \{\s*runtime::spawn_autostart\(app\.handle\(\)\.clone\(\)\);\s*\}/);
+    assert.doesNotMatch(lib, /RunEvent::Ready/);
     assert.match(runtime, /windows_release_autostarts_without_a_webview/);
     assert.match(runtime, /std::fs::create_dir_all\(&data_dir\)/);
   });

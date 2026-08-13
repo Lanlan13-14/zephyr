@@ -102,17 +102,11 @@ pub fn run() {
     let configured_autostart = std::env::var("ZEPHYR_ONE_AUTOSTART_RUNTIME").ok();
     let windows_release = cfg!(target_os = "windows") && !cfg!(debug_assertions);
     let autostart = runtime::should_autostart(configured_autostart.as_deref(), windows_release);
-    let mut autostart_dispatched = false;
+    if autostart {
+        runtime::spawn_autostart(app.handle().clone());
+    }
 
-    app.run(move |handle, event| match event {
-        /* `Ready` is the first point at which Tauri's event loop and all
-         * plugins are initialized. Windows release builds start here even if
-         * WebView JavaScript never loads; the UI's runtime_start command stays
-         * as an idempotent retry path. */
-        tauri::RunEvent::Ready if autostart && !autostart_dispatched => {
-            autostart_dispatched = true;
-            runtime::spawn_autostart(handle.clone());
-        }
+    app.run(move |_handle, event| match event {
         /* Stop the child when the application exits, not whenever an
          * individual window is destroyed. Window recreation must not tear
          * down a healthy local core while the Tauri process is still alive. */

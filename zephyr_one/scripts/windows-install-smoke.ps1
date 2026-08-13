@@ -80,6 +80,13 @@ function Dump-Fail([string]$Reason) {
   $lines.Add("expectedNode=$($script:ExpectedNode)") | Out-Null
   $lines.Add("expectedServer=$($script:ExpectedServer)") | Out-Null
   $lines.Add("dataDir=$($script:DataDir)") | Out-Null
+  $autostartLog = Join-Path $script:DataDir "zephyr-autostart.log"
+  $lines.Add("---- autostart log ----") | Out-Null
+  if (Test-Path -LiteralPath $autostartLog -PathType Leaf) {
+    try { $lines.Add((Get-Content -LiteralPath $autostartLog -Raw)) | Out-Null } catch { $lines.Add("$_") | Out-Null }
+  } else {
+    $lines.Add("missing: $autostartLog") | Out-Null
+  }
   $lines.Add("---- captured process tree ----") | Out-Null
   try {
     $lines.Add((Get-CapturedProcessTree |

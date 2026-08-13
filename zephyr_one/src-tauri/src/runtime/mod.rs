@@ -122,7 +122,8 @@ where
         })
 }
 
-/// Schedule the blocking Node boot after Tauri reports `RunEvent::Ready`.
+/// Schedule blocking Node boot after Tauri has built the application, without
+/// depending on WebView JavaScript or a platform-specific event callback.
 /// Every boundary is logged outside Node so a missing child process still has
 /// an actionable cause in the app data directory.
 pub(crate) fn spawn_autostart(app: AppHandle) {
