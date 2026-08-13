@@ -1,0 +1,2793 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="frost" data-scheme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Zephyr One — UI 原型</title>
+<style>
+/* ============ Design Tokens ============ */
+:root{
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-press: 120ms; --dur-fast: 160ms; --dur-med: 240ms; --dur-sheet: 420ms;
+  --ok:#30d158; --warn:#ffd60a; --err:#ff453a;
+  --offline:#8e99a6; --pending:#64d2ff; --conflict:#ff9f0a;
+  --p-ssh:#0a84ff; --p-telnet:#ffd60a; --p-rdp:#bf5af2; --p-vnc:#30d158; --p-sftp:#64d2ff;
+  --r-sm:10px; --r-md:14px; --r-lg:20px; --r-xl:28px;
+  --mono: ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+}
+[data-theme="frost"]{ --accent:#0a84ff; --accent-2:#8e99a6; }
+[data-theme="lava"]{ --accent:#bf5a1f; --accent-2:#a58a78; }
+[data-theme="asagi"]{ --accent:#4d9c8a; --accent-2:#829b96; }
+[data-theme="cyber"]{ --accent:#4f9da6; --accent-2:#7f9298; }
+[data-scheme="dark"]{
+  --bg:#0a0c0f; --surface:#13161b; --elevated:#1b1f26;
+  --chrome:rgba(26,30,37,.78); --scrim:rgba(0,0,0,.5);
+  --text:#f2f4f7; --text-2:#9aa4b0; --text-3:#5d6773;
+  --sep:rgba(255,255,255,.08); --sep-2:rgba(255,255,255,.05);
+  --term-bg:#07090c;
+  --shadow-chrome: 0 8px 32px rgba(0,0,0,.45), 0 1px 0 rgba(255,255,255,.06) inset;
+}
+[data-scheme="light"]{
+  --bg:#eef0f4; --surface:#f7f8fa; --elevated:#ffffff;
+  --chrome:rgba(255,255,255,.82); --scrim:rgba(20,24,30,.35);
+  --text:#14181d; --text-2:#5b6570; --text-3:#98a1ab;
+  --sep:rgba(15,20,28,.1); --sep-2:rgba(15,20,28,.05);
+  --term-bg:#f3f5f7;
+  --shadow-chrome: 0 8px 28px rgba(20,26,34,.16), 0 1px 0 rgba(255,255,255,.7) inset;
+}
+*{ margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body{ height:100%; overscroll-behavior:none; }
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+  background:#05070a; color:var(--text); font-variant-numeric:tabular-nums;
+  -webkit-font-smoothing:antialiased; user-select:none;
+}
+button{ font:inherit; color:inherit; background:none; border:none; cursor:pointer; }
+input,textarea{ font:inherit; color:inherit; }
+svg.ic{ width:18px; height:18px; fill:currentColor; flex:none; }
+
+#app{ position:relative; height:100dvh; width:100%; max-width:430px; margin:0 auto; background:var(--bg); overflow:hidden;
+  box-shadow:0 0 0 1px rgba(255,255,255,.05), 0 0 80px rgba(0,0,0,.6); }
+@media (min-width:500px) and (max-width:767px){ body{ display:flex; align-items:center; justify-content:center; }
+  #app{ width:430px; height:min(92dvh,900px); border-radius:36px; } }
+/* pad / 大屏：整屏工作台，不套手机框 */
+@media (min-width:768px){
+  body{ background:var(--bg); display:block; }
+  #app{ max-width:none; width:100%; height:100dvh; margin:0; border-radius:0; box-shadow:none; display:flex; }
+  #stage{ flex:1; min-width:0; position:relative; }
+  .page-scroll{ padding-bottom:110px; }
+  #island{ width:min(360px, 42%); }
+  #ai-fab{ right:22px; }
+  .stat-row{ gap:14px; }
+  #page-home .page-scroll, #page-library .page-scroll, #page-tools .page-scroll{
+    padding:0 28px 110px;
+  }
+  #page-home .searchbar{ max-width:420px; }
+  #conn-list{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; }
+  #conn-list .conn-card{ margin-bottom:0; height:100%; }
+  #page-tools .page-scroll{
+    column-count:2; column-gap:28px;
+  }
+  #page-tools .section-title, #page-tools .group{
+    break-inside:avoid; -webkit-column-break-inside:avoid; page-break-inside:avoid;
+  }
+  #page-library .stat-row{ max-width:720px; }
+  #page-conntype .page-scroll{ max-width:860px; margin:0 auto; width:100%; }
+  #page-conntype .ptype{ min-height:76px; }
+  #page-batch .page-scroll, #page-docker .page-scroll, #page-sync .page-scroll,
+  #page-appearance .page-scroll, #page-ai-settings .page-scroll, #page-server-settings .page-scroll,
+  #page-backup .page-scroll, #page-about .page-scroll, #page-lang .page-scroll,
+  #page-proxy .page-scroll, #page-keys .page-scroll, #page-token .page-scroll{ max-width:860px; margin:0 auto; width:100%; }
+  #page-sftp .page-scroll{ max-width:760px; margin:0 auto; width:100%; }
+  #page-editor .page-scroll{ max-width:720px; margin:0 auto; width:100%; }
+  #page-note .page-scroll{ max-width:720px; margin:0 auto; width:100%; }
+}
+@media (min-width:1100px){
+  #conn-list{ grid-template-columns:repeat(3, minmax(0,1fr)); }
+}
+
+/* pages & shared-axis */
+.page{ position:absolute; inset:0; background:var(--bg); display:flex; flex-direction:column;
+  transition:transform var(--dur-sheet) var(--ease-drawer), opacity var(--dur-sheet) var(--ease-drawer); will-change:transform; }
+.page.behind{ transform:translateX(-28%) scale(.995); opacity:.55; pointer-events:none; }
+.page.pushed{ transform:translateX(100%); }
+.page.hidden{ display:none; }
+.page-scroll{ flex:1; overflow-y:auto; overscroll-behavior:contain; padding:0 16px 140px; scrollbar-width:none; }
+.page-scroll::-webkit-scrollbar{ display:none; }
+
+.page-head{ padding:calc(env(safe-area-inset-top,0px) + 14px) 16px 10px; display:flex; align-items:center; gap:10px; }
+.page-head h1{ font-size:23px; font-weight:700; letter-spacing:-.02em; flex:1; }
+.back-btn{ width:36px; height:36px; border-radius:50%; display:grid; place-items:center; flex:none;
+  background:var(--elevated); color:var(--accent); transition:transform var(--dur-press) var(--ease-out); }
+.back-btn:active{ transform:scale(.92); }
+.head-btn{ width:38px; height:38px; border-radius:50%; display:grid; place-items:center; flex:none;
+  background:var(--elevated); color:var(--accent); transition:transform var(--dur-press) var(--ease-out); }
+.head-btn:active{ transform:scale(.9); }
+.head-btn svg{ width:18px; height:18px; }
+
+.press{ transition:transform var(--dur-press) var(--ease-out); }
+.press:active{ transform:scale(.98); }
+
+/* home */
+.searchbar{ display:flex; align-items:center; gap:8px; height:36px; padding:0 12px;
+  background:var(--elevated); border-radius:var(--r-sm); color:var(--text-3); flex:1; font-size:13.5px; }
+.sync-pill{ display:flex; align-items:center; gap:6px; height:36px; padding:0 12px; border-radius:19px;
+  background:var(--elevated); color:var(--text-2); font-size:12px; font-weight:500; white-space:nowrap;
+  transition:transform var(--dur-press) var(--ease-out); }
+.sync-pill:active{ transform:scale(.95); }
+.sync-pill .dot{ width:7px; height:7px; border-radius:50%; background:var(--ok); }
+.sync-pill.syncing .dot{ background:var(--pending); }
+.sync-pill svg{ width:14px; height:14px; }
+.sync-pill.syncing svg{ animation:spin 1.1s linear infinite; }
+@keyframes spin{ to{ transform:rotate(360deg);} }
+.section-title{ font-size:12px; font-weight:600; color:var(--text-3); text-transform:uppercase;
+  letter-spacing:.06em; margin:22px 4px 10px; }
+.chips{ display:flex; gap:8px; margin:4px 0 2px; overflow-x:auto; scrollbar-width:none; }
+.chips::-webkit-scrollbar{ display:none; }
+.chip{ padding:6px 13px; border-radius:16px; background:var(--elevated); color:var(--text-2);
+  font-size:12.5px; font-weight:500; white-space:nowrap;
+  transition:transform var(--dur-press) var(--ease-out), background var(--dur-fast) ease, color var(--dur-fast) ease; }
+.chip:active{ transform:scale(.95); }
+.chip.on{ background:var(--accent); color:#fff; }
+
+.conn-card{ display:flex; align-items:center; gap:12px; padding:14px; background:var(--surface);
+  border:1px solid var(--sep-2); border-radius:var(--r-md); margin-bottom:10px; text-align:left; width:100%;
+  transition:transform var(--dur-press) var(--ease-out), background var(--dur-fast) ease; }
+.conn-card:active{ transform:scale(.98); background:var(--elevated); }
+.conn-ico{ width:40px; height:40px; border-radius:11px; display:grid; place-items:center; flex:none;
+  font-size:10.5px; font-weight:800; font-family:var(--mono); letter-spacing:.02em; }
+.conn-ico.ssh{ background:color-mix(in srgb,var(--p-ssh) 16%, transparent); color:var(--p-ssh); }
+.conn-ico.telnet{ background:color-mix(in srgb,var(--p-telnet) 16%, transparent); color:var(--p-telnet); }
+.conn-ico.rdp{ background:color-mix(in srgb,var(--p-rdp) 16%, transparent); color:var(--p-rdp); }
+.conn-ico.vnc{ background:color-mix(in srgb,var(--p-vnc) 16%, transparent); color:var(--p-vnc); }
+.conn-body{ flex:1; min-width:0; }
+.conn-name{ font-size:14.5px; font-weight:600; display:flex; align-items:center; gap:6px; }
+.conn-host{ font-family:var(--mono); font-size:11.5px; color:var(--text-2); margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.conn-meta{ display:flex; align-items:center; gap:6px; margin-top:6px; flex-wrap:wrap; }
+.tag{ font-size:11px; padding:2px 8px; border-radius:8px; background:var(--elevated); color:var(--text-2); }
+.badge{ font-size:11px; font-weight:600; padding:2px 8px; border-radius:8px; display:inline-flex; align-items:center; gap:4px; }
+.badge.pending{ color:var(--pending); background:color-mix(in srgb,var(--pending) 14%, transparent); }
+.badge.conflict{ color:var(--conflict); background:color-mix(in srgb,var(--conflict) 14%, transparent); }
+.badge.shared{ color:var(--text-2); background:var(--elevated); }
+.conn-end{ display:flex; flex-direction:column; align-items:flex-end; gap:6px; flex:none; }
+.conn-time{ font-size:11px; color:var(--text-3); }
+.more-btn{ width:30px; height:30px; border-radius:50%; display:grid; place-items:center; color:var(--text-3);
+  transition:transform var(--dur-press) var(--ease-out); }
+.more-btn:active{ transform:scale(.9); background:var(--elevated); }
+
+.stat-row{ display:flex; gap:10px; }
+.stat-card{ flex:1; padding:14px; border-radius:var(--r-md); background:var(--surface); border:1px solid var(--sep-2); text-align:left; }
+.stat-num{ font-size:20px; font-weight:700; }
+.stat-label{ font-size:12px; color:var(--text-3); margin-top:2px; }
+.entry-card{ flex:1; padding:14px; border-radius:var(--r-md); background:var(--surface); border:1px solid var(--sep-2);
+  display:flex; align-items:center; gap:12px; text-align:left;
+  transition:transform var(--dur-press) var(--ease-out), background var(--dur-fast) ease; }
+.entry-card:active{ transform:scale(.97); background:var(--elevated); }
+.entry-card .e-ico{ width:38px; height:38px; border-radius:10px; display:grid; place-items:center; flex:none; }
+.entry-card b{ font-size:13.5px; display:block; }
+.entry-card small{ font-size:11.5px; color:var(--text-3); display:block; margin-top:2px; }
+
+/* sessions */
+.sess-row{ display:flex; align-items:center; gap:12px; padding:13px 14px; width:100%; text-align:left;
+  background:var(--surface); border:1px solid var(--sep-2); border-radius:var(--r-md); margin-bottom:8px;
+  transition:transform var(--dur-press) var(--ease-out); }
+.sess-row:active{ transform:scale(.98); }
+.sess-dot{ width:9px; height:9px; border-radius:50%; flex:none; }
+.sess-dot.live{ background:var(--ok); box-shadow:0 0 8px color-mix(in srgb,var(--ok) 60%, transparent); }
+.sess-dot.connecting{ background:var(--pending); animation:pulse 1.2s ease-in-out infinite; }
+.sess-dot.dead{ background:var(--err); }
+.sess-dot.min{ background:var(--offline); }
+@keyframes pulse{ 50%{ opacity:.35; } }
+.sess-lat{ font-family:var(--mono); font-size:12px; color:var(--text-2); }
+
+/* list rows */
+.group{ background:var(--surface); border:1px solid var(--sep-2); border-radius:var(--r-md); overflow:hidden; }
+.row{ display:flex; align-items:center; gap:12px; padding:12px 14px; width:100%; text-align:left;
+  font-size:14px; border-bottom:1px solid var(--sep-2);
+  transition:transform var(--dur-press) var(--ease-out), background var(--dur-fast) ease; }
+.row:last-child{ border-bottom:none; }
+.row:active{ background:var(--elevated); }
+.row .r-ico{ width:30px; height:30px; border-radius:8px; display:grid; place-items:center; flex:none;
+  background:var(--elevated); color:var(--text-2); }
+.row .r-ico svg{ width:16px; height:16px; }
+.row .r-body{ flex:1; min-width:0; }
+.row .r-sub{ font-size:11.5px; color:var(--text-3); margin-top:2px; }
+.row .chev{ color:var(--text-3); flex:none; }
+.row .r-val{ font-size:12.5px; color:var(--text-2); flex:none; }
+
+.toggle{ width:46px; height:28px; border-radius:14px; background:var(--offline); position:relative; flex:none;
+  transition:background var(--dur-med) var(--ease-out); }
+.toggle::after{ content:""; position:absolute; top:2.5px; left:3px; width:23px; height:23px; border-radius:50%;
+  background:#fff; box-shadow:0 2px 6px rgba(0,0,0,.3); transition:transform var(--dur-med) var(--ease-out); }
+.toggle.on{ background:var(--ok); }
+.toggle.on::after{ transform:translateX(17px); }
+
+/* floating island */
+#island{ position:absolute; left:50%; bottom:calc(env(safe-area-inset-bottom,0px) + 18px); transform:translateX(-50%);
+  width:min(88%,340px); height:62px; border-radius:31px; z-index:40;
+  background:var(--chrome); backdrop-filter:blur(24px) saturate(1.5); -webkit-backdrop-filter:blur(24px) saturate(1.5);
+  box-shadow:var(--shadow-chrome); display:flex; padding:5px;
+  transition:transform var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out); }
+#island.gone{ transform:translateX(-50%) translateY(120px); opacity:0; pointer-events:none; }
+#island .pill{ position:absolute; top:5px; bottom:5px; left:5px; width:calc((100% - 10px)/4);
+  border-radius:26px; background:color-mix(in srgb,var(--accent) 16%, transparent);
+  transition:transform 340ms var(--ease-out); }
+#island .item{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  color:var(--text-3); z-index:1; border-radius:26px;
+  transition:color var(--dur-fast) ease, transform var(--dur-press) var(--ease-out); }
+#island .item:active{ transform:scale(.94); }
+#island .item.on{ color:var(--accent); }
+/* 未选中：大图标居中；选中：图标缩小 + 文字淡入 */
+#island .item svg{ width:23px; height:23px; transition:width var(--dur-med) var(--ease-out), height var(--dur-med) var(--ease-out); }
+#island .item.on svg{ width:17px; height:17px; }
+#island .item span{ font-size:10px; font-weight:600; line-height:1; height:0; opacity:0; overflow:hidden;
+  transition:opacity 180ms ease, height var(--dur-med) var(--ease-out); }
+#island .item.on span{ opacity:1; height:11px; }
+
+/* AI */
+#ai-fab{ position:absolute; right:16px; bottom:calc(env(safe-area-inset-bottom,0px) + 96px);
+  width:50px; height:50px; border-radius:25px; z-index:45;
+  background:var(--chrome); backdrop-filter:blur(24px) saturate(1.5); -webkit-backdrop-filter:blur(24px) saturate(1.5);
+  box-shadow:var(--shadow-chrome); display:grid; place-items:center; color:var(--accent);
+  transition:transform var(--dur-press) var(--ease-out), opacity var(--dur-med) ease; }
+#ai-fab:active{ transform:scale(.92); }
+#ai-fab.gone{ opacity:0; pointer-events:none; transform:scale(.9); }
+#ai-scrim{ position:absolute; inset:0; background:var(--scrim); z-index:48; opacity:0; pointer-events:none;
+  transition:opacity var(--dur-sheet) ease; }
+#ai-scrim.show{ opacity:1; pointer-events:auto; }
+#ai-sheet{ position:absolute; left:0; right:0; bottom:0; height:55%; z-index:50;
+  background:var(--elevated); border-radius:var(--r-xl) var(--r-xl) 0 0; box-shadow:0 -12px 48px rgba(0,0,0,.4);
+  display:flex; flex-direction:column; transform:translateY(105%); touch-action:none; }
+#ai-sheet.anim{ transition:transform var(--dur-sheet) var(--ease-drawer), height var(--dur-sheet) var(--ease-drawer); }
+.ai-tools{ flex:none; display:flex; gap:6px; padding:0 16px 10px; overflow-x:auto; scrollbar-width:none; }
+.ai-tools::-webkit-scrollbar{ display:none; }
+.ai-chip{ display:flex; align-items:center; gap:5px; height:28px; padding:0 11px; border-radius:14px; flex:none;
+  background:var(--surface); border:1px solid var(--sep-2); color:var(--text-2);
+  font-size:11.5px; font-weight:600; transition:transform var(--dur-press) var(--ease-out); }
+.ai-chip:active{ transform:scale(.94); }
+.ai-chip b{ color:var(--text); font-weight:600; }
+.ai-run{ flex:none; display:none; align-items:center; gap:8px; margin:0 16px 10px; padding:8px 12px;
+  border-radius:var(--r-sm); background:color-mix(in srgb,var(--pending) 10%, transparent);
+  color:var(--pending); font-size:12px; font-weight:600; }
+.ai-run.show{ display:flex; }
+.ai-run .spin{ width:12px; height:12px; border:2px solid currentColor; border-top-color:transparent;
+  border-radius:50%; animation:spin .8s linear infinite; }
+.ai-run button{ margin-left:auto; color:var(--err); font-weight:700; font-size:12px; padding:3px 10px;
+  border-radius:8px; background:var(--surface); }
+@media (min-width:768px){
+  #ai-sheet{ left:auto; width:min(420px, 42vw); height:100% !important; border-radius:var(--r-xl) 0 0 var(--r-xl);
+    transform:translateX(105%); }
+  #ai-sheet.anim{ transition:transform var(--dur-sheet) var(--ease-drawer); }
+  #ai-handle{ display:none; }
+}
+#ai-handle{ padding:10px 0 6px; display:grid; place-items:center; flex:none; cursor:grab; }
+#ai-handle::before{ content:""; width:38px; height:5px; border-radius:3px; background:var(--text-3); opacity:.5; }
+.ai-ctx{ margin:0 16px 10px; padding:8px 12px; border-radius:var(--r-sm); flex:none;
+  background:color-mix(in srgb,var(--accent) 10%, transparent); color:var(--accent);
+  font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:8px; }
+.ai-ctx .mono{ font-family:var(--mono); font-weight:500; opacity:.85; }
+.ai-msgs{ flex:1; overflow-y:auto; padding:2px 16px 12px; touch-action:pan-y; }
+.msg{ max-width:86%; padding:10px 13px; border-radius:16px; font-size:13.5px; line-height:1.5; margin-bottom:10px; user-select:text; }
+.msg.user{ margin-left:auto; background:var(--accent); color:#fff; border-bottom-right-radius:5px; }
+.msg.ai{ background:var(--surface); border:1px solid var(--sep-2); border-bottom-left-radius:5px; }
+.tool-trace{ margin:0 0 10px; padding:11px 13px; border-radius:14px; font-size:12.5px;
+  background:var(--surface); border:1px solid var(--sep-2); }
+.tool-trace .tt-head{ display:flex; align-items:center; gap:7px; font-weight:600; color:var(--text-2); margin-bottom:6px; }
+.tool-trace code{ font-family:var(--mono); font-size:11.5px; display:block; padding:8px 10px; border-radius:8px;
+  background:var(--term-bg); color:#7ee787; overflow-x:auto; white-space:nowrap; }
+.tt-actions{ display:flex; gap:8px; margin-top:9px; }
+.tt-btn{ flex:1; height:34px; border-radius:9px; font-size:13px; font-weight:600;
+  transition:transform var(--dur-press) var(--ease-out); }
+.tt-btn:active{ transform:scale(.96); }
+.tt-btn.allow{ background:var(--accent); color:#fff; }
+.tt-btn.deny{ background:var(--elevated); color:var(--err); border:1px solid var(--sep); }
+.ai-input{ flex:none; display:flex; gap:8px; padding:10px 16px calc(env(safe-area-inset-bottom,0px) + 12px); border-top:1px solid var(--sep-2); }
+.ai-input .field{ flex:1; height:40px; border-radius:20px; background:var(--surface); border:1px solid var(--sep-2);
+  padding:0 16px; display:flex; align-items:center; color:var(--text-3); font-size:14px; }
+.ai-send{ width:40px; height:40px; border-radius:50%; background:var(--accent); color:#fff; display:grid; place-items:center;
+  transition:transform var(--dur-press) var(--ease-out); }
+.ai-send:active{ transform:scale(.9); }
+
+/* generic action sheet */
+#sheet-scrim{ position:absolute; inset:0; background:var(--scrim); z-index:58; opacity:0; pointer-events:none; transition:opacity var(--dur-med) ease; }
+#sheet-scrim.show{ opacity:1; pointer-events:auto; }
+#action-sheet{ position:absolute; left:10px; right:10px; bottom:calc(env(safe-area-inset-bottom,0px) + 10px); z-index:60;
+  transform:translateY(120%); transition:transform var(--dur-sheet) var(--ease-drawer); max-height:78%; overflow-y:auto; }
+#action-sheet.show{ transform:translateY(0); }
+.as-group{ background:var(--chrome); backdrop-filter:blur(28px) saturate(1.6); -webkit-backdrop-filter:blur(28px) saturate(1.6);
+  border-radius:var(--r-lg); overflow:hidden; margin-bottom:8px; box-shadow:var(--shadow-chrome); }
+.as-item{ display:flex; align-items:center; justify-content:center; gap:8px; min-height:50px; padding:6px 14px; font-size:15px; width:100%;
+  border-bottom:1px solid var(--sep-2); transition:background var(--dur-fast) ease; }
+.as-item:last-child{ border-bottom:none; }
+.as-item:active{ background:rgba(128,128,128,.15); }
+.as-item.danger{ color:var(--err); }
+.as-item.cancel{ font-weight:700; }
+.as-item .sub{ font-size:12px; color:var(--text-3); }
+.as-title{ text-align:center; font-size:12.5px; color:var(--text-2); padding:12px 16px 10px; border-bottom:1px solid var(--sep-2); }
+
+/* editor form */
+.field-row{ display:flex; align-items:center; gap:12px; padding:12px 14px; border-bottom:1px solid var(--sep-2); }
+.field-row:last-child{ border-bottom:none; }
+.field-row label{ width:72px; flex:none; font-size:13px; color:var(--text-2); }
+.field-row input{ flex:1; background:none; border:none; outline:none; font-size:14px; min-width:0; }
+.field-row input.mono{ font-family:var(--mono); font-size:13.5px; }
+.field-row textarea{ flex:1; background:none; border:none; outline:none; font-size:14px; min-width:0; resize:none;
+  font-family:var(--mono); line-height:1.55; }
+.seg{ display:flex; background:var(--elevated); border-radius:9px; padding:2px; }
+.seg button{ padding:5px 10px; font-size:12px; font-weight:600; border-radius:7px; color:var(--text-2);
+  transition:background var(--dur-fast) ease, color var(--dur-fast) ease; }
+.seg button.on{ background:var(--surface); color:var(--text); box-shadow:0 1px 4px rgba(0,0,0,.25); }
+.editor-bar{ position:absolute; left:0; right:0; bottom:0; display:flex; gap:10px; z-index:10;
+  padding:12px 16px calc(env(safe-area-inset-bottom,0px) + 14px);
+  background:var(--chrome); backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px); border-top:1px solid var(--sep-2); }
+.ebtn{ flex:1; height:42px; border-radius:12px; font-size:14px; font-weight:600;
+  transition:transform var(--dur-press) var(--ease-out); }
+.ebtn:active{ transform:scale(.97); }
+.ebtn.ghost{ background:var(--elevated); color:var(--text-2); }
+.ebtn.primary{ background:var(--accent); color:#fff; flex:1.4; }
+.dirty-dot{ width:8px; height:8px; border-radius:50%; background:var(--conflict); display:inline-block; margin-left:6px; }
+
+/* ============ Terminal（chrome 跟主题 accent，ANSI 输出色不动） ============ */
+#page-terminal{ background:var(--term-bg);
+  --t-chrome: color-mix(in srgb, var(--accent) 8%, #12161c);
+  --t-chrome-2: color-mix(in srgb, var(--accent) 13%, #1e242e);
+  --t-line: color-mix(in srgb, var(--accent) 14%, transparent);
+  --t-text:#c9d1d9; --t-dim:#7d8794; }
+html[data-scheme="light"] #page-terminal{
+  --t-chrome: color-mix(in srgb, var(--accent) 8%, #e8edf2);
+  --t-chrome-2: color-mix(in srgb, var(--accent) 11%, #dce3ea);
+  --t-line: color-mix(in srgb, var(--accent) 18%, rgba(15,20,28,.08));
+  --t-text:#1c232b; --t-dim:#66707c;
+}
+html[data-scheme="light"] #page-terminal .term-title .t1{ color:#1c232b; }
+html[data-scheme="light"] #page-terminal .term-view .p{ color:color-mix(in srgb, var(--accent) 50%, #18794e); }
+html[data-scheme="light"] #page-terminal .term-view .h{ color:#0969da; }
+html[data-scheme="light"] #page-terminal .term-view .w{ color:#9a6700; }
+html[data-scheme="light"] #page-terminal .cursor{ background:#1c232b; }
+html[data-scheme="light"] #page-terminal .dock-item:active{ color:#1c232b; }
+html[data-scheme="light"] #page-terminal .sr-chip.on{ color:#fff; }
+html[data-scheme="light"] .fake-ime{ background:#e4e8ee; }
+html[data-scheme="light"] .fake-ime .k{ background:#fff; color:#1c232b; }
+html[data-scheme="light"] .fake-ime .k:active{ background:#d5dbe3; }
+html[data-scheme="light"] .tpanel{
+  background:color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.94));
+  border-color:color-mix(in srgb, var(--accent) 20%, rgba(15,20,28,.08));
+  box-shadow:0 14px 36px rgba(20,26,34,.14); }
+html[data-scheme="light"] .tpanel-head{ color:#1c232b; border-bottom-color:rgba(15,20,28,.08); }
+html[data-scheme="light"] .tpanel-body{ color:#2b333c; }
+html[data-scheme="light"] .tp-row small, html[data-scheme="light"] .tp-sec{ color:#6b7380; }
+html[data-scheme="light"] .tp-mini{ background:#e6ebf0; color:#2b333c; }
+html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
+.term-bg{ position:absolute; inset:0; z-index:0; pointer-events:none; opacity:0;
+  background:radial-gradient(120% 90% at 80% 0%, #2f5f8f 0%, transparent 55%),
+             radial-gradient(100% 80% at 10% 90%, #4a2f6e 0%, transparent 60%),
+             linear-gradient(160deg,#12233a,#0a1420);
+  filter:blur(0px); transition:opacity 200ms ease; }
+#page-terminal .term-head, #page-terminal .sess-rail, #page-terminal .keyrow,
+#page-terminal .context-dock, #page-terminal .term-split{ position:relative; z-index:1; }
+#page-terminal .term-view{ position:relative; z-index:1; }
+.term-head{ display:flex; align-items:center; gap:6px; flex:none;
+  padding:calc(env(safe-area-inset-top,0px) + 12px) 14px 12px; background:var(--t-chrome); border-bottom:1px solid var(--t-line); }
+#page-terminal .back-btn{ flex:none; width:30px; height:30px; border-radius:50%; background:transparent; color:var(--t-dim); }
+#page-terminal .back-btn:active{ background:var(--t-chrome-2); color:var(--t-text); }
+.term-title{ flex:1; min-width:0; overflow:hidden; padding-left:2px; }
+.term-title .t1{ font-size:14px; font-weight:650; color:#e6ebf0; display:flex; align-items:center; gap:7px;
+  overflow:hidden; white-space:nowrap; letter-spacing:-.01em; }
+.term-title .t1 span:last-child{ overflow:hidden; text-overflow:ellipsis; }
+.term-title .t2{ font-family:var(--mono); font-size:10.5px; color:var(--t-dim); margin-top:2px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:-.01em; }
+.term-head .term-end{ display:flex; align-items:center; gap:6px; flex:none; }
+.term-lat{ font-family:var(--mono); font-size:11px; color:var(--t-dim); font-variant-numeric:tabular-nums; }
+.term-split-btn{ width:30px; height:30px; border-radius:8px; display:grid; place-items:center; color:var(--t-dim);
+  background:transparent; transition:transform var(--dur-press) var(--ease-out), color var(--dur-fast) ease, background var(--dur-fast) ease; }
+.term-split-btn:active{ transform:scale(.9); background:var(--t-chrome-2); }
+.term-split-btn.on{ color:var(--accent); background:color-mix(in srgb, var(--accent) 16%, transparent); }
+.sess-rail{ flex:none; display:flex; gap:2px; padding:0 10px; overflow-x:auto; scrollbar-width:none;
+  background:var(--t-chrome); border-bottom:1px solid var(--t-line); }
+.sess-rail::-webkit-scrollbar{ display:none; }
+.sr-chip{ display:flex; align-items:center; gap:7px; height:34px; padding:0 12px; border-radius:0; flex:none;
+  background:transparent; color:var(--t-dim); font-size:12px; font-weight:550; font-family:var(--mono);
+  border:none; border-bottom:2px solid transparent; position:relative;
+  transition:color var(--dur-fast) ease, border-color var(--dur-fast) ease; }
+.sr-chip:active{ transform:none; }
+.sr-chip.on{ color:var(--t-text); border-bottom-color:var(--accent); font-weight:600; }
+.sr-chip.side-b{ color:var(--t-dim); border-bottom-color:color-mix(in srgb, var(--accent) 35%, transparent); font-weight:550; }
+.sr-chip .sess-dot{ width:6px; height:6px; }
+.sr-chip .sr-x{ color:var(--t-dim); font-size:13px; line-height:1; padding:2px 0 2px 4px; opacity:.55; }
+.sr-chip .sr-x:hover{ opacity:1; }
+.sr-add{ width:34px; height:34px; border-radius:0; flex:none; background:transparent; color:var(--t-dim);
+  display:grid; place-items:center; transition:color var(--dur-fast) ease; }
+.sr-add:active{ transform:scale(.9); }
+.sr-add svg{ width:14px; height:14px; }
+#page-terminal{ flex-direction:row; }
+.term-main{ flex:1; min-width:0; display:flex; flex-direction:column; position:relative; }
+.term-split{ flex:1; display:flex; min-height:0; position:relative; }
+.term-pane{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; position:relative; }
+.term-pane .term-view{ flex:1; }
+.term-pane .term-view{ position:relative; }
+#page-terminal.split-term .term-pane.focused::before{
+  content:""; position:absolute; top:0; left:0; right:0; height:2px; background:var(--accent); z-index:2; }
+.term-view{ overflow-y:auto; padding:10px 12px; font-family:var(--mono); font-size:12.5px; line-height:1.55;
+  color:var(--t-text); user-select:text; scrollbar-width:none; position:relative; height:100%; }
+.term-view::-webkit-scrollbar{ display:none; }
+#page-terminal:not(.split-term) #pane-b{ display:none; }
+#page-terminal:not(.split-term) #pane-a{ flex:1 1 auto; }
+#page-terminal.split-term #pane-b{ display:flex; flex:0 0 auto; width:var(--dock-w, 50%); min-width:0; }
+#page-terminal.split-term #pane-a{ flex:0 0 auto; width:calc(100% - var(--dock-w, 50%)); min-width:0; }
+.term-gutter{ display:none; width:12px; flex:none; margin:0 -5px; z-index:3; cursor:col-resize; touch-action:none;
+  position:relative; background:transparent; }
+.term-gutter::before{ content:""; position:absolute; top:0; bottom:0; left:50%; width:1px; margin-left:-0.5px;
+  background:var(--t-line); transition:background 120ms ease, width 120ms ease; }
+.term-gutter:hover::before, .term-gutter.dragging::before{ background:var(--accent); width:2px; margin-left:-1px; }
+.term-dock{ display:none; flex:0 0 auto; width:var(--dock-w, 38%); min-width:180px; max-width:72%;
+  flex-direction:column; background:var(--t-chrome); border-inline-start:1px solid var(--t-line); min-height:0; }
+#page-terminal.dock-on .term-gutter,
+#page-terminal.dock-on .term-dock{ display:flex; }
+#page-terminal.split-term .term-gutter{ display:block; }
+#page-terminal.split-term .term-view.pane-b{ display:block; }
+#page-terminal.dock-left .term-split{ flex-direction:row-reverse; }
+#page-terminal.dock-left .term-dock{ border-inline-start:none; border-inline-end:1px solid var(--t-line); }
+.sr-chip.side-b{ }
+.term-dock-tabs{ flex:none; display:flex; gap:4px; padding:6px 8px; overflow-x:auto; scrollbar-width:none;
+  border-bottom:1px solid var(--t-line); }
+.term-dock-tabs::-webkit-scrollbar{ display:none; }
+.td-tab{ display:flex; align-items:center; gap:5px; height:28px; padding:0 10px; border-radius:8px; flex:none;
+  background:var(--t-chrome-2); color:var(--t-dim); font-size:11.5px; font-weight:600; }
+.td-tab.on{ color:#fff; background:color-mix(in srgb, var(--accent) 30%, var(--t-chrome-2)); }
+.td-tab svg{ width:12px; height:12px; fill:currentColor; }
+.td-x{ font-size:13px; opacity:.7; padding-left:2px; }
+.term-dock-body{ flex:1; overflow-y:auto; padding:6px; scrollbar-width:none; }
+.term-dock-body::-webkit-scrollbar{ display:none; }
+.term-dock-empty{ padding:28px 16px; text-align:center; color:var(--t-dim); font-size:12.5px; line-height:1.55; }
+.term-view .p{ color:color-mix(in srgb, var(--accent) 45%, #7ee787); } .term-view .h{ color:#79c0ff; } .term-view .w{ color:#ffa657; } .term-view .d{ color:var(--t-dim); }
+.cursor{ display:inline-block; width:7px; height:15px; background:var(--t-text); vertical-align:-2px; animation:blink 1.06s steps(1) infinite; }
+@keyframes blink{ 50%{ opacity:0; } }
+.keyrow{ flex:none; display:flex; gap:6px; padding:7px 10px; overflow-x:auto; scrollbar-width:none;
+  background:var(--t-chrome); border-top:1px solid var(--t-line);
+  transition:transform 180ms var(--ease-out), opacity 180ms var(--ease-out); }
+.keyrow::-webkit-scrollbar{ display:none; }
+.key{ min-width:44px; height:36px; padding:0 12px; border-radius:8px; flex:none;
+  background:var(--t-chrome-2); color:var(--t-text); font-family:var(--mono); font-size:12.5px; display:grid; place-items:center;
+  transition:transform var(--dur-press) var(--ease-out), background var(--dur-press) ease; }
+.key:active{ transform:scale(.93); }
+.key.latched{ background:color-mix(in srgb,var(--accent) 40%, var(--t-chrome-2)); color:#fff; }
+.context-dock{ flex:none; display:flex; padding:8px 8px calc(env(safe-area-inset-bottom,0px) + 10px); overflow-x:auto; scrollbar-width:none;
+  background:var(--t-chrome); border-top:1px solid var(--t-line);
+  transition:transform 180ms var(--ease-out), opacity 180ms var(--ease-out); }
+.context-dock::-webkit-scrollbar{ display:none; }
+.dock-item{ flex:1; min-width:52px; display:flex; flex-direction:column; align-items:center; gap:3px; color:var(--t-dim);
+  font-size:10px; font-weight:600; padding:4px 0; border-radius:10px;
+  transition:transform var(--dur-press) var(--ease-out), color var(--dur-fast) ease; }
+.dock-item:active{ transform:scale(.92); color:#e6ebf0; }
+.dock-item svg{ width:20px; height:20px; fill:currentColor; }
+.dock-item svg.stroke{ fill:none; stroke:currentColor; stroke-width:1.8; }
+.dock-item.danger{ color:#ff7b72; }
+#page-terminal.ime-on .context-dock{ transform:translateY(90px); opacity:0; pointer-events:none; }
+
+/* shared fake IME (terminal flex child; remote pages overlay) */
+.fake-ime{ flex:none; height:0; overflow:hidden; background:#171b22; transition:height 240ms var(--ease-drawer);
+  display:grid; grid-template-rows:repeat(4,1fr); gap:6px; padding:0 8px; }
+.fake-ime.open{ height:236px; padding:8px; }
+.fake-ime .krow{ display:flex; gap:6px; }
+.fake-ime .k{ flex:1; border-radius:6px; background:#2b323d; display:grid; place-items:center;
+  color:#c9d1d9; font-size:14px; font-family:var(--mono); }
+.fake-ime .k:active{ background:#3a4250; }
+.fake-ime .k.wide{ flex:2.2; }
+.fake-ime.overlay{ position:absolute; left:0; right:0; bottom:0; z-index:30; height:0; }
+.fake-ime.overlay.open{ height:236px; }
+
+/* ============ Remote desktop (RDP / VNC) ============ */
+.remote-page{ background:#000; }
+.r-surface{ position:absolute; inset:0; overflow:hidden; touch-action:none; background:#000; }
+.r-zoom{ position:absolute; inset:0; transition:transform 180ms var(--ease-out); transform-origin:center;
+  display:flex; align-items:center; justify-content:center; }
+/* 远程 framebuffer 按真实宽高比 letterbox，不拉伸 */
+.r-frame{ position:relative; width:100%; overflow:hidden; flex:none; }
+.r-frame.r16x9{ aspect-ratio:16/9; }
+.r-frame.r16x10{ aspect-ratio:16/10; }
+.r-status{ position:absolute; left:10px; top:calc(env(safe-area-inset-top,0px) + 10px); z-index:5;
+  display:flex; align-items:center; gap:7px; padding:6px 11px; border-radius:16px;
+  background:rgba(12,14,18,.6); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+  color:#dbe2ea; font-family:var(--mono); font-size:11px;
+  transition:opacity var(--dur-fast) ease; }
+.r-ball{ position:absolute; right:10px; top:34%; width:44px; height:44px; border-radius:50%; z-index:6;
+  background:rgba(20,24,30,.62); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,.14); display:grid; place-items:center; color:#e6ebf0;
+  box-shadow:0 4px 18px rgba(0,0,0,.4);
+  transition:transform var(--dur-press) var(--ease-out), opacity var(--dur-med) ease; }
+.r-ball:active{ transform:scale(.9); }
+.r-ball svg{ width:20px; height:20px; }
+.r-panel{ position:absolute; left:8px; right:8px; top:calc(env(safe-area-inset-top,0px) + 8px); z-index:7;
+  background:rgba(18,22,28,.78); backdrop-filter:blur(24px) saturate(1.4); -webkit-backdrop-filter:blur(24px) saturate(1.4);
+  border:1px solid rgba(255,255,255,.1); border-radius:18px; padding:8px 6px;
+  transform:translateY(-14px) scale(.98); opacity:0; pointer-events:none;
+  transition:transform 200ms var(--ease-out), opacity 200ms ease; }
+.r-panel.show{ transform:none; opacity:1; pointer-events:auto; }
+.r-tools{ display:flex; gap:2px; overflow-x:auto; scrollbar-width:none; }
+.r-tools::-webkit-scrollbar{ display:none; }
+.r-tool{ min-width:56px; padding:8px 4px 6px; display:flex; flex-direction:column; align-items:center; gap:5px;
+  color:#c3ccd6; font-size:10px; font-weight:600; border-radius:12px; flex:none;
+  transition:transform var(--dur-press) var(--ease-out), background var(--dur-fast) ease; }
+.r-tool:active{ background:rgba(255,255,255,.1); transform:scale(.93); }
+.r-tool svg{ width:20px; height:20px; fill:currentColor; }
+.r-tool.on{ color:var(--accent); }
+.r-tool.danger{ color:#ff7b72; }
+.r-back{ position:absolute; left:10px; bottom:calc(env(safe-area-inset-bottom,0px) + 14px); z-index:6;
+  width:40px; height:40px; border-radius:50%; background:rgba(12,14,18,.6); backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px); display:grid; place-items:center; color:#dbe2ea;
+  transition:transform var(--dur-press) var(--ease-out); }
+.r-back:active{ transform:scale(.9); }
+.r-cursor{ position:absolute; left:0; top:0; width:16px; height:16px; z-index:4; pointer-events:none;
+  filter:drop-shadow(0 1px 2px rgba(0,0,0,.7)); will-change:transform; }
+.r-click{ position:absolute; width:34px; height:34px; margin:-17px 0 0 -17px; border:2px solid rgba(255,255,255,.9);
+  border-radius:50%; z-index:5; pointer-events:none; animation:clickm .32s ease-out forwards; }
+.r-click.right{ border-color:var(--warn); }
+@keyframes clickm{ from{ transform:scale(.35); opacity:.95; } to{ transform:scale(1.5); opacity:0; } }
+.r-mouse{ position:absolute; right:10px; bottom:calc(env(safe-area-inset-bottom,0px) + 14px); z-index:6;
+  display:none; gap:8px; }
+.r-mouse.show{ display:flex; }
+.r-mbtn{ min-width:58px; height:42px; padding:0 12px; border-radius:12px; font-size:12px; font-weight:600;
+  background:rgba(18,22,28,.72); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,.14); color:#dbe2ea;
+  transition:transform var(--dur-press) var(--ease-out); }
+.r-mbtn:active{ transform:scale(.93); background:rgba(50,58,70,.8); }
+
+/* fake windows desktop */
+.win-wall{ position:absolute; inset:0; background:
+  radial-gradient(120% 90% at 80% 10%, #2f7cd6 0%, transparent 55%),
+  radial-gradient(100% 80% at 15% 85%, #0d3b78 0%, transparent 60%),
+  linear-gradient(160deg,#173b6e,#0a2144); }
+.win-win{ position:absolute; left:7%; top:12%; width:72%; border-radius:8px; overflow:hidden;
+  background:#f9f9f9; box-shadow:0 18px 50px rgba(0,0,0,.5); }
+.win-tb{ height:30px; background:#eef1f4; display:flex; align-items:center; padding:0 10px; gap:8px; }
+.win-tb .tt{ font-size:10.5px; color:#333; flex:1; font-weight:600; }
+.win-tb .wc{ width:9px; height:9px; border-radius:50%; }
+.win-menu{ display:flex; gap:10px; padding:5px 10px; font-size:9.5px; color:#555; border-bottom:1px solid #e5e5e5; }
+.win-body{ padding:10px; font-family:var(--mono); font-size:9.5px; color:#333; line-height:1.8; }
+.win-taskbar{ position:absolute; left:0; right:0; bottom:0; height:42px;
+  background:rgba(24,28,36,.82); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+  display:flex; align-items:center; justify-content:center; gap:14px; }
+.wt-ico{ width:22px; height:22px; border-radius:5px; }
+/* fake linux desktop (VNC) */
+.lx-wall{ position:absolute; inset:0; background:
+  radial-gradient(110% 80% at 75% 15%, #6b3fa0 0%, transparent 55%),
+  linear-gradient(160deg,#3b2354,#1b1028); }
+.lx-topbar{ position:absolute; top:0; left:0; right:0; height:24px; background:rgba(0,0,0,.45);
+  display:flex; align-items:center; padding:0 10px; color:#e8e8e8; font-size:9.5px; }
+.lx-dock{ position:absolute; left:0; top:24px; bottom:0; width:44px; background:rgba(10,10,14,.5);
+  display:flex; flex-direction:column; align-items:center; padding-top:12px; gap:12px; }
+.lx-dock i{ width:26px; height:26px; border-radius:7px; display:block; }
+.lx-term{ position:absolute; left:20%; top:20%; width:66%; border-radius:8px; overflow:hidden;
+  background:rgba(22,8,18,.92); box-shadow:0 16px 44px rgba(0,0,0,.55); }
+.lx-term .lt-tb{ height:26px; background:rgba(50,20,40,.9); display:flex; align-items:center; padding:0 10px; gap:6px; }
+.lx-term .lt-tb i{ width:8px; height:8px; border-radius:50%; display:block; }
+.lx-term .lt-body{ padding:9px 10px; font-family:var(--mono); font-size:9.5px; color:#7ee787; line-height:1.75; }
+
+/* file sync */
+.sync-hero{ background:var(--surface); border:1px solid var(--sep-2); border-radius:var(--r-lg); padding:16px; }
+.sync-phase{ display:flex; align-items:center; gap:12px; }
+.sync-orb{ width:46px; height:46px; border-radius:50%; display:grid; place-items:center; flex:none;
+  background:color-mix(in srgb,var(--ok) 14%, transparent); color:var(--ok);
+  transition:background var(--dur-med) ease, color var(--dur-med) ease; }
+.sync-hero.busy .sync-orb{ background:color-mix(in srgb,var(--pending) 14%, transparent); color:var(--pending); }
+.sync-hero.busy .sync-orb svg{ animation:spin 1.1s linear infinite; }
+.progress{ height:5px; border-radius:3px; background:var(--elevated); margin:14px 0 8px; overflow:hidden; }
+.progress i{ display:block; height:100%; width:0%; border-radius:3px; background:var(--accent); transition:width 200ms linear; }
+.sync-sub{ font-size:12.5px; color:var(--text-3); font-variant-numeric:tabular-nums; }
+
+.swatches{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+.swatch{ border-radius:var(--r-md); padding:10px 6px; display:flex; flex-direction:column; align-items:center; gap:8px;
+  background:var(--surface); border:2px solid transparent; font-size:12px; font-weight:600; color:var(--text-2);
+  transition:transform var(--dur-press) var(--ease-out), border-color var(--dur-fast) ease; }
+.swatch:active{ transform:scale(.95); }
+.swatch.on{ border-color:var(--accent); color:var(--text); }
+.swatch .ball{ width:34px; height:34px; border-radius:50%; }
+
+.toast{ position:absolute; left:50%; bottom:110px; transform:translateX(-50%) translateY(20px);
+  background:var(--chrome); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+  color:var(--text); font-size:13.5px; font-weight:600; padding:11px 18px; border-radius:22px;
+  box-shadow:var(--shadow-chrome); opacity:0; pointer-events:none; z-index:70;
+  transition:transform 300ms var(--ease-out), opacity 300ms ease; white-space:nowrap; }
+.toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+/* 协议选择卡 */
+.ptype{ display:flex; gap:13px; align-items:center; padding:15px 14px; background:var(--surface);
+  border:1px solid var(--sep-2); border-radius:var(--r-md); margin-bottom:10px; width:100%; text-align:left;
+  transition:transform var(--dur-press) var(--ease-out), background var(--dur-fast) ease, border-color var(--dur-fast) ease; }
+.ptype:active{ transform:scale(.98); background:var(--elevated); }
+.ptype .p-body{ flex:1; min-width:0; }
+.ptype b{ font-size:14.5px; display:flex; align-items:center; gap:7px; }
+.ptype small{ font-size:11.5px; color:var(--text-3); display:block; margin-top:3px; line-height:1.45; }
+
+/* 语言勾选 */
+.check-ic{ color:var(--accent); width:18px; height:18px; flex:none; visibility:hidden; }
+.row.sel .check-ic{ visibility:visible; }
+
+/* 批量执行结果 */
+.res-row{ display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--sep-2); font-size:13px; }
+.res-row:last-child{ border-bottom:none; }
+.res-row .mono{ font-family:var(--mono); font-size:11.5px; color:var(--text-2); }
+.res-st{ font-size:11px; font-weight:700; padding:2px 8px; border-radius:8px; flex:none; }
+.res-st.ok{ color:var(--ok); background:color-mix(in srgb,var(--ok) 13%,transparent); }
+.res-st.run{ color:var(--pending); background:color-mix(in srgb,var(--pending) 13%,transparent); }
+.res-st.fail{ color:var(--err); background:color-mix(in srgb,var(--err) 13%,transparent); }
+.res-st.denied{ color:var(--offline); background:var(--elevated); }
+
+/* meter */
+.meter{ height:5px; border-radius:3px; background:var(--elevated); overflow:hidden; margin-top:8px; }
+.meter i{ display:block; height:100%; border-radius:3px; background:var(--accent); }
+.meter.warn i{ background:var(--warn); } .meter.bad i{ background:var(--err); }
+
+/* 终端功能浮窗（对齐主端 floating-panel：拖动/调大小/布局档位/共存/关闭） */
+.tpanel{ position:absolute; width:min(78%, 330px); height:44%; min-width:200px; min-height:180px; z-index:20;
+  background:color-mix(in srgb, var(--accent) 7%, rgba(18,22,28,.92));
+  backdrop-filter:blur(24px) saturate(1.4); -webkit-backdrop-filter:blur(24px) saturate(1.4);
+  border:1px solid color-mix(in srgb, var(--accent) 22%, rgba(255,255,255,.08)); border-radius:16px;
+  display:flex; flex-direction:column; overflow:hidden;
+  box-shadow:0 14px 44px rgba(0,0,0,.5), 0 1px 0 rgba(255,255,255,.06) inset; animation:tpin 180ms var(--ease-out); }
+@keyframes tpin{ from{ transform:scale(.95); opacity:0; } }
+.tpanel-head{ display:flex; align-items:center; gap:7px; padding:8px 6px 8px 12px; color:#dbe2ea;
+  font-size:12.5px; font-weight:600; cursor:grab; touch-action:none; flex:none;
+  border-bottom:1px solid rgba(255,255,255,.07); }
+.tpanel-head .ti{ width:14px; height:14px; fill:var(--accent); flex:none; }
+.tpanel-head b{ flex:1; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tp-hbtn{ width:26px; height:26px; border-radius:50%; display:grid; place-items:center; color:#8b949e; flex:none;
+  transition:transform var(--dur-press) var(--ease-out), background var(--dur-fast) ease, color var(--dur-fast) ease; }
+.tp-hbtn:active{ transform:scale(.88); background:rgba(255,255,255,.1); }
+.tp-hbtn svg{ width:13px; height:13px; fill:currentColor; }
+.tp-hbtn.close{ font-size:15px; }
+.tp-hbtn.on{ color:var(--accent); }
+.tpanel-body{ flex:1; overflow-y:auto; padding:6px; font-size:12px; color:#c9d1d9; scrollbar-width:none; }
+.tpanel-body::-webkit-scrollbar{ display:none; }
+.tp-resize{ position:absolute; right:1px; bottom:1px; width:28px; height:28px; cursor:nwse-resize; touch-action:none;
+  color:#5d6773; display:grid; place-items:center; }
+.tp-resize svg{ width:12px; height:12px; }
+.tp-slider{ width:100%; accent-color:var(--accent); margin:6px 0 2px; }
+
+/* pad 左侧主机树：只在终端页出现 */
+#pad-rail{ display:none; width:216px; flex:none; flex-direction:column;
+  background:var(--t-chrome, var(--surface)); border-right:1px solid var(--t-line, var(--sep-2)); z-index:8; }
+@media (min-width:768px){ #page-terminal #pad-rail{ display:flex; } }
+#pad-rail .pr-head{ padding:calc(env(safe-area-inset-top,0px) + 14px) 14px 8px; font-size:11px; font-weight:700; letter-spacing:.08em; color:var(--t-dim, var(--text-3)); text-transform:uppercase; }
+#pad-rail .pr-list{ flex:1; overflow-y:auto; padding:2px 8px 16px; scrollbar-width:none; }
+#pad-rail .pr-list::-webkit-scrollbar{ display:none; }
+.pr-item{ display:flex; align-items:center; gap:9px; width:100%; text-align:left; padding:8px 9px; border-radius:9px;
+  margin-bottom:2px; border:1px solid transparent;
+  transition:background var(--dur-fast) ease, border-color var(--dur-fast) ease; }
+.pr-item:active{ transform:scale(.99); }
+.pr-item.on{ background:color-mix(in srgb, var(--accent) 14%, transparent); border-color:color-mix(in srgb, var(--accent) 30%, transparent); }
+.pr-item .conn-ico{ width:26px; height:26px; font-size:8px; border-radius:7px; }
+.pr-item b{ font-size:12.5px; display:block; color:var(--t-text, var(--text)); }
+.pr-item small{ font-size:10px; color:var(--t-dim, var(--text-3)); font-family:var(--mono); }
+.pr-item .sess-dot{ margin-left:auto; width:7px; height:7px; }
+#stage{ position:relative; flex:1; min-width:0; height:100%; }
+
+/* pad 会话墙 */
+.sess-wall{ display:none; grid-template-columns:repeat(2,1fr); gap:12px; margin-top:8px; }
+.sw-card{ position:relative; aspect-ratio:16/10; border-radius:var(--r-md); overflow:hidden;
+  background:#0d1218; border:1px solid var(--sep-2); text-align:left;
+  transition:transform var(--dur-press) var(--ease-out); }
+.sw-card:active{ transform:scale(.98); }
+.sw-thumb{ position:absolute; inset:0; opacity:.55; }
+.sw-meta{ position:absolute; left:0; right:0; bottom:0; padding:10px 12px;
+  background:linear-gradient(transparent, rgba(0,0,0,.72)); color:#fff; }
+.sw-meta b{ display:block; font-size:13.5px; }
+.sw-meta small{ font-family:var(--mono); font-size:11px; opacity:.8; }
+@media (min-width:768px){
+  .sess-wall{ display:grid; }
+  #page-sessions .page-scroll > .sess-row, #page-sessions .section-title{ display:none; }
+  #page-sessions .sess-wall + .empty-note{ display:block; }
+  #page-notes .page-scroll, #page-snippets .page-scroll{ max-width:420px; }
+}
+
+/* SFTP 二级：进度 / 冲突 / 预览 */
+.xfer{ margin-top:10px; }
+.xfer-row{ display:flex; align-items:center; gap:10px; padding:10px 14px; font-size:12.5px; }
+.xfer-row .bar{ flex:1; height:4px; border-radius:2px; background:var(--elevated); overflow:hidden; }
+.xfer-row .bar i{ display:block; height:100%; background:var(--accent); width:0; transition:width 200ms linear; }
+.diff-box{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+.diff-col{ background:var(--term-bg); border-radius:10px; padding:10px; font-family:var(--mono); font-size:11px; color:#c9d1d9; line-height:1.55; }
+.diff-col h4{ font-size:10px; color:var(--text-3); letter-spacing:.06em; margin-bottom:6px; font-family:inherit; }
+.tp-row{ display:flex; align-items:center; gap:9px; padding:8px; border-radius:9px; width:100%; text-align:left;
+  transition:background var(--dur-fast) ease; }
+.tp-row:active{ background:rgba(255,255,255,.07); }
+.tp-row .ti{ width:15px; height:15px; fill:#8b949e; flex:none; }
+.tp-row small{ color:#5d6773; font-family:var(--mono); font-size:10.5px; }
+.tp-mini{ font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:8px; flex:none;
+  background:#2b323d; color:#c9d1d9; transition:transform var(--dur-press) var(--ease-out); }
+.tp-mini:active{ transform:scale(.92); }
+.tp-mini.on{ background:color-mix(in srgb,var(--ok) 30%,#2b323d); color:#7ee787; }
+.tp-stat{ padding:8px; }
+.tp-stat .l{ display:flex; justify-content:space-between; font-size:11px; color:#8b949e; font-family:var(--mono); }
+.tp-stat .meter{ background:#262c36; margin-top:5px; }
+.tp-sec{ font-size:10px; font-weight:700; color:#5d6773; letter-spacing:.08em; padding:8px 8px 4px; }
+
+.empty-note{ text-align:center; color:var(--text-3); font-size:13px; padding:26px 0 8px; }
+
+/* note editor */
+.note-body{ flex:1; padding:6px 16px 140px; display:flex; flex-direction:column; }
+.note-body textarea{ flex:1; background:none; border:none; outline:none; resize:none;
+  font-size:15.5px; line-height:1.7; color:var(--text); user-select:text; }
+.note-preview{ flex:1; overflow-y:auto; font-size:15.5px; line-height:1.7; user-select:text; display:none; }
+.note-preview h2{ font-size:19px; margin:14px 0 6px; }
+.note-preview p{ margin-bottom:10px; color:var(--text-2); }
+.note-preview code{ font-family:var(--mono); font-size:13px; background:var(--elevated); padding:1px 6px; border-radius:6px; }
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{ transition-duration:120ms !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; }
+  .page.behind{ transform:none; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============ Icon sprite：Zephyr 主端 glyph（fill 24×24）+ 少量同风格补充 ============ -->
+<svg width="0" height="0" style="position:absolute">
+  <!-- Zephyr 主端原图标（public/style.css data-uri 原样搬出，fill black→currentColor） -->
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1H3V6zm0 4h18l-2 9H5l-2-9z"/></symbol>
+  <symbol id="i-stats" viewBox="0 0 24 24"><path d="M4 20V4h16v2H6v12h14v2H4zm3-3V9h3v8H7zm5 0V6h3v11h-3zm5 0v-5h3v5h-3z"/></symbol>
+  <symbol id="i-docker" viewBox="0 0 24 24"><path d="M3 13h18c-.6 4-3.8 7-8.8 7C7.5 20 4 17.8 3 13zm2-5h3v3H5V8zm4 0h3v3H9V8zm4 0h3v3h-3V8zM9 4h3v3H9V4zm4 0h3v3h-3V4zm4 4h3v3h-3V8z"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 10-13h-7l0-7z"/></symbol>
+  <symbol id="i-notes" viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5V3zm9 1.5V8h3.5L14 4.5zM7 6h5v2H7V6zm0 4h10v2H7v-2zm0 4h10v2H7v-2zm0 4h7v2H7v-2z"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M3 6h18v12H3V6zm2 2v8h14V8H5zm1 1h2v2H6V9zm3 0h2v2H9V9zm3 0h2v2h-2V9zm3 0h2v2h-2V9zM6 12h2v2H6v-2zm3 0h6v2H9v-2zm7 0h2v2h-2v-2z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><path d="M7 7V3h14v14h-4v4H3V7h4zm2 0h8v8h2V5H9v2zm-4 2v10h10V9H5z"/></symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24"><path d="M9 3h6l1 2h3v16H5V5h3l1-2zm1 4h4l1-2h-6l1 2zm-3 1v11h10V8h-2v2H9V8H7z"/></symbol>
+  <symbol id="i-paste" viewBox="0 0 24 24"><path d="M9 3h6l1 2h3v16H5V5h3l1-2zm1 4h4l1-2h-6l1 2zm-3 1v11h10V8h-2v2H9V8H7z"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24"><path d="M12 2a9 9 0 1 0 9 9c-1 4-5 7-9 7V2z"/></symbol>
+  <symbol id="i-reconnect" viewBox="0 0 24 24"><path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.76-4.24L13 11h8V3l-3.3 3.3z"/></symbol>
+  <symbol id="i-disconnect" viewBox="0 0 24 24"><path d="M7 3h10v2H7V3zm4 4h2v7h-2V7zm-5.6 3.2 1.5 1.3A6 6 0 1 0 17.1 11.5l1.5-1.3a8 8 0 1 1-13.2 0z"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 4h7v2H7.4l4.1 4.1-1.4 1.4L6 7.4V11H4V4zm9 0h7v7h-2V7.4l-4.1 4.1-1.4-1.4L16.6 6H13V4zM4 13h2v3.6l4.1-4.1 1.4 1.4L7.4 18H11v2H4v-7zm14 0h2v7h-7v-2h3.6l-4.1-4.1 1.4 1.4 4.1 4.1V13z"/></symbol>
+  <symbol id="i-zoom" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm1 2H9v2H7v2h2v2h2v-2h2v-2h-2V8zm4.7 7.3 4.5 4.5-1.4 1.4-4.5-4.5 1.4-1.4z"/></symbol>
+  <symbol id="i-joystick" viewBox="0 0 24 24"><path d="M7 9h10a5 5 0 0 1 4.8 3.6l.8 3A3.5 3.5 0 0 1 19.2 20c-1 0-1.9-.4-2.6-1.1L14.7 17H9.3l-1.9 1.9A3.7 3.7 0 0 1 4.8 20a3.5 3.5 0 0 1-3.4-4.4l.8-3A5 5 0 0 1 7 9zm1 3H6v2H4v2h2v2h2v-2h2v-2H8v-2zm8.5 1a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM18 10a1 1 0 1 0 0 2 1 1 0 0 0 0-2zM11 4h2v5h-2V4z"/></symbol>
+  <symbol id="i-security" viewBox="0 0 24 24"><path d="M12 2 5 5v6c0 4.6 2.9 8.8 7 10 4.1-1.2 7-5.4 7-10V5l-7-3zm0 3.2 5 2.1V11c0 3.3-2 6.4-5 7.6-3-1.2-5-4.3-5-7.6V7.3l5-2.1zM11 8h2v5h-2V8zm0 7h2v2h-2v-2z"/></symbol>
+  <!-- Zephyr 没有、按同风格（实心 24×24）补充的 -->
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M11 3h2v9.2l3.1-3.1 1.4 1.4L12 16l-5.5-5.5 1.4-1.4 3.1 3.1V3zM4 18h16v3H4v-3z"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm7.9 9h-3a15.6 15.6 0 0 0-1.2-5.3A8 8 0 0 1 19.9 11zM12 4.1c.9 1.2 1.8 3.2 2.1 6.9H9.9c.3-3.7 1.2-5.7 2.1-6.9zM8.3 5.7A15.6 15.6 0 0 0 7.1 11h-3a8 8 0 0 1 4.2-5.3zM4.1 13h3c.2 2.3.6 4 1.2 5.3A8 8 0 0 1 4.1 13zM12 19.9c-.9-1.2-1.8-3.2-2.1-6.9h4.2c-.3 3.7-1.2 5.7-2.1 6.9zm3.7-1.6c.6-1.3 1-3 1.2-5.3h3a8 8 0 0 1-4.2 5.3z"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><path d="M14.5 3a6.5 6.5 0 0 0-6.3 8.1L3 16.3V21h4.7v-2.5h2.5v-2.5h2.3l1.2-1.2A6.5 6.5 0 1 0 14.5 3zm1 4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></symbol>
+  <symbol id="i-jumphost" viewBox="0 0 24 24"><path d="M4 17a3 3 0 1 1 2.8-4h3.9a3 3 0 1 1 2.6-4.5l3.4-2A3 3 0 1 1 18 4a3 3 0 0 1-.2 6 3 3 0 0 1-2.6-1.5l-3.4 2c.1.3.2.7.2 1a3 3 0 0 1-4.8 2.5H6.8A3 3 0 0 1 4 17z"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><path d="M4 3h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm2 2.5v2h2v-2H6zM4 11h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1zm2 2.5v2h2v-2H6zm-1 6.5h14v2H5v-2z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 1 5 5v3h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h1V7a5 5 0 0 1 5-5zm0 2a3 3 0 0 0-3 3v3h6V7a3 3 0 0 0-3-3zm0 8.5a2 2 0 0 0-1 3.7V19h2v-2.8a2 2 0 0 0-1-3.7z"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 11h4l2.5-6 4 14L16 11h5v2h-3.9l-3.4 8.9-4.2-14.7L8.1 13H3v-2z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 8.5A3.5 3.5 0 1 1 12 15.5 3.5 3.5 0 0 1 12 8.5zM10.9 2h2.2l.5 2.6c.7.2 1.3.5 1.9.9l2.5-1 1.1 1.9-1.7 2.1c.2.6.4 1.2.4 1.9s-.1 1.3-.4 1.9l1.7 2.1-1.1 1.9-2.5-1a8 8 0 0 1-1.9.9l-.5 2.6h-2.2l-.5-2.6a8 8 0 0 1-1.9-.9l-2.5 1-1.1-1.9 1.7-2.1a7.6 7.6 0 0 1 0-3.8L4.9 6.4 6 4.5l2.5 1c.6-.4 1.2-.7 1.9-.9l.5-2.6z"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm2 2v5h8V5H7zm5 6.5A3.5 3.5 0 1 0 12 18.5 3.5 3.5 0 0 0 12 11.5z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></symbol>
+  <symbol id="i-ticket" viewBox="0 0 24 24"><path d="M4 6a2 2 0 0 0-2 2v2a2 2 0 1 1 0 4v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a2 2 0 1 1 0-4V8a2 2 0 0 0-2-2H4zm9 2h2v2.5h-2V8zm0 4.5h2V15h-2v-2.5z"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 2 1.5 20.5h21L12 2zm-1 7h2v6h-2V9zm0 7.5h2v2h-2v-2z"/></symbol>
+  <symbol id="i-devices" viewBox="0 0 24 24"><path d="M3 5h14a1 1 0 0 1 1 1v3h-2V7H4v9h7v2H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm11 6h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1zm1.5 6.5h3v1h-3v-1z"/></symbol>
+  <symbol id="i-pointer" viewBox="0 0 24 24"><path d="M6 3l13 9.5-7.2 1L9 20.5 6 3z"/></symbol>
+  <symbol id="i-grid-tools" viewBox="0 0 24 24"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 3h2v-3h2v3h3v2h-3v3h-2v-3h-2v-2z"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><path d="M3 4h18a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-7v2h3v2H7v-2h3v-2H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v9h16V6H4z"/></symbol>
+</svg>
+
+<div id="app">
+  <div id="stage">
+
+  <!-- ================= HOME ================= -->
+  <section class="page" id="page-home" data-root="0">
+    <div class="page-head">
+      <h1>Zephyr One</h1>
+      <button class="head-btn" onclick="openAddSheet()" aria-label="新建">
+        <svg class="ic"><use href="#i-plus"/></svg></button>
+      <button class="sync-pill" id="sync-pill" onclick="goSync()">
+        <span class="dot"></span><span id="sync-pill-text">已同步</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>
+      </button>
+    </div>
+    <div class="page-scroll">
+      <div class="searchbar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        搜索连接、标签、主机…
+      </div>
+      <div class="chips" id="chips">
+        <button class="chip on" data-f="all">全部</button>
+        <button class="chip" data-f="ssh">SSH</button>
+        <button class="chip" data-f="rdp">RDP</button>
+        <button class="chip" data-f="vnc">VNC</button>
+        <button class="chip" data-f="telnet">Telnet</button>
+        <button class="chip" data-f="fav">收藏</button>
+        <button class="chip" data-f="shared">共享给我</button>
+      </div>
+      <div class="section-title">最近连接</div>
+      <div id="conn-list"></div>
+      <div class="section-title">活动摘要</div>
+      <div class="stat-row">
+        <div class="stat-card"><div class="stat-num">12</div><div class="stat-label">本周会话</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:var(--pending)">3</div><div class="stat-label">待同步</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:var(--conflict)">1</div><div class="stat-label">冲突</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SESSIONS ================= -->
+  <section class="page hidden" id="page-sessions" data-root="1">
+    <div class="page-head"><h1>会话</h1></div>
+    <div class="page-scroll">
+      <div class="section-title" style="margin-top:6px">连接中</div>
+      <button class="sess-row"><span class="sess-dot connecting"></span>
+        <span style="flex:1;text-align:left"><b style="font-size:14px">backup-02</b><br><span class="sess-lat">handshake…</span></span>
+        <span class="badge pending">SSH</span></button>
+      <div class="section-title">已连接</div>
+      <button class="sess-row" onclick="openTerminal()"><span class="sess-dot live"></span>
+        <span style="flex:1;text-align:left"><b style="font-size:14px">prod-web-01</b><br><span class="sess-lat">23 ms · 1:42:07 · 本地执行</span></span>
+        <span class="badge" style="color:var(--p-ssh);background:color-mix(in srgb,var(--p-ssh) 14%,transparent)">SSH</span></button>
+      <button class="sess-row" onclick="pushPage('page-rdp')"><span class="sess-dot live"></span>
+        <span style="flex:1;text-align:left"><b style="font-size:14px">win-ops-desktop</b><br><span class="sess-lat">41 ms · 18:52 · 1920×1080@30</span></span>
+        <span class="badge" style="color:var(--p-rdp);background:color-mix(in srgb,var(--p-rdp) 14%,transparent)">RDP</span></button>
+      <div class="section-title">断线可恢复</div>
+      <button class="sess-row"><span class="sess-dot dead"></span>
+        <span style="flex:1;text-align:left"><b style="font-size:14px">nas-home</b><br><span class="sess-lat">network lost · 可恢复</span></span>
+        <span class="r-val" style="color:var(--accent);font-weight:600">重连</span></button>
+      <div class="section-title">已最小化</div>
+      <button class="sess-row" onclick="pushPage('page-vnc')"><span class="sess-dot min"></span>
+        <span style="flex:1;text-align:left"><b style="font-size:14px">vnc-pi-kitchen</b><br><span class="sess-lat">后台 2:11:40</span></span>
+        <span class="badge" style="color:var(--p-vnc);background:color-mix(in srgb,var(--p-vnc) 14%,transparent)">VNC</span></button>
+      <div class="sess-wall" id="sess-wall"></div>
+      <div class="empty-note">历史任务与批量执行状态见 工具 → 远程批量</div>
+    </div>
+  </section>
+
+  <!-- ================= LIBRARY ================= -->
+  <section class="page hidden" id="page-library" data-root="2">
+    <div class="page-head"><h1>资料</h1>
+      <button class="head-btn" onclick="openLibraryAdd()" aria-label="新建">
+        <svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="page-scroll">
+      <div class="stat-row" style="margin-top:6px">
+        <button class="entry-card" onclick="pushPage('page-sftp')"><span class="e-ico" style="background:color-mix(in srgb,var(--p-sftp) 15%,transparent);color:var(--p-sftp)"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span><b>文件 SFTP</b><small>prod-web-01 最近目录</small></span></button>
+        <button class="entry-card" onclick="pushPage('page-notes')"><span class="e-ico" style="background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn)"><svg class="ic"><use href="#i-notes"/></svg></span>
+          <span><b>笔记</b><small>27 篇 · 3 组</small></span></button>
+      </div>
+      <div class="stat-row" style="margin-top:10px">
+        <button class="entry-card" onclick="pushPage('page-snippets')"><span class="e-ico" style="background:color-mix(in srgb,var(--p-ssh) 15%,transparent);color:var(--p-ssh)"><svg class="ic"><use href="#i-bolt"/></svg></span>
+          <span><b>代码片段</b><small>41 条 · 运维</small></span></button>
+        <button class="entry-card" onclick="pushPage('page-sftp')"><span class="e-ico" style="background:color-mix(in srgb,var(--p-vnc) 15%,transparent);color:var(--p-vnc)"><svg class="ic"><use href="#i-download"/></svg></span>
+          <span><b>下载</b><small>2 个进行中</small></span></button>
+      </div>
+      <div class="section-title">最近文件</div>
+      <div class="group">
+        <button class="row"><span class="r-ico" style="color:var(--p-sftp)"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span class="r-body">nginx.conf<div class="r-sub" style="font-family:var(--mono)">/etc/nginx · prod-web-01 · 2 小时前</div></span></button>
+        <button class="row"><span class="r-ico" style="color:var(--p-sftp)"><svg class="ic"><use href="#i-download"/></svg></span>
+          <span class="r-body">deploy-2026-08-11.tar.gz<div class="r-sub" style="font-family:var(--mono)">~/releases · 18.4 MB · 昨天</div></span></button>
+        <button class="row" onclick="pushPage('page-note')"><span class="r-ico" style="color:var(--warn)"><svg class="ic"><use href="#i-notes"/></svg></span>
+          <span class="r-body">线上故障排查清单<div class="r-sub">笔记 · 运维 · 已同步</div></span></button>
+      </div>
+      <div class="empty-note">最近文件仅记录你主动浏览/下载的 metadata</div>
+    </div>
+  </section>
+
+  <!-- ================= TOOLS ================= -->
+  <section class="page hidden" id="page-tools" data-root="3">
+    <div class="page-head"><h1>工具</h1>
+      <button class="head-btn" onclick="openToolsAdd()" aria-label="新建资源">
+        <svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="page-scroll">
+      <div class="section-title" style="margin-top:6px">远程操作</div>
+      <div class="group">
+        <button class="row" onclick="pushPage('page-batch')"><span class="r-ico" style="color:var(--p-ssh)"><svg class="ic"><use href="#i-bolt"/></svg></span>
+          <span class="r-body">远程批量<div class="r-sub">多主机执行 · 并发 4 · fail-fast</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="section-title">资源</div>
+      <div class="group">
+        <button class="row" onclick="pushPage('page-proxy')"><span class="r-ico"><svg class="ic"><use href="#i-globe"/></svg></span>
+          <span class="r-body">Proxy<div class="r-sub">SOCKS5:1080 默认</div></span><span class="chev">›</span></button>
+        <button class="row" onclick="pushPage('page-keys')"><span class="r-ico"><svg class="ic"><use href="#i-key"/></svg></span>
+          <span class="r-body">SSH Key<div class="r-sub">secret 三态编辑</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="section-title">AI</div>
+      <div class="group">
+        <button class="row" onclick="pushPage('page-ai-settings')"><span class="r-ico" style="color:var(--accent)"><svg class="ic" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5 13.8 8l5.7 1.8a.8.8 0 0 1 0 1.55L13.8 13.2 12 18.7a.8.8 0 0 1-1.55 0L8.7 13.2 3 11.35a.8.8 0 0 1 0-1.55L8.7 8 10.45 2.5a.8.8 0 0 1 1.55 0z"/></svg></span>
+          <span class="r-body">AI 助理<div class="r-sub" id="ai-settings-sub">已启用 · Claude Opus · 协作模式</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="section-title">文件同步</div>
+      <div class="group">
+        <button class="row" onclick="goSync()"><span class="r-ico" style="color:var(--pending)"><svg class="ic"><use href="#i-reconnect"/></svg></span>
+          <span class="r-body">文件同步<div class="r-sub" id="tools-sync-sub">已开启 · 每 5 分钟 · 3 项待同步</div></span><span class="chev">›</span></button>
+        <button class="row" onclick="pushPage('page-token')"><span class="r-ico"><svg class="ic"><use href="#i-ticket"/></svg></span>
+          <span class="r-body">Client Token<div class="r-sub">查看/旋转需敏感验证</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="section-title">服务器</div>
+      <div class="group">
+        <button class="row" onclick="pushPage('page-server')"><span class="r-ico"><svg class="ic"><use href="#i-server"/></svg></span>
+          <span class="r-body">服务器<div class="r-sub">设置 · 备份与恢复</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="section-title">One</div>
+      <div class="group">
+        <button class="row" onclick="pushPage('page-appearance')"><span class="r-ico"><svg class="ic"><use href="#i-theme"/></svg></span>
+          <span class="r-body">外观<div class="r-sub" id="appearance-sub">Frost · 深色</div></span><span class="chev">›</span></button>
+        <button class="row" onclick="pushPage('page-lang')"><span class="r-ico"><svg class="ic"><use href="#i-globe"/></svg></span>
+          <span class="r-body">语言<div class="r-sub" id="lang-sub">跟随系统</div></span><span class="chev">›</span></button>
+        <button class="row"><span class="r-ico"><svg class="ic"><use href="#i-lock"/></svg></span>
+          <span class="r-body">本地解锁<div class="r-sub">生物识别 · 回前台 1 分钟</div></span><span class="chev">›</span></button>
+        <button class="row" onclick="pushPage('page-about')"><span class="r-ico"><svg class="ic"><use href="#i-stats"/></svg></span>
+          <span class="r-body">关于与诊断<div class="r-sub">版本 · 日志导出</div></span><span class="chev">›</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: CONNECTION EDITOR ================= -->
+  <section class="page pushed hidden" id="page-editor">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px" id="editor-title">编辑连接</h1>
+    </div>
+    <div class="page-scroll" style="padding-bottom:190px">
+      <div class="section-title" style="margin-top:4px">基础</div>
+      <div class="group">
+        <div class="field-row"><label>名称</label><input id="ed-name" value="prod-web-01"></div>
+        <div class="field-row"><label>协议</label>
+          <div class="seg" id="seg-proto">
+            <button class="on">SSH</button><button>Telnet</button><button>RDP</button><button>VNC</button>
+          </div></div>
+        <div class="field-row"><label>主机</label><input class="mono" id="ed-host" value="10.0.8.21"></div>
+        <div class="field-row"><label>端口</label><input class="mono" id="ed-port" value="22" inputmode="numeric"></div>
+        <div class="field-row"><label>用户名</label><input class="mono" id="ed-user" value="deploy"></div>
+      </div>
+      <div class="section-title">认证</div>
+      <div class="group">
+        <div class="field-row"><label>密码</label><input class="mono" type="password" value="••••••••••" readonly>
+          <div class="seg"><button class="on">保持不变</button><button>替换</button><button>清除</button></div></div>
+        <button class="row" id="sec-sshkey"><span class="r-body">已保存的 SSH Key<div class="r-sub">id_ed25519-prod · 指纹 SHA256:a1b2…9f</div></span><span class="chev">›</span></button>
+      </div>
+      <div id="sec-telnet" style="display:none">
+        <div class="group" style="margin-top:10px">
+          <div class="row"><span class="r-ico" style="color:var(--conflict)"><svg class="ic"><use href="#i-warn"/></svg></span>
+            <span class="r-body" style="font-size:12.5px;color:var(--conflict)">Telnet 未加密<div class="r-sub" style="color:var(--text-3)">账号口令与终端内容以明文传输，仅用于可信内网或设备 console</div></span></div>
+          <button class="row"><span class="r-body">终端编码<div class="r-sub">老设备/中文路由器常用 GBK · 仅 Telnet 生效</div></span><span class="r-val">UTF-8</span><span class="chev">›</span></button>
+        </div>
+      </div>
+      <div id="sec-rdp" style="display:none">
+        <div class="section-title">RDP 通道</div>
+        <div class="group">
+          <button class="row"><span class="r-body">声音</span><span class="r-val">在此设备播放</span><span class="chev">›</span></button>
+          <div class="row"><span class="r-body">剪贴板</span><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+          <div class="row"><span class="r-body">麦克风<div class="r-sub">会话请求时才申请权限</div></span><button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+          <div class="row"><span class="r-body">摄像头</span><button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+          <div class="row"><span class="r-body">存储（文件 drive）<div class="r-sub">只读在 provider 层执行</div></span>
+            <button class="toggle on" id="rdp-drive-t" onclick="toggleDrive(this)"></button></div>
+          <div id="rdp-drive-cfg">
+            <button class="row"><span class="r-body" style="padding-left:14px">映射目录<div class="r-sub">本机共享目录授权</div></span><span class="r-val" style="font-family:var(--mono)">下载/ZephyrDrive</span><span class="chev">›</span></button>
+            <div class="row"><span class="r-body" style="padding-left:14px">只读</span>
+              <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+          </div>
+        </div>
+        <div class="section-title">RDP 显示</div>
+        <div class="group">
+          <button class="row"><span class="r-body">分辨率</span><span class="r-val">自动（匹配此设备）</span><span class="chev">›</span></button>
+          <button class="row"><span class="r-body">画质</span><span class="r-val">平衡</span><span class="chev">›</span></button>
+          <button class="row"><span class="r-body">帧率</span><span class="r-val">30 FPS</span><span class="chev">›</span></button>
+          <button class="row"><span class="r-body">触控方式</span><span class="r-val">直接触控</span><span class="chev">›</span></button>
+          <button class="row"><span class="r-body">触控板灵敏度</span><span class="r-val">1.0</span><span class="chev">›</span></button>
+        </div>
+      </div>
+      <div class="section-title">路由</div>
+      <div class="group">
+        <button class="row"><span class="r-body">方式</span><span class="r-val">JumpHost · 2 级</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">bastion-01 → sw-core<div class="r-sub">服务器列表中的 SSH 连接都可作为跳板机 · 依赖均有 use 能力</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="section-title">Metadata</div>
+      <div class="group">
+        <div class="field-row"><label>标签</label><input value="生产, web"></div>
+        <div class="field-row"><label>备注</label><input placeholder="支持 Markdown" value=""></div>
+        <button class="row" onclick="openShareSheet()"><span class="r-body">共享</span><span class="r-val" id="share-val">私有</span><span class="chev">›</span></button>
+      </div>
+    </div>
+    <div class="editor-bar">
+      <button class="ebtn ghost" onclick="toast('正在测试主机连通性…')">测试</button>
+      <button class="ebtn ghost" onclick="popPage();toast('未保存 · 直接连接')">不保存连接</button>
+      <button class="ebtn primary" onclick="saveEditor()">保存</button>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: NOTE EDITOR ================= -->
+  <section class="page pushed hidden" id="page-note">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px" id="note-title">新建笔记</h1>
+      <div class="seg" id="seg-note">
+        <button class="on" onclick="noteMode(this,'edit')">编辑</button>
+        <button onclick="noteMode(this,'preview')">预览</button>
+      </div>
+    </div>
+    <div class="page-scroll" style="padding-bottom:16px">
+      <div class="group">
+        <div class="field-row"><label>标题</label><input id="note-name" placeholder="最多 200 字" value=""></div>
+        <div class="field-row"><label>标签</label><input placeholder="逗号分隔，最多 100 字" value=""></div>
+        <button class="row"><span class="r-body">关联连接<div class="r-sub">未关联 · 最多 100 字</div></span><span class="chev">›</span></button>
+      </div>
+    </div>
+    <div class="note-body">
+      <textarea id="note-text" placeholder="Markdown 正文，最大 1 MiB…">## 磁盘排查
+
+- `du -x --max-depth=1 /` 定位大户
+- nginx access.log 确认已轮转</textarea>
+      <div class="note-preview" id="note-preview"></div>
+    </div>
+    <div class="editor-bar">
+      <button class="ebtn ghost" onclick="toast('正文 1 MiB 上限 · 当前 96 B')">统计</button>
+      <button class="ebtn primary" onclick="popPage();markPending();toast('已保存，待同步')">保存</button>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: SNIPPET EDITOR ================= -->
+  <section class="page pushed hidden" id="page-snippet">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">新建代码片段</h1>
+    </div>
+    <div class="page-scroll" style="padding-bottom:190px">
+      <div class="group" style="margin-top:4px">
+        <div class="field-row"><label>名称</label><input placeholder="最多 60 字" value="找出磁盘大户"></div>
+        <div class="field-row"><label>分组</label><input placeholder="最多 40 字" value="运维"></div>
+        <div class="field-row" style="align-items:flex-start"><label style="padding-top:2px">命令</label>
+          <textarea rows="4">du -x --max-depth=1 / 2>/dev/null | sort -rn | head -12</textarea></div>
+        <div class="row"><span class="r-body">autoRun<div class="r-sub">插入终端后立即执行 · 仍需 execute 权限</div></span>
+          <button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+      </div>
+      <div class="empty-note">插入不需要 execute 权限；实际执行需要 connection 的 execute 能力，危险命令仍走确认策略</div>
+    </div>
+    <div class="editor-bar">
+      <button class="ebtn ghost" onclick="toast('已插入当前终端（未执行）')">插入终端</button>
+      <button class="ebtn primary" onclick="popPage();markPending();toast('已保存，待同步')">保存</button>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: TERMINAL（多会话） ================= -->
+  <section class="page pushed hidden" id="page-terminal">
+    <div class="term-bg" id="term-bg"></div>
+    <aside id="pad-rail" aria-label="主机树">
+      <div class="pr-head">连接</div>
+      <div class="pr-list" id="pad-rail-list"></div>
+    </aside>
+    <div class="term-main">
+    <div class="term-head">
+      <button class="back-btn" onclick="popPage()" aria-label="返回"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="term-title">
+        <div class="t1"><span class="sess-dot live" id="term-dot"></span><span id="term-name">prod-web-01</span></div>
+        <div class="t2" id="term-sub">deploy@10.0.8.21:22 · 80×24</div>
+      </div>
+      <div class="term-end">
+        <span class="term-lat" id="term-lat">23 ms</span>
+        <button class="term-split-btn" id="term-split-btn" onclick="toggleSplit()" aria-label="分屏" title="分屏：双终端 / 工具停靠">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 4h8v16H3V4zm10 0h8v16h-8V4z"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="sess-rail" id="sess-rail"></div>
+    <div class="term-split" id="term-split">
+      <div class="term-pane" id="pane-a" data-pane="a" onclick="focusPane('a')">
+        <div class="term-view" id="term-view" data-pane="a"></div>
+      </div>
+      <div class="term-gutter" id="term-gutter" aria-label="调整分屏比例"></div>
+      <div class="term-pane" id="pane-b" data-pane="b" onclick="focusPane('b')">
+        <div class="term-view pane-b" id="term-view-b" data-pane="b"></div>
+      </div>
+      <aside class="term-dock" id="term-dock">
+        <div class="term-dock-tabs" id="term-dock-tabs"></div>
+        <div class="term-dock-body" id="term-dock-body">
+          <div class="term-dock-empty">点底部 文件 / 片段 / 笔记 / 监控 / 外观<br>停靠在这一侧，不挡终端</div>
+        </div>
+      </aside>
+    </div>
+    <div class="keyrow">
+      <button class="key">Esc</button><button class="key">Tab</button>
+      <button class="key" onclick="this.classList.toggle('latched');toast(this.classList.contains('latched')?'Ctrl 已锁定':'Ctrl 已释放')">Ctrl</button>
+      <button class="key" onclick="this.classList.toggle('latched')">Alt</button>
+      <button class="key">←</button><button class="key">↓</button><button class="key">↑</button><button class="key">→</button>
+      <button class="key">|</button><button class="key">~</button><button class="key">/</button><button class="key">-</button>
+    </div>
+    <div class="context-dock">
+      <button class="dock-item" onclick="toggleIME()"><svg class="stroke" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" stroke-linecap="round"/></svg>键盘</button>
+      <button class="dock-item" onclick="toast('已复制 · ' + activeSession().name)"><svg viewBox="0 0 24 24"><use href="#i-copy"/></svg>复制</button>
+      <button class="dock-item" onclick="toast('已粘贴到 ' + activeSession().name)"><svg viewBox="0 0 24 24"><use href="#i-paste"/></svg>粘贴</button>
+      <button class="dock-item" onclick="openTPanel('files')"><svg viewBox="0 0 24 24"><use href="#i-file"/></svg>文件</button>
+      <button class="dock-item" onclick="openTPanel('snippet')"><svg viewBox="0 0 24 24"><use href="#i-bolt"/></svg>片段</button>
+      <button class="dock-item" onclick="openTPanel('notes')"><svg viewBox="0 0 24 24"><use href="#i-notes"/></svg>笔记</button>
+      <button class="dock-item" onclick="openTPanel('stats')"><svg viewBox="0 0 24 24"><use href="#i-stats"/></svg>监控</button>
+      <button class="dock-item" onclick="openTPanel('theme')"><svg viewBox="0 0 24 24"><use href="#i-theme"/></svg>外观</button>
+      <button class="dock-item danger" onclick="confirmDisconnect(activeSession().name)"><svg viewBox="0 0 24 24"><use href="#i-disconnect"/></svg>断开</button>
+    </div>
+    <div class="fake-ime" id="fake-ime">
+      <div class="krow"><div class="k">q</div><div class="k">w</div><div class="k">e</div><div class="k">r</div><div class="k">t</div><div class="k">y</div><div class="k">u</div><div class="k">i</div><div class="k">o</div><div class="k">p</div></div>
+      <div class="krow"><div class="k">a</div><div class="k">s</div><div class="k">d</div><div class="k">f</div><div class="k">g</div><div class="k">h</div><div class="k">j</div><div class="k">k</div><div class="k">l</div></div>
+      <div class="krow"><div class="k wide">⇧</div><div class="k">z</div><div class="k">x</div><div class="k">c</div><div class="k">v</div><div class="k">b</div><div class="k">n</div><div class="k">m</div><div class="k wide">⌫</div></div>
+      <div class="krow"><div class="k wide">?123</div><div class="k" style="flex:4">space</div><div class="k wide" onclick="toggleIME()">收起</div></div>
+    </div>
+    </div><!-- /term-main -->
+  </section>
+
+  <!-- ================= PUSH: RDP ================= -->
+  <section class="page pushed hidden remote-page" id="page-rdp">
+    <div class="r-surface" id="rdp-surface">
+      <div class="r-zoom">
+        <div class="r-frame r16x9">
+        <div class="win-wall"></div>
+        <div class="win-win">
+          <div class="win-tb"><span class="tt">notes.txt — 记事本</span>
+            <span class="wc" style="background:#e2e6ea"></span><span class="wc" style="background:#e2e6ea"></span><span class="wc" style="background:#e81123"></span></div>
+          <div class="win-menu"><span>文件(F)</span><span>编辑(E)</span><span>查看(V)</span></div>
+          <div class="win-body">发布 checklist<br>1. 备份 prod 数据库<br>2. 滚动重启 web 节点<br>3. 观察 5xx 率 10 分钟</div>
+        </div>
+        <div class="win-taskbar">
+          <span class="wt-ico" style="background:linear-gradient(135deg,#3aa7f0,#1668c8)"></span>
+          <span class="wt-ico" style="background:linear-gradient(135deg,#f7d154,#d79b1e);border-radius:4px"></span>
+          <span class="wt-ico" style="background:linear-gradient(135deg,#37c6a5,#1c6fbe);border-radius:50%"></span>
+          <span class="wt-ico" style="background:linear-gradient(135deg,#8a8f98,#4c525c)"></span>
+        </div>
+        </div>
+      </div>
+    </div>
+    <div class="r-status"><span class="sess-dot live"></span><span id="rdp-status">41 ms · 1920×1080 · 30FPS</span></div>
+    <svg class="r-cursor" id="rdp-cursor" viewBox="0 0 24 24"><path d="M6 3l13 9.5-7.2 1L9 20.5 6 3z" fill="#fff" stroke="#000" stroke-width="1.2"/></svg>
+    <button class="r-ball" onclick="toggleRemotePanel('page-rdp')" aria-label="工具">
+      <svg class="ic"><use href="#i-grid-tools"/></svg></button>
+    <div class="r-panel" id="rdp-panel">
+      <div class="r-tools">
+        <button class="r-tool" data-act="pointer"><svg><use href="#i-pointer"/></svg><span data-lb>触控板</span></button>
+        <button class="r-tool" data-act="keyboard"><svg><use href="#i-keyboard"/></svg><span>键盘</span></button>
+        <button class="r-tool" data-act="quality"><svg><use href="#i-bolt"/></svg><span data-lb>平衡</span></button>
+        <button class="r-tool" data-act="resolution"><svg><use href="#i-monitor"/></svg><span data-lb>自动</span></button>
+        <button class="r-tool" data-act="fps"><svg><use href="#i-stats"/></svg><span data-lb>30FPS</span></button>
+        <button class="r-tool" data-act="fit"><svg><use href="#i-fit"/></svg><span>适应</span></button>
+        <button class="r-tool" data-act="zoom"><svg><use href="#i-zoom"/></svg><span data-lb>100%</span></button>
+        <button class="r-tool" data-act="clipboard"><svg><use href="#i-clipboard"/></svg><span>剪贴板</span></button>
+        <button class="r-tool" data-act="files"><svg><use href="#i-file"/></svg><span>文件</span></button>
+        <button class="r-tool" data-act="shortcuts"><svg><use href="#i-bolt"/></svg><span>快捷键</span></button>
+        <button class="r-tool" data-act="joystick"><svg><use href="#i-joystick"/></svg><span>视区</span></button>
+        <button class="r-tool" data-act="cad"><svg><use href="#i-security"/></svg><span>CAD</span></button>
+        <button class="r-tool" data-act="reconnect"><svg><use href="#i-reconnect"/></svg><span>重连</span></button>
+        <button class="r-tool danger" data-act="disconnect"><svg><use href="#i-disconnect"/></svg><span>断开</span></button>
+      </div>
+    </div>
+    <div class="r-mouse" id="rdp-mouse">
+      <button class="r-mbtn" data-mb="left">左键</button>
+      <button class="r-mbtn" data-mb="right">右键</button>
+    </div>
+    <button class="r-back" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+  </section>
+
+  <!-- ================= PUSH: VNC ================= -->
+  <section class="page pushed hidden remote-page" id="page-vnc">
+    <div class="r-surface" id="vnc-surface">
+      <div class="r-zoom">
+        <div class="r-frame r16x10">
+        <div class="lx-wall"></div>
+        <div class="lx-topbar"><span>Activities</span><span style="flex:1;text-align:center">周二 20:14</span><span style="font-family:var(--mono)">en  WiFi  82%</span></div>
+        <div class="lx-dock">
+          <i style="background:linear-gradient(135deg,#f7d154,#d78a1e)"></i>
+          <i style="background:linear-gradient(135deg,#e95420,#a73410)"></i>
+          <i style="background:linear-gradient(135deg,#37c6a5,#1c6fbe)"></i>
+          <i style="background:linear-gradient(135deg,#8a8f98,#4c525c)"></i>
+        </div>
+        <div class="lx-term">
+          <div class="lt-tb"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+          <div class="lt-body">pi@vnc-kitchen:~$ vcgencmd measure_temp<br>temp=42.8'C<br>pi@vnc-kitchen:~$ uptime<br>20:14 up 36 days, 2 users</div>
+        </div>
+        </div>
+      </div>
+    </div>
+    <div class="r-status"><span class="sess-dot live"></span><span id="vnc-status">18 ms · 1440×900 · 高质量</span></div>
+    <svg class="r-cursor" id="vnc-cursor" viewBox="0 0 24 24"><path d="M6 3l13 9.5-7.2 1L9 20.5 6 3z" fill="#fff" stroke="#000" stroke-width="1.2"/></svg>
+    <button class="r-ball" onclick="toggleRemotePanel('page-vnc')" aria-label="工具">
+      <svg class="ic"><use href="#i-grid-tools"/></svg></button>
+    <div class="r-panel" id="vnc-panel">
+      <div class="r-tools">
+        <button class="r-tool" data-act="pointer"><svg><use href="#i-pointer"/></svg><span data-lb>触控板</span></button>
+        <button class="r-tool" data-act="keyboard"><svg><use href="#i-keyboard"/></svg><span>键盘</span></button>
+        <button class="r-tool" data-act="vncquality"><svg><use href="#i-bolt"/></svg><span data-lb>高质量</span></button>
+        <button class="r-tool" data-act="fit"><svg><use href="#i-fit"/></svg><span>适应</span></button>
+        <button class="r-tool" data-act="zoom"><svg><use href="#i-zoom"/></svg><span data-lb>100%</span></button>
+        <button class="r-tool" data-act="clipboard"><svg><use href="#i-clipboard"/></svg><span>剪贴板</span></button>
+        <button class="r-tool" data-act="joystick"><svg><use href="#i-joystick"/></svg><span>视区</span></button>
+        <button class="r-tool" data-act="reconnect"><svg><use href="#i-reconnect"/></svg><span>重连</span></button>
+        <button class="r-tool danger" data-act="disconnect"><svg><use href="#i-disconnect"/></svg><span>断开</span></button>
+      </div>
+    </div>
+    <div class="r-mouse" id="vnc-mouse">
+      <button class="r-mbtn" data-mb="left">左键</button>
+      <button class="r-mbtn" data-mb="right">右键</button>
+    </div>
+    <button class="r-back" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+  </section>
+
+  <!-- remote 共享软键盘（overlay，不挤压 surface） -->
+  <div class="fake-ime overlay" id="fake-ime-remote">
+    <div class="krow"><div class="k">q</div><div class="k">w</div><div class="k">e</div><div class="k">r</div><div class="k">t</div><div class="k">y</div><div class="k">u</div><div class="k">i</div><div class="k">o</div><div class="k">p</div></div>
+    <div class="krow"><div class="k">a</div><div class="k">s</div><div class="k">d</div><div class="k">f</div><div class="k">g</div><div class="k">h</div><div class="k">j</div><div class="k">k</div><div class="k">l</div></div>
+    <div class="krow"><div class="k wide">⇧</div><div class="k">z</div><div class="k">x</div><div class="k">c</div><div class="k">v</div><div class="k">b</div><div class="k">n</div><div class="k">m</div><div class="k wide">⌫</div></div>
+    <div class="krow"><div class="k wide">?123</div><div class="k" style="flex:4">space</div><div class="k wide" onclick="toggleRemoteIME()">收起</div></div>
+  </div>
+
+  <!-- ================= PUSH: FILE SYNC ================= -->
+  <section class="page pushed hidden" id="page-sync">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">文件同步</h1>
+    </div>
+    <div class="page-scroll">
+      <div class="sync-hero" id="sync-hero">
+        <div class="sync-phase">
+          <div class="sync-orb"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg></div>
+          <div style="flex:1">
+            <b id="sync-phase-text" style="font-size:16px">镜像已同步</b>
+            <div class="sync-sub" id="sync-sub-text">上次成功 20:01 · 下次自动 20:06</div>
+          </div>
+          <button class="toggle on" id="sync-toggle" onclick="this.classList.toggle('on');toast(this.classList.contains('on')?'文件同步已开启':'已暂停 · 镜像保留')"></button>
+        </div>
+        <div class="progress"><i id="sync-bar"></i></div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="sync-sub" id="sync-detail">cursor 8f2c91 · 0 B/s</span>
+          <button class="ebtn primary" id="sync-now" style="flex:none;height:36px;padding:0 18px;font-size:13.5px" onclick="runSync()">立即同步</button>
+        </div>
+      </div>
+      <div class="section-title">状态</div>
+      <div class="group">
+        <button class="row"><span class="r-ico" style="color:var(--conflict)"><svg class="ic"><use href="#i-warn"/></svg></span>
+          <span class="r-body">冲突中心</span><span class="badge conflict">1 个冲突</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-ico"><svg class="ic"><use href="#i-devices"/></svg></span>
+          <span class="r-body">One 设备<div class="r-sub">Pixel 8 Pro（本机）· iPad Air</div></span><span class="chev">›</span></button>
+        <button class="row" onclick="pushPage('page-token')"><span class="r-ico"><svg class="ic"><use href="#i-ticket"/></svg></span>
+          <span class="r-body">Client Token<div class="r-sub">one-mobile-prod · lastUsed 2 分钟前</div></span><span class="chev">›</span></button>
+        <button class="row"><span class="r-ico"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span class="r-body">本机共享目录<div class="r-sub">文件桥接 · 授权有效 · 只读</div></span><span class="chev">›</span></button>
+        <button class="row"><span class="r-ico"><svg class="ic"><use href="#i-activity"/></svg></span>
+          <span class="r-body">诊断<div class="r-sub">幂等 / 墓碑 / secret envelope 正常</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="section-title">策略</div>
+      <div class="group">
+        <div class="row"><span class="r-body">自动同步</span><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <button class="row"><span class="r-body">目标间隔</span><span class="r-val">5 分钟</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">网络策略</span><span class="r-val">仅 Wi-Fi 传大文件</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body" style="color:var(--err)">解绑并删除本地镜像<div class="r-sub">先 revoke 后清本机 · 需敏感验证</div></span><span class="chev">›</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: SERVER ================= -->
+  <section class="page pushed hidden" id="page-server">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">服务器</h1>
+    </div>
+    <div class="page-scroll">
+      <div class="group" style="margin-top:4px">
+        <button class="row" onclick="pushPage('page-server-settings')"><span class="r-ico"><svg class="ic"><use href="#i-gear"/></svg></span>
+          <span class="r-body">设置<div class="r-sub">仅当前账号有权限且 One 有用途的项</div></span><span class="chev">›</span></button>
+        <button class="row" onclick="pushPage('page-backup')"><span class="r-ico"><svg class="ic"><use href="#i-save"/></svg></span>
+          <span class="r-body">备份与恢复<div class="r-sub">导出加密备份 · 导入需双密码</div></span><span class="chev">›</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: BACKUP ================= -->
+  <section class="page pushed hidden" id="page-backup">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">备份与恢复</h1>
+    </div>
+    <div class="page-scroll">
+      <div class="section-title" style="margin-top:4px">导出</div>
+      <div class="group">
+        <div class="row"><span class="r-body">范围<div class="r-sub">连接 / 笔记 / 片段 / 设置 · AES-256-GCM · v1</div></span></div>
+        <button class="row" onclick="toast('备份已生成 · SHA-256 3fa9…e2 · 4.1 MB')"><span class="r-body" style="color:var(--accent);font-weight:600">生成加密备份…</span></button>
+      </div>
+      <div class="section-title">导入</div>
+      <div class="group">
+        <button class="row" onclick="toast('需要当前登录密码 + 备份密码')"><span class="r-body" style="color:var(--accent);font-weight:600">从文件恢复…<div class="r-sub" style="color:var(--text-3);font-weight:400">影响确认 → 服务端验证 → 所有 One 重新绑定</div></span></button>
+      </div>
+      <div class="section-title">WebDAV 备份</div>
+      <div class="group">
+        <div class="row"><span class="r-body">启用 WebDAV 备份<div class="r-sub">账号级加密备份到独立目录 · 仅 HTTPS</div></span>
+          <button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+        <div class="field-row"><label>地址</label><input class="mono" placeholder="https://dav.example.com/…"></div>
+        <button class="row" onclick="toast('先验证连接，再创建账号级加密备份')"><span class="r-body" style="color:var(--accent);font-weight:600">立即备份</span></button>
+      </div>
+      <div class="empty-note">失败时明确显示「原数据已回滚 / 未改动」</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: AI 设置 ================= -->
+  <section class="page pushed hidden" id="page-ai-settings">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">AI 助理</h1>
+    </div>
+    <div class="page-scroll">
+      <div class="group" style="margin-top:4px">
+        <div class="row"><span class="r-body">启用 AI 助理<div class="r-sub">在导航和工作区中显示 AI 功能</div></span>
+          <button class="toggle on" id="ai-master" onclick="toggleAI(this)"></button></div>
+      </div>
+      <div class="section-title">服务商与模型</div>
+      <div class="group">
+        <button class="row"><span class="r-body">AI 服务商<div class="r-sub">共享 Provider 不展示 API Key</div></span><span class="r-val">Claude</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">模型<div class="r-sub">上下文窗口 / 最大输出按模型动态计算</div></span><span class="r-val">Claude Opus</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">协作模式</span><span class="r-val">协作</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">权限模式</span><span class="r-val">按能力确认</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">思考<div class="r-sub">对支持扩展推理的模型启用思考模式</div></span><span class="r-val">medium</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">工具调用轮次上限</span><span class="r-val">12</span><span class="chev">›</span></button>
+      </div>
+      <div class="section-title">确认策略</div>
+      <div class="group">
+        <div class="row"><span class="r-body">敏感操作确认<div class="r-sub">敏感操作包括远程执行、远程写文件等。关闭确认或开启自动确认会显著提高风险。</div></span>
+          <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+      </div>
+      <div class="section-title">Memory 与规划器</div>
+      <div class="group">
+        <div class="row"><span class="r-body">启用长期 Memory / 项目记忆</span>
+          <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <button class="row"><span class="r-body">最多保存 Memory 条数</span><span class="r-val">200</span><span class="chev">›</span></button>
+        <div class="row"><span class="r-body">任务计划器</span>
+          <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+      </div>
+      <div class="section-title">Skills 能力包</div>
+      <div class="group">
+        <div class="row"><span class="r-body">启用 Skill<div class="r-sub">能力目录与同版本 Zephyr 主端一致</div></span>
+          <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+      </div>
+      <div class="section-title">AI 环境变量</div>
+      <div class="group">
+        <div class="row"><span class="r-body">允许 AI 看到变量名/说明</span>
+          <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <div class="row"><span class="r-body">允许 AI 直接看到变量值<div class="r-sub">仅用于非敏感配置</div></span>
+          <button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+      </div>
+      <div class="section-title">用量</div>
+      <div class="group">
+        <div class="row"><span class="r-body">本月 tokens<div class="r-sub">输入 1.2M · 输出 86K · 缓存命中 41%</div></span>
+          <span class="r-val" style="font-family:var(--mono)">1.29M</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: APPEARANCE ================= -->
+  <section class="page pushed hidden" id="page-appearance">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">外观</h1>
+    </div>
+    <div class="page-scroll">
+      <div class="section-title" style="margin-top:4px">主题色</div>
+      <div class="swatches" id="swatches">
+        <button class="swatch on" data-t="frost"><span class="ball" style="background:linear-gradient(135deg,#eef2f7,#0a84ff)"></span>Frost</button>
+        <button class="swatch" data-t="lava"><span class="ball" style="background:linear-gradient(135deg,#f1e8df,#bf5a1f)"></span>Lava</button>
+        <button class="swatch" data-t="asagi"><span class="ball" style="background:linear-gradient(135deg,#edf4f2,#4d9c8a)"></span>Asagi</button>
+        <button class="swatch" data-t="cyber"><span class="ball" style="background:linear-gradient(135deg,#eef3f5,#4f9da6)"></span>Cyber</button>
+      </div>
+      <div class="section-title">模式</div>
+      <div class="group"><div class="row" style="justify-content:center">
+        <div class="seg" id="seg-scheme" style="width:100%">
+          <button data-s="auto" style="flex:1">自动</button>
+          <button data-s="light" style="flex:1">浅色</button>
+          <button data-s="dark" class="on" style="flex:1">深色</button>
+        </div></div></div>
+      <div class="section-title">终端</div>
+      <div class="group">
+        <div class="row"><span class="r-body">终端字号</span>
+          <div class="seg" id="seg-termfont">
+            <button>12</button><button class="on">13</button><button>14</button><button>15</button>
+          </div></div>
+        <button class="row"><span class="r-body">终端背景来源</span><span class="r-val">纯黑 #07090C</span><span class="chev">›</span></button>
+        <div class="row"><span class="r-body">允许终端字体连字<div class="r-sub">仅同样式 run 内</div></span>
+          <button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+        <div class="row"><span class="r-body">自定义终端背景色<div class="r-sub">所有配色模式生效</div></span>
+          <button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+        <div class="row"><span class="r-body">自定义选中色<div class="r-sub">选中背景 + 选中文字</div></span>
+          <button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+        <div class="row" style="align-items:flex-start"><span class="r-body">分屏<div class="r-sub">双终端共享底部按钮 · 或一侧停靠工具</div></span>
+          <div class="seg" id="seg-dock">
+            <button data-d="off" class="on">关</button>
+            <button data-d="term">双终端</button>
+            <button data-d="left">工具左</button>
+            <button data-d="right">工具右</button>
+          </div></div>
+      </div>
+      <div class="empty-note">终端 ANSI 输出色与 chrome 分离；浅色只改页面框架，不重写服务器颜色语义</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: 选择协议（新建连接第一步） ================= -->
+  <section class="page pushed hidden" id="page-conntype">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">新建连接</h1>
+    </div>
+    <div class="page-scroll">
+      <div class="section-title" style="margin-top:4px">选择协议</div>
+      <button class="ptype" onclick="openEditor('create','ssh')">
+        <span class="conn-ico ssh">SSH</span>
+        <span class="p-body"><b>SSH</b><small>安全 Shell · 支持 SFTP、代码片段、批量执行、JumpHost 多级隧道</small></span>
+        <span class="chev">›</span></button>
+      <button class="ptype" onclick="openEditor('create','telnet')">
+        <span class="conn-ico telnet">TEL</span>
+        <span class="p-body"><b>Telnet <span class="badge conflict" style="font-weight:600">未加密</span></b><small>账号口令与终端内容明文传输 · 仅用于可信内网或设备 console</small></span>
+        <span class="chev">›</span></button>
+      <button class="ptype" onclick="openEditor('create','rdp')">
+        <span class="conn-ico rdp">RDP</span>
+        <span class="p-body"><b>RDP</b><small>Windows 远程桌面 · 声音/剪贴板/存储等通道重定向</small></span>
+        <span class="chev">›</span></button>
+      <button class="ptype" onclick="openEditor('create','vnc')">
+        <span class="conn-ico vnc">VNC</span>
+        <span class="p-body"><b>VNC</b><small>跨平台远程桌面 · 未知弱安全模式不自动降级</small></span>
+        <span class="chev">›</span></button>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: 语言 ================= -->
+  <section class="page pushed hidden" id="page-lang">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">语言</h1>
+    </div>
+    <div class="page-scroll">
+      <div class="group" style="margin-top:4px" id="lang-list">
+        <button class="row sel" data-lang="auto"><span class="r-body">跟随系统</span>
+          <svg class="check-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="m5 13 4 4L19 7"/></svg></button>
+        <button class="row" data-lang="zh"><span class="r-body">简体中文</span>
+          <svg class="check-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="m5 13 4 4L19 7"/></svg></button>
+        <button class="row" data-lang="zh-tw"><span class="r-body">繁體中文</span>
+          <svg class="check-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="m5 13 4 4L19 7"/></svg></button>
+        <button class="row" data-lang="en"><span class="r-body">English</span>
+          <svg class="check-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="m5 13 4 4L19 7"/></svg></button>
+        <button class="row" data-lang="ja"><span class="r-body">日本語</span>
+          <svg class="check-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="m5 13 4 4L19 7"/></svg></button>
+      </div>
+      <div class="empty-note">选择界面显示语言，立即生效并保存到本机</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: 远程批量 ================= -->
+  <section class="page pushed hidden" id="page-batch">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">远程批量</h1>
+    </div>
+    <div class="page-scroll" style="padding-bottom:190px">
+      <div class="section-title" style="margin-top:4px">目标（需 execute 能力）</div>
+      <div class="group" id="batch-targets">
+        <div class="row"><span class="r-body">prod-web-01<div class="r-sub" style="font-family:var(--mono)">10.0.8.21</div></span>
+          <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <div class="row"><span class="r-body">prod-web-02<div class="r-sub" style="font-family:var(--mono)">10.0.8.22</div></span>
+          <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <div class="row"><span class="r-body">backup-02<div class="r-sub" style="font-family:var(--mono)">10.0.9.12</div></span>
+          <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <div class="row"><span class="r-body">legacy-switch<div class="r-sub">无 execute 能力 · 将被跳过</div></span>
+          <button class="toggle" style="opacity:.4" onclick="event.stopPropagation();toast('该目标无 execute 能力')"></button></div>
+      </div>
+      <div class="section-title">命令</div>
+      <div class="group">
+        <div class="field-row" style="align-items:flex-start"><label style="padding-top:2px">命令</label>
+          <textarea rows="2" id="batch-cmd">systemctl reload nginx</textarea></div>
+        <button class="row"><span class="r-body">超时</span><span class="r-val">60 秒（1–300）</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">并发</span><span class="r-val">4</span><span class="chev">›</span></button>
+        <div class="row"><span class="r-body">fail-fast<div class="r-sub">一台失败即取消剩余目标</div></span>
+          <button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+      </div>
+      <div class="section-title">结果</div>
+      <div class="group" id="batch-results">
+        <div class="empty-note" style="padding:16px">尚未执行 · 审计只保存截断 metadata</div>
+      </div>
+    </div>
+    <div class="editor-bar">
+      <button class="ebtn ghost" onclick="toast('已取消 · 已完成主机不回滚')">取消</button>
+      <button class="ebtn primary" onclick="runBatch()">执行</button>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: Docker / 监控 / 日志 ================= -->
+  <section class="page pushed hidden" id="page-docker">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">Docker / 监控</h1>
+      <span class="badge" style="color:var(--p-ssh);background:color-mix(in srgb,var(--p-ssh) 14%,transparent)">prod-web-01</span>
+    </div>
+    <div class="page-scroll">
+      <div class="section-title" style="margin-top:4px">资源 <span style="text-transform:none;font-weight:400">· snapshot 20:14:32</span></div>
+      <div class="stat-row">
+        <div class="stat-card"><div class="stat-num" style="font-size:17px">34%</div><div class="meter"><i style="width:34%"></i></div><div class="stat-label">CPU</div></div>
+        <div class="stat-card"><div class="stat-num" style="font-size:17px">58%</div><div class="meter"><i style="width:58%"></i></div><div class="stat-label">内存</div></div>
+      </div>
+      <div class="stat-row" style="margin-top:10px">
+        <div class="stat-card"><div class="stat-num" style="font-size:17px;color:var(--warn)">82%</div><div class="meter warn"><i style="width:82%"></i></div><div class="stat-label">磁盘 /</div></div>
+        <div class="stat-card"><div class="stat-num" style="font-size:17px">1.2<span style="font-size:11px">MB/s</span></div><div class="meter"><i style="width:22%"></i></div><div class="stat-label">网络</div></div>
+      </div>
+      <div class="section-title">容器 · control 能力可启停</div>
+      <div class="group" id="docker-list">
+        <div class="row"><span class="sess-dot live"></span><span class="r-body">nginx-proxy<div class="r-sub" style="font-family:var(--mono)">Up 36 days · 80/443</div></span>
+          <button class="tp-mini on" onclick="dockerToggle(this)">运行中</button></div>
+        <div class="row"><span class="sess-dot live"></span><span class="r-body">postgres-16<div class="r-sub" style="font-family:var(--mono)">Up 36 days · 5432</div></span>
+          <button class="tp-mini on" onclick="dockerToggle(this)">运行中</button></div>
+        <div class="row"><span class="sess-dot dead"></span><span class="r-body">old-redis<div class="r-sub" style="font-family:var(--mono)">Exited (0) 3 days ago</div></span>
+          <button class="tp-mini" onclick="dockerToggle(this)">已停止</button></div>
+      </div>
+      <div class="section-title">服务日志</div>
+      <div class="group">
+        <button class="row" onclick="toast('tail -f nginx-proxy · 支持搜索/导出')"><span class="r-body">nginx-proxy<div class="r-sub">tail · 搜索 · 导出</div></span><span class="chev">›</span></button>
+        <button class="row" onclick="toast('tail -f postgres-16')"><span class="r-body">postgres-16</span><span class="chev">›</span></button>
+      </div>
+      <div class="empty-note">离线时显示最后 snapshot 时间，不把旧值说成实时</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: SFTP 文件管理 ================= -->
+  <section class="page pushed hidden" id="page-sftp">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">文件 · prod-web-01</h1>
+      <button class="head-btn" onclick="toast('上传到 /home/deploy · fileWrite 能力')" aria-label="上传"><svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="chips" style="padding:0 16px 8px">
+      <button class="chip on" style="font-family:var(--mono)">~</button>
+      <button class="chip" style="font-family:var(--mono)">deploy</button>
+      <button class="chip" style="font-family:var(--mono)">releases</button>
+    </div>
+    <div class="page-scroll" style="padding-top:2px">
+      <div class="group">
+        <button class="row"><span class="r-ico" style="color:var(--p-sftp)"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span class="r-body" style="font-family:var(--mono);font-size:13px">..<div class="r-sub">上级目录</div></span></button>
+        <button class="row"><span class="r-ico" style="color:var(--p-sftp)"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span class="r-body" style="font-family:var(--mono);font-size:13px">deploy-2026-08-11.tar.gz<div class="r-sub">18.4 MB · 昨天 22:41</div></span>
+          <span class="more-btn" onclick="event.stopPropagation();toast('下载 / 重命名 / 删除需 fileWrite')">•••</span></button>
+        <button class="row"><span class="r-ico" style="color:var(--p-sftp)"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span class="r-body" style="font-family:var(--mono);font-size:13px">deploy-2026-08-04.tar.gz<div class="r-sub">17.9 MB · 8月4日</div></span>
+          <span class="more-btn" onclick="event.stopPropagation();toast('下载 / 重命名 / 删除需 fileWrite')">•••</span></button>
+        <button class="row" onclick="toast('编辑器记录 mtime/hash · 保存冲突给 compare/另存/覆盖')"><span class="r-ico" style="color:var(--warn)"><svg class="ic"><use href="#i-notes"/></svg></span>
+          <span class="r-body" style="font-family:var(--mono);font-size:13px">rollback-notes.md<div class="r-sub">2.1 KB · 8月1日</div></span></button>
+      </div>
+      <div class="section-title">传输</div>
+      <div class="group xfer" id="sftp-xfer">
+        <div class="xfer-row"><span style="font-family:var(--mono);min-width:0;flex:none;width:42%">access.log</span>
+          <span class="bar"><i id="xfer-bar" style="width:62%"></i></span>
+          <span class="r-val" id="xfer-pct">62%</span></div>
+        <div class="xfer-row"><span style="font-family:var(--mono);min-width:0;flex:none;width:42%">deploy.tar.gz</span>
+          <span class="bar"><i style="width:100%;background:var(--ok)"></i></span>
+          <span class="r-val" style="color:var(--ok)">完成</span></div>
+      </div>
+      <div class="section-title">保存冲突 · rollback-notes.md</div>
+      <div class="diff-box">
+        <div class="diff-col"><h4>本机 · 2 分钟前</h4># rollback<br>1. stop nginx<br>2. restore dump</div>
+        <div class="diff-col"><h4>远端 · mtime 更新</h4># rollback<br>1. stop nginx<br>2. restore dump<br>3. verify 5xx</div>
+      </div>
+      <div class="stat-row" style="margin-top:10px">
+        <button class="ebtn ghost" onclick="toast('已另存 rollback-notes.local.md')">另存</button>
+        <button class="ebtn ghost" onclick="toast('已保留本机版本，待同步')">保留本机</button>
+        <button class="ebtn primary" onclick="toast('已覆盖远端 · 记录 hash')">覆盖远端</button>
+      </div>
+      <div class="empty-note">list/stat/read/download = fileRead · upload/new/edit/rename/delete = fileWrite</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: 笔记列表 ================= -->
+  <section class="page pushed hidden" id="page-notes">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">笔记</h1>
+      <button class="head-btn" onclick="$('note-title').textContent='新建笔记';pushPage('page-note')" aria-label="新建笔记"><svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="chips" style="padding:0 16px 8px">
+      <button class="chip on">全部</button><button class="chip">运维</button><button class="chip">清单</button><button class="chip">回收站</button>
+    </div>
+    <div class="page-scroll" style="padding-top:2px">
+      <div class="group">
+        <button class="row" onclick="$('note-title').textContent='编辑笔记';pushPage('page-note')"><span class="r-ico" style="color:var(--warn)"><svg class="ic"><use href="#i-notes"/></svg></span>
+          <span class="r-body">线上故障排查清单<div class="r-sub">运维 · 关联 prod-web-01 · 2 小时前</div></span>
+          <span class="badge pending">待同步</span></button>
+        <button class="row" onclick="$('note-title').textContent='编辑笔记';pushPage('page-note')"><span class="r-ico"><svg class="ic"><use href="#i-notes"/></svg></span>
+          <span class="r-body">发布 checklist<div class="r-sub">清单 · 昨天</div></span></button>
+        <button class="row" onclick="$('note-title').textContent='编辑笔记';pushPage('page-note')"><span class="r-ico"><svg class="ic"><use href="#i-notes"/></svg></span>
+          <span class="r-body">跳板机链备忘<div class="r-sub">运维 · 3 天前 · AI 可读写</div></span></button>
+      </div>
+      <div class="empty-note">默认私有 · 可关联连接、按标签归档 · 标题 200 / 正文 1 MiB / 标签 100</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: 代码片段列表 ================= -->
+  <section class="page pushed hidden" id="page-snippets">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">代码片段</h1>
+      <button class="head-btn" onclick="pushPage('page-snippet')" aria-label="新建片段"><svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="page-scroll">
+      <div class="group" style="margin-top:4px">
+        <div class="row"><span class="r-body"><span style="font-family:var(--mono);font-size:13px">du -x --max-depth=1 / | sort -rn</span><div class="r-sub">找出磁盘大户 · 运维</div></span>
+          <button class="tp-mini" onclick="toast('已插入当前终端（未执行）')">插入</button>
+          <button class="tp-mini on" onclick="toast('执行需 connection execute 能力')">执行</button></div>
+        <div class="row"><span class="r-body"><span style="font-family:var(--mono);font-size:13px">systemctl reload nginx</span><div class="r-sub">重载 · 运维 · autoRun</div></span>
+          <button class="tp-mini" onclick="toast('已插入当前终端（未执行）')">插入</button>
+          <button class="tp-mini on" onclick="toast('执行需 connection execute 能力')">执行</button></div>
+        <div class="row"><span class="r-body"><span style="font-family:var(--mono);font-size:13px">journalctl -u zephyr -n 200</span><div class="r-sub">看日志 · 诊断</div></span>
+          <button class="tp-mini" onclick="toast('已插入当前终端（未执行）')">插入</button>
+          <button class="tp-mini on" onclick="toast('执行需 connection execute 能力')">执行</button></div>
+      </div>
+      <div class="empty-note">name 60 / command 20000 / group 40 · 最多 500 条 · 删除进入同步 tombstone</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: Proxy 列表 ================= -->
+  <section class="page pushed hidden" id="page-proxy">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">代理池</h1>
+      <button class="head-btn" onclick="toast('新建代理 · 默认 SOCKS5:1080')" aria-label="新建代理"><svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="page-scroll">
+      <div class="group" style="margin-top:4px">
+        <button class="row"><span class="r-ico"><svg class="ic"><use href="#i-globe"/></svg></span>
+          <span class="r-body">office-socks<div class="r-sub" style="font-family:var(--mono)">SOCKS5 · 10.0.0.8:1080</div></span><span class="chev">›</span></button>
+        <button class="row"><span class="r-ico"><svg class="ic"><use href="#i-globe"/></svg></span>
+          <span class="r-body">home-http<div class="r-sub" style="font-family:var(--mono)">HTTP · 192.168.3.2:8080</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="empty-note">编辑时留空密码不会覆盖已保存密码 · 被引用时删除受保护</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: SSH 密钥库 ================= -->
+  <section class="page pushed hidden" id="page-keys">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">SSH 密钥库</h1>
+      <button class="head-btn" onclick="toast('新增 SSH 密钥 · 支持口令')" aria-label="新增密钥"><svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="page-scroll">
+      <div class="group" style="margin-top:4px">
+        <button class="row"><span class="r-ico"><svg class="ic"><use href="#i-key"/></svg></span>
+          <span class="r-body">id_ed25519-prod<div class="r-sub" style="font-family:var(--mono)">SHA256:a1b2…9f · 有口令</div></span>
+          <span class="badge pending">已关联 3 个连接</span></button>
+        <button class="row"><span class="r-ico"><svg class="ic"><use href="#i-key"/></svg></span>
+          <span class="r-body">id_rsa-legacy<div class="r-sub" style="font-family:var(--mono)">SHA256:77c1…02 · 2048 位</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="empty-note">编辑时留空或保留 ****** 不会覆盖已保存的私钥与口令</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: Client Token ================= -->
+  <section class="page pushed hidden" id="page-token">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">Client Token</h1>
+      <button class="head-btn" onclick="toast('新增 Token · 敏感验证后生成')" aria-label="新增 Token"><svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="page-scroll">
+      <div class="group" style="margin-top:4px">
+        <button class="row" onclick="openTokenMenu('one-mobile-prod')"><span class="r-ico"><svg class="ic"><use href="#i-ticket"/></svg></span>
+          <span class="r-body">one-mobile-prod<div class="r-sub">关联 Pixel 8 Pro（本机）· lastUsed 2 分钟前</div></span>
+          <span class="badge pending">本机</span></button>
+        <button class="row" onclick="openTokenMenu('agent-nas')"><span class="r-ico"><svg class="ic"><use href="#i-ticket"/></svg></span>
+          <span class="r-body">agent-nas<div class="r-sub">关联旧 Agent ×1 · lastUsed 3 小时前</div></span><span class="chev">›</span></button>
+      </div>
+      <div class="section-title">危险区</div>
+      <div class="group">
+        <button class="row" onclick="toast('重置全部：先敏感验证，再二次确认')"><span class="r-body" style="color:var(--err)">重置全部 Token<div class="r-sub">所有 One / Agent 立即断开</div></span></button>
+      </div>
+      <div class="empty-note">查看 / 复制 / 旋转 / 删除均需当前密码或 TOTP · grant 单次且 action+target 绑定</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: 服务器设置 ================= -->
+  <section class="page pushed hidden" id="page-server-settings">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">服务器设置</h1>
+    </div>
+    <div class="page-scroll">
+      <div class="group" style="margin-top:4px">
+        <div class="row"><span class="r-body">笔记功能<div class="r-sub">关闭后导航不显示笔记入口，AI 笔记工具一并禁用</div></span>
+          <button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <button class="row"><span class="r-body">AI runtime<div class="r-sub">能力目录与本机对齐</div></span><span class="r-val" style="color:var(--ok)">可用</span></button>
+        <button class="row"><span class="r-body">终端工作台<div class="r-sub">最小化窗口保持连接数 · 页面最多窗口数</div></span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">版本 / 能力协商</span><span class="r-val" style="font-family:var(--mono)">v2.4.1</span></button>
+      </div>
+      <div class="empty-note">普通用户看到只读公共设置；admin 按服务端授权显示可编辑 section</div>
+    </div>
+  </section>
+
+  <!-- ================= PUSH: 关于 ================= -->
+  <section class="page pushed hidden" id="page-about">
+    <div class="page-head">
+      <button class="back-btn" onclick="popPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:18px">关于 Zephyr One</h1>
+    </div>
+    <div class="page-scroll">
+      <div class="group" style="margin-top:4px">
+        <div class="row"><span class="r-body">版本</span><span class="r-val" style="font-family:var(--mono)">One 0.3.0 · 主端 v2.4.1</span></div>
+        <button class="row" onclick="toast('已是最新')"><span class="r-body">检查更新</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">GitHub</span><span class="chev">›</span></button>
+        <button class="row"><span class="r-body">开源许可证</span><span class="chev">›</span></button>
+        <button class="row" onclick="toast('诊断日志已导出 · 默认不含 secret/host/path')"><span class="r-body">导出诊断日志</span><span class="chev">›</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ISLAND ================= -->
+  <nav id="island">
+    <div class="pill" id="island-pill"></div>
+    <button class="item on" data-root="0">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/></svg><span>首页</span></button>
+    <button class="item" data-root="1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M12 15h5"/></svg><span>会话</span></button>
+    <button class="item" data-root="2">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg><span>资料</span></button>
+    <button class="item" data-root="3">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><path d="M17 13.5v7M13.5 17h7"/></svg><span>工具</span></button>
+  </nav>
+
+  <!-- ================= AI ================= -->
+  <button id="ai-fab" onclick="openAI()">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5 13.8 8l5.7 1.8a.8.8 0 0 1 0 1.55L13.8 13.2 12 18.7a.8.8 0 0 1-1.55 0L8.7 13.2 3 11.35a.8.8 0 0 1 0-1.55L8.7 8 10.45 2.5a.8.8 0 0 1 1.55 0z"/><path d="M18.5 14.5l.9 2.6 2.6.9a.6.6 0 0 1 0 1.15l-2.6.9-.9 2.6a.6.6 0 0 1-1.15 0l-.9-2.6-2.6-.9a.6.6 0 0 1 0-1.15l2.6-.9.9-2.6a.6.6 0 0 1 1.15 0z"/></svg>
+  </button>
+  <div id="ai-scrim" onclick="aiTo('peek')"></div>
+  <div id="ai-sheet">
+    <div id="ai-handle"></div>
+    <div class="ai-ctx">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M12 15h5" stroke-linecap="round"/></svg>
+      上下文 <span class="mono" id="ai-ctx-text">SSH · prod-web-01</span> · 底层页面持续可见
+    </div>
+    <div class="ai-tools">
+      <button class="ai-chip" onclick="aiPick(this,'model',['Claude Opus','Claude Sonnet','GPT-5','Gemini 3 Pro'])">模型 <b data-v>Claude Opus</b></button>
+      <button class="ai-chip" onclick="aiPick(this,'mode',['协作','自动','只读'])">协作 <b data-v>协作</b></button>
+      <button class="ai-chip" onclick="aiPick(this,'perm',['按能力确认','自动确认','全部询问'])">权限 <b data-v>按能力确认</b></button>
+      <button class="ai-chip" onclick="aiPick(this,'think',['关闭','low','medium','high'])">思考 <b data-v>medium</b></button>
+      <button class="ai-chip" onclick="toast('附件 · 图片/文件，RDP/VNC 走图片输入')">附件</button>
+      <button class="ai-chip" onclick="toast('计划 · 复杂任务先规划')">计划</button>
+      <button class="ai-chip" onclick="toast('Memory 12 条 · Skills 启用 · Env 仅变量名')">Memory/Skills</button>
+      <button class="ai-chip" onclick="pushPage('page-ai-settings')">设置</button>
+    </div>
+    <div class="ai-run" id="ai-run">
+      <span class="spin"></span><span id="ai-run-text">正在执行 · terminal.execute</span>
+      <button onclick="aiStop()">停止</button>
+      <button style="color:var(--text-2)" onclick="aiTakeover()">接管</button>
+    </div>
+    <div class="ai-msgs" id="ai-msgs">
+      <div class="msg user">看下 prod-web-01 磁盘为什么涨到 82%</div>
+      <div class="msg ai">我先跑只读命令定位大户。计划：<br>1. <code style="font-family:var(--mono);font-size:12px">du -x --max-depth=1 /</code><br>2. 找出 7 天内增长最快的目录<br>全程只读，不需要写权限。</div>
+      <div class="tool-trace">
+        <div class="tt-head">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v5M12 16h.01" stroke-linecap="round"/></svg>
+          待确认 · terminal.execute · 风险：低
+        </div>
+        <code>du -x --max-depth=1 / 2>/dev/null | sort -rn | head -12</code>
+        <div class="tt-actions">
+          <button class="tt-btn deny" onclick="this.closest('.tool-trace').querySelector('.tt-head').textContent='已拒绝 · 未执行';this.parentElement.remove()">拒绝</button>
+          <button class="tt-btn allow" onclick="aiRun(this)">允许执行</button>
+        </div>
+      </div>
+      <div class="msg ai" id="ai-result" style="display:none"><span style="color:var(--text-3);font-size:12px">执行完成 · 已验证输出</span><br>/var/log 涨了 9.4G，元凶是 nginx access.log 未轮转。要我生成 logrotate 配置片段吗？（写操作会再单独确认）</div>
+    </div>
+    <div class="ai-input">
+      <div class="field">向 Zephyr AI 提问 · Claude Opus</div>
+      <button class="ai-send" onclick="toast('需要联网才能发送')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+    </div>
+  </div>
+
+  <!-- ================= ACTION SHEET ================= -->
+  <div id="sheet-scrim" onclick="closeSheet()"></div>
+  <div id="action-sheet"></div>
+
+  <div class="toast" id="toast"></div>
+  </div><!-- /stage -->
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+/* ================= Root navigation ================= */
+const ROOTS = ['page-home','page-sessions','page-library','page-tools'];
+let currentRoot = 0, stack = [];
+const island = $('island'), pill = $('island-pill'), fab = $('ai-fab');
+function showRoot(i){
+  currentRoot = i;
+  ROOTS.forEach((id,idx)=>{
+    const p = $(id);
+    if(idx===i){ p.classList.remove('hidden'); requestAnimationFrame(()=>p.classList.remove('pushed','behind')); }
+    else p.classList.add('hidden');
+  });
+  pill.style.transform = `translateX(${i*100}%)`;
+  island.querySelectorAll('.item').forEach((el,idx)=>el.classList.toggle('on', idx===i));
+}
+island.querySelectorAll('.item').forEach(el=>el.addEventListener('click',()=>showRoot(+el.dataset.root)));
+
+/* ================= Push / pop ================= */
+function setIslandVisible(v){ island.classList.toggle('gone', !v); }
+function pushPage(id){
+  const from = stack.length ? $(stack[stack.length-1]) : $(ROOTS[currentRoot]);
+  const to = $(id);
+  stack.push(id);
+  to.classList.remove('hidden');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    from.classList.add('behind');
+    to.classList.remove('pushed');
+  }));
+  setIslandVisible(false);
+}
+function popPage(){
+  const id = stack.pop(); if(!id) return;
+  const to = $(id);
+  const under = stack.length ? $(stack[stack.length-1]) : $(ROOTS[currentRoot]);
+  under.classList.remove('behind');
+  to.classList.add('pushed');
+  setTimeout(()=>to.classList.add('hidden'), 430);
+  if(!stack.length) setIslandVisible(true);
+}
+
+/* ================= Connection cards ================= */
+const CONNS = [
+ {p:'ssh',   name:'prod-web-01', host:'deploy@10.0.8.21:22', tags:['生产','web'], time:'2 分钟前', fav:1, open:'term'},
+ {p:'rdp',   name:'win-ops-desktop', host:'administrator@10.0.8.30:3389', tags:['办公'], time:'18 分钟前', fav:1, open:'rdp'},
+ {p:'ssh',   name:'backup-02', host:'root@10.0.9.12:22', tags:['备份'], time:'1 小时前', pending:1, open:'term2'},
+ {p:'vnc',   name:'vnc-pi-kitchen', host:'pi@192.168.3.41:5900', tags:['家庭'], time:'昨天', conflict:1, open:'vnc'},
+ {p:'telnet',name:'legacy-switch', host:'admin@192.168.1.2:23', tags:['网络'], time:'3 天前'},
+ {p:'ssh',   name:'nas-home (来自 爸)', host:'共享 · 在线使用 · 不保存到此设备', tags:['共享'], time:'能力: use', shared:1},
+];
+function connCard(c){
+  const badges =
+    (c.pending?'<span class="badge pending">已保存，待同步</span>':'') +
+    (c.conflict?'<span class="badge conflict">同步冲突</span>':'') +
+    (c.shared?'<span class="badge shared">shared</span>':'');
+  const act = c.open==='term' ? 'openTerminal(0)' : c.open==='term2' ? 'openTerminal(1)'
+            : c.open==='rdp' ? "pushPage('page-rdp')" : c.open==='vnc' ? "pushPage('page-vnc')"
+            : `toast('${c.name} · 演示原型')`;
+  return `<button class="conn-card" data-f="${c.p}${c.fav?' fav':''}${c.shared?' shared':''}" onclick="${act}">
+    <span class="conn-ico ${c.p}">${c.p==='telnet'?'TEL':c.p.toUpperCase()}</span>
+    <span class="conn-body">
+      <span class="conn-name">${c.name}</span>
+      <span class="conn-host">${c.host}</span>
+      <span class="conn-meta">${c.tags.map(t=>`<span class="tag">${t}</span>`).join('')}${badges}</span>
+    </span>
+    <span class="conn-end">
+      <span class="conn-time">${c.time}</span>
+      <span class="more-btn" onclick="event.stopPropagation();openConnMenu('${c.name}','${c.open||''}')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5.5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="18.5" r="1.7"/></svg>
+      </span>
+    </span></button>`;
+}
+$('conn-list').innerHTML = CONNS.map(connCard).join('');
+function renderPadRail(){
+  const list = $('pad-rail-list'); if(!list) return;
+  const live = new Set(TERM_SESSIONS.map(s=>s.name));
+  list.innerHTML = CONNS.map((c,i)=>{
+    const isLive = live.has(c.name.replace(' (来自 爸)',''));
+    return `<button class="pr-item" data-i="${i}">
+      <span class="conn-ico ${c.p}">${c.p==='telnet'?'TEL':c.p.toUpperCase()}</span>
+      <span style="flex:1;min-width:0"><b>${c.name}</b><small>${c.host}</small></span>
+      ${isLive?'<span class="sess-dot live"></span>':''}
+    </button>`;
+  }).join('');
+  list.querySelectorAll('.pr-item').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      list.querySelectorAll('.pr-item').forEach(x=>x.classList.remove('on'));
+      el.classList.add('on');
+      const c = CONNS[+el.dataset.i];
+      const base = c.name.replace(' (来自 爸)','');
+      const idx = TERM_SESSIONS.findIndex(s=>s.name===base);
+      if(c.open==='term'||c.open==='term2'){
+        if(idx>=0) assignToFocused(idx);
+        else addSessionByName(base);
+        if(splitMode==='off' && matchMedia('(min-width:768px)').matches && TERM_SESSIONS.length>1) setDockSide('term', false);
+      }
+      else if(c.open==='rdp') pushPage('page-rdp');
+      else if(c.open==='vnc') pushPage('page-vnc');
+      else toast(c.name);
+    });
+  });
+}
+function addSessionByName(name){
+  if(!TERM_POOL[name]) return;
+  TERM_SESSIONS.push({ name, sub:TERM_POOL[name], lat:'— ms', dot:'connecting', ctx:'SSH · '+name,
+    body:`<span class="d">Connecting ${TERM_POOL[name]}…</span>\n<span class="p">${name.split('-')[0]}@${name}</span><span class="d">:</span><span class="h">~</span><span class="d">$ </span><span class="cursor"></span>`});
+  assignToFocused(TERM_SESSIONS.length-1);
+  renderSessWall(); renderPadRail();
+}
+function renderSessWall(){
+  const w = $('sess-wall'); if(!w) return;
+  const items = [
+    {name:'prod-web-01', proto:'ssh', lat:'23 ms', kind:'term', i:0, bg:'linear-gradient(160deg,#0d1f18,#12233a)'},
+    {name:'win-ops-desktop', proto:'rdp', lat:'41 ms', kind:'rdp', bg:'linear-gradient(160deg,#173b6e,#0a2144)'},
+    {name:'vnc-pi-kitchen', proto:'vnc', lat:'18 ms', kind:'vnc', bg:'linear-gradient(160deg,#3b2354,#1b1028)'},
+    {name:'backup-02', proto:'ssh', lat:'87 ms', kind:'term', i:1, bg:'linear-gradient(160deg,#2a1c10,#1a120c)'},
+  ];
+  w.innerHTML = items.map(it=>`
+    <button class="sw-card" data-k="${it.kind}" data-i="${it.i||0}">
+      <div class="sw-thumb" style="background:${it.bg}"></div>
+      <div class="sw-meta"><b>${it.name}</b><small>${it.proto.toUpperCase()} · ${it.lat} · live</small></div>
+    </button>`).join('');
+  w.querySelectorAll('.sw-card').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const k = el.dataset.k;
+      if(k==='term') openTerminal(+el.dataset.i);
+      else if(k==='rdp') pushPage('page-rdp');
+      else pushPage('page-vnc');
+    });
+  });
+}
+$('chips').addEventListener('click', e=>{
+  const b = e.target.closest('.chip'); if(!b) return;
+  document.querySelectorAll('#chips .chip').forEach(c=>c.classList.toggle('on', c===b));
+  const f = b.dataset.f;
+  document.querySelectorAll('.conn-card').forEach(c=>{
+    c.style.display = (f==='all' || c.dataset.f.includes(f)) ? '' : 'none';
+  });
+});
+
+/* ================= Generic action sheet ================= */
+const sheet = $('action-sheet'), sScrim = $('sheet-scrim');
+function openSheet(title, groups){
+  sheet.innerHTML = groups.map(g=>
+    `<div class="as-group">${g.map(it=>{
+      if(it.title) return `<div class="as-title">${it.title}</div>`;
+      return `<button class="as-item ${it.danger?'danger':''} ${it.cancel?'cancel':''}" data-act="${it.act||''}">
+        ${it.label}${it.sub?`<span class="sub">${it.sub}</span>`:''}</button>`;
+    }).join('')}</div>`).join('');
+  sheet.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{
+    const act = b.dataset.act; closeSheet(); SHEET_ACTS[act] && SHEET_ACTS[act]();
+  }));
+  sheet.classList.add('show'); sScrim.classList.add('show');
+}
+function closeSheet(){ sheet.classList.remove('show'); sScrim.classList.remove('show'); }
+
+const SHEET_ACTS = {
+  'conn-open':   ()=>{ SHEET_CTX.open==='rdp' ? pushPage('page-rdp') : SHEET_CTX.open==='vnc' ? pushPage('page-vnc') : openTerminal(0); },
+  'conn-edit':   ()=>openEditor('edit'),
+  'conn-copy':   ()=>toast('已复制连接配置'),
+  'conn-test':   ()=>toast('正在测试主机连通性…'),
+  'conn-del':    ()=>toast('删除进入同步 tombstone'),
+  'add-new':     ()=>pushPage('page-conntype'),
+  'add-temp':    ()=>pushPage('page-conntype'),
+  'add-pull':    ()=>{ goSync(); setTimeout(runSync, 500); },
+  'lib-note':    ()=>{ $('note-title').textContent='新建笔记'; pushPage('page-note'); },
+  'lib-snippet': ()=>pushPage('page-snippet'),
+  'tool-proxy':  ()=>toast('新建 Proxy · SOCKS5:1080 默认'),
+  'tool-key':    ()=>toast('新建 SSH Key · 支持 passphrase'),
+  'disc-yes':    ()=>{ popPage(); toast('会话已关闭'); },
+  'sc-win':      ()=>toast('已发送 Win'),
+  'sc-cad':      ()=>toast('已发送 Ctrl+Alt+Del'),
+  'sc-alttab':   ()=>toast('已发送 Alt+Tab'),
+  'sc-winr':     ()=>toast('已发送 Win+R'),
+  'sc-altf4':    ()=>toast('已发送 Alt+F4'),
+  'share-0':     ()=>setShare('私有'),
+  'share-1':     ()=>setShare('所有用户'),
+  'share-2':     ()=>setShare('所有管理员'),
+  'share-3':     ()=>setShare('指定用户'),
+  'tok-view':    ()=>toast('敏感验证通过 · Token 明文仅本次显示'),
+  'tok-copy':    ()=>toast('敏感验证通过 · 已复制'),
+  'tok-rotate':  ()=>toast('旋转前列出将断开的 One/Agent · 已预览'),
+  'tok-del':     ()=>toast('已删除 · 关联设备立即断开'),
+};
+function setShare(v){ $('share-val').textContent = v; toast('共享：' + v); markPending(); }
+function openShareSheet(){
+  openSheet(null, [
+    [{label:'私有',sub:'默认',act:'share-0'},
+     {label:'共享给所有用户',sub:'可查看并连接',act:'share-1'},
+     {label:'共享给所有管理员',act:'share-2'},
+     {label:'指定用户',sub:'多选',act:'share-3'}],
+    [{label:'取消',cancel:true}],
+  ]);
+}
+function openTokenMenu(name){
+  openSheet(null, [
+    [{title:name + ' · secret 默认隐藏'}],
+    [{label:'查看明文',act:'tok-view'},{label:'复制',act:'tok-copy'},
+     {label:'旋转',sub:'预览影响后确认',act:'tok-rotate'},{label:'删除',danger:true,act:'tok-del'}],
+    [{label:'取消',cancel:true}],
+  ]);
+}
+let SHEET_CTX = {};
+function openConnMenu(name, open){
+  SHEET_CTX = {open};
+  openSheet(null, [
+    [{title:`${name}`}],
+    [{label:'连接',act:'conn-open'},{label:'编辑',act:'conn-edit'},{label:'复制',act:'conn-copy'},{label:'测试',act:'conn-test'}],
+    [{label:'删除连接',danger:true,act:'conn-del'}],
+    [{label:'取消',cancel:true}],
+  ]);
+}
+function confirmDisconnect(name){
+  openSheet(null, [
+    [{title:`断开 ${name}？会话不可恢复`}],
+    [{label:'断开连接',danger:true,act:'disc-yes'}],
+    [{label:'取消',cancel:true}],
+  ]);
+}
+
+/* ================= 添加功能 ================= */
+function openAddSheet(){
+  openSheet(null, [
+    [{label:'新建连接',sub:'SSH / Telnet / RDP / VNC',act:'add-new'},
+     {label:'临时连接',sub:'不保存 · 会话结束即清理',act:'add-temp'},
+     {label:'从主端同步',sub:'拉取最新连接库',act:'add-pull'}],
+    [{label:'取消',cancel:true}],
+  ]);
+}
+function openLibraryAdd(){
+  openSheet(null, [
+    [{label:'新建笔记',sub:'Markdown · 支持关联连接',act:'lib-note'},
+     {label:'新建代码片段',sub:'可插入终端 / autoRun',act:'lib-snippet'}],
+    [{label:'取消',cancel:true}],
+  ]);
+}
+function toggleDrive(btn){
+  const on = btn.classList.toggle('on');
+  $('rdp-drive-cfg').style.display = on ? '' : 'none';
+  toast(on ? '已启用存储重定向' : '已关闭存储重定向');
+}
+function openToolsAdd(){
+  openSheet(null, [
+    [{title:'新建资源'}],
+    [{label:'Proxy',act:'tool-proxy'},{label:'SSH Key',act:'tool-key'}],
+    [{label:'取消',cancel:true}],
+  ]);
+}
+
+/* ================= Editor dual mode + 协议驱动 section ================= */
+let editorMode = 'edit';
+function openEditor(mode, proto){
+  editorMode = mode;
+  $('editor-title').textContent = mode==='create' ? '新建连接' : mode==='temp' ? '临时连接' : '编辑连接';
+  const blank = mode!=='edit';
+  $('ed-name').value = blank ? '' : 'prod-web-01';
+  $('ed-host').value = blank ? '' : '10.0.8.21';
+  $('ed-user').value = blank ? '' : 'deploy';
+  const p = proto || 'ssh';
+  $('ed-port').value = {ssh:'22', telnet:'23', rdp:'3389', vnc:'5900'}[p];
+  document.querySelectorAll('#seg-proto button').forEach(x=>
+    x.classList.toggle('on', x.textContent.toLowerCase()===p));
+  updateEditorSections(p);
+  pushPage('page-editor');
+  if(mode==='temp') toast('临时连接 · 不写入同步镜像');
+}
+/* 协议改变：只清不兼容字段，其他保留草稿（对齐主端） */
+function updateEditorSections(p){
+  $('sec-rdp').style.display    = p==='rdp' ? '' : 'none';
+  $('sec-telnet').style.display = p==='telnet' ? '' : 'none';
+  $('sec-sshkey').style.display = (p==='telnet' || p==='rdp' || p==='vnc') ? 'none' : '';
+}
+function saveEditor(){
+  popPage(); markPending();
+  toast(editorMode==='edit' ? '已保存，待同步' : '已创建，待同步');
+}
+document.querySelector('#seg-proto')?.addEventListener('click', e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#seg-proto button').forEach(x=>x.classList.toggle('on', x===b));
+  const p = b.textContent.toLowerCase();
+  updateEditorSections(p);
+  $('ed-port').value = {ssh:'22', telnet:'23', rdp:'3389', vnc:'5900'}[p];
+  if(p==='telnet') toast('Telnet：已清除 SSH key 字段，保留 in-band 密码');
+});
+/* secret 三态 seg（通用，点选即切换） */
+document.querySelectorAll('.seg').forEach(seg=>{
+  if(seg.id==='seg-proto'||seg.id==='seg-scheme'||seg.id==='seg-note'||seg.id==='seg-dock') return;
+  seg.addEventListener('click', e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    seg.querySelectorAll('button').forEach(x=>x.classList.toggle('on', x===b));
+  });
+});
+
+/* ================= Note editor ================= */
+function noteMode(btn, mode){
+  document.querySelectorAll('#seg-note button').forEach(x=>x.classList.toggle('on', x===btn));
+  const ta = $('note-text'), pv = $('note-preview');
+  if(mode==='preview'){
+    /* 极简 Markdown：标题/列表/行内 code */
+    const esc = s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    pv.innerHTML = esc(ta.value)
+      .replace(/^## (.*)$/gm,'<h2>$1</h2>')
+      .replace(/^- (.*)$/gm,'<p>· $1</p>')
+      .replace(/`([^`]+)`/g,'<code>$1</code>')
+      .replace(/\n{2,}/g,'<br>');
+    ta.style.display='none'; pv.style.display='block';
+  } else { ta.style.display=''; pv.style.display='none'; }
+}
+
+/* ================= Terminal：多会话 ================= */
+const TERM_SESSIONS = [
+ {name:'prod-web-01', sub:'deploy@10.0.8.21:22', lat:'23 ms', dot:'live', ctx:'SSH · prod-web-01',
+  body:`<span class="p">deploy@prod-web-01</span><span class="d">:</span><span class="h">~</span><span class="d">$ </span>systemctl status nginx
+<span class="d">●</span> nginx.service - A high performance web server
+   <span class="d">Active:</span> <span class="p">active (running)</span> since Tue 2026-08-11 09:14:02 CST; 1 day 11h ago
+<span class="p">deploy@prod-web-01</span><span class="d">:</span><span class="h">~</span><span class="d">$ </span>df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1        40G   <span class="w">31G</span>  7.2G  <span class="w">82%</span> /
+<span class="p">deploy@prod-web-01</span><span class="d">:</span><span class="h">~</span><span class="d">$ </span><span class="cursor"></span>`},
+ {name:'backup-02', sub:'root@10.0.9.12:22', lat:'87 ms', dot:'connecting', ctx:'SSH · backup-02',
+  body:`<span class="p">root@backup-02</span><span class="d">:</span><span class="h">/var/backups</span><span class="d">$ </span>borg list /srv/borg/prod
+<span class="d">archive</span> prod-2026-08-10  <span class="d">Mon …  18.2 GB</span>
+<span class="d">archive</span> prod-2026-08-11  <span class="d">Tue …  18.4 GB</span>
+<span class="d">archive</span> prod-2026-08-12  <span class="w">running …  61%</span>
+<span class="p">root@backup-02</span><span class="d">:</span><span class="h">/var/backups</span><span class="d">$ </span><span class="cursor"></span>`},
+ {name:'nas-home', sub:'admin@192.168.3.10:22', lat:'12 ms', dot:'min', ctx:'SSH · nas-home',
+  body:`<span class="p">admin@nas-home</span><span class="d">:</span><span class="h">~</span><span class="d">$ </span>uptime
+ 20:14  up 36 days,  2 users,  load average: 0.42, 0.38, 0.31
+<span class="p">admin@nas-home</span><span class="d">:</span><span class="h">~</span><span class="d">$ </span>zfs list -o name,used,avail
+NAME        USED   AVAIL
+tank       6.21T   1.72T
+<span class="p">admin@nas-home</span><span class="d">:</span><span class="h">~</span><span class="d">$ </span><span class="cursor"></span>`},
+];
+let termCur = 0;
+function renderRail(){
+  const a = termCur, b = (splitMode==='term' ? termCurB : -1);
+  $('sess-rail').innerHTML = TERM_SESSIONS.map((s,i)=>{
+    const focused = i===activeIndex();
+    const other = (splitMode==='term' && (i===a || i===b) && !focused);
+    const close = focused ? '<span class="sr-x" data-x="1">×</span>' : '';
+    return `<button class="sr-chip ${focused?'on':''} ${other?'side-b':''}" data-i="${i}">
+       <span class="sess-dot ${s.dot}"></span>${s.name}${close}
+     </button>`;
+  }).join('') +
+    `<button class="sr-add" id="sr-add" aria-label="新建会话"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg></button>`;
+  $('sess-rail').querySelectorAll('.sr-chip').forEach(ch=>ch.addEventListener('click', e=>{
+    if(e.target.dataset.x){ closeTermSession(+ch.dataset.i); return; }
+    assignToFocused(+ch.dataset.i);
+  }));
+  $('sr-add').addEventListener('click', pickTermSession);
+}
+const TERM_POOL = {
+  'prod-web-01': 'deploy@10.0.8.21:22',
+  'backup-02': 'root@10.0.9.12:22',
+  'nas-home': 'admin@192.168.3.10:22',
+  'legacy-switch': 'admin@192.168.1.2:23',
+};
+function pickTermSession(){
+  const open = TERM_SESSIONS.map(x=>x.name);
+  const avail = Object.keys(TERM_POOL).filter(n=>!open.includes(n));
+  if(!avail.length){ toast('所有连接都已有会话'); return; }
+  avail.forEach((n,i)=>SHEET_ACTS['ts-'+i] = ()=>{
+    TERM_SESSIONS.push({ name:n, sub:TERM_POOL[n], lat:'— ms', dot:'connecting', ctx:'SSH · '+n,
+      body:`<span class="d">Connecting ${TERM_POOL[n]}…</span>\n<span class="p">${n.split('-')[0]}@${n}</span><span class="d">:</span><span class="h">~</span><span class="d">$ </span><span class="cursor"></span>`});
+    switchTerm(TERM_SESSIONS.length-1);
+    renderSessWall(); renderPadRail();
+  });
+  openSheet(null, [
+    [{title:'新建会话 · 选择连接'}],
+    avail.map((n,i)=>({label:n, sub:TERM_POOL[n], act:'ts-'+i})),
+    [{label:'取消',cancel:true}],
+  ]);
+}
+function activeIndex(){ return (splitMode==='term' && focusP==='b') ? termCurB : termCur; }
+function activeSession(){ return TERM_SESSIONS[activeIndex()] || TERM_SESSIONS[0] || {name:'',sub:'',lat:'',dot:'min',ctx:'',body:''}; }
+function paintPane(el, sess){
+  if(!el || !sess) return;
+  el.innerHTML = sess.body;
+}
+function paintHead(){
+  const sess = activeSession(); if(!sess) return;
+  $('term-name').textContent = sess.name;
+  $('term-sub').textContent = sess.sub + ' · 80×24';
+  $('term-lat').textContent = sess.lat;
+  $('term-dot').className = 'sess-dot ' + sess.dot;
+  $('ai-ctx-text').textContent = sess.ctx;
+}
+function focusPane(which){
+  if(splitMode!=='term') return;
+  focusP = which;
+  $('pane-a')?.classList.toggle('focused', which==='a');
+  $('pane-b')?.classList.toggle('focused', which==='b');
+  paintHead(); renderRail();
+}
+function assignToFocused(i){
+  if(i<0 || i>=TERM_SESSIONS.length) return;
+  if(splitMode==='term'){
+    if(focusP==='b'){
+      if(i===termCur){ /* swap */ termCur = termCurB; termCurB = i; }
+      else termCurB = i;
+    } else {
+      if(i===termCurB){ termCurB = termCur; termCur = i; }
+      else termCur = i;
+    }
+    paintPane($('term-view'), TERM_SESSIONS[termCur]);
+    paintPane($('term-view-b'), TERM_SESSIONS[termCurB]);
+  } else {
+    termCur = i;
+    paintPane($('term-view'), TERM_SESSIONS[termCur]);
+  }
+  paintHead(); renderRail();
+}
+function switchTerm(i){ assignToFocused(i); }
+function closeTermSession(i){
+  TERM_SESSIONS.splice(i,1);
+  renderSessWall(); renderPadRail();
+  if(!TERM_SESSIONS.length){ popPage(); toast('所有会话已关闭'); return; }
+  const clamp = n => Math.max(0, Math.min(TERM_SESSIONS.length-1, n > i ? n-1 : n));
+  termCur = clamp(termCur);
+  termCurB = clamp(termCurB);
+  if(splitMode==='term' && termCur===termCurB && TERM_SESSIONS.length>1){
+    termCurB = (termCur+1) % TERM_SESSIONS.length;
+  }
+  paintPane($('term-view'), TERM_SESSIONS[termCur]);
+  if(splitMode==='term') paintPane($('term-view-b'), TERM_SESSIONS[termCurB]);
+  paintHead(); renderRail();
+  toast('会话已关闭 · 未自动重放命令');
+}
+function openTerminal(i=0){
+  termCur=i; pushPage('page-terminal');
+  if(matchMedia('(min-width:768px)').matches && TERM_SESSIONS.length>1 && splitMode==='off'){
+    setDockSide('term', false);
+  }
+  renderRail(); switchTerm(i);
+}
+function toggleIME(){
+  const t = $('page-terminal');
+  const on = t.classList.toggle('ime-on');
+  $('fake-ime').classList.toggle('open', on);
+  const sess = activeSession();
+  $('term-sub').textContent = sess.sub + (on ? ' · 80×14 (resized)' : ' · 80×24');
+}
+
+/* ================= 终端功能浮窗（对齐主端 floating panel：可拖动/共存/关闭） ================= */
+const TPANEL_DEFS = {
+  files: { icon:'i-file', title:'SFTP · /home/deploy', body:`
+    <button class="tp-row" onclick="toast('下载 nginx.conf · 12.4 KB')"><svg class="ti"><use href="#i-file"/></svg><span style="flex:1;font-family:var(--mono)">nginx.conf</span><small>12K</small></button>
+    <button class="tp-row" onclick="toast('下载 access.log · 210 MB')"><svg class="ti"><use href="#i-file"/></svg><span style="flex:1;font-family:var(--mono)">access.log</span><small>210M</small></button>
+    <button class="tp-row" onclick="toast('进入 releases/')"><svg class="ti"><use href="#i-file"/></svg><span style="flex:1;font-family:var(--mono)">releases/</span><small>dir</small></button>
+    <button class="tp-row" onclick="toast('上传到当前目录')"><svg class="ti"><use href="#i-download"/></svg><span style="flex:1">上传到此目录…</span></button>`},
+  snippet: { icon:'i-bolt', title:'代码片段', body:`
+    <div class="tp-row"><span style="flex:1;font-family:var(--mono);font-size:11px">du -x --max-depth=1 / | sort -rn</span><button class="tp-mini" onclick="toast('已插入终端（未执行）')">插入</button></div>
+    <div class="tp-row"><span style="flex:1;font-family:var(--mono);font-size:11px">systemctl reload nginx</span><button class="tp-mini" onclick="toast('已插入终端（未执行）')">插入</button></div>
+    <div class="tp-row"><span style="flex:1;font-family:var(--mono);font-size:11px">journalctl -u zephyr -n 200</span><button class="tp-mini" onclick="toast('已插入终端（未执行）')">插入</button></div>`},
+  notes: { icon:'i-notes', title:'笔记 · 关联 prod-web-01', body:`
+    <button class="tp-row" onclick="pushPage('page-note')"><svg class="ti"><use href="#i-notes"/></svg><span style="flex:1">线上故障排查清单</span><small>2h</small></button>
+    <button class="tp-row" onclick="pushPage('page-note')"><svg class="ti"><use href="#i-notes"/></svg><span style="flex:1">发布 checklist</span><small>1d</small></button>`},
+  stats: { icon:'i-stats', title:'监控 · prod-web-01', body:`
+    <div class="tp-stat"><div class="l"><span>CPU</span><span>34%</span></div><div class="meter"><i style="width:34%"></i></div></div>
+    <div class="tp-stat"><div class="l"><span>内存</span><span>58%</span></div><div class="meter"><i style="width:58%"></i></div></div>
+    <div class="tp-stat"><div class="l"><span>磁盘 /</span><span>82%</span></div><div class="meter warn"><i style="width:82%"></i></div></div>
+    <div class="tp-sec">DOCKER · <span style="color:var(--accent)" onclick="pushPage('page-docker')">打开完整监控页 ›</span></div>
+    <div class="tp-row"><span class="sess-dot live"></span><span style="flex:1;font-family:var(--mono);font-size:11px">nginx-proxy</span><button class="tp-mini on" onclick="dockerToggle(this)">运行中</button></div>
+    <div class="tp-row"><span class="sess-dot live"></span><span style="flex:1;font-family:var(--mono);font-size:11px">postgres-16</span><button class="tp-mini on" onclick="dockerToggle(this)">运行中</button></div>
+    <div class="tp-row"><span class="sess-dot dead"></span><span style="flex:1;font-family:var(--mono);font-size:11px">old-redis</span><button class="tp-mini" onclick="dockerToggle(this)">已停止</button></div>`},
+  theme: { icon:'i-theme', title:'终端外观 · 本会话', body:`
+    <div class="tp-sec">终端背景来源</div>
+    <div class="tp-row"><span style="flex:1">不使用自定义背景</span><button class="tp-mini" onclick="termBg('none',this)">应用</button></div>
+    <div class="tp-row"><span style="flex:1">图片（演示渐变）</span><button class="tp-mini on" onclick="termBg('img',this)">应用</button></div>
+    <div class="tp-row"><span style="flex:1">大背景</span><button class="tp-mini" onclick="termBg('big',this)">应用</button></div>
+    <div class="tp-stat"><div class="l"><span>模糊强度</span><span id="blur-v">0px</span></div>
+      <input type="range" class="tp-slider" min="0" max="20" value="0" oninput="termBgBlur(this.value)"></div>
+    <div class="tp-stat"><div class="l"><span>背景强度</span><span id="bgop-v">55%</span></div>
+      <input type="range" class="tp-slider" min="10" max="100" value="55" oninput="termBgOp(this.value)"></div>
+    <div class="tp-sec">颜色覆盖（所有配色模式生效）</div>
+    <div class="tp-row"><span style="flex:1">自定义终端背景色</span><button class="tp-mini" onclick="this.classList.toggle('on');toast(this.classList.contains('on')?'已启用自定义背景色':'已关闭')">开关</button></div>
+    <div class="tp-row"><span style="flex:1">自定义选中色（背景+文字）</span><button class="tp-mini" onclick="this.classList.toggle('on')">开关</button></div>`},
+};
+let tz = 20, tpCount = 0;
+function openTPanel(kind){
+  if(splitMode==='left' || splitMode==='right'){ dockTool(kind); return; }
+  const page = $('page-terminal');
+  let p = page.querySelector(`.tpanel[data-k="${kind}"]`);
+  if(p){ p.style.zIndex = ++tz; return; }
+  const def = TPANEL_DEFS[kind];
+  p = document.createElement('div');
+  p.className = 'tpanel'; p.dataset.k = kind;
+  const off = (tpCount++ % 3) * 16;
+  p.style.left = (6 + off/3) + '%'; p.style.top = (8 + off) + '%';
+  p.style.zIndex = ++tz;
+  p.innerHTML = `<div class="tpanel-head">
+      <svg class="ti"><use href="#${def.icon||'i-file'}"/></svg><b>${def.title}</b>
+      <button class="tp-hbtn tp-layout" aria-label="布局" title="布局"><svg viewBox="0 0 24 24"><path d="M4 4h7v16H4V4zm9 0h7v7h-7V4zm0 9h7v7h-7v-7z"/></svg></button>
+      <button class="tp-hbtn close" aria-label="关闭">×</button></div>
+    <div class="tpanel-body">${def.body}</div>
+    <div class="tp-resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6v12H6"/><path d="M18 12v6h-6"/></svg></div>`;
+  page.appendChild(p);
+  const closeBtn = p.querySelector('.tp-hbtn.close');
+  const layoutBtn = p.querySelector('.tp-layout');
+  const head = p.querySelector('.tpanel-head');
+  const rez = p.querySelector('.tp-resize');
+  closeBtn.addEventListener('click', ()=>p.remove());
+  p.addEventListener('pointerdown', ()=>{ p.style.zIndex = ++tz; });
+  let layout = 0;
+  layoutBtn.addEventListener('click', ()=>{
+    layout = (layout+1) % 4;
+    layoutBtn.classList.toggle('on', layout!==0);
+    const pr = page.getBoundingClientRect();
+    if(layout===0){ p.style.left=''; p.style.top=''; p.style.width=''; p.style.height=''; }
+    if(layout===1){ p.style.left='0px'; p.style.top='0px'; p.style.width=(pr.width*0.5)+'px'; p.style.height=pr.height+'px'; }
+    if(layout===2){ p.style.left=(pr.width*0.5)+'px'; p.style.top='0px'; p.style.width=(pr.width*0.5)+'px'; p.style.height=pr.height+'px'; }
+    if(layout===3){ p.style.left='0px'; p.style.top=(pr.height*0.55)+'px'; p.style.width=pr.width+'px'; p.style.height=(pr.height*0.45)+'px'; }
+  });
+  let sx=0, sy=0, bx=0, by=0, drag=false;
+  head.addEventListener('pointerdown', e=>{
+    if(e.target.closest('.tp-hbtn')) return;
+    drag=true; sx=e.clientX; sy=e.clientY; bx=p.offsetLeft; by=p.offsetTop;
+    head.setPointerCapture(e.pointerId);
+  });
+  head.addEventListener('pointermove', e=>{
+    if(!drag) return;
+    const pr = page.getBoundingClientRect();
+    p.style.left = Math.max(-40, Math.min(pr.width-80, bx + e.clientX - sx)) + 'px';
+    p.style.top  = Math.max(0,   Math.min(pr.height-90, by + e.clientY - sy)) + 'px';
+  });
+  const endDrag = ()=>{ drag=false; };
+  head.addEventListener('pointerup', endDrag);
+  head.addEventListener('pointercancel', endDrag);
+  let rs=false, rw=0, rh=0;
+  rez.addEventListener('pointerdown', e=>{
+    rs=true; sx=e.clientX; sy=e.clientY; rw=p.offsetWidth; rh=p.offsetHeight;
+    rez.setPointerCapture(e.pointerId); e.stopPropagation();
+  });
+  rez.addEventListener('pointermove', e=>{
+    if(!rs) return;
+    const pr = page.getBoundingClientRect();
+    p.style.width  = Math.max(200, Math.min(pr.width - p.offsetLeft,  rw + e.clientX - sx)) + 'px';
+    p.style.height = Math.max(160, Math.min(pr.height - p.offsetTop, rh + e.clientY - sy)) + 'px';
+  });
+  const endRez = ()=>{ rs=false; };
+  rez.addEventListener('pointerup', endRez);
+  rez.addEventListener('pointercancel', endRez);
+}
+function termBg(kind, btn){
+  const bg = $('term-bg');
+  btn.closest('.tpanel-body').querySelectorAll('.tp-mini').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  if(kind==='none'){ bg.style.opacity = 0; return; }
+  bg.style.background = kind==='big'
+    ? 'radial-gradient(140% 110% at 50% 0%, #1e4d3a 0%, transparent 60%), linear-gradient(180deg,#0d1f18,#07090c)'
+    : 'radial-gradient(120% 90% at 80% 0%, #2f5f8f 0%, transparent 55%), radial-gradient(100% 80% at 10% 90%, #4a2f6e 0%, transparent 60%), linear-gradient(160deg,#12233a,#0a1420)';
+  bg.style.opacity = ($('bgop-v')?.textContent || '55%').replace('%','')/100;
+}
+function termBgBlur(v){ $('term-bg').style.filter = `blur(${v}px)`; $('blur-v').textContent = v+'px'; }
+function termBgOp(v){ $('term-bg').style.opacity = v/100; $('bgop-v').textContent = v+'%'; }
+let splitMode = 'off'; /* off | term | left | right */
+let dockW = 0.38;
+let termCurB = 1;
+let focusP = 'a';
+const docked = [];
+let dockCur = null;
+function setDockSide(side, announce=true){
+  splitMode = side;
+  const page = $('page-terminal');
+  page.classList.toggle('dock-on', side==='left' || side==='right');
+  page.classList.toggle('dock-left', side==='left');
+  page.classList.toggle('dock-right', side==='right');
+  page.classList.toggle('split-term', side==='term');
+  $('term-split-btn')?.classList.toggle('on', side!=='off');
+  document.querySelectorAll('#seg-dock button').forEach(b=>b.classList.toggle('on', b.dataset.d===side));
+  applyDockWidth();
+  if(side==='term'){
+    if(TERM_SESSIONS.length<2){
+      toast('再开一个会话才能双终端'); 
+      /* 仍进入分屏，右栏给提示 */
+      termCurB = termCur;
+    } else if(termCurB===termCur || termCurB>=TERM_SESSIONS.length){
+      termCurB = (termCur+1) % TERM_SESSIONS.length;
+    }
+    focusP = 'a';
+    paintPane($('term-view'), TERM_SESSIONS[termCur]);
+    paintPane($('term-view-b'), TERM_SESSIONS[termCurB]);
+    $('pane-a')?.classList.add('focused');
+    $('pane-b')?.classList.remove('focused');
+    paintHead(); renderRail();
+  }
+  if((side==='left'||side==='right') && !dockCur) dockTool('stats', false);
+  if(announce){
+    const msg = {off:'已关闭分屏', term:'双终端 · 点哪边，底部按钮打哪边', left:'工具停靠左侧', right:'工具停靠右侧'};
+    toast(msg[side]||'分屏');
+  }
+}
+function toggleSplit(){
+  const order = ['off','term','right','left'];
+  setDockSide(order[(order.indexOf(splitMode)+1)%order.length]);
+}
+function applyDockWidth(){
+  $('term-split')?.style.setProperty('--dock-w', (dockW*100).toFixed(2) + '%');
+}
+function dockTool(kind, announce=true){
+  if(splitMode!=='left' && splitMode!=='right') setDockSide('right', false);
+  if(!docked.includes(kind)) docked.push(kind);
+  dockCur = kind;
+  renderDock();
+  if(announce) toast('已停靠 · ' + (TPANEL_DEFS[kind]?.title || kind));
+}
+function undockTool(kind){
+  const i = docked.indexOf(kind); if(i>=0) docked.splice(i,1);
+  if(dockCur===kind) dockCur = docked[docked.length-1] || null;
+  renderDock();
+}
+function renderDock(){
+  const tabs = $('term-dock-tabs'), body = $('term-dock-body');
+  if(!tabs || !body) return;
+  if(!docked.length){
+    tabs.innerHTML = '';
+    body.innerHTML = '<div class="term-dock-empty">点底部 文件 / 片段 / 笔记 / 监控 / 外观<br>停靠在这一侧，不挡终端</div>';
+    return;
+  }
+  tabs.innerHTML = docked.map(k=>{
+    const d = TPANEL_DEFS[k] || {title:k, icon:'i-file'};
+    return `<button class="td-tab ${k===dockCur?'on':''}" data-k="${k}">
+      <svg><use href="#${d.icon||'i-file'}"/></svg>${d.title.split('·')[0].trim()}
+      <span class="td-x" data-x="1">×</span></button>`;
+  }).join('');
+  tabs.querySelectorAll('.td-tab').forEach(el=>{
+    el.addEventListener('click', e=>{
+      if(e.target.dataset.x){ undockTool(el.dataset.k); return; }
+      dockCur = el.dataset.k; renderDock();
+    });
+  });
+  body.innerHTML = (TPANEL_DEFS[dockCur]||{}).body || '';
+}
+(function initGutter(){
+  const g = $('term-gutter'); if(!g) return;
+  let drag=false, startX=0, startW=0, splitW=0;
+  g.addEventListener('pointerdown', e=>{
+    drag=true; g.classList.add('dragging');
+    startX=e.clientX;
+    splitW=$('term-split').getBoundingClientRect().width;
+    startW = dockW * splitW;
+    try{ g.setPointerCapture(e.pointerId); }catch(err){}
+    e.preventDefault();
+  });
+  g.addEventListener('pointermove', e=>{
+    if(!drag) return;
+    const dx = e.clientX - startX;
+    const signed = splitMode==='left' ? dx : -dx;
+    const next = Math.max(0.2, Math.min(0.7, (startW + signed) / splitW));
+    dockW = next; applyDockWidth();
+  });
+  const end = ()=>{ drag=false; g.classList.remove('dragging'); };
+  g.addEventListener('pointerup', end);
+  g.addEventListener('pointercancel', end);
+})();
+
+
+function closeTopTPanel(){
+  const ps = [...document.querySelectorAll('#page-terminal .tpanel')];
+  if(!ps.length) return false;
+  ps.sort((a,b)=>(+b.style.zIndex||0)-(+a.style.zIndex||0))[0].remove();
+  return true;
+}
+
+/* ================= Remote desktop（RDP/VNC 共用控制器） ================= */
+const remoteState = {};
+function initRemote(pid){
+  const page = $(pid);
+  const surf = page.querySelector('.r-surface');
+  const zoomEl = page.querySelector('.r-zoom');
+  const cursor = page.querySelector('.r-cursor');
+  const mouseBar = page.querySelector('.r-mouse');
+  const st = remoteState[pid] = { mode:'direct', cx:180, cy:300, zoomIdx:0, qIdx:0, rIdx:0, fIdx:0, hideTimer:null };
+  const ZOOMS = [1, 1.25, 1.5, 0.75];
+  function place(){ cursor.style.transform = `translate(${st.cx}px,${st.cy}px)`; }
+  function clickAt(x,y,btn='left'){
+    const m = document.createElement('div');
+    m.className = 'r-click' + (btn==='right'?' right':'');
+    m.style.left = x+'px'; m.style.top = y+'px';
+    page.appendChild(m); setTimeout(()=>m.remove(), 360);
+  }
+  let dragging=false, moved=false, lx=0, ly=0;
+  surf.addEventListener('pointerdown', e=>{ dragging=true; moved=false; lx=e.clientX; ly=e.clientY; });
+  surf.addEventListener('pointermove', e=>{
+    if(!dragging) return;
+    const dx=e.clientX-lx, dy=e.clientY-ly;
+    if(Math.abs(dx)+Math.abs(dy)>4) moved=true;
+    if(st.mode==='trackpad'){ /* 协议位置立即更新，不补间 */
+      const r = surf.getBoundingClientRect();
+      st.cx = Math.max(0, Math.min(r.width-8,  st.cx+dx));
+      st.cy = Math.max(0, Math.min(r.height-8, st.cy+dy));
+      place();
+    }
+    lx=e.clientX; ly=e.clientY;
+  });
+  surf.addEventListener('pointerup', e=>{
+    dragging=false;
+    if(moved) return;
+    const r = surf.getBoundingClientRect();
+    if(st.mode==='direct'){ st.cx=e.clientX-r.left; st.cy=e.clientY-r.top; place(); }
+    clickAt(st.cx, st.cy, 'left');
+  });
+  mouseBar.querySelectorAll('.r-mbtn').forEach(b=>b.addEventListener('click',()=>clickAt(st.cx, st.cy, b.dataset.mb)));
+  /* 工具条动作 */
+  page.querySelectorAll('.r-tool').forEach(btn=>btn.addEventListener('click',()=>{
+    const lb = btn.querySelector('[data-lb]');
+    switch(btn.dataset.act){
+      case 'pointer':
+        st.mode = st.mode==='direct' ? 'trackpad' : 'direct';
+        lb.textContent = st.mode==='direct' ? '触控板' : '直接触控';
+        btn.classList.toggle('on', st.mode==='trackpad');
+        mouseBar.classList.toggle('show', st.mode==='trackpad');
+        toast(st.mode==='trackpad' ? '触控板模式 · 拖动移动指针' : '直接触控 · 点哪点哪');
+        break;
+      case 'keyboard': toggleRemoteIME(); break;
+      case 'quality': { const v=['平衡','性能','画质']; st.qIdx=(st.qIdx+1)%3; lb.textContent=v[st.qIdx]; toast('画质模式 · '+v[st.qIdx]); break; }
+      case 'vncquality': { const v=['高质量','平衡','性能']; st.qIdx=(st.qIdx+1)%3; lb.textContent=v[st.qIdx]; toast('画质 · '+v[st.qIdx]+' · 未知弱模式不自动降级'); break; }
+      case 'resolution': { const v=['自动','1080p','2K','4K']; st.rIdx=(st.rIdx+1)%4; lb.textContent=v[st.rIdx]; toast('分辨率 · '+v[st.rIdx]); break; }
+      case 'fps': { const v=['30FPS','45FPS','60FPS','120FPS']; st.fIdx=(st.fIdx+1)%4; lb.textContent=v[st.fIdx]; break; }
+      case 'fit': st.zoomIdx=0; zoomEl.style.transform='scale(1)'; lb_reset(); toast('已适应窗口'); break;
+      case 'zoom': st.zoomIdx=(st.zoomIdx+1)%ZOOMS.length; zoomEl.style.transform=`scale(${ZOOMS[st.zoomIdx]})`;
+        lb.textContent=Math.round(ZOOMS[st.zoomIdx]*100)+'%'; break;
+      case 'clipboard': toast('跨设备剪贴板 · 本机⇄远程'); break;
+      case 'files': toast('RDP 文件剪贴板 · 只读 provider 执行'); break;
+      case 'shortcuts':
+        openSheet(null,[[{title:'常用快捷键'}],
+          [{label:'Win',act:'sc-win'},{label:'Ctrl+Alt+Del',act:'sc-cad'},{label:'Alt+Tab',act:'sc-alttab'},{label:'Win+R',act:'sc-winr'},{label:'Alt+F4',act:'sc-altf4'}],
+          [{label:'取消',cancel:true}]]); break;
+      case 'joystick': toast('视区模式 · 拖动平移远程画面'); break;
+      case 'cad': toast('已发送 Ctrl+Alt+Del'); break;
+      case 'reconnect': {
+        const stEl = page.querySelector('.r-status span:last-child');
+        const old = stEl.textContent; stEl.textContent = '重连中…';
+        setTimeout(()=>{ stEl.textContent = old; toast('已重连'); }, 1200); break; }
+      case 'disconnect': confirmDisconnect(pid==='page-rdp'?'win-ops-desktop':'vnc-pi-kitchen'); break;
+    }
+    resetHide(pid);
+  }));
+  function lb_reset(){ page.querySelector('[data-act="zoom"] [data-lb]').textContent='100%'; }
+  place();
+}
+function toggleRemotePanel(pid){
+  const p = $(pid).querySelector('.r-panel');
+  p.classList.toggle('show');
+  resetHide(pid);
+}
+function resetHide(pid){
+  const st = remoteState[pid]; if(!st) return;
+  clearTimeout(st.hideTimer);
+  st.hideTimer = setTimeout(()=>$(pid).querySelector('.r-panel').classList.remove('show'), 5000);
+}
+function toggleRemoteIME(){
+  const im = $('fake-ime-remote');
+  const on = im.classList.toggle('open');
+  if(on) toast('远程键盘 · overlays-content 不挤压画面');
+}
+initRemote('page-rdp'); initRemote('page-vnc');
+
+/* ================= AI floating workspace — 高度 detent，输入条永不出屏 ================= */
+const aiSheet = $('ai-sheet'), aiScrim = $('ai-scrim');
+const DETENTS = { expanded:0.92, half:0.55, peek:0.30 };
+let aiState = 'closed';
+const isPad = () => matchMedia('(min-width:768px)').matches;
+function aiH(k){ return Math.round($('app').offsetHeight * DETENTS[k]); }
+function aiTo(k, anim=true){
+  aiState = k;
+  if(anim) aiSheet.classList.add('anim');
+  if(isPad()){
+    if(k==='closed'){ aiSheet.style.transform = 'translateX(105%)'; aiScrim.classList.remove('show');
+      if($('ai-fab').style.display!=='none') $('ai-fab').classList.remove('gone'); return; }
+    aiSheet.style.transform = 'translateX(0)';
+    aiScrim.classList.remove('show');
+    fab.classList.add('gone');
+    return;
+  }
+  if(k==='closed'){ aiSheet.style.transform = 'translateY(105%)'; aiScrim.classList.remove('show');
+    if($('ai-fab').style.display!=='none') $('ai-fab').classList.remove('gone'); return; }
+  aiSheet.style.height = aiH(k) + 'px';
+  aiSheet.style.transform = 'translateY(0)';
+  aiScrim.classList.toggle('show', k==='expanded');
+  fab.classList.add('gone');
+}
+function openAI(){ aiTo('half'); }
+(function(){
+  const handle = $('ai-handle');
+  let startY=0, base=0, lastY=0, lastT=0, vel=0, drag=false;
+  handle.addEventListener('pointerdown', e=>{
+    if(isPad()) return;
+    drag=true; aiSheet.classList.remove('anim');
+    startY=e.clientY; base=aiSheet.offsetHeight; lastY=e.clientY; lastT=performance.now(); vel=0;
+    handle.setPointerCapture(e.pointerId);
+  });
+  handle.addEventListener('pointermove', e=>{
+    if(!drag) return;
+    const now=performance.now();
+    vel = (e.clientY-lastY)/Math.max(1,now-lastT); lastY=e.clientY; lastT=now;
+    const h = Math.max(aiH('peek')*0.7, Math.min(aiH('expanded'), base - (e.clientY-startY)));
+    aiSheet.style.height = h + 'px';
+  });
+  const end = e=>{
+    if(!drag) return; drag=false;
+    const cur = aiSheet.offsetHeight;
+    if(vel > 0.9 && e && (e.clientY-startY) > 40){ aiTo('closed'); return; }
+    let best = 'peek', bd = Infinity;
+    for(const k of Object.keys(DETENTS)){
+      const d = Math.abs(aiH(k) - (cur - vel*140));
+      if(d < bd){ bd = d; best = k; }
+    }
+    aiTo(best);
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+})();
+function aiRun(btn){
+  const trace = btn.closest('.tool-trace');
+  trace.querySelector('.tt-head').innerHTML =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#30d158" stroke-width="2.6" stroke-linecap="round"><path d="m5 13 4 4L19 7"/></svg> 已执行 · 退出码 0 · 1.2s';
+  trace.querySelector('.tt-actions').remove();
+  $('ai-result').style.display='';
+  const m = $('ai-msgs'); m.scrollTop = m.scrollHeight;
+  $('ai-run').classList.add('show');
+  $('ai-run-text').textContent = '正在执行 · terminal.execute';
+  setTimeout(()=>$('ai-run').classList.remove('show'), 4000);
+}
+function aiStop(){
+  $('ai-run').classList.remove('show');
+  toast('已停止 run · 收起面板不取消，这里显式停止');
+}
+function aiTakeover(){
+  $('ai-run').classList.remove('show');
+  toast('已接管 · AI 暂停操作，终端交还手动控制');
+}
+function aiPick(chip, kind, opts){
+  const v = chip.querySelector('[data-v]');
+  v.textContent = opts[(opts.indexOf(v.textContent)+1) % opts.length];
+  toast({model:'模型', mode:'协作模式', perm:'权限模式', think:'思考'}[kind] + '：' + v.textContent);
+}
+
+/* ================= Sync demo ================= */
+let syncing = false;
+function runSync(){
+  if(syncing) return; syncing = true;
+  const hero = $('sync-hero'), bar = $('sync-bar');
+  const phase = $('sync-phase-text'), sub = $('sync-sub-text'), detail = $('sync-detail');
+  const pillEl = $('sync-pill'), pillTx = $('sync-pill-text');
+  hero.classList.add('busy'); pillEl.classList.add('syncing');
+  const phases = [[0,'连接主端…','验证 Client Token'],[18,'推送 3 个操作…','notes ×2 · connection ×1'],
+                  [55,'拉取变更…','cursor 8f2c91 → 8f2d0a'],[88,'校验 secret envelope…','AAD 边界 OK']];
+  const t0 = performance.now(), DUR = 2600;
+  (function tick(){
+    const p = Math.min(1,(performance.now()-t0)/DUR);
+    bar.style.width = (p*100).toFixed(1)+'%';
+    pillTx.textContent = Math.round(p*100)+'%';
+    detail.textContent = `cursor 8f2c91 · ${(p*38.2).toFixed(1)} KB/s`;
+    for(const [th,txt,s] of phases) if(p*100>=th){ phase.textContent=txt; sub.textContent=s; }
+    if(p<1) requestAnimationFrame(tick);
+    else{
+      syncing=false; hero.classList.remove('busy'); pillEl.classList.remove('syncing');
+      phase.textContent='镜像已同步'; sub.textContent='上次成功 刚刚 · 下次自动 5 分钟后';
+      detail.textContent='cursor 8f2d0a · 0 B/s'; pillTx.textContent='刚刚同步';
+      $('tools-sync-sub').textContent='已开启 · 每 5 分钟 · 全部同步';
+      bar.style.width='0%';
+      toast('同步完成 · 3 推送 · 5 拉取 · 0 冲突');
+    }
+  })();
+}
+function goSync(){ pushPage('page-sync'); }
+function markPending(){ $('sync-pill-text').textContent='待同步'; }
+
+/* ================= Toast ================= */
+let toastTimer;
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 2100);
+}
+
+/* ================= Appearance ================= */
+const THEME_NAMES = {frost:'Frost', lava:'Lava', asagi:'Asagi', cyber:'Cyber'};
+$('swatches').addEventListener('click', e=>{
+  const b = e.target.closest('.swatch'); if(!b) return;
+  document.querySelectorAll('.swatch').forEach(s=>s.classList.toggle('on', s===b));
+  document.documentElement.dataset.theme = b.dataset.t;
+  updAppearanceSub();
+});
+$('seg-dock').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  setDockSide(b.dataset.d);
+});
+$('seg-scheme').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#seg-scheme button').forEach(s=>s.classList.toggle('on', s===b));
+  const s = b.dataset.s;
+  const dark = s==='dark' || (s==='auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.scheme = dark ? 'dark' : 'light';
+  updAppearanceSub();
+});
+function updAppearanceSub(){
+  const t = THEME_NAMES[document.documentElement.dataset.theme];
+  const s = document.documentElement.dataset.scheme==='dark'?'深色':'浅色';
+  $('appearance-sub').textContent = `${t} · ${s}`;
+}
+
+/* ================= AI 开关：控制浮窗入口与上下文 ================= */
+function toggleAI(btn){
+  const on = btn.classList.toggle('on');
+  $('ai-fab').style.display = on ? '' : 'none';
+  if(!on && aiState!=='closed') aiTo('closed');
+  $('ai-settings-sub').textContent = on ? '已启用 · Claude Opus · 协作模式' : '已停用 · 导航与工作区不再显示 AI';
+  toast(on ? 'AI 助理已启用' : 'AI 助理已停用 · AI 笔记工具一并禁用');
+}
+/* 终端字号档 */
+$('seg-termfont').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  $('term-view').style.fontSize = b.textContent + 'px';
+  toast('终端字号 ' + b.textContent + 'px');
+});
+
+/* ================= 批量执行 demo ================= */
+function runBatch(){
+  const hosts = [...document.querySelectorAll('#batch-targets .row')]
+    .filter(r=>r.querySelector('.toggle').classList.contains('on'))
+    .map(r=>r.querySelector('.r-body').childNodes[0].textContent.trim());
+  const box = $('batch-results');
+  box.innerHTML = hosts.map(h=>`<div class="res-row" data-h="${h}">
+      <span class="res-st run">运行中</span><span style="flex:1;font-weight:600">${h}</span>
+      <span class="mono">—</span></div>`).join('') +
+    `<div class="res-row"><span class="res-st denied">已跳过</span><span style="flex:1;font-weight:600">legacy-switch</span>
+      <span class="mono">no execute</span></div>`;
+  hosts.forEach((h,i)=>{
+    setTimeout(()=>{
+      const row = box.querySelector(`[data-h="${h}"]`);
+      const fail = h==='backup-02';
+      row.querySelector('.res-st').className = 'res-st ' + (fail?'fail':'ok');
+      row.querySelector('.res-st').textContent = fail ? '失败' : '成功';
+      row.querySelector('.mono').textContent = fail ? 'exit 1 · 60.0s 超时' : `exit 0 · ${(0.8+i*0.4).toFixed(1)}s`;
+    }, 900 + i*700);
+  });
+  setTimeout(()=>toast('批量完成 · 2 成功 1 失败 1 跳过 · 审计仅存截断 metadata'), 900+hosts.length*700+200);
+}
+function dockerToggle(btn){
+  const on = btn.classList.toggle('on');
+  btn.textContent = on ? '运行中' : '已停止';
+  const dot = btn.closest('.row,.tp-row')?.querySelector('.sess-dot');
+  if(dot) dot.className = 'sess-dot ' + (on ? 'live' : 'dead');
+  toast(on ? '容器已启动' : '容器已停止');
+}
+
+/* ================= 语言 ================= */
+const LANG_NAMES = {auto:'跟随系统', zh:'简体中文', 'zh-tw':'繁體中文', en:'English', ja:'日本語'};
+$('lang-list').addEventListener('click', e=>{
+  const b = e.target.closest('.row'); if(!b) return;
+  document.querySelectorAll('#lang-list .row').forEach(x=>x.classList.toggle('sel', x===b));
+  $('lang-sub').textContent = LANG_NAMES[b.dataset.lang];
+  toast(LANG_NAMES[b.dataset.lang] + ' · 已保存到本机');
+});
+
+/* latency ticker */
+(function(){
+  let v = 23;
+  setInterval(()=>{
+    v = Math.max(18, Math.min(31, v + (Math.random()*4-2)));
+    if(stack[stack.length-1]==='page-terminal') $('term-lat').textContent = v.toFixed(0)+' ms';
+  }, 1600);
+})();
+
+/* hash-driven test states */
+(function(){
+  renderRail(); switchTerm(0);
+  renderPadRail(); renderSessWall();
+  const h = location.hash; if(!h) return;
+  if(h.includes('light')){ document.documentElement.dataset.scheme='light';
+    document.querySelectorAll('#seg-scheme button').forEach(x=>x.classList.toggle('on', x.dataset.s==='light')); }
+  const tm = h.match(/theme-(\w+)/); if(tm){ document.documentElement.dataset.theme=tm[1];
+    document.querySelectorAll('.swatch').forEach(x=>x.classList.toggle('on', x.dataset.t===tm[1])); }
+  if(h.includes('editor')) pushPage('page-editor');
+  if(h.includes('sync')) pushPage('page-sync');
+  if(h.includes('appearance')) pushPage('page-appearance');
+  if(h.includes('ai-settings')) pushPage('page-ai-settings');
+  if(h.includes('conntype')) pushPage('page-conntype');
+  if(h.includes('batch')) pushPage('page-batch');
+  if(h.includes('docker')) pushPage('page-docker');
+  if(h.includes('sftp')) pushPage('page-sftp');
+  if(h.includes('notes')) pushPage('page-notes');
+  if(h.includes('snippets')) pushPage('page-snippets');
+  if(h.includes('token')) pushPage('page-token');
+  if(h.includes('lang')) pushPage('page-lang');
+  if(h.includes('about')) pushPage('page-about');
+  if(h.includes('srvset')) pushPage('page-server-settings');
+  if(h.includes('tpanels')){ openTerminal(0); setTimeout(()=>{ openTPanel('files'); openTPanel('stats'); }, 500); }
+  if(h.includes('note')) pushPage('page-note');
+  if(h.includes('snippet')) pushPage('page-snippet');
+  if(h.includes('rdp')) pushPage('page-rdp');
+  if(h.includes('vnc')) pushPage('page-vnc');
+  if(h.includes('panel')){
+    const pid = h.includes('vnc') ? 'page-vnc' : 'page-rdp';
+    setTimeout(()=>{ toggleRemotePanel(pid);
+      if(h.includes('trackpad')) document.querySelector(`#${pid} [data-act="pointer"]`).click();
+    }, 200);
+  }
+  if(h.includes('terminal')){ openTerminal(0); if(h.includes('ime')) setTimeout(toggleIME, 60); }
+  if(h.includes('#ai')) setTimeout(openAI, 400);
+  updAppearanceSub();
+})();
+
+/* Escape = back：一次手势只改一层 */
+addEventListener('keydown', e=>{
+  if(e.key!=='Escape') return;
+  if($('fake-ime-remote').classList.contains('open')){ toggleRemoteIME(); return; }
+  if(closeTopTPanel()) return;
+  const top = stack[stack.length-1];
+  if(top && (top==='page-rdp'||top==='page-vnc') && $(top).querySelector('.r-panel').classList.contains('show')){
+    $(top).querySelector('.r-panel').classList.remove('show'); return; }
+  if(aiState!=='closed'){ aiTo(aiState==='expanded'?'half':aiState==='half'?'peek':'closed'); return; }
+  if(sheet.classList.contains('show')){ closeSheet(); return; }
+  if(stack.length) popPage();
+});
+</script>
+</body>
+</html>
