@@ -254,7 +254,19 @@ jobs:
               /tmp/ios-package.log 'package unsigned iOS app'
             exit "$status"
           fi
-          test -s "$GITHUB_WORKSPACE/zephyr_one/mobile/build/zephyr-one-ios-unsigned.ipa"
+          ipa="$GITHUB_WORKSPACE/zephyr_one/mobile/build/zephyr-one-ios-unsigned.ipa"
+          if [ ! -s "$ipa" ]; then
+            {
+              echo "Expected non-empty IPA at: $ipa"
+              echo 'IPA files found under the workspace:'
+              find "$GITHUB_WORKSPACE" -type f -name '*.ipa' -print
+              echo 'Packager log tail:'
+              tail -n 80 /tmp/ios-package.log
+            } > /tmp/ios-package-diagnostic.log
+            bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
+              /tmp/ios-package-diagnostic.log 'locate unsigned iOS app'
+            exit 1
+          fi
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
@@ -267,7 +279,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-packaging-diagnostics
-          path: /tmp/ios-package.log
+          path: |
+            /tmp/ios-package.log
+            /tmp/ios-package-diagnostic.log
           if-no-files-found: warn
 
   release:
