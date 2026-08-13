@@ -222,6 +222,7 @@ using Microsoft.Win32.SafeHandles;
 public static class ZephyrSecureFile {
     private const uint READ_CONTROL = 0x00020000;
     private const uint WRITE_DAC = 0x00040000;
+    private const uint WRITE_OWNER = 0x00080000;
     private const uint GENERIC_READ = 0x80000000;
     private const uint FILE_READ_ATTRIBUTES = 0x00000080;
     private const uint FILE_SHARE_READ = 0x00000001;
@@ -279,12 +280,16 @@ public static class ZephyrSecureFile {
         return handle;
     }
 
-    public static SafeFileHandle OpenDirectory(string directory) {
-        return Open(directory, READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS);
+    public static SafeFileHandle OpenDirectory(string directory, bool allowOwnerChange) {
+        uint access = READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES;
+        if (allowOwnerChange) access |= WRITE_OWNER;
+        return Open(directory, access, FILE_FLAG_BACKUP_SEMANTICS);
     }
 
-    public static SafeFileHandle OpenFile(string fileName) {
-        return Open(fileName, GENERIC_READ | WRITE_DAC, 0);
+    public static SafeFileHandle OpenFile(string fileName, bool allowOwnerChange) {
+        uint access = GENERIC_READ | WRITE_DAC;
+        if (allowOwnerChange) access |= WRITE_OWNER;
+        return Open(fileName, access, 0);
     }
 
     public static FileIdentity GetIdentity(SafeFileHandle handle) {
@@ -307,13 +312,16 @@ function Set-And-VerifyPrivateAcl(
     [IO.FileStream] $stream,
     [bool] $directory,
     [string] $sidValue,
+    [string] $tokenOwnerSidValue,
+    [bool] $allowTokenOwner,
     [string] $lockedPath) {
     $sidType = [Security.Principal.SecurityIdentifier]
     $sid = [Security.Principal.SecurityIdentifier]::new($sidValue)
     $beforeAcl = $stream.GetAccessControl()
     $beforeOwner = $beforeAcl.GetOwner($sidType).Value
-    if ($beforeOwner -ne $sidValue) {
-        throw 'backup environment path is not owned by the service identity'
+    $usesAllowedTokenOwner = $allowTokenOwner -and $beforeOwner -eq $tokenOwnerSidValue
+    if ($beforeOwner -ne $sidValue -and -not $usesAllowedTokenOwner) {
+        throw "backup environment path is not owned by the service identity (owner=$beforeOwner; user=$sidValue; tokenOwner=$tokenOwnerSidValue)"
     }
 
     if ($directory) {
@@ -322,6 +330,9 @@ function Set-And-VerifyPrivateAcl(
         $privateAcl = [Security.AccessControl.FileSecurity]::new()
     }
     $privateAcl.SetAccessRuleProtection($true, $false)
+    if ($usesAllowedTokenOwner) {
+        $privateAcl.SetOwner($sid)
+    }
     $inheritance = [Security.AccessControl.InheritanceFlags]::None
     if ($directory) {
         $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
@@ -369,8 +380,13 @@ $envFile = $env:ZEPHYR_BACKUP_ENV_FILE
 $readContents = $env:ZEPHYR_BACKUP_READ_CONTENTS -eq '1'
 $maxEnvBytes = [uint64] $env:ZEPHYR_BACKUP_MAX_ENV_BYTES
 $encodedContents = ''
-$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$directoryHandle = [ZephyrSecureFile]::OpenDirectory($dataDirectory)
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$currentSid = $currentIdentity.User.Value
+$tokenOwnerSid = $currentIdentity.Owner.Value
+$administratorsSid = 'S-1-5-32-544'
+$allowTokenOwner = $env:ZEPHYR_BACKUP_ALLOW_TOKEN_DEFAULT_OWNER -eq '1' -and
+    $tokenOwnerSid -eq $administratorsSid
+$directoryHandle = [ZephyrSecureFile]::OpenDirectory($dataDirectory, $allowTokenOwner)
 $directoryStream = $null
 try {
     $directoryBefore = [ZephyrSecureFile]::GetIdentity($directoryHandle)
@@ -378,14 +394,14 @@ try {
         throw 'backup data directory must be one regular directory'
     }
     $directoryStream = [IO.FileStream]::new($directoryHandle, [IO.FileAccess]::Read)
-    Set-And-VerifyPrivateAcl $directoryStream $true $currentSid $dataDirectory
+    Set-And-VerifyPrivateAcl $directoryStream $true $currentSid $tokenOwnerSid $allowTokenOwner $dataDirectory
 
     if ($envFile) {
         $resolvedEnvFile = [IO.Path]::GetFullPath($envFile)
         if ([IO.Path]::GetDirectoryName($resolvedEnvFile) -ne $dataDirectory) {
             throw 'backup environment file must be inside the data directory'
         }
-        $fileHandle = [ZephyrSecureFile]::OpenFile($resolvedEnvFile)
+        $fileHandle = [ZephyrSecureFile]::OpenFile($resolvedEnvFile, $allowTokenOwner)
         $fileStream = $null
         try {
             $fileBefore = [ZephyrSecureFile]::GetIdentity($fileHandle)
@@ -397,7 +413,7 @@ try {
                 throw 'backup key environment file is too large'
             }
             $fileStream = [IO.FileStream]::new($fileHandle, [IO.FileAccess]::Read)
-            Set-And-VerifyPrivateAcl $fileStream $false $currentSid $resolvedEnvFile
+            Set-And-VerifyPrivateAcl $fileStream $false $currentSid $tokenOwnerSid $allowTokenOwner $resolvedEnvFile
 
             if ($readContents) {
                 $content = [IO.MemoryStream]::new()
@@ -414,7 +430,7 @@ try {
             if ($fileAfter.NumberOfLinks -ne 1) {
                 throw 'backup key environment file acquired another hard link during secure access'
             }
-            $namedFileHandle = [ZephyrSecureFile]::OpenFile($resolvedEnvFile)
+            $namedFileHandle = [ZephyrSecureFile]::OpenFile($resolvedEnvFile, $allowTokenOwner)
             try {
                 Assert-SameIdentity $fileAfter ([ZephyrSecureFile]::GetIdentity($namedFileHandle)) 'backup key environment pathname'
             } finally {
@@ -427,7 +443,7 @@ try {
 
     $directoryAfter = [ZephyrSecureFile]::GetIdentity($directoryHandle)
     Assert-SameIdentity $directoryBefore $directoryAfter 'backup data directory'
-    $namedDirectoryHandle = [ZephyrSecureFile]::OpenDirectory($dataDirectory)
+    $namedDirectoryHandle = [ZephyrSecureFile]::OpenDirectory($dataDirectory, $allowTokenOwner)
     try {
         Assert-SameIdentity $directoryAfter ([ZephyrSecureFile]::GetIdentity($namedDirectoryHandle)) 'backup data directory pathname'
     } finally {
@@ -455,6 +471,8 @@ function secureWindowsDataEnv(dataDir, envFile, { readContents = false } = {}) {
                 ZEPHYR_BACKUP_ENV_FILE: envFile || '',
                 ZEPHYR_BACKUP_READ_CONTENTS: readContents ? '1' : '0',
                 ZEPHYR_BACKUP_MAX_ENV_BYTES: String(MAX_ENV_FILE_BYTES),
+                ZEPHYR_BACKUP_ALLOW_TOKEN_DEFAULT_OWNER:
+                    process.env.ZEPHYR_BACKUP_ALLOW_TOKEN_DEFAULT_OWNER === '1' ? '1' : '0',
             },
             maxBuffer: 2 * 1024 * 1024,
             windowsHide: true,

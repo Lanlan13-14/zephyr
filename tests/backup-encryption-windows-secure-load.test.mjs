@@ -84,3 +84,15 @@ test('Windows ACL timeout keeps the shared default and bounds desktop overrides'
     assert.equal(backupModule.windowsAclTimeoutMs({ ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS: '1000' }), 30_000);
     assert.equal(backupModule.windowsAclTimeoutMs({ ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS: 'invalid' }), 30_000);
 });
+
+test('Windows token-owner compatibility remains opt-in and normalizes ownership', () => {
+    const source = fs.readFileSync(path.join(ROOT, 'backup-encryption.js'), 'utf8');
+    assert.match(source, /WRITE_OWNER/);
+    assert.match(source, /ZEPHYR_BACKUP_ALLOW_TOKEN_DEFAULT_OWNER -eq '1'/);
+    assert.match(source, /\$administratorsSid = 'S-1-5-32-544'/);
+    assert.match(source, /\$tokenOwnerSid -eq \$administratorsSid/);
+    assert.match(source, /ZEPHYR_BACKUP_ALLOW_TOKEN_DEFAULT_OWNER:[\s\S]*process\.env\.ZEPHYR_BACKUP_ALLOW_TOKEN_DEFAULT_OWNER === '1' \? '1' : '0'/);
+    assert.match(source, /\$allowTokenOwner -and \$beforeOwner -eq \$tokenOwnerSidValue/);
+    assert.match(source, /\$privateAcl\.SetOwner\(\$sid\)/);
+    assert.match(source, /\$verified\.GetOwner\(\$sidType\)\.Value -ne \$sidValue/);
+});

@@ -748,6 +748,7 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         .env("TRUST_PROXY", "false")
         .env("ZEPHYR_ONE_EMBEDDED", "1")
         .env("ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS", "90000")
+        .env("ZEPHYR_BACKUP_ALLOW_TOKEN_DEFAULT_OWNER", "1")
         .env(STARTUP_CHALLENGE_ENV, &startup_challenge_encoded)
         .env("ZEPHYR_ONE_SHELL_SECRET", shell_secret)
         .env("ZEPHYR_ONE_SHELL_INSTANCE", shell_instance)

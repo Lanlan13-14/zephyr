@@ -73,6 +73,7 @@ describe('Windows install smoke harness', () => {
     assert.match(runtime, /\.env\("ZEPHYR_ONE_SHELL_SECRET", shell_secret\)/);
     assert.match(runtime, /\.env\("ZEPHYR_ONE_SHELL_INSTANCE", shell_instance\)/);
     assert.match(runtime, /\.env\("ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS", "90000"\)/);
+    assert.match(runtime, /\.env\("ZEPHYR_BACKUP_ALLOW_TOKEN_DEFAULT_OWNER", "1"\)/);
     assert.match(runtime, /cfg\(target_os = "windows"\)[\s\S]*EMBEDDED_CORE_READY_TIMEOUT: Duration = Duration::from_secs\(210\)/);
     assert.match(runtime, /wait_http_ready\([\s\S]*EMBEDDED_CORE_READY_TIMEOUT/);
     assert.match(runtime, /\.env_remove\("NODE_OPTIONS"\)/);
