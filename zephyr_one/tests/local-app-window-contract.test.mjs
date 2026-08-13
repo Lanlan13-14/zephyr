@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,8 +64,58 @@ test('startup diagnostics identify the trusted handoff stages', () => {
   assert.match(commands, /runtime_start command completed/);
   assert.match(commands, /runtime_enter command completed/);
   assert.match(commands, /runtime_enter command failed/);
+  assert.match(commands, /local_app_ready command entered/);
   assert.match(commands, /local_app_ready command completed/);
   assert.match(commands, /local_app_ready command failed/);
+});
+
+test('UI-ready polling survives document-start injection and retries IPC failures', () => {
+  const runtime = read('src-tauri/src/runtime/mod.rs');
+  assert.match(runtime, /document\.documentElement\?\.dataset\.appReady === '1'/);
+  assert.match(runtime, /typeof invoke === 'function'/);
+  assert.match(runtime, /await invoke\('local_app_ready'\)[\s\S]*reported = true/);
+  assert.match(runtime, /catch \(_\) \{[\s\S]*reporting = false/);
+  assert.doesNotMatch(runtime, /requestAnimationFrame\(\(\) => requestAnimationFrame/);
+});
+
+test('UI-ready document-start script reaches IPC after a transient failure', async () => {
+  const runtime = read('src-tauri/src/runtime/mod.rs');
+  const script = runtime.match(/const LOCAL_APP_READY_SCRIPT: &str = r#"([\s\S]*?)"#;/)?.[1];
+  assert.ok(script);
+
+  const timers = [];
+  let attempts = 0;
+  const document = { documentElement: null, readyState: 'loading' };
+  const window = {
+    __TAURI_INTERNALS__: {
+      invoke: async (command) => {
+        assert.equal(command, 'local_app_ready');
+        attempts += 1;
+        if (attempts === 1) throw new Error('transient IPC failure');
+      },
+    },
+  };
+  window.top = window;
+
+  vm.runInNewContext(script, {
+    document,
+    location: { hostname: '127.0.0.1', pathname: '/app.html', search: '?zephyrOne=1' },
+    setTimeout: (callback) => timers.push(callback),
+    window,
+  });
+  assert.equal(timers.length, 1);
+
+  document.documentElement = { dataset: { appReady: '1' } };
+  document.readyState = 'complete';
+  await timers.shift()();
+  await Promise.resolve();
+  assert.equal(attempts, 1);
+  assert.equal(timers.length, 1);
+
+  await timers.shift()();
+  await Promise.resolve();
+  assert.equal(attempts, 2);
+  assert.equal(timers.length, 0);
 });
 
 test('restart destroys the stale origin window before installing a new session', () => {
@@ -109,11 +160,10 @@ test('UI-ready marker is bound to the exact product window and current core', ()
   assert.match(runtime, /current_url\.path\(\) != "\/app\.html" \|\| current_url\.query\(\) != Some\("zephyrOne=1"\)/);
   assert.match(runtime, /ZEPHYR_ONE_UI_READY_NONCE/);
   assert.match(runtime, /"instanceId": instance_id/);
-  assert.match(runtime, /LOCAL_APP_READY_SCRIPT:[\s\S]*dataset\.appReady === '1'/);
+  assert.match(runtime, /LOCAL_APP_READY_SCRIPT:[\s\S]*document\.documentElement\?\.dataset\.appReady === '1'/);
   assert.match(runtime, /document\.readyState === 'complete'/);
-  assert.match(runtime, /requestAnimationFrame\(\(\) => requestAnimationFrame/);
   assert.match(runtime, /\.initialization_script\(LOCAL_APP_READY_SCRIPT\)/);
-  assert.match(runtime, /invoke\?\.\('local_app_ready'\)/);
+  assert.match(runtime, /await invoke\('local_app_ready'\)/);
   assert.match(embedded, /tauriInvoke\('rdp_bridge'/);
   assert.doesNotMatch(localApp.permissions.join('\n'), /rdp-native/);
 });

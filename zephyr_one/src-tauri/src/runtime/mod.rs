@@ -55,16 +55,21 @@ const LOCAL_APP_READY_SCRIPT: &str = r#"
   }
   if (location.pathname !== '/app.html' || location.search !== '?zephyrOne=1') return;
   let reported = false;
-  const poll = () => {
-    if (reported) return;
-    if (document.documentElement.dataset.appReady === '1' && document.readyState === 'complete') {
-      reported = true;
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        window.__TAURI_INTERNALS__?.invoke?.('local_app_ready').catch(() => {});
-      }));
-      return;
+  let reporting = false;
+  const poll = async () => {
+    if (reported || reporting) return;
+    const appReady = document.documentElement?.dataset.appReady === '1';
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    if (appReady && document.readyState === 'complete' && typeof invoke === 'function') {
+      reporting = true;
+      try {
+        await invoke('local_app_ready');
+        reported = true;
+      } catch (_) {
+        reporting = false;
+      }
     }
-    setTimeout(poll, 100);
+    if (!reported) setTimeout(poll, 100);
   };
   poll();
 })();

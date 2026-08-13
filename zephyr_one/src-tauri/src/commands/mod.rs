@@ -118,6 +118,7 @@ pub async fn runtime_enter(
 
 #[tauri::command]
 pub async fn local_app_ready(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    runtime::append_runtime_log(&app, "local_app_ready command entered");
     let log_app = app.clone();
     let result =
         tauri::async_runtime::spawn_blocking(move || runtime::mark_local_app_ready(&app, &window))
