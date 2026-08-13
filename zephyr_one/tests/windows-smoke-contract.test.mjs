@@ -72,6 +72,9 @@ describe('Windows install smoke harness', () => {
     assert.match(runtime, /\.env\(STARTUP_CHALLENGE_ENV, &startup_challenge_encoded\)/);
     assert.match(runtime, /\.env\("ZEPHYR_ONE_SHELL_SECRET", shell_secret\)/);
     assert.match(runtime, /\.env\("ZEPHYR_ONE_SHELL_INSTANCE", shell_instance\)/);
+    assert.match(runtime, /\.env\("ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS", "90000"\)/);
+    assert.match(runtime, /cfg\(target_os = "windows"\)[\s\S]*EMBEDDED_CORE_READY_TIMEOUT: Duration = Duration::from_secs\(210\)/);
+    assert.match(runtime, /wait_http_ready\([\s\S]*EMBEDDED_CORE_READY_TIMEOUT/);
     assert.match(runtime, /\.env_remove\("NODE_OPTIONS"\)/);
     assert.match(runtime, /\.env_remove\("NODE_PATH"\)/);
     assert.match(runtime, /if cfg!\(debug_assertions\) \{[\s\S]*ZEPHYR_NODE_PATH/);
@@ -85,6 +88,11 @@ describe('Windows install smoke harness', () => {
     assert.match(childJob, /AssignProcessToJobObject/);
     assert.doesNotMatch(runtime, /launcher_auth|windows_runtime_launcher::FLAG/);
     assert.doesNotMatch(runtime, /ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN/);
+  });
+
+  it('keeps the Windows smoke deadline outside the embedded core deadline', () => {
+    const workflow = fs.readFileSync(path.join(REPO, '.github', 'workflows', 'zephyr-one.yml'), 'utf8');
+    assert.match(workflow, /windows-install-smoke\.ps1[^\n]*-ReadyTimeoutSec 240/);
   });
 
   it('propagates the full static RDP closure to Windows bins and the lib test harness', () => {

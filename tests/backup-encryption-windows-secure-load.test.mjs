@@ -76,3 +76,11 @@ test('server consumes provisioned env contents without reopening the pathname', 
     assert.doesNotMatch(loadDataEnv, /fs\.readFileSync/);
     assert.match(loadDataEnv, /contents:\s*raw/);
 });
+
+test('Windows ACL timeout keeps the shared default and bounds desktop overrides', () => {
+    assert.equal(backupModule.windowsAclTimeoutMs({}), 30_000);
+    assert.equal(backupModule.windowsAclTimeoutMs({ ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS: '90000' }), 90_000);
+    assert.equal(backupModule.windowsAclTimeoutMs({ ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS: '120000' }), 90_000);
+    assert.equal(backupModule.windowsAclTimeoutMs({ ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS: '1000' }), 30_000);
+    assert.equal(backupModule.windowsAclTimeoutMs({ ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS: 'invalid' }), 30_000);
+});

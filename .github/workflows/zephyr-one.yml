@@ -341,7 +341,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist-windows-smoke | Out-Null
-          pwsh -File scripts/windows-install-smoke.ps1 -Root (Resolve-Path .) -OutDir (Resolve-Path dist-windows-smoke) -ReadyTimeoutSec 120 -HoldSec 60
+          pwsh -File scripts/windows-install-smoke.ps1 -Root (Resolve-Path .) -OutDir (Resolve-Path dist-windows-smoke) -ReadyTimeoutSec 240 -HoldSec 60
       - name: Upload Windows smoke diagnostics
         if: always()
         uses: actions/upload-artifact@v4

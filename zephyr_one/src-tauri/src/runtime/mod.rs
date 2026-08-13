@@ -38,6 +38,10 @@ const READY_CONTEXT: &[u8] = b"zephyr-one-ready-v1\0";
 const LOCAL_APP_LABEL: &str = "local-app";
 const LOCAL_APP_PATH: &str = "/app.html?zephyrOne=1";
 const UI_READY_MARKER: &str = "zephyr-one-ui-ready.json";
+#[cfg(target_os = "windows")]
+const EMBEDDED_CORE_READY_TIMEOUT: Duration = Duration::from_secs(210);
+#[cfg(not(target_os = "windows"))]
+const EMBEDDED_CORE_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const LOCAL_APP_READY_SCRIPT: &str = r#"
 (() => {
   if (window.top !== window || location.hostname !== '127.0.0.1') return;
@@ -743,6 +747,7 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         .env("PUBLIC_ORIGIN", &public_origin)
         .env("TRUST_PROXY", "false")
         .env("ZEPHYR_ONE_EMBEDDED", "1")
+        .env("ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS", "90000")
         .env(STARTUP_CHALLENGE_ENV, &startup_challenge_encoded)
         .env("ZEPHYR_ONE_SHELL_SECRET", shell_secret)
         .env("ZEPHYR_ONE_SHELL_INSTANCE", shell_instance)
@@ -818,7 +823,7 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         &health,
         port,
         &startup_challenge,
-        Duration::from_secs(60),
+        EMBEDDED_CORE_READY_TIMEOUT,
     ) {
         let _ = child.kill();
         let _ = child.wait();

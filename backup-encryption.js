@@ -21,6 +21,8 @@ const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const MAX_HEADER_BYTES = 4096;
 const MAX_ENV_FILE_BYTES = 64 * 1024;
+const DEFAULT_WINDOWS_ACL_TIMEOUT_MS = 30_000;
+const MAX_WINDOWS_ACL_TIMEOUT_MS = 90_000;
 const MIN_SECRET_BYTES = 32;
 const SCRYPT_PARAMS = Object.freeze({ N: 32768, r: 8, p: 1, keyLength: 32 });
 const SCRYPT_MAXMEM = 128 * 1024 * 1024;
@@ -200,6 +202,12 @@ function windowsToolEnv() {
         TEMP: process.env.TEMP,
         TMP: process.env.TMP,
     };
+}
+
+function windowsAclTimeoutMs(env = process.env) {
+    const configured = Number(env.ZEPHYR_BACKUP_WINDOWS_ACL_TIMEOUT_MS);
+    if (!Number.isSafeInteger(configured)) return DEFAULT_WINDOWS_ACL_TIMEOUT_MS;
+    return Math.min(MAX_WINDOWS_ACL_TIMEOUT_MS, Math.max(DEFAULT_WINDOWS_ACL_TIMEOUT_MS, configured));
 }
 
 const WINDOWS_SECURE_ENV_SCRIPT = String.raw`
@@ -451,7 +459,7 @@ function secureWindowsDataEnv(dataDir, envFile, { readContents = false } = {}) {
             maxBuffer: 2 * 1024 * 1024,
             windowsHide: true,
             stdio: 'pipe',
-            timeout: 30_000,
+            timeout: windowsAclTimeoutMs(),
         },
     );
     if (!readContents) return undefined;
@@ -806,6 +814,7 @@ module.exports = {
     generateBackupSecret,
     parseCurrentEnvelope,
     provisionDataEnv,
+    windowsAclTimeoutMs,
     requireConfiguredBackupSecret,
     requireLegacyBackupPassword,
     requireStrongBackupSecret,

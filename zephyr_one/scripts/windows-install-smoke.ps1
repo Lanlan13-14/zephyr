@@ -2,7 +2,7 @@
 param(
   [string]$Root = "",
   [string]$OutDir = "",
-  [int]$ReadyTimeoutSec = 120,
+  [int]$ReadyTimeoutSec = 240,
   [int]$UiReadyTimeoutSec = 120,
   [int]$HoldSec = 60
 )
