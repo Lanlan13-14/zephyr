@@ -256,11 +256,76 @@ class MobileV1ChangeBridge {
     }
 }
 
+/**
+ * True only when the frozen mobile contract file is simply absent from this
+ * tree. A malformed or unreadable registry is NOT this case and must keep
+ * failing loudly so a bad contract cannot silently degrade sync semantics.
+ */
+function isMissingRegistryError(error) {
+    return !!error && String(error.message || '').includes('Mobile entity registry not found');
+}
+
+/**
+ * No-op change bridge for trees that deliberately ship without the frozen
+ * mobile contracts (the hosted Zephyr Docker image excludes zephyr_one/, so
+ * the registry and the whole mobile v1 surface are absent there). Consumers
+ * still receive a bridge-shaped object: mutations pass straight through,
+ * nothing is recorded, and there is no registry to project against. The
+ * mobile v1 API itself stays unmounted because server.js still requires the
+ * real contract file, so nothing reachable serves a disabled bridge output.
+ */
+function createDisabledMobileV1ChangeBridge(db) {
+    const registry = { entities: [] };
+    return {
+        db,
+        registry,
+        entityByType: new Map(),
+        store: {
+            serverId() {
+                try {
+                    const row = db && typeof db.prepare === "function"
+                        ? db.prepare("SELECT value FROM settings WHERE key = 'mobileV1ServerId'").get()
+                        : null;
+                    if (row && row.value) return String(row.value);
+                } catch {
+                    /* settings table may not exist yet; fall through to the constant */
+                }
+                return 'srv-mobile-v1-disabled';
+            },
+            appendChange() {
+                return 0;
+            },
+            setEntityVersion() {},
+            setFieldRevisions() {},
+        },
+        setWakePublisher() {},
+        publishCommittedChange() {},
+        runMutation(meta, write) {
+            if (typeof write !== 'function') throw new TypeError('mutation write must be a function');
+            return write();
+        },
+        recordMutation() {
+            return { skipped: true, reason: 'change_bridge_disabled' };
+        },
+        pendingWakeEvents() {
+            return [];
+        },
+        acknowledgeWakeEvents() {},
+    };
+}
+
 function getMobileV1ChangeBridge(db, options = {}) {
     if (options.bridge) return options.bridge;
     let bridge = sharedByDb.get(db);
     if (!bridge) {
-        bridge = new MobileV1ChangeBridge({ db, ...options });
+        try {
+            bridge = new MobileV1ChangeBridge({ db, ...options });
+        } catch (error) {
+            if (!isMissingRegistryError(error)) throw error;
+            console.warn('[mobile-v1] entity registry absent; change bridge disabled:',
+                error && error.message);
+            bridge = createDisabledMobileV1ChangeBridge(db);
+        }
         sharedByDb.set(db, bridge);
     }
     return bridge;
