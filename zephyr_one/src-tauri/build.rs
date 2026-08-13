@@ -278,8 +278,7 @@ fn emit_windows_target_link_closure(libraries: &[pkg_config::Library]) -> Result
 }
 
 fn emit_windows_target_link_arg(argument: &Path) {
-    println!("cargo:rustc-link-arg-bin=zephyr-one={}", argument.display());
-    println!("cargo:rustc-link-arg-tests={}", argument.display());
+    println!("cargo:rustc-link-arg={}", argument.display());
 }
 
 fn is_msvc_crt_link_name(name: &str) -> bool {
