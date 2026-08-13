@@ -213,12 +213,28 @@ jobs:
           # msvc-dev-cmd exports the Visual Studio vcpkg path. Keep the command,
           # environment, cache and CMake toolchain on the same standalone checkout.
           $env:VCPKG_ROOT = $vcpkgRoot
-          & C:/vcpkg/vcpkg.exe install `
-            "--vcpkg-root=$vcpkgRoot" `
-            --x-manifest-root=native/freerdp-core `
-            "--x-install-root=$vcpkgRoot/installed" `
-            --triplet x64-windows-static-md
-          if ($LASTEXITCODE -ne 0) { throw "static FreeRDP dependency install failed" }
+          $vcpkgArguments = @(
+            'install'
+            "--vcpkg-root=$vcpkgRoot"
+            '--x-manifest-root=native/freerdp-core'
+            "--x-install-root=$vcpkgRoot/installed"
+            '--triplet'
+            'x64-windows-static-md'
+          )
+          $installed = $false
+          foreach ($attempt in 1..3) {
+            & C:/vcpkg/vcpkg.exe @vcpkgArguments
+            if ($LASTEXITCODE -eq 0) {
+              $installed = $true
+              break
+            }
+            if ($attempt -lt 3) {
+              $delaySeconds = 15 * $attempt
+              Write-Warning "vcpkg install attempt $attempt failed; retrying in $delaySeconds seconds"
+              Start-Sleep -Seconds $delaySeconds
+            }
+          }
+          if (-not $installed) { throw "static FreeRDP dependency install failed after 3 attempts" }
           "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
           "VCPKG_INSTALLED_DIR=C:/vcpkg/installed" >> $env:GITHUB_ENV
           "VCPKG_DEFAULT_TRIPLET=x64-windows-static-md" >> $env:GITHUB_ENV
