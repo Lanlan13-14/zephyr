@@ -90,6 +90,9 @@ done < <(grep -E \
   -e 'Unresolved reference' \
   -e 'Compilation error' \
   -e 'package-ios-unsigned failed at line' \
+  -e '^IPA_STAGE=' \
+  -e '^Expected non-empty IPA at:' \
+  -e '^/.*\.ipa$' \
   -e 'Could not (find|resolve|determine)' \
   -e 'No such file or directory' \
   "$signal" | head -n 60)
