@@ -93,8 +93,11 @@ describe('Windows install smoke harness', () => {
     assert.match(build, /emit_windows_target_link_closure\(&linked_libraries\)/);
     assert.match(build, /cargo:rustc-link-arg=/);
     assert.doesNotMatch(build, /cargo:rustc-link-arg-(?:bin|bins|test|tests)=/);
+    assert.match(build, /for file in &library\.link_files \{\s+if is_msvc_crt_link_file\(file\) \{\s+continue;/);
     assert.match(build, /for name in &library\.libs/);
     assert.match(build, /if is_msvc_crt_link_name\(name\) \{\s+continue;/);
+    assert.match(build, /fn is_msvc_crt_link_file\(path: &Path\)/);
+    assert.match(build, /\.is_some_and\(is_msvc_crt_link_name\)/);
     assert.match(build, /"msvcrt"[\s\S]*"ucrt"[\s\S]*"vcruntime"/);
     assert.match(build, /directory\.join\(&filename\)/);
     assert.match(build, /is_freerdp2_link_name\(name\)/);

@@ -255,6 +255,9 @@ fn emit_windows_target_link_closure(libraries: &[pkg_config::Library]) -> Result
             return Err("Windows pkg-config closure contains non-MSVC linker options".into());
         }
         for file in &library.link_files {
+            if is_msvc_crt_link_file(file) {
+                continue;
+            }
             emit_windows_target_link_arg(file);
         }
         for name in &library.libs {
@@ -286,6 +289,12 @@ fn is_msvc_crt_link_name(name: &str) -> bool {
         name.to_ascii_lowercase().as_str(),
         "msvcrt" | "msvcrtd" | "ucrt" | "ucrtd" | "vcruntime" | "vcruntimed" | "libcmt" | "libcmtd"
     )
+}
+
+fn is_msvc_crt_link_file(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(is_msvc_crt_link_name)
 }
 
 fn pkg_config(cargo_metadata: bool) -> pkg_config::Config {
