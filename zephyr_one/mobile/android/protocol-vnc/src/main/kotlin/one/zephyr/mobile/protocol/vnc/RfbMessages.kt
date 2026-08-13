@@ -8,6 +8,7 @@ object RfbClientMessage {
     const val KEY_EVENT = 4
     const val POINTER_EVENT = 5
     const val CLIENT_CUT_TEXT = 6
+    const val SET_DESKTOP_SIZE = 251
 }
 
 /** Server-to-client message type numbers. */
@@ -160,6 +161,25 @@ object RfbEncoder {
         out[0] = RfbClientMessage.CLIENT_CUT_TEXT.toByte()
         writeS32(out, 4, body.size)
         body.copyInto(out, 8)
+        return out
+    }
+
+    /**
+     * Requests one screen covering the requested framebuffer through the ExtendedDesktopSize
+     * extension. Servers that do not advertise that pseudo-encoding must never receive this.
+     */
+    fun setDesktopSize(width: Int, height: Int): ByteArray {
+        require(width in 1..0xFFFF) { "width out of range: " + width }
+        require(height in 1..0xFFFF) { "height out of range: " + height }
+        val out = ByteArray(24)
+        out[0] = RfbClientMessage.SET_DESKTOP_SIZE.toByte()
+        writeU16(out, 2, width)
+        writeU16(out, 4, height)
+        out[6] = 1 // number-of-screens
+        // Bytes 8..11 are the screen id (zero) and 12..15 are its x/y origin (zero).
+        writeU16(out, 16, width)
+        writeU16(out, 18, height)
+        // Bytes 20..23 are screen flags (zero).
         return out
     }
 

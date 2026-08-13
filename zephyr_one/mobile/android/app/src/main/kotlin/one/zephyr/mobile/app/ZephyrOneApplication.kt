@@ -7,6 +7,9 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
 import androidx.work.WorkManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import one.zephyr.mobile.app.di.AppContainer
 
@@ -19,6 +22,8 @@ import one.zephyr.mobile.app.di.AppContainer
  * that can hold decrypted material. An annotation processor hides that ordering.
  */
 class ZephyrOneApplication : Application(), Configuration.Provider {
+
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     lateinit var container: AppContainer
         private set
@@ -36,13 +41,18 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
         container.sweepErasedAccountDatabases()
         // Recovery completes before any Activity or persisted worker can observe the container.
         runBlocking(Dispatchers.IO) {
-            container.bindingCoordinator.restoreActiveBinding()
+            container.bindingCoordinator.restoreActiveBinding(bootstrap = false)
         }
         // Local-first: an unbound device still opens a fully usable workspace. Sync is optional on
         // mobile, so the app must never be unusable just because no server binding is present.
         runBlocking(Dispatchers.IO) {
             val workspace = container.ensureLocalWorkspace()
             if (workspace.isLocalMode) workspace.activate()
+        }
+        if (!container.isLocalMode) {
+            applicationScope.launch {
+                runCatching { container.bindingCoordinator.bootstrapRestoredBinding() }
+            }
         }
         WorkManager.initialize(this, workManagerConfiguration)
         ProcessLifecycleOwner.get().lifecycle.addObserver(LockLifecycleObserver())

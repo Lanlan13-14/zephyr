@@ -418,7 +418,7 @@ class RfbHandshakeTest {
     }
 
     @Test
-    fun `an oversized name length is capped rather than allocated`() = runTest {
+    fun `an oversized name length is rejected rather than allocated or left in the frame stream`() = runTest {
         // A hostile server claiming a 4 GiB desktop name must not be able to make the client try to
         // allocate it, so the read is clamped to MAX_STRING_BYTES.
         val nameBytes = ByteArray(RfbHandshake.MAX_STRING_BYTES) { 'z'.code.toByte() }
@@ -438,8 +438,10 @@ class RfbHandshakeTest {
 
         val outcome = RfbHandshake.perform(channel, password = null)
 
-        val ready = outcome as RfbHandshakeOutcome.Ready
-        assertEquals(RfbHandshake.MAX_STRING_BYTES, ready.session.desktopName.length)
-        assertEquals(RfbPixelFormat.RGB565, ready.session.pixelFormat)
+        val rejected = outcome as RfbHandshakeOutcome.Rejected
+        assertEquals(VncErrors.PROTOCOL_ERROR, rejected.code)
+        // The payload is intentionally not consumed: the connection is rejected immediately rather
+        // than treating bytes beyond the cap as the first server message.
+        assertEquals(RfbHandshake.MAX_STRING_BYTES, channel.unreadBytes)
     }
 }

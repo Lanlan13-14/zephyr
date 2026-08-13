@@ -145,6 +145,7 @@ class AccountContainer(
     }
     /** True for the device-reserved local workspace ([AppContainer].ensureLocalWorkspace). */
     val isLocalMode: Boolean get() = localMode
+    override val isDeviceLocal: Boolean get() = localMode
 
     private val accountJob = SupervisorJob()
     private val accountScope = CoroutineScope(accountJob + Dispatchers.Default)

@@ -7,6 +7,6 @@ object ZephyrBuild {
     const val TARGET_SDK = 35
     const val APPLICATION_ID = "one.zephyr.mobile"
     const val VERSION_CODE = 1
-    const val VERSION_NAME = "0.1.0"
+    const val VERSION_NAME = "1.0.0"
     val JAVA_VERSION: JavaVersion = JavaVersion.VERSION_17
 }

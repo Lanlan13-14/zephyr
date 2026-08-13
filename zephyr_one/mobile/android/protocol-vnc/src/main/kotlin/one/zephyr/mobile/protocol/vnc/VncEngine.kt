@@ -7,24 +7,12 @@ import one.zephyr.mobile.model.MobileError
 /**
  * The RFB engine boundary.
  *
- * ADR-005 in NATIVE_ENGINE_DECISIONS.md prefers a shared LibVNCClient-class core behind a small C
- * adapter, but it is blocked on a licence audit: LibVNCClient and TigerVNC ship under GPL-2.0-family
- * terms and MultiVNC under GPL-3.0, and the ADR is explicit that Zephyr being GPL-3.0-only does not
- * make the combination automatically compatible - linking form, transitive dependencies and App
- * Store distribution obligations all have to be audited per version. Until that closes, no core is
- * linked and [isAvailable] is false.
- *
- * The handshake is implemented for real anyway ([RfbHandshake]), because it is pure byte logic, it
- * carries the ADR-005 gate that unknown security types must be refused, and it is identical whichever
- * core wins. The framebuffer decoders are what the licence question actually covers.
- *
- * ADR-005 also rules out two shortcuts: no embedded noVNC page inside the native app, and no copying
- * a third-party viewer's UI. So this port speaks in damage rectangles and input events, and the
- * gesture and viewport work lives in feature-remote where REMOTE_DESKTOP_EXPERIENCE.md puts it.
+ * The production implementation is [SocketVncEngine]. This boundary speaks in damage rectangles
+ * and input events; gesture and viewport behaviour remains above the protocol module.
  */
 interface VncEngine {
 
-    /** False until the ADR-005 licence gate closes and a core is linked. Callers must branch on it. */
+    /** Whether this implementation can open sessions. Callers must branch on it. */
     val isAvailable: Boolean
 
     suspend fun connect(request: VncConnectRequest): VncConnectOutcome

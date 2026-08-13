@@ -86,6 +86,7 @@ data class ZephyrPalette(
     val onBackground: Color,
     val onFloating: Color,
     val onFloatingMuted: Color,
+    val onFloatingSubtle: Color,
 ) {
 
     /**
@@ -107,7 +108,7 @@ data class ZephyrPalette(
      * floating surface, so the contrast pair that was already verified for that surface still
      * holds. Choosing a second on-colour here would create a value nothing verifies.
      */
-    val onIslandSelection: Color = onFloating
+    val onIslandSelection: Color = brand.accent
 
     /**
      * Ambient and spot colour for the island's drop shadow.
@@ -128,7 +129,7 @@ data class ZephyrPalette(
          * above AA, and 0.32 is where the pill is clearly distinguishable from the unselected
          * surface (1.37:1 to 1.67:1) while the label still measures 7.96:1 at worst.
          */
-        private const val SELECTION_BLEND = 0.32f
+        private const val SELECTION_BLEND = 0.16f
 
         /**
          * Component-wise mix of two opaque colours.
@@ -166,29 +167,29 @@ data class ZephyrPalette(
             // Status hues are shared across themes on purpose: an error must look like an error
             // regardless of the brand palette the user picked.
             status = ZephyrStatusColors(
-                success = if (dark) Color(0xFF4ADE80) else Color(0xFF15803D),
-                warning = if (dark) Color(0xFFFBBF24) else Color(0xFFB45309),
-                error = if (dark) Color(0xFFF87171) else Color(0xFFB91C1C),
-                offline = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B),
-                pendingSync = if (dark) Color(0xFF60A5FA) else Color(0xFF1D4ED8),
-                conflict = if (dark) Color(0xFFC084FC) else Color(0xFF7E22CE),
+                success = if (dark) Color(0xFF30D158) else Color(0xFF15803D),
+                warning = if (dark) Color(0xFFFFD60A) else Color(0xFFB45309),
+                error = if (dark) Color(0xFFFF453A) else Color(0xFFB91C1C),
+                offline = if (dark) Color(0xFF8E99A6) else Color(0xFF64748B),
+                pendingSync = if (dark) Color(0xFF64D2FF) else Color(0xFF1D4ED8),
+                conflict = if (dark) Color(0xFFFF9F0A) else Color(0xFF7E22CE),
             ),
             protocol = ZephyrProtocolColors(
-                ssh = if (dark) Color(0xFF5EEAD4) else Color(0xFF0F766E),
-                telnet = if (dark) Color(0xFFFCD34D) else Color(0xFF92400E),
-                rdp = if (dark) Color(0xFF93C5FD) else Color(0xFF1E40AF),
-                vnc = if (dark) Color(0xFFD8B4FE) else Color(0xFF6B21A8),
+                ssh = if (dark) Color(0xFF0A84FF) else Color(0xFF0F766E),
+                telnet = if (dark) Color(0xFFFFD60A) else Color(0xFF92400E),
+                rdp = if (dark) Color(0xFFBF5AF2) else Color(0xFF1E40AF),
+                vnc = if (dark) Color(0xFF30D158) else Color(0xFF6B21A8),
             ),
             surfaces = if (dark) {
                 ZephyrSurfaces(
-                    background = Color(0xFF0B0F14),
-                    content = Color(0xFF121820),
-                    elevated = Color(0xFF1A222C),
+                    background = Color(0xFF0A0C0F),
+                    content = Color(0xFF13161B),
+                    elevated = Color(0xFF1B1F26),
                     // High opacity, not translucency: DEVELOPMENT.md 6.1.1 forbids faking glass, and
                     // a tonal surface keeps contrast predictable when blur is unavailable.
-                    floating = Color(0xFF1C242E),
-                    scrim = Color(0x99000000),
-                    outline = Color(0x33FFFFFF),
+                    floating = Color(0xE61A1E25),
+                    scrim = Color(0x80000000),
+                    outline = Color(0x14FFFFFF),
                 )
             } else {
                 ZephyrSurfaces(
@@ -200,9 +201,10 @@ data class ZephyrPalette(
                     outline = Color(0x1F0B0F14),
                 )
             },
-            onBackground = if (dark) Color(0xFFE8EDF3) else Color(0xFF10151B),
-            onFloating = if (dark) Color(0xFFE8EDF3) else Color(0xFF10151B),
-            onFloatingMuted = if (dark) Color(0xFF93A1B0) else Color(0xFF5B6875),
+            onBackground = if (dark) Color(0xFFF2F4F7) else Color(0xFF10151B),
+            onFloating = if (dark) Color(0xFFF2F4F7) else Color(0xFF10151B),
+            onFloatingMuted = if (dark) Color(0xFF9AA4B0) else Color(0xFF5B6875),
+            onFloatingSubtle = if (dark) Color(0xFF5D6773) else Color(0xFF98A1AB),
         )
     }
 }

@@ -122,6 +122,10 @@ object VncErrors {
     const val BAD_PIXEL_FORMAT = "rfb_bad_pixel_format"
     const val BAD_FRAMEBUFFER_SIZE = "rfb_bad_framebuffer_size"
     const val TRUNCATED = "rfb_truncated"
+    const val CONNECTION_FAILED = "rfb_connection_failed"
+    const val CONNECTION_TIMEOUT = "rfb_connection_timeout"
+    const val PROTOCOL_ERROR = "rfb_protocol_error"
+    const val SESSION_NOT_FOUND = "rfb_session_not_found"
     const val ENGINE_UNAVAILABLE = "vnc_engine_unavailable"
 }
 
@@ -363,10 +367,16 @@ object RfbHandshake {
         }
         val pixelFormat = RfbPixelFormat.decode(header, 4)
         val nameLength = readU32At(header, 20)
+        if (nameLength > MAX_STRING_BYTES) {
+            return RfbHandshakeOutcome.Rejected(
+                VncErrors.PROTOCOL_ERROR,
+                "Desktop name is too large: " + nameLength + " bytes",
+            )
+        }
         val name = if (nameLength <= 0) {
             ""
         } else {
-            channel.readFully(minOf(nameLength, MAX_STRING_BYTES)).toString(Charsets.UTF_8)
+            channel.readFully(nameLength).toString(Charsets.UTF_8)
         }
 
         return RfbHandshakeOutcome.Ready(

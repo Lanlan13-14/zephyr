@@ -6,6 +6,59 @@ import SwiftUI
 import UIKit
 #endif
 
+/// Host-owned connection operations that ZephyrUI can gate and present but
+/// cannot execute without protocol engines or share-sheet composition.
+public struct ConnectionHostActions {
+    public let duplicate: (Connection) -> Void
+    public let test: (Connection) -> Void
+    public let share: (Connection) -> Void
+
+    public init(
+        duplicate: @escaping (Connection) -> Void,
+        test: @escaping (Connection) -> Void,
+        share: @escaping (Connection) -> Void
+    ) {
+        self.duplicate = duplicate
+        self.test = test
+        self.share = share
+    }
+}
+
+/// Native session destinations are composed by the app host because the
+/// terminal and remote engines own their view lifetimes.
+public struct SessionHostActions {
+    public let openTerminal: (String, String) -> Void
+    public let openRemote: (String, String) -> Void
+    public let reconnect: (String, String, ConnectionProtocol) -> Void
+    public let showDetails: (String) -> Void
+
+    public init(
+        openTerminal: @escaping (String, String) -> Void,
+        openRemote: @escaping (String, String) -> Void,
+        reconnect: @escaping (String, String, ConnectionProtocol) -> Void,
+        showDetails: @escaping (String) -> Void
+    ) {
+        self.openTerminal = openTerminal
+        self.openRemote = openRemote
+        self.reconnect = reconnect
+        self.showDetails = showDetails
+    }
+}
+
+/// Routes whose dependencies live outside ZephyrUI.
+public struct FeatureHostActions {
+    public let openLibrary: (LibraryDestination) -> Void
+    public let openTool: (ToolDestination) -> Void
+
+    public init(
+        openLibrary: @escaping (LibraryDestination) -> Void,
+        openTool: @escaping (ToolDestination) -> Void
+    ) {
+        self.openLibrary = openLibrary
+        self.openTool = openTool
+    }
+}
+
 /// The root view, and the app's only navigation authority.
 ///
 /// Three contract shapes live here:
@@ -27,25 +80,37 @@ public struct ZephyrOneRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var navigation: RootNavigationModel
     @StateObject private var listViewModel: ConnectionListViewModel
+    @StateObject private var sessionViewModel: SessionListViewModel
 
     private let makeEditorViewModel: (String?) -> ConnectionEditorViewModel
     private let makeBindingViewModel: () -> ServerBindingViewModel
     private let onConnect: (Connection, Bool) -> Void
+    private let connectionActions: ConnectionHostActions
+    private let sessionActions: SessionHostActions
+    private let featureActions: FeatureHostActions
 
     public init(
         appLock: AppLock,
         navigation: @autoclosure @escaping () -> RootNavigationModel,
         listViewModel: @autoclosure @escaping () -> ConnectionListViewModel,
+        sessionViewModel: @autoclosure @escaping () -> SessionListViewModel,
         makeEditorViewModel: @escaping (String?) -> ConnectionEditorViewModel,
         makeBindingViewModel: @escaping () -> ServerBindingViewModel,
-        onConnect: @escaping (Connection, Bool) -> Void
+        onConnect: @escaping (Connection, Bool) -> Void,
+        connectionActions: ConnectionHostActions,
+        sessionActions: SessionHostActions,
+        featureActions: FeatureHostActions
     ) {
         self.appLock = appLock
         _navigation = StateObject(wrappedValue: navigation())
         _listViewModel = StateObject(wrappedValue: listViewModel())
+        _sessionViewModel = StateObject(wrappedValue: sessionViewModel())
         self.makeEditorViewModel = makeEditorViewModel
         self.makeBindingViewModel = makeBindingViewModel
         self.onConnect = onConnect
+        self.connectionActions = connectionActions
+        self.sessionActions = sessionActions
+        self.featureActions = featureActions
     }
 
     public var body: some View {
@@ -72,20 +137,36 @@ public struct ZephyrOneRootView: View {
     }
 
     private var rootTabs: some View {
-        TabView(selection: $navigation.selectedRoot) {
-            homeRoot
-                .tabItem { Label("首页", systemImage: RootDestination.home.systemImage) }
-                .tag(RootDestination.home)
-            placeholder(RootDestination.sessions)
-                .tabItem { Label("会话", systemImage: RootDestination.sessions.systemImage) }
-                .tag(RootDestination.sessions)
-            placeholder(RootDestination.library)
-                .tabItem { Label("资料", systemImage: RootDestination.library.systemImage) }
-                .tag(RootDestination.library)
-            placeholder(RootDestination.tools)
-                .tabItem { Label("工具", systemImage: RootDestination.tools.systemImage) }
-                .tag(RootDestination.tools)
+        ZStack(alignment: .bottom) {
+            rootLayer(homeRoot, destination: .home)
+            rootLayer(sessionsRoot, destination: .sessions)
+            rootLayer(libraryRoot, destination: .library)
+            rootLayer(toolsRoot, destination: .tools)
+
+            if showsRootIsland {
+                ZephyrRootIsland(selection: $navigation.selectedRoot)
+                    .padding(.bottom, ZephyrRootIslandMetrics.bottomSpacing)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(10)
+            }
         }
+        .background(ZephyrRootBackground())
+        .animation(.spring(response: 0.34, dampingFraction: 0.88), value: showsRootIsland)
+    }
+
+    private var showsRootIsland: Bool {
+        navigation.editorTarget == nil && !navigation.showsServerBinding
+    }
+
+    private func rootLayer<Content: View>(
+        _ content: Content,
+        destination: RootDestination
+    ) -> some View {
+        content
+            .opacity(navigation.selectedRoot == destination ? 1 : 0)
+            .allowsHitTesting(navigation.selectedRoot == destination)
+            .accessibilityHidden(navigation.selectedRoot != destination)
+            .zIndex(navigation.selectedRoot == destination ? 1 : 0)
     }
 
     private var homeRoot: some View {
@@ -94,10 +175,40 @@ public struct ZephyrOneRootView: View {
                 viewModel: listViewModel,
                 onOpenConnection: { onConnect($0, true) },
                 onEditConnection: { navigation.openEditor(connectionId: $0) },
-                onOpenBinding: { navigation.openServerBinding() }
+                onOpenBinding: { navigation.openServerBinding() },
+                onDuplicateConnection: connectionActions.duplicate,
+                onTestConnection: connectionActions.test,
+                onShareConnection: connectionActions.share
             )
             .background(editorLink)
             .background(bindingLink)
+        }
+        .zephyrNavigationStackStyle()
+    }
+
+    private var sessionsRoot: some View {
+        NavigationView {
+            SessionListView(
+                viewModel: sessionViewModel,
+                onOpenTerminal: sessionActions.openTerminal,
+                onOpenRemote: sessionActions.openRemote,
+                onReconnect: sessionActions.reconnect,
+                onDetails: sessionActions.showDetails
+            )
+        }
+        .zephyrNavigationStackStyle()
+    }
+
+    private var libraryRoot: some View {
+        NavigationView {
+            LibraryRootView(onOpen: featureActions.openLibrary)
+        }
+        .zephyrNavigationStackStyle()
+    }
+
+    private var toolsRoot: some View {
+        NavigationView {
+            ToolsRootView(onOpen: featureActions.openTool)
         }
         .zephyrNavigationStackStyle()
     }
@@ -143,16 +254,6 @@ public struct ZephyrOneRootView: View {
         }
     }
 
-    /// Sessions, library and tools are root destinations whose screens are
-    /// outside this package's current scope; the destination must still exist
-    /// so the switcher honours the frozen four-entry contract.
-    private func placeholder(_ destination: RootDestination) -> some View {
-        NavigationView {
-            Text("\(destination.title)（尚未实现）")
-                .navigationTitle(destination.title)
-        }
-        .zephyrNavigationStackStyle()
-    }
 }
 
 /// Owns the editor view model for the pushed editor's lifetime.

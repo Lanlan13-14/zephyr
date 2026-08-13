@@ -2,10 +2,10 @@ package one.zephyr.mobile.ui.island
 
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Article
-import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Handyman
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.ui.graphics.vector.ImageVector
 import one.zephyr.mobile.ui.R
 
@@ -29,10 +29,10 @@ enum class IslandDestination(
     @StringRes val labelRes: Int,
     val icon: ImageVector,
 ) {
-    HOME("home", R.string.island_home, Icons.Outlined.Dashboard),
-    SESSIONS("sessions", R.string.island_sessions, Icons.Outlined.Article),
+    HOME("home", R.string.island_home, Icons.Outlined.Home),
+    SESSIONS("sessions", R.string.island_sessions, Icons.Outlined.Terminal),
     LIBRARY("library", R.string.island_library, Icons.Outlined.Folder),
-    TOOLS("tools", R.string.island_tools, Icons.Outlined.Handyman),
+    TOOLS("tools", R.string.island_tools, Icons.Outlined.GridView),
     ;
 
     companion object {

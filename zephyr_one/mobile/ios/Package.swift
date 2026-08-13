@@ -35,7 +35,7 @@ import PackageDescription
      policy) is Foundation/Combine-only code, so `swift test` exercises it on
      the runner. SwiftUI views are a thin rendering of those types.
    - View files are wrapped in `#if canImport(SwiftUI)` and compile for
-     macOS 12 as well as iOS 15, so the compiler still reads them; only the
+     macOS 14 as well as iOS 17, so the compiler still reads them; only the
      UIKit bridge (interactive pop gesture) and iOS-specific modifiers sit
      behind `canImport(UIKit)` shims.
 
@@ -65,10 +65,10 @@ import PackageDescription
 let package = Package(
     name: "ZephyrOne",
     platforms: [
-        // iOS 15 is the product floor. macOS is listed because `swift test`
+        // iOS 17 is the dependency-backed product floor. macOS is listed because `swift test`
         // builds for the host, and without it the tests cannot run in CI.
-        .iOS(.v15),
-        .macOS(.v12),
+        .iOS(.v17),
+        .macOS(.v14),
     ],
      products: [
          .library(name: "ZephyrContracts", targets: ["ZephyrContracts"]),

@@ -376,6 +376,33 @@ data class ConnectionDraft(
                 portWasEdited = connection.port != connection.protocol.defaultPort,
             )
 
+        /** Prefills a new owned row without copying secret presence or server authority metadata. */
+        fun duplicate(source: Connection, ownerUserId: String, connectionId: String): ConnectionDraft {
+            val clean = source.copy(
+                id = connectionId,
+                ownerUserId = ownerUserId,
+                name = source.name + " 副本",
+                password = SecretPresence.absent,
+                privateKey = SecretPresence.absent,
+                revision = 0,
+                updatedAt = 0,
+                lastConnectedAt = null,
+                deletedAt = null,
+                residency = one.zephyr.mobile.model.Residency.OWNED,
+                capabilities = one.zephyr.mobile.model.CapabilitySet.owner,
+                sharedOwnerLabel = null,
+                grantExpiresAt = null,
+                syncState = one.zephyr.mobile.model.SyncState.SYNCED,
+                opaque = emptyMap(),
+                ephemeral = false,
+            )
+            return ConnectionDraft(
+                original = null,
+                current = clean,
+                portWasEdited = clean.port != clean.protocol.defaultPort,
+            )
+        }
+
         /**
          * Field readers keyed by registry field name.
          *

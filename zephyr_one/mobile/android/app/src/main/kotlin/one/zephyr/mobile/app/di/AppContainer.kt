@@ -7,6 +7,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import one.zephyr.mobile.BuildConfig
 import one.zephyr.mobile.contracts.BindingState
 import one.zephyr.mobile.model.AccountBinding
@@ -28,6 +31,10 @@ import one.zephyr.mobile.app.binding.NoAccountStateWiper
 import one.zephyr.mobile.app.binding.SharedPreferencesBindingTeardownJournal
 import one.zephyr.mobile.app.binding.SharedPreferencesBindingReplacementJournal
 import one.zephyr.mobile.app.binding.SharedPreferencesNoAccountCleanupJournal
+import one.zephyr.mobile.protocol.rdp.AndroidRdpEngine
+import one.zephyr.mobile.protocol.rdp.RdpEngine
+import one.zephyr.mobile.protocol.vnc.SocketVncEngine
+import one.zephyr.mobile.protocol.vnc.VncEngine
 import one.zephyr.mobile.app.session.WorkspaceStatePersistence
 import one.zephyr.mobile.app.security.BiometricDeviceAuthenticator
 import one.zephyr.mobile.data.db.DatabaseFactory
@@ -61,6 +68,12 @@ import one.zephyr.mobile.sync.SyncSettings
  * reading another's blobs.
  */
 class AppContainer(private val context: Context) {
+
+    /** Process-scoped protocol engines survive Activity recreation without orphaning sessions. */
+    val vncEngine: VncEngine by lazy { SocketVncEngine() }
+
+    /** Reports unavailable until the packaged FreeRDP JNI library can be loaded. */
+    val rdpEngine: RdpEngine by lazy { AndroidRdpEngine() }
 
     /** Process lifetime scope used only to tear down a graph after that graph reports revocation. */
     private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -156,6 +169,10 @@ class AppContainer(private val context: Context) {
     @Volatile
     private var accountGraph: ManagedBindingGraph? = null
 
+    private val accountState = MutableStateFlow<AccountContainer?>(null)
+
+    val accounts: StateFlow<AccountContainer?> = accountState.asStateFlow()
+
     val account: AccountContainer?
         get() = accountGraph as? AccountContainer
 
@@ -168,11 +185,17 @@ class AppContainer(private val context: Context) {
                 override fun attachGraph(graph: ManagedBindingGraph) {
                     check(accountGraph == null) { "old account graph must be stopped before replacement" }
                     accountGraph = graph
-                    (graph as? AccountContainer)?.onProcessForegroundChanged(processForeground.get())
+                    (graph as? AccountContainer)?.let { account ->
+                        accountState.value = account
+                        account.onProcessForegroundChanged(processForeground.get())
+                    }
                 }
 
                 override fun clearGraph(expected: ManagedBindingGraph) {
-                    if (accountGraph === expected) accountGraph = null
+                    if (accountGraph === expected) {
+                        accountGraph = null
+                        accountState.value = null
+                    }
                 }
             },
             graphFactory = BindingGraphFactory { stored ->
@@ -257,6 +280,7 @@ class AppContainer(private val context: Context) {
             throw failure
         }
         accountGraph = container
+        accountState.value = container
         container.onProcessForegroundChanged(processForeground.get())
         return container
     }

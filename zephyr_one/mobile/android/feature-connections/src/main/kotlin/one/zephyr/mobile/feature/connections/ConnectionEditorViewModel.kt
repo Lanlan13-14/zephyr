@@ -69,6 +69,7 @@ class ConnectionEditorViewModel(
     resources: ResourceRepository,
     private val ownerUserId: String,
     private val connectionId: String?,
+    private val duplicateSourceId: String?,
     private val newIdFactory: () -> String,
     private val tester: ConnectionTester = UnavailableConnectionTester,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -100,6 +101,22 @@ class ConnectionEditorViewModel(
     }
 
     private suspend fun load() {
+        if (duplicateSourceId != null) {
+            val source = connections.find(duplicateSourceId)
+            page.value = if (
+                source == null || source.isDeleted ||
+                source.residency != one.zephyr.mobile.model.Residency.OWNED
+            ) {
+                PageState.NotFoundOrRevoked
+            } else {
+                PageState.Content(
+                    ConnectionEditorUiState(
+                        ConnectionDraft.duplicate(source, ownerUserId, newIdFactory()),
+                    ),
+                )
+            }
+            return
+        }
         if (connectionId == null) {
             page.value = PageState.Content(
                 ConnectionEditorUiState(ConnectionDraft.create(ownerUserId, newIdFactory())),
@@ -321,6 +338,7 @@ class ConnectionEditorViewModel(
             resources: ResourceRepository,
             ownerUserId: String,
             connectionId: String?,
+            duplicateSourceId: String? = null,
             newIdFactory: () -> String,
             tester: ConnectionTester = UnavailableConnectionTester,
             registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
@@ -332,6 +350,7 @@ class ConnectionEditorViewModel(
                 resources = resources,
                 ownerUserId = ownerUserId,
                 connectionId = connectionId,
+                duplicateSourceId = duplicateSourceId,
                 newIdFactory = newIdFactory,
                 tester = tester,
                 registerSensitiveSink = registerSensitiveSink,

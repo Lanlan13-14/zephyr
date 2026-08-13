@@ -57,6 +57,7 @@ final class ConnectionListViewModelTests: XCTestCase {
 
     func testColdStartIsInitialLoading() {
         let viewModel = makeViewModel()
+        XCTAssertFalse(viewModel.canSync)
         guard case .initialLoading = viewModel.state else {
             return XCTFail("expected initialLoading, got \(viewModel.state)")
         }
@@ -120,6 +121,21 @@ final class ConnectionListViewModelTests: XCTestCase {
         XCTAssertEqual(2, allRows.count)
     }
 
+    func testResetSearchAndFiltersRecoversFromNoMatch() {
+        let viewModel = makeViewModel()
+        viewModel.updateOwnedRows([UiTestData.connection()])
+        viewModel.setQuery("missing")
+        viewModel.toggleProtocol(.rdp)
+        guard case .empty(.noMatchingFilter) = viewModel.state else {
+            return XCTFail("expected noMatchingFilter, got \(viewModel.state)")
+        }
+        viewModel.resetSearchAndFilters()
+        XCTAssertEqual(ConnectionFilter(), viewModel.filter)
+        guard case .content = viewModel.state else {
+            return XCTFail("expected content, got \(viewModel.state)")
+        }
+    }
+
     func testToggleFavouritePersists() {
         let preferences = FakePreferenceStore()
         let viewModel = makeViewModel(preferences: preferences)
@@ -154,6 +170,24 @@ final class ConnectionListViewModelTests: XCTestCase {
         let viewModel = makeViewModel(connections: store)
         await viewModel.delete(UiTestData.connection())
         XCTAssertEqual(ConnectionListViewModel.msgDeleteFailed, viewModel.message)
+    }
+
+    func testDeleteWithoutLocalStoreReportsUnavailable() async {
+        let viewModel = makeViewModel()
+        XCTAssertFalse(viewModel.canDeleteLocally)
+        await viewModel.delete(UiTestData.connection())
+        XCTAssertEqual(ConnectionListViewModel.msgDeleteUnavailable, viewModel.message)
+    }
+
+    func testOptionalManualSyncRunsWhenProvided() async {
+        var syncCount = 0
+        let viewModel = ConnectionListViewModel(
+            ownerUserId: UiTestData.owner,
+            syncNowAction: { syncCount += 1 }
+        )
+        XCTAssertTrue(viewModel.canSync)
+        await viewModel.syncNow()
+        XCTAssertEqual(1, syncCount)
     }
 
     func testRecentsAndTagsTrackTheRows() {

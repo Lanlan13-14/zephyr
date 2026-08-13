@@ -38,13 +38,17 @@ public final class ConnectionListViewModel: ObservableObject {
     private let ownerUserId: String
     private let connections: ConnectionStore?
     private let preferences: PreferenceStore?
-    private let syncNowAction: () async -> Void
+    private let syncNowAction: (() async -> Void)?
+
+    /// Manual sync is optional. Local browsing and writes never depend on it.
+    public var canSync: Bool { syncNowAction != nil }
+    public var canDeleteLocally: Bool { connections != nil }
 
     public init(
         ownerUserId: String,
         connections: ConnectionStore? = nil,
         preferences: PreferenceStore? = nil,
-        syncNowAction: @escaping () async -> Void = {}
+        syncNowAction: (() async -> Void)? = nil
     ) {
         self.ownerUserId = ownerUserId
         self.connections = connections
@@ -131,6 +135,12 @@ public final class ConnectionListViewModel: ObservableObject {
         filter = filter.cleared()
     }
 
+    /// Empty-search recovery clears both the query and facets. The normal
+    /// facet reset deliberately preserves the query while this intent cannot.
+    public func resetSearchAndFilters() {
+        filter = ConnectionFilter()
+    }
+
     // ---- write intents -----------------------------------------------------------
 
     public func toggleFavourite(_ connectionId: String) {
@@ -147,7 +157,10 @@ public final class ConnectionListViewModel: ObservableObject {
     /// gone from this device and the tombstone is queued, which is true
     /// whether or not the network is up.
     public func delete(_ connection: Connection) async {
-        guard let connections else { return }
+        guard let connections else {
+            message = ConnectionListViewModel.msgDeleteUnavailable
+            return
+        }
         do {
             try await connections.delete(connection, ownerUserId: ownerUserId)
             message = ConnectionListViewModel.msgDeleted
@@ -159,7 +172,7 @@ public final class ConnectionListViewModel: ObservableObject {
     }
 
     public func syncNow() async {
-        await syncNowAction()
+        await syncNowAction?()
     }
 
     public func consumeMessage() {
@@ -167,6 +180,7 @@ public final class ConnectionListViewModel: ObservableObject {
     }
 
     public static let msgDeleted = "已删除，待同步"
+    public static let msgDeleteUnavailable = "此版本未配置本地连接存储，无法删除"
     public static let msgDeleteDenied = "你没有删除此连接的权限"
     public static let msgDeleteFailed = "删除未完成，请重试"
 }

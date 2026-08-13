@@ -7,6 +7,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
@@ -19,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -29,10 +36,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.app.di.AccountContainer
 import one.zephyr.mobile.app.di.AppContainer
@@ -44,6 +57,11 @@ import one.zephyr.mobile.feature.connections.ConnectionListRoute
 import one.zephyr.mobile.feature.connections.ConnectionListViewModel
 import one.zephyr.mobile.feature.filesync.DirectoryAuthorizationResult
 import one.zephyr.mobile.feature.filesync.rememberDirectoryAuthorizer
+import one.zephyr.mobile.feature.notes.LibraryRootContent
+import one.zephyr.mobile.feature.notes.LibraryRootRoute
+import one.zephyr.mobile.feature.notes.RecentFileRecord
+import one.zephyr.mobile.feature.notes.RecentResourceFiles
+import one.zephyr.mobile.feature.notes.ResourceHomeSummary
 import one.zephyr.mobile.feature.remote.RdpRemoteRoute
 import one.zephyr.mobile.feature.remote.RdpViewModel
 import one.zephyr.mobile.feature.remote.RemoteCredentials
@@ -62,16 +80,22 @@ import one.zephyr.mobile.feature.tools.BatchExecutionViewModel
 import one.zephyr.mobile.feature.tools.BatchIntent
 import one.zephyr.mobile.feature.tools.NoopBatchAuditSink
 import one.zephyr.mobile.feature.tools.UnavailableRemotePorts
+import one.zephyr.mobile.feature.tools.ToolEntry
+import one.zephyr.mobile.feature.tools.ToolsInventory
+import one.zephyr.mobile.feature.tools.ToolsRootRoute
+import one.zephyr.mobile.feature.tools.ToolsRootSummaries
 import one.zephyr.mobile.R
 import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.MobileError
+import one.zephyr.mobile.model.Note
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.Residency
 import one.zephyr.mobile.model.SecretRef
 import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SyncStatus
-import one.zephyr.mobile.protocol.rdp.UnavailableRdpEngine
-import one.zephyr.mobile.protocol.vnc.UnavailableVncEngine
+import one.zephyr.mobile.model.SyncState
+import one.zephyr.mobile.model.Snippet
+import one.zephyr.mobile.data.session.SessionExecution
 import one.zephyr.mobile.ui.island.FloatingIsland
 import one.zephyr.mobile.ui.island.IslandDestination
 import one.zephyr.mobile.ui.island.islandContentBottomInset
@@ -101,9 +125,10 @@ fun ZephyrOneRoot(
     locked: Boolean,
     onUnlockRequested: () -> Unit,
     modifier: Modifier = Modifier,
+    integrations: ZephyrOneIntegrations = ZephyrOneIntegrations(),
 ) {
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        val account = container.account
+        val account by container.accounts.collectAsState()
         when {
             /* The lock gate outranks everything, including a bound account: AppLock is the product
              * gate, and drawing a screen behind it would expose content to the recents screenshot. */
@@ -113,9 +138,39 @@ fun ZephyrOneRoot(
              * instead of rendering an empty dashboard that merely looks broken. */
             account == null -> NoticeScreen(text = NOT_BOUND)
 
-            else -> BoundRoot(account = account)
+            else -> account?.let { activeAccount ->
+                key(activeAccount.generation) {
+                    BoundRoot(
+                        account = activeAccount,
+                        integrations = integrations,
+                        vncEngine = container.vncEngine,
+                        rdpEngine = container.rdpEngine,
+                    )
+                }
+            }
         }
     }
+}
+
+/** Optional destinations owned by host modules that are not part of this Android UI slice. */
+data class ZephyrOneIntegrations(
+    val onTestConnection: ((Connection) -> Unit)? = null,
+    val onShareConnection: ((Connection) -> Unit)? = null,
+    val onOpenAccount: (() -> Unit)? = null,
+    val onOpenServerBinding: (() -> Unit)? = null,
+    val onLibraryAction: ((LibraryAction) -> Unit)? = null,
+    val onOpenTool: ((ToolEntry) -> Unit)? = null,
+)
+
+sealed interface LibraryAction {
+    data object Create : LibraryAction
+    data object Files : LibraryAction
+    data object Notes : LibraryAction
+    data object Snippets : LibraryAction
+    data object Downloads : LibraryAction
+    data class RecentFile(val value: RecentFileRecord) : LibraryAction
+    data class OpenNote(val value: Note) : LibraryAction
+    data class OpenSnippet(val value: Snippet) : LibraryAction
 }
 
 /** Where the user currently is: one root destination, or one full-screen surface above it. */
@@ -125,7 +180,14 @@ private sealed interface RootRoute {
     data class Root(val destination: IslandDestination) : RootRoute
 
     /** Null [connectionId] means a new connection. */
-    data class ConnectionEditor(val connectionId: String?) : RootRoute
+    data class ConnectionEditor(
+        val connectionId: String?,
+        val duplicateSourceId: String? = null,
+    ) : RootRoute
+
+    data class SessionDetails(val sessionId: String) : RootRoute
+
+    data object BatchExecution : RootRoute
 
     data class Terminal(val sessionId: String, val connectionId: String) : RootRoute
 
@@ -146,7 +208,10 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
     save = { route ->
         when (route) {
             is RootRoute.Root -> listOf(TAG_ROOT, route.destination.name)
-            is RootRoute.ConnectionEditor -> listOf(TAG_EDITOR, route.connectionId ?: "")
+            is RootRoute.ConnectionEditor ->
+                listOf(TAG_EDITOR, route.connectionId ?: "", route.duplicateSourceId ?: "")
+            is RootRoute.SessionDetails -> listOf(TAG_SESSION_DETAILS, route.sessionId)
+            RootRoute.BatchExecution -> listOf(TAG_BATCH)
             is RootRoute.Terminal -> listOf(TAG_TERMINAL, route.sessionId, route.connectionId)
             is RootRoute.Remote ->
                 listOf(TAG_REMOTE, route.sessionId, route.connectionId, route.protocol.name)
@@ -161,7 +226,16 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
                     ?: IslandDestination.HOME,
             )
 
-            TAG_EDITOR -> RootRoute.ConnectionEditor(saved.getOrNull(1)?.takeIf { it.isNotEmpty() })
+            TAG_EDITOR -> RootRoute.ConnectionEditor(
+                connectionId = saved.getOrNull(1)?.takeIf { it.isNotEmpty() },
+                duplicateSourceId = saved.getOrNull(2)?.takeIf { it.isNotEmpty() },
+            )
+
+            TAG_SESSION_DETAILS -> saved.getOrNull(1)?.takeIf { it.isNotEmpty() }
+                ?.let(RootRoute::SessionDetails)
+                ?: RootRoute.Root(IslandDestination.SESSIONS)
+
+            TAG_BATCH -> RootRoute.BatchExecution
 
             TAG_TERMINAL -> {
                 val sessionId = saved.getOrNull(1)
@@ -190,7 +264,12 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
 )
 
 @Composable
-private fun BoundRoot(account: AccountContainer) {
+private fun BoundRoot(
+    account: AccountContainer,
+    integrations: ZephyrOneIntegrations,
+    vncEngine: one.zephyr.mobile.protocol.vnc.VncEngine,
+    rdpEngine: one.zephyr.mobile.protocol.rdp.RdpEngine,
+) {
     var route: RootRoute by rememberSaveable(stateSaver = RootRouteSaver) {
         mutableStateOf(RootRoute.Root(IslandDestination.HOME))
     }
@@ -222,11 +301,17 @@ private fun BoundRoot(account: AccountContainer) {
                 ownerUserId = ownerUserId,
                 syncStatus = syncStatus,
                 onOpenEditor = { id -> route = RootRoute.ConnectionEditor(id) },
+                onDuplicateConnection = { id -> route = RootRoute.ConnectionEditor(null, id) },
                 onOpenSession = { sessionId, connectionId, protocol ->
                     route = routeForProtocol(sessionId, connectionId, protocol)
                 },
                 onMessage = { messages.emit(it) },
                 onNotice = notice,
+                integrations = integrations,
+                onOpenSessionDetails = { sessionId -> route = RootRoute.SessionDetails(sessionId) },
+                onOpenBatch = { route = RootRoute.BatchExecution },
+                vncEngine = vncEngine,
+                rdpEngine = rdpEngine,
             )
 
             is RootRoute.ConnectionEditor -> ConnectionEditorRoute(
@@ -237,6 +322,7 @@ private fun BoundRoot(account: AccountContainer) {
                         resources = account.resources,
                         ownerUserId = ownerUserId,
                         connectionId = current.connectionId,
+                        duplicateSourceId = current.duplicateSourceId,
                         newIdFactory = { UUID.randomUUID().toString() },
                         registerSensitiveSink = account::registerSensitiveSink,
                         unregisterSensitiveSink = account::unregisterSensitiveSink,
@@ -280,6 +366,19 @@ private fun BoundRoot(account: AccountContainer) {
                 onBack = { route = RootRoute.Root(IslandDestination.SESSIONS) },
                 onMessage = { messages.emit(it) },
                 onNotice = notice,
+                vncEngine = vncEngine,
+                rdpEngine = rdpEngine,
+            )
+
+            is RootRoute.SessionDetails -> SessionDetailsScreen(
+                row = account.sessions.find(current.sessionId),
+                onBack = { route = RootRoute.Root(IslandDestination.SESSIONS) },
+            )
+
+            RootRoute.BatchExecution -> BatchExecutionDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                onMessage = { messages.emit(it) },
             )
         }
 
@@ -307,9 +406,15 @@ private fun RootDestination(
     ownerUserId: String,
     syncStatus: Flow<SyncStatus>,
     onOpenEditor: (String?) -> Unit,
+    onDuplicateConnection: (String) -> Unit,
     onOpenSession: (String, String, Protocol) -> Unit,
     onMessage: suspend (String) -> Unit,
     onNotice: (String) -> Unit,
+    integrations: ZephyrOneIntegrations,
+    onOpenSessionDetails: (String) -> Unit,
+    onOpenBatch: () -> Unit,
+    vncEngine: one.zephyr.mobile.protocol.vnc.VncEngine,
+    rdpEngine: one.zephyr.mobile.protocol.rdp.RdpEngine,
 ) {
     val nowMs = System.currentTimeMillis()
 
@@ -325,8 +430,8 @@ private fun RootDestination(
             val status by listSyncStatus.collectAsState(initial = SyncStatus.unbound())
 
             Column(Modifier.fillMaxSize()) {
-                if (account.isLocalMode) {
-                    LocalModeBanner(onBindServer = { onNotice(PENDING_BIND_SERVER) })
+                if (account.isLocalMode && integrations.onOpenServerBinding != null) {
+                    LocalModeBanner(onBindServer = integrations.onOpenServerBinding)
                 }
                 ConnectionListRoute(
                     viewModel = viewModel(
@@ -338,6 +443,7 @@ private fun RootDestination(
                             ownerUserId = ownerUserId,
                             syncStatus = listSyncStatus,
                             network = account.network,
+                            localMode = account.isLocalMode,
                             syncNowAction = if (account.isLocalMode) {
                                 { /* Local mode has no server to sync with. */ }
                             } else {
@@ -354,11 +460,12 @@ private fun RootDestination(
                 onEditConnection = { connection -> onOpenEditor(connection.id) },
                 /* Opens the source row rather than pre-filling a copy: the editor has no duplicate
                  * mode, and silently editing the original would be the wrong write. */
-                onDuplicateConnection = { onNotice(PENDING_DUPLICATE) },
-                onTestConnection = { onNotice(PENDING_TEST) },
-                onShareConnection = { onNotice(PENDING_SHARE) },
+                onDuplicateConnection = { connection -> onDuplicateConnection(connection.id) },
+                onTestConnection = integrations.onTestConnection,
+                onShareConnection = integrations.onShareConnection,
                     onCreate = { onOpenEditor(null) },
-                    onOpenAccount = { onNotice(PENDING_ACCOUNT) },
+                    onOpenAccount = integrations.onOpenAccount,
+                    localMode = account.isLocalMode,
                     onMessage = onMessage,
                     modifier = if (account.isLocalMode) Modifier.weight(1f) else Modifier,
                 )
@@ -375,7 +482,13 @@ private fun RootDestination(
                     network = account.network,
                     /* Nothing to close at transport level while the engines are unavailable. The
                      * ViewModel still updates the registry, so the row moves to 已关闭 either way. */
-                    closeTransport = { _: SessionRow -> },
+                    closeTransport = { row ->
+                        when (row.protocol) {
+                            Protocol.VNC -> vncEngine.disconnect(row.sessionId)
+                            Protocol.RDP -> rdpEngine.disconnect(row.sessionId)
+                            Protocol.SSH, Protocol.TELNET -> Unit
+                        }
+                    },
                     /* Restores directly into the registry, which is what the persistence class does;
                      * the empty list means "no extra snapshots beyond what was restored". */
                     loadWorkspace = {
@@ -397,38 +510,219 @@ private fun RootDestination(
                 val protocol = account.sessions.find(sessionId)?.protocol ?: Protocol.RDP
                 onOpenSession(sessionId, connectionId, protocol)
             },
-            onDetails = { onNotice(PENDING_SESSION_DETAILS) },
+            onDetails = onOpenSessionDetails,
             onMessage = onMessage,
         )
 
-        /* 资料 (notes / recent files / snippets). feature-notes has its state and reducers but no
-         * Composable yet, so this names the gap instead of rendering an empty list, which would be a
-         * false claim that the user has no notes. */
-        IslandDestination.LIBRARY -> NoticeScreen(text = PENDING_LIBRARY)
+        IslandDestination.LIBRARY -> LibraryDestination(
+            account = account,
+            ownerUserId = ownerUserId,
+            nowMs = nowMs,
+            integrations = integrations,
+            onNotice = onNotice,
+        )
 
-        IslandDestination.TOOLS -> {
-            val toolsViewModel: BatchExecutionViewModel = viewModel(
-                key = "tools:batch",
-                factory = BatchExecutionViewModel.factory(
-                    connections = account.connections,
-                    exec = UnavailableRemotePorts,
-                    audit = NoopBatchAuditSink,
-                    ownerUserId = ownerUserId,
-                    network = account.network,
-                ),
-            )
-            val state by toolsViewModel.state.collectAsState()
+        IslandDestination.TOOLS -> ToolsDestination(
+            account = account,
+            ownerUserId = ownerUserId,
+            syncStatus = syncStatus,
+            integrations = integrations,
+            onOpenBatch = onOpenBatch,
+            onNotice = onNotice,
+        )
+    }
+}
 
-            BatchExecutionScreen(
-                state = state,
-                onIntent = { intent -> toolsViewModel.dispatch(intent) },
-                /* The page state is derived from a Room flow that re-emits on its own, so there is no
-                 * fetch to repeat. Clearing the selection is the one recovery the ViewModel offers
-                 * for a plan that references rows the mirror no longer has. */
-                onRetry = { toolsViewModel.clearSelection() },
-            )
+@Composable
+private fun LibraryDestination(
+    account: AccountContainer,
+    ownerUserId: String,
+    nowMs: Long,
+    integrations: ZephyrOneIntegrations,
+    onNotice: (String) -> Unit,
+) {
+    val notes by account.notes.observeNotes(ownerUserId).collectAsState(initial = emptyList())
+    val snippets by account.notes.observeSnippets(ownerUserId).collectAsState(initial = emptyList())
+    val recentFilesFlow = remember(account) {
+        account.settings.observePreferences().map { preferences ->
+            RecentResourceFiles.decode(preferences[RecentResourceFiles.PREFERENCE_KEY])
         }
     }
+    val recentFiles by recentFilesFlow.collectAsState(initial = emptyList())
+    val activeNotes = notes.filterNot(Note::isTrashed)
+    val summary = ResourceHomeSummary(
+        noteCount = activeNotes.size,
+        snippetCount = snippets.count { it.deletedAt == null },
+        trashedNoteCount = notes.count(Note::isTrashed),
+        activeDownloadCount = 0,
+        recentFiles = recentFiles,
+        pendingCount = notes.count { it.syncState == SyncState.PENDING_LOCAL } +
+            snippets.count { it.syncState == SyncState.PENDING_LOCAL },
+        conflictCount = notes.count { it.syncState == SyncState.CONFLICTED } +
+            snippets.count { it.syncState == SyncState.CONFLICTED },
+    )
+    val dispatch: (LibraryAction) -> Unit = { action ->
+        integrations.onLibraryAction?.invoke(action)
+            ?: onNotice("${libraryActionTitle(action)}尚未接入当前 Android 宿主")
+    }
+
+    LibraryRootRoute(
+        content = LibraryRootContent(summary, activeNotes, snippets.filter { it.deletedAt == null }),
+        nowMs = nowMs,
+        onCreateResource = { dispatch(LibraryAction.Create) },
+        onOpenFiles = { dispatch(LibraryAction.Files) },
+        onOpenNotes = { dispatch(LibraryAction.Notes) },
+        onOpenSnippets = { dispatch(LibraryAction.Snippets) },
+        onOpenDownloads = { dispatch(LibraryAction.Downloads) },
+        onOpenRecentFile = { dispatch(LibraryAction.RecentFile(it)) },
+        onOpenNote = { dispatch(LibraryAction.OpenNote(it)) },
+        onOpenSnippet = { dispatch(LibraryAction.OpenSnippet(it)) },
+    )
+}
+
+@Composable
+private fun ToolsDestination(
+    account: AccountContainer,
+    ownerUserId: String,
+    syncStatus: Flow<SyncStatus>,
+    integrations: ZephyrOneIntegrations,
+    onOpenBatch: () -> Unit,
+    onNotice: (String) -> Unit,
+) {
+    val connections by account.connections.observeAll(ownerUserId).collectAsState(initial = emptyList())
+    val proxies by account.resources.observeProxies(ownerUserId).collectAsState(initial = emptyList())
+    val keys by account.resources.observeSshKeys(ownerUserId).collectAsState(initial = emptyList())
+    val jumps by account.resources.observeJumpHosts(ownerUserId).collectAsState(initial = emptyList())
+    val network by account.network.collectAsState(initial = one.zephyr.mobile.network.NetworkState.offline)
+    val status by syncStatus.collectAsState(initial = SyncStatus.unbound())
+    val inventory = ToolsInventory(
+        executableSshCount = connections.count { it.protocol == Protocol.SSH && it.capabilities.canExecute },
+        observableSshCount = connections.count { it.protocol == Protocol.SSH && it.capabilities.canObserve },
+        proxyCount = proxies.count { it.deletedAt == null },
+        sshKeyCount = keys.count { it.deletedAt == null },
+        jumpHostCount = jumps.count { it.deletedAt == null },
+        online = network.connected,
+        pendingSyncCount = status.pendingCount,
+        conflictCount = status.conflictCount,
+    )
+    val openExternal: (ToolEntry) -> Unit = { entry ->
+        integrations.onOpenTool?.invoke(entry)
+            ?: onNotice("${toolEntryTitle(entry)}尚未接入当前 Android 宿主")
+    }
+
+    ToolsRootRoute(
+        inventory = inventory,
+        summaries = ToolsRootSummaries(),
+        onAddTool = { openExternal(ToolEntry.PROXY) },
+        onOpenBatchExecution = onOpenBatch,
+        onOpenDocker = { openExternal(ToolEntry.DOCKER) },
+        onOpenMonitor = { openExternal(ToolEntry.MONITOR) },
+        onOpenLogs = { openExternal(ToolEntry.LOGS) },
+        onOpenProxies = { openExternal(ToolEntry.PROXY) },
+        onOpenSshKeys = { openExternal(ToolEntry.SSH_KEY) },
+        onOpenJumpHosts = { openExternal(ToolEntry.JUMP_HOST) },
+        onOpenAiWorkspace = { openExternal(ToolEntry.AI_WORKSPACE) },
+        onOpenFileSync = { openExternal(ToolEntry.FILE_SYNC) },
+        onOpenClientToken = { openExternal(ToolEntry.CLIENT_TOKEN) },
+        onOpenServerSettings = { openExternal(ToolEntry.SERVER_SETTINGS) },
+        onOpenBackupRestore = { openExternal(ToolEntry.BACKUP_RESTORE) },
+        onOpenRuntimeStatus = { openExternal(ToolEntry.RUNTIME_STATUS) },
+        onOpenAppearance = { openExternal(ToolEntry.APPEARANCE) },
+        onOpenLanguage = { openExternal(ToolEntry.LANGUAGE) },
+        onOpenAppLock = { openExternal(ToolEntry.APP_LOCK) },
+        onOpenNetwork = { openExternal(ToolEntry.NETWORK) },
+        onOpenDiagnostics = { openExternal(ToolEntry.DIAGNOSTICS) },
+        onUnavailableTool = { _, reason -> onNotice(reason) },
+    )
+}
+
+private fun libraryActionTitle(action: LibraryAction): String = when (action) {
+    LibraryAction.Create -> "新建资料"
+    LibraryAction.Files, is LibraryAction.RecentFile -> "文件"
+    LibraryAction.Notes, is LibraryAction.OpenNote -> "笔记"
+    LibraryAction.Snippets, is LibraryAction.OpenSnippet -> "代码片段"
+    LibraryAction.Downloads -> "下载"
+}
+
+private fun toolEntryTitle(entry: ToolEntry): String = when (entry) {
+    ToolEntry.BATCH_EXEC -> "远程批量"
+    ToolEntry.DOCKER -> "Docker"
+    ToolEntry.MONITOR -> "监控"
+    ToolEntry.LOGS -> "日志"
+    ToolEntry.PROXY -> "Proxy"
+    ToolEntry.SSH_KEY -> "SSH Key"
+    ToolEntry.JUMP_HOST -> "JumpHost"
+    ToolEntry.AI_WORKSPACE -> "AI 助理"
+    ToolEntry.FILE_SYNC -> "文件同步"
+    ToolEntry.CLIENT_TOKEN -> "Client Token"
+    ToolEntry.SERVER_SETTINGS -> "服务器设置"
+    ToolEntry.BACKUP_RESTORE -> "备份恢复"
+    ToolEntry.RUNTIME_STATUS -> "运行状态"
+    ToolEntry.APPEARANCE -> "外观"
+    ToolEntry.LANGUAGE -> "语言"
+    ToolEntry.APP_LOCK -> "本地解锁"
+    ToolEntry.NETWORK -> "网络"
+    ToolEntry.DIAGNOSTICS -> "诊断"
+}
+
+@Composable
+private fun BatchExecutionDestination(
+    account: AccountContainer,
+    ownerUserId: String,
+    onMessage: suspend (String) -> Unit,
+) {
+    val toolsViewModel: BatchExecutionViewModel = viewModel(
+        key = "tools:batch",
+        factory = BatchExecutionViewModel.factory(
+            connections = account.connections,
+            exec = UnavailableRemotePorts,
+            audit = NoopBatchAuditSink,
+            ownerUserId = ownerUserId,
+            network = account.network,
+        ),
+    )
+    val state by toolsViewModel.state.collectAsState()
+    BatchExecutionScreen(
+        state = state,
+        onIntent = { toolsViewModel.dispatch(it) },
+        onRetry = toolsViewModel::clearSelection,
+    )
+}
+
+@Composable
+private fun SessionDetailsScreen(row: SessionRow?, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    Column(Modifier.fillMaxSize().padding(ZephyrSpacing.lg)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
+            }
+            Text("会话详情", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(ZephyrSpacing.lg))
+        if (row == null) {
+            Text("会话已关闭或不存在", color = one.zephyr.mobile.ui.theme.ZephyrTheme.palette.onFloatingMuted)
+        } else {
+            DetailLine("连接", row.name)
+            DetailLine("协议", row.protocol.wireName)
+            DetailLine("地址", row.displayAddress, mono = true)
+            DetailLine("会话 ID", row.sessionId, mono = true)
+            DetailLine("执行位置", if (row.execution == SessionExecution.LOCAL) "本机" else "主端")
+            row.latencyMs?.let { DetailLine("延迟", it.toString() + " ms", mono = true) }
+            row.detail?.let { DetailLine("状态", it) }
+            row.revokedReason?.let { DetailLine("权限", it) }
+        }
+    }
+}
+
+@Composable
+private fun DetailLine(label: String, value: String, mono: Boolean = false) {
+    Text(label, color = one.zephyr.mobile.ui.theme.ZephyrTheme.palette.onFloatingSubtle, fontSize = 12.sp)
+    Text(
+        value,
+        fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
+        modifier = Modifier.padding(top = 3.dp, bottom = 14.dp),
+    )
 }
 
 @Composable
@@ -438,6 +732,8 @@ private fun RemoteDestination(
     onBack: () -> Unit,
     onMessage: suspend (String) -> Unit,
     onNotice: (String) -> Unit,
+    vncEngine: one.zephyr.mobile.protocol.vnc.VncEngine,
+    rdpEngine: one.zephyr.mobile.protocol.rdp.RdpEngine,
 ) {
     val nowMs = System.currentTimeMillis()
     val networkState by account.network.collectAsState(initial = null)
@@ -452,7 +748,7 @@ private fun RemoteDestination(
                     connectionId = route.connectionId,
                     registry = account.sessions,
                     connections = account.connections,
-                    engine = UnavailableVncEngine(),
+                    engine = vncEngine,
                     secretProvider = { connection ->
                         RemoteCredentials(password = account.passwordChars(connection))
                     },
@@ -510,7 +806,7 @@ private fun RemoteDestination(
                 connectionId = route.connectionId,
                 registry = account.sessions,
                 connections = account.connections,
-                engine = UnavailableRdpEngine(),
+                engine = rdpEngine,
                 secretProvider = { candidate -> account.passwordChars(candidate) },
                 /* The real grant, re-derived on every resolution.
                  *
@@ -724,6 +1020,8 @@ internal fun secretRefForPresence(
 
 private const val TAG_ROOT = "root"
 private const val TAG_EDITOR = "editor"
+private const val TAG_SESSION_DETAILS = "session-details"
+private const val TAG_BATCH = "batch"
 private const val TAG_TERMINAL = "terminal"
 private const val TAG_REMOTE = "remote"
 

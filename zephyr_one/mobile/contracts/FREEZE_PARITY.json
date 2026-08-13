@@ -96,6 +96,12 @@
       "freezePath": "FREEZE/zephyr one for mobile/branding/source/zephyr-one-cyber.svg",
       "sha256": "cde0df1b57af7fbfc6571af1f484974fe2f143fbd562b90239a4aff32f8a7884",
       "bytes": 1347
+    },
+    {
+      "path": "branding/production/zephyr-one-frost-outlined.svg",
+      "freezePath": "FREEZE/zephyr one for mobile/branding/production/zephyr-one-frost-outlined.svg",
+      "sha256": "856a607e83ac8faa78f4e75789c6b8206dfbaa37dd3505a09284d4781870e81d",
+      "bytes": 2213
     }
   ]
 }

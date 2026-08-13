@@ -44,6 +44,7 @@ class ConnectionListViewModel(
     private val ownerUserId: String,
     syncStatus: Flow<SyncStatus>,
     network: Flow<NetworkState>,
+    private val localMode: Boolean,
     private val syncNowAction: suspend () -> Unit,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
@@ -86,7 +87,7 @@ class ConnectionListViewModel(
             favouriteIds = favouriteIds,
             loaded = rows != null,
             online = networkState.connected,
-            bound = status.bindingState.isBound,
+            bound = localMode || status.bindingState.isBound,
             lastSyncedAt = status.lastSuccessAt,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), PageState.InitialLoading)
@@ -180,6 +181,7 @@ class ConnectionListViewModel(
             ownerUserId: String,
             syncStatus: Flow<SyncStatus>,
             network: Flow<NetworkState>,
+            localMode: Boolean = false,
             syncNowAction: suspend () -> Unit,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -190,6 +192,7 @@ class ConnectionListViewModel(
                 ownerUserId = ownerUserId,
                 syncStatus = syncStatus,
                 network = network,
+                localMode = localMode,
                 syncNowAction = syncNowAction,
             ) as T
         }

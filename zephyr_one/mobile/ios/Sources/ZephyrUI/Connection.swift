@@ -2,7 +2,7 @@ import Foundation
 
 /// A Zephyr connection as mirrored on the device. Field names track the entity
 /// registry so a fieldMask can be produced without a translation table.
-public struct Connection: Equatable, Sendable, Identifiable {
+public struct Connection: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var ownerUserId: String
     public var `protocol`: ConnectionProtocol

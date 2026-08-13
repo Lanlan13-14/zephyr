@@ -7,10 +7,9 @@ import one.zephyr.mobile.model.RdpChannel
 /**
  * The RDP engine boundary.
  *
- * **Not implemented in this release, deliberately.** ADR-004 in NATIVE_ENGINE_DECISIONS.md keeps the
- * FreeRDP mobile binding an open M0 item: the repo already has a native FreeRDP shim for the desktop
- * shell at `zephyr_one/native/zephyr-one-rdp/`, but there is no Android Surface or iOS Metal binding,
- * and the ADR is explicit that its presence must not be read as mobile RDP being done.
+ * The Android implementation is [AndroidRdpEngine]. It is available only in builds that package the
+ * pinned Android FreeRDP archives and JNI library; [UnavailableRdpEngine] remains the explicit
+ * fallback for builds without that native payload.
  *
  * What exists here is the seam: the port every caller codes against, plus the pure decisions that do
  * not need an engine - certificate trust, channel gating and the drive read-only rule. When the
@@ -27,7 +26,7 @@ import one.zephyr.mobile.model.RdpChannel
  */
 interface RdpEngine {
 
-    /** False until the ADR-004 binding exists. Callers must branch on it, never assume. */
+    /** Callers must branch on this because the native payload is optional per build. */
     val isAvailable: Boolean
 
     suspend fun connect(request: RdpConnectRequest): RdpConnectOutcome
@@ -145,7 +144,7 @@ sealed interface RdpConnectOutcome {
     data class Failed(val error: MobileError) : RdpConnectOutcome
 }
 
-/** The engine is absent until ADR-004 closes. Reports it instead of pretending to connect. */
+/** Explicit fallback for a build that does not package the JNI engine. */
 class UnavailableRdpEngine : RdpEngine {
 
     override val isAvailable: Boolean = false

@@ -35,7 +35,6 @@ public struct SessionListView: View {
     public var body: some View {
         content
             .navigationTitle("会话")
-            .zephyrInlineTitle()
             .toolbar {
                 ToolbarItem(placement: .zephyrNavTrailing) {
                     Button("批量关闭") { showBulkClose = true }
@@ -82,69 +81,110 @@ public struct SessionListView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch viewModel.state {
-        case .initialLoading:
-            ProgressView("正在恢复会话…")
-        case let .content(value, _, _, _):
-            list(value)
-        case let .empty(reason):
-            emptyView(reason)
-        case .offlineWithCache:
-            // Sessions are process-local runtime state, so there is no mirror
-            // to fall back on while offline: the list simply marks it.
-            if case let .content(value, _, _, _) = viewModel.state { list(value) }
-            else { EmptyView() }
-        case .offlineNoCache, .notFoundOrRevoked, .fatalIncompatible:
-            EmptyView()
-        case let .permissionDenied(_, reason):
-            Text(reason ?? "无权限查看会话")
-        case let .retryableError(error):
-            errorView(error)
+        ZStack {
+            ZephyrRootBackground()
+            switch viewModel.state {
+            case .initialLoading:
+                ProgressView("正在恢复会话…")
+            case let .content(value, _, _, _):
+                list(value)
+            case let .empty(reason):
+                emptyView(reason)
+            case .offlineWithCache:
+                if case let .content(value, _, _, _) = viewModel.state { list(value) }
+                else { EmptyView() }
+            case .offlineNoCache, .notFoundOrRevoked, .fatalIncompatible:
+                ZephyrEmptyPanel(systemImage: "rectangle.slash", title: "会话不可用", detail: "没有可恢复的本地会话")
+                    .padding()
+            case let .permissionDenied(_, reason):
+                ZephyrEmptyPanel(systemImage: "lock", title: "无权限查看会话", detail: reason ?? "权限不足")
+                    .padding()
+            case let .retryableError(error):
+                errorView(error)
+            }
         }
     }
 
     private func list(_ value: SessionListContent) -> some View {
-        List {
-            if !value.online {
-                Text("离线：断线会话不能重连，恢复网络后重试")
-                    .font(.footnote)
-            }
-            ForEach(value.groups) { section in
-                Section(header: Text(section.group.title)) {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if !value.online {
+                    Label("离线：断线会话不能重连", systemImage: "wifi.slash")
+                        .font(.footnote.weight(.medium))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .zephyrCard()
+                        .padding(.top, 6)
+                }
+                ForEach(value.groups) { section in
+                    ZephyrSectionTitle(section.group.title)
                     ForEach(section.rows) { row in
                         sessionRow(row, online: value.online)
+                            .padding(.bottom, 8)
                     }
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 112)
         }
     }
 
     private func sessionRow(_ row: SessionRow, online: Bool) -> some View {
-        VStack(alignment: .leading) {
-            HStack {
+        HStack(alignment: .top, spacing: 12) {
+            Circle()
+                .fill(statusColor(row))
+                .frame(width: 9, height: 9)
+                .shadow(color: statusColor(row).opacity(row.transport == .connected ? 0.6 : 0), radius: 4)
+                .padding(.top, 6)
+
+            VStack(alignment: .leading, spacing: 4) {
                 Text(row.name)
-                Spacer()
-                Text(row.`protocol`.wireName)
-                    .font(.footnote)
+                    .font(.system(size: 14, weight: .semibold))
+                Text(sessionSummary(row))
+                    .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                    .foregroundColor(.secondary)
+                if let disclosure = SessionActions.executionDisclosure(row) {
+                    Text(disclosure)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                if row.revoked {
+                    Text(row.revokedReason ?? SessionActions.reasonRevoked)
+                        .font(.caption2)
+                        .foregroundColor(ZephyrStyle.danger)
+                }
             }
-            Text(row.displayAddress)
-                .font(.footnote)
-            if let disclosure = SessionActions.executionDisclosure(row) {
-                Text(disclosure)
-                    .font(.footnote)
+
+            Spacer(minLength: 6)
+
+            Text(row.`protocol`.wireName)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(protocolColor(row.`protocol`))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(protocolColor(row.`protocol`).opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            Menu {
+                ForEach(SessionActions.visibleActions(row), id: \.self) { action in
+                    actionButton(action, for: row, online: online)
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 28, height: 28)
             }
-            if row.revoked {
-                Text(row.revokedReason ?? SessionActions.reasonRevoked)
-                    .font(.footnote)
-            }
-            if let latency = row.latencyMs {
-                Text("延迟 \(latency) ms")
-                    .font(.footnote)
-            }
+            .accessibilityLabel("\(row.name) 会话操作")
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onTapGesture {
             handleTap(row)
         }
+        .zephyrCard()
         .contextMenu {
             ForEach(SessionActions.visibleActions(row), id: \.self) { action in
                 actionButton(action, for: row, online: online)
@@ -189,12 +229,11 @@ public struct SessionListView: View {
     }
 
     private func emptyView(_ reason: EmptyReason) -> some View {
-        VStack(spacing: 8) {
-            Text("还没有会话")
-            Text("从首页连接一个 SSH/Telnet/RDP/VNC 连接后，这里会列出运行中的会话")
-                .font(.footnote)
-                .multilineTextAlignment(.center)
-        }
+        ZephyrEmptyPanel(
+            systemImage: "terminal",
+            title: "还没有会话",
+            detail: "从首页连接 SSH/Telnet/RDP/VNC 后，运行中的会话会显示在这里"
+        )
         .padding()
     }
 
@@ -204,6 +243,32 @@ public struct SessionListView: View {
             Text(error.diagnosticText())
                 .font(.footnote)
             Button("重试") { Task { await viewModel.restoreWorkspace([]) } }
+        }
+        .padding()
+    }
+
+    private func sessionSummary(_ row: SessionRow) -> String {
+        var values: [String] = [row.displayAddress]
+        if let latency = row.latencyMs { values.append("\(latency) ms") }
+        values.append(row.execution == .local ? "本地执行" : "主端 relay")
+        return values.joined(separator: " · ")
+    }
+
+    private func statusColor(_ row: SessionRow) -> Color {
+        if row.minimised { return Color.gray }
+        switch row.transport {
+        case .connecting: return ZephyrStyle.pending
+        case .connected: return ZephyrStyle.success
+        case .disconnected, .closed: return ZephyrStyle.danger
+        }
+    }
+
+    private func protocolColor(_ value: ConnectionProtocol) -> Color {
+        switch value {
+        case .ssh: return ZephyrStyle.accent
+        case .telnet: return ZephyrStyle.warning
+        case .rdp: return Color(red: 191 / 255, green: 90 / 255, blue: 242 / 255)
+        case .vnc: return ZephyrStyle.success
         }
     }
 }

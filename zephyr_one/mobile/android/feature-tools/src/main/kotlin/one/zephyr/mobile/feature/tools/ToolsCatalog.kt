@@ -52,6 +52,7 @@ object ToolRoutes {
     const val JUMP_HOSTS = "tools/resources/jumpHost"
     const val AI = "tools/ai"
     const val FILE_SYNC = "tools/fileSync"
+    const val CLIENT_TOKEN = "tools/fileSync/clientToken"
     const val SERVER_SETTINGS = "tools/server/settings"
     const val BACKUP = "tools/server/backup"
     const val RUNTIME_STATUS = "tools/server/status"
@@ -82,6 +83,7 @@ enum class ToolEntry(
     AI_WORKSPACE(ToolSection.AI, ToolRoutes.AI),
 
     FILE_SYNC(ToolSection.FILE_SYNC, ToolRoutes.FILE_SYNC),
+    CLIENT_TOKEN(ToolSection.FILE_SYNC, ToolRoutes.CLIENT_TOKEN),
 
     SERVER_SETTINGS(ToolSection.SERVER, ToolRoutes.SERVER_SETTINGS),
     BACKUP_RESTORE(ToolSection.SERVER, ToolRoutes.BACKUP),
@@ -152,7 +154,7 @@ object ToolsCatalog {
             if (inventory.aiRuntimeAvailable) ActionGate.Allowed
             else ActionGate.Disabled(Capability.USE, REASON_NO_AI_RUNTIME)
 
-        ToolEntry.FILE_SYNC -> ActionGate.Allowed
+        ToolEntry.FILE_SYNC, ToolEntry.CLIENT_TOKEN -> ActionGate.Allowed
 
         // Readable offline: the effective settings come from the mirror, and the screen labels them
         // as a mirror with its age rather than refusing to open.

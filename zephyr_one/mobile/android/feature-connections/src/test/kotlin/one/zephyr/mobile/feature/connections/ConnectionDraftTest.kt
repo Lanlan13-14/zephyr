@@ -54,6 +54,24 @@ class ConnectionDraftTest {
     }
 
     @Test
+    fun duplicateCreatesANewOwnedDraftWithoutSecretsOrHistory() {
+        val source = Fixtures.connection(
+            password = SecretPresence(hasValue = true),
+            privateKey = SecretPresence(hasValue = true),
+        ).copy(lastConnectedAt = 123L, revision = 7)
+
+        val duplicate = ConnectionDraft.duplicate(source, Fixtures.OWNER, "copy-id")
+
+        assertTrue(duplicate.isCreate)
+        assertEquals("copy-id", duplicate.current.id)
+        assertEquals(source.name + " 副本", duplicate.current.name)
+        assertFalse(duplicate.current.password.hasValue)
+        assertFalse(duplicate.current.privateKey.hasValue)
+        assertNull(duplicate.current.lastConnectedAt)
+        assertEquals(0L, duplicate.current.revision)
+    }
+
+    @Test
     fun untouchedPortFollowsProtocolSwitch() {
         val draft = ConnectionDraft.create(Fixtures.OWNER, "c-new", Protocol.SSH)
             .withProtocol(Protocol.RDP)

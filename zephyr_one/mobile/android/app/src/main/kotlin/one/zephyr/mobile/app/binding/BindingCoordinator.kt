@@ -158,6 +158,7 @@ interface ManagedBindingGraph {
     val binding: AccountBinding
     val bindingKey: String
     val generation: String
+    val isDeviceLocal: Boolean get() = false
 
     fun isRecoverable(): Boolean
     fun storeCredentials(access: String, accessExpiresAt: Long?, refresh: String)
@@ -257,7 +258,7 @@ class BindingCoordinator internal constructor(
     )
 
     /** Restores the graph before WorkManager can resolve a persisted sync request. */
-    suspend fun restoreActiveBinding(): BindingRestoreResult {
+    suspend fun restoreActiveBinding(bootstrap: Boolean = true): BindingRestoreResult {
         val preparation = mutex.withLock {
             workersMayRun = false
             if (noAccountCleanupMarkerConflictsLocked()) {
@@ -312,13 +313,25 @@ class BindingCoordinator internal constructor(
         }
         // Bootstrap can perform network I/O. Keep it outside the coordinator mutex so unbind or a
         // revoke can cancel the graph, join the round, and erase the database immediately.
-        preparation.bootstrapGraph?.let { graph ->
+        preparation.bootstrapGraph?.takeIf { bootstrap }?.let { graph ->
             graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
                 markBootstrapReadyIfCurrent(graph, checkNotNull(preparation.binding), round.endState)
             }
         }
         workersMayRun = preparation.result !is BindingRestoreResult.LocalCleanupRequired
         return preparation.result
+    }
+
+    /** Retries a restored account's initial sync without blocking process startup. */
+    suspend fun bootstrapRestoredBinding() {
+        val graph = mutex.withLock {
+            val current = host.currentGraph() ?: return
+            if (!current.accountDatabaseRequiresBootstrap()) return
+            current
+        }
+        graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
+            markBootstrapReadyIfCurrent(graph, graph.binding, round.endState)
+        }
     }
 
     /** Production entry point. The gateway is scoped to this server profile and authentication. */
@@ -579,7 +592,10 @@ class BindingCoordinator internal constructor(
         )
 
         val next = StoredBinding(binding, pending.profile, settings)
-        val previousBinding = host.currentGraph()?.binding ?: storage.bindingForTeardown()
+        val previousBinding = host.currentGraph()
+            ?.takeUnless { it.isDeviceLocal }
+            ?.binding
+            ?: storage.bindingForTeardown()
         val previousScope = previousBinding?.let(BindingTeardownScope::of)
         val workersWereAllowed = workersMayRun
         if (previousScope != null) workersMayRun = false

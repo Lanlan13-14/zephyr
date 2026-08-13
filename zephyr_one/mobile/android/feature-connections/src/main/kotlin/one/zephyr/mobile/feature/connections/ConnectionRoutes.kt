@@ -28,17 +28,17 @@ fun ConnectionListRoute(
     nowMs: Long,
     onOpenConnection: (Connection) -> Unit,
     onEditConnection: (Connection) -> Unit,
-    onDuplicateConnection: (Connection) -> Unit,
-    onTestConnection: (Connection) -> Unit,
-    onShareConnection: (Connection) -> Unit,
+    onDuplicateConnection: ((Connection) -> Unit)?,
+    onTestConnection: ((Connection) -> Unit)?,
+    onShareConnection: ((Connection) -> Unit)?,
     onCreate: () -> Unit,
-    onOpenAccount: () -> Unit,
+    onOpenAccount: (() -> Unit)?,
+    localMode: Boolean,
     onMessage: suspend (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsState()
     val filter by viewModel.filter.collectAsState()
-    val recents by viewModel.recents.collectAsState()
     val tags by viewModel.availableTags.collectAsState()
     val favourites by viewModel.favouriteIds.collectAsState()
 
@@ -47,12 +47,20 @@ fun ConnectionListRoute(
     ConnectionListScreen(
         state = state,
         filter = filter,
-        recents = recents,
         availableTags = tags,
         favouriteIds = favourites,
         syncStatus = syncStatus,
         activity = activity,
         nowMs = nowMs,
+        localMode = localMode,
+        availableActions = buildSet {
+            add(ConnectionAction.USE)
+            add(ConnectionAction.EDIT)
+            add(ConnectionAction.DELETE)
+            if (onDuplicateConnection != null) add(ConnectionAction.DUPLICATE)
+            if (onTestConnection != null) add(ConnectionAction.TEST)
+            if (onShareConnection != null) add(ConnectionAction.SHARE)
+        },
         onQueryChange = viewModel::setQuery,
         onToggleProtocol = viewModel::toggleProtocol,
         onToggleTag = viewModel::toggleTag,
@@ -64,15 +72,15 @@ fun ConnectionListRoute(
             when (action) {
                 ConnectionAction.USE -> onOpenConnection(connection)
                 ConnectionAction.EDIT -> onEditConnection(connection)
-                ConnectionAction.DUPLICATE -> onDuplicateConnection(connection)
-                ConnectionAction.TEST -> onTestConnection(connection)
-                ConnectionAction.SHARE -> onShareConnection(connection)
+                ConnectionAction.DUPLICATE -> onDuplicateConnection?.invoke(connection)
+                ConnectionAction.TEST -> onTestConnection?.invoke(connection)
+                ConnectionAction.SHARE -> onShareConnection?.invoke(connection)
                 // The screen already confirmed; the ViewModel queues the tombstone.
                 ConnectionAction.DELETE -> viewModel.delete(connection)
             }
         },
         onCreate = onCreate,
-        onSyncNow = viewModel::syncNow,
+        onSyncNow = if (localMode) null else viewModel::syncNow,
         onOpenAccount = onOpenAccount,
         onRetry = viewModel::syncNow,
         modifier = modifier,

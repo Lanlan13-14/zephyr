@@ -34,30 +34,27 @@ object ZephyrRadius {
  */
 object IslandSpec {
     /** Outer capsule height on phones. */
-    val outerHeight: Dp = 72.dp
+    val outerHeight: Dp = 62.dp
 
-    /** Side inset from the screen edge. */
-    val sideInset: Dp = 16.dp
+    /** The frozen prototype uses 88% of the viewport until the phone-width cap is reached. */
+    const val widthFraction: Float = 0.88f
 
-    /** Tablets cap the width so the island never becomes a full-width bar. */
-    val maxWidth: Dp = 520.dp
+    val maxWidth: Dp = 340.dp
 
-    /** Bottom gap is max(this, safeAreaBottom). */
-    val minBottomGap: Dp = 10.dp
+    /** Added after, rather than replacing, the navigation-bar inset. */
+    val bottomGap: Dp = 18.dp
 
     /** Padding between the outer capsule and the item row. */
-    val innerPadding: Dp = 6.dp
+    val innerPadding: Dp = 5.dp
 
-    val selectedPillHeight: Dp = 60.dp
-    val selectedPillRadius: Dp = 30.dp
+    val selectedPillHeight: Dp = 52.dp
+    val selectedPillRadius: Dp = 26.dp
 
-    val iconSize: Dp = 24.dp
+    val iconSize: Dp = 23.dp
+    val selectedIconSize: Dp = 17.dp
 
     /** Gap between the icon and the label inside the selected pill. */
-    val iconLabelGap: Dp = 10.dp
-
-    /** Horizontal padding inside the selected pill, per side. */
-    val pillHorizontalPadding: Dp = 20.dp
+    val iconLabelGap: Dp = 2.dp
 
     /** Android accessibility floor for every item hit area. */
     val minTouchTarget: Dp = 48.dp
@@ -69,19 +66,19 @@ object IslandSpec {
     val fabClearance: Dp = 12.dp
 
     /** Press feedback scale. */
-    const val PRESS_SCALE: Float = 0.97f
+    const val PRESS_SCALE: Float = 0.94f
 
     /** Press feedback must be visible within this budget. */
-    const val PRESS_FEEDBACK_MS: Int = 100
+    const val PRESS_FEEDBACK_MS: Int = 120
 
     /** Target spring response for the selection pill, in seconds. */
-    const val SELECTION_RESPONSE_SEC: Float = 0.28f
+    const val SELECTION_RESPONSE_SEC: Float = 0.34f
 
     /** Critically damped: the spec forbids overshoot on selection. */
     const val SELECTION_DAMPING_RATIO: Float = 1.0f
 
     /** Label crossfade ceiling. */
-    const val LABEL_CROSSFADE_MS: Int = 140
+    const val LABEL_CROSSFADE_MS: Int = 180
 
     /** Reduce Motion replaces the positional spring with this crossfade. */
     const val REDUCED_MOTION_MS: Int = 120

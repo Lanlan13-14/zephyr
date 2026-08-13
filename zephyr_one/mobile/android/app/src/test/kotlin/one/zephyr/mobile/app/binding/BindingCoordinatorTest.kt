@@ -94,6 +94,37 @@ class BindingCoordinatorTest {
     }
 
     @Test
+    fun `device local workspace binds as first persisted account`() = runTest {
+        val events = mutableListOf<String>()
+        val storage = FakeStorage(events)
+        val host = FakeHost(events)
+        val local = FakeGraph(
+            binding = storedBinding().binding.copy(serverProfileId = "_local", userId = "local"),
+            events = events,
+            initiallyRecoverable = true,
+            databaseRequiresBootstrap = false,
+            deviceLocal = true,
+        )
+        host.attachGraph(local)
+        events.clear()
+        val graphs = mutableListOf<FakeGraph>()
+        val gateway = FakeGateway()
+        val coordinator = coordinator(storage, host, graphs, events)
+
+        assertTrue(
+            coordinator.login(profile(), "alice", "password".toCharArray(), gateway) is
+                BindingAuthenticationResult.Authenticated,
+        )
+        val result = coordinator.completeBinding(bindingRequest(), "123456".toCharArray())
+
+        assertTrue(result is BindingCompletionResult.Completed)
+        assertEquals("server-1", storage.active?.binding?.serverProfileId)
+        assertTrue("storage.save" in events)
+        assertFalse("storage.replace" in events)
+        assertTrue("graph.stop" in events)
+    }
+
+    @Test
     fun `must change password blocks binding and clears authentication`() = runTest {
         val gateway = FakeGateway(
             loginReply = BindingLoginReply.Authenticated(
@@ -1698,9 +1729,11 @@ private class FakeGraph(
     private val events: MutableList<String>,
     initiallyRecoverable: Boolean,
     private val databaseRequiresBootstrap: Boolean,
+    private val deviceLocal: Boolean = false,
 ) : ManagedBindingGraph {
     override val bindingKey = binding.serverProfileId + "/" + binding.userId + "/" + binding.deviceId
     override val generation = BindingGeneration.of(binding)
+    override val isDeviceLocal: Boolean get() = deviceLocal
 
     private var recoverable = initiallyRecoverable
     private val job = SupervisorJob()

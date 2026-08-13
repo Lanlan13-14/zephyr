@@ -157,6 +157,18 @@ jobs:
             exit "$status"
           fi
 
+      - name: Validate installable APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/debug/*.apk)
+          test "${#apks[@]}" -eq 1
+          unzip -tq "${apks[0]}"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "${apks[0]}"
+          version="$($ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")"
+          test "$version" = '1.0.0'
+
       # assembleDebug produces a debug-signed APK that installs as-is. Upload it
       # so a green run yields a testable build instead of leaving the binary on
       # the discarded runner, and so the release job has something to attach.
@@ -219,6 +231,37 @@ jobs:
             exit "$status"
           fi
 
+      # Build a device-targeted Swift executable against the checked-in
+      # ZephyrUI package, place it in a valid .app bundle, and archive that
+      # bundle as an unsigned IPA. The packager rejects host executables and
+      # malformed Payload layouts rather than relabelling arbitrary output.
+      - name: Build unsigned IPA
+        shell: bash
+        env:
+          # Dispatch versions are release tags (zom-v1.0.0); the packager
+          # removes the required prefix for CFBundleShortVersionString. Push
+          # and pull-request validation runs use a valid standalone default.
+          MARKETING_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '1.0.0' }}
+        run: |
+          set -o pipefail
+          status=0
+          bash "$GITHUB_WORKSPACE/zephyr_one/mobile/tools/package-ios-unsigned.sh" \
+            "$RUNNER_TEMP/zephyr-one-ios-unsigned.ipa" \
+            "$GITHUB_WORKSPACE/zephyr_one/mobile/ios" \
+            2>&1 | tee /tmp/ios-package.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
+              /tmp/ios-package.log 'package unsigned iOS app'
+            exit "$status"
+          fi
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: ${{ runner.temp }}/zephyr-one-ios-unsigned.ipa
+          if-no-files-found: error
+
   release:
     # Publish a mobile pre-release only on an explicit dispatch with a version
     # (and not just validation), and only when every platform compiled and the
@@ -227,22 +270,57 @@ jobs:
     if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.version != '' && github.event.inputs.validation_only != 'true' && needs.contracts.result == 'success' && needs.android.result == 'success' && needs.ios.result == 'success' }}
     needs: [contracts, android, ios]
     runs-on: ubuntu-latest
+    concurrency:
+      group: zephyr-one-mobile-release-${{ github.event.inputs.version }}${{ github.event.inputs.prerelease_label }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
-          path: release-artifacts
-          merge-multiple: true
+          name: android-debug-apk
+          path: release-artifacts/android
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: release-artifacts/ios
       - name: Pack release artifacts
         working-directory: .
+        shell: bash
         run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(release-artifacts/android/*.apk)
+          ipas=(release-artifacts/ios/*.ipa)
+          test "${#apks[@]}" -eq 1
+          test "${#ipas[@]}" -eq 1
+          unzip -tq "${apks[0]}"
+          unzip -tq "${ipas[0]}"
+          unzip -Z1 "${ipas[0]}" | grep -qx 'Payload/ZephyrOne.app/Info.plist'
+          unzip -Z1 "${ipas[0]}" | grep -qx 'Payload/ZephyrOne.app/ZephyrOneMobileApp'
           mkdir -p dist-mobile
-          find release-artifacts -type f \( -name '*.apk' -o -name '*.aab' -o -name '*.zip' \) -exec cp -v {} dist-mobile/ \; || true
-          ls -la dist-mobile || true
-          test "$(find dist-mobile -type f | wc -l)" -gt 0
-      - uses: softprops/action-gh-release@v2
+          install -m 0644 "${apks[0]}" dist-mobile/zephyr-one-android-debug.apk
+          install -m 0644 "${ipas[0]}" dist-mobile/zephyr-one-ios-unsigned.ipa
+          test "$(find dist-mobile -maxdepth 1 -type f -name '*.apk' | wc -l)" -eq 1
+          test "$(find dist-mobile -maxdepth 1 -type f -name '*.ipa' | wc -l)" -eq 1
+          ls -la dist-mobile
+      - name: Replace target prerelease and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_TAG: ${{ github.event.inputs.version }}${{ github.event.inputs.prerelease_label }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TARGET_TAG" >/dev/null 2>&1; then
+            gh release delete "$TARGET_TAG" --cleanup-tag --yes
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TARGET_TAG" >/dev/null 2>&1; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TARGET_TAG"
+          fi
+
+      - name: Publish mobile release
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version }}${{ github.event.inputs.prerelease_label }}
+          target_commitish: ${{ github.sha }}
           name: "Zephyr One Mobile ${{ github.event.inputs.version }}${{ github.event.inputs.prerelease_label }}"
           body: |
             ## Zephyr One Mobile ${{ github.event.inputs.version }}${{ github.event.inputs.prerelease_label }}
@@ -252,11 +330,35 @@ jobs:
 
             ### This pre-release
             - Android debug APK (installs as-is)
-            - Contracts suite + Android compile + iOS compile all green
+            - Unsigned iOS 17+ IPA (requires signing before device installation)
+            - Contracts suite + Android compile/test + iOS compile/test all green
 
             See the [mobile product contract](../../tree/main/FREEZE/zephyr%20one%20for%20mobile/README.md)
             for scope, and IMPLEMENTATION_STATUS.md for the honest per-feature status.
           files: dist-mobile/*
           draft: false
           prerelease: true
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
+
+      - name: Validate release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_TAG: ${{ github.event.inputs.version }}${{ github.event.inputs.prerelease_label }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TARGET_TAG" --jq '.id')"
+          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TARGET_TAG" --jq '.object.sha')"
+          test "$tag_sha" = "$GITHUB_SHA"
+          mapfile -t apk_names < <(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+              --jq '.[] | select(.name | test("\\.apk$"; "i")) | .name'
+          )
+          mapfile -t ipa_names < <(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+              --jq '.[] | select(.name | test("\\.ipa$"; "i")) | .name'
+          )
+          test "${#apk_names[@]}" -eq 1
+          test "${apk_names[0]}" = 'zephyr-one-android-debug.apk'
+          test "${#ipa_names[@]}" -eq 1
+          test "${ipa_names[0]}" = 'zephyr-one-ios-unsigned.ipa'

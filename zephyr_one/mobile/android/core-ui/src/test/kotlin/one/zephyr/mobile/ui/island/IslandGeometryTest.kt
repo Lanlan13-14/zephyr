@@ -19,16 +19,15 @@ class IslandGeometryTest {
 
     @Test
     fun outerWidthSubtractsBothInsetsAndCapsAtMaxWidth() {
-        assertEquals(360f - 32f, IslandGeometry.outerWidth(360f, 16f, 520f), 0.001f)
-        // Tablet: capped, not stretched into a full-width bar.
-        assertEquals(520f, IslandGeometry.outerWidth(1024f, 16f, 520f), 0.001f)
+        assertEquals(316.8f, IslandGeometry.outerWidth(360f, 0.88f, 340f), 0.001f)
+        assertEquals(340f, IslandGeometry.outerWidth(1024f, 0.88f, 340f), 0.001f)
     }
 
     @Test
     fun slotsSplitTheInnerWidthEvenly() {
-        val outer = IslandGeometry.outerWidth(360f, 16f, 520f)
-        val inner = IslandGeometry.innerWidth(outer, 6f)
-        assertEquals(328f - 12f, inner, 0.001f)
+        val outer = IslandGeometry.outerWidth(360f, 0.88f, 340f)
+        val inner = IslandGeometry.innerWidth(outer, 5f)
+        assertEquals(306.8f, inner, 0.001f)
         assertEquals(inner / 4f, IslandGeometry.slotWidth(inner), 0.001f)
     }
 
@@ -36,8 +35,8 @@ class IslandGeometryTest {
     fun everySupportedWidthClearsTheAndroidTouchFloor() {
         // 320dp is the narrowest width the app supports; below the floor the layout would be illegal.
         for (screen in listOf(320f, 360f, 393f, 411f, 480f, 600f, 800f, 1024f)) {
-            val outer = IslandGeometry.outerWidth(screen, 16f, 520f)
-            val slot = IslandGeometry.slotWidth(IslandGeometry.innerWidth(outer, 6f))
+            val outer = IslandGeometry.outerWidth(screen, 0.88f, 340f)
+            val slot = IslandGeometry.slotWidth(IslandGeometry.innerWidth(outer, 5f))
             assertTrue(
                 "slot " + slot + "dp at screen " + screen + "dp is below the 48dp floor",
                 IslandGeometry.meetsTouchTargetFloor(slot, 48f),
@@ -78,21 +77,20 @@ class IslandGeometryTest {
 
     @Test
     fun cornerRadiusIsExactlyHalfTheHeight() {
-        assertEquals(36f, IslandGeometry.outerCornerRadius(72f), 0.001f)
+        assertEquals(31f, IslandGeometry.outerCornerRadius(62f), 0.001f)
     }
 
     @Test
     fun bottomGapTakesTheLargerOfSafeAreaAndFrozenMinimum() {
-        assertEquals(10f, IslandGeometry.bottomGap(0f, 10f), 0.001f)
-        assertEquals(10f, IslandGeometry.bottomGap(8f, 10f), 0.001f)
-        assertEquals(34f, IslandGeometry.bottomGap(34f, 10f), 0.001f)
+        assertEquals(18f, IslandGeometry.bottomGap(0f, 18f), 0.001f)
+        assertEquals(26f, IslandGeometry.bottomGap(8f, 18f), 0.001f)
+        assertEquals(52f, IslandGeometry.bottomGap(34f, 18f), 0.001f)
     }
 
     @Test
     fun contentInsetLetsTheLastRowClearTheIsland() {
-        // 72 island + 12 gap + max(24, 10) safe area
-        assertEquals(108f, IslandGeometry.contentBottomInset(72f, 12f, 24f, 10f), 0.001f)
-        assertEquals(94f, IslandGeometry.contentBottomInset(72f, 12f, 0f, 10f), 0.001f)
+        assertEquals(116f, IslandGeometry.contentBottomInset(62f, 12f, 24f, 18f), 0.001f)
+        assertEquals(92f, IslandGeometry.contentBottomInset(62f, 12f, 0f, 18f), 0.001f)
     }
 
     @Test

@@ -15,11 +15,9 @@ object IslandGeometry {
 
     const val DESTINATION_COUNT: Int = 4
 
-    /** Outer capsule width: screen width minus both side insets, capped for tablets. */
-    fun outerWidth(screenWidthDp: Float, sideInsetDp: Float, maxWidthDp: Float): Float {
-        val available = screenWidthDp - sideInsetDp * 2f
-        return minOf(available, maxWidthDp).coerceAtLeast(0f)
-    }
+    /** Outer capsule width: 88% of the viewport, capped at the frozen phone width. */
+    fun outerWidth(screenWidthDp: Float, widthFraction: Float, maxWidthDp: Float): Float =
+        minOf(screenWidthDp * widthFraction, maxWidthDp).coerceAtLeast(0f)
 
     /** Width available to the item row after the inner padding on both sides. */
     fun innerWidth(outerWidthDp: Float, innerPaddingDp: Float): Float =
@@ -91,9 +89,9 @@ object IslandGeometry {
     /** Corner radius of the outer capsule: exactly half its height. */
     fun outerCornerRadius(outerHeightDp: Float): Float = outerHeightDp / 2f
 
-    /** Bottom gap: the frozen minimum, or the system inset when that is larger. */
-    fun bottomGap(safeAreaBottomDp: Float, minGapDp: Float): Float =
-        maxOf(safeAreaBottomDp, minGapDp)
+    /** The prototype places the island 18dp above the safe-area edge. */
+    fun bottomGap(safeAreaBottomDp: Float, fixedGapDp: Float): Float =
+        safeAreaBottomDp + fixedGapDp
 
     /**
      * Bottom content inset for scrollable pages.
@@ -105,8 +103,8 @@ object IslandGeometry {
         outerHeightDp: Float,
         contentGapDp: Float,
         safeAreaBottomDp: Float,
-        minGapDp: Float,
-    ): Float = outerHeightDp + contentGapDp + bottomGap(safeAreaBottomDp, minGapDp)
+        fixedGapDp: Float,
+    ): Float = outerHeightDp + contentGapDp + bottomGap(safeAreaBottomDp, fixedGapDp)
 
     /** True when every slot still clears the platform touch-target floor. */
     fun meetsTouchTargetFloor(slotWidthDp: Float, minTouchTargetDp: Float): Boolean =

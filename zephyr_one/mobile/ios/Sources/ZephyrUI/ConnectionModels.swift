@@ -7,7 +7,7 @@ import ZephyrContracts
 /// collides with Swift's own vocabulary type, and every call site would need
 /// backticks. The wire values are unchanged, so nothing on the wire notices.
 /// Unknown wire values are preserved read-only instead of being coerced.
-public enum ConnectionProtocol: String, Sendable, CaseIterable {
+public enum ConnectionProtocol: String, Codable, Sendable, CaseIterable {
     case ssh = "SSH"
     case telnet = "TELNET"
     case rdp = "RDP"
@@ -41,7 +41,7 @@ public enum ConnectionProtocol: String, Sendable, CaseIterable {
 }
 
 /// Terminal encodings Zephyr accepts. Telnet may use the legacy code pages.
-public enum TerminalEncoding: String, Sendable, CaseIterable {
+public enum TerminalEncoding: String, Codable, Sendable, CaseIterable {
     case utf8 = "UTF-8"
     case gbk = "GBK"
     case big5 = "Big5"
@@ -57,7 +57,7 @@ public enum TerminalEncoding: String, Sendable, CaseIterable {
     }
 }
 
-public enum ConnectionMode: String, Sendable, CaseIterable {
+public enum ConnectionMode: String, Codable, Sendable, CaseIterable {
     case direct
     case proxy
     case jump
@@ -73,7 +73,7 @@ public enum ConnectionMode: String, Sendable, CaseIterable {
 
 /// Where a connection wants device files exposed. The grant itself is never
 /// portable.
-public enum FileSyncDirectoryIntent: String, Sendable, CaseIterable {
+public enum FileSyncDirectoryIntent: String, Codable, Sendable, CaseIterable {
     case off
     case ask
     case localShare = "local_share"
@@ -90,7 +90,7 @@ public enum FileSyncDirectoryIntent: String, Sendable, CaseIterable {
 
 /// RDP enumerations and defaults frozen by ZEPHYR_PARITY.md 5.2. These values
 /// are product contract, not renderer hints.
-public enum RdpSoundMode: String, Sendable, CaseIterable {
+public enum RdpSoundMode: String, Codable, Sendable, CaseIterable {
     case local
     case remote
     case off
@@ -104,7 +104,7 @@ public enum RdpSoundMode: String, Sendable, CaseIterable {
     }
 }
 
-public enum RdpResolution: String, Sendable, CaseIterable {
+public enum RdpResolution: String, Codable, Sendable, CaseIterable {
     case auto
     case p1080 = "1080p"
     case k2 = "2K"
@@ -120,7 +120,7 @@ public enum RdpResolution: String, Sendable, CaseIterable {
     }
 }
 
-public enum RdpQuality: String, Sendable, CaseIterable {
+public enum RdpQuality: String, Codable, Sendable, CaseIterable {
     case balanced
     case performance
     case quality
@@ -134,7 +134,7 @@ public enum RdpQuality: String, Sendable, CaseIterable {
     }
 }
 
-public enum RdpFps: Int, Sendable, CaseIterable {
+public enum RdpFps: Int, Codable, Sendable, CaseIterable {
     case f30 = 30
     case f45 = 45
     case f60 = 60
@@ -152,7 +152,7 @@ public enum RdpFps: Int, Sendable, CaseIterable {
 
 /// direct maps a finger to the remote pointer; relative drives it like a
 /// trackpad.
-public enum RdpTouchMode: String, Sendable, CaseIterable {
+public enum RdpTouchMode: String, Codable, Sendable, CaseIterable {
     case direct
     case relative
 
@@ -165,7 +165,7 @@ public enum RdpTouchMode: String, Sendable, CaseIterable {
     }
 }
 
-public enum RdpChannel: String, Sendable, CaseIterable {
+public enum RdpChannel: String, Codable, Sendable, CaseIterable {
     case audio
     case clipboard
     case microphone
@@ -174,7 +174,7 @@ public enum RdpChannel: String, Sendable, CaseIterable {
     case location
 }
 
-public struct RdpSettings: Equatable, Sendable {
+public struct RdpSettings: Codable, Equatable, Sendable {
     public var soundMode: RdpSoundMode
     public var clipboard: Bool
     public var microphone: Bool
@@ -250,7 +250,7 @@ public struct RdpSettings: Equatable, Sendable {
 /// owned resources are mirrored locally, shared-to-me resources are
 /// online-only and must never touch the local DB, SecretStore, search index,
 /// offline cache, backup, logs or notifications.
-public enum Residency: String, Sendable, CaseIterable {
+public enum Residency: String, Codable, Sendable, CaseIterable {
     /// ownerUserId == boundUserId. Full local mirror, offline capable.
     case owned
 
@@ -267,7 +267,7 @@ public enum Residency: String, Sendable, CaseIterable {
 
 /// The capability set the server most recently reported. Client-side gating is
 /// presentation only; every server call recomputes it (ZEPHYR_PARITY.md 4.2).
-public struct CapabilitySet: Equatable, Sendable {
+public struct CapabilitySet: Codable, Equatable, Sendable {
     public let capabilities: Set<Capability>
 
     public init(_ capabilities: Set<Capability>) {
@@ -313,7 +313,7 @@ public struct CapabilitySet: Equatable, Sendable {
 
 /// How a shared connection is allowed to be opened. Owner policy decides; One
 /// never downgrades.
-public enum SharedUsePolicy: String, Sendable, CaseIterable {
+public enum SharedUsePolicy: String, Codable, Sendable, CaseIterable {
     /// Credentials stay on the Zephyr main end. Always available as the safe
     /// default.
     case relayOnly
@@ -347,7 +347,7 @@ public enum SecretState: Equatable, Sendable {
 
 /// List payloads only ever carry presence, never the secret. Mirrors Zephyr's
 /// hasX/masked contract.
-public struct SecretPresence: Equatable, Sendable {
+public struct SecretPresence: Codable, Equatable, Sendable {
     public let hasValue: Bool
     public let secretRef: String?
 
@@ -361,7 +361,7 @@ public struct SecretPresence: Equatable, Sendable {
 }
 
 /// Local mirror state for any entity row.
-public enum SyncState: String, Sendable, CaseIterable {
+public enum SyncState: String, Codable, Sendable, CaseIterable {
     case synced
     case pendingLocal
     case conflicted

@@ -45,8 +45,9 @@ object ZephyrTextStyles {
 
     /** Island labels: single line, never below the accessibility floor. */
     val islandLabel: TextStyle = TextStyle(
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Medium,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
     )
 
     /** Secondary explanatory text: empty-state reasons, timestamps, permission causes. */

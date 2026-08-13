@@ -507,7 +507,7 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'Combine', 'SwiftUI', 'UIKit',
     // Combine
     'ObservableObject', 'Published', 'ObservedObject',
-    /* SwiftUI view surface. The floors are iOS 15 / macOS 12, so the names
+    /* SwiftUI view surface. The floors are iOS 17 / macOS 14, so the names
      * here are deliberately the long-stable half of the framework:
      * NavigationView rather than NavigationStack, no LabeledContent, no
      * ` searchable`. A name that needs a newer SDK does not belong on this
@@ -517,6 +517,10 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'HStack', 'VStack', 'Spacer', 'ForEach', 'ProgressView', 'EmptyView',
     'AnyView', 'NavigationView', 'NavigationLink', 'TabView', 'ToolbarItem',
     'State', 'StateObject', 'Environment', 'Binding', 'ViewBuilder', 'FocusState',
+    'ZStack', 'ScrollView', 'LazyVStack', 'LazyVGrid', 'GridItem', 'GeometryReader',
+    'Color', 'ColorScheme', 'RoundedRectangle', 'Rectangle', 'Circle', 'Capsule',
+    'Divider', 'Menu', 'Animation', 'ButtonStyle', 'ViewModifier', 'Configuration',
+    'Content', 'CGFloat',
     /* The UIKit bridge behind canImport(UIKit): the interactive pop gesture
      * recognizer is re-enabled, never replaced, per MOBILE_EXPERIENCE.md. */
     'UIViewControllerRepresentable', 'UIViewController', 'UINavigationController',

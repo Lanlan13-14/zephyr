@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+    <group
+        android:pivotX="100"
+        android:pivotY="100"
+        android:scaleX="0.7"
+        android:scaleY="0.7">
+        <path
+            android:pathData="M 45 65 C 85 45, 135 55, 160 80 C 130 80, 95 95, 75 125"
+            android:strokeColor="#FF000000"
+            android:strokeWidth="10"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <group>
+            <clip-path
+                android:fillType="evenOdd"
+                android:pathData="M 0 0 H 200 V 200 H 0 Z M 140 115 A 5 4.8 0 1 0 150 115 A 5 4.8 0 1 0 140 115 Z" />
+            <path
+                android:pathData="M 50 75 C 90 75, 125 90, 145 115 C 115 135, 75 155, 40 135"
+                android:strokeColor="#FF000000"
+                android:strokeWidth="6"
+                android:strokeAlpha="0.85"
+                android:strokeLineCap="round"
+                android:strokeLineJoin="round" />
+        </group>
+        <path
+            android:pathData="M 78 88 C 108 106, 137 137, 170 128"
+            android:strokeColor="#FF000000"
+            android:strokeWidth="3.5"
+            android:strokeAlpha="0.6"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M144.95 120.88Q142.70 120.88 141.28 119.41Q139.85 117.95 139.85 115.59Q139.85 113.10 141.30 111.56Q142.74 110.02 145.12 110.02Q147.37 110.02 148.76 111.49Q150.15 112.97 150.15 115.38Q150.15 117.85 148.71 119.37Q147.27 120.88 144.95 120.88ZM145.05 112.06Q143.81 112.06 143.08 112.99Q142.34 113.93 142.34 115.46Q142.34 117.02 143.08 117.93Q143.81 118.84 145.00 118.84Q146.22 118.84 146.94 117.96Q147.66 117.07 147.66 115.51Q147.66 113.87 146.96 112.97Q146.26 112.06 145.05 112.06Z M160.62 120.70H158.31V116.53Q158.31 114.79 157.07 114.79Q156.46 114.79 156.08 115.25Q155.69 115.71 155.69 116.42V120.70H153.37V113.20H155.69V114.39H155.72Q156.55 113.02 158.13 113.02Q160.62 113.02 160.62 116.11Z M169.19 117.61H164.29Q164.41 119.24 166.35 119.24Q167.59 119.24 168.53 118.66V120.33Q167.49 120.88 165.83 120.88Q164.01 120.88 163.01 119.88Q162.00 118.87 162.00 117.07Q162.00 115.20 163.09 114.11Q164.17 113.02 165.75 113.02Q167.39 113.02 168.29 113.99Q169.19 114.97 169.19 116.64ZM167.04 116.19Q167.04 114.58 165.74 114.58Q165.18 114.58 164.77 115.04Q164.37 115.50 164.28 116.19Z"
+            android:fillColor="#FF000000"
+            android:fillAlpha="0.9" />
+        <path
+            android:pathData="M 75 122 A 3 3 0 1 1 75 128 A 3 3 0 1 1 75 122 Z"
+            android:fillColor="#FF000000"
+            android:fillAlpha="0.8" />
+    </group>
+</vector>

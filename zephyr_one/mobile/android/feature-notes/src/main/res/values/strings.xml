@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_title">资料</string>
+    <string name="library_create">新建资料</string>
+    <string name="library_files">文件 SFTP</string>
+    <string name="library_notes">笔记</string>
+    <string name="library_snippets">代码片段</string>
+    <string name="library_downloads">下载</string>
+    <string name="library_files_detail">%1$d 个最近文件</string>
+    <string name="library_notes_detail">%1$d 篇</string>
+    <string name="library_snippets_detail">%1$d 条</string>
+    <string name="library_downloads_detail">%1$d 个进行中</string>
+    <string name="library_search_hint">搜索笔记、片段和最近文件</string>
+    <string name="library_filter_all">全部</string>
+    <string name="library_recent_files">最近文件</string>
+    <string name="library_recent_notes">最近笔记</string>
+    <string name="library_recent_snippets">最近片段</string>
+    <string name="library_no_results">没有匹配的资料</string>
+    <string name="library_untitled_note">无标题笔记</string>
+    <string name="library_metadata_notice">最近文件仅记录你主动浏览或下载的 metadata</string>
+</resources>
