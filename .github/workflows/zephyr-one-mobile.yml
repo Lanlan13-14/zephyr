@@ -244,11 +244,13 @@ jobs:
           MARKETING_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '1.0.0' }}
         run: |
           set -o pipefail
-          status=0
+          set +e
           bash "$GITHUB_WORKSPACE/zephyr_one/mobile/tools/package-ios-unsigned.sh" \
             "$GITHUB_WORKSPACE/zephyr_one/mobile/build/zephyr-one-ios-unsigned.ipa" \
             "$GITHUB_WORKSPACE/zephyr_one/mobile/ios" \
-            2>&1 | tee /tmp/ios-package.log || status=$?
+            2>&1 | tee /tmp/ios-package.log
+          status=${PIPESTATUS[0]}
+          set -e
           if [ "$status" -ne 0 ]; then
             bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
               /tmp/ios-package.log 'package unsigned iOS app'
