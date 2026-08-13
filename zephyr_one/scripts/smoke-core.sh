@@ -18,11 +18,16 @@ APP_HTML="$RUN_DIR/app.html"
 mkdir -p "$DATA" "$TMP"
 chmod 700 "$RUN_DIR" "$DATA" "$TMP"
 
-terminate_tree() {
-  for child_pid in $(pgrep -P "$1" 2>/dev/null || true); do
-    terminate_tree "$child_pid"
+remove_run_dir() {
+  attempts=0
+  while [ "$attempts" -lt 10 ]; do
+    rm -rf -- "$RUN_DIR" 2>/dev/null || true
+    [ -e "$RUN_DIR" ] || return 0
+    attempts=$((attempts+1))
+    sleep 0.1
   done
-  kill "$1" 2>/dev/null || true
+  echo "FAIL: smoke cleanup could not remove $RUN_DIR" >&2
+  return 1
 }
 
 descendant_pids() {
@@ -67,11 +72,11 @@ cleanup() {
     wait "$CORE_PID" 2>/dev/null || true
   fi
   if [ -n "$SHELL_PID" ]; then
-    terminate_tree "$SHELL_PID"
+    kill -TERM "$SHELL_PID" 2>/dev/null || true
     wait "$SHELL_PID" 2>/dev/null || true
   fi
   case "$RUN_DIR" in
-    "$ROOT"/.smoke-core.*) rm -rf -- "$RUN_DIR" ;;
+    "$ROOT"/.smoke-core.*) remove_run_dir || { [ "$status" -ne 0 ] || status=1; } ;;
     *) echo "REFUSING unsafe smoke cleanup path: $RUN_DIR" >&2 ;;
   esac
   exit "$status"
@@ -115,12 +120,42 @@ smoke_packaged_shell() {
 
   (
     cd "$LAUNCH_DIR"
-    HOME="$HOME" XDG_DATA_HOME="$XDG_DATA_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
-      XDG_CACHE_HOME="$XDG_CACHE_HOME" TMPDIR="$TMP" ZEPHYR_ONE_AUTOSTART_RUNTIME=1 \
-      ZEPHYR_ONE_UI_READY_MARKER="$UI_READY_MARKER" \
-      ZEPHYR_ONE_UI_READY_NONCE="$UI_READY_NONCE" \
-      "$shell_executable" >"$RUN_DIR/shell.log" 2>&1
-  ) &
+    export HOME XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME
+    export TMPDIR="$TMP" ZEPHYR_ONE_AUTOSTART_RUNTIME=1
+    export ZEPHYR_ONE_UI_READY_MARKER="$UI_READY_MARKER"
+    export ZEPHYR_ONE_UI_READY_NONCE="$UI_READY_NONCE"
+exec python3 -c 'import os, signal, subprocess, sys, time
+
+child = subprocess.Popen(sys.argv[1:], start_new_session=True)
+
+def signal_group(signum):
+    try:
+        os.killpg(child.pid, signum)
+    except ProcessLookupError:
+        pass
+
+def stop(signum, _frame):
+    signal_group(signum)
+    signal.alarm(4)
+
+def force_stop(_signum, _frame):
+    signal_group(signal.SIGKILL)
+
+for forwarded in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+    signal.signal(forwarded, stop)
+signal.signal(signal.SIGALRM, force_stop)
+
+return_code = child.wait()
+signal.alarm(0)
+signal_group(signal.SIGKILL)
+for _ in range(20):
+    try:
+        os.killpg(child.pid, 0)
+    except ProcessLookupError:
+        break
+    time.sleep(0.1)
+raise SystemExit(return_code)' "$shell_executable"
+  ) >"$RUN_DIR/shell.log" 2>&1 &
   SHELL_PID=$!
 
   i=0

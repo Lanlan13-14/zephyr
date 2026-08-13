@@ -124,6 +124,32 @@ impl AutostartLog {
     }
 }
 
+pub(crate) fn append_runtime_log(app: &AppHandle, message: &str) {
+    let Some(log_path) = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join("zephyr-data").join("zephyr-autostart.log"))
+    else {
+        return;
+    };
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let thread = std::thread::current();
+    let thread_name = thread.name().unwrap_or("unnamed");
+    let line = format!(
+        "{millis} pid={} thread={thread_name} {message}\n",
+        std::process::id()
+    );
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()));
+}
+
 /// Windows release builds must not depend on the WebView reaching JavaScript
 /// before the local product core is started. The environment variable remains
 /// an explicit override for smoke tests, development, and support diagnostics.
@@ -179,6 +205,8 @@ pub(crate) fn spawn_autostart(app: AppHandle) {
     log.append("ready event received; scheduling worker");
     let worker_log = log.clone();
     match spawn_logged_worker(worker_log, move |worker_log| {
+        worker_log.append("waiting for trusted shell startup grace");
+        std::thread::sleep(Duration::from_secs(2));
         match ensure_started_inner(&app, false) {
             Ok(info) => worker_log.append(&format!(
                 "runtime ready port={} node={}",

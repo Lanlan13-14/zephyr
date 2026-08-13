@@ -41,16 +41,30 @@ test('trusted shell explicitly enters only after runtime_start returns', () => {
   const enter = main.indexOf("await safeInvoke('runtime_enter')", start);
 
   assert.ok(start >= 0 && enter > start);
-  assert.match(commands, /pub fn runtime_enter\([\s\S]*window\.label\(\) != "main"/);
+  assert.match(commands, /pub async fn runtime_enter\([\s\S]*window\.label\(\) != "main"[\s\S]*spawn_blocking\(move \|\| runtime::enter\(&app\)\)/);
   assert.match(lib, /commands::runtime_enter,/);
 });
 
 test('release autostart starts only the child and defers every WebView operation', () => {
   const runtime = read('src-tauri/src/runtime/mod.rs');
   assert.match(runtime, /spawn_autostart[\s\S]*ensure_started_inner\(&app, false\)/);
+  assert.match(runtime, /waiting for trusted shell startup grace[\s\S]*sleep\(Duration::from_secs\(2\)\)[\s\S]*ensure_started_inner\(&app, false\)/);
   assert.match(runtime, /pub fn ensure_started[\s\S]*ensure_started_inner\(app, true\)/);
   assert.match(runtime, /if provision_webview && !st\.session_ready/);
   assert.match(runtime, /st\.startup_challenge = if provision_webview \{[\s\S]*Some\(startup_challenge\)/);
+});
+
+test('startup diagnostics identify the trusted handoff stages', () => {
+  const runtime = read('src-tauri/src/runtime/mod.rs');
+  const commands = read('src-tauri/src/commands/mod.rs');
+  assert.match(runtime, /pub\(crate\) fn append_runtime_log/);
+  assert.match(commands, /runtime_enter command entered/);
+  assert.match(commands, /runtime_start command entered/);
+  assert.match(commands, /runtime_start command completed/);
+  assert.match(commands, /runtime_enter command completed/);
+  assert.match(commands, /runtime_enter command failed/);
+  assert.match(commands, /local_app_ready command completed/);
+  assert.match(commands, /local_app_ready command failed/);
 });
 
 test('restart destroys the stale origin window before installing a new session', () => {
@@ -89,7 +103,7 @@ test('UI-ready marker is bound to the exact product window and current core', ()
   const embedded = read('src/rdp/native-rdp-embedded.js');
   const localApp = JSON.parse(read('src-tauri/capabilities/local-app.json'));
 
-  assert.match(commands, /pub fn local_app_ready\([\s\S]*mark_local_app_ready/);
+  assert.match(commands, /pub async fn local_app_ready\([\s\S]*spawn_blocking\(move \|\|[\s\S]*runtime::mark_local_app_ready\(&app, &window\)/);
   assert.match(runtime, /window\.label\(\) != LOCAL_APP_LABEL/);
   assert.match(runtime, /current_url\.origin\(\)\.ascii_serialization\(\) != expected_origin/);
   assert.match(runtime, /current_url\.path\(\) != "\/app\.html" \|\| current_url\.query\(\) != Some\("zephyrOne=1"\)/);

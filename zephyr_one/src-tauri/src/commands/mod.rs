@@ -61,9 +61,11 @@ pub fn set_theme_icon(app: AppHandle, theme: Option<String>) -> icon::IconResult
 pub async fn runtime_start(app: AppHandle) -> Result<runtime::RuntimeInfo, String> {
     // `app` is moved into the blocking closure; the watcher needs its own handle.
     let watcher_app = app.clone();
+    runtime::append_runtime_log(&watcher_app, "runtime_start command entered");
     let info = tauri::async_runtime::spawn_blocking(move || runtime::ensure_started(&app))
         .await
         .map_err(|error| format!("本地运行时任务异常退出：{error}"))??;
+    runtime::append_runtime_log(&watcher_app, "runtime_start command completed");
     /* The core is now serving, so its colour scheme is readable. Start the
      * watcher only on success: before that there is no base_url to poll, and
      * the shell may retry runtime_start after a failure (the watcher itself is
@@ -87,19 +89,53 @@ pub async fn runtime_start(app: AppHandle) -> Result<runtime::RuntimeInfo, Strin
 }
 
 #[tauri::command]
-pub fn runtime_enter(
+pub async fn runtime_enter(
     app: AppHandle,
     window: tauri::WebviewWindow,
 ) -> Result<runtime::RuntimeInfo, String> {
     if window.label() != "main" {
         return Err("runtime_enter is restricted to the trusted main shell".into());
     }
-    runtime::enter(&app)
+    runtime::append_runtime_log(&app, "runtime_enter command entered");
+    let log_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || runtime::enter(&app))
+        .await
+        .map_err(|error| format!("local product entry task failed: {error}"))?;
+    match result {
+        Ok(info) => {
+            runtime::append_runtime_log(&log_app, "runtime_enter command completed");
+            Ok(info)
+        }
+        Err(error) => {
+            runtime::append_runtime_log(
+                &log_app,
+                &format!("runtime_enter command failed: {error}"),
+            );
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
-pub fn local_app_ready(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
-    runtime::mark_local_app_ready(&app, &window)
+pub async fn local_app_ready(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    let log_app = app.clone();
+    let result =
+        tauri::async_runtime::spawn_blocking(move || runtime::mark_local_app_ready(&app, &window))
+            .await
+            .map_err(|error| format!("local product ready task failed: {error}"))?;
+    match result {
+        Ok(()) => {
+            runtime::append_runtime_log(&log_app, "local_app_ready command completed");
+            Ok(())
+        }
+        Err(error) => {
+            runtime::append_runtime_log(
+                &log_app,
+                &format!("local_app_ready command failed: {error}"),
+            );
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
