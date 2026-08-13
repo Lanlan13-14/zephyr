@@ -862,7 +862,7 @@ html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
   <!-- ================= TOOLS ================= -->
   <section class="page hidden" id="page-tools" data-root="3">
     <div class="page-head"><h1>工具</h1>
-      <button class="head-btn" onclick="openToolsAdd()" aria-label="新建资源">
+      <button class="head-btn" onclick="openToolsAdd()" aria-label="添加">
         <svg class="ic"><use href="#i-plus"/></svg></button>
     </div>
     <div class="page-scroll">
@@ -1938,8 +1938,9 @@ const SHEET_ACTS = {
   'add-pull':    ()=>{ goSync(); setTimeout(runSync, 500); },
   'lib-note':    ()=>{ $('note-title').textContent='新建笔记'; pushPage('page-note'); },
   'lib-snippet': ()=>pushPage('page-snippet'),
-  'tool-proxy':  ()=>toast('新建 Proxy · SOCKS5:1080 默认'),
-  'tool-key':    ()=>toast('新建 SSH Key · 支持 passphrase'),
+  'tool-proxy':  ()=>pushPage('page-proxy'),
+  'tool-key':    ()=>pushPage('page-keys'),
+
   'disc-yes':    ()=>{ popPage(); toast('会话已关闭'); },
   'sc-win':      ()=>toast('已发送 Win'),
   'sc-cad':      ()=>toast('已发送 Ctrl+Alt+Del'),
@@ -2000,6 +2001,13 @@ function openAddSheet(){
     [{label:'取消',cancel:true}],
   ]);
 }
+function openToolsAdd(){
+  openSheet(null, [
+    [{label:'Proxy',sub:'SOCKS5:1080 默认',act:'tool-proxy'},
+     {label:'SSH Key',sub:'secret 三态编辑',act:'tool-key'}],
+    [{label:'取消',cancel:true}],
+  ]);
+}
 function openLibraryAdd(){
   openSheet(null, [
     [{label:'新建笔记',sub:'Markdown · 支持关联连接',act:'lib-note'},
@@ -2012,14 +2020,6 @@ function toggleDrive(btn){
   $('rdp-drive-cfg').style.display = on ? '' : 'none';
   toast(on ? '已启用存储重定向' : '已关闭存储重定向');
 }
-function openToolsAdd(){
-  openSheet(null, [
-    [{title:'新建资源'}],
-    [{label:'Proxy',act:'tool-proxy'},{label:'SSH Key',act:'tool-key'}],
-    [{label:'取消',cancel:true}],
-  ]);
-}
-
 /* ================= Editor dual mode + 协议驱动 section ================= */
 let editorMode = 'edit';
 function openEditor(mode, proto){
