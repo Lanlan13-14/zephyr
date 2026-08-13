@@ -3,6 +3,7 @@ package one.zephyr.mobile.app
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -13,6 +14,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.app.di.AccountContainer
 import one.zephyr.mobile.app.di.AppContainer
@@ -315,21 +318,33 @@ private fun RootDestination(
             val activityRepository = remember(account) { ActivityRepository(account.database) }
             val activity by activityRepository.observeRecent(ownerUserId)
                 .collectAsState(initial = emptyList())
-            val status by syncStatus.collectAsState(initial = SyncStatus.unbound())
+            /* Local mode has no server, so the honest sync status is "unbound" and the sync
+             * action is a no-op; the banner above the list explains the mode. */
+            val listSyncStatus: Flow<SyncStatus> =
+                if (account.isLocalMode) remember { flowOf(SyncStatus.unbound()) } else syncStatus
+            val status by listSyncStatus.collectAsState(initial = SyncStatus.unbound())
 
-            ConnectionListRoute(
-                viewModel = viewModel(
-                    key = "connections",
-                    factory = ConnectionListViewModel.factory(
-                        connections = account.connections,
-                        settings = account.settings,
-                        shared = account.sharedResources,
-                        ownerUserId = ownerUserId,
-                        syncStatus = syncStatus,
-                        network = account.network,
-                        syncNowAction = { account.syncEngine.syncNow() },
+            Column(Modifier.fillMaxSize()) {
+                if (account.isLocalMode) {
+                    LocalModeBanner(onBindServer = { onNotice(PENDING_BIND_SERVER) })
+                }
+                ConnectionListRoute(
+                    viewModel = viewModel(
+                        key = "connections",
+                        factory = ConnectionListViewModel.factory(
+                            connections = account.connections,
+                            settings = account.settings,
+                            shared = account.sharedResources,
+                            ownerUserId = ownerUserId,
+                            syncStatus = listSyncStatus,
+                            network = account.network,
+                            syncNowAction = if (account.isLocalMode) {
+                                { /* Local mode has no server to sync with. */ }
+                            } else {
+                                { account.syncEngine.syncNow() }
+                            },
+                        ),
                     ),
-                ),
                 syncStatus = status,
                 activity = activity,
                 nowMs = nowMs,
@@ -342,10 +357,12 @@ private fun RootDestination(
                 onDuplicateConnection = { onNotice(PENDING_DUPLICATE) },
                 onTestConnection = { onNotice(PENDING_TEST) },
                 onShareConnection = { onNotice(PENDING_SHARE) },
-                onCreate = { onOpenEditor(null) },
-                onOpenAccount = { onNotice(PENDING_ACCOUNT) },
-                onMessage = onMessage,
-            )
+                    onCreate = { onOpenEditor(null) },
+                    onOpenAccount = { onNotice(PENDING_ACCOUNT) },
+                    onMessage = onMessage,
+                    modifier = if (account.isLocalMode) Modifier.weight(1f) else Modifier,
+                )
+            }
         }
 
         IslandDestination.SESSIONS -> SessionListRoute(
@@ -563,6 +580,34 @@ private fun LockGate(onUnlockRequested: () -> Unit) {
  * was never written, and it is indistinguishable from real data loss.
  */
 @Composable
+private fun LocalModeBanner(
+    onBindServer: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(
+                horizontal = ZephyrSpacing.lg,
+                vertical = ZephyrSpacing.sm,
+            ),
+        ) {
+            Text(
+                text = "本地模式 · 未连接服务器",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onBindServer) {
+                Text(text = "连接服务器")
+            }
+        }
+    }
+}
+
+@Composable
 private fun NoticeScreen(text: String) {
     Box(
         modifier = Modifier
@@ -685,6 +730,7 @@ private const val TAG_REMOTE = "remote"
 private const val FIELD_PASSWORD = "password"
 private const val FIELD_PRIVATE_KEY = "privateKey"
 
+private const val PENDING_BIND_SERVER = "连接服务器功能即将上线：绑定 Zephyr 主端后可启用同步。"
 private const val NOT_BOUND =
     "尚未绑定账号。请先在主端创建 Client Token，再在本机完成绑定（S01/S02 界面尚未实现）。"
 private const val PENDING_LIBRARY = "资料（笔记 / 最近文件 / 代码片段）界面尚未实现。"

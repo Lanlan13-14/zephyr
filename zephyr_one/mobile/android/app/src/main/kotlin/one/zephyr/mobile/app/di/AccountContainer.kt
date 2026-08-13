@@ -120,6 +120,13 @@ class AccountContainer(
      * silently re-enable automatic sync for a user who turned it off.
      */
     initialSyncSettings: SyncSettings,
+    /**
+     * Local-first mode: no server binding is involved, so network/sync/wake producers are never
+     * started and every scope is reserved to this device (see [AppContainer]'s LOCAL_ ids). All
+     * local data -- connections, notes, settings, sessions -- works exactly as in a bound account,
+     * so sync being optional never makes the app unusable.
+     */
+    val localMode: Boolean = false,
 ) : ManagedBindingGraph {
 
     /** Identifies this binding's rows in `sync_state` / `bootstrap_progress`. */
@@ -136,6 +143,8 @@ class AccountContainer(
         require(databaseScope.userId == binding.userId) { "database user scope mismatch" }
         require(databaseScope.generation == generation) { "database generation scope mismatch" }
     }
+    /** True for the device-reserved local workspace ([AppContainer].ensureLocalWorkspace). */
+    val isLocalMode: Boolean get() = localMode
 
     private val accountJob = SupervisorJob()
     private val accountScope = CoroutineScope(accountJob + Dispatchers.Default)
@@ -493,10 +502,13 @@ class AccountContainer(
         shareActivation.activate()
         if (!started.compareAndSet(false, true)) return
         journal.recover()
-        syncState.ensure(bindingKey)
-        networkEnabled.set(true)
         appContainer.appLock.register(secretStore)
         appContainer.appLock.register(sessionSecrets)
+        // A local workspace has no server to sync or wake from. The lock sinks above still arm,
+        // which is what wipes device-local secrets when the device locks.
+        if (localMode) return
+        syncState.ensure(bindingKey)
+        networkEnabled.set(true)
         syncEngine.start(syncScope)
         syncScope.launch {
             syncEngine.lastRoundResult.collect { round ->
@@ -514,14 +526,14 @@ class AccountContainer(
 
     /** Runs the first bootstrap inside this account's cancellable lifetime. */
     override suspend fun bootstrapAfterBind(): List<SyncRoundResult> =
-        if (networkEnabled.get()) syncScope.async { syncEngine.onBindComplete() }.await() else emptyList()
+        if (!localMode && networkEnabled.get()) syncScope.async { syncEngine.onBindComplete() }.await() else emptyList()
 
     /** Runs only when the worker's persisted identity has already matched this graph. */
     override suspend fun runScheduledRound(): List<SyncRoundResult> =
-        if (networkEnabled.get()) syncScope.async { syncEngine.runScheduledRound() }.await() else emptyList()
+        if (!localMode && networkEnabled.get()) syncScope.async { syncEngine.runScheduledRound() }.await() else emptyList()
 
     override suspend fun accountDatabaseRequiresBootstrap(): Boolean =
-        AccountDatabaseReadiness.requiresBootstrap(
+        if (localMode) false else AccountDatabaseReadiness.requiresBootstrap(
             database.devicePreferenceDao().find(AccountDatabaseReadiness.MARKER_KEY)?.valueJson,
             binding,
         )
@@ -568,7 +580,7 @@ class AccountContainer(
     }
 
     override fun isRecoverable(): Boolean =
-        credentials.refreshCredential() != null && deviceIdentity.hasKeys()
+        if (localMode) true else credentials.refreshCredential() != null && deviceIdentity.hasKeys()
 
     override fun storeCredentials(access: String, accessExpiresAt: Long?, refresh: String) {
         credentials.replaceBindingCredentials(access, accessExpiresAt, refresh)

@@ -38,6 +38,12 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
         runBlocking(Dispatchers.IO) {
             container.bindingCoordinator.restoreActiveBinding()
         }
+        // Local-first: an unbound device still opens a fully usable workspace. Sync is optional on
+        // mobile, so the app must never be unusable just because no server binding is present.
+        runBlocking(Dispatchers.IO) {
+            val workspace = container.ensureLocalWorkspace()
+            if (workspace.isLocalMode) workspace.activate()
+        }
         WorkManager.initialize(this, workManagerConfiguration)
         ProcessLifecycleOwner.get().lifecycle.addObserver(LockLifecycleObserver())
     }

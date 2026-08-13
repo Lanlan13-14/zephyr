@@ -8,6 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.BuildConfig
+import one.zephyr.mobile.contracts.BindingState
+import one.zephyr.mobile.model.AccountBinding
+import one.zephyr.mobile.model.NetworkPolicy
+import one.zephyr.mobile.model.TlsPolicy
 import one.zephyr.mobile.app.binding.BindingCoordinator
 import one.zephyr.mobile.app.binding.BindingGatewayFactory
 import one.zephyr.mobile.app.binding.BindingGraphFactory
@@ -45,6 +49,7 @@ import one.zephyr.mobile.security.DeviceIdentity
 import one.zephyr.mobile.security.FileSecretBlobStore
 import one.zephyr.mobile.security.SecretBlobStore
 import one.zephyr.mobile.sync.WakeBindingIdentity
+import one.zephyr.mobile.sync.SyncSettings
 
 /**
  * Objects that live as long as the process and do not depend on which account is bound.
@@ -214,6 +219,66 @@ class AppContainer(private val context: Context) {
             noAccountStateWiper = NoAccountStateWiper(::wipeNoAccountState),
         ).also(appLock::register)
     }
+
+    /**
+     * Builds the device-local workspace that keeps the app fully usable without a server binding.
+     *
+     * Sync is optional on mobile (PRODUCT_REQUIREMENTS.md): an unbound install must still open the
+     * dashboard and edit connections/notes/settings locally instead of showing a dead notice. The
+     * workspace is scoped to reserved LOCAL_* ids that no server ever issues, so its keystore and
+     * database scope can never collide with a real account's, and it is replaced when a real binding
+     * is attached (the coordinator's attachGraph requires accountGraph == null, which the caller
+     * ensures before starting a bind).
+     *
+     * @return the active graph when one already exists (server or local), otherwise a fresh local
+     *   workspace that becomes the active graph.
+     */
+    @Synchronized
+    fun ensureLocalWorkspace(): AccountContainer {
+        (accountGraph as? AccountContainer)?.let { return it }
+
+        val binding = localBinding()
+        val databaseScope = AccountContainer.databaseScopeOf(binding)
+        val databaseHandle = accountDatabases.open(databaseScope)
+        val container = try {
+            AccountContainer(
+                context = context,
+                binding = binding,
+                endpoint = LOCAL_ENDPOINT,
+                appContainer = this,
+                databaseScope = databaseScope,
+                database = databaseHandle.database,
+                appVersion = BuildConfig.VERSION_NAME,
+                initialSyncSettings = LOCAL_SYNC_SETTINGS,
+                localMode = true,
+            )
+        } catch (failure: Throwable) {
+            accountDatabases.close(databaseScope)
+            throw failure
+        }
+        accountGraph = container
+        container.onProcessForegroundChanged(processForeground.get())
+        return container
+    }
+
+    /** True when the active graph is the device-reserved local workspace. */
+    val isLocalMode: Boolean
+        get() = (accountGraph as? AccountContainer)?.isLocalMode == true
+
+    private fun localBinding(): AccountBinding = AccountBinding(
+        serverProfileId = LOCAL_SERVER_ID,
+        userId = LOCAL_USER_ID,
+        username = "local",
+        deviceId = deviceInstallId,
+        deviceName = "This device",
+        tokenId = LOCAL_TOKEN_ID,
+        tokenName = "local",
+        state = BindingState.IDLE,
+        registryHash = "",
+        boundAt = 0L,
+        lastSyncAt = null,
+        instanceEpoch = 0L,
+    )
 
     /**
      * Idempotently erases a persisted account scope without opening its SQLCipher database.
@@ -400,5 +465,25 @@ class AppContainer(private val context: Context) {
 
         /** Reserved scope segment: never a real server or user id, which are opaque server strings. */
         const val SCOPE_PREBIND = "_prebind"
+
+        /** Local-workspace scope ids. Reserved on purpose: a real server never issues them, so the
+         *  local keystore/database scope can never collide with a bound account's. */
+        const val LOCAL_SERVER_ID = "_local"
+        const val LOCAL_USER_ID = "local"
+        const val LOCAL_TOKEN_ID = "local-token"
+
+        /** Dummy endpoint for the local workspace; nothing network-backed is ever started there. */
+        val LOCAL_ENDPOINT: ApiEndpoint by lazy {
+            ApiEndpoint(baseUrl = "https://local.invalid", tlsPolicy = TlsPolicy.SystemTrust)
+        }
+
+        /** Local workspace never syncs, so automatic sync is off by default. */
+        val LOCAL_SYNC_SETTINGS: SyncSettings by lazy {
+            SyncSettings(
+                automaticEnabled = false,
+                intervalSec = 300,
+                networkPolicy = NetworkPolicy.ANY,
+            )
+        }
     }
 }
