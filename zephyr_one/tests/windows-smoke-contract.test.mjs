@@ -89,7 +89,9 @@ describe('Windows install smoke harness', () => {
 
   it('propagates the full static RDP closure to Windows bins and the lib test harness', () => {
     const build = fs.readFileSync(path.join(ROOT, 'src-tauri', 'build.rs'), 'utf8');
+    const workflow = fs.readFileSync(path.join(REPO, '.github', 'workflows', 'zephyr-one.yml'), 'utf8');
     assert.match(build, /probe\(&FREERDP3_PACKAGES, !windows\)/);
+    assert.match(build, /cargo:rerun-if-env-changed=STATIC_VCRUNTIME/);
     assert.match(build, /emit_windows_target_link_closure\(&linked_libraries\)/);
     assert.match(build, /cargo:rustc-link-arg=/);
     assert.doesNotMatch(build, /cargo:rustc-link-arg-(?:bin|bins|test|tests)=/);
@@ -101,5 +103,7 @@ describe('Windows install smoke harness', () => {
     assert.match(build, /"msvcrt"[\s\S]*"ucrt"[\s\S]*"vcruntime"/);
     assert.match(build, /directory\.join\(&filename\)/);
     assert.match(build, /is_freerdp2_link_name\(name\)/);
+    assert.match(workflow, /build-windows:[\s\S]*STATIC_VCRUNTIME: 'false'/);
+    assert.match(workflow, /VCPKG_DEFAULT_TRIPLET=x64-windows-static-md/);
   });
 });

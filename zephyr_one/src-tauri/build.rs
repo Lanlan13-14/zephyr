@@ -32,6 +32,7 @@ const PATCHED_FREERDP_STAMP: &str = "3.30.0+cliprdr-reassembly-limit-v1";
 const PATCHED_FREERDP_DEFINE: &str = "#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1";
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=STATIC_VCRUNTIME");
     const APP_COMMANDS: &[&str] = &[
         "get_platform",
         "get_app_version",

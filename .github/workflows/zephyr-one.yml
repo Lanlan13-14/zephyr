@@ -157,6 +157,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (github.event.inputs.tag != '' || inputs.validation_only == true)
     needs: test
     runs-on: windows-2022
+    env:
+      # FreeRDP and its vcpkg closure use x64-windows-static-md. Keep Tauri's
+      # Rust/C runtime mode on /MD too, including the post-bundle lib tests.
+      STATIC_VCRUNTIME: 'false'
     steps:
       - uses: actions/checkout@v5
         with:
