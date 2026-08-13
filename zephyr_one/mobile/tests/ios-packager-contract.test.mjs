@@ -28,4 +28,5 @@ test('iOS artifact is verified unsigned', () => {
   assert.match(script, /test ! -d "\$ARCHIVED_APP_DIR\/_CodeSignature"/);
   assert.match(script, /test ! -f "\$ARCHIVED_APP_DIR\/embedded\.mobileprovision"/);
   assert.match(script, /! codesign -dv "\$ARCHIVED_APP_DIR"/);
+  assert.match(script, /trap - EXIT[\s\S]*install -m 0644 "\$PACKAGED_IPA" "\$OUTPUT_PATH"/);
 });

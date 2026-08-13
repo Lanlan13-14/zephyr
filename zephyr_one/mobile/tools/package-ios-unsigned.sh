@@ -20,6 +20,7 @@ BUILD_DIR="$WORK_DIR/build"
 STAGING_DIR="$WORK_DIR/staging"
 APP_DIR="$STAGING_DIR/Payload/ZephyrOne.app"
 EXECUTABLE_NAME="ZephyrOneMobileApp"
+PACKAGED_IPA="$WORK_DIR/zephyr-one-ios-unsigned.ipa"
 
 if [[ ! "$MARKETING_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
   echo "Invalid iOS marketing version after removing zom-v prefix: $RAW_MARKETING_VERSION" >&2
@@ -589,23 +590,22 @@ plutil -lint "$APP_DIR/Info.plist"
 test "$(plutil -extract CFBundleExecutable raw "$APP_DIR/Info.plist")" = "$EXECUTABLE_NAME"
 test -x "$APP_DIR/$EXECUTABLE_NAME"
 
-mkdir -p "$(dirname "$OUTPUT_PATH")"
-rm -f "$OUTPUT_PATH"
+rm -f "$PACKAGED_IPA"
 (
   cd "$STAGING_DIR"
-  /usr/bin/zip -qry "$OUTPUT_PATH" Payload
+  /usr/bin/zip -qry "$PACKAGED_IPA" Payload
 )
 
-unzip -tq "$OUTPUT_PATH"
-unzip -Z1 "$OUTPUT_PATH" | grep -qx 'Payload/ZephyrOne.app/Info.plist'
-unzip -Z1 "$OUTPUT_PATH" | grep -qx "Payload/ZephyrOne.app/$EXECUTABLE_NAME"
+unzip -tq "$PACKAGED_IPA"
+unzip -Z1 "$PACKAGED_IPA" | grep -qx 'Payload/ZephyrOne.app/Info.plist'
+unzip -Z1 "$PACKAGED_IPA" | grep -qx "Payload/ZephyrOne.app/$EXECUTABLE_NAME"
 while IFS= read -r framework_name; do
-  unzip -Z1 "$OUTPUT_PATH" | grep -q "^Payload/ZephyrOne.app/Frameworks/$framework_name/"
+  unzip -Z1 "$PACKAGED_IPA" | grep -q "^Payload/ZephyrOne.app/Frameworks/$framework_name/"
 done < "$linked_frameworks"
 
 VERIFY_DIR="$WORK_DIR/verify"
 mkdir -p "$VERIFY_DIR"
-unzip -q "$OUTPUT_PATH" -d "$VERIFY_DIR"
+unzip -q "$PACKAGED_IPA" -d "$VERIFY_DIR"
 ARCHIVED_APP_DIR="$VERIFY_DIR/Payload/ZephyrOne.app"
 test "$(plutil -extract CFBundleShortVersionString raw "$ARCHIVED_APP_DIR/Info.plist")" = "$MARKETING_VERSION"
 test "$(plutil -extract CFBundleVersion raw "$ARCHIVED_APP_DIR/Info.plist")" = "$BUNDLE_VERSION"
@@ -616,6 +616,13 @@ xcrun vtool -show-build "$ARCHIVED_APP_DIR/$EXECUTABLE_NAME" | grep -Eq 'platfor
 test ! -d "$ARCHIVED_APP_DIR/_CodeSignature"
 test ! -f "$ARCHIVED_APP_DIR/embedded.mobileprovision"
 ! codesign -dv "$ARCHIVED_APP_DIR" >/dev/null 2>&1
+test -s "$PACKAGED_IPA"
+
+trap - EXIT
+mkdir -p "$(dirname "$OUTPUT_PATH")"
+rm -f "$OUTPUT_PATH"
+install -m 0644 "$PACKAGED_IPA" "$OUTPUT_PATH"
 test -s "$OUTPUT_PATH"
+rm -rf "$WORK_DIR"
 
 echo "Created unsigned IPA: $OUTPUT_PATH"
