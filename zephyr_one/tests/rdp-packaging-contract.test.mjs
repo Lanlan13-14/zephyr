@@ -320,6 +320,10 @@ test('release workflow verifies the staged tree and every desktop bundle type', 
   assert.doesNotMatch(workflow, /tauri build --config scripts\/tauri\.freerdp\.windows\.json/);
   assert.match(workflow, /Tauri bundling failed; retrying once after a short backoff/);
   assert.match(workflow, /Tauri Windows build failed after retry/);
+  assert.match(workflow, /Start-Process -FilePath "npx\.cmd"[\s\S]*-Wait -PassThru/);
+  assert.match(workflow, /needs\.build-windows\.result == 'success'/);
+  assert.match(workflow, /needs\.build-macos\.result == 'success'/);
+  assert.match(workflow, /needs\.build-linux\.result == 'success'/);
   assert.match(workflow, /verify-rdp-packaging\.mjs windows-static/);
   assert.match(workflow, /ilammy\/msvc-dev-cmd@v1/);
   const smoke = fs.readFileSync(path.join(ROOT, 'scripts', 'windows-install-smoke.ps1'), 'utf8');

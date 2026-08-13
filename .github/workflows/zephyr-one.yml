@@ -258,13 +258,13 @@ jobs:
         shell: pwsh
         # stage:core already done; avoid double npm install in pretauri
         run: |
-          npx tauri build
-          if ($LASTEXITCODE -ne 0) {
+          $build = Start-Process -FilePath "npx.cmd" -ArgumentList @("tauri", "build") -NoNewWindow -Wait -PassThru
+          if ($build.ExitCode -ne 0) {
             Write-Warning "Tauri bundling failed; retrying once after a short backoff"
             Start-Sleep -Seconds 15
-            npx tauri build
+            $build = Start-Process -FilePath "npx.cmd" -ArgumentList @("tauri", "build") -NoNewWindow -Wait -PassThru
           }
-          if ($LASTEXITCODE -ne 0) { throw "Tauri Windows build failed after retry" }
+          if ($build.ExitCode -ne 0) { throw "Tauri Windows build failed after retry" }
       # Static FreeRDP must leave no FreeRDP/WinPR DLL import or payload. This
       # catches an accidental reversion to vcpkg's unpatched dynamic port.
       - name: Verify raw Windows static FreeRDP payload
@@ -483,9 +483,9 @@ jobs:
           if-no-files-found: warn
 
   release:
-    # Publish whatever desktop platforms succeeded; one failing OS must not
-    # withhold the others. `test` is the only hard gate.
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true' && needs.test.result == 'success' }}
+    # A desktop release is one cross-platform version. Never update a tag with
+    # a mixture of fresh and stale platform assets.
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true' && needs.test.result == 'success' && needs.build-windows.result == 'success' && needs.build-macos.result == 'success' && needs.build-linux.result == 'success' }}
     needs: [test, build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     steps:
