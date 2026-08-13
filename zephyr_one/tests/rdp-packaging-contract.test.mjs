@@ -322,6 +322,14 @@ test('release workflow verifies the staged tree and every desktop bundle type', 
   assert.match(workflow, /ilammy\/msvc-dev-cmd@v1/);
   const smoke = fs.readFileSync(path.join(ROOT, 'scripts', 'windows-install-smoke.ps1'), 'utf8');
   assert.match(smoke, /installed payload contains FreeRDP\/WinPR DLLs/);
+
+  // macOS and Linux CI must run the core runtime smoke (embedded boot +
+  // redirect loop guard), not just compile.
+  const smokeCore = fs.readFileSync(path.join(ROOT, 'scripts', 'smoke-core.sh'), 'utf8');
+  assert.match(smokeCore, /redirect loop/i);
+  assert.match(smokeCore, /zephyr-one-recovery/);
+  assert.match(smokeCore, /__zephyr_one\/bootstrap/);
+  assert.match(workflow, /Core runtime smoke \(embedded boot \+ redirect loop guard\)/);
   assert.ok(
     (workflow.match(/--atleast-version=3\.0\.0 freerdp3 freerdp-client3 winpr3/g) || []).length >= 4,
     'every desktop CI platform must verify the FreeRDP 3 pkg-config modules before building',

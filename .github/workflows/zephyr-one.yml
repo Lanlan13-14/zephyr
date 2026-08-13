@@ -363,6 +363,8 @@ jobs:
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
       - run: npm run build
+      - name: Core runtime smoke (embedded boot + redirect loop guard)
+        run: sh scripts/smoke-core.sh
       - name: Tauri build macOS
         run: npx tauri build
       - name: Bundle and verify macOS FreeRDP dependency closure
@@ -437,6 +439,8 @@ jobs:
       - run: npm run stage:core
       - run: node scripts/stage-desktop-runtime.mjs
       - run: npm run build
+      - name: Core runtime smoke (embedded boot + redirect loop guard)
+        run: sh scripts/smoke-core.sh
       - name: Tauri build Linux (deb+rpm; skip AppImage/linuxdeploy flakiness)
         run: |
           # Full compile always; AppImage's linuxdeploy often fails on GH runners.

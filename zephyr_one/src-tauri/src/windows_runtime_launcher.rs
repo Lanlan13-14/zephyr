@@ -1059,8 +1059,17 @@ fn run(pipe_name: &str) -> Result<i32, String> {
         .env("ZEPHYR_VERSION", env!("CARGO_PKG_VERSION"))
         .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1")
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stdout(std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(data_dir.join("zephyr-node.log"))
+            .map_err(|e| format!("unable to create node log: {e}"))?)
+        .stderr(std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(data_dir.join("zephyr-node.log"))
+            .map_err(|e| format!("unable to create node log: {e}"))?);
     use std::os::windows::process::CommandExt;
     command.creation_flags(0x0800_0000);
     let mut child = command

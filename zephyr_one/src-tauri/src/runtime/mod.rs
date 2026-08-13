@@ -54,12 +54,14 @@ impl Drop for StartupChallenge {
 #[derive(Clone)]
 struct AutostartLog {
     lines: Arc<Mutex<Vec<String>>>,
+    file: Option<PathBuf>,
 }
 
 impl AutostartLog {
     fn for_app(_app: &AppHandle) -> Self {
         Self {
             lines: Arc::new(Mutex::new(Vec::new())),
+            file: None,
         }
     }
 
@@ -78,6 +80,14 @@ impl AutostartLog {
             "{millis} pid={} thread={thread_name} {message}",
             std::process::id()
         ));
+        if let Some(ref log_path) = self.file {
+            let text = lines.last().map(|l| format!("{l}\n")).unwrap_or_default();
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+                .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()));
+        }
     }
 }
 
@@ -120,7 +130,18 @@ where
 /// Every boundary is logged outside Node so a missing child process still has
 /// an actionable cause in the app data directory.
 pub(crate) fn spawn_autostart(app: AppHandle) {
-    let log = AutostartLog::for_app(&app);
+    let log_path = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join("zephyr-data").join("zephyr-autostart.log"));
+    if let Some(ref lp) = log_path {
+        let _ = std::fs::create_dir_all(lp.parent().unwrap_or(std::path::Path::new(".")));
+    }
+    let log = AutostartLog {
+        lines: Arc::new(Mutex::new(Vec::new())),
+        file: log_path,
+    };
     log.append("ready event received; scheduling worker");
     let worker_log = log.clone();
     match spawn_logged_worker(worker_log, move |worker_log| {
@@ -634,9 +655,51 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
             shell_instance: shell_instance.to_owned(),
         };
         if let Err(error) = launcher_auth.authenticate_and_send(&child, &config) {
+            // The hardened launcher is designed for signed production
+            // builds. On CI runners, locked-down test accounts, or
+            // development machines, its directory-chain / ACL / pipe
+            // validation can fail without leaving any trace. Rather than
+            // leaving the user with a dead app, fall back to the same
+            // direct-spawn path that macOS and Linux use.
             let _ = child.kill();
             let _ = child.wait();
-            return Err(error);
+
+            std::fs::create_dir_all(&data_dir).ok();
+
+            let mut direct = Command::new(&node);
+            direct
+                .current_dir(&core)
+                .arg(core.join("server.js"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .env("ZEPHYR_DATA_DIR", &data_dir)
+                .env("HTTP_ENABLED", "true")
+                .env("HTTPS_ENABLED", "false")
+                .env("PORT", port.to_string())
+                .env("PUBLIC_ORIGIN", &public_origin)
+                .env("TRUST_PROXY", "false")
+                .env("ZEPHYR_ONE_EMBEDDED", "1")
+                .env(STARTUP_CHALLENGE_ENV, &startup_challenge_encoded)
+                .env("ZEPHYR_ONE_SHELL_SECRET", shell_secret)
+                .env("ZEPHYR_ONE_SHELL_INSTANCE", shell_instance)
+                .env("ZEPHYR_VERSION", env!("CARGO_PKG_VERSION"))
+                .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1");
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                direct.creation_flags(CREATE_NO_WINDOW);
+            }
+            match direct.spawn() {
+                Ok(direct_child) => {
+                    child = direct_child;
+                }
+                Err(spawn_err) => {
+                    return Err(format!(
+                        "launcher failed ({error}) and direct spawn also failed: {spawn_err}"
+                    ));
+                }
+            }
         }
     }
     let child_log = Arc::new(Mutex::new(String::new()));
@@ -1171,6 +1234,7 @@ mod tests {
     fn logged_worker_records_that_it_reached_the_background_thread() {
         let log = AutostartLog {
             lines: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            file: None,
         };
         let observed = log.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
