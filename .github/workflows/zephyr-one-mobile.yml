@@ -246,7 +246,7 @@ jobs:
           set -o pipefail
           status=0
           bash "$GITHUB_WORKSPACE/zephyr_one/mobile/tools/package-ios-unsigned.sh" \
-            "$RUNNER_TEMP/zephyr-one-ios-unsigned.ipa" \
+            "$GITHUB_WORKSPACE/zephyr_one/mobile/build/zephyr-one-ios-unsigned.ipa" \
             "$GITHUB_WORKSPACE/zephyr_one/mobile/ios" \
             2>&1 | tee /tmp/ios-package.log || status=$?
           if [ "$status" -ne 0 ]; then
@@ -254,12 +254,13 @@ jobs:
               /tmp/ios-package.log 'package unsigned iOS app'
             exit "$status"
           fi
+          test -s "$GITHUB_WORKSPACE/zephyr_one/mobile/build/zephyr-one-ios-unsigned.ipa"
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
           name: ios-unsigned-ipa
-          path: ${{ runner.temp }}/zephyr-one-ios-unsigned.ipa
+          path: zephyr_one/mobile/build/zephyr-one-ios-unsigned.ipa
           if-no-files-found: error
 
   release:
