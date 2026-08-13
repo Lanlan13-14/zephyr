@@ -257,7 +257,14 @@ jobs:
       - name: Tauri build Windows
         shell: pwsh
         # stage:core already done; avoid double npm install in pretauri
-        run: npx tauri build
+        run: |
+          npx tauri build
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Tauri bundling failed; retrying once after a short backoff"
+            Start-Sleep -Seconds 15
+            npx tauri build
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Tauri Windows build failed after retry" }
       # Static FreeRDP must leave no FreeRDP/WinPR DLL import or payload. This
       # catches an accidental reversion to vcpkg's unpatched dynamic port.
       - name: Verify raw Windows static FreeRDP payload
