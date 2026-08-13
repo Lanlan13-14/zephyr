@@ -22,6 +22,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
 
+#[cfg(target_os = "windows")]
+mod windows_child_job;
+
 static RUNTIME: OnceCell<Mutex<RuntimeState>> = OnceCell::new();
 
 const STARTUP_CHALLENGE_ENV: &str = "ZEPHYR_ONE_STARTUP_CHALLENGE";
@@ -58,13 +61,6 @@ struct AutostartLog {
 }
 
 impl AutostartLog {
-    fn for_app(_app: &AppHandle) -> Self {
-        Self {
-            lines: Arc::new(Mutex::new(Vec::new())),
-            file: None,
-        }
-    }
-
     fn append(&self, message: &str) {
         let millis = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -161,6 +157,8 @@ pub(crate) fn spawn_autostart(app: AppHandle) {
 #[derive(Default)]
 struct RuntimeState {
     child: Option<Child>,
+    #[cfg(target_os = "windows")]
+    child_job: Option<windows_child_job::ChildJob>,
     port: u16,
     base_url: String,
     startup_challenge: Option<StartupChallenge>,
@@ -344,14 +342,15 @@ pub fn resolve_core_dir(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(res) = app.path().resource_dir() {
         candidates.extend(resource_candidates(&res, "zephyr-core"));
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("zephyr-core"));
-        candidates.push(cwd.join("..").join("zephyr-core"));
-        candidates.push(cwd.join("..")); // monorepo root with server.js
-    }
-    // Dev fallback: app data can host a manually staged core during local debug.
-    if let Ok(data) = app.path().app_data_dir() {
-        candidates.push(data.join("zephyr-core"));
+    if cfg!(debug_assertions) {
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join("zephyr-core"));
+            candidates.push(cwd.join("..").join("zephyr-core"));
+            candidates.push(cwd.join(".."));
+        }
+        if let Ok(data) = app.path().app_data_dir() {
+            candidates.push(data.join("zephyr-core"));
+        }
     }
     for c in candidates {
         if c.join("server.js").is_file() && c.join("public").is_dir() {
@@ -367,14 +366,8 @@ pub fn resolve_core_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Resolve Node binary for open-box execution.
 ///
 /// The installer ships `desktop-runtime/node[.exe]` as a Tauri resource;
-/// `ZEPHYR_NODE_PATH` and then `PATH` act as development fallbacks.
+/// debug builds may use `ZEPHYR_NODE_PATH`, the current tree, or `PATH`.
 pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Ok(value) = std::env::var("ZEPHYR_NODE_PATH") {
-        let candidate = PathBuf::from(value);
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
     if let Ok(res) = app.path().resource_dir() {
         for root in resource_candidates(&res, "desktop-runtime") {
             for name in ["node.exe", "node", "bin/node"] {
@@ -391,17 +384,24 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
             }
         }
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        for name in ["desktop-runtime/node.exe", "desktop-runtime/node"] {
-            let candidate = cwd.join(name);
+    if cfg!(debug_assertions) {
+        if let Ok(value) = std::env::var("ZEPHYR_NODE_PATH") {
+            let candidate = PathBuf::from(value);
             if candidate.is_file() {
                 return Ok(candidate);
             }
         }
-    }
-    // PATH
-    if let Some(node) = which_node() {
-        return Ok(node);
+        if let Ok(cwd) = std::env::current_dir() {
+            for name in ["desktop-runtime/node.exe", "desktop-runtime/node"] {
+                let candidate = cwd.join(name);
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
+            }
+        }
+        if let Some(node) = which_node() {
+            return Ok(node);
+        }
     }
     Err("安装包缺少内置 Node 运行时，请重新安装 Zephyr One。".into())
 }
@@ -490,6 +490,10 @@ fn provision_session(
 }
 
 fn clear_runtime_state(st: &mut RuntimeState) {
+    #[cfg(target_os = "windows")]
+    {
+        st.child_job = None;
+    }
     st.startup_challenge = None;
     st.session_ready = false;
     st.session_id = None;
@@ -561,21 +565,6 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
     let startup_challenge = StartupChallenge::generate()?;
     let startup_challenge_encoded = startup_challenge.encoded();
 
-    #[cfg(target_os = "windows")]
-    let launcher_auth = crate::windows_runtime_launcher::LauncherAuth::new()?;
-    #[cfg(target_os = "windows")]
-    let mut cmd = {
-        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-        let system_drive = crate::windows_runtime_launcher::trusted_system_drive()?;
-        let mut command = Command::new(executable);
-        command
-            .arg(crate::windows_runtime_launcher::FLAG)
-            .arg(launcher_auth.command_arg())
-            .env_clear()
-            .env("SystemDrive", system_drive);
-        command
-    };
-    #[cfg(not(target_os = "windows"))]
     let mut cmd = {
         let mut command = Command::new(&node);
         command.arg(core.join("server.js"));
@@ -588,7 +577,6 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
     // boot markers, or diagnostics.
     let (shell_secret, shell_instance) = crate::unlock_bridge::shell_identity_env();
 
-    #[cfg(not(target_os = "windows"))]
     cmd.env("ZEPHYR_DATA_DIR", &data_dir)
         .env("HTTP_ENABLED", "true")
         .env("HTTPS_ENABLED", "false")
@@ -613,7 +601,9 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
          * node:sqlite is compiled into the Node binary, so it always matches the
          * arch and ABI of the runtime actually shipped. sqlite-driver.js aligns
          * its named-parameter semantics with better-sqlite3 in both directions. */
-        .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1");
+        .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1")
+        .env_remove("NODE_OPTIONS")
+        .env_remove("NODE_PATH");
 
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -634,9 +624,6 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    // The Windows launcher deliberately leaves this to Node's validated,
-    // exclusive creation path after changing its process TokenOwner.
-    #[cfg(not(target_os = "windows"))]
     std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
 
     let mut child = cmd.spawn().map_err(|e| {
@@ -646,63 +633,17 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
             core.display()
         )
     })?;
-    #[cfg(target_os = "windows")]
-    {
-        let config = crate::windows_runtime_launcher::LaunchConfig {
-            port,
-            startup_challenge: startup_challenge_encoded.clone(),
-            shell_secret: shell_secret.to_owned(),
-            shell_instance: shell_instance.to_owned(),
-        };
-        if let Err(error) = launcher_auth.authenticate_and_send(&child, &config) {
-            // The hardened launcher is designed for signed production
-            // builds. On CI runners, locked-down test accounts, or
-            // development machines, its directory-chain / ACL / pipe
-            // validation can fail without leaving any trace. Rather than
-            // leaving the user with a dead app, fall back to the same
-            // direct-spawn path that macOS and Linux use.
-            let _ = child.kill();
-            let _ = child.wait();
-
-            std::fs::create_dir_all(&data_dir).ok();
-
-            let mut direct = Command::new(&node);
-            direct
-                .current_dir(&core)
-                .arg(core.join("server.js"))
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .env("ZEPHYR_DATA_DIR", &data_dir)
-                .env("HTTP_ENABLED", "true")
-                .env("HTTPS_ENABLED", "false")
-                .env("PORT", port.to_string())
-                .env("PUBLIC_ORIGIN", &public_origin)
-                .env("TRUST_PROXY", "false")
-                .env("ZEPHYR_ONE_EMBEDDED", "1")
-                .env(STARTUP_CHALLENGE_ENV, &startup_challenge_encoded)
-                .env("ZEPHYR_ONE_SHELL_SECRET", shell_secret)
-                .env("ZEPHYR_ONE_SHELL_INSTANCE", shell_instance)
-                .env("ZEPHYR_VERSION", env!("CARGO_PKG_VERSION"))
-                .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1");
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-                direct.creation_flags(CREATE_NO_WINDOW);
-            }
-            match direct.spawn() {
-                Ok(direct_child) => {
-                    child = direct_child;
-                }
-                Err(spawn_err) => {
-                    return Err(format!(
-                        "launcher failed ({error}) and direct spawn also failed: {spawn_err}"
-                    ));
-                }
-            }
-        }
-    }
     let child_log = Arc::new(Mutex::new(String::new()));
+    #[cfg(target_os = "windows")]
+    let child_job = match windows_child_job::ChildJob::assign(&child) {
+        Ok(job) => Some(job),
+        Err(error) => {
+            child_log
+                .lock()
+                .push_str(&format!("Windows child cleanup job unavailable: {error}\n"));
+            None
+        }
+    };
     if let Some(stdout) = child.stdout.take() {
         capture_pipe(stdout, child_log.clone());
     }
@@ -757,6 +698,10 @@ fn ensure_started_inner(app: &AppHandle, provision_webview: bool) -> Result<Runt
     };
 
     st.child = Some(child);
+    #[cfg(target_os = "windows")]
+    {
+        st.child_job = child_job;
+    }
     st.port = port;
     st.base_url = public_origin.clone();
     st.startup_challenge = if provision_webview {

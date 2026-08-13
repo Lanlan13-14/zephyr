@@ -380,6 +380,13 @@ jobs:
             -p '@executable_path/../Frameworks/'
           codesign --force --deep --sign - "$app_path"
           node scripts/verify-rdp-packaging.mjs macos-static "$app_path"
+      - name: Packaged macOS shell smoke (bundled Node boot)
+        run: |
+          set -eu
+          app_path=$(find src-tauri/target/release/bundle -maxdepth 4 -name '*.app' -type d | head -n 1)
+          executable=$(find "$app_path/Contents/MacOS" -maxdepth 1 -type f | head -n 1)
+          executable=$(CDPATH= cd -- "$(dirname "$executable")" && pwd)/$(basename "$executable")
+          sh scripts/smoke-core.sh --packaged-shell "$executable"
       - name: Collect macOS artifacts
         run: |
           mkdir -p dist-out
@@ -423,7 +430,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev \
-            cmake ninja-build pkg-config libssl-dev zlib1g-dev libcjson-dev libasound2-dev rpm
+            cmake ninja-build pkg-config libssl-dev zlib1g-dev libcjson-dev libasound2-dev rpm xvfb
       - name: Build and verify pinned patched FreeRDP 3
         run: |
           sh native/freerdp-core/scripts/build-freerdp.sh
@@ -447,6 +454,15 @@ jobs:
           npx tauri build --bundles deb,rpm
       - name: Verify Linux native imports and package dependencies
         run: node scripts/verify-rdp-packaging.mjs linux-static src-tauri/target/release/zephyr-one src-tauri/target/release/bundle
+      - name: Packaged Linux shell smoke (installed deb bundled Node boot)
+        run: |
+          set -eu
+          deb_path=$(find src-tauri/target/release/bundle -type f -name '*.deb' | head -n 1)
+          [ -n "$deb_path" ] || { echo "ERROR: Tauri produced no deb package" >&2; exit 1; }
+          sudo dpkg -i "$deb_path"
+          executable=$(command -v zephyr-one)
+          [ -n "$executable" ] || { echo "ERROR: installed deb exposes no zephyr-one executable" >&2; exit 1; }
+          xvfb-run -a sh scripts/smoke-core.sh --packaged-shell "$executable"
       - name: Collect Linux artifacts
         run: |
           mkdir -p dist-out

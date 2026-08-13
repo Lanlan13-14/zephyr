@@ -329,7 +329,15 @@ test('release workflow verifies the staged tree and every desktop bundle type', 
   assert.match(smokeCore, /redirect loop/i);
   assert.match(smokeCore, /zephyr-one-recovery/);
   assert.match(smokeCore, /__zephyr_one\/bootstrap/);
+  assert.match(smokeCore, /ZEPHYR_ONE_USE_BUILTIN_SQLITE=1/);
+  assert.match(smokeCore, /mktemp -d "\$ROOT\/\.smoke-core\.XXXXXX"/);
+  assert.match(smokeCore, /ZEPHYR_ONE_AUTOSTART_RUNTIME=1/);
+  assert.match(smokeCore, /runtime ready port=/);
   assert.match(workflow, /Core runtime smoke \(embedded boot \+ redirect loop guard\)/);
+  assert.match(workflow, /Packaged macOS shell smoke \(bundled Node boot\)/);
+  assert.match(workflow, /Packaged Linux shell smoke \(installed deb bundled Node boot\)/);
+  assert.match(workflow, /sudo dpkg -i "\$deb_path"/);
+  assert.match(workflow, /xvfb-run -a sh scripts\/smoke-core\.sh --packaged-shell/);
   assert.ok(
     (workflow.match(/--atleast-version=3\.0\.0 freerdp3 freerdp-client3 winpr3/g) || []).length >= 4,
     'every desktop CI platform must verify the FreeRDP 3 pkg-config modules before building',
