@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "aad": {
+    "fields": [
+      "prefix",
+      "serverId",
+      "userId",
+      "deviceId",
+      "entityType",
+      "entityId",
+      "fieldName",
+      "entityRevision",
+      "keyVersion"
+    ],
+    "separator": "NUL (0x00)",
+    "utf8Text": "zephyr-mobile-secret-v1\\0srv-1\\0usr-1\\0dev-1\\0connection\\0conn-1\\0password\\08\\01",
+    "hex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d31007573722d31006465762d3100636f6e6e656374696f6e00636f6e6e2d310070617373776f726400380031"
+  },
+  "operations": {
+    "acceptedUpsert": {
+      "opId": "op-1",
+      "entityType": "connection",
+      "entityId": "conn-1",
+      "action": "upsert",
+      "baseRevision": 7,
+      "clientModifiedAt": 1786093200000,
+      "fieldMask": [
+        "name",
+        "rdpQuality"
+      ],
+      "payload": {
+        "name": "Office RDP",
+        "rdpQuality": "balanced"
+      }
+    },
+    "invalidMissingMask": {
+      "opId": "op-invalid",
+      "entityType": "connection",
+      "entityId": "conn-1",
+      "action": "upsert",
+      "baseRevision": 7,
+      "payload": {
+        "name": "Must fail schema validation"
+      }
+    }
+  },
+  "syncCases": [
+    {
+      "id": "duplicate-op",
+      "given": "same deviceId/opId repeated",
+      "expect": "same stored result and no second business write"
+    },
+    {
+      "id": "non-overlap",
+      "given": "baseRevision 7; local mask name; server changed remark at revision 8",
+      "expect": "accept and create revision 9"
+    },
+    {
+      "id": "overlap",
+      "given": "baseRevision 7; local mask name; server changed name at revision 8",
+      "expect": "sync_conflict"
+    },
+    {
+      "id": "delete-edit",
+      "given": "server tombstone newer than local edit",
+      "expect": "delete wins; explicit restore creates new revision"
+    },
+    {
+      "id": "crash-page",
+      "given": "crash after entity page transaction before cursor commit",
+      "expect": "page replays without duplicate side effects"
+    },
+    {
+      "id": "unknown-field",
+      "given": "server payload has futureField unknown to client",
+      "expect": "opaque retention; client fieldMask never names futureField"
+    }
+  ]
+}

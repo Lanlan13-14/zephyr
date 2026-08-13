@@ -1,0 +1,713 @@
+{
+  "generatedFrom": "mobile/tools/lib/sync-core.mjs",
+  "fieldMask": [
+    {
+      "name": "connection-accepts-editable",
+      "entityType": "connection",
+      "requested": [
+        "name",
+        "host",
+        "rdpQuality"
+      ],
+      "expected": {
+        "accepted": [
+          "name",
+          "host",
+          "rdpQuality"
+        ],
+        "rejected": []
+      }
+    },
+    {
+      "name": "connection-rejects-secret-and-authority",
+      "entityType": "connection",
+      "requested": [
+        "name",
+        "password",
+        "revision",
+        "rdpPipeline",
+        "ephemeral",
+        "notAField"
+      ],
+      "expected": {
+        "accepted": [
+          "name"
+        ],
+        "rejected": [
+          {
+            "field": "password",
+            "reason": "forbidden"
+          },
+          {
+            "field": "revision",
+            "reason": "forbidden"
+          },
+          {
+            "field": "rdpPipeline",
+            "reason": "forbidden"
+          },
+          {
+            "field": "ephemeral",
+            "reason": "forbidden"
+          },
+          {
+            "field": "notAField",
+            "reason": "unknown"
+          }
+        ]
+      }
+    },
+    {
+      "name": "connection-rejects-duplicate",
+      "entityType": "connection",
+      "requested": [
+        "name",
+        "name"
+      ],
+      "expected": {
+        "accepted": [
+          "name"
+        ],
+        "rejected": [
+          {
+            "field": "name",
+            "reason": "duplicate"
+          }
+        ]
+      }
+    },
+    {
+      "name": "note-nested-path-root-checked",
+      "entityType": "note",
+      "requested": [
+        "title",
+        "tags[0]"
+      ],
+      "expected": {
+        "accepted": [
+          "title",
+          "tags[0]"
+        ],
+        "rejected": []
+      }
+    },
+    {
+      "name": "activity-is-append-only",
+      "entityType": "activityEvent",
+      "requested": [
+        "message"
+      ],
+      "expected": {
+        "accepted": [],
+        "rejected": [
+          {
+            "field": "message",
+            "reason": "forbidden"
+          }
+        ]
+      }
+    },
+    {
+      "name": "clientToken-only-name-editable",
+      "entityType": "clientToken",
+      "requested": [
+        "name",
+        "token"
+      ],
+      "expected": {
+        "accepted": [
+          "name"
+        ],
+        "rejected": [
+          {
+            "field": "token",
+            "reason": "forbidden"
+          }
+        ]
+      }
+    }
+  ],
+  "fold": [
+    {
+      "name": "create-then-updates-collapses",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "createdLocally": true,
+          "fieldMask": [
+            "name"
+          ],
+          "payload": {
+            "name": "A"
+          }
+        },
+        {
+          "opId": "op-2",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "h1"
+          }
+        },
+        {
+          "opId": "op-3",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "name"
+          ],
+          "payload": {
+            "name": "B"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "name",
+            "host"
+          ],
+          "payload": {
+            "name": "B",
+            "host": "h1"
+          },
+          "createdLocally": true
+        }
+      ]
+    },
+    {
+      "name": "create-then-delete-disappears",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "createdLocally": true,
+          "fieldMask": [
+            "title"
+          ],
+          "payload": {
+            "title": "draft"
+          }
+        },
+        {
+          "opId": "op-2",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "delete",
+          "baseRevision": 0,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "updates-keep-oldest-base-revision",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n2",
+          "action": "upsert",
+          "baseRevision": 4,
+          "fieldMask": [
+            "title"
+          ],
+          "payload": {
+            "title": "t1"
+          }
+        },
+        {
+          "opId": "op-2",
+          "entityType": "note",
+          "entityId": "n2",
+          "action": "upsert",
+          "baseRevision": 6,
+          "fieldMask": [
+            "content"
+          ],
+          "payload": {
+            "content": "body"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n2",
+          "action": "upsert",
+          "baseRevision": 4,
+          "fieldMask": [
+            "title",
+            "content"
+          ],
+          "payload": {
+            "title": "t1",
+            "content": "body"
+          }
+        }
+      ]
+    },
+    {
+      "name": "delete-dominates-later-stale-edit",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "snippet",
+          "entityId": "s1",
+          "action": "upsert",
+          "baseRevision": 2,
+          "fieldMask": [
+            "name"
+          ],
+          "payload": {
+            "name": "x"
+          }
+        },
+        {
+          "opId": "op-2",
+          "entityType": "snippet",
+          "entityId": "s1",
+          "action": "delete",
+          "baseRevision": 2,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ],
+      "expected": [
+        {
+          "opId": "op-2",
+          "entityType": "snippet",
+          "entityId": "s1",
+          "action": "delete",
+          "baseRevision": 2,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "name": "restore-after-delete-survives",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n3",
+          "action": "delete",
+          "baseRevision": 3,
+          "fieldMask": [],
+          "payload": {}
+        },
+        {
+          "opId": "op-2",
+          "entityType": "note",
+          "entityId": "n3",
+          "action": "restore",
+          "baseRevision": 3,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ],
+      "expected": [
+        {
+          "opId": "op-2",
+          "entityType": "note",
+          "entityId": "n3",
+          "action": "restore",
+          "baseRevision": 3,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ]
+    }
+  ],
+  "pushOrder": {
+    "input": [
+      {
+        "opId": "o1",
+        "entityType": "note",
+        "entityId": "n1",
+        "action": "upsert",
+        "baseRevision": 1,
+        "fieldMask": [
+          "title"
+        ],
+        "payload": {}
+      },
+      {
+        "opId": "o2",
+        "entityType": "connection",
+        "entityId": "c1",
+        "action": "upsert",
+        "baseRevision": 1,
+        "fieldMask": [
+          "name"
+        ],
+        "payload": {}
+      },
+      {
+        "opId": "o3",
+        "entityType": "jumpHost",
+        "entityId": "j1",
+        "action": "upsert",
+        "baseRevision": 1,
+        "fieldMask": [
+          "name"
+        ],
+        "payload": {}
+      },
+      {
+        "opId": "o4",
+        "entityType": "sshKey",
+        "entityId": "k1",
+        "action": "upsert",
+        "baseRevision": 1,
+        "fieldMask": [
+          "name"
+        ],
+        "payload": {}
+      },
+      {
+        "opId": "o5",
+        "entityType": "proxy",
+        "entityId": "p1",
+        "action": "upsert",
+        "baseRevision": 1,
+        "fieldMask": [
+          "name"
+        ],
+        "payload": {}
+      },
+      {
+        "opId": "o6",
+        "entityType": "clientToken",
+        "entityId": "t1",
+        "action": "upsert",
+        "baseRevision": 1,
+        "fieldMask": [
+          "name"
+        ],
+        "payload": {}
+      }
+    ],
+    "expectedOpIds": [
+      "o6",
+      "o4",
+      "o5",
+      "o3",
+      "o2",
+      "o1"
+    ],
+    "expectedBatchCount": 3
+  },
+  "classifyPush": [
+    {
+      "name": "base-matches",
+      "localMask": [
+        "name"
+      ],
+      "serverChangedFields": [],
+      "baseRevision": 7,
+      "currentRevision": 7,
+      "expected": {
+        "status": "accepted",
+        "reason": "base_matches"
+      }
+    },
+    {
+      "name": "non-overlapping-merge",
+      "localMask": [
+        "name"
+      ],
+      "serverChangedFields": [
+        "remark"
+      ],
+      "baseRevision": 7,
+      "currentRevision": 8,
+      "expected": {
+        "status": "accepted",
+        "reason": "non_overlapping_merge"
+      }
+    },
+    {
+      "name": "overlap-conflicts",
+      "localMask": [
+        "name"
+      ],
+      "serverChangedFields": [
+        "name"
+      ],
+      "baseRevision": 7,
+      "currentRevision": 8,
+      "expected": {
+        "status": "conflict",
+        "reason": "field_overlap",
+        "fields": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "multi-field-overlap",
+      "localMask": [
+        "name",
+        "host"
+      ],
+      "serverChangedFields": [
+        "host",
+        "port"
+      ],
+      "baseRevision": 7,
+      "currentRevision": 9,
+      "expected": {
+        "status": "conflict",
+        "reason": "field_overlap",
+        "fields": [
+          "host"
+        ]
+      }
+    }
+  ],
+  "applyChange": [
+    {
+      "name": "newer-revision-applies",
+      "localRevision": 7,
+      "change": {
+        "action": "upsert",
+        "revision": 8
+      },
+      "expected": true
+    },
+    {
+      "name": "echo-of-own-push-skipped",
+      "localRevision": 8,
+      "change": {
+        "action": "upsert",
+        "revision": 8
+      },
+      "expected": false
+    },
+    {
+      "name": "stale-revision-skipped",
+      "localRevision": 9,
+      "change": {
+        "action": "upsert",
+        "revision": 8
+      },
+      "expected": false
+    },
+    {
+      "name": "tombstone-always-applies",
+      "localRevision": 12,
+      "change": {
+        "action": "delete",
+        "revision": 5
+      },
+      "expected": true
+    }
+  ],
+  "conflictResolution": [
+    {
+      "name": "use-server",
+      "resolution": "use_server",
+      "entityType": "connection",
+      "entityId": "c1",
+      "serverRevision": 9,
+      "newOpId": "op-new",
+      "mask": [
+        "name"
+      ],
+      "payload": {
+        "name": "local"
+      },
+      "expected": {
+        "operation": null,
+        "clearsConflict": true
+      }
+    },
+    {
+      "name": "keep-local",
+      "resolution": "keep_local",
+      "entityType": "connection",
+      "entityId": "c1",
+      "serverRevision": 9,
+      "newOpId": "op-new",
+      "mask": [
+        "name"
+      ],
+      "payload": {
+        "name": "local"
+      },
+      "expected": {
+        "operation": {
+          "opId": "op-new",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 9,
+          "fieldMask": [
+            "name"
+          ],
+          "payload": {
+            "name": "local"
+          }
+        },
+        "clearsConflict": true
+      }
+    },
+    {
+      "name": "copy-as-new",
+      "resolution": "copy_as_new",
+      "entityType": "connection",
+      "entityId": "c1",
+      "serverRevision": 9,
+      "newOpId": "op-new",
+      "mask": [
+        "name",
+        "password"
+      ],
+      "payload": {
+        "name": "local"
+      },
+      "expected": {
+        "operation": {
+          "opId": "op-new",
+          "entityType": "connection",
+          "entityId": "c1-copy",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "name"
+          ],
+          "payload": {
+            "name": "local"
+          },
+          "createdLocally": true
+        },
+        "clearsConflict": true
+      }
+    },
+    {
+      "name": "manual-merge",
+      "resolution": "manual_merge",
+      "entityType": "note",
+      "entityId": "n1",
+      "serverRevision": 4,
+      "newOpId": "op-new",
+      "mask": [
+        "content"
+      ],
+      "payload": {
+        "content": "merged"
+      },
+      "expected": {
+        "operation": {
+          "opId": "op-new",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 4,
+          "fieldMask": [
+            "content"
+          ],
+          "payload": {
+            "content": "merged"
+          }
+        },
+        "clearsConflict": true
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "from": "UNBOUND",
+      "event": "bind_success",
+      "expected": "BOUND_NEEDS_BOOTSTRAP"
+    },
+    {
+      "from": "BOUND_NEEDS_BOOTSTRAP",
+      "event": "run",
+      "expected": "BOOTSTRAPPING"
+    },
+    {
+      "from": "BOOTSTRAPPING",
+      "event": "snapshot_complete",
+      "expected": "CATCHING_UP"
+    },
+    {
+      "from": "CATCHING_UP",
+      "event": "success",
+      "expected": "IDLE"
+    },
+    {
+      "from": "IDLE",
+      "event": "trigger",
+      "expected": "RUNNING"
+    },
+    {
+      "from": "RUNNING",
+      "event": "success",
+      "expected": "IDLE"
+    },
+    {
+      "from": "RUNNING",
+      "event": "conflict_only",
+      "expected": "CONFLICTED"
+    },
+    {
+      "from": "IDLE",
+      "event": "cursor_expired",
+      "expected": "BOUND_NEEDS_BOOTSTRAP"
+    },
+    {
+      "from": "RUNNING",
+      "event": "refresh_invalid",
+      "expected": "REAUTH_REQUIRED"
+    },
+    {
+      "from": "IDLE",
+      "event": "device_revoked",
+      "expected": "REVOKED"
+    },
+    {
+      "from": "IDLE",
+      "event": "registry_incompatible",
+      "expected": "FATAL_INCOMPATIBLE"
+    },
+    {
+      "from": "CONFLICTED",
+      "event": "conflicts_resolved",
+      "expected": "IDLE"
+    },
+    {
+      "from": "REAUTH_REQUIRED",
+      "event": "bind_success",
+      "expected": "REAUTH_REQUIRED"
+    },
+    {
+      "from": "IDLE",
+      "event": "sid_expired",
+      "expected": "IDLE"
+    }
+  ]
+}

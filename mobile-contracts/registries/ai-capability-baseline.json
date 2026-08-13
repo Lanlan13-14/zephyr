@@ -1,0 +1,3776 @@
+{
+  "version": 1,
+  "sourceCommit": "8dd5b98",
+  "source": "ai-agent-service.listToolCatalog(all mobile-relevant permissions)",
+  "invariant": "Zephyr One must expose an equivalent native/server bridge for every model-visible tool; unknown additions block release.",
+  "permissionFixture": {
+    "browser": true,
+    "webSearch": true,
+    "webFetch": true,
+    "memory": true,
+    "env": true,
+    "notesRead": true,
+    "notesWrite": true,
+    "remoteExecute": true,
+    "fileRead": true,
+    "fileWrite": true
+  },
+  "count": 116,
+  "tools": [
+    {
+      "toolId": "agent_file_delete_v1",
+      "capabilityId": "agent.files_write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "recursive": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "agentId",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "agent_file_list_v1",
+      "capabilityId": "agent.files_read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "agentId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "agent_file_mkdir_v1",
+      "capabilityId": "agent.files_write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "agentId",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "agent_file_read_text_v1",
+      "capabilityId": "agent.files_read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "maxBytes": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 262144
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "utf8",
+              "utf-8"
+            ]
+          }
+        },
+        "required": [
+          "agentId",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "agent_file_rename_v1",
+      "capabilityId": "agent.files_write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "oldPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "newPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "agentId",
+          "oldPath",
+          "newPath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "agent_file_stat_v1",
+      "capabilityId": "agent.files_read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "agentId",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "agent_file_write_text_v1",
+      "capabilityId": "agent.files_write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 262144
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "utf8",
+              "utf-8"
+            ]
+          },
+          "append": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "agentId",
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "agent_get_v1",
+      "capabilityId": "agent.get",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "agentId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "agent_list_v1",
+      "capabilityId": "agent.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_click_v1",
+      "capabilityId": "browser.click",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "elementRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "domRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "elementRef",
+          "domRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_close",
+      "capabilityId": "browser.close",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_inspect_v1",
+      "capabilityId": "browser.inspect",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "max": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_key",
+      "capabilityId": "browser.key",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_navigate",
+      "capabilityId": "browser.navigate",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "waitMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_screenshot",
+      "capabilityId": "browser.observe",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "fullPage": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_scroll",
+      "capabilityId": "browser.viewport",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down"
+            ]
+          },
+          "amount": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_text",
+      "capabilityId": "browser.observe",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "maxChars": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_type_v1",
+      "capabilityId": "browser.type",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "elementRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "domRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "clear": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "elementRef",
+          "domRevision",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "browser_wait",
+      "capabilityId": "browser.observe",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "ms": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "capability_search",
+      "capabilityId": "capability.search",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "connection_create_v1",
+      "capabilityId": "connection.create",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "SSH",
+              "TELNET",
+              "RDP",
+              "VNC"
+            ]
+          },
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "port": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "username": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "sshKeyId": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "sshKeySecretRef": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "remark": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "maxItems": 50
+          },
+          "connectionMode": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "proxy",
+              "jump"
+            ]
+          },
+          "proxyId": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "jumpHostIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "maxItems": 12
+          },
+          "encoding": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "name",
+          "protocol",
+          "host"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "connection_delete_v1",
+      "capabilityId": "connection.delete",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "connectionId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "connection_get_v1",
+      "capabilityId": "connection.get",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "connection_list_v1",
+      "capabilityId": "connection.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "SSH",
+              "TELNET",
+              "RDP",
+              "VNC"
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "connection_open_v1",
+      "capabilityId": "connection.open",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "connection_rename_v1",
+      "capabilityId": "connection.rename",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "connectionId",
+          "name",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "connection_test_v1",
+      "capabilityId": "connection.test",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timeoutSeconds": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 30
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "connection_update_v1",
+      "capabilityId": "connection.update",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "SSH",
+              "TELNET",
+              "RDP",
+              "VNC"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "port": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "username": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "sshKeyId": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "sshKeySecretRef": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "remark": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "maxItems": 50
+          },
+          "connectionMode": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "proxy",
+              "jump"
+            ]
+          },
+          "proxyId": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "jumpHostIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "maxItems": 12
+          },
+          "encoding": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "connectionId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "docker_container_action_v1",
+      "capabilityId": "docker.mutate",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "stop",
+              "restart",
+              "remove",
+              "pause",
+              "unpause"
+            ]
+          },
+          "container": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "force": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connectionId",
+          "action",
+          "container"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "docker_images_v1",
+      "capabilityId": "docker.inspect",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "docker_logs_v1",
+      "capabilityId": "docker.inspect",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "container": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "tail": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 2000
+          },
+          "timestamps": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connectionId",
+          "container"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "docker_mirrors_get_v1",
+      "capabilityId": "docker.inspect",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "docker_mirrors_set_v1",
+      "capabilityId": "docker.mutate",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "mirrors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "maxItems": 20
+          },
+          "restart": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connectionId",
+          "mirrors"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "docker_ps_v1",
+      "capabilityId": "docker.inspect",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "all": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "docker_pull_v1",
+      "capabilityId": "docker.mutate",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "image": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "timeoutSeconds": {
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600
+          }
+        },
+        "required": [
+          "connectionId",
+          "image"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "docker_status_v1",
+      "capabilityId": "docker.inspect",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "env_delete_v1",
+      "capabilityId": "env.write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "env_set_v1",
+      "capabilityId": "env.write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "visibleToAi": {
+            "type": "boolean"
+          },
+          "valueVisibleToAi": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "fetch_url",
+      "capabilityId": "web.fetch",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "maxChars": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "get_env_var",
+      "capabilityId": "env.get",
+      "risk": "R4",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "jump_host_create_v1",
+      "capabilityId": "jumphost.create",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "name",
+          "connectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "jump_host_delete_v1",
+      "capabilityId": "jumphost.delete",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "jumpHostId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "jumpHostId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "jump_host_get_v1",
+      "capabilityId": "jumphost.get",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "jumpHostId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "jumpHostId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "jump_host_list_v1",
+      "capabilityId": "jumphost.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "jump_host_update_v1",
+      "capabilityId": "jumphost.update",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "jumpHostId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "jumpHostId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "list_env_vars",
+      "capabilityId": "env.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "memory_save",
+      "capabilityId": "memory.write",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "connectionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "memory_search",
+      "capabilityId": "memory.read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "connectionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "maxResults": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_bulk_v1",
+      "capabilityId": "notes.groups",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "noteIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 200
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "trash",
+              "restore",
+              "purge"
+            ]
+          }
+        },
+        "required": [
+          "noteIds",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_create",
+      "capabilityId": "notes.write",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "group": {
+            "type": "string"
+          },
+          "connectionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowAiRead": {
+            "type": "boolean"
+          },
+          "allowAiWrite": {
+            "type": "boolean"
+          },
+          "allowAi": {
+            "type": "boolean",
+            "description": "兼容字段：同时设置读取与编辑"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_delete",
+      "capabilityId": "notes.delete",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "noteId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "noteId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_get",
+      "capabilityId": "notes.read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "noteId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "noteId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_group_delete_v1",
+      "capabilityId": "notes.groups",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "groupPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "groupPath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_group_rename_v1",
+      "capabilityId": "notes.groups",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "oldPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "newPath": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "oldPath",
+          "newPath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_groups_v1",
+      "capabilityId": "notes.groups_read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_list",
+      "capabilityId": "notes.read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "offset": {
+            "type": "number"
+          },
+          "trash": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_purge_v1",
+      "capabilityId": "notes.groups",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "noteId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "noteId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_restore_v1",
+      "capabilityId": "notes.groups",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "noteId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "noteId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_search",
+      "capabilityId": "notes.read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "group": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "note_update",
+      "capabilityId": "notes.write",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "noteId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "group": {
+            "type": "string"
+          },
+          "connectionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowAiRead": {
+            "type": "boolean"
+          },
+          "allowAiWrite": {
+            "type": "boolean"
+          },
+          "allowAi": {
+            "type": "boolean"
+          },
+          "expectedRevision": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "noteId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "plan_delete",
+      "capabilityId": "plan.delete",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "planId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "planId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "plan_task",
+      "capabilityId": "plan.create",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risk": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "steps"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "plan_update",
+      "capabilityId": "plan.update",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "planId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "running",
+              "paused",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "pause": {
+            "type": "boolean"
+          },
+          "resume": {
+            "type": "boolean"
+          },
+          "retryFailed": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "index": {
+                  "type": "number"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "running",
+                    "paused",
+                    "completed",
+                    "failed",
+                    "skipped",
+                    "retrying"
+                  ]
+                },
+                "note": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "planId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "proxy_create_v1",
+      "capabilityId": "proxy.create",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "port": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "socks5",
+              "http"
+            ]
+          },
+          "username": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "name",
+          "host",
+          "port"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "proxy_delete_v1",
+      "capabilityId": "proxy.delete",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "proxyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "proxyId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "proxy_get_v1",
+      "capabilityId": "proxy.get",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "proxyId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "proxyId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "proxy_list_v1",
+      "capabilityId": "proxy.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "socks5",
+              "http"
+            ]
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "proxy_update_v1",
+      "capabilityId": "proxy.update",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "proxyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "port": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "socks5",
+              "http"
+            ]
+          },
+          "username": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "proxyId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_desktop_action_v1",
+      "capabilityId": "remotedesktop.action",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tabId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "toolbar",
+              "send_text",
+              "mouse"
+            ]
+          },
+          "captureId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "control": {
+            "type": "string",
+            "enum": [
+              "quality",
+              "fit",
+              "zoom",
+              "clipboard",
+              "keyboard",
+              "shortcuts",
+              "joystick",
+              "drag",
+              "ctrl_alt_del",
+              "reconnect",
+              "disconnect",
+              "clipboard_send",
+              "clipboard_read_local",
+              "clipboard_copy_remote",
+              "shortcut",
+              "text",
+              "mouse_click"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "sequence": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "paste": {
+            "type": "boolean"
+          },
+          "qualityMode": {
+            "type": "string",
+            "enum": [
+              "balanced",
+              "performance",
+              "quality"
+            ]
+          },
+          "fitMode": {
+            "type": "string",
+            "enum": [
+              "fit",
+              "1:1",
+              "16:9",
+              "4:3",
+              "original",
+              "drag"
+            ]
+          },
+          "zoomPercent": {
+            "type": "number",
+            "minimum": 25,
+            "maximum": 400
+          },
+          "x": {
+            "type": "number",
+            "minimum": 0
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0
+          },
+          "button": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "waitMs": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 15000
+          },
+          "maxWidth": {
+            "type": "number",
+            "minimum": 320,
+            "maximum": 1600
+          },
+          "screenshotWidth": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 16000
+          },
+          "screenshotHeight": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 16000
+          },
+          "originalWidth": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 16000
+          },
+          "originalHeight": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 16000
+          }
+        },
+        "required": [
+          "tabId",
+          "action",
+          "captureId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_desktop_capture_v1",
+      "capabilityId": "remotedesktop.capture",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tabId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "maxWidth": {
+            "type": "number",
+            "minimum": 320,
+            "maximum": 1600
+          },
+          "afterCaptureId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "requireFresh": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_desktop_cert_decide_v1",
+      "capabilityId": "remotedesktop.cert_decide",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tabId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "accept",
+              "reject"
+            ]
+          },
+          "remember": {
+            "type": "boolean"
+          },
+          "connectionId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "expectedFingerprint": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "waitMs": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 15000
+          }
+        },
+        "required": [
+          "tabId",
+          "decision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_desktop_cert_status_v1",
+      "capabilityId": "remotedesktop.cert_status",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tabId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "connectionId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "requireLive": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_desktop_verify_v1",
+      "capabilityId": "remotedesktop.verify",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tabId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "beforeCaptureId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "afterCaptureId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "actionId": {
+            "type": "string",
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "tabId",
+          "beforeCaptureId",
+          "afterCaptureId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_execute",
+      "capabilityId": "ssh.execute",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "string"
+          },
+          "timeoutSeconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "connectionIds",
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_file_rollback",
+      "capabilityId": "ssh.file_rollback",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "snapshotId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_file_snapshot_list",
+      "capabilityId": "ssh.file_snapshots",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_read_file",
+      "capabilityId": "ssh.file_read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "maxBytes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "connectionId",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "remote_write_file",
+      "capabilityId": "ssh.file_write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "utf8",
+              "base64"
+            ]
+          },
+          "append": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connectionId",
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "resource_share_delete_v1",
+      "capabilityId": "resource.share",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "resourceType": {
+            "type": "string",
+            "enum": [
+              "connection",
+              "proxy",
+              "sshKey",
+              "jumpHost",
+              "note"
+            ]
+          },
+          "resourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "subjectId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "resourceType",
+          "resourceId",
+          "subjectId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "resource_share_list_v1",
+      "capabilityId": "resource.share_read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "resourceType": {
+            "type": "string",
+            "enum": [
+              "connection",
+              "proxy",
+              "sshKey",
+              "jumpHost",
+              "note"
+            ]
+          },
+          "resourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "resourceType",
+          "resourceId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "resource_share_put_v1",
+      "capabilityId": "resource.share",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "resourceType": {
+            "type": "string",
+            "enum": [
+              "connection",
+              "proxy",
+              "sshKey",
+              "jumpHost",
+              "note"
+            ]
+          },
+          "resourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "shares": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "subjectId": {
+                  "type": "string"
+                },
+                "tier": {
+                  "type": "string"
+                },
+                "capabilities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expiresAt": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "subjectId"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 200
+          }
+        },
+        "required": [
+          "resourceType",
+          "resourceId",
+          "shares"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "resource_shared_with_me_v1",
+      "capabilityId": "resource.share_read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "resourceType": {
+            "type": "string",
+            "enum": [
+              "connection",
+              "proxy",
+              "sshKey",
+              "jumpHost",
+              "note"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "secret_ref_list_v1",
+      "capabilityId": "secretref.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ssh_key",
+              "proxy"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "session_exec_v1",
+      "capabilityId": "sandbox.exec",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 8192
+            },
+            "maxItems": 128
+          },
+          "cwd": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "相对会话根，默认 workspace"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "minimum": 1000,
+            "maximum": 300000
+          },
+          "network": {
+            "type": "boolean",
+            "description": "默认 false；uv/npm/go mod 拉包时需 true+策略"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "session_sandbox_status_v1",
+      "capabilityId": "sandbox.status",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "sftp_chmod_v1",
+      "capabilityId": "sftp.write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "mode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 6,
+            "description": "octal mode like 644 or 0755"
+          }
+        },
+        "required": [
+          "connectionId",
+          "path",
+          "mode"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "sftp_delete_v1",
+      "capabilityId": "sftp.write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "recursive": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connectionId",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "sftp_list_v1",
+      "capabilityId": "sftp.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "sftp_mkdir_v1",
+      "capabilityId": "sftp.write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "recursive": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connectionId",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "sftp_rename_v1",
+      "capabilityId": "sftp.write",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "oldPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "newPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "connectionId",
+          "oldPath",
+          "newPath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "sftp_stat_v1",
+      "capabilityId": "sftp.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "connectionId",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "snippet_create_v1",
+      "capabilityId": "snippet.create",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "group": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "autoRun": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "snippet_delete_v1",
+      "capabilityId": "snippet.delete",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "snippetId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "snippetId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "snippet_get_v1",
+      "capabilityId": "snippet.get",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "snippetId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "snippetId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "snippet_list_v1",
+      "capabilityId": "snippet.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "group": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "autoRun": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "snippet_update_v1",
+      "capabilityId": "snippet.update",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "snippetId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "group": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "autoRun": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "snippetId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "ssh_key_delete_v1",
+      "capabilityId": "sshkey.delete",
+      "risk": "R3",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sshKeyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "sshKeyId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "ssh_key_get_v1",
+      "capabilityId": "sshkey.get",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sshKeyId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "sshKeyId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "ssh_key_list_v1",
+      "capabilityId": "sshkey.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "ssh_key_rename_v1",
+      "capabilityId": "sshkey.rename",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sshKeyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "sshKeyId",
+          "name",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "ssh_key_update_metadata_v1",
+      "capabilityId": "sshkey.metadata_update",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sshKeyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "remark": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "expectedRevision": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "sshKeyId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "ssh_key_validate_v1",
+      "capabilityId": "sshkey.validate",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sshKeyId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "sshKeyId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "subagent_fleet_v1",
+      "capabilityId": "subagent.fleet",
+      "risk": "R2",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string"
+                },
+                "profileId": {
+                  "type": "string"
+                },
+                "connectionId": {
+                  "type": "string"
+                },
+                "tabId": {
+                  "type": "string"
+                },
+                "workspacePath": {
+                  "type": "string"
+                },
+                "resourceClaims": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              },
+              "required": [
+                "prompt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "subagent_list_profiles_v1",
+      "capabilityId": "subagent.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "subagent_parallel_v1",
+      "capabilityId": "subagent.parallel",
+      "risk": "R1",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "profileId": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string"
+                },
+                "profileId": {
+                  "type": "string"
+                },
+                "connectionId": {
+                  "type": "string"
+                },
+                "connectionIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "prompt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "subagent_task_v1",
+      "capabilityId": "subagent.task",
+      "risk": "R1",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "profileId": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "connectionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tabId": {
+            "type": "string"
+          },
+          "workspacePath": {
+            "type": "string"
+          },
+          "maxSteps": {
+            "type": "number"
+          },
+          "resourceClaims": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "readOnly": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "terminal_read_v1",
+      "capabilityId": "terminal.read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "可省略；默认使用当前活跃 SSH/TELNET 会话。也可传真实 sessionId、tabId、唯一 connectionId 或连接名。"
+          },
+          "maxChars": {
+            "type": "number",
+            "minimum": 1000,
+            "maximum": 120000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "terminal_send_v1",
+      "capabilityId": "terminal.send",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "可省略；默认使用当前活跃 SSH/TELNET 会话。也可传真实 sessionId、tabId、唯一 connectionId 或连接名。"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "appendNewline": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "terminal_wait_v1",
+      "capabilityId": "terminal.wait",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "可省略；默认使用当前活跃 SSH/TELNET 会话。也可传真实 sessionId、tabId、唯一 connectionId 或连接名。"
+          },
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "regex": {
+            "type": "boolean"
+          },
+          "caseSensitive": {
+            "type": "boolean"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "minimum": 100,
+            "maximum": 120000
+          },
+          "pollMs": {
+            "type": "number",
+            "minimum": 50,
+            "maximum": 2000
+          },
+          "maxChars": {
+            "type": "number",
+            "minimum": 1000,
+            "maximum": 120000
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "ui_action",
+      "capabilityId": "ui.act",
+      "risk": "R2",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "switch_view",
+              "open_add_connection",
+              "open_edit_connection",
+              "terminal_fullscreen",
+              "terminal_exit_fullscreen",
+              "terminal_window_action",
+              "terminal_toolbar",
+              "terminal_send_input",
+              "remote_desktop_toolbar",
+              "remote_desktop_send_text",
+              "remote_desktop_mouse",
+              "toast"
+            ]
+          },
+          "view": {
+            "type": "string",
+            "enum": [
+              "dashboard",
+              "terminal",
+              "remote",
+              "settings"
+            ]
+          },
+          "settingsSection": {
+            "type": "string",
+            "enum": [
+              "ai",
+              "appearance",
+              "terminal",
+              "network",
+              "profile",
+              "snippets"
+            ]
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "tabId": {
+            "type": "string"
+          },
+          "windowAction": {
+            "type": "string",
+            "enum": [
+              "fullscreen",
+              "exit-fullscreen",
+              "left-half",
+              "right-half",
+              "right-top",
+              "right-bottom",
+              "left-two-thirds",
+              "right-two-thirds",
+              "minimize",
+              "close",
+              "reconnect-mobile"
+            ]
+          },
+          "control": {
+            "type": "string",
+            "enum": [
+              "file",
+              "info",
+              "docker",
+              "snippet",
+              "shortcut",
+              "copy",
+              "paste",
+              "theme",
+              "wterm-theme",
+              "reconnect",
+              "disconnect",
+              "quality",
+              "fit",
+              "zoom",
+              "clipboard",
+              "keyboard",
+              "shortcuts",
+              "joystick",
+              "drag",
+              "ctrl_alt_del",
+              "clipboard_send",
+              "clipboard_read_local",
+              "clipboard_copy_remote"
+            ]
+          },
+          "desktopControl": {
+            "type": "string",
+            "enum": [
+              "quality",
+              "fit",
+              "zoom",
+              "clipboard",
+              "keyboard",
+              "shortcuts",
+              "joystick",
+              "drag",
+              "ctrl_alt_del",
+              "reconnect",
+              "disconnect",
+              "clipboard_send",
+              "clipboard_read_local",
+              "clipboard_copy_remote",
+              "shortcut",
+              "text",
+              "mouse_click"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "run": {
+            "type": "boolean"
+          },
+          "maxChars": {
+            "type": "number"
+          },
+          "maxWidth": {
+            "type": "number"
+          },
+          "qualityMode": {
+            "type": "string",
+            "enum": [
+              "balanced",
+              "performance",
+              "quality"
+            ]
+          },
+          "fitMode": {
+            "type": "string",
+            "enum": [
+              "fit",
+              "1:1",
+              "16:9",
+              "4:3",
+              "original",
+              "drag"
+            ]
+          },
+          "zoomPercent": {
+            "type": "number"
+          },
+          "sequence": {
+            "type": "string"
+          },
+          "paste": {
+            "type": "boolean"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "button": {
+            "type": "number"
+          },
+          "coordinateSpace": {
+            "type": "string",
+            "enum": [
+              "remote",
+              "screenshot"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "user_attachment_read_v1",
+      "capabilityId": "workspace.read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "attachmentId": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "number"
+          },
+          "limit": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "attachmentId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "user_attachment_view_v1",
+      "capabilityId": "workspace.read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "attachmentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachmentId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "web_search",
+      "capabilityId": "web.search",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "maxResults": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "workspace_list_v1",
+      "capabilityId": "workspace.list",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "dir": {
+            "type": "string",
+            "description": "相对路径，如 uploads 或 workspace/notes"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "workspace_read_v1",
+      "capabilityId": "workspace.read",
+      "risk": "R0",
+      "confirmation": "never",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "number"
+          },
+          "limit": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "toolId": "workspace_write_v1",
+      "capabilityId": "workspace.write",
+      "risk": "R1",
+      "confirmation": "always",
+      "playbookId": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

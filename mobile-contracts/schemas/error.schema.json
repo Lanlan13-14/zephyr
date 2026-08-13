@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/error.schema.json",
+  "title": "MobileErrorEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "error"
+  ],
+  "properties": {
+    "ok": {
+      "const": false
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "requestId"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
