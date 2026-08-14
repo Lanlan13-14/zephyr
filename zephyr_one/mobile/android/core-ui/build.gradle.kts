@@ -14,6 +14,7 @@ dependencies {
     api(libs.androidx.compose.foundation)
     api(libs.androidx.compose.ui.tooling.preview)
     api(libs.androidx.lifecycle.viewmodel.compose)
+    api(libs.androidx.lifecycle.runtime.compose)
     // viewModelScope lives here in lifecycle 2.8.x. Exposed as api because every feature module's
     // ViewModel launches into it, and a transitive-only dependency would break their compilation.
     api(libs.androidx.lifecycle.viewmodel.ktx)

@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -127,7 +129,7 @@ fun ActionSheet(
                             item.danger -> palette.status.error
                             else -> palette.onBackground
                         }
-                        Column(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 50.dp)
@@ -136,7 +138,8 @@ fun ActionSheet(
                                     onDismiss()
                                 }
                                 .padding(horizontal = 14.dp, vertical = 6.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
                                 text = item.label,

@@ -96,18 +96,30 @@ internal fun AiWorkspaceOverlay(
         runVisible = false
     }
 
-    BoxWithConstraints(modifier.fillMaxSize()) {
-        val containerHeight = maxHeight
-        val targetHeight = containerHeight * detent.fraction
-        val animatedHeight by animateDpAsState(
-            targetValue = targetHeight,
-            animationSpec = tween(
-                durationMillis = motion.scale(ZephyrMotionTokens.SHEET_MS),
-                easing = ZephyrMotionTokens.easeDrawer,
+    Box(modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = detent != AiDetent.CLOSED,
+            modifier = Modifier.fillMaxSize(),
+            enter = fadeIn(tween(durationMillis = 1)),
+            exit = fadeOut(
+                tween(
+                    durationMillis = 1,
+                    delayMillis = motion.scale(ZephyrMotionTokens.SHEET_MS),
+                ),
             ),
-            label = "aiSheetHeight",
-        )
-        val sheetHeight = dragHeight ?: animatedHeight
+        ) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val containerHeight = maxHeight
+                val targetHeight = containerHeight * detent.fraction
+                val animatedHeight by animateDpAsState(
+                    targetValue = targetHeight,
+                    animationSpec = tween(
+                        durationMillis = motion.scale(ZephyrMotionTokens.SHEET_MS),
+                        easing = ZephyrMotionTokens.easeDrawer,
+                    ),
+                    label = "aiSheetHeight",
+                )
+                val sheetHeight = dragHeight ?: animatedHeight
 
         AnimatedVisibility(
             visible = detent == AiDetent.EXPANDED,
@@ -125,44 +137,6 @@ internal fun AiWorkspaceOverlay(
             )
         }
 
-        AnimatedVisibility(
-            visible = detent == AiDetent.CLOSED,
-            modifier = Modifier.align(Alignment.BottomEnd),
-            enter = fadeIn(tween(motion.scale(ZephyrMotionTokens.MED_MS))) +
-                scaleIn(
-                    initialScale = 0.9f,
-                    animationSpec = tween(motion.scale(ZephyrMotionTokens.MED_MS), easing = ZephyrMotionTokens.easeOut),
-                ),
-            exit = fadeOut(tween(motion.scale(ZephyrMotionTokens.MED_MS))) +
-                scaleOut(
-                    targetScale = 0.9f,
-                    animationSpec = tween(motion.scale(ZephyrMotionTokens.MED_MS), easing = ZephyrMotionTokens.easeOut),
-                ),
-        ) {
-            val interaction = remember { MutableInteractionSource() }
-            Surface(
-                modifier = Modifier
-                    .navigationBarsPadding()
-                    .padding(end = 16.dp, bottom = 96.dp)
-                    .size(50.dp)
-                    .shadow(12.dp, CircleShape, ambientColor = palette.islandShadow, spotColor = palette.islandShadow)
-                    .pressScale(ZephyrMotionTokens.PRESS_SCALE_HARD, interaction = interaction)
-                    .clip(CircleShape)
-                    .clickable(
-                        interactionSource = interaction,
-                        indication = null,
-                        role = Role.Button,
-                    ) { detent = AiDetent.HALF },
-                shape = CircleShape,
-                color = palette.surfaces.floating,
-                contentColor = palette.brand.accent,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(ZephyrIcons.AiSpark, contentDescription = "Zephyr AI", modifier = Modifier.size(22.dp))
-                }
-            }
-        }
-
         val open = detent != AiDetent.CLOSED
         val slide by androidx.compose.animation.core.animateFloatAsState(
             targetValue = if (open) 0f else 1.05f,
@@ -173,7 +147,7 @@ internal fun AiWorkspaceOverlay(
             label = "aiSheetSlide",
         )
 
-        Column(
+                Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -182,7 +156,7 @@ internal fun AiWorkspaceOverlay(
                 .shadow(24.dp, RoundedCornerShape(topStart = ZephyrRadius.xl, topEnd = ZephyrRadius.xl))
                 .clip(RoundedCornerShape(topStart = ZephyrRadius.xl, topEnd = ZephyrRadius.xl))
                 .background(palette.surfaces.elevated),
-        ) {
+                ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -332,6 +306,46 @@ internal fun AiWorkspaceOverlay(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(ZephyrIcons.ArrowUp, contentDescription = "发送", tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(16.dp))
+                }
+            }
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = detent == AiDetent.CLOSED,
+            modifier = Modifier.align(Alignment.BottomEnd),
+            enter = fadeIn(tween(motion.scale(ZephyrMotionTokens.MED_MS))) +
+                scaleIn(
+                    initialScale = 0.9f,
+                    animationSpec = tween(motion.scale(ZephyrMotionTokens.MED_MS), easing = ZephyrMotionTokens.easeOut),
+                ),
+            exit = fadeOut(tween(motion.scale(ZephyrMotionTokens.MED_MS))) +
+                scaleOut(
+                    targetScale = 0.9f,
+                    animationSpec = tween(motion.scale(ZephyrMotionTokens.MED_MS), easing = ZephyrMotionTokens.easeOut),
+                ),
+        ) {
+            val interaction = remember { MutableInteractionSource() }
+            Surface(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(end = 16.dp, bottom = 96.dp)
+                    .size(50.dp)
+                    .shadow(12.dp, CircleShape, ambientColor = palette.islandShadow, spotColor = palette.islandShadow)
+                    .pressScale(ZephyrMotionTokens.PRESS_SCALE_HARD, interaction = interaction)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        role = Role.Button,
+                    ) { detent = AiDetent.HALF },
+                shape = CircleShape,
+                color = palette.surfaces.floating,
+                contentColor = palette.brand.accent,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(ZephyrIcons.AiSpark, contentDescription = "Zephyr AI", modifier = Modifier.size(22.dp))
                 }
             }
         }

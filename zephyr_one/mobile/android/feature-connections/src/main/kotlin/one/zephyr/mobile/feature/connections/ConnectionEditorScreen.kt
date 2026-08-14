@@ -10,12 +10,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -61,10 +61,14 @@ import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SecretState
 import one.zephyr.mobile.model.TerminalEncoding
 import one.zephyr.mobile.ui.chrome.PushedPageHeader
+import one.zephyr.mobile.ui.chrome.PushedPageActionBar
 import one.zephyr.mobile.ui.component.CleartextProtocolWarning
 import one.zephyr.mobile.ui.component.GroupCard
+import one.zephyr.mobile.ui.component.FieldRow
 import one.zephyr.mobile.ui.component.HorizontalDivider
+import one.zephyr.mobile.ui.component.PrimaryButton
 import one.zephyr.mobile.ui.component.SectionLabel
+import one.zephyr.mobile.ui.component.SettingsRow
 import one.zephyr.mobile.ui.state.PageStateScaffold
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
@@ -108,10 +112,10 @@ fun ConnectionEditorScreen(
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = ZephyrSpacing.lg)
-                        .padding(bottom = 112.dp),
+                        .padding(bottom = 190.dp),
                 ) {
-                    for (section in ui.sections) {
-                        SectionCard(title = sectionTitle(section)) {
+                    for (section in ui.sections.filterNot { it == EditorSection.FILE_SYNC }) {
+                        SectionCard(title = sectionTitle(section), compact = section == EditorSection.BASIC) {
                             when (section) {
                                 EditorSection.BASIC -> BasicSection(ui, onIntent)
                                 EditorSection.AUTH -> AuthSection(ui, onIntent)
@@ -123,14 +127,16 @@ fun ConnectionEditorScreen(
                             }
                         }
                     }
+                    ui.testResult?.let {
+                        Box(Modifier.padding(horizontal = 4.dp, vertical = 12.dp)) {
+                            TestResultText(it)
+                        }
+                    }
                 }
-                Box(
+                PushedPageActionBar(
                     Modifier
                         .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .background(ZephyrTheme.palette.surfaces.floating)
-                        .navigationBarsPadding()
-                        .padding(horizontal = ZephyrSpacing.lg, vertical = 12.dp),
+                        .fillMaxWidth(),
                 ) {
                     FixedActions(ui = ui, onIntent = onIntent)
                 }
@@ -200,12 +206,15 @@ private fun sectionTitle(section: EditorSection): String = when (section) {
 }
 
 @Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
+private fun SectionCard(title: String, compact: Boolean, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth()) {
-        SectionLabel(title)
-        GroupCard {
-            Column(Modifier.padding(ZephyrSpacing.lg)) { content() }
-        }
+        Text(
+            text = title.uppercase(),
+            style = ZephyrTheme.typography.section,
+            color = ZephyrTheme.palette.onFloatingSubtle,
+            modifier = Modifier.padding(start = 4.dp, top = if (compact) 4.dp else 22.dp, bottom = 10.dp),
+        )
+        GroupCard { content() }
     }
 }
 
@@ -223,10 +232,11 @@ private fun BasicSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
 
     HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 54.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(stringResource(R.string.editor_field_protocol), color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(84.dp))
+        Text(stringResource(R.string.editor_field_protocol), style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(72.dp))
         SegmentedControl(
             options = Protocol.entries.map { it.wireName },
             selectedIndex = Protocol.entries.indexOf(draft.current.protocol),
@@ -276,10 +286,11 @@ private fun BasicSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
     if (draft.showsEncodingField) {
         HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 54.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(stringResource(R.string.editor_field_encoding), color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(84.dp))
+            Text(stringResource(R.string.editor_field_encoding), style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(72.dp))
             SegmentedControl(
                 options = ConnectionDraft.availableEncodings(draft.current.protocol).map { it.wireName },
                 selectedIndex = ConnectionDraft.availableEncodings(draft.current.protocol).indexOf(draft.current.encoding).coerceAtLeast(0),
@@ -303,7 +314,7 @@ private fun AuthSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) ->
     )
 
     if (draft.showsSshKeyField) {
-        Spacer(Modifier.height(ZephyrSpacing.md))
+        HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
         val keyNames = ui.sshKeys.associate { it.id to it.name }
         Selector(
             label = stringResource(R.string.editor_field_ssh_key),
@@ -313,36 +324,32 @@ private fun AuthSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) ->
             onSelect = { onIntent(EditorIntent.SshKeySelected(it)) },
             onRepair = { onIntent(EditorIntent.RepairRoute("sshKeyId")) },
         )
-
-        Spacer(Modifier.height(ZephyrSpacing.md))
-        SecretEditor(
-            label = stringResource(R.string.editor_field_private_key),
-            stored = draft.original?.privateKey ?: SecretPresence.absent,
-            state = draft.privateKey,
-            multiline = true,
-            onChange = { onIntent(EditorIntent.PrivateKey(it)) },
-        )
     }
 }
 
 @Composable
 private fun RouteSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -> Unit) {
     val draft = ui.draft
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-        for (mode in ConnectionMode.entries) {
-            FilterChip(
-                selected = draft.current.connectionMode == mode,
-                onClick = { onIntent(EditorIntent.Mode(mode)) },
-                label = { Text(modeLabel(mode)) },
-            )
-        }
-    }
+    val mode = draft.current.connectionMode
+    SettingsRow(
+        title = "方式",
+        value = when (mode) {
+            ConnectionMode.DIRECT -> modeLabel(mode)
+            ConnectionMode.PROXY -> modeLabel(mode)
+            ConnectionMode.JUMP -> "JumpHost · ${draft.current.jumpHostIds.size} 级"
+        },
+        showChevron = true,
+        showDivider = mode != ConnectionMode.DIRECT,
+        onClick = {
+            val next = ConnectionMode.entries[(ConnectionMode.entries.indexOf(mode) + 1) % ConnectionMode.entries.size]
+            onIntent(EditorIntent.Mode(next))
+        },
+    )
 
-    when (draft.current.connectionMode) {
+    when (mode) {
         ConnectionMode.DIRECT -> Unit
 
         ConnectionMode.PROXY -> {
-            Spacer(Modifier.height(ZephyrSpacing.md))
             Selector(
                 label = stringResource(R.string.editor_mode_proxy),
                 selectedId = draft.current.proxyId,
@@ -354,8 +361,18 @@ private fun RouteSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
         }
 
         ConnectionMode.JUMP -> {
-            Spacer(Modifier.height(ZephyrSpacing.md))
-            JumpChainEditor(ui = ui, onIntent = onIntent)
+            val names = ui.jumpHosts.associate { it.id to it.name }
+            SettingsRow(
+                title = draft.current.jumpHostIds.joinToString(" → ") { names[it] ?: it }.ifBlank { "未选择 JumpHost" },
+                subtitle = "服务器列表中的 SSH 连接都可作为跳板机 · 依赖均有 use 能力",
+                showChevron = true,
+                showDivider = false,
+                onClick = {
+                    ui.jumpHosts.firstOrNull {
+                        it.id !in draft.current.jumpHostIds && it.id in ui.inventory.usableJumpHostIds
+                    }?.let { onIntent(EditorIntent.JumpAdded(it.id)) }
+                },
+            )
         }
     }
 }
@@ -426,106 +443,84 @@ private fun JumpChainEditor(ui: ConnectionEditorUiState, onIntent: (EditorIntent
 @Composable
 private fun RdpChannelSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -> Unit) {
     val rdp = ui.draft.current.rdp
-
-    Text(stringResource(R.string.editor_rdp_sound), style = ZephyrTheme.typography.caption)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-        for (mode in RdpSoundMode.entries) {
-            FilterChip(
-                selected = rdp.soundMode == mode,
-                onClick = { onIntent(EditorIntent.Rdp(rdp.copy(soundMode = mode))) },
-                label = { Text(mode.wireName) },
-            )
-        }
-    }
-
+    SettingsRow(
+        title = stringResource(R.string.editor_rdp_sound),
+        value = when (rdp.soundMode) {
+            RdpSoundMode.LOCAL -> "在此设备播放"
+            RdpSoundMode.REMOTE -> "在远端播放"
+            RdpSoundMode.OFF -> "关闭"
+        },
+        showChevron = true,
+        onClick = {
+            val next = RdpSoundMode.entries[(RdpSoundMode.entries.indexOf(rdp.soundMode) + 1) % RdpSoundMode.entries.size]
+            onIntent(EditorIntent.Rdp(rdp.copy(soundMode = next)))
+        },
+    )
     ToggleRow(stringResource(R.string.editor_rdp_clipboard), rdp.clipboard) {
         onIntent(EditorIntent.Rdp(rdp.copy(clipboard = it)))
     }
-    ToggleRow(stringResource(R.string.editor_rdp_microphone), rdp.microphone) {
+    ToggleRow(stringResource(R.string.editor_rdp_microphone), rdp.microphone, "会话请求时才申请权限") {
         onIntent(EditorIntent.Rdp(rdp.copy(microphone = it)))
     }
     ToggleRow(stringResource(R.string.editor_rdp_camera), rdp.camera) {
         onIntent(EditorIntent.Rdp(rdp.copy(camera = it)))
     }
-    ToggleRow(stringResource(R.string.editor_rdp_storage), rdp.storage) {
+    ToggleRow("存储（文件 drive）", rdp.storage, "只读在 provider 层执行", showDivider = !rdp.storage) {
         onIntent(EditorIntent.Rdp(rdp.copy(storage = it)))
     }
-    ToggleRow(stringResource(R.string.editor_rdp_location), rdp.location) {
-        onIntent(EditorIntent.Rdp(rdp.copy(location = it)))
+    if (rdp.storage) {
+        SettingsRow(
+            title = "映射目录",
+            subtitle = "本机共享目录授权",
+            value = when (ui.draft.current.fileSyncIntent) {
+                FileSyncDirectoryIntent.OFF -> "未映射"
+                FileSyncDirectoryIntent.ASK -> "会话时选择"
+                FileSyncDirectoryIntent.LOCAL_SHARE -> "下载/ZephyrDrive"
+                FileSyncDirectoryIntent.SERVER_BRIDGE -> "主端桥接"
+            },
+            showChevron = true,
+            onClick = {
+                val values = FileSyncDirectoryIntent.entries
+                val current = values.indexOf(ui.draft.current.fileSyncIntent)
+                onIntent(EditorIntent.FileSync(values[(current + 1) % values.size]))
+            },
+        )
+        SettingsRow(
+            title = "只读",
+            showDivider = false,
+            trailing = { Switch(checked = true, onCheckedChange = null, enabled = false) },
+        )
     }
-
-    Spacer(Modifier.height(ZephyrSpacing.sm))
-    Text(
-        text = stringResource(R.string.editor_rdp_permission_note),
-        style = ZephyrTheme.typography.caption,
-        color = ZephyrTheme.palette.onFloatingMuted,
-    )
 }
 
 @Composable
 private fun RdpDisplaySection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -> Unit) {
     val rdp = ui.draft.current.rdp
-
-    Text(stringResource(R.string.editor_rdp_resolution), style = ZephyrTheme.typography.caption)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-        for (value in RdpResolution.entries) {
-            FilterChip(
-                selected = rdp.resolution == value,
-                onClick = { onIntent(EditorIntent.Rdp(rdp.copy(resolution = value))) },
-                label = { Text(value.wireName) },
-            )
-        }
-    }
-
-    Spacer(Modifier.height(ZephyrSpacing.sm))
-    Text(stringResource(R.string.editor_rdp_quality), style = ZephyrTheme.typography.caption)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-        for (value in RdpQuality.entries) {
-            FilterChip(
-                selected = rdp.quality == value,
-                onClick = { onIntent(EditorIntent.Rdp(rdp.copy(quality = value))) },
-                label = { Text(value.wireName) },
-            )
-        }
-    }
-
-    Spacer(Modifier.height(ZephyrSpacing.sm))
-    Text(stringResource(R.string.editor_rdp_fps), style = ZephyrTheme.typography.caption)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-        for (value in RdpFps.entries) {
-            FilterChip(
-                selected = rdp.fps == value,
-                onClick = { onIntent(EditorIntent.Rdp(rdp.copy(fps = value))) },
-                label = { Text(value.value.toString()) },
-            )
-        }
-    }
-
-    Spacer(Modifier.height(ZephyrSpacing.sm))
-    Text(stringResource(R.string.editor_rdp_touch_mode), style = ZephyrTheme.typography.caption)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-        for (value in RdpTouchMode.entries) {
-            FilterChip(
-                selected = rdp.touchMode == value,
-                onClick = { onIntent(EditorIntent.Rdp(rdp.copy(touchMode = value))) },
-                label = { Text(value.wireName) },
-            )
-        }
-    }
-
-    Spacer(Modifier.height(ZephyrSpacing.sm))
-    // The numeric value is in the label because a slider position alone is not readable
-    // (SCREEN_CATALOG.md 26 requires progress as a readable value).
-    Text(
-        text = stringResource(R.string.editor_rdp_sensitivity, rdp.touchSensitivity),
-        style = ZephyrTheme.typography.tabularNumeric,
-    )
-    Slider(
-        value = rdp.touchSensitivity,
-        onValueChange = {
-            onIntent(EditorIntent.Rdp(rdp.copy(touchSensitivity = RdpSettings.clampSensitivity(it))))
+    SettingsRow(title = stringResource(R.string.editor_rdp_resolution), value = if (rdp.resolution == RdpResolution.AUTO) "自动（匹配此设备）" else rdp.resolution.wireName, showChevron = true, onClick = {
+        val next = RdpResolution.entries[(RdpResolution.entries.indexOf(rdp.resolution) + 1) % RdpResolution.entries.size]
+        onIntent(EditorIntent.Rdp(rdp.copy(resolution = next)))
+    })
+    SettingsRow(title = stringResource(R.string.editor_rdp_quality), value = qualityLabel(rdp.quality), showChevron = true, onClick = {
+        val next = RdpQuality.entries[(RdpQuality.entries.indexOf(rdp.quality) + 1) % RdpQuality.entries.size]
+        onIntent(EditorIntent.Rdp(rdp.copy(quality = next)))
+    })
+    SettingsRow(title = stringResource(R.string.editor_rdp_fps), value = "${rdp.fps.value} FPS", showChevron = true, onClick = {
+        val next = RdpFps.entries[(RdpFps.entries.indexOf(rdp.fps) + 1) % RdpFps.entries.size]
+        onIntent(EditorIntent.Rdp(rdp.copy(fps = next)))
+    })
+    SettingsRow(title = "触控方式", value = touchModeLabel(rdp.touchMode), showChevron = true, onClick = {
+        val next = RdpTouchMode.entries[(RdpTouchMode.entries.indexOf(rdp.touchMode) + 1) % RdpTouchMode.entries.size]
+        onIntent(EditorIntent.Rdp(rdp.copy(touchMode = next)))
+    })
+    SettingsRow(
+        title = "触控板灵敏度",
+        value = "%.1f".format(rdp.touchSensitivity),
+        showChevron = true,
+        showDivider = false,
+        onClick = {
+            val next = if (rdp.touchSensitivity >= RdpSettings.MAX_SENSITIVITY) RdpSettings.MIN_SENSITIVITY else rdp.touchSensitivity + 0.1f
+            onIntent(EditorIntent.Rdp(rdp.copy(touchSensitivity = RdpSettings.clampSensitivity(next))))
         },
-        valueRange = RdpSettings.MIN_SENSITIVITY..RdpSettings.MAX_SENSITIVITY,
     )
 }
 
@@ -554,13 +549,12 @@ private fun MetadataSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent
         label = stringResource(R.string.editor_field_tags),
         value = ui.draft.current.tags.joinToString(","),
         issue = null,
-        supporting = stringResource(R.string.editor_field_tags_hint),
         // Split here rather than in the draft so the raw text stays exactly what the user typed
         // until they leave the field; the draft normalises on save.
         onChange = { onIntent(EditorIntent.Tags(it.split(',').map(String::trim))) },
     )
 
-    Spacer(Modifier.height(ZephyrSpacing.md))
+    HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
     Field(
         label = stringResource(R.string.editor_field_remark),
         value = ui.draft.current.remark,
@@ -568,17 +562,17 @@ private fun MetadataSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent
         onChange = { onIntent(EditorIntent.Remark(it)) },
     )
 
-    Spacer(Modifier.height(ZephyrSpacing.md))
-    Text(stringResource(R.string.editor_field_visibility), style = ZephyrTheme.typography.caption)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-        for (option in VISIBILITY_OPTIONS) {
-            FilterChip(
-                selected = ui.draft.current.visibility == option,
-                onClick = { onIntent(EditorIntent.Visibility(option)) },
-                label = { Text(option) },
-            )
-        }
-    }
+    HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
+    SettingsRow(
+        title = "共享",
+        value = if (ui.draft.current.visibility == "private") "私有" else ui.draft.current.visibility,
+        showChevron = true,
+        showDivider = false,
+        onClick = {
+            val current = VISIBILITY_OPTIONS.indexOf(ui.draft.current.visibility).coerceAtLeast(0)
+            onIntent(EditorIntent.Visibility(VISIBILITY_OPTIONS[(current + 1) % VISIBILITY_OPTIONS.size]))
+        },
+    )
 }
 
 /**
@@ -589,34 +583,24 @@ private fun MetadataSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent
  * wrong; the ViewModel answers with issues instead of a silent no-op.
  */
 @Composable
-private fun FixedActions(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        ui.testResult?.let { TestResultText(it) }
-
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OutlinedButton(
-                onClick = { onIntent(EditorIntent.Test) },
-                enabled = !ui.testing && !ui.saving,
-                modifier = Modifier.weight(1f),
-            ) { Text(stringResource(R.string.editor_action_test)) }
-
-            OutlinedButton(
-                onClick = { onIntent(EditorIntent.ConnectWithoutSaving) },
-                enabled = !ui.saving,
-                modifier = Modifier.weight(1f),
-            ) { Text(stringResource(R.string.editor_action_connect_unsaved)) }
-
-            Button(
-                onClick = { onIntent(EditorIntent.Save) },
-                enabled = !ui.saving,
-                modifier = Modifier.weight(1f),
-            ) { Text(stringResource(R.string.editor_action_save)) }
-        }
-    }
+private fun RowScope.FixedActions(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -> Unit) {
+    PrimaryButton(
+        onClick = { onIntent(EditorIntent.Test) },
+        enabled = !ui.testing && !ui.saving,
+        modifier = Modifier.weight(1f),
+        ghost = true,
+    ) { Text(stringResource(R.string.editor_action_test)) }
+    PrimaryButton(
+        onClick = { onIntent(EditorIntent.ConnectWithoutSaving) },
+        enabled = !ui.saving,
+        modifier = Modifier.weight(1f),
+        ghost = true,
+    ) { Text(stringResource(R.string.editor_action_connect_unsaved)) }
+    PrimaryButton(
+        onClick = { onIntent(EditorIntent.Save) },
+        enabled = !ui.saving,
+        modifier = Modifier.weight(1.4f),
+    ) { Text(stringResource(R.string.editor_action_save)) }
 }
 
 @Composable
@@ -649,22 +633,24 @@ private fun Field(
     keyboardType: KeyboardType = KeyboardType.Text,
     supporting: String? = null,
 ) {
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 54.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(84.dp))
-        OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
-            modifier = Modifier.weight(1f),
-            isError = issue != null,
-            singleLine = true,
-            supportingText = supporting?.let { { Text(it) } },
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType),
+    FieldRow(
+        label = label,
+        value = value,
+        onValueChange = onChange,
+        mono = keyboardType == KeyboardType.Number ||
+            label == stringResource(R.string.editor_field_host) ||
+            label == stringResource(R.string.editor_field_username),
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType),
+        showDivider = false,
+    )
+    (issue?.message ?: supporting)?.let {
+        Text(
+            text = it,
+            style = ZephyrTheme.typography.caption,
+            color = if (issue != null) ZephyrTheme.palette.status.error else ZephyrTheme.palette.onFloatingSubtle,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
         )
     }
-    issue?.let { IssueText(it) }
 }
 
 @Composable
@@ -688,45 +674,55 @@ private fun SecretEditor(
     multiline: Boolean = false,
 ) {
     Column(Modifier.fillMaxWidth()) {
-        Text(label, style = ZephyrTheme.typography.caption)
-        Text(
-            text = ConnectionDraft.presenceFor(state, stored).let {
-                if (it.hasValue) SecretPresence.MASK else stringResource(R.string.editor_secret_clear)
-            },
-            style = ZephyrTheme.typography.mono,
-        )
-
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-            FilterChip(
-                selected = state is SecretState.Unchanged,
-                onClick = { onChange(SecretState.Unchanged) },
-                label = { Text(stringResource(R.string.editor_secret_keep)) },
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(label, style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(72.dp))
+            Text(
+                text = ConnectionDraft.presenceFor(state, stored).let {
+                    if (it.hasValue) SecretPresence.MASK else stringResource(R.string.editor_secret_clear)
+                },
+                style = ZephyrTheme.typography.mono,
+                modifier = Modifier.weight(1f),
             )
-            FilterChip(
-                selected = state is SecretState.Replace,
-                onClick = { onChange(SecretState.Replace("")) },
-                label = { Text(stringResource(R.string.editor_secret_replace)) },
-            )
-            FilterChip(
-                selected = state is SecretState.Clear,
-                onClick = { onChange(SecretState.Clear) },
-                label = { Text(stringResource(R.string.editor_secret_clear)) },
+            SegmentedControl(
+                options = listOf(
+                    stringResource(R.string.editor_secret_keep),
+                    stringResource(R.string.editor_secret_replace),
+                    stringResource(R.string.editor_secret_clear),
+                ),
+                selectedIndex = when (state) {
+                    is SecretState.Unchanged -> 0
+                    is SecretState.Replace -> 1
+                    is SecretState.Clear -> 2
+                },
+                onSelect = {
+                    onChange(
+                        when (it) {
+                            0 -> SecretState.Unchanged
+                            1 -> SecretState.Replace("")
+                            else -> SecretState.Clear
+                        },
+                    )
+                },
+                modifier = Modifier.width(159.dp),
             )
         }
 
         if (state is SecretState.Replace) {
-            OutlinedTextField(
+            FieldRow(
+                label = stringResource(R.string.editor_secret_new_value),
                 value = state.editingText(),
                 onValueChange = { onChange(SecretState.Replace(it)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.editor_secret_new_value)) },
                 singleLine = !multiline,
-                minLines = if (multiline) 4 else 1,
                 visualTransformation = if (multiline) {
                     androidx.compose.ui.text.input.VisualTransformation.None
                 } else {
                     PasswordVisualTransformation()
                 },
+                showDivider = false,
             )
         }
     }
@@ -750,22 +746,13 @@ private fun Selector(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
-        Text(label, style = ZephyrTheme.typography.caption)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = { expanded = true }) {
-                Text(
-                    selectedId?.let { options[it] ?: it }
-                        ?: stringResource(R.string.editor_none),
-                )
-            }
-            if (issue != null) {
-                Spacer(Modifier.width(ZephyrSpacing.sm))
-                AssistChip(
-                    onClick = onRepair,
-                    label = { Text(stringResource(R.string.editor_route_repair)) },
-                )
-            }
-        }
+        SettingsRow(
+            title = if (label.contains("Key", ignoreCase = true)) "已保存的 SSH Key" else label,
+            subtitle = selectedId?.let { options[it] ?: it } ?: stringResource(R.string.editor_none),
+            showChevron = true,
+            showDivider = false,
+            onClick = { if (issue == null) expanded = true else onRepair() },
+        )
         issue?.let { IssueText(it) }
 
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -790,14 +777,30 @@ private fun Selector(
 }
 
 @Composable
-private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = ZephyrSpacing.xs),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
+private fun ToggleRow(
+    label: String,
+    checked: Boolean,
+    subtitle: String? = null,
+    showDivider: Boolean = true,
+    onChange: (Boolean) -> Unit,
+) {
+    SettingsRow(
+        title = label,
+        subtitle = subtitle,
+        showDivider = showDivider,
+        trailing = { Switch(checked = checked, onCheckedChange = onChange) },
+    )
+}
+
+private fun qualityLabel(value: RdpQuality): String = when (value) {
+    RdpQuality.BALANCED -> "平衡"
+    RdpQuality.PERFORMANCE -> "性能"
+    RdpQuality.QUALITY -> "画质"
+}
+
+private fun touchModeLabel(value: RdpTouchMode): String = when (value) {
+    RdpTouchMode.DIRECT -> "直接触控"
+    RdpTouchMode.RELATIVE -> "触控板"
 }
 
 @Composable

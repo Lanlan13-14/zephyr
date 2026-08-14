@@ -3,6 +3,7 @@
 package one.zephyr.mobile.feature.tools
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -33,6 +34,9 @@ import one.zephyr.mobile.ui.component.Surface
 import one.zephyr.mobile.ui.component.Switch
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
+import one.zephyr.mobile.ui.component.GroupCard
+import one.zephyr.mobile.ui.component.PrimaryButton
+import one.zephyr.mobile.ui.component.SettingsRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,11 +49,13 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import one.zephyr.mobile.model.ActionGate
 import one.zephyr.mobile.model.PageState
 import one.zephyr.mobile.ui.component.MonoEndpoint
 import one.zephyr.mobile.ui.component.SectionHeader
+import one.zephyr.mobile.ui.chrome.PushedPageActionBar
 import one.zephyr.mobile.ui.island.islandContentBottomInset
 import one.zephyr.mobile.ui.state.PageStateScaffold
 import one.zephyr.mobile.ui.theme.ZephyrRadius
@@ -75,64 +81,136 @@ fun BatchExecutionScreen(
     modifier: Modifier = Modifier,
 ) {
     PageStateScaffold(state = state, onRetry = onRetry, modifier = modifier.fillMaxSize()) { content ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = ZephyrSpacing.lg,
-                end = ZephyrSpacing.lg,
-                top = ZephyrSpacing.sm,
-                bottom = islandContentBottomInset(),
-            ),
-            verticalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm),
-        ) {
-            if (!content.engineAvailable) {
-                item(key = "engine") { EngineUnavailableNotice() }
-            }
-
-            item(key = "command") { CommandField(content = content, onIntent = onIntent) }
-            item(key = "limits") { LimitsRow(content = content, onIntent = onIntent) }
-            item(key = "failfast") { FailFastRow(plan = content.plan, onIntent = onIntent) }
-
-            item(key = "targets-header") {
-                TargetsHeader(content = content, onIntent = onIntent)
-            }
-            items(content.targets, key = { "t-" + it.connectionId }) { target ->
-                TargetPickerRow(
-                    target = target,
-                    selected = target.connectionId in content.plan.selectedIds,
-                    enabled = !content.isRunning,
-                    onToggle = { onIntent(BatchIntent.ToggleTarget(target.connectionId)) },
-                )
-            }
-
-            item(key = "actions") { RunActions(content = content, onIntent = onIntent) }
-
-            val run = content.run
-            if (run != null) {
-                item(key = "progress") { RunProgress(run = run) }
-                val executed = run.executableTargets
-                if (executed.isNotEmpty()) {
-                    item(key = "results-header") {
-                        SectionHeader(stringResource(R.string.tools_batch_result_title))
+        Box(Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = ZephyrSpacing.lg,
+                    end = ZephyrSpacing.lg,
+                    top = 2.dp,
+                    bottom = 190.dp,
+                ),
+            ) {
+                item("targets-label") { DemoSectionLabel("目标（需 execute 能力）", compact = true) }
+                item("targets") {
+                    GroupCard {
+                        content.targets.forEachIndexed { index, target ->
+                            val gate = BatchTargets.gate(target)
+                            val available = gate.isAllowed
+                            SettingsRow(
+                                title = target.name,
+                                subtitle = if (available) target.host else "无 execute 能力 · 将被跳过",
+                                showDivider = index != content.targets.lastIndex,
+                                trailing = {
+                                    Switch(
+                                        checked = available && target.connectionId in content.plan.selectedIds,
+                                        onCheckedChange = if (available && !content.isRunning) {
+                                            { onIntent(BatchIntent.ToggleTarget(target.connectionId)) }
+                                        } else {
+                                            null
+                                        },
+                                        enabled = available && !content.isRunning,
+                                    )
+                                },
+                            )
+                        }
                     }
-                    items(executed, key = { "r-" + it.target.connectionId }) { row ->
-                        ResultRow(
-                            row = row,
-                            cancellable = !row.isTerminal,
-                            onCancel = { onIntent(BatchIntent.CancelTarget(row.target.connectionId)) },
+                }
+                item("command-label") { DemoSectionLabel("命令") }
+                item("command") {
+                    GroupCard {
+                        one.zephyr.mobile.ui.component.FieldRow(
+                            label = "命令",
+                            value = content.plan.command,
+                            onValueChange = { onIntent(BatchIntent.Command(it)) },
+                            mono = true,
+                            singleLine = false,
+                        )
+                        SettingsRow(
+                            title = "超时",
+                            value = "${content.plan.timeoutSeconds} 秒（1–300）",
+                            showChevron = true,
+                            onClick = {
+                                val values = listOf(30, 60, 120, 300)
+                                val current = values.indexOf(content.plan.timeoutSeconds)
+                                onIntent(BatchIntent.Timeout(values[(current + 1).coerceAtLeast(0) % values.size]))
+                            },
+                        )
+                        SettingsRow(
+                            title = "并发",
+                            value = content.plan.concurrency.toString(),
+                            showChevron = true,
+                            onClick = {
+                                val values = listOf(1, 2, 4, 8, 16)
+                                val current = values.indexOf(content.plan.concurrency)
+                                onIntent(BatchIntent.Concurrency(values[(current + 1).coerceAtLeast(0) % values.size]))
+                            },
+                        )
+                        SettingsRow(
+                            title = "fail-fast",
+                            subtitle = "一台失败即取消剩余目标",
+                            showDivider = false,
+                            trailing = {
+                                Switch(
+                                    checked = content.plan.failFast,
+                                    onCheckedChange = { onIntent(BatchIntent.FailFast(it)) },
+                                    enabled = !content.isRunning,
+                                )
+                            },
                         )
                     }
                 }
-                val denied = run.deniedTargets
-                if (denied.isNotEmpty()) {
-                    item(key = "denied-header") { DeniedHeader(count = denied.size) }
-                    items(denied, key = { "d-" + it.target.connectionId }) { row ->
-                        DeniedRow(row = row)
+                item("results-label") { DemoSectionLabel("结果") }
+                item("results") {
+                    GroupCard {
+                        if (content.run == null) {
+                            Text(
+                                "尚未执行 · 审计只保存截断 metadata",
+                                color = ZephyrTheme.palette.onFloatingSubtle,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            )
+                        } else {
+                            RunProgress(content.run)
+                            content.run.executableTargets.forEach { row ->
+                                ResultRow(
+                                    row = row,
+                                    cancellable = !row.isTerminal,
+                                    onCancel = { onIntent(BatchIntent.CancelTarget(row.target.connectionId)) },
+                                )
+                            }
+                            content.run.deniedTargets.forEach { DeniedRow(it) }
+                        }
                     }
                 }
+                if (!content.engineAvailable) {
+                    item("engine") { EngineUnavailableNotice() }
+                }
+            }
+            PushedPageActionBar(Modifier.align(Alignment.BottomCenter)) {
+                PrimaryButton(
+                    onClick = { onIntent(if (content.isRunning) BatchIntent.CancelRun else BatchIntent.ClearSelection) },
+                    modifier = Modifier.weight(1f),
+                    ghost = true,
+                ) { Text("取消") }
+                PrimaryButton(
+                    onClick = { onIntent(BatchIntent.Run) },
+                    modifier = Modifier.weight(1.4f),
+                    enabled = content.canRun,
+                ) { Text("执行") }
             }
         }
     }
+}
+
+@Composable
+private fun DemoSectionLabel(text: String, compact: Boolean = false) {
+    Text(
+        text = text.uppercase(),
+        color = ZephyrTheme.palette.onFloatingSubtle,
+        style = ZephyrTheme.typography.caption,
+        modifier = Modifier.padding(start = 4.dp, top = if (compact) 4.dp else 22.dp, bottom = 10.dp),
+    )
 }
 
 @Composable

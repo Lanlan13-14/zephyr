@@ -25,7 +25,7 @@ object ZephyrTextStyles {
     val rootTitle: TextStyle = TextStyle(
         fontSize = 23.sp,
         fontWeight = FontWeight.Bold,
-        letterSpacing = (-0.46).sp,
+        letterSpacing = 0.sp,
         platformStyle = noPad,
         lineHeightStyle = line,
     )
@@ -33,7 +33,7 @@ object ZephyrTextStyles {
     val pushedTitle: TextStyle = TextStyle(
         fontSize = 18.sp,
         fontWeight = FontWeight.Bold,
-        letterSpacing = (-0.36).sp,
+        letterSpacing = 0.sp,
         platformStyle = noPad,
         lineHeightStyle = line,
     )
@@ -41,7 +41,7 @@ object ZephyrTextStyles {
     val section: TextStyle = TextStyle(
         fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.72.sp,
+        letterSpacing = 0.sp,
         platformStyle = noPad,
         lineHeightStyle = line,
     )
@@ -115,7 +115,7 @@ object ZephyrTextStyles {
         fontFamily = FontFamily.Monospace,
         fontSize = 10.5.sp,
         fontWeight = FontWeight.ExtraBold,
-        letterSpacing = 0.21.sp,
+        letterSpacing = 0.sp,
         platformStyle = noPad,
         lineHeightStyle = line,
     )

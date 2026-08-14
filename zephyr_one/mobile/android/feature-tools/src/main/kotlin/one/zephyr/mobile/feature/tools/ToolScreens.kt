@@ -29,10 +29,14 @@ import androidx.compose.foundation.verticalScroll
 import one.zephyr.mobile.ui.component.AlertDialog
 import one.zephyr.mobile.ui.component.Button
 import one.zephyr.mobile.ui.component.FilterChip
+import one.zephyr.mobile.ui.component.GroupCard
+import one.zephyr.mobile.ui.component.Icon
 import one.zephyr.mobile.ui.component.LinearProgress
 import one.zephyr.mobile.ui.component.OutlinedTextField
 import one.zephyr.mobile.ui.component.Slider
 import one.zephyr.mobile.ui.component.Switch
+import one.zephyr.mobile.ui.component.SettingsRow
+import one.zephyr.mobile.ui.component.Surface
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
@@ -75,6 +79,7 @@ import one.zephyr.mobile.ui.theme.ZephyrRadius
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 import one.zephyr.mobile.ui.theme.ZephyrThemeId
+import one.zephyr.mobile.ui.icon.ZephyrIcons
 import java.util.UUID
 
 @Composable
@@ -91,6 +96,7 @@ fun AppearanceSettingsScreen(
     var customBackground by remember { mutableStateOf(false) }
     var customSelection by remember { mutableStateOf(false) }
     var splitMode by remember { mutableStateOf(0) }
+    var terminalBackgroundSource by remember { mutableStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = stringResource(R.string.tools_appearance), onBack = onBack)
         Column(
@@ -137,7 +143,7 @@ fun AppearanceSettingsScreen(
             }
             SectionLabel(stringResource(R.string.tools_appearance_mode))
             one.zephyr.mobile.ui.component.GroupCard {
-                Box(Modifier.padding(12.dp)) {
+                Box(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                     one.zephyr.mobile.ui.component.SegmentedControl(
                         options = listOf(
                             stringResource(R.string.tools_appearance_auto),
@@ -165,9 +171,9 @@ fun AppearanceSettingsScreen(
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "终端背景来源",
-                    value = "纯黑 #07090C",
+                    value = if (terminalBackgroundSource == 0) "纯黑 #07090C" else "跟随配色",
                     showChevron = true,
-                    onClick = {},
+                    onClick = { terminalBackgroundSource = (terminalBackgroundSource + 1) % 2 },
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "允许终端字体连字",
@@ -188,6 +194,7 @@ fun AppearanceSettingsScreen(
                     title = "分屏",
                     subtitle = "双终端共享底部按钮 · 或一侧停靠工具",
                     showDivider = false,
+                    verticalAlignment = Alignment.Top,
                     trailing = {
                         one.zephyr.mobile.ui.component.SegmentedControl(
                             options = listOf("关", "双终端", "工具左", "工具右"),
@@ -201,7 +208,7 @@ fun AppearanceSettingsScreen(
             Text(
                 stringResource(R.string.tools_appearance_note),
                 color = palette.onFloatingSubtle,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 14.dp),
             )
@@ -248,7 +255,8 @@ fun LanguageSettingsScreen(
                 stringResource(R.string.tools_language_hint),
                 color = ZephyrTheme.palette.onFloatingSubtle,
                 fontSize = 12.sp,
-                modifier = Modifier.padding(start = 4.dp, top = 12.dp),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
             )
         }
     }
@@ -552,7 +560,7 @@ fun ServerHubScreen(
     val palette = ZephyrTheme.palette
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "服务器", onBack = onBack)
-        Column(Modifier.padding(horizontal = ZephyrSpacing.lg)) {
+        Column(Modifier.padding(horizontal = ZephyrSpacing.lg, vertical = 4.dp)) {
             one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "设置",
@@ -599,8 +607,7 @@ fun ServerHubScreen(
 }
 
 @Composable
-fun BackupRestoreScreen(localMode: Boolean, onBack: () -> Unit) {
-    var webDavEnabled by remember { mutableStateOf(false) }
+fun BackupRestoreScreen(localMode: Boolean, onUnavailable: () -> Unit, onBack: () -> Unit) {
     val palette = ZephyrTheme.palette
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "备份与恢复", onBack = onBack)
@@ -617,7 +624,7 @@ fun BackupRestoreScreen(localMode: Boolean, onBack: () -> Unit) {
                     title = "生成加密备份…",
                     titleColor = palette.brand.accent,
                     showDivider = false,
-                    onClick = {},
+                    onClick = onUnavailable,
                 )
             }
             SectionLabel("导入")
@@ -627,7 +634,7 @@ fun BackupRestoreScreen(localMode: Boolean, onBack: () -> Unit) {
                     subtitle = "影响确认 → 服务端验证 → 所有 One 重新绑定",
                     titleColor = palette.brand.accent,
                     showDivider = false,
-                    onClick = {},
+                    onClick = onUnavailable,
                 )
             }
             SectionLabel("WebDAV 备份")
@@ -635,7 +642,7 @@ fun BackupRestoreScreen(localMode: Boolean, onBack: () -> Unit) {
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "启用 WebDAV 备份",
                     subtitle = "账号级加密备份到独立目录 · 仅 HTTPS",
-                    trailing = { Switch(webDavEnabled, { webDavEnabled = it }) },
+                    trailing = { Switch(false, null, enabled = false) },
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "地址",
@@ -645,13 +652,13 @@ fun BackupRestoreScreen(localMode: Boolean, onBack: () -> Unit) {
                     title = "立即备份",
                     titleColor = palette.brand.accent,
                     showDivider = false,
-                    onClick = {},
+                    onClick = onUnavailable,
                 )
             }
             Text(
                 "失败时明确显示「原数据已回滚 / 未改动」",
                 color = palette.onFloatingMuted,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
             )
@@ -684,20 +691,104 @@ fun DockerMonitorScreen(
     section: OpsSection,
     onBack: () -> Unit,
 ) {
-    val title = when (section) {
-        OpsSection.DOCKER -> "Docker / 监控"
-        OpsSection.METRICS -> "监控"
-        OpsSection.LOGS -> "日志"
-    }
+    val palette = ZephyrTheme.palette
+    val connection = connections.firstOrNull { it.protocol == Protocol.SSH && it.capabilities.canObserve }
+    val unavailable = UnavailableOpsPort()
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = title, onBack = onBack)
-        Column(Modifier.padding(horizontal = ZephyrSpacing.lg), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(UnavailableOpsPort().let { "SSH 引擎在此版本中尚未接入（ADR-002 M0 未关闭），无法读取 Docker、监控或日志。" }, color = ZephyrTheme.palette.onFloatingMuted)
-            connections.filter { it.protocol == Protocol.SSH && it.capabilities.canObserve }.forEach { connection ->
-                Text("${connection.name} · ${connection.host}", fontWeight = FontWeight.Medium)
-            }
-            Text("离线时显示最后 snapshot 时间，不把旧值说成实时。", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
+        PushedPageHeader(title = "Docker / 监控", onBack = onBack) {
+            Text(
+                connection?.name ?: "未选择",
+                color = palette.protocol.ssh,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(palette.protocol.ssh.copy(alpha = 0.14f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
         }
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = ZephyrSpacing.lg)
+                .padding(bottom = 140.dp),
+        ) {
+            Text(
+                "资源 · snapshot --".uppercase(),
+                style = ZephyrTheme.typography.section,
+                color = palette.onFloatingSubtle,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 10.dp),
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DockerStatCard("--", "CPU", 0f, Modifier.weight(1f))
+                DockerStatCard("--", "内存", 0f, Modifier.weight(1f))
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                DockerStatCard("--", "磁盘 /", 0f, Modifier.weight(1f), warning = true)
+                DockerStatCard("--", "网络", 0f, Modifier.weight(1f))
+            }
+
+            SectionLabel("容器 · control 能力可启停")
+            GroupCard {
+                SettingsRow(
+                    title = if (connection == null) "暂无可观察 SSH 连接" else "暂无容器快照",
+                    subtitle = unavailable.let { "SSH 引擎尚未接入，当前无法读取容器状态" },
+                    showDivider = false,
+                )
+            }
+
+            SectionLabel("服务日志")
+            GroupCard {
+                SettingsRow(
+                    title = if (connection == null) "暂无服务日志" else connection.name,
+                    subtitle = "tail · 搜索 · 导出",
+                    showChevron = connection != null && unavailable.isAvailable,
+                    showDivider = false,
+                )
+            }
+
+            Text(
+                "离线时显示最后 snapshot 时间，不把旧值说成实时",
+                color = palette.onFloatingSubtle,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DockerStatCard(
+    value: String,
+    label: String,
+    progress: Float,
+    modifier: Modifier = Modifier,
+    warning: Boolean = false,
+) {
+    val palette = ZephyrTheme.palette
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(palette.surfaces.content)
+            .border(1.dp, palette.surfaces.outlineSoft, RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+    ) {
+        Text(
+            value,
+            color = if (warning) palette.status.warning else palette.onFloating,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        LinearProgress(
+            progress = progress,
+            color = if (warning) palette.status.warning else palette.brand.accent,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Text(label, color = palette.onFloatingMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 7.dp))
     }
 }
 
@@ -777,50 +868,74 @@ fun ResourceListRoute(
         ResourceKind.SSH_KEY -> "SSH 密钥库"
         ResourceKind.JUMP_HOST -> "JumpHost"
     }
-    var pending by remember { mutableStateOf<ResourceRow?>(null) }
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = title, onBack = onBack) {
-            HeaderAddButton("新建", onCreate)
+            HeaderAddButton(
+                when (viewModel.kind) {
+                    ResourceKind.PROXY -> "新建代理"
+                    ResourceKind.SSH_KEY -> "新增密钥"
+                    ResourceKind.JUMP_HOST -> "新增 JumpHost"
+                },
+                onCreate,
+            )
         }
-        LazyColumn(contentPadding = PaddingValues(horizontal = ZephyrSpacing.lg, vertical = 8.dp)) {
-            items(rows, key = { it.id }) { row ->
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpen(row.id) }
-                        .padding(vertical = 12.dp),
-                ) {
-                    Text(row.name, fontWeight = FontWeight.SemiBold)
-                    Text(row.subtitle, color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
-                    TextButton(onClick = { pending = row }) { Text("删除") }
+        LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 140.dp)) {
+            item("resources") {
+                GroupCard {
+                    rows.forEachIndexed { index, row ->
+                        SettingsRow(
+                            title = row.name,
+                            subtitle = row.subtitle,
+                            showDivider = index != rows.lastIndex,
+                            showChevron = !row.isReferenced,
+                            onClick = { onOpen(row.id) },
+                            leading = {
+                                Surface(shape = RoundedCornerShape(8.dp), color = ZephyrTheme.palette.surfaces.elevated) {
+                                    Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            when (row.kind) {
+                                                ResourceKind.PROXY -> ZephyrIcons.Globe
+                                                ResourceKind.SSH_KEY -> ZephyrIcons.Key
+                                                ResourceKind.JUMP_HOST -> ZephyrIcons.JumpHost
+                                            },
+                                            contentDescription = null,
+                                            tint = ZephyrTheme.palette.onFloatingMuted,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                }
+                            },
+                            trailing = {
+                                if (row.isReferenced) {
+                                    Text(
+                                        "已关联 ${row.referencedBy.size} 个连接",
+                                        color = ZephyrTheme.palette.status.pendingSync,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(ZephyrTheme.palette.status.pendingSync.copy(alpha = 0.14f))
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    )
+                                }
+                            },
+                        )
+                    }
                 }
             }
-            item {
+            item("hint") {
                 Text(
-                    "编辑时留空密码不会覆盖已保存密码 · 被引用时删除受保护",
-                    color = ZephyrTheme.palette.onFloatingMuted,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(vertical = 12.dp),
+                    when (viewModel.kind) {
+                        ResourceKind.SSH_KEY -> "编辑时留空或保留 ****** 不会覆盖已保存的私钥与口令"
+                        else -> "编辑时留空密码不会覆盖已保存密码 · 被引用时删除受保护"
+                    },
+                    color = ZephyrTheme.palette.onFloatingSubtle,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
                 )
             }
         }
-    }
-    pending?.let { target ->
-        AlertDialog(
-            onDismissRequest = { pending = null },
-            title = { Text("删除 ${target.name}") },
-            text = { Text(if (target.isReferenced) "仍被连接引用，无法删除。" else "删除进入同步 tombstone。") },
-            confirmButton = {
-                TextButton(
-                    enabled = !target.isReferenced,
-                    onClick = {
-                        viewModel.delete(target.id)
-                        pending = null
-                    },
-                ) { Text("删除") }
-            },
-            dismissButton = { TextButton(onClick = { pending = null }) { Text("取消") } },
-        )
     }
 }
 

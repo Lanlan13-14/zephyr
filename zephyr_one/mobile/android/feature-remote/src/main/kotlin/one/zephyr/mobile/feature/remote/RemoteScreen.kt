@@ -174,7 +174,6 @@ private fun RemoteSession(
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         RemoteSurface(
             controller = controller,
-            dynamicResolution = content.surface.mode == RemoteViewportMode.DYNAMIC,
             onChromeTap = { onIntent(RemoteIntent.ToggleChrome) },
             modifier = Modifier.fillMaxSize(),
         )

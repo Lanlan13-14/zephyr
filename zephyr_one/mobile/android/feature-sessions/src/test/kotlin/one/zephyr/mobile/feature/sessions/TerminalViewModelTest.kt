@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -165,6 +166,7 @@ class TerminalViewModelTest {
         emulator = emulator,
         secretProvider = { credentials },
         clock = { NOW },
+        emulatorDispatcher = mainDispatcher,
     )
 
     /** stateIn(WhileSubscribed) produces nothing without a collector. */
@@ -355,6 +357,26 @@ class TerminalViewModelTest {
         assertEquals("remote-host", subject.title.value)
         // foreground = true: the tab the user is looking at must not badge itself as unread.
         assertFalse(registry.find(SESSION)?.unreadOutput ?: true)
+    }
+
+    @Test
+    fun anOutputBurstIsMergedToOneImmediateAndOneTrailingRedraw() = runTest(mainDispatcher) {
+        val host = FakeHost()
+        val emulator = FakeEmulator()
+        val subject = subject(host = host, emulator = emulator)
+        subscribe(subject)
+        subject.connect()
+        runCurrent()
+
+        repeat(20) { host.outputFlow.emit(ascii("x")) }
+        runCurrent()
+
+        assertEquals(20, emulator.fed.size)
+        assertEquals(1, subject.surfaceRevision.value)
+
+        advanceTimeBy(16)
+        runCurrent()
+        assertEquals(2, subject.surfaceRevision.value)
     }
 
     @Test

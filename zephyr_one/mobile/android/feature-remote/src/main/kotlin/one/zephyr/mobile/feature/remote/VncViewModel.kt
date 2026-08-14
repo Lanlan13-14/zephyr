@@ -100,8 +100,6 @@ class VncViewModel(
     /** The remote desktop name from the handshake. Shown in the status pill once it is known. */
     val title: StateFlow<String?> = titleState.asStateFlow()
 
-    val frameRevision: StateFlow<Int> get() = controller.frameRevision
-
     private var frameJob: Job? = null
     private var clipboardJob: Job? = null
     private var watchdogJob: Job? = null
@@ -120,7 +118,7 @@ class VncViewModel(
 
     val state: StateFlow<PageState<RemoteContent>> = combine(
         connectionState,
-        controller.state,
+        controller.contentState,
         registry.observe(sessionId),
         combine(errorState, authState, loadedState, statusState) { error, auth, loaded, status ->
             Aux(error, auth, loaded, status)

@@ -42,9 +42,12 @@ import one.zephyr.mobile.feature.filesync.FileSyncShareCoordinator
 import one.zephyr.mobile.feature.filesync.SafShareGrants
 import one.zephyr.mobile.feature.filesync.PersistentShareStore
 import one.zephyr.mobile.feature.filesync.SharedPreferencesKeyValueStore
+import one.zephyr.mobile.feature.tools.ClientTokenActions
+import one.zephyr.mobile.feature.tools.RepositoryClientTokenSecretCache
 import one.zephyr.mobile.model.AccountBinding
 import one.zephyr.mobile.network.ApiEndpoint
 import one.zephyr.mobile.network.ApiResult
+import one.zephyr.mobile.network.ClientTokenManagementApi
 import one.zephyr.mobile.network.CredentialStore
 import one.zephyr.mobile.network.CredentialScope
 import one.zephyr.mobile.network.DeviceProofSigner
@@ -231,6 +234,8 @@ class AccountContainer(
     )
 
     val api: MobileApi = MobileApi(apiClient)
+
+    val clientTokenManagement: ClientTokenManagementApi = ClientTokenManagementApi(apiClient)
 
     /** Shared-to-me reads go through their own client so no shared payload can reach the mirror. */
     val sharedResourceClient: SharedResourceClient = SharedResourceClient(apiClient)
@@ -478,6 +483,13 @@ class AccountContainer(
         bindingKey = bindingKey,
         settings = syncSettingsState,
         localWriteSignals = writeGateway.writeSignals,
+    )
+
+    val clientTokenActions: ClientTokenActions = ClientTokenActions(
+        management = clientTokenManagement,
+        secretCache = RepositoryClientTokenSecretCache(tokens, binding.userId),
+        localMode = localMode,
+        onServerMutation = { syncEngine.syncNow() },
     )
 
     internal val wakeIdentity = WakeBindingIdentity(

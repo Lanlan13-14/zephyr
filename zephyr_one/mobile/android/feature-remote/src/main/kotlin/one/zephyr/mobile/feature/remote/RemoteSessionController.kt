@@ -2,11 +2,13 @@ package one.zephyr.mobile.feature.remote
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -64,9 +66,23 @@ class RemoteSessionController(
     )
     val state: StateFlow<RemoteSurfaceState> = stateFlow.asStateFlow()
 
-    /** Bumped once per drained frame batch, so the renderer recomposes without the pixels in state. */
-    private val revisionFlow = MutableStateFlow(0)
-    val frameRevision: StateFlow<Int> = revisionFlow.asStateFlow()
+    /**
+     * Low-frequency state used to derive [RemoteContent]. Cursor coordinates and transforms are
+     * renderer concerns; feeding them into the ViewModel would rebuild the entire page on every
+     * pointer move.
+     */
+    private val contentStateFlow = MutableStateFlow(stateFlow.value)
+    val contentState: StateFlow<RemoteSurfaceState> = contentStateFlow.asStateFlow()
+
+    /**
+     * Capacity-one wake-up for the render thread.
+     *
+     * The signal carries no pixels and is deliberately conflated. While one batch is rendering, any
+     * number of protocol callbacks collapse into one trailing wake and stay bounded in [mailbox]. A
+     * frame therefore never writes Compose state or queues an unbounded number of Handler tasks.
+     */
+    private val frameWake = Channel<Unit>(Channel.CONFLATED)
+    val frameRequests: Flow<Unit> = frameWake.receiveAsFlow()
 
     private val gestureFlow = MutableSharedFlow<RemoteGestureSignal>(extraBufferCapacity = 8)
     val gestureSignals: SharedFlow<RemoteGestureSignal> = gestureFlow
@@ -135,7 +151,10 @@ class RemoteSessionController(
         if (widthPx <= 0 || heightPx <= 0) return
         if (widthPx == geometry.remoteWidthPx && heightPx == geometry.remoteHeightPx) return
         geometry = geometry.copy(remoteWidthPx = widthPx, remoteHeightPx = heightPx)
-        mailbox.requestFullRepaint(FrameRegion(0, 0, widthPx, heightPx))
+        // Do not mark the mailbox full here: the negotiated size is known before the first patch,
+        // and full-repaint mode intentionally discards patches until it is drained. Marking it here
+        // would therefore throw away the first visible frame.
+        frameWake.trySend(Unit)
         retransform()
     }
 
@@ -155,15 +174,19 @@ class RemoteSessionController(
                 maxOf(patch.region.bottom, geometry.remoteHeightPx),
             )
         }
-        mailbox.offer(patch)
+        if (mailbox.offer(patch)) frameWake.trySend(Unit)
     }
 
-    /** Called by the renderer once per frame. Empties the mailbox and bumps [frameRevision]. */
+    /** Called on the render thread. No Compose-visible state is touched on the ordinary frame path. */
     fun drainFrames(): FrameDrain {
         val drain = mailbox.drain()
-        if (drain.patches.isNotEmpty() || drain.fullRepaint) {
-            revisionFlow.value = revisionFlow.value + 1
-            publish()
+        // Drop diagnostics change only when the mailbox degraded. Publishing that rare event keeps
+        // the status line accurate without making every successful frame a page-state update.
+        val current = stateFlow.value
+        if (drain.droppedPatches != current.droppedPatches) {
+            val next = current.copy(droppedPatches = drain.droppedPatches)
+            stateFlow.value = next
+            contentStateFlow.value = next
         }
         return drain
     }
@@ -176,6 +199,7 @@ class RemoteSessionController(
                 null
             },
         )
+        frameWake.trySend(Unit)
     }
 
     // ---- viewport --------------------------------------------------------------------------------
@@ -504,7 +528,7 @@ class RemoteSessionController(
     }
 
     private fun publish() {
-        stateFlow.value = RemoteSurfaceState(
+        val next = RemoteSurfaceState(
             geometry = geometry,
             transform = transform,
             mode = mode,
@@ -516,8 +540,24 @@ class RemoteSessionController(
             pendingClipboard = pendingClipboard,
             sensitivity = pointer.sensitivity,
         )
+        val current = stateFlow.value
+        if (next == current) return
+        stateFlow.value = next
+        if (!current.sameRemoteContentState(next)) contentStateFlow.value = next
     }
 }
+
+/** Fields rendered outside the framebuffer/cursor layer. */
+private fun RemoteSurfaceState.sameRemoteContentState(other: RemoteSurfaceState): Boolean =
+    mode == other.mode &&
+        pointer.mode == other.pointer.mode &&
+        pointer.dragLock == other.pointer.dragLock &&
+        pointer.hasButtonDown == other.pointer.hasButtonDown &&
+        latches == other.latches &&
+        chrome == other.chrome &&
+        droppedPatches == other.droppedPatches &&
+        pendingClipboard == other.pendingClipboard &&
+        sensitivity == other.sensitivity
 
 /**
  * Something the host must do that is not state.

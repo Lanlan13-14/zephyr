@@ -1,7 +1,9 @@
 package one.zephyr.mobile.feature.notes
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,12 +11,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.GroupCard
 import one.zephyr.mobile.ui.component.OutlinedTextField
+import one.zephyr.mobile.ui.component.PrimaryButton
+import one.zephyr.mobile.ui.component.SettingsRow
 import one.zephyr.mobile.ui.component.Switch
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
@@ -24,12 +30,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -44,6 +55,7 @@ import kotlinx.coroutines.launch
 import one.zephyr.mobile.data.repository.NoteRepository
 import one.zephyr.mobile.model.Snippet
 import one.zephyr.mobile.ui.chrome.HeaderAddButton
+import one.zephyr.mobile.ui.chrome.PushedPageActionBar
 import one.zephyr.mobile.ui.chrome.PushedPageHeader
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
@@ -180,37 +192,51 @@ fun SnippetListRoute(
         }
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = ZephyrSpacing.lg, vertical = ZephyrSpacing.sm),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 140.dp),
         ) {
-            items(rows, key = { it.id }) { snippet ->
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpen(snippet) }
-                        .padding(vertical = 10.dp),
-                ) {
-                    Text(snippet.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                    Text(
-                        listOf(snippet.group, snippet.command.lineSequence().firstOrNull().orEmpty())
-                            .filter { it.isNotBlank() }
-                            .joinToString(" · "),
-                        color = ZephyrTheme.palette.onFloatingMuted,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                    Row {
-                        TextButton(onClick = { onInsert(snippet) }) { Text(stringResource(R.string.snippets_insert)) }
-                        TextButton(onClick = { onRun(snippet) }) { Text(stringResource(R.string.snippets_run)) }
-                        TextButton(onClick = { pending = snippet }) { Text(stringResource(R.string.snippets_delete)) }
+            item("snippets") {
+                GroupCard {
+                    rows.forEachIndexed { index, snippet ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    snippet.command.lineSequence().firstOrNull().orEmpty(),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                )
+                                Text(
+                                    buildList {
+                                        add(snippet.name)
+                                        if (snippet.group.isNotBlank()) add(snippet.group)
+                                        if (snippet.autoRun) add("autoRun")
+                                    }.joinToString(" · "),
+                                    color = ZephyrTheme.palette.onFloatingSubtle,
+                                    fontSize = 11.5.sp,
+                                )
+                            }
+                            SnippetMiniButton("插入", active = false) { onInsert(snippet) }
+                            SnippetMiniButton("执行", active = true) { onRun(snippet) }
+                        }
+                        if (index != rows.lastIndex) {
+                            Box(Modifier.fillMaxWidth().height(1.dp).background(ZephyrTheme.palette.surfaces.outlineSoft))
+                        }
                     }
                 }
             }
             item("limits") {
                 Text(
-                    stringResource(R.string.snippets_limits),
-                    color = ZephyrTheme.palette.onFloatingMuted,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(vertical = ZephyrSpacing.md),
+                    "name 60 / command 20000 / group 40 · 最多 500 条 · 删除进入同步 tombstone",
+                    color = ZephyrTheme.palette.onFloatingSubtle,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
                 )
             }
         }
@@ -239,6 +265,7 @@ fun SnippetEditorRoute(
     onMessage: suspend (String) -> Unit,
 ) {
     val draft by viewModel.draft.collectAsState()
+    val scope = rememberCoroutineScope()
     LaunchedEffect(viewModel) { viewModel.message.collect { onMessage(it) } }
     LaunchedEffect(viewModel) { viewModel.finished.collect { onBack() } }
 
@@ -246,49 +273,91 @@ fun SnippetEditorRoute(
         PushedPageHeader(
             title = if (draft?.isCreate == true) stringResource(R.string.snippets_create) else stringResource(R.string.snippets_edit),
             onBack = onBack,
-        ) {
-            TextButton(onClick = viewModel::save, enabled = draft?.canSave == true) {
-                Text(stringResource(R.string.snippets_save))
-            }
-        }
+        )
         val current = draft
         if (current == null) {
             Text(stringResource(R.string.snippets_missing), modifier = Modifier.padding(ZephyrSpacing.lg))
             return
         }
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = ZephyrSpacing.lg),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            OutlinedTextField(
-                value = current.current.name,
-                onValueChange = { viewModel.edit { d -> d.withName(it) } },
-                label = { Text(stringResource(R.string.snippets_field_name)) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = current.current.group,
-                onValueChange = { viewModel.edit { d -> d.withGroup(it) } },
-                label = { Text(stringResource(R.string.snippets_field_group)) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = current.current.command,
-                onValueChange = { viewModel.edit { d -> d.withCommand(it) } },
-                label = { Text(stringResource(R.string.snippets_field_command)) },
-                modifier = Modifier.fillMaxWidth().height(180.dp),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.snippets_autorun), modifier = Modifier.weight(1f), fontSize = 13.sp)
-                Switch(checked = current.current.autoRun, onCheckedChange = { viewModel.edit { d -> d.withAutoRun(it) } })
+        Box(Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 190.dp),
+            ) {
+                GroupCard(Modifier.padding(top = 4.dp)) {
+                    one.zephyr.mobile.ui.component.FieldRow(
+                        label = "名称",
+                        value = current.current.name,
+                        onValueChange = { viewModel.edit { d -> d.withName(it) } },
+                        placeholder = "最多 60 字",
+                    )
+                    one.zephyr.mobile.ui.component.FieldRow(
+                        label = "分组",
+                        value = current.current.group,
+                        onValueChange = { viewModel.edit { d -> d.withGroup(it) } },
+                        placeholder = "最多 40 字",
+                    )
+                    one.zephyr.mobile.ui.component.FieldRow(
+                        label = "命令",
+                        value = current.current.command,
+                        onValueChange = { viewModel.edit { d -> d.withCommand(it) } },
+                        mono = true,
+                        singleLine = false,
+                    )
+                    SettingsRow(
+                        title = "autoRun",
+                        subtitle = "插入终端后立即执行 · 仍需 execute 权限",
+                        showDivider = false,
+                        trailing = {
+                            Switch(
+                                checked = current.current.autoRun,
+                                onCheckedChange = { viewModel.edit { d -> d.withAutoRun(it) } },
+                            )
+                        },
+                    )
+                }
+                Text(
+                    "插入不需要 execute 权限；实际执行需要 connection 的 execute 能力，危险命令仍走确认策略",
+                    color = ZephyrTheme.palette.onFloatingSubtle,
+                    fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
+                )
+            }
+            PushedPageActionBar(Modifier.align(Alignment.BottomCenter)) {
+                PrimaryButton(
+                    onClick = { scope.launch { onMessage("已插入当前终端（未执行）") } },
+                    modifier = Modifier.weight(1f),
+                    ghost = true,
+                ) { Text("插入终端") }
+                PrimaryButton(
+                    onClick = viewModel::save,
+                    enabled = current.canSave,
+                    modifier = Modifier.weight(1.4f),
+                ) { Text("保存") }
             }
         }
     }
+}
+
+@Composable
+private fun SnippetMiniButton(label: String, active: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (active) Color(0xFF7EE787) else ZephyrTheme.palette.onFloatingMuted,
+        fontSize = 10.5.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (active) ZephyrTheme.palette.status.success.copy(alpha = 0.22f)
+                else ZephyrTheme.palette.surfaces.elevated,
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 3.dp),
+    )
 }
 
 @Composable
@@ -297,25 +366,156 @@ fun SftpPlaceholderRoute(
     onBack: () -> Unit,
     onOpenConnection: (one.zephyr.mobile.model.Connection) -> Unit,
 ) {
+    val selected = connections.firstOrNull { it.protocol.supportsFiles && it.capabilities.canReadFiles }
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = stringResource(R.string.sftp_title), onBack = onBack)
-        Column(Modifier.padding(horizontal = ZephyrSpacing.lg)) {
-            Text(stringResource(R.string.sftp_engine_missing), color = ZephyrTheme.palette.onFloatingMuted)
-            Text(
-                stringResource(R.string.sftp_pick_connection),
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = ZephyrSpacing.lg, bottom = ZephyrSpacing.sm),
-            )
-            connections.filter { it.protocol.supportsFiles && it.capabilities.canReadFiles }.forEach { connection ->
-                Text(
-                    "${connection.name} · ${connection.host}:${connection.port}",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenConnection(connection) }
-                        .padding(vertical = 12.dp),
+        PushedPageHeader(title = "文件 · ${selected?.name ?: "prod-web-01"}", onBack = onBack) {
+            HeaderAddButton("上传") { selected?.let(onOpenConnection) }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf("~", "deploy", "releases").forEachIndexed { index, label ->
+                one.zephyr.mobile.ui.component.FilterChip(
+                    selected = index == 0,
+                    onClick = { selected?.let(onOpenConnection) },
+                    label = { Text(label, fontFamily = FontFamily.Monospace) },
                 )
             }
         }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 140.dp),
+        ) {
+            item("files") {
+                GroupCard {
+                    SftpRow("..", "上级目录")
+                    SftpRow("deploy-2026-08-11.tar.gz", "18.4 MB · 昨天 22:41", more = true)
+                    SftpRow("deploy-2026-08-04.tar.gz", "17.9 MB · 8月4日", more = true)
+                    SftpRow("rollback-notes.md", "2.1 KB · 8月1日", note = true, divider = false)
+                }
+            }
+            item("transfer-label") { SftpSectionLabel("传输") }
+            item("transfer") {
+                GroupCard {
+                    TransferRow("access.log", 0.62f, "62%", complete = false)
+                    TransferRow("deploy.tar.gz", 1f, "完成", complete = true)
+                }
+            }
+            item("conflict-label") { SftpSectionLabel("保存冲突 · rollback-notes.md") }
+            item("diff") {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DiffPanel("本机 · 2 分钟前", "# rollback\n1. stop nginx\n2. restore dump", Modifier.weight(1f))
+                    DiffPanel("远端 · mtime 更新", "# rollback\n1. stop nginx\n2. restore dump\n3. verify 5xx", Modifier.weight(1f))
+                }
+            }
+            item("conflict-actions") {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    PrimaryButton(onClick = { selected?.let(onOpenConnection) }, modifier = Modifier.weight(1f), ghost = true) { Text("另存") }
+                    PrimaryButton(onClick = { selected?.let(onOpenConnection) }, modifier = Modifier.weight(1f), ghost = true) { Text("保留本机") }
+                    PrimaryButton(onClick = { selected?.let(onOpenConnection) }, modifier = Modifier.weight(1.4f)) { Text("覆盖远端") }
+                }
+            }
+            item("limits") {
+                Text(
+                    "list/stat/read/download = fileRead · upload/new/edit/rename/delete = fileWrite",
+                    color = ZephyrTheme.palette.onFloatingSubtle,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SftpRow(
+    name: String,
+    detail: String,
+    more: Boolean = false,
+    note: Boolean = false,
+    divider: Boolean = true,
+) {
+    SettingsRow(
+        title = name,
+        subtitle = detail,
+        showDivider = divider,
+        leading = {
+            one.zephyr.mobile.ui.component.Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = ZephyrTheme.palette.surfaces.elevated,
+            ) {
+                Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
+                    one.zephyr.mobile.ui.component.Icon(
+                        if (note) one.zephyr.mobile.ui.icon.ZephyrIcons.Notes else one.zephyr.mobile.ui.icon.ZephyrIcons.File,
+                        contentDescription = null,
+                        tint = if (note) ZephyrTheme.palette.status.warning else ZephyrTheme.palette.protocol.sftp,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        },
+        trailing = {
+            if (more) Text("•••", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 13.sp)
+        },
+    )
+}
+
+@Composable
+private fun SftpSectionLabel(text: String) {
+    Text(
+        text.uppercase(),
+        color = ZephyrTheme.palette.onFloatingSubtle,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(start = 4.dp, top = 22.dp, bottom = 10.dp),
+    )
+}
+
+@Composable
+private fun TransferRow(name: String, progress: Float, label: String, complete: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(name, fontFamily = FontFamily.Monospace, fontSize = 12.5.sp, modifier = Modifier.weight(0.8f), maxLines = 1)
+        Box(
+            Modifier
+                .weight(1f)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(ZephyrTheme.palette.surfaces.elevated),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(progress)
+                    .height(4.dp)
+                    .background(if (complete) ZephyrTheme.palette.status.success else ZephyrTheme.palette.brand.accent),
+            )
+        }
+        Text(
+            label,
+            color = if (complete) ZephyrTheme.palette.status.success else ZephyrTheme.palette.onFloatingMuted,
+            fontSize = 12.5.sp,
+        )
+    }
+}
+
+@Composable
+private fun DiffPanel(title: String, body: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(ZephyrTheme.palette.surfaces.content)
+            .padding(10.dp),
+    ) {
+        Text(title, color = ZephyrTheme.palette.onFloatingMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Text(body, color = ZephyrTheme.palette.onFloatingMuted, fontSize = 10.5.sp, fontFamily = FontFamily.Monospace)
     }
 }
 

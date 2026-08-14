@@ -84,6 +84,7 @@ class AuthInterceptor(
             "/api/auth/",
             MobileApiPaths.POST_MOBILE_V1_DEVICES_BIND,
             MobileApiPaths.POST_MOBILE_V1_SENSITIVE_VERIFY,
+            ClientTokenManagementPaths.TOKENS,
         )
     }
 }

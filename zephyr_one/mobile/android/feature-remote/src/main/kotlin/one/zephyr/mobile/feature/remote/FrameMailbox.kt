@@ -85,20 +85,21 @@ class FrameMailbox(
     val pendingCount: Int get() = pending.size
 
     @Synchronized
-    fun offer(patch: FramePatch) {
-        if (patch.region.isEmpty) return
+    fun offer(patch: FramePatch): Boolean {
+        if (patch.region.isEmpty) return false
         merged = merged?.union(patch.region) ?: patch.region
         if (fullRepaint) {
             // Already degraded for this frame: keep merging geometry so the renderer knows the area,
             // but do not accumulate pixels that a full repaint will supersede anyway.
             dropped++
-            return
+            return true
         }
         pending.add(patch)
         pendingBytes += patch.pixels.size
         if (pending.size > maxPatches || pendingBytes > maxBytes) {
             degrade()
         }
+        return true
     }
 
     /** Marks the next drain as a full repaint. Called on resize, reconnect and surface recreation. */

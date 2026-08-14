@@ -93,6 +93,11 @@ class ClientTokenRepository(
         secretStore.putText(SecretRef.of(ClientToken.ENTITY_TYPE, id, "token"), plaintext)
     }
 
+    /** Removes one cached secret after the canonical server has deleted that token. */
+    fun forgetSecret(id: String) {
+        secretStore.remove(SecretRef.of(ClientToken.ENTITY_TYPE, id, "token"))
+    }
+
     /**
      * Queues the local half of a token delete.
      *

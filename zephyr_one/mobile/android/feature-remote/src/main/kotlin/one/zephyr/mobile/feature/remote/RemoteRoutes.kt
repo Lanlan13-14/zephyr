@@ -2,12 +2,12 @@ package one.zephyr.mobile.feature.remote
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import kotlinx.coroutines.flow.Flow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import one.zephyr.mobile.model.RdpChannel
 
 /**
@@ -36,7 +36,7 @@ fun RdpRemoteRoute(
     autoConnect: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
 
     CollectRemoteMessages(viewModel.message, onMessage)
     WriteLocalClipboard(viewModel.localClipboardWrites)
@@ -82,8 +82,8 @@ fun VncRemoteRoute(
     autoConnect: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val state by viewModel.state.collectAsState()
-    val remoteTitle by viewModel.title.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val remoteTitle by viewModel.title.collectAsStateWithLifecycle()
 
     CollectRemoteMessages(viewModel.message, onMessage)
     WriteLocalClipboard(viewModel.localClipboardWrites)

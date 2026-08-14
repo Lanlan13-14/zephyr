@@ -577,6 +577,18 @@ private fun BoundRoot(
             RootRoute.Diagnostics -> DiagnosticsLiveDestination(
                 account = account,
                 onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+                onCheckUpdate = {
+                    appContainer.aboutActions.open(AboutDestination.CHECK_UPDATE)
+                        .onFailure { notice("无法打开更新页面") }
+                },
+                onOpenGitHub = {
+                    appContainer.aboutActions.open(AboutDestination.GITHUB)
+                        .onFailure { notice("无法打开 GitHub") }
+                },
+                onOpenLicenses = {
+                    appContainer.aboutActions.open(AboutDestination.OPEN_SOURCE_LICENSES)
+                        .onFailure { notice("无法打开开源许可证") }
+                },
                 onExport = { notice(diagnosticExport(account)) },
             )
             RootRoute.FileSync -> FileSyncDestination(
@@ -628,7 +640,11 @@ private fun BoundRoot(
                 onBack = { route = RootRoute.ServerHub },
                 onMessage = notice,
             )
-            RootRoute.Backup -> BackupDestination(account, onBack = { route = RootRoute.ServerHub })
+            RootRoute.Backup -> BackupDestination(
+                account = account,
+                onUnavailable = { notice("当前 Mobile v1 没有可用的备份或 WebDAV 接口") },
+                onBack = { route = RootRoute.ServerHub },
+            )
             RootRoute.RuntimeStatus -> RuntimeDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
             RootRoute.AiSettings -> AiSettingsLiveDestination(
                 account = account,
@@ -945,7 +961,6 @@ private fun RootDestination(
         IslandDestination.TOOLS -> ToolsDestination(
             account = account,
             ownerUserId = ownerUserId,
-            syncStatus = syncStatus,
             onOpenBatch = onOpenBatch,
             onOpenTool = onOpenTool,
         )
@@ -1015,16 +1030,10 @@ private fun LibraryDestination(
 private fun ToolsDestination(
     account: AccountContainer,
     ownerUserId: String,
-    syncStatus: Flow<SyncStatus>,
     onOpenBatch: () -> Unit,
     onOpenTool: (ToolEntry) -> Unit,
 ) {
     val connections by account.connections.observeAll(ownerUserId).collectAsState(initial = emptyList())
-    val proxies by account.resources.observeProxies(ownerUserId).collectAsState(initial = emptyList())
-    val keys by account.resources.observeSshKeys(ownerUserId).collectAsState(initial = emptyList())
-    val jumps by account.resources.observeJumpHosts(ownerUserId).collectAsState(initial = emptyList())
-    val network by account.network.collectAsState(initial = one.zephyr.mobile.network.NetworkState.offline)
-    val status by syncStatus.collectAsState(initial = SyncStatus.unbound())
     val prefs by account.settings.observePreferences().collectAsState(initial = emptyMap())
     val language = one.zephyr.mobile.ui.locale.AppLanguage.fromStored(
         prefs[one.zephyr.mobile.data.repository.SettingsRepository.PREF_LANGUAGE]?.let {
@@ -1043,12 +1052,6 @@ private fun ToolsDestination(
     val inventory = ToolsInventory(
         executableSshCount = connections.count { it.protocol == Protocol.SSH && it.capabilities.canExecute },
         observableSshCount = connections.count { it.protocol == Protocol.SSH && it.capabilities.canObserve },
-        proxyCount = proxies.count { it.deletedAt == null },
-        sshKeyCount = keys.count { it.deletedAt == null },
-        jumpHostCount = jumps.count { it.deletedAt == null },
-        online = network.connected,
-        pendingSyncCount = status.pendingCount,
-        conflictCount = status.conflictCount,
     )
     ToolsRootRoute(
         inventory = inventory,

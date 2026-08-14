@@ -354,7 +354,7 @@ class TerminalSurfaceController(
             modes = current.modes,
             twoFingerScrollGoesRemote = twoFingerScrollGoesRemote,
         )
-        stateFlow.value = current.copy(gestureOwner = owner)
+        if (owner != current.gestureOwner) stateFlow.value = current.copy(gestureOwner = owner)
 
         when (owner) {
             GestureOwner.SCROLLBACK -> {
@@ -504,7 +504,8 @@ class TerminalSurfaceController(
      * which draws escape text on the user's screen, so this is a plain replace rather than a merge.
      */
     fun onModes(modes: TerminalModes) {
-        stateFlow.value = stateFlow.value.copy(modes = modes)
+        val current = stateFlow.value
+        if (modes != current.modes) stateFlow.value = current.copy(modes = modes)
     }
 
     /** Telnet may renegotiate the code page mid-session (ZEPHYR_PARITY.md 6.2). */

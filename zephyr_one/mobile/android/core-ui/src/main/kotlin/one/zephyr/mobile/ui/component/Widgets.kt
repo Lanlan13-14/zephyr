@@ -40,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.rotate
@@ -327,8 +328,9 @@ fun ZephyrToggle(
     Box(
         modifier = modifier
             .size(width = 46.dp, height = 28.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
             .clip(RoundedCornerShape(14.dp))
-            .background(if (enabled) track else track.copy(alpha = 0.45f))
+            .background(track)
             .clickable(
                 enabled = enabled && onCheckedChange != null,
                 interactionSource = interaction,
@@ -344,6 +346,7 @@ fun ZephyrToggle(
                 .padding(start = 3.dp)
                 .size(23.dp)
                 .graphicsLayer { translationX = thumbOffset }
+                .shadow(3.dp, CircleShape, clip = false)
                 .clip(CircleShape)
                 .background(Color.White),
         )
@@ -429,6 +432,7 @@ fun SettingsRow(
     onClick: (() -> Unit)? = null,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    verticalAlignment: Alignment.Vertical = Alignment.CenterVertically,
 ) {
     val palette = ZephyrTheme.palette
     val interaction = remember { MutableInteractionSource() }
@@ -457,11 +461,11 @@ fun SettingsRow(
                     },
                 )
                 .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = verticalAlignment,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (leading != null) {
                 leading()
-                Spacer(Modifier.width(12.dp))
             }
             Column(Modifier.weight(1f)) {
                 Text(title, style = ZephyrTextStyles.row, color = titleColor ?: palette.onBackground)
@@ -476,7 +480,6 @@ fun SettingsRow(
             }
             if (value != null) {
                 Text(value, style = ZephyrTextStyles.chip, color = palette.onFloatingMuted)
-                Spacer(Modifier.width(6.dp))
             }
             if (selected) {
                 Icon(ZephyrIcons.Check, contentDescription = null, tint = palette.brand.accent, modifier = Modifier.size(18.dp))
@@ -511,13 +514,16 @@ fun FieldRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
                 text = label,
                 style = ZephyrTextStyles.caption,
                 color = palette.onFloatingMuted,
-                modifier = Modifier.width(72.dp),
+                modifier = Modifier
+                    .width(72.dp)
+                    .then(if (singleLine) Modifier else Modifier.padding(top = 2.dp)),
             )
             BasicTextField(
                 value = value,

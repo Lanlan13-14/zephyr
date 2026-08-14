@@ -1,13 +1,17 @@
 package one.zephyr.mobile.ui.chrome
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -162,4 +166,32 @@ fun HeaderIconButton(
 @Composable
 fun HeaderAddButton(description: String, onClick: () -> Unit) {
     HeaderIconButton(description = description, onClick = onClick, icon = ZephyrIcons.Plus)
+}
+
+@Composable
+fun PushedPageActionBar(
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(ZephyrTheme.palette.surfaces.floating),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(ZephyrTheme.palette.surfaces.outlineSoft),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content,
+        )
+    }
 }

@@ -133,7 +133,6 @@ class RdpViewModel(
     /** Emitted only after an explicit acceptance. The host writes the device clipboard. */
     val localClipboardWrites: SharedFlow<String> = clipboardToLocal
 
-    val frameRevision: StateFlow<Int> get() = controller.frameRevision
     val gestureSignals: SharedFlow<RemoteGestureSignal> get() = controller.gestureSignals
 
     private var frameJob: Job? = null
@@ -156,7 +155,7 @@ class RdpViewModel(
 
     val state: StateFlow<PageState<RemoteContent>> = combine(
         connectionState,
-        controller.state,
+        controller.contentState,
         registry.observe(sessionId),
         combine(errorState, certificateState, loadedState, statusState) { error, certificate, loaded, status ->
             Aux(error, certificate, loaded, status)

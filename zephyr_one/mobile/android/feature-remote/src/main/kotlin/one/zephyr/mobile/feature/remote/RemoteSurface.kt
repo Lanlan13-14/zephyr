@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -34,7 +33,12 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import one.zephyr.mobile.ui.theme.LocalZephyrPalette
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -60,6 +64,18 @@ internal class RemoteRenderView(context: Context) : SurfaceView(context) {
 
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
+
+    private val transformLock = Any()
+    private var pendingTransform: RemoteTransform? = null
+    private var transformScheduled = false
+    private val transformRunnable = Runnable {
+        val next = synchronized(transformLock) {
+            transformScheduled = false
+            pendingTransform.also { pendingTransform = null }
+        }
+        val source = bitmap
+        if (next != null && source != null) blit(source, next)
+    }
 
     @Volatile
     private var surfaceValid = false
@@ -112,6 +128,10 @@ internal class RemoteRenderView(context: Context) : SurfaceView(context) {
     fun stop() {
         handler?.removeCallbacksAndMessages(null)
         handler = null
+        synchronized(transformLock) {
+            pendingTransform = null
+            transformScheduled = false
+        }
         thread?.quitSafely()
         thread = null
         bitmap?.recycle()
@@ -119,20 +139,46 @@ internal class RemoteRenderView(context: Context) : SurfaceView(context) {
     }
 
     /**
-     * Hands one drained batch to the render thread.
+     * Drains and renders exactly one mailbox batch.
      *
-     * @param transform the transform the batch must be drawn with. Passed by value rather than read
-     *   back on the render thread, so the pixels and the matrix always belong to the same frame -
-     *   section 4 requires the transform to track the frame 1:1.
+     * The caller awaits completion, so its conflated frame channel cannot enqueue another render
+     * task while this one is running. Pixels stay in the bounded mailbox until the render thread is
+     * ready for them instead of moving into an unbounded Handler queue.
      */
-    fun submit(
-        drain: FrameDrain,
-        remoteWidthPx: Int,
-        remoteHeightPx: Int,
-        transform: RemoteTransform,
-    ) {
+    suspend fun renderNext(controller: RemoteSessionController) {
+        val completion = CompletableDeferred<Unit>()
+        val accepted = handler?.post {
+            try {
+                val surface = controller.state.value
+                render(
+                    drain = controller.drainFrames(),
+                    remoteWidthPx = surface.geometry.remoteWidthPx,
+                    remoteHeightPx = surface.geometry.remoteHeightPx,
+                    transform = surface.transform,
+                )
+            } finally {
+                completion.complete(Unit)
+            }
+        } == true
+        if (!accepted) completion.complete(Unit)
+        completion.await()
+    }
+
+    /** Coalesces gesture transforms and redraws the existing Bitmap without uploading its pixels. */
+    fun updateTransform(transform: RemoteTransform) {
         val target = handler ?: return
-        target.post { render(drain, remoteWidthPx, remoteHeightPx, transform) }
+        val shouldPost = synchronized(transformLock) {
+            pendingTransform = transform
+            if (transformScheduled) {
+                false
+            } else {
+                transformScheduled = true
+                true
+            }
+        }
+        if (shouldPost && !target.post(transformRunnable)) {
+            synchronized(transformLock) { transformScheduled = false }
+        }
     }
 
     private fun render(
@@ -151,7 +197,7 @@ internal class RemoteRenderView(context: Context) : SurfaceView(context) {
             if (framebuffer.apply(patch)) touched = touched.union(patch.region)
         }
 
-        val everything = drain.fullRepaint || surfaceDirty || drain.patches.isEmpty()
+        val everything = drain.fullRepaint || surfaceDirty
         if (drain.fullRepaint) unservicedFullRepaints += 1
 
         if (everything) {
@@ -172,7 +218,7 @@ internal class RemoteRenderView(context: Context) : SurfaceView(context) {
                     height,
                 )
             }
-        } else {
+        } else if (drain.patches.isNotEmpty()) {
             return
         }
 
@@ -222,23 +268,26 @@ internal class RemoteRenderView(context: Context) : SurfaceView(context) {
 @Composable
 fun RemoteSurface(
     controller: RemoteSessionController,
-    dynamicResolution: Boolean,
     onChromeTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val surface by controller.state.collectAsState()
-    val revision by controller.frameRevision.collectAsState()
+    val surface by controller.state.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     val view = remember { RemoteViewHolder() }
 
     // Haptics are events, not state: section 5.1 requires the secondary-click buzz to fire before the
     // click is delivered, and the controller emits the signal before it enqueues the button.
-    LaunchedEffect(controller) {
-        controller.gestureSignals.collect { signal ->
-            when (signal) {
-                RemoteGestureSignal.SecondaryClickHaptic -> haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                RemoteGestureSignal.DragLockHaptic -> haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+    LaunchedEffect(controller, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            controller.gestureSignals.collect { signal ->
+                when (signal) {
+                    RemoteGestureSignal.SecondaryClickHaptic ->
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    RemoteGestureSignal.DragLockHaptic ->
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
             }
         }
     }
@@ -253,7 +302,7 @@ fun RemoteSurface(
                 controller.onViewportMeasured(
                     widthPx = size.width.toFloat(),
                     heightPx = size.height.toFloat(),
-                    requestResize = dynamicResolution,
+                    requestResize = controller.state.value.mode == RemoteViewportMode.DYNAMIC,
                 )
             }
             .remoteGestures(controller, onChromeTap)
@@ -269,18 +318,18 @@ fun RemoteSurface(
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Drains on every revision bump. The drain itself is a list swap on the main thread; the
-        // conversion and the blit happen on the render thread inside submit().
-        LaunchedEffect(revision, surface.transform, surface.geometry) {
-            val target = view.value ?: return@LaunchedEffect
-            val drain = controller.drainFrames()
-            if (drain.patches.isEmpty() && !drain.fullRepaint && revision != 0) return@LaunchedEffect
-            target.submit(
-                drain = drain,
-                remoteWidthPx = surface.geometry.remoteWidthPx,
-                remoteHeightPx = surface.geometry.remoteHeightPx,
-                transform = surface.transform,
-            )
+        LaunchedEffect(controller, lifecycleOwner) {
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                controller.frameRequests.collect {
+                    view.value?.renderNext(controller)
+                }
+            }
+        }
+
+        // A gesture only changes the matrix. The framebuffer Bitmap is already current and must not
+        // be uploaded again on every pan/pinch event.
+        LaunchedEffect(surface.transform) {
+            view.value?.updateTransform(surface.transform)
         }
 
         DisposableEffect(Unit) {

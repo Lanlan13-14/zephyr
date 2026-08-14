@@ -2,7 +2,6 @@ package one.zephyr.mobile.feature.sessions
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -10,7 +9,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import kotlinx.coroutines.flow.Flow
-import one.zephyr.mobile.model.PageState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
  * Route bindings for S20 and S21.
@@ -29,8 +28,8 @@ fun SessionListRoute(
     onMessage: suspend (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val state by viewModel.state.collectAsState()
-    val selection by viewModel.selection.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val selection by viewModel.selection.collectAsStateWithLifecycle()
 
     CollectSessionMessages(viewModel.message, onMessage)
 
@@ -80,22 +79,15 @@ fun TerminalRoute(
     twoFingerScrollGoesRemote: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val state by viewModel.state.collectAsState()
-    val revision by viewModel.surfaceRevision.collectAsState()
-    val remoteTitle by viewModel.title.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val remoteTitle by viewModel.title.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
 
     var keyboardVisible by remember { mutableStateOf(false) }
 
-    val content = (state as? PageState.Content)?.value
-    val topRow = content?.surface?.topRow ?: 0
-    val rows = content?.surface?.size?.rows ?: 0
-
-    // Keyed on the revision and the window rather than held in state: the grid is far too large to
-    // copy into a state object on every keystroke, so the screen reads the current window and this
-    // counter is the recomposition trigger (TERMINAL_EXPERIENCE.md 3).
-    val lines = remember(revision, topRow, rows) { viewModel.visibleLines() }
-    val cursor = remember(revision, topRow, rows) { viewModel.cursor() }
+    val readFrame = remember(viewModel) {
+        { topRow: Int, rows: Int -> viewModel.renderFrame(topRow, rows) }
+    }
 
     CollectSessionMessages(viewModel.message, onMessage)
 
@@ -130,8 +122,8 @@ fun TerminalRoute(
 
     TerminalScreen(
         state = state,
-        lines = lines,
-        cursor = cursor,
+        surfaceRevision = viewModel.surfaceRevision,
+        readFrame = readFrame,
         remoteTitle = remoteTitle,
         keyboardVisible = keyboardVisible,
         onIntent = { intent ->

@@ -419,8 +419,8 @@ internal fun ServerSettingsLiveDestination(
 }
 
 @Composable
-internal fun BackupDestination(account: AccountContainer, onBack: () -> Unit) {
-    BackupRestoreScreen(localMode = account.isLocalMode, onBack = onBack)
+internal fun BackupDestination(account: AccountContainer, onUnavailable: () -> Unit, onBack: () -> Unit) {
+    BackupRestoreScreen(localMode = account.isLocalMode, onUnavailable = onUnavailable, onBack = onBack)
 }
 
 @Composable
@@ -442,17 +442,13 @@ internal fun ClientTokenLiveDestination(
     onBack: () -> Unit,
     onMessage: suspend (String) -> Unit,
 ) {
-    val broker = remember(account) {
-        one.zephyr.mobile.feature.tools.SensitiveGrantBroker(account.api, account.isLocalMode)
-    }
     one.zephyr.mobile.feature.tools.ClientTokenLiveRoute(
         viewModel = viewModel(
             key = "tokens",
             factory = one.zephyr.mobile.feature.tools.ClientTokenViewModel.factory(
                 tokens = account.tokens,
                 ownerUserId = ownerUserId,
-                broker = broker,
-                localMode = account.isLocalMode,
+                actions = account.clientTokenActions,
             ),
         ),
         localMode = account.isLocalMode,
@@ -529,6 +525,9 @@ internal fun LocalSharesDestination(
 internal fun DiagnosticsLiveDestination(
     account: AccountContainer,
     onBack: () -> Unit,
+    onCheckUpdate: () -> Unit,
+    onOpenGitHub: () -> Unit,
+    onOpenLicenses: () -> Unit,
     onExport: () -> Unit,
 ) {
     val status by account.syncEngine.status.collectAsState(initial = one.zephyr.mobile.model.SyncStatus.unbound())
@@ -539,6 +538,9 @@ internal fun DiagnosticsLiveDestination(
         pending = status.pendingCount,
         conflicts = status.conflictCount,
         lastError = status.lastError?.code,
+        onCheckUpdate = onCheckUpdate,
+        onOpenGitHub = onOpenGitHub,
+        onOpenLicenses = onOpenLicenses,
         onExport = onExport,
         onBack = onBack,
     )

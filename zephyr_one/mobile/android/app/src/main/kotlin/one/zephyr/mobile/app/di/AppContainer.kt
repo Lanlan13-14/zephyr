@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import one.zephyr.mobile.BuildConfig
+import one.zephyr.mobile.app.AboutActionLauncher
 import one.zephyr.mobile.contracts.BindingState
 import one.zephyr.mobile.model.AccountBinding
 import one.zephyr.mobile.model.NetworkPolicy
@@ -68,6 +69,8 @@ import one.zephyr.mobile.sync.SyncSettings
  * reading another's blobs.
  */
 class AppContainer(private val context: Context) {
+
+    val aboutActions: AboutActionLauncher by lazy { AboutActionLauncher(context) }
 
     /** Process-scoped protocol engines survive Activity recreation without orphaning sessions. */
     val vncEngine: VncEngine by lazy { SocketVncEngine() }

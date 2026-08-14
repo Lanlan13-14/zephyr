@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A bare Material3 shell only. Every colour, shape and type value comes from ZephyrTheme in
-     core-ui at runtime, because the four palettes are switchable while the app runs and an XML
-     theme cannot follow that. -->
+<!-- The platform window theme only supplies system-bar behavior. Every app colour, shape and type
+     value comes from ZephyrTheme in core-ui at runtime. -->
 <resources>
     <style name="Theme.ZephyrOne" parent="android:Theme.Material.Light.NoActionBar">
         <!-- Match Frost light background so the first frame is the dashboard, not a black flash. -->

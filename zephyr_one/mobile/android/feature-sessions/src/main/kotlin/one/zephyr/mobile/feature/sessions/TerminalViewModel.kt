@@ -3,7 +3,11 @@ package one.zephyr.mobile.feature.sessions
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -13,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import one.zephyr.mobile.contracts.Capability
 import one.zephyr.mobile.data.repository.ConnectionRepository
 import one.zephyr.mobile.data.session.SessionExecution
@@ -51,6 +56,12 @@ enum class TerminalDockItem {
 /** A host-key decision the user must make before the session can continue (ADR-002 gate). */
 data class HostKeyPrompt(val fingerprint: String, val changed: Boolean)
 
+/** One visible terminal grid snapshot. Kept out of [TerminalContent] so page state stays lightweight. */
+data class TerminalRenderFrame(
+    val lines: List<TerminalLine>,
+    val cursor: TerminalCursor?,
+)
+
 /** Everything S21 renders around the terminal surface. */
 data class TerminalContent(
     val connection: Connection,
@@ -87,6 +98,7 @@ class TerminalViewModel(
     private val emulator: TerminalEmulator,
     private val secretProvider: suspend (Connection) -> TerminalCredentials,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val emulatorDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     /**
@@ -125,9 +137,19 @@ class TerminalViewModel(
     val title: StateFlow<String?> = titleState.asStateFlow()
 
     private var outputJob: Job? = null
+    private val emulatorLock = Any()
+
+    private data class CachedTerminalFrame(
+        val topRow: Int,
+        val rows: Int,
+        val frame: TerminalRenderFrame,
+    )
+
+    @Volatile
+    private var cachedFrame: CachedTerminalFrame? = null
 
     /**
-     * Bumped once per emulator update.
+     * Bumped at most once per display frame while output is arriving.
      *
      * The cell grid is far too large to put in a state object and copy on every keystroke, so the
      * screen reads it through [visibleLines] and uses this counter as the recomposition trigger.
@@ -136,6 +158,7 @@ class TerminalViewModel(
      */
     private val revisionState = MutableStateFlow(0)
     val surfaceRevision: StateFlow<Int> = revisionState.asStateFlow()
+    private val redrawWake = Channel<Unit>(Channel.CONFLATED)
 
     val state: StateFlow<PageState<TerminalContent>> = combine(
         connectionState,
@@ -205,6 +228,24 @@ class TerminalViewModel(
     }
 
     init {
+        viewModelScope.launch {
+            for (signal in redrawWake) {
+                val surface = controller.state.value
+                if (revisionState.subscriptionCount.value > 0) {
+                    val frame = withContext(emulatorDispatcher) {
+                        snapshotFrame(surface.topRow, surface.size.rows)
+                    }
+                    cachedFrame = CachedTerminalFrame(surface.topRow, surface.size.rows, frame)
+                } else {
+                    cachedFrame = null
+                }
+                revisionState.value = revisionState.value + 1
+                registry.markOutput(sessionId, foreground = true)
+                // Keep one trailing wake while a burst is arriving. The first update is immediate;
+                // only subsequent network fragmentation inside the same display frame is merged.
+                delay(RENDER_FRAME_INTERVAL_MS)
+            }
+        }
         viewModelScope.launch {
             val connection = findConnection(connectionId)
             connectionState.value = connection
@@ -290,12 +331,13 @@ class TerminalViewModel(
         outputJob?.cancel()
         outputJob = viewModelScope.launch {
             host.output(sessionId).collect { bytes ->
-                val update = emulator.feed(bytes)
+                val update = withContext(emulatorDispatcher) {
+                    synchronized(emulatorLock) { emulator.feed(bytes) }
+                }
                 controller.onModes(update.modes)
                 controller.onOutput(update.newRows, update.transcriptRows)
                 update.title?.let { titleState.value = it }
-                revisionState.value = revisionState.value + 1
-                registry.markOutput(sessionId, foreground = true)
+                redrawWake.trySend(Unit)
             }
         }
     }
@@ -309,13 +351,33 @@ class TerminalViewModel(
     fun visibleLines(): List<TerminalLine> {
         if (!emulator.isAvailable) return emptyList()
         val surface = controller.state.value
-        return emulator.snapshot(surface.topRow, surface.size.rows)
+        return synchronized(emulatorLock) { emulator.snapshot(surface.topRow, surface.size.rows) }
     }
 
-    fun cursor(): TerminalCursor = emulator.cursor()
+    fun cursor(): TerminalCursor = synchronized(emulatorLock) { emulator.cursor() }
+
+    fun renderFrame(topRow: Int, rows: Int): TerminalRenderFrame {
+        cachedFrame?.let { cached ->
+            if (cached.topRow == topRow && cached.rows == rows) return cached.frame
+        }
+        return snapshotFrame(topRow, rows).also { frame ->
+            cachedFrame = CachedTerminalFrame(topRow, rows, frame)
+        }
+    }
+
+    private fun snapshotFrame(topRow: Int, rows: Int): TerminalRenderFrame {
+        if (!emulator.isAvailable) return TerminalRenderFrame(emptyList(), null)
+        return synchronized(emulatorLock) {
+            TerminalRenderFrame(
+                lines = emulator.snapshot(topRow, rows),
+                cursor = emulator.cursor(),
+            )
+        }
+    }
 
     /** Scrollback as text, for copy/share of a selected range. */
-    fun readScrollback(fromRow: Int, toRow: Int): String = emulator.readScrollback(fromRow, toRow)
+    fun readScrollback(fromRow: Int, toRow: Int): String =
+        synchronized(emulatorLock) { emulator.readScrollback(fromRow, toRow) }
 
     fun onHostKeyAccepted() {
         val prompt = hostKeyState.value ?: return
@@ -398,7 +460,7 @@ class TerminalViewModel(
     override fun onCleared() {
         outputJob?.cancel()
         // The emulator holds a native handle; leaking it would leak the whole scrollback buffer.
-        emulator.close()
+        synchronized(emulatorLock) { emulator.close() }
         super.onCleared()
     }
 
@@ -429,6 +491,7 @@ class TerminalViewModel(
         const val DISCLOSURE_RELAY = "主端 relay：凭据保留在主端"
         const val DISCLOSURE_DIRECT = "本次原生直连：加密连接材料仅驻留会话内存"
         private const val STOP_TIMEOUT_MS = 5_000L
+        private const val RENDER_FRAME_INTERVAL_MS = 16L
     }
 }
 

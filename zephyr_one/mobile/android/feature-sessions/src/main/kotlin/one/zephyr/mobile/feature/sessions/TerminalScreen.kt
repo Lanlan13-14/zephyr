@@ -75,6 +75,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.flow.StateFlow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.abs
 import one.zephyr.mobile.data.session.SessionTransport
 import one.zephyr.mobile.model.PageState
@@ -119,16 +121,16 @@ private const val PASTE_PREVIEW_CHARS = 512
  * its scrollback are never rebuilt: a screen that owned the emulator could not honour that. Every
  * event leaves as a [TerminalIntent], so a Compose test can assert routing with no transport at all.
  *
- * @param lines the rows under the viewport, already windowed by the caller.
- * @param cursor null when the engine is unavailable or the cursor is hidden.
+ * [surfaceRevision] is collected inside the viewport rather than at the route. Output can therefore
+ * repaint the cell grid without recomposing the top bar, IME bridge, shortcut matrix or dock.
  * @param keyboardVisible drives the IME rather than being read from it, so the shortcut key, a tap on
  *   the viewport and the system state cannot disagree.
  */
 @Composable
 fun TerminalScreen(
     state: PageState<TerminalContent>,
-    lines: List<TerminalLine>,
-    cursor: TerminalCursor?,
+    surfaceRevision: StateFlow<Int>,
+    readFrame: (topRow: Int, rows: Int) -> TerminalRenderFrame,
     remoteTitle: String?,
     keyboardVisible: Boolean,
     onIntent: (TerminalIntent) -> Unit,
@@ -141,8 +143,8 @@ fun TerminalScreen(
     ) { content ->
         TerminalSurface(
             content = content,
-            lines = lines,
-            cursor = cursor,
+            surfaceRevision = surfaceRevision,
+            readFrame = readFrame,
             remoteTitle = remoteTitle,
             keyboardVisible = keyboardVisible,
             onIntent = onIntent,
@@ -153,8 +155,8 @@ fun TerminalScreen(
 @Composable
 private fun TerminalSurface(
     content: TerminalContent,
-    lines: List<TerminalLine>,
-    cursor: TerminalCursor?,
+    surfaceRevision: StateFlow<Int>,
+    readFrame: (topRow: Int, rows: Int) -> TerminalRenderFrame,
     remoteTitle: String?,
     keyboardVisible: Boolean,
     onIntent: (TerminalIntent) -> Unit,
@@ -256,10 +258,11 @@ private fun TerminalSurface(
             // rows that are actually visible above the IME.
             Column(Modifier.fillMaxSize().padding(bottom = imeHeightDp)) {
                 Box(Modifier.fillMaxWidth().weight(1f)) {
-                    TerminalViewport(
-                        lines = lines,
-                        cursor = cursor,
+                    TerminalViewportHost(
+                        surfaceRevision = surfaceRevision,
+                        readFrame = readFrame,
                         topRow = surface.topRow,
+                        rows = surface.size.rows,
                         cellStyle = cellStyle,
                         metrics = metrics,
                         onIntent = onIntent,
@@ -375,6 +378,29 @@ private fun TerminalViewport(
             )
         }
     }
+}
+
+/** The only Compose scope invalidated by a terminal output frame. */
+@Composable
+private fun TerminalViewportHost(
+    surfaceRevision: StateFlow<Int>,
+    readFrame: (topRow: Int, rows: Int) -> TerminalRenderFrame,
+    topRow: Int,
+    rows: Int,
+    cellStyle: TextStyle,
+    metrics: TerminalCellMetrics,
+    onIntent: (TerminalIntent) -> Unit,
+) {
+    val revision by surfaceRevision.collectAsStateWithLifecycle()
+    val frame = remember(revision, topRow, rows, readFrame) { readFrame(topRow, rows) }
+    TerminalViewport(
+        lines = frame.lines,
+        cursor = frame.cursor,
+        topRow = topRow,
+        cellStyle = cellStyle,
+        metrics = metrics,
+        onIntent = onIntent,
+    )
 }
 
 /**

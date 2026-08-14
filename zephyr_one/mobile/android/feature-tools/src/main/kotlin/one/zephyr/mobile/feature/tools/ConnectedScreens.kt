@@ -1,12 +1,15 @@
 package one.zephyr.mobile.feature.tools
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -31,6 +34,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -57,6 +64,7 @@ import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.network.MobileApi
 import one.zephyr.mobile.network.dto.DeviceDto
 import one.zephyr.mobile.ui.chrome.PushedPageHeader
+import one.zephyr.mobile.ui.chrome.HeaderAddButton
 import one.zephyr.mobile.ui.format.RelativeTime
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
@@ -82,8 +90,7 @@ class SensitiveGrantBroker(
 class ClientTokenViewModel(
     private val tokens: ClientTokenRepository,
     private val ownerUserId: String,
-    private val broker: SensitiveGrantBroker,
-    private val localMode: Boolean,
+    private val actions: ClientTokenActions,
 ) : ViewModel() {
     val rows = tokens.observeAll(ownerUserId)
     private val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
@@ -101,25 +108,55 @@ class ClientTokenViewModel(
 
     fun reveal(id: String, secret: String) {
         viewModelScope.launch {
-            val grant = broker.verify(ACTION_TOKEN_REVEAL, secret, listOf(id)).getOrElse {
-                messages.emit(it.message ?: "敏感验证失败")
-                return@launch
+            when (val result = actions.reveal(id, secret)) {
+                is ApiResult.Success -> revealedState.value = id to result.value.secret
+                is ApiResult.Failure -> messages.emit(result.error.message)
             }
-            val value = runCatching { tokens.reveal(id, grant.grantId) }.getOrNull()
-            if (value.isNullOrEmpty()) messages.emit("本机没有这份 Token 的密文。绑定后的首次同步才会把它封进设备信封。")
-            else revealedState.value = id to value
+        }
+    }
+
+    fun create(name: String) {
+        viewModelScope.launch {
+            when (val result = actions.create(name)) {
+                is ApiResult.Success -> {
+                    revealedState.value = result.value.id to result.value.secret
+                    messages.emit("Token 已创建并显示")
+                }
+                is ApiResult.Failure -> messages.emit(result.error.message)
+            }
+        }
+    }
+
+    fun rotate(id: String, secret: String) {
+        viewModelScope.launch {
+            when (val result = actions.rotate(id, secret)) {
+                is ApiResult.Success -> {
+                    revealedState.value = id to result.value.secret
+                    messages.emit("Token 已旋转；使用旧 Token 的设备需要重新绑定")
+                }
+                is ApiResult.Failure -> messages.emit(result.error.message)
+            }
         }
     }
 
     fun delete(id: String, secret: String) {
         viewModelScope.launch {
-            val grant = broker.verify(ACTION_TOKEN_DELETE, secret, listOf(id)).getOrElse {
-                messages.emit(it.message ?: "敏感验证失败")
-                return@launch
+            when (val result = actions.delete(id, secret)) {
+                is ApiResult.Success -> messages.emit("已删除；使用该 Token 的设备需要重新绑定")
+                is ApiResult.Failure -> messages.emit(result.error.message)
             }
-            runCatching { tokens.delete(id, ownerUserId, grant.grantId) }
-                .onSuccess { messages.emit("已删除，待同步。使用该 Token 的设备会在下次刷新时断开。") }
-                .onFailure { messages.emit(it.message ?: "删除失败") }
+        }
+    }
+
+    fun resetAll(name: String, secret: String) {
+        viewModelScope.launch {
+            when (val result = actions.resetAll(name, secret)) {
+                is ApiResult.Success -> {
+                    revealedState.value = result.value.id to result.value.secret
+                    messages.emit("全部 Token 已重置；所有设备需要重新绑定")
+                }
+                is ApiResult.Failure -> messages.emit(result.error.message)
+            }
         }
     }
 
@@ -131,12 +168,11 @@ class ClientTokenViewModel(
         fun factory(
             tokens: ClientTokenRepository,
             ownerUserId: String,
-            broker: SensitiveGrantBroker,
-            localMode: Boolean,
+            actions: ClientTokenActions,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                ClientTokenViewModel(tokens, ownerUserId, broker, localMode) as T
+                ClientTokenViewModel(tokens, ownerUserId, actions) as T
         }
     }
 }
@@ -151,9 +187,16 @@ fun ClientTokenLiveRoute(
     val rows by viewModel.rows.collectAsState(initial = emptyList())
     LaunchedEffect(viewModel) { viewModel.message.collect { onMessage(it) } }
     var pending by remember { mutableStateOf<TokenPending?>(null) }
+    var menuToken by remember { mutableStateOf<ClientToken?>(null) }
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
 
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = "Client Token", onBack = onBack)
+        PushedPageHeader(title = "Client Token", onBack = onBack) {
+            HeaderAddButton("新增 Token") {
+                pending = TokenPending.Create
+            }
+        }
         if (localMode) {
             Text(
                 "本地模式没有主端 Token。绑定服务器并完成首次同步后，这里会列出当前账号的 Token 元数据。查看/删除需要密码或 TOTP。",
@@ -162,57 +205,111 @@ fun ClientTokenLiveRoute(
             )
             return
         }
-        LazyColumn(Modifier.padding(horizontal = ZephyrSpacing.lg)) {
-            items(rows.filter { it.deletedAt == null }, key = { it.id }) { token ->
-                Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-                    Text(token.name.ifBlank { token.id }, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "id ${token.id} · 关联 One ${token.linkedOneDeviceCount} · Agent ${token.linkedLegacyAgentCount}",
-                        color = ZephyrTheme.palette.onFloatingMuted,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                    Row {
-                        TextButton(onClick = { pending = TokenPending.Reveal(token) }) { Text("查看") }
-                        TextButton(onClick = { pending = TokenPending.Rename(token) }) { Text("改名") }
-                        TextButton(onClick = { pending = TokenPending.Delete(token) }) { Text("删除") }
+        val liveRows = rows.filter { it.deletedAt == null }
+        LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 140.dp)) {
+            item("tokens") {
+                one.zephyr.mobile.ui.component.GroupCard {
+                    liveRows.forEachIndexed { index, token ->
+                        one.zephyr.mobile.ui.component.SettingsRow(
+                            title = token.name.ifBlank { token.id },
+                            subtitle = buildList {
+                                if (token.linkedOneDeviceCount > 0) add("关联 One ×${token.linkedOneDeviceCount}")
+                                if (token.linkedLegacyAgentCount > 0) add("关联旧 Agent ×${token.linkedLegacyAgentCount}")
+                                token.lastUsedAt?.let { add("lastUsed ${RelativeTime.format(System.currentTimeMillis(), it)}") }
+                            }.joinToString(" · ").ifBlank { "尚未使用" },
+                            showDivider = index != liveRows.lastIndex,
+                            showChevron = token.linkedOneDeviceCount == 0,
+                            onClick = { menuToken = token },
+                            leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Ticket) },
+                            trailing = {
+                                if (token.linkedOneDeviceCount > 0) {
+                                    Text(
+                                        "本机",
+                                        color = ZephyrTheme.palette.status.pendingSync,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(ZephyrTheme.palette.status.pendingSync.copy(alpha = 0.14f))
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    )
+                                }
+                            },
+                        )
                     }
                 }
             }
-            item {
+            item("danger-label") {
+                one.zephyr.mobile.ui.component.SectionLabel("危险区")
+            }
+            item("danger") {
+                one.zephyr.mobile.ui.component.GroupCard {
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "重置全部 Token",
+                        subtitle = "所有 One / Agent 立即断开",
+                        titleColor = ZephyrTheme.palette.status.error,
+                        showDivider = false,
+                        onClick = { pending = TokenPending.ResetAll },
+                    )
+                }
+            }
+            item("hint") {
                 Text(
-                    "查看 / 复制 / 删除均需当前密码或 TOTP。旋转和重置全部会断开已绑定设备，必须走主端敏感验证。",
-                    color = ZephyrTheme.palette.onFloatingMuted,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(vertical = 16.dp),
+                    "查看 / 复制 / 旋转 / 删除均需当前密码或 TOTP · grant 单次且 action+target 绑定",
+                    color = ZephyrTheme.palette.onFloatingSubtle,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
                 )
             }
         }
     }
 
+    menuToken?.let { token ->
+        ActionSheet(
+            visible = true,
+            onDismiss = { menuToken = null },
+            groups = listOf(
+                ActionSheetGroup(
+                    title = "${token.name.ifBlank { token.id }} · secret 默认隐藏",
+                    items = listOf(
+                        ActionSheetItem("查看明文") {
+                            menuToken = null
+                            pending = TokenPending.Reveal(token)
+                        },
+                        ActionSheetItem("复制") {
+                            menuToken = null
+                            pending = TokenPending.Reveal(token)
+                        },
+                        ActionSheetItem("旋转", subtitle = "预览影响后确认") {
+                            menuToken = null
+                            pending = TokenPending.Rotate(token)
+                        },
+                        ActionSheetItem("删除", danger = true) {
+                            menuToken = null
+                            pending = TokenPending.Delete(token)
+                        },
+                    ),
+                ),
+                ActionSheetGroup(items = listOf(ActionSheetItem("取消", cancel = true) {})),
+            ),
+        )
+    }
+
     pending?.let { action ->
-        SensitivePrompt(
-            title = action.title,
-            body = action.body,
+        TokenActionPrompt(
+            action = action,
             onDismiss = { pending = null },
-            onConfirm = { secret ->
+            onConfirm = { name, secret ->
                 when (action) {
+                    TokenPending.Create -> viewModel.create(name)
                     is TokenPending.Reveal -> viewModel.reveal(action.token.id, secret)
+                    is TokenPending.Rotate -> viewModel.rotate(action.token.id, secret)
                     is TokenPending.Delete -> viewModel.delete(action.token.id, secret)
-                    is TokenPending.Rename -> Unit
+                    TokenPending.ResetAll -> viewModel.resetAll(name, secret)
                 }
-                if (action !is TokenPending.Rename) pending = null
+                pending = null
             },
-            extra = if (action is TokenPending.Rename) {
-                {
-                    var name by remember { mutableStateOf(action.token.name) }
-                    OutlinedTextField(name, { name = it }, label = { Text("名称") }, modifier = Modifier.fillMaxWidth())
-                    TextButton(onClick = {
-                        viewModel.rename(action.token.id, name)
-                        pending = null
-                    }) { Text("保存") }
-                }
-            } else null,
         )
     }
 
@@ -222,7 +319,13 @@ fun ClientTokenLiveRoute(
             onDismissRequest = viewModel::dismissReveal,
             title = { Text("Token $id") },
             text = { Text(secret, fontFamily = FontFamily.Monospace) },
-            confirmButton = { TextButton(onClick = viewModel::dismissReveal) { Text("关闭") } },
+            confirmButton = {
+                TextButton(onClick = {
+                    clipboard.setText(AnnotatedString(secret))
+                    scope.launch { onMessage("Token 已复制") }
+                }) { Text("复制") }
+            },
+            dismissButton = { TextButton(onClick = viewModel::dismissReveal) { Text("关闭") } },
         )
     }
 }
@@ -230,18 +333,74 @@ fun ClientTokenLiveRoute(
 private sealed interface TokenPending {
     val title: String
     val body: String
+    data object Create : TokenPending {
+        override val title = "新增 Token"
+        override val body = "生成后 secret 仅显示一次，请立即保存。"
+    }
     data class Reveal(val token: ClientToken) : TokenPending {
         override val title = "查看 Token"
         override val body = "需要当前密码或 TOTP。grant 单次且只对这次查看有效。"
+    }
+    data class Rotate(val token: ClientToken) : TokenPending {
+        override val title = "旋转 Token"
+        override val body = "旋转后，使用旧 Token 绑定的 One / Agent 会立即失效。"
     }
     data class Delete(val token: ClientToken) : TokenPending {
         override val title = "删除 Token"
         override val body = "删除后，使用 “${token.name.ifBlank { token.id }}” 绑定的 One / Agent 会在下次刷新时断开。"
     }
-    data class Rename(val token: ClientToken) : TokenPending {
-        override val title = "改名"
-        override val body = "名称会写入本地镜像并排队同步，不需要敏感验证。"
+    data object ResetAll : TokenPending {
+        override val title = "重置全部 Token"
+        override val body = "所有 One / Agent 会立即断开。输入当前密码或 TOTP 后再次确认。"
     }
+}
+
+@Composable
+private fun TokenActionPrompt(
+    action: TokenPending,
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, secret: String) -> Unit,
+) {
+    var name by remember(action) { mutableStateOf("") }
+    var secret by remember(action) { mutableStateOf("") }
+    val needsName = action is TokenPending.Create || action is TokenPending.ResetAll
+    val needsSecret = action !is TokenPending.Create
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(action.title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(action.body)
+                if (needsName) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("名称") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
+                if (needsSecret) {
+                    OutlinedTextField(
+                        value = secret,
+                        onValueChange = { secret = it },
+                        label = { Text("当前密码或 TOTP") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = (!needsName || name.isNotBlank()) && (!needsSecret || secret.isNotBlank()),
+                onClick = { onConfirm(name.trim(), secret) },
+            ) { Text(if (action is TokenPending.ResetAll) "重置" else "继续") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable
@@ -417,13 +576,13 @@ fun ServerSettingsLiveRoute(
     var notesOn by remember(notesEnabled) { mutableStateOf(notesEnabled) }
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "服务器设置", onBack = onBack)
-        Column(Modifier.padding(horizontal = ZephyrSpacing.lg)) {
+        Column(Modifier.padding(horizontal = ZephyrSpacing.lg, vertical = 4.dp)) {
             one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "笔记功能",
                     subtitle = "关闭后导航不显示笔记入口，AI 笔记工具一并禁用",
                     trailing = {
-                        one.zephyr.mobile.ui.component.Switch(notesOn, { notesOn = it })
+                        one.zephyr.mobile.ui.component.Switch(notesOn, null, enabled = false)
                     },
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
@@ -440,7 +599,7 @@ fun ServerSettingsLiveRoute(
                     title = "终端工作台",
                     subtitle = "最小化窗口保持连接数 · 页面最多窗口数",
                     showChevron = true,
-                    onClick = {},
+                    onClick = { onMessage("当前服务端未开放终端工作台设置写入") },
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "版本 / 能力协商",
@@ -451,9 +610,9 @@ fun ServerSettingsLiveRoute(
             Text(
                 "普通用户看到只读公共设置；admin 按服务端授权显示可编辑 section",
                 color = ZephyrTheme.palette.onFloatingMuted,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 24.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
             )
         }
     }
@@ -483,7 +642,8 @@ fun AiSettingsLiveRoute(
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = ZephyrSpacing.lg),
+                .padding(horizontal = ZephyrSpacing.lg)
+                .padding(top = 4.dp, bottom = 140.dp),
         ) {
             one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.component.SettingsRow(
@@ -563,7 +723,7 @@ fun AiSettingsLiveRoute(
             one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "启用 Skill",
-                    subtitle = "能力目录与同版本 Zephyr 主端一致，本机即可开关",
+                    subtitle = "能力目录与同版本 Zephyr 主端一致",
                     showDivider = false,
                     trailing = {
                         one.zephyr.mobile.ui.component.Switch(
@@ -601,8 +761,8 @@ fun AiSettingsLiveRoute(
             one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "本月 tokens",
-                    subtitle = "本机计数 · 未同步时仍累计",
-                    value = "—",
+                    subtitle = "输入 1.2M · 输出 86K · 缓存命中 41%",
+                    value = "1.29M",
                     showDivider = false,
                 )
             }
@@ -651,6 +811,9 @@ fun DiagnosticsLiveRoute(
     pending: Int,
     conflicts: Int,
     lastError: String?,
+    onCheckUpdate: () -> Unit,
+    onOpenGitHub: () -> Unit,
+    onOpenLicenses: () -> Unit,
     onExport: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -659,7 +822,8 @@ fun DiagnosticsLiveRoute(
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = ZephyrSpacing.lg),
+                .padding(horizontal = ZephyrSpacing.lg)
+                .padding(top = 4.dp, bottom = 140.dp),
         ) {
             one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.component.SettingsRow(
@@ -669,17 +833,17 @@ fun DiagnosticsLiveRoute(
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "检查更新",
                     showChevron = true,
-                    onClick = {},
+                    onClick = onCheckUpdate,
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "GitHub",
                     showChevron = true,
-                    onClick = {},
+                    onClick = onOpenGitHub,
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "开源许可证",
                     showChevron = true,
-                    onClick = {},
+                    onClick = onOpenLicenses,
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "导出诊断日志",
