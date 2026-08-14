@@ -374,7 +374,13 @@ internal fun ResourceEditorDestination(
     ResourceEditorRoute(
         viewModel = viewModel(
             key = "resource-editor:" + kind.name + ":" + (entityId ?: "new"),
-            factory = ResourceEditorViewModel.factory(account.resources, ownerUserId, kind, entityId) { usable },
+            factory = ResourceEditorViewModel.factory(
+                resources = account.resources,
+                ownerUserId = ownerUserId,
+                kind = kind,
+                entityId = entityId,
+                usableConnectionIds = { usable },
+            ),
         ),
         usableConnectionIds = usable,
         connections = connections,
