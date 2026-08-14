@@ -4,7 +4,6 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,8 +25,6 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,11 +42,15 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.theme.IslandSpec
+import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 import kotlin.math.roundToInt
 
-/** The four-slot floating root navigation from the frozen mobile prototype. */
+/** Demo `#island`: 62-high chrome capsule, 340ms ease-out pill, 23→17 icon, label 180ms. */
 @Composable
 fun FloatingIsland(
     selected: IslandDestination,
@@ -71,9 +72,9 @@ fun FloatingIsland(
         } else {
             position.animateTo(
                 targetValue = selectedIndex.toFloat(),
-                animationSpec = spring(
-                    dampingRatio = IslandSpec.SELECTION_DAMPING_RATIO,
-                    stiffness = IslandSpec.selectionStiffness,
+                animationSpec = tween(
+                    durationMillis = motion.scale(IslandSpec.SELECTION_MS),
+                    easing = ZephyrMotionTokens.easeOut,
                 ),
             )
         }
@@ -131,18 +132,32 @@ fun FloatingIsland(
                     val pressed by interaction.collectIsPressedAsState()
                     val pressScale by animateFloatAsState(
                         targetValue = if (pressed) IslandSpec.PRESS_SCALE else 1f,
-                        animationSpec = tween(IslandSpec.PRESS_FEEDBACK_MS),
+                        animationSpec = tween(
+                            motion.scale(IslandSpec.PRESS_FEEDBACK_MS),
+                            easing = ZephyrMotionTokens.easeOut,
+                        ),
                         label = "islandPress",
                     )
                     val iconSize by animateDpAsState(
                         targetValue = if (isSelected) IslandSpec.selectedIconSize else IslandSpec.iconSize,
-                        animationSpec = tween(motion.scale(240)),
+                        animationSpec = tween(
+                            motion.scale(ZephyrMotionTokens.MED_MS),
+                            easing = ZephyrMotionTokens.easeOut,
+                        ),
                         label = "islandIconSize",
                     )
                     val labelAlpha by animateFloatAsState(
                         targetValue = if (isSelected) 1f else 0f,
                         animationSpec = tween(motion.scale(IslandSpec.LABEL_CROSSFADE_MS)),
                         label = "islandLabel",
+                    )
+                    val labelHeight by animateDpAsState(
+                        targetValue = if (isSelected) 11.dp else 0.dp,
+                        animationSpec = tween(
+                            motion.scale(ZephyrMotionTokens.MED_MS),
+                            easing = ZephyrMotionTokens.easeOut,
+                        ),
+                        label = "islandLabelH",
                     )
 
                     Column(
@@ -172,15 +187,16 @@ fun FloatingIsland(
                             tint = if (isSelected) palette.brand.accent else palette.onFloatingSubtle,
                             modifier = Modifier.size(iconSize),
                         )
-                        if (labelAlpha > 0f) {
+                        if (labelHeight > 0.dp) {
                             Text(
                                 text = labels[index],
-                                style = ZephyrTheme.typography.islandLabel,
+                                style = ZephyrTextStyles.islandLabel,
                                 color = palette.brand.accent,
                                 maxLines = 1,
                                 overflow = TextOverflow.Clip,
                                 modifier = Modifier
                                     .padding(top = IslandSpec.iconLabelGap)
+                                    .height(labelHeight)
                                     .alpha(labelAlpha),
                             )
                         }
@@ -191,7 +207,6 @@ fun FloatingIsland(
     }
 }
 
-/** Bottom inset a scrollable page must reserve so its last row clears the island. */
 @Composable
 fun islandContentBottomInset(): androidx.compose.ui.unit.Dp {
     val safeBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()

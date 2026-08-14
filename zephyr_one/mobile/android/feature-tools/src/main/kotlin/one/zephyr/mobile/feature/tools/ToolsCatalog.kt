@@ -150,9 +150,9 @@ object ToolsCatalog {
         // whose remedy is the create action on the destination.
         ToolEntry.PROXY, ToolEntry.SSH_KEY, ToolEntry.JUMP_HOST -> ActionGate.Allowed
 
-        ToolEntry.AI_WORKSPACE ->
-            if (inventory.aiRuntimeAvailable) ActionGate.Allowed
-            else ActionGate.Disabled(Capability.USE, REASON_NO_AI_RUNTIME)
+        // AI settings and the floating workspace are device-local. Provider keys,
+        // models and skills live on this phone. The main end is optional sync only.
+        ToolEntry.AI_WORKSPACE -> ActionGate.Allowed
 
         ToolEntry.FILE_SYNC, ToolEntry.CLIENT_TOKEN -> ActionGate.Allowed
 
@@ -160,13 +160,9 @@ object ToolsCatalog {
         // as a mirror with its age rather than refusing to open.
         ToolEntry.SERVER_SETTINGS -> ActionGate.Allowed
 
-        // A backup is generated and verified on the main end, so it genuinely cannot start offline.
-        ToolEntry.BACKUP_RESTORE -> when {
-            !inventory.online -> ActionGate.Disabled(Capability.ADMINISTER, REASON_OFFLINE)
-            !inventory.role.canExportBackup ->
-                ActionGate.Disabled(Capability.ADMINISTER, REASON_NEEDS_ADMIN)
-            else -> ActionGate.Allowed
-        }
+        // Local export/import is a device feature. Binding only adds a server-side
+        // backup job — it must not hide the page.
+        ToolEntry.BACKUP_RESTORE -> ActionGate.Allowed
 
         ToolEntry.RUNTIME_STATUS -> ActionGate.Allowed
 
@@ -206,7 +202,6 @@ object ToolsCatalog {
 
     const val REASON_NO_EXECUTABLE_SSH = "需要至少一台你有执行权限的 SSH 连接"
     const val REASON_NO_OBSERVABLE_SSH = "需要至少一台你有观察权限的 SSH 连接"
-    const val REASON_NO_AI_RUNTIME = "主端未启用 AI runtime"
     const val REASON_NEEDS_ADMIN = "需要管理员权限"
-    const val REASON_OFFLINE = "需要联网才能在主端生成或校验备份"
+    const val REASON_OFFLINE = "需要联网才能同步"
 }

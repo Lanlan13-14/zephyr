@@ -1,25 +1,32 @@
 package one.zephyr.mobile.feature.tools
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.FilterChip
+import one.zephyr.mobile.ui.component.OutlinedTextField
+import one.zephyr.mobile.ui.component.Slider
+import one.zephyr.mobile.ui.component.Switch
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -29,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,14 +66,6 @@ import one.zephyr.mobile.ui.theme.ZephyrTheme
 import one.zephyr.mobile.ui.theme.ZephyrThemeId
 import java.util.UUID
 
-private val LANGUAGES = listOf(
-    "system" to "跟随系统",
-    "zh-Hans" to "简体中文",
-    "zh-Hant" to "繁體中文",
-    "en" to "English",
-    "ja" to "日本語",
-)
-
 @Composable
 fun AppearanceSettingsScreen(
     themeId: ZephyrThemeId,
@@ -74,38 +74,73 @@ fun AppearanceSettingsScreen(
     onMode: (String) -> Unit,
     onBack: () -> Unit,
 ) {
+    val palette = ZephyrTheme.palette
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = "外观", onBack = onBack)
+        PushedPageHeader(title = stringResource(R.string.tools_appearance), onBack = onBack)
         Column(
             Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = ZephyrSpacing.lg),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SectionLabel("主题色")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionLabel(stringResource(R.string.tools_appearance_theme))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ZephyrThemeId.entries.forEach { id ->
-                    FilterChip(
-                        selected = id == themeId,
-                        onClick = { onTheme(id) },
-                        label = { Text(id.wireName.replaceFirstChar { it.uppercase() }) },
+                    val on = id == themeId
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onTheme(id) }
+                            .padding(vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(id.swatch()),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            id.wireName.replaceFirstChar { it.uppercase() },
+                            color = if (on) palette.onBackground else palette.onFloatingMuted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+            SectionLabel(stringResource(R.string.tools_appearance_mode))
+            one.zephyr.mobile.ui.component.GroupCard {
+                Box(Modifier.padding(12.dp)) {
+                    one.zephyr.mobile.ui.component.SegmentedControl(
+                        options = listOf(
+                            stringResource(R.string.tools_appearance_auto),
+                            stringResource(R.string.tools_appearance_light),
+                            stringResource(R.string.tools_appearance_dark),
+                        ),
+                        selectedIndex = listOf("auto", "light", "dark").indexOf(mode).coerceAtLeast(0),
+                        onSelect = { onMode(listOf("auto", "light", "dark")[it]) },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
-            SectionLabel("模式")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("auto" to "自动", "light" to "浅色", "dark" to "深色").forEach { (value, label) ->
-                    FilterChip(selected = mode == value, onClick = { onMode(value) }, label = { Text(label) })
-                }
-            }
             Text(
-                "终端 ANSI 输出色与 chrome 分离；浅色只改页面框架，不重写服务器颜色语义。",
-                color = ZephyrTheme.palette.onFloatingMuted,
+                stringResource(R.string.tools_appearance_note),
+                color = palette.onFloatingSubtle,
                 fontSize = 12.sp,
+                modifier = Modifier.padding(start = 4.dp, top = 14.dp, bottom = 24.dp),
             )
         }
     }
+}
+
+@Composable
+private fun ZephyrThemeId.swatch(): Color = when (this) {
+    ZephyrThemeId.FROST -> Color(0xFF0A84FF)
+    ZephyrThemeId.LAVA -> Color(0xFFBF5A1F)
+    ZephyrThemeId.ASAGI -> Color(0xFF4D9C8A)
+    ZephyrThemeId.CYBER -> Color(0xFF4F9DA6)
 }
 
 @Composable
@@ -114,22 +149,30 @@ fun LanguageSettingsScreen(
     onSelect: (String) -> Unit,
     onBack: () -> Unit,
 ) {
+    val current = one.zephyr.mobile.ui.locale.AppLanguage.fromStored(selected)
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = "语言", onBack = onBack)
+        PushedPageHeader(title = stringResource(R.string.tools_language), onBack = onBack)
         Column(Modifier.padding(horizontal = ZephyrSpacing.lg)) {
-            LANGUAGES.forEach { (code, label) ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelect(code) }
-                        .padding(vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(label, modifier = Modifier.weight(1f), fontWeight = if (selected == code) FontWeight.SemiBold else FontWeight.Normal)
-                    if (selected == code) Text("已选", color = ZephyrTheme.palette.brand.accent, fontSize = 13.sp)
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.locale.AppLanguage.stored.forEachIndexed { index, lang ->
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = when (lang) {
+                            one.zephyr.mobile.ui.locale.AppLanguage.SYSTEM -> stringResource(R.string.tools_language_system)
+                            one.zephyr.mobile.ui.locale.AppLanguage.ZH_HANS -> stringResource(R.string.tools_language_zh)
+                            one.zephyr.mobile.ui.locale.AppLanguage.EN -> stringResource(R.string.tools_language_en)
+                        },
+                        selected = current == lang,
+                        showDivider = index != one.zephyr.mobile.ui.locale.AppLanguage.stored.lastIndex,
+                        onClick = { onSelect(lang.code) },
+                    )
                 }
             }
-            Text("选择界面显示语言，立即生效并保存到本机", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
+            Text(
+                stringResource(R.string.tools_language_hint),
+                color = ZephyrTheme.palette.onFloatingSubtle,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(start = 4.dp, top = 12.dp),
+            )
         }
     }
 }
@@ -276,9 +319,9 @@ fun ClientTokenScreen(localMode: Boolean, onBack: () -> Unit) {
         PushedPageHeader(title = "Client Token", onBack = onBack)
         Text(
             if (localMode) {
-                "本地模式没有主端 Token。绑定服务器后可在此查看、旋转或删除，查看/旋转/删除均需当前密码或 TOTP。"
+                "未绑定主端时没有服务器 Token。本机工作区不需要它。绑定后可在此查看、旋转或删除，均需当前密码或 TOTP。"
             } else {
-                "查看 / 复制 / 旋转 / 删除均需当前密码或 TOTP。grant 单次且 action+target 绑定。敏感验证门尚未接到本机 UI，不会在这里明文列出 secret。"
+                "查看 / 复制 / 旋转 / 删除均需当前密码或 TOTP。grant 单次且 action+target 绑定。不会在这里明文列出 secret。"
             },
             modifier = Modifier.padding(ZephyrSpacing.lg),
             color = ZephyrTheme.palette.onFloatingMuted,
@@ -319,9 +362,9 @@ fun BackupRestoreScreen(localMode: Boolean, onBack: () -> Unit) {
             Text("从文件恢复… 影响确认 → 服务端验证 → 所有 One 重新绑定")
             Text(
                 if (localMode) {
-                    "本地模式没有主端备份任务。绑定管理员账号后才能在主端生成或校验备份。"
+                    "本机可以导出加密备份并再导回来。绑定主端只是多一条可选的服务器备份，不是使用门槛。"
                 } else {
-                    "主端尚未发布 /api/mobile/v1/backup。失败时会明确显示「原数据已回滚 / 未改动」，不会假装成功。"
+                    "本机导出始终可用。主端备份任务是额外通道；失败时会明确显示「原数据已回滚 / 未改动」。"
                 },
                 color = ZephyrTheme.palette.onFloatingMuted,
                 fontSize = 12.sp,
@@ -377,8 +420,8 @@ fun AiSettingsScreen(onBack: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "AI 助理", onBack = onBack)
         Column(Modifier.padding(horizontal = ZephyrSpacing.lg), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("主端未启用 AI runtime，或本机构建尚未接入 NativeSurfaceBridge。")
-            Text("能力目录与同版本 Zephyr 主端一致，不会维护手机子集。共享 Provider 不展示 API Key。", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
+            Text("AI 在本机独立运行。Provider、模型、Memory 和 Skills 都存在这台设备上，不依赖主端。")
+            Text("共享 Provider 不会在这里展示 API Key。", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
         }
     }
 }

@@ -1,5 +1,7 @@
 package one.zephyr.mobile.feature.tools
 
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,31 +19,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Backup
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MonitorHeart
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Route
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Token
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import one.zephyr.mobile.ui.component.HorizontalDivider
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.IconButton
+import one.zephyr.mobile.ui.component.Surface
+import one.zephyr.mobile.ui.component.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -240,7 +222,7 @@ private fun ToolRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(Icons.Filled.ChevronRight, null, tint = ZephyrTheme.palette.onFloatingMuted.copy(alpha = alpha), modifier = Modifier.size(18.dp))
+            Icon(ZephyrIcons.Chevron, null, tint = ZephyrTheme.palette.onFloatingMuted.copy(alpha = alpha), modifier = Modifier.size(18.dp))
         }
         if (showDivider) HorizontalDivider(Modifier.padding(start = 56.dp), color = ZephyrTheme.palette.surfaces.outline.copy(alpha = .35f))
     }
@@ -302,22 +284,22 @@ private fun toolTint(entry: ToolEntry): Color = when (entry) {
 }
 
 private fun toolIcon(entry: ToolEntry): ImageVector = when (entry) {
-    ToolEntry.BATCH_EXEC -> Icons.Filled.Bolt
-    ToolEntry.DOCKER -> Icons.Filled.Storage
-    ToolEntry.MONITOR -> Icons.Filled.MonitorHeart
-    ToolEntry.LOGS -> Icons.Filled.Code
-    ToolEntry.PROXY -> Icons.Filled.Public
-    ToolEntry.SSH_KEY -> Icons.Filled.Key
-    ToolEntry.JUMP_HOST -> Icons.Filled.Route
-    ToolEntry.AI_WORKSPACE -> Icons.Filled.AutoAwesome
-    ToolEntry.FILE_SYNC -> Icons.Filled.CloudSync
-    ToolEntry.CLIENT_TOKEN -> Icons.Filled.Token
-    ToolEntry.SERVER_SETTINGS -> Icons.Filled.Settings
-    ToolEntry.BACKUP_RESTORE -> Icons.Filled.Backup
-    ToolEntry.RUNTIME_STATUS -> Icons.Filled.Dns
-    ToolEntry.APPEARANCE -> Icons.Filled.Palette
-    ToolEntry.LANGUAGE -> Icons.Filled.Language
-    ToolEntry.APP_LOCK -> Icons.Filled.Lock
-    ToolEntry.NETWORK -> Icons.Filled.CloudSync
-    ToolEntry.DIAGNOSTICS -> Icons.Filled.BugReport
+    ToolEntry.BATCH_EXEC -> ZephyrIcons.Bolt
+    ToolEntry.DOCKER -> ZephyrIcons.Docker
+    ToolEntry.MONITOR -> ZephyrIcons.Monitor
+    ToolEntry.LOGS -> ZephyrIcons.Notes
+    ToolEntry.PROXY -> ZephyrIcons.Globe
+    ToolEntry.SSH_KEY -> ZephyrIcons.Key
+    ToolEntry.JUMP_HOST -> ZephyrIcons.JumpHost
+    ToolEntry.AI_WORKSPACE -> ZephyrIcons.AiSpark
+    ToolEntry.FILE_SYNC -> ZephyrIcons.Refresh
+    ToolEntry.CLIENT_TOKEN -> ZephyrIcons.Ticket
+    ToolEntry.SERVER_SETTINGS -> ZephyrIcons.Gear
+    ToolEntry.BACKUP_RESTORE -> ZephyrIcons.Save
+    ToolEntry.RUNTIME_STATUS -> ZephyrIcons.Server
+    ToolEntry.APPEARANCE -> ZephyrIcons.Theme
+    ToolEntry.LANGUAGE -> ZephyrIcons.Globe
+    ToolEntry.APP_LOCK -> ZephyrIcons.Lock
+    ToolEntry.NETWORK -> ZephyrIcons.Refresh
+    ToolEntry.DIAGNOSTICS -> ZephyrIcons.Activity
 }

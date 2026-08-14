@@ -27,6 +27,16 @@
     <string name="tools_runtime_status">运行状态</string>
     <string name="tools_appearance">外观</string>
     <string name="tools_language">语言</string>
+    <string name="tools_language_system">跟随系统</string>
+    <string name="tools_language_zh">简体中文</string>
+    <string name="tools_language_en">English</string>
+    <string name="tools_language_hint">选择界面显示语言，立即生效并保存到本机</string>
+    <string name="tools_appearance_theme">主题色</string>
+    <string name="tools_appearance_mode">模式</string>
+    <string name="tools_appearance_auto">自动</string>
+    <string name="tools_appearance_light">浅色</string>
+    <string name="tools_appearance_dark">深色</string>
+    <string name="tools_appearance_note">终端 ANSI 输出色与 chrome 分离；浅色只改页面框架，不重写服务器颜色语义</string>
     <string name="tools_app_lock">本地解锁</string>
     <string name="tools_network">网络</string>
     <string name="tools_diagnostics">关于与诊断</string>

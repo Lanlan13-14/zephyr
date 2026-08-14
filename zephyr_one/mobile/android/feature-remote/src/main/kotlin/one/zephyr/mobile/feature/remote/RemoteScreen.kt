@@ -1,9 +1,9 @@
-@file:OptIn(
-    androidx.compose.material3.ExperimentalMaterial3Api::class,
-    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
-)
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package one.zephyr.mobile.feature.remote
+
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -30,35 +30,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.AspectRatio
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.LinkOff
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.CircularProgressIndicator
+import one.zephyr.mobile.ui.component.FilterChip
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.IconButton
+import one.zephyr.mobile.ui.component.OutlinedTextField
+import one.zephyr.mobile.ui.component.Slider
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -351,7 +331,7 @@ private fun StatusPill(
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { onIntent(RemoteIntent.Back) }) {
                 Icon(
-                    imageVector = Icons.Filled.ArrowBack,
+                    imageVector = ZephyrIcons.Back,
                     contentDescription = stringResource(R.string.remote_back),
                     tint = palette.onFloating,
                 )
@@ -359,7 +339,7 @@ private fun StatusPill(
             Column(modifier = Modifier.padding(horizontal = ZephyrSpacing.sm)) {
                 Text(
                     text = content.connection.name,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = ZephyrTextStyles.caption,
                     color = palette.onFloating,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -375,7 +355,7 @@ private fun StatusPill(
             Spacer(modifier = Modifier.width(ZephyrSpacing.sm))
             if (!online) {
                 Icon(
-                    imageVector = Icons.Filled.CloudOff,
+                    imageVector = ZephyrIcons.CloudOff,
                     contentDescription = stringResource(R.string.remote_offline),
                     tint = palette.status.offline,
                     modifier = Modifier.size(18.dp),
@@ -383,7 +363,7 @@ private fun StatusPill(
             }
             IconButton(onClick = { onIntent(RemoteIntent.Minimise) }) {
                 Icon(
-                    imageVector = Icons.Filled.Remove,
+                    imageVector = ZephyrIcons.Minus,
                     contentDescription = stringResource(R.string.remote_minimise),
                     tint = palette.onFloatingMuted,
                 )
@@ -427,7 +407,7 @@ private fun StatusPill(
         content.securityWarning?.let { warning ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = Icons.Filled.Warning,
+                    imageVector = ZephyrIcons.Warn,
                     contentDescription = null,
                     tint = palette.status.warning,
                     modifier = Modifier.size(14.dp),
@@ -594,7 +574,7 @@ private fun CaptureIndicator(labels: List<String>, modifier: Modifier = Modifier
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = Icons.Filled.Mic,
+            imageVector = ZephyrIcons.Mic,
             contentDescription = null,
             tint = Color.White,
             modifier = Modifier.size(14.dp),
@@ -625,14 +605,14 @@ private fun EngineBlockedOverlay(protocol: Protocol) {
 
     CentredOverlay {
         Icon(
-            imageVector = Icons.Filled.Lock,
+            imageVector = ZephyrIcons.Lock,
             contentDescription = null,
             tint = ZephyrTheme.palette.status.warning,
         )
         Spacer(modifier = Modifier.height(ZephyrSpacing.sm))
         Text(
             text = message,
-            style = MaterialTheme.typography.bodyMedium,
+            style = ZephyrTextStyles.body,
             color = Color.White,
         )
     }
@@ -646,7 +626,7 @@ private fun PhaseOverlay(content: RemoteContent, nowMs: Long) {
         Spacer(modifier = Modifier.height(ZephyrSpacing.md))
         Text(
             text = phaseText(content.status, nowMs),
-            style = MaterialTheme.typography.bodyMedium,
+            style = ZephyrTextStyles.body,
             color = Color.White,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
@@ -672,14 +652,14 @@ private fun DisconnectedOverlay(content: RemoteContent, onIntent: (RemoteIntent)
     val error = content.status.error
     CentredOverlay {
         Icon(
-            imageVector = Icons.Filled.LinkOff,
+            imageVector = ZephyrIcons.Disconnect,
             contentDescription = null,
             tint = ZephyrTheme.palette.status.offline,
         )
         Spacer(modifier = Modifier.height(ZephyrSpacing.sm))
         Text(
             text = error?.message ?: stringResource(R.string.remote_not_connected),
-            style = MaterialTheme.typography.bodyMedium,
+            style = ZephyrTextStyles.body,
             color = Color.White,
         )
         error?.let { value ->
@@ -896,7 +876,7 @@ private fun SoundPanel(content: RemoteContent, onClose: () -> Unit) {
     RemoteBottomPanel(title = stringResource(R.string.remote_sound), onClose = onClose) {
         Text(
             text = stringResource(soundModeLabel(content.connection.rdp.soundMode)),
-            style = MaterialTheme.typography.bodyMedium,
+            style = ZephyrTextStyles.body,
         )
         Spacer(modifier = Modifier.height(ZephyrSpacing.xs))
         Text(
@@ -940,7 +920,7 @@ private fun ChannelRowView(row: RemoteChannelRow, onIntent: (RemoteIntent) -> Un
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = row.label, style = MaterialTheme.typography.bodyMedium)
+            Text(text = row.label, style = ZephyrTextStyles.body)
             Text(
                 text = row.statusText,
                 style = ZephyrTheme.typography.caption,
@@ -989,7 +969,7 @@ private fun DrivePanel(
             is RdpDriveResolution.Mapped -> {
                 Text(
                     text = stringResource(R.string.remote_drive_share, drive.mapping.shareName),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = ZephyrTextStyles.body,
                 )
                 Text(
                     text = stringResource(R.string.remote_drive_profile, drive.mapping.profileId),
@@ -1011,7 +991,7 @@ private fun DrivePanel(
             is RdpDriveResolution.Unavailable -> {
                 Text(
                     text = stringResource(R.string.remote_drive_unavailable, drive.detail),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = ZephyrTextStyles.body,
                     color = ZephyrTheme.palette.status.warning,
                 )
                 Text(text = drive.code, style = ZephyrTheme.typography.monoCaption)
@@ -1023,7 +1003,7 @@ private fun DrivePanel(
             RdpDriveResolution.NeedsUserChoice -> {
                 Text(
                     text = stringResource(R.string.remote_drive_needs_choice),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = ZephyrTextStyles.body,
                 )
                 TextButton(onClick = { onIntent(RemoteIntent.PickDriveDirectory) }) {
                     Text(text = stringResource(R.string.remote_pick_directory))
@@ -1138,7 +1118,7 @@ private fun CertificateFacts(prompt: RemoteCertificatePrompt) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = stringResource(R.string.remote_cert_subject, review.subject),
-            style = MaterialTheme.typography.bodyMedium,
+            style = ZephyrTextStyles.body,
         )
         Text(
             text = stringResource(R.string.remote_cert_issuer, review.issuer),
@@ -1202,7 +1182,7 @@ private fun CertificateDialog(prompt: RemoteCertificatePrompt, onIntent: (Remote
                     text = stringResource(
                         if (changed) R.string.remote_cert_changed_body else R.string.remote_cert_first_body,
                     ),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = ZephyrTextStyles.body,
                     color = if (changed) ZephyrTheme.palette.status.error else ZephyrTheme.palette.onBackground,
                 )
                 Spacer(modifier = Modifier.height(ZephyrSpacing.sm))
@@ -1266,7 +1246,7 @@ private fun AuthDialog(
         title = { Text(text = stringResource(R.string.remote_auth_title)) },
         text = {
             Column {
-                Text(text = prompt.reason, style = MaterialTheme.typography.bodyMedium)
+                Text(text = prompt.reason, style = ZephyrTextStyles.body)
 
                 // Section 10: a VNC password is not TLS, and the pill says so for the whole session.
                 // Repeated here because this is the moment the user decides to type it.
@@ -1282,7 +1262,7 @@ private fun AuthDialog(
                     Spacer(modifier = Modifier.height(ZephyrSpacing.sm))
                     Text(
                         text = stringResource(R.string.remote_auth_exhausted),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = ZephyrTextStyles.body,
                         color = ZephyrTheme.palette.status.error,
                     )
                 } else {
@@ -1456,18 +1436,18 @@ private fun dockLabel(item: RemoteDockItem): Int = when (item) {
 }
 
 private fun dockIcon(item: RemoteDockItem): ImageVector = when (item) {
-    RemoteDockItem.KEYBOARD -> Icons.Filled.Keyboard
-    RemoteDockItem.POINTER_MODE -> Icons.Filled.TouchApp
-    RemoteDockItem.MODIFIERS -> Icons.Filled.Code
-    RemoteDockItem.CLIPBOARD -> Icons.Filled.ContentPaste
-    RemoteDockItem.DISPLAY -> Icons.Filled.AspectRatio
-    RemoteDockItem.SOUND -> Icons.Filled.VolumeUp
-    RemoteDockItem.CHANNELS -> Icons.Filled.Layers
-    RemoteDockItem.DRIVE -> Icons.Filled.Folder
-    RemoteDockItem.CERTIFICATE -> Icons.Filled.Lock
-    RemoteDockItem.QUALITY -> Icons.Filled.Tune
-    RemoteDockItem.RECONNECT -> Icons.Filled.Refresh
-    RemoteDockItem.DISCONNECT -> Icons.Filled.Close
+    RemoteDockItem.KEYBOARD -> ZephyrIcons.Keyboard
+    RemoteDockItem.POINTER_MODE -> ZephyrIcons.Pointer
+    RemoteDockItem.MODIFIERS -> ZephyrIcons.Notes
+    RemoteDockItem.CLIPBOARD -> ZephyrIcons.Paste
+    RemoteDockItem.DISPLAY -> ZephyrIcons.Fit
+    RemoteDockItem.SOUND -> ZephyrIcons.Volume
+    RemoteDockItem.CHANNELS -> ZephyrIcons.GridTools
+    RemoteDockItem.DRIVE -> ZephyrIcons.File
+    RemoteDockItem.CERTIFICATE -> ZephyrIcons.Lock
+    RemoteDockItem.QUALITY -> ZephyrIcons.Tune
+    RemoteDockItem.RECONNECT -> ZephyrIcons.Refresh
+    RemoteDockItem.DISCONNECT -> ZephyrIcons.Close
 }
 
 /**

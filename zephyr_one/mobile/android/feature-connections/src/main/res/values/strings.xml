@@ -8,7 +8,7 @@
 -->
 <resources>
     <string name="connections_title">Zephyr One</string>
-    <string name="connections_search_hint">搜索名称、主机、标签</string>
+    <string name="connections_search_hint">搜索连接、标签、主机…</string>
     <string name="connections_search_label">搜索连接</string>
     <string name="connections_account_menu">账号菜单</string>
     <string name="connections_sync_now">立即同步</string>

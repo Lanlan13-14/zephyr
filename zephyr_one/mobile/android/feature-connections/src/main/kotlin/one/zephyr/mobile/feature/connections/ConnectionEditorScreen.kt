@@ -1,9 +1,8 @@
-@file:OptIn(
-    androidx.compose.material3.ExperimentalMaterial3Api::class,
-    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
-)
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package one.zephyr.mobile.feature.connections
+
+import one.zephyr.mobile.ui.icon.ZephyrIcons
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,27 +16,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.AssistChip
+import one.zephyr.mobile.ui.component.Button
+import one.zephyr.mobile.ui.component.Card
+import one.zephyr.mobile.ui.component.DropdownMenu
+import one.zephyr.mobile.ui.component.DropdownMenuItem
+import one.zephyr.mobile.ui.component.FilterChip
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.IconButton
+import one.zephyr.mobile.ui.component.OutlinedButton
+import one.zephyr.mobile.ui.component.OutlinedTextField
+import one.zephyr.mobile.ui.component.Slider
+import one.zephyr.mobile.ui.component.Switch
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -376,16 +369,16 @@ private fun JumpChainEditor(ui: ConnectionEditorUiState, onIntent: (EditorIntent
                 onClick = { onIntent(EditorIntent.JumpMoved(index, index - 1)) },
                 enabled = index > 0,
             ) {
-                Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.editor_jump_up))
+                Icon(ZephyrIcons.ArrowUp, contentDescription = stringResource(R.string.editor_jump_up))
             }
             IconButton(
                 onClick = { onIntent(EditorIntent.JumpMoved(index, index + 1)) },
                 enabled = index < chain.size - 1,
             ) {
-                Icon(Icons.Filled.ArrowDownward, contentDescription = stringResource(R.string.editor_jump_down))
+                Icon(ZephyrIcons.ArrowDown, contentDescription = stringResource(R.string.editor_jump_down))
             }
             IconButton(onClick = { onIntent(EditorIntent.JumpRemoved(id)) }) {
-                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.editor_jump_remove))
+                Icon(ZephyrIcons.Close, contentDescription = stringResource(R.string.editor_jump_remove))
             }
         }
     }

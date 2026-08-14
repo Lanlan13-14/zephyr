@@ -1,6 +1,7 @@
 package one.zephyr.mobile.ui.chrome
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -11,45 +12,46 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.Surface
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.pressScale
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 
 /**
  * Frozen page-head geometry from demo.html:
  * `padding: calc(env(safe-area-inset-top) + 14px) 16px 10px`.
  *
- * Every root and pushed screen must go through this rather than inventing its own top padding.
- * The previous screens only used a 14.dp top gap and ignored the status bar, so the title sat
- * under the system clock / battery on a real device.
+ * Root h1 is 23/700. Pushed h1 is 18/700. Back button 36 circular, head-btn 38.
  */
 object PageChrome {
     val extraTop: Dp = 14.dp
     val extraBottom: Dp = 10.dp
     val horizontal: Dp = 16.dp
     val actionSize: Dp = 38.dp
+    val backSize: Dp = 36.dp
     val actionIcon: Dp = 18.dp
     val titleSize = 23.sp
+    val pushedTitleSize = 18.sp
 }
 
-/** Status-bar inset plus the frozen 14.dp head padding. */
 @Composable
 fun Modifier.pageHeadInsets(includeBottom: Boolean = true): Modifier =
     statusBarsPadding()
@@ -60,7 +62,6 @@ fun Modifier.pageHeadInsets(includeBottom: Boolean = true): Modifier =
             bottom = if (includeBottom) PageChrome.extraBottom else 0.dp,
         )
 
-/** Exposed for JVM tests that cannot read WindowInsets. */
 fun pageHeadTopPaddingDp(statusBarDp: Float): Float = statusBarDp + PageChrome.extraTop.value
 
 @Composable
@@ -80,9 +81,7 @@ fun RootPageHeader(
         Text(
             text = title,
             color = ZephyrTheme.palette.onBackground,
-            fontSize = PageChrome.titleSize,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.4).sp,
+            style = ZephyrTextStyles.rootTitle,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).semantics { heading() },
@@ -107,15 +106,18 @@ fun PushedPageHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        HeaderIconButton(description = backDescription, onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(PageChrome.actionIcon))
+        HeaderIconButton(
+            description = backDescription,
+            onClick = onBack,
+            size = PageChrome.backSize,
+            pressScale = ZephyrMotionTokens.BACK_PRESS_SCALE,
+        ) {
+            Icon(ZephyrIcons.Back, contentDescription = null, modifier = Modifier.size(16.dp))
         }
         Text(
             text = title,
             color = ZephyrTheme.palette.onBackground,
-            fontSize = PageChrome.titleSize,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.4).sp,
+            style = ZephyrTextStyles.pushedTitle,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).semantics { heading() },
@@ -128,14 +130,24 @@ fun PushedPageHeader(
 fun HeaderIconButton(
     description: String,
     onClick: () -> Unit,
-    icon: ImageVector = Icons.Filled.Add,
+    icon: ImageVector = ZephyrIcons.Plus,
+    size: Dp = PageChrome.actionSize,
+    pressScale: Float = ZephyrMotionTokens.HEAD_PRESS_SCALE,
     content: (@Composable () -> Unit)? = null,
 ) {
+    val interaction = remember { MutableInteractionSource() }
     Surface(
         modifier = Modifier
-            .size(PageChrome.actionSize)
+            .size(size)
+            .pressScale(pressScale, true, interaction)
+            .clip(CircleShape)
             .semantics { contentDescription = description }
-            .clickable(role = Role.Button, onClick = onClick),
+            .clickable(
+                role = Role.Button,
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+            ),
         shape = CircleShape,
         color = ZephyrTheme.palette.surfaces.elevated,
         contentColor = ZephyrTheme.palette.brand.accent,
@@ -149,5 +161,5 @@ fun HeaderIconButton(
 
 @Composable
 fun HeaderAddButton(description: String, onClick: () -> Unit) {
-    HeaderIconButton(description = description, onClick = onClick, icon = Icons.Filled.Add)
+    HeaderIconButton(description = description, onClick = onClick, icon = ZephyrIcons.Plus)
 }

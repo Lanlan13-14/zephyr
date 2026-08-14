@@ -14,6 +14,8 @@
     <string name="sessions_clear_selection">取消选择</string>
     <string name="sessions_close_many">批量关闭</string>
     <string name="sessions_clear_history">清空历史</string>
+    <string name="sessions_batch_hint">历史任务与批量执行状态见 工具 → 远程批量</string>
+    <string name="sessions_status_minimised">后台</string>
     <string name="sessions_cancel">取消</string>
 
     <string name="sessions_bulk_close_title">关闭会话</string>

@@ -62,6 +62,11 @@ class MainActivity : FragmentActivity() {
                 account?.settings?.observePreferences()?.map(::appearanceFromPrefs)
                     ?: flowOf(AppearancePrefs())
             }.collectAsState(initial = AppearancePrefs())
+            val languageCode by remember(account) {
+                account?.settings?.observePreferences()?.map { prefs ->
+                    prefs[SettingsRepository.PREF_LANGUAGE]?.let { EntityCodec.string(it, "value") } ?: "system"
+                } ?: flowOf("system")
+            }.collectAsState(initial = "system")
             val systemDark = isSystemInDarkTheme()
             val dark = when (themePrefs.mode) {
                 AppearanceMode.LIGHT -> false
@@ -69,6 +74,12 @@ class MainActivity : FragmentActivity() {
                 AppearanceMode.AUTO -> systemDark
             }
 
+            LaunchedEffect(languageCode) {
+                LocaleController.apply(
+                    this@MainActivity,
+                    one.zephyr.mobile.ui.locale.AppLanguage.fromStored(languageCode),
+                )
+            }
             LaunchedEffect(themePrefs.lockEnabled, themePrefs.lockTimeout) {
                 applyAppLock(themePrefs)
             }

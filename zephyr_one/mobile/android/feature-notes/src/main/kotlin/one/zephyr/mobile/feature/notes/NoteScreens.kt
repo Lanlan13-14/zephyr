@@ -1,5 +1,7 @@
 package one.zephyr.mobile.feature.notes
 
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -16,17 +18,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.FilterChip
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.OutlinedTextField
+import one.zephyr.mobile.ui.component.Switch
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -376,7 +374,7 @@ private fun NoteSearch(query: String, onQueryChange: (String) -> Unit) {
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Filled.Search, contentDescription = null, tint = palette.onFloatingSubtle)
+        Icon(ZephyrIcons.Search, contentDescription = null, tint = palette.onFloatingSubtle)
         Spacer(Modifier.padding(4.dp))
         BasicTextField(
             value = query,

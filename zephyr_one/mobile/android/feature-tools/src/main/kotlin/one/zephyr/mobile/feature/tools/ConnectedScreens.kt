@@ -12,12 +12,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import one.zephyr.mobile.ui.component.ActionSheet
+import one.zephyr.mobile.ui.component.ActionSheetGroup
+import one.zephyr.mobile.ui.component.ActionSheetItem
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.FilterChip
+import one.zephyr.mobile.ui.component.OutlinedTextField
+import one.zephyr.mobile.ui.component.Switch
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -433,25 +436,181 @@ fun AiSettingsLiveRoute(
     ownerUserId: String,
     onBack: () -> Unit,
 ) {
-    val payload by settings.observeSection("oneUserSettings", ServerSettingsPolicy.SECTION_KEY)
-        .collectAsState(initial = kotlinx.serialization.json.JsonObject(emptyMap()))
-    val server by settings.observeSection("serverSettings", ServerSettingsPolicy.SECTION_KEY)
-        .collectAsState(initial = kotlinx.serialization.json.JsonObject(emptyMap()))
-    val name = dottedText(payload, "ai.assistantName", fallback = "Zephyr AI")
-    val layout = dottedText(payload, "ai.panelLayout", fallback = "floating")
-    val enabled = dottedBool(server, "ai.enabled", fallback = false)
+    val prefs by settings.observePreferences().collectAsState(initial = emptyMap())
+    val scope = rememberCoroutineScope()
+    fun flag(key: String, fallback: Boolean): Boolean =
+        prefs[key]?.let { EntityCodec.bool(it, "value", fallback) } ?: fallback
+    fun text(key: String, fallback: String): String =
+        prefs[key]?.let { EntityCodec.string(it, "value") } ?: fallback
+    fun writeFlag(key: String, value: Boolean) {
+        scope.launch { settings.putBooleanPreference(key, value, System.currentTimeMillis()) }
+    }
+    fun writeText(key: String, value: String) {
+        scope.launch { settings.putStringPreference(key, value, System.currentTimeMillis()) }
+    }
+    val enabled = flag(SettingsRepository.PREF_AI_ENABLED, true)
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "AI 助理", onBack = onBack)
-        Column(Modifier.padding(horizontal = ZephyrSpacing.lg), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SettingLine("主端 runtime", if (enabled) "已启用" else "未启用")
-            SettingLine("助理名", name)
-            SettingLine("面板布局", layout)
-            Text(
-                "浮窗执行链和 NativeSurfaceBridge 还没接到本机构建。共享 Provider 不会在这里展示 API Key。",
-                color = ZephyrTheme.palette.onFloatingMuted,
-                fontSize = 12.sp,
-            )
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = ZephyrSpacing.lg),
+        ) {
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "启用 AI 助理",
+                    subtitle = "在导航和工作区中显示 AI 功能",
+                    showDivider = false,
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Switch(
+                            checked = enabled,
+                            onCheckedChange = { writeFlag(SettingsRepository.PREF_AI_ENABLED, it) },
+                        )
+                    },
+                )
+            }
+            one.zephyr.mobile.ui.component.SectionLabel("服务商与模型")
+            one.zephyr.mobile.ui.component.GroupCard {
+                AiChoiceRow("AI 服务商", "共享 Provider 不展示 API Key", text(SettingsRepository.PREF_AI_PROVIDER, "Claude"), listOf("Claude", "OpenAI", "Gemini", "本地")) {
+                    writeText(SettingsRepository.PREF_AI_PROVIDER, it)
+                }
+                AiChoiceRow("模型", "上下文窗口 / 最大输出按模型动态计算", text(SettingsRepository.PREF_AI_MODEL, "Claude Opus"), listOf("Claude Opus", "Claude Sonnet", "GPT-5", "Gemini 3 Pro")) {
+                    writeText(SettingsRepository.PREF_AI_MODEL, it)
+                }
+                AiChoiceRow("协作模式", null, text(SettingsRepository.PREF_AI_COLLAB, "协作"), listOf("协作", "自动", "只读")) {
+                    writeText(SettingsRepository.PREF_AI_COLLAB, it)
+                }
+                AiChoiceRow("权限模式", null, text(SettingsRepository.PREF_AI_PERM, "按能力确认"), listOf("按能力确认", "自动确认", "全部询问")) {
+                    writeText(SettingsRepository.PREF_AI_PERM, it)
+                }
+                AiChoiceRow("思考", "对支持扩展推理的模型启用思考模式", text(SettingsRepository.PREF_AI_THINK, "medium"), listOf("关闭", "low", "medium", "high")) {
+                    writeText(SettingsRepository.PREF_AI_THINK, it)
+                }
+                AiChoiceRow("工具调用轮次上限", null, text(SettingsRepository.PREF_AI_TOOL_ROUNDS, "12"), listOf("4", "8", "12", "24")) {
+                    writeText(SettingsRepository.PREF_AI_TOOL_ROUNDS, it)
+                }
+            }
+            one.zephyr.mobile.ui.component.SectionLabel("确认策略")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "敏感操作确认",
+                    subtitle = "敏感操作包括远程执行、远程写文件等。关闭确认或开启自动确认会显著提高风险。",
+                    showDivider = false,
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Switch(
+                            checked = flag(SettingsRepository.PREF_AI_CONFIRM, true),
+                            onCheckedChange = { writeFlag(SettingsRepository.PREF_AI_CONFIRM, it) },
+                        )
+                    },
+                )
+            }
+            one.zephyr.mobile.ui.component.SectionLabel("Memory 与规划器")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "启用长期 Memory / 项目记忆",
+                    showDivider = true,
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Switch(
+                            checked = flag(SettingsRepository.PREF_AI_MEMORY, true),
+                            onCheckedChange = { writeFlag(SettingsRepository.PREF_AI_MEMORY, it) },
+                        )
+                    },
+                )
+                AiChoiceRow("最多保存 Memory 条数", null, text(SettingsRepository.PREF_AI_MEMORY_CAP, "200"), listOf("50", "100", "200", "500")) {
+                    writeText(SettingsRepository.PREF_AI_MEMORY_CAP, it)
+                }
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "任务计划器",
+                    showDivider = false,
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Switch(
+                            checked = flag(SettingsRepository.PREF_AI_PLANNER, true),
+                            onCheckedChange = { writeFlag(SettingsRepository.PREF_AI_PLANNER, it) },
+                        )
+                    },
+                )
+            }
+            one.zephyr.mobile.ui.component.SectionLabel("Skills 能力包")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "启用 Skill",
+                    subtitle = "能力目录与同版本 Zephyr 主端一致，本机即可开关",
+                    showDivider = false,
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Switch(
+                            checked = flag(SettingsRepository.PREF_AI_SKILLS, true),
+                            onCheckedChange = { writeFlag(SettingsRepository.PREF_AI_SKILLS, it) },
+                        )
+                    },
+                )
+            }
+            one.zephyr.mobile.ui.component.SectionLabel("AI 环境变量")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "允许 AI 看到变量名/说明",
+                    showDivider = true,
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Switch(
+                            checked = flag(SettingsRepository.PREF_AI_ENV_NAMES, true),
+                            onCheckedChange = { writeFlag(SettingsRepository.PREF_AI_ENV_NAMES, it) },
+                        )
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "允许 AI 直接看到变量值",
+                    subtitle = "仅用于非敏感配置",
+                    showDivider = false,
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Switch(
+                            checked = flag(SettingsRepository.PREF_AI_ENV_VALUES, false),
+                            onCheckedChange = { writeFlag(SettingsRepository.PREF_AI_ENV_VALUES, it) },
+                        )
+                    },
+                )
+            }
+            one.zephyr.mobile.ui.component.SectionLabel("用量")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "本月 tokens",
+                    subtitle = "本机计数 · 未同步时仍累计",
+                    value = "—",
+                    showDivider = false,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun AiChoiceRow(
+    title: String,
+    subtitle: String?,
+    value: String,
+    options: List<String>,
+    onPick: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    one.zephyr.mobile.ui.component.SettingsRow(
+        title = title,
+        subtitle = subtitle,
+        value = value,
+        showChevron = true,
+        showDivider = true,
+        onClick = { open = true },
+    )
+    if (open) {
+        ActionSheet(
+            visible = true,
+            onDismiss = { open = false },
+            groups = listOf(
+                ActionSheetGroup(
+                    items = options.map { option ->
+                        ActionSheetItem(label = option, onClick = { onPick(option) })
+                    },
+                ),
+                ActionSheetGroup(items = listOf(ActionSheetItem(label = "取消", cancel = true, onClick = {}))),
+            ),
+        )
     }
 }
 

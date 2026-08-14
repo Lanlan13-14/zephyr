@@ -1,5 +1,7 @@
 package one.zephyr.mobile.feature.connections
 
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,22 +26,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.AccountCircle
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.DropdownMenu
+import one.zephyr.mobile.ui.component.DropdownMenuItem
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.Surface
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -193,7 +186,7 @@ private fun DashboardHeader(
                 description = stringResource(R.string.connections_create),
                 onClick = onCreate,
             ) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(ZephyrIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
             }
             Spacer(Modifier.width(8.dp))
             SyncPill(status = syncStatus, localMode = localMode, onClick = onSyncNow)
@@ -203,7 +196,7 @@ private fun DashboardHeader(
                     description = stringResource(R.string.connections_account_menu),
                     onClick = onOpenAccount,
                 ) {
-                    Icon(Icons.Outlined.AccountCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(ZephyrIcons.Account, contentDescription = null, modifier = Modifier.size(18.dp))
                 }
             }
         }
@@ -244,7 +237,7 @@ private fun SyncPill(status: SyncStatus, localMode: Boolean, onClick: (() -> Uni
         Box(Modifier.size(7.dp).clip(CircleShape).background(color))
         Text(label, color = palette.onFloatingMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         if (onClick != null) {
-            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+            Icon(ZephyrIcons.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
         }
     }
 }
@@ -273,7 +266,7 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    Icons.Filled.Search,
+                    ZephyrIcons.Search,
                     contentDescription = null,
                     tint = palette.onFloatingSubtle,
                     modifier = Modifier.size(15.dp),
@@ -293,7 +286,7 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier
                 }
                 if (query.isNotEmpty()) {
                     Icon(
-                        Icons.Filled.Close,
+                        ZephyrIcons.Close,
                         contentDescription = stringResource(R.string.connections_search_clear),
                         tint = palette.onFloatingSubtle,
                         modifier = Modifier
@@ -328,7 +321,7 @@ private fun FilterStrip(
             selected = !filter.hasFacets,
             onClick = onClearFilters,
         )
-        Protocol.entries.forEach { protocol ->
+        listOf(Protocol.SSH, Protocol.RDP, Protocol.VNC, Protocol.TELNET).forEach { protocol ->
             DashboardChip(
                 label = if (protocol == Protocol.TELNET) "Telnet" else protocol.wireName,
                 selected = protocol in filter.protocols,
@@ -446,7 +439,7 @@ private fun ConnectionCard(
                     if (isFavourite) {
                         Spacer(Modifier.width(5.dp))
                         Icon(
-                            Icons.Filled.Star,
+                            ZephyrIcons.Star,
                             contentDescription = null,
                             tint = palette.status.warning,
                             modifier = Modifier.size(13.dp),
@@ -494,7 +487,7 @@ private fun ConnectionCard(
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            Icons.Filled.MoreVert,
+                            ZephyrIcons.More,
                             contentDescription = null,
                             tint = palette.onFloatingSubtle,
                             modifier = Modifier.size(18.dp),

@@ -1,12 +1,5 @@
 package one.zephyr.mobile.app
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -14,7 +7,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.BuildConfig
@@ -51,7 +43,6 @@ import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.Snippet
 import one.zephyr.mobile.security.BiometricAvailability
 import one.zephyr.mobile.security.LockDelay
-import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrThemeId
 import java.util.UUID
 
@@ -62,17 +53,23 @@ internal fun LibraryCreateDialog(
     onSnippet: () -> Unit,
     onFiles: () -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("新建到资料库") },
-        text = {
-            Column {
-                Text("新建笔记", modifier = Modifier.fillMaxWidth().clickable(onClick = onNote).padding(vertical = ZephyrSpacing.md))
-                Text("新建代码片段", modifier = Modifier.fillMaxWidth().clickable(onClick = onSnippet).padding(vertical = ZephyrSpacing.md))
-                Text("打开远程文件", modifier = Modifier.fillMaxWidth().clickable(onClick = onFiles).padding(vertical = ZephyrSpacing.md))
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    one.zephyr.mobile.ui.component.ActionSheet(
+        visible = true,
+        onDismiss = onDismiss,
+        groups = listOf(
+            one.zephyr.mobile.ui.component.ActionSheetGroup(
+                items = listOf(
+                    one.zephyr.mobile.ui.component.ActionSheetItem("新建笔记", onClick = onNote),
+                    one.zephyr.mobile.ui.component.ActionSheetItem("新建代码片段", onClick = onSnippet),
+                    one.zephyr.mobile.ui.component.ActionSheetItem("打开远程文件", onClick = onFiles),
+                ),
+            ),
+            one.zephyr.mobile.ui.component.ActionSheetGroup(
+                items = listOf(
+                    one.zephyr.mobile.ui.component.ActionSheetItem("取消", cancel = true, onClick = onDismiss),
+                ),
+            ),
+        ),
     )
 }
 
@@ -236,11 +233,15 @@ internal fun AppearanceDestination(account: AccountContainer, onBack: () -> Unit
 internal fun LanguageDestination(account: AccountContainer, onBack: () -> Unit) {
     val prefs by account.settings.observePreferences().collectAsState(initial = emptyMap())
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     val selected = prefs[SettingsRepository.PREF_LANGUAGE]?.let { one.zephyr.mobile.data.EntityCodec.string(it, "value") } ?: "system"
     LanguageSettingsScreen(
         selected = selected,
         onSelect = { code ->
-            scope.launch { account.settings.putStringPreference(SettingsRepository.PREF_LANGUAGE, code, System.currentTimeMillis()) }
+            LocaleController.apply(context, one.zephyr.mobile.ui.locale.AppLanguage.fromStored(code))
+            scope.launch {
+                account.settings.putStringPreference(SettingsRepository.PREF_LANGUAGE, code, System.currentTimeMillis())
+            }
         },
         onBack = onBack,
     )

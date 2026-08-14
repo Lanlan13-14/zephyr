@@ -1,5 +1,7 @@
 package one.zephyr.mobile.feature.connections
 
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,11 +15,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.Surface
+import one.zephyr.mobile.ui.component.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,7 +94,7 @@ private fun ProtocolCard(protocol: Protocol, onClick: () -> Unit) {
                     Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     Text(detail, fontSize = 12.sp, color = palette.onFloatingMuted)
                 }
-                Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = palette.onFloatingMuted)
+                Icon(ZephyrIcons.Chevron, contentDescription = null, tint = palette.onFloatingMuted)
             }
             if (protocol.isCleartext) CleartextProtocolWarning(protocol)
         }

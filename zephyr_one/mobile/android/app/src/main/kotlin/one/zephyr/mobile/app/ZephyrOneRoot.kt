@@ -9,18 +9,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import one.zephyr.mobile.ui.component.Button
+import one.zephyr.mobile.ui.component.Surface
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
+import one.zephyr.mobile.ui.theme.ZephyrTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -59,7 +53,6 @@ import one.zephyr.mobile.feature.connections.ProtocolPickerScreen
 import one.zephyr.mobile.feature.tools.OpsSection
 import one.zephyr.mobile.feature.tools.ResourceKind
 import one.zephyr.mobile.feature.tools.OneSettingsAnchor
-import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.clickable
 import one.zephyr.mobile.feature.filesync.DirectoryAuthorizationResult
 import one.zephyr.mobile.feature.filesync.rememberDirectoryAuthorizer
@@ -134,7 +127,7 @@ fun ZephyrOneRoot(
     modifier: Modifier = Modifier,
     integrations: ZephyrOneIntegrations = ZephyrOneIntegrations(),
 ) {
-    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    Surface(modifier = modifier.fillMaxSize(), color = ZephyrTheme.palette.surfaces.background) {
         val account by container.accounts.collectAsState()
         when {
             /* The lock gate outranks everything, including a bound account: AppLock is the product
@@ -383,11 +376,11 @@ private fun BoundRoot(
      * routing them all here means a message raised by a screen that is being navigated away from
      * still reaches the user. */
     val messages = remember { MutableSharedFlow<String>(extraBufferCapacity = 8) }
-    val snackbarHostState = remember { SnackbarHostState() }
+    var toastMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(messages, snackbarHostState) {
-        messages.collect { message -> snackbarHostState.showSnackbar(message) }
+    LaunchedEffect(messages) {
+        messages.collect { message -> toastMessage = message }
     }
 
     /* Non-suspend entry point for callbacks that are not suspend (island taps, click handlers). */
@@ -670,10 +663,11 @@ private fun BoundRoot(
             )
         }
 
-        SnackbarHost(
-            hostState = snackbarHostState,
+        one.zephyr.mobile.ui.component.ZephyrToast(
+            message = toastMessage,
             modifier = Modifier.align(Alignment.BottomCenter),
-        ) { data -> Snackbar(snackbarData = data) }
+            onDismiss = { toastMessage = null },
+        )
     }
 }
 
@@ -885,6 +879,20 @@ private fun ToolsDestination(
     val jumps by account.resources.observeJumpHosts(ownerUserId).collectAsState(initial = emptyList())
     val network by account.network.collectAsState(initial = one.zephyr.mobile.network.NetworkState.offline)
     val status by syncStatus.collectAsState(initial = SyncStatus.unbound())
+    val prefs by account.settings.observePreferences().collectAsState(initial = emptyMap())
+    val language = one.zephyr.mobile.ui.locale.AppLanguage.fromStored(
+        prefs[one.zephyr.mobile.data.repository.SettingsRepository.PREF_LANGUAGE]?.let {
+            one.zephyr.mobile.data.EntityCodec.string(it, "value")
+        },
+    )
+    val languageLabel = when (language) {
+        one.zephyr.mobile.ui.locale.AppLanguage.SYSTEM ->
+            androidx.compose.ui.res.stringResource(one.zephyr.mobile.feature.tools.R.string.tools_language_system)
+        one.zephyr.mobile.ui.locale.AppLanguage.ZH_HANS ->
+            androidx.compose.ui.res.stringResource(one.zephyr.mobile.feature.tools.R.string.tools_language_zh)
+        one.zephyr.mobile.ui.locale.AppLanguage.EN ->
+            androidx.compose.ui.res.stringResource(one.zephyr.mobile.feature.tools.R.string.tools_language_en)
+    }
     val inventory = ToolsInventory(
         executableSshCount = connections.count { it.protocol == Protocol.SSH && it.capabilities.canExecute },
         observableSshCount = connections.count { it.protocol == Protocol.SSH && it.capabilities.canObserve },
@@ -897,7 +905,7 @@ private fun ToolsDestination(
     )
     ToolsRootRoute(
         inventory = inventory,
-        summaries = ToolsRootSummaries(),
+        summaries = ToolsRootSummaries(language = languageLabel),
         onAddTool = { onOpenTool(ToolEntry.PROXY) },
         onOpenBatchExecution = onOpenBatch,
         onOpenDocker = { onOpenTool(ToolEntry.DOCKER) },
@@ -1112,11 +1120,11 @@ private fun LockGate(onUnlockRequested: () -> Unit) {
     ) {
         Text(
             text = stringResource(R.string.unlock_title),
-            style = MaterialTheme.typography.headlineSmall,
+            style = ZephyrTextStyles.rootTitle,
         )
         Text(
             text = stringResource(R.string.unlock_subtitle),
-            style = MaterialTheme.typography.bodyMedium,
+            style = ZephyrTextStyles.body,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = ZephyrSpacing.sm),
         )
@@ -1138,7 +1146,7 @@ private fun LocalModeBanner(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = ZephyrTheme.palette.surfaces.content,
         modifier = modifier.fillMaxWidth(),
     ) {
         Row(
@@ -1150,7 +1158,7 @@ private fun LocalModeBanner(
         ) {
             Text(
                 text = "本地模式 · 未连接服务器",
-                style = MaterialTheme.typography.bodyMedium,
+                style = ZephyrTextStyles.body,
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onBindServer) {
@@ -1175,7 +1183,7 @@ private fun NoticeScreen(text: String) {
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.bodyLarge,
+            style = ZephyrTextStyles.body,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )

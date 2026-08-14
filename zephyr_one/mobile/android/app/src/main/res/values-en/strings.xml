@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English UI. values/ is zh-Hans. -->
+<resources>
+    <string name="app_name">Zephyr One</string>
+    <string name="file_bridge_channel_name">File bridge</string>
+    <string name="file_bridge_channel_description">Shown while a local shared folder is online. Stop it any time.</string>
+    <string name="file_bridge_notification_title">File bridge is online</string>
+    <string name="file_bridge_notification_text">%1$s · transferred %2$s</string>
+    <string name="file_bridge_stop">Stop</string>
+    <string name="unlock_title">Unlock Zephyr One</string>
+    <string name="unlock_subtitle">Continue with the device credential</string>
+    <string name="unlock_locked_message">Locked</string>
+    <string name="unlock_retry">Unlock again</string>
+    <string name="unlock_unavailable">This device has no platform authenticator. Local unlock is unavailable.</string>
+</resources>

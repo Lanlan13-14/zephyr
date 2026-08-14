@@ -17,22 +17,22 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
+import one.zephyr.mobile.ui.component.Checkbox
+import one.zephyr.mobile.ui.component.CircularProgressIndicator
+import one.zephyr.mobile.ui.component.HorizontalDivider
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.IconButton
+import one.zephyr.mobile.ui.component.LinearProgressIndicator
+import one.zephyr.mobile.ui.component.OutlinedButton
+import one.zephyr.mobile.ui.component.OutlinedTextField
+import one.zephyr.mobile.ui.component.Surface
+import one.zephyr.mobile.ui.component.Switch
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -227,7 +227,7 @@ private fun FailFastRow(plan: BatchPlan, onIntent: (BatchIntent) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(stringResource(R.string.tools_batch_fail_fast_label), style = MaterialTheme.typography.bodyLarge)
+            Text(stringResource(R.string.tools_batch_fail_fast_label), style = ZephyrTextStyles.body)
             Text(
                 text = stringResource(R.string.tools_batch_fail_fast_hint),
                 style = ZephyrTheme.typography.caption,
@@ -292,7 +292,7 @@ private fun TargetPickerRow(
             modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
         )
         Column(Modifier.weight(1f)) {
-            Text(target.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(target.name, style = ZephyrTextStyles.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
             MonoEndpoint(host = target.host, port = target.port)
             denialReason?.let {
                 Text(it, style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.status.warning)
@@ -338,7 +338,7 @@ private fun RunActions(content: BatchContent, onIntent: (BatchIntent) -> Unit) {
     }
 
     if (confirmCancel) {
-        androidx.compose.material3.AlertDialog(
+        AlertDialog(
             onDismissRequest = { confirmCancel = false },
             title = { Text(stringResource(R.string.tools_batch_cancel_title)) },
             text = { Text(stringResource(R.string.tools_batch_cancel_message)) },
@@ -403,7 +403,7 @@ private fun ResultRow(row: BatchTargetState, cancellable: Boolean, onCancel: () 
     Column(Modifier.fillMaxWidth().padding(vertical = ZephyrSpacing.xs)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(row.target.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(row.target.name, style = ZephyrTextStyles.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 MonoEndpoint(host = row.target.host, port = row.target.port)
             }
             StatusLabel(row.status)
@@ -417,7 +417,7 @@ private fun ResultRow(row: BatchTargetState, cancellable: Boolean, onCancel: () 
                     modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                 ) {
                     Icon(
-                        Icons.Filled.Cancel,
+                        ZephyrIcons.Cancel,
                         contentDescription = stringResource(R.string.tools_batch_cancel_target),
                     )
                 }
@@ -525,7 +525,7 @@ private fun DeniedRow(row: BatchTargetState) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(row.target.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(row.target.name, style = ZephyrTextStyles.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
             MonoEndpoint(host = row.target.host, port = row.target.port)
             row.error?.let {
                 Text(it.message, style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.status.warning)

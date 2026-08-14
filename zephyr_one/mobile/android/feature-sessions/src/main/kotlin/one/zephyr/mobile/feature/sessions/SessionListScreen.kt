@@ -1,30 +1,43 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-
 package one.zephyr.mobile.feature.sessions
 
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import one.zephyr.mobile.ui.chrome.HeaderIconButton
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.Checkbox
+import one.zephyr.mobile.ui.component.DropdownMenu
+import one.zephyr.mobile.ui.component.DropdownMenuItem
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.IconButton
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
+import one.zephyr.mobile.ui.component.pressScale
+import one.zephyr.mobile.ui.island.islandContentBottomInset
+import one.zephyr.mobile.ui.theme.ZephyrRadius
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,9 +58,6 @@ import one.zephyr.mobile.data.session.SessionTransport
 import one.zephyr.mobile.model.ActionGate
 import one.zephyr.mobile.model.PageState
 import one.zephyr.mobile.ui.chrome.RootPageHeader
-import one.zephyr.mobile.ui.component.MonoEndpoint
-import one.zephyr.mobile.ui.component.ProtocolChip
-import one.zephyr.mobile.ui.component.SectionHeader
 import one.zephyr.mobile.ui.state.PageStateScaffold
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
@@ -77,25 +87,33 @@ fun SessionListScreen(
     PageStateScaffold(state = state, modifier = modifier) { content ->
         Column(Modifier.fillMaxSize()) {
             ListHeader(
-                liveCount = content.liveCount,
-                unreadCount = content.unreadCount,
                 selectionCount = selection.size,
                 onClearSelection = onClearSelection,
                 onRequestBulkClose = { confirmingBulkClose = true },
-                onClearHistory = onClearHistory,
             )
 
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 6.dp,
+                    bottom = islandContentBottomInset(),
+                ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 for ((group, rows) in content.groups) {
                     item(key = "header-" + group.name) {
-                        SectionHeader(
-                            title = SessionListStates.labelFor(group) + " (" + rows.size + ")",
-                            modifier = Modifier.padding(horizontal = ZephyrSpacing.lg),
+                        Text(
+                            text = SessionListStates.labelFor(group).uppercase(),
+                            style = ZephyrTextStyles.section,
+                            color = ZephyrTheme.palette.onFloatingSubtle,
+                            modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 2.dp),
                         )
                     }
                     items(rows.size, key = { index -> rows[index].sessionId }) { index ->
                         val row = rows[index]
-                        SessionCard(
+                        SessionRowCard(
                             row = row,
                             online = content.online,
                             nowMs = nowMs,
@@ -106,7 +124,14 @@ fun SessionListScreen(
                         )
                     }
                 }
-                item { Spacer(Modifier.height(ZephyrSpacing.xxl)) }
+                item {
+                    Text(
+                        text = stringResource(R.string.sessions_batch_hint),
+                        color = ZephyrTheme.palette.onFloatingSubtle,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 12.dp),
+                    )
+                }
             }
         }
 
@@ -136,28 +161,21 @@ fun SessionListScreen(
 
 @Composable
 private fun ListHeader(
-    liveCount: Int,
-    unreadCount: Int,
     selectionCount: Int,
     onClearSelection: () -> Unit,
     onRequestBulkClose: () -> Unit,
-    onClearHistory: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
         RootPageHeader(title = stringResource(R.string.sessions_title)) {
             if (selectionCount > 0) {
                 TextButton(onClick = onClearSelection) { Text(stringResource(R.string.sessions_clear_selection)) }
             }
-            TextButton(onClick = onRequestBulkClose) { Text(stringResource(R.string.sessions_close_many)) }
-            TextButton(onClick = onClearHistory) { Text(stringResource(R.string.sessions_clear_history)) }
+            HeaderIconButton(
+                description = stringResource(R.string.sessions_close_many),
+                onClick = onRequestBulkClose,
+                icon = ZephyrIcons.Close,
+            )
         }
-        Text(
-            text = stringResource(R.string.sessions_live_count, liveCount) +
-                if (unreadCount > 0) "  " + stringResource(R.string.sessions_unread_count, unreadCount) else "",
-            style = ZephyrTheme.typography.caption,
-            color = ZephyrTheme.palette.onFloatingMuted,
-            modifier = Modifier.padding(horizontal = ZephyrSpacing.lg),
-        )
     }
 }
 
@@ -169,7 +187,7 @@ private fun ListHeader(
  * may need to read out to a server operator.
  */
 @Composable
-private fun SessionCard(
+private fun SessionRowCard(
     row: SessionRow,
     online: Boolean,
     nowMs: Long,
@@ -179,118 +197,111 @@ private fun SessionCard(
     onAction: (SessionAction) -> Unit,
 ) {
     val restoreGate = SessionActions.gate(row, SessionAction.RESTORE)
-    Card(
+    val reconnectGate = SessionActions.gate(row, SessionAction.RECONNECT)
+    val palette = ZephyrTheme.palette
+    val protocolColor = when (row.protocol) {
+        one.zephyr.mobile.model.Protocol.SSH -> palette.protocol.ssh
+        one.zephyr.mobile.model.Protocol.TELNET -> palette.protocol.telnet
+        one.zephyr.mobile.model.Protocol.RDP -> palette.protocol.rdp
+        one.zephyr.mobile.model.Protocol.VNC -> palette.protocol.vnc
+    }
+    val dotColor = when {
+        row.revoked -> palette.status.warning
+        row.transport == SessionTransport.CONNECTED && row.minimised -> palette.status.offline
+        row.transport == SessionTransport.CONNECTED -> palette.status.success
+        row.transport == SessionTransport.CONNECTING -> palette.status.pendingSync
+        row.transport == SessionTransport.DISCONNECTED -> palette.status.error
+        else -> palette.status.offline
+    }
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = ZephyrSpacing.lg, vertical = ZephyrSpacing.xs)
-            // Tapping the card is the same as 恢复, but only when that action is actually allowed:
-            // a revoked tab must not become reachable through the card just because it is visible.
-            .clickable(enabled = restoreGate.isAllowed) { onAction(SessionAction.RESTORE) },
+            .pressScale(0.98f)
+            .clip(RoundedCornerShape(ZephyrRadius.md))
+            .background(if (selected) palette.surfaces.elevated else palette.surfaces.content)
+            .border(1.dp, palette.surfaces.outlineSoft, RoundedCornerShape(ZephyrRadius.md))
+            .clickable(enabled = restoreGate.isAllowed) { onAction(SessionAction.RESTORE) }
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(ZephyrSpacing.md),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (selectable) {
-                val label = stringResource(R.string.sessions_select_row, row.name)
-                Checkbox(
-                    checked = selected,
-                    onCheckedChange = { onToggleSelection() },
-                    modifier = Modifier.semantics { contentDescription = label },
-                )
-            }
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ProtocolChip(row.protocol)
-                    Spacer(Modifier.width(ZephyrSpacing.sm))
-                    Text(
-                        text = row.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Spacer(Modifier.height(ZephyrSpacing.xs))
-                MonoEndpoint(host = row.host, port = row.port)
-                Spacer(Modifier.height(ZephyrSpacing.xs))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    StatusLabel(row = row, online = online)
-                    Spacer(Modifier.width(ZephyrSpacing.sm))
-                    Text(
-                        text = metricFor(row, nowMs),
-                        style = ZephyrTheme.typography.tabularNumeric,
-                        color = ZephyrTheme.palette.onFloatingMuted,
-                    )
-                }
-                Spacer(Modifier.height(ZephyrSpacing.xs))
-                Text(
-                    text = stringResource(R.string.sessions_session_id, row.sessionId),
-                    style = ZephyrTheme.typography.monoCaption,
-                    color = ZephyrTheme.palette.onFloatingMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = executionLabel(row),
-                    style = ZephyrTheme.typography.caption,
-                    color = ZephyrTheme.palette.onFloatingMuted,
-                )
-                // Capability change: the frozen rule is that a revoked tab keeps its explanation.
-                row.revokedReason?.let { reason ->
-                    Spacer(Modifier.height(ZephyrSpacing.xs))
-                    Text(
-                        text = reason,
-                        style = ZephyrTheme.typography.caption,
-                        color = ZephyrTheme.palette.status.warning,
-                    )
-                }
-                if (row.restoredFromWorkspace) {
-                    Text(
-                        text = stringResource(R.string.sessions_restored_hint),
-                        style = ZephyrTheme.typography.caption,
-                        color = ZephyrTheme.palette.onFloatingMuted,
-                    )
-                }
-                SessionActions.executionDisclosure(row)?.let { disclosure ->
-                    Text(
-                        text = disclosure,
-                        style = ZephyrTheme.typography.caption,
-                        color = ZephyrTheme.palette.brand.accent,
-                    )
-                }
-            }
-            ActionMenu(row = row, online = online, onAction = onAction)
+        if (selectable) {
+            val label = stringResource(R.string.sessions_select_row, row.name)
+            Checkbox(
+                checked = selected,
+                onCheckedChange = { onToggleSelection() },
+                modifier = Modifier.padding(end = 8.dp).semantics { contentDescription = label },
+            )
         }
+        Box(
+            Modifier
+                .size(9.dp)
+                .clip(CircleShape)
+                .background(dotColor),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = row.name,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = sessionSubtitle(row, nowMs),
+                style = ZephyrTextStyles.monoHost,
+                color = palette.onFloatingMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+            row.revokedReason?.let { reason ->
+                Text(reason, color = palette.status.warning, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
+            }
+        }
+        if (row.transport == SessionTransport.DISCONNECTED && reconnectGate.isAllowed) {
+            Text(
+                text = stringResource(R.string.sessions_action_reconnect),
+                color = palette.brand.accent,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .clickable { onAction(SessionAction.RECONNECT) }
+                    .padding(start = 8.dp),
+            )
+        } else {
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(protocolColor.copy(alpha = 0.14f))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            ) {
+                Text(
+                    text = if (row.protocol == one.zephyr.mobile.model.Protocol.TELNET) "Telnet" else row.protocol.wireName,
+                    color = protocolColor,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        ActionMenu(row = row, online = online, onAction = onAction)
     }
 }
 
-/**
- * Status as text plus a dot.
- *
- * SCREEN_CATALOG.md 26 forbids colour-only status, so the label carries the whole meaning and the
- * colour is redundant reinforcement.
- */
 @Composable
-private fun StatusLabel(row: SessionRow, online: Boolean) {
-    val palette = ZephyrTheme.palette
-    val text = when {
-        row.revoked -> stringResource(R.string.sessions_status_revoked)
-        row.transport == SessionTransport.CONNECTING -> stringResource(R.string.sessions_status_connecting)
-        row.transport == SessionTransport.CONNECTED -> stringResource(R.string.sessions_status_connected)
-        row.transport == SessionTransport.DISCONNECTED && !online ->
-            stringResource(R.string.sessions_status_disconnected_offline)
-        row.transport == SessionTransport.DISCONNECTED -> stringResource(R.string.sessions_status_disconnected)
-        else -> stringResource(R.string.sessions_status_closed)
+private fun sessionSubtitle(row: SessionRow, nowMs: Long): String {
+    val metric = metricFor(row, nowMs)
+    val exec = executionLabel(row)
+    return when {
+        row.transport == SessionTransport.CONNECTING ->
+            (row.detail ?: stringResource(R.string.sessions_status_connecting))
+        row.transport == SessionTransport.DISCONNECTED ->
+            listOf(stringResource(R.string.sessions_status_disconnected), stringResource(R.string.sessions_action_reconnect))
+                .joinToString(" · ")
+        row.minimised ->
+            listOf(stringResource(R.string.sessions_status_minimised), metric).joinToString(" · ")
+        else -> listOf(metric, exec).joinToString(" · ")
     }
-    val color = when {
-        row.revoked -> palette.status.warning
-        row.transport == SessionTransport.CONNECTED -> palette.status.success
-        row.transport == SessionTransport.CONNECTING -> palette.status.pendingSync
-        row.transport == SessionTransport.DISCONNECTED -> palette.status.offline
-        else -> palette.onFloatingMuted
-    }
-    Text(text = text, style = ZephyrTheme.typography.caption, color = color)
 }
 
 /** 延迟 while live, 时长 once it is not: a stale latency next to a dead session is a lie. */
@@ -316,7 +327,7 @@ private fun ActionMenu(row: SessionRow, online: Boolean, onAction: (SessionActio
     val label = stringResource(R.string.sessions_more_actions, row.name)
     Box {
         IconButton(onClick = { expanded = true }, modifier = Modifier.semantics { contentDescription = label }) {
-            Icon(Icons.Filled.MoreVert, contentDescription = null)
+            Icon(ZephyrIcons.More, contentDescription = null)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             for (action in SessionActions.visibleActions(row)) {

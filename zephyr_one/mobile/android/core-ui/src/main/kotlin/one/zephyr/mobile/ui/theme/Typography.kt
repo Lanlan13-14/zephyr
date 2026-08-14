@@ -1,8 +1,6 @@
 package one.zephyr.mobile.ui.theme
 
-import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -11,73 +9,155 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.sp
 
 /**
- * Five text roles from MOBILE_EXPERIENCE.md 4.2: page title, section title, body, caption, mono.
+ * Type roles measured from demo.html, not Material type scale.
  *
- * Sizes are in sp so Android font scaling applies; nothing here fixes a pixel size, because the spec
- * forbids a layout that truncates at the largest accessibility font.
+ * Root titles 23/700. Pushed titles 18/700. Section 12/600 uppercase.
+ * Body 14. Card name 14.5/600. Host mono 11.5. Caption 11.5–12.5.
  */
 object ZephyrTextStyles {
 
+    private val noPad = PlatformTextStyle(includeFontPadding = false)
+    private val line = LineHeightStyle(
+        alignment = LineHeightStyle.Alignment.Center,
+        trim = LineHeightStyle.Trim.None,
+    )
 
-    /**
-     * Monospace for host, port, fingerprint, command and path only.
-     *
-     * Tabular figures are requested via the font feature setting rather than a different family, so
-     * latency and FPS readouts stop jittering while still falling back cleanly on devices whose
-     * monospace font lacks the feature.
-     */
-    val mono: TextStyle = TextStyle(
-        fontFamily = FontFamily.Monospace,
+    val rootTitle: TextStyle = TextStyle(
+        fontSize = 23.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.46).sp,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val pushedTitle: TextStyle = TextStyle(
+        fontSize = 18.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.36).sp,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val section: TextStyle = TextStyle(
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 0.72.sp,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val body: TextStyle = TextStyle(
         fontSize = 14.sp,
-        fontFeatureSettings = "tnum",
-        platformStyle = PlatformTextStyle(includeFontPadding = false),
-        lineHeightStyle = LineHeightStyle(
-            alignment = LineHeightStyle.Alignment.Center,
-            trim = LineHeightStyle.Trim.None,
-        ),
+        fontWeight = FontWeight.Normal,
+        platformStyle = noPad,
+        lineHeightStyle = line,
     )
 
-    /** Numeric status values that must not reflow as they change. */
-    val tabularNumeric: TextStyle = TextStyle(
-        fontSize = 13.sp,
-        fontFeatureSettings = "tnum",
+    val bodyStrong: TextStyle = body.copy(fontWeight = FontWeight.SemiBold)
+
+    val cardName: TextStyle = TextStyle(
+        fontSize = 14.5.sp,
+        fontWeight = FontWeight.SemiBold,
+        platformStyle = noPad,
+        lineHeightStyle = line,
     )
 
-    /** Island labels: single line, never below the accessibility floor. */
+    val row: TextStyle = TextStyle(
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Normal,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val caption: TextStyle = TextStyle(
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Normal,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val hint: TextStyle = TextStyle(
+        fontSize = 11.5.sp,
+        fontWeight = FontWeight.Normal,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val chip: TextStyle = TextStyle(
+        fontSize = 12.5.sp,
+        fontWeight = FontWeight.Medium,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val pill: TextStyle = TextStyle(
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
     val islandLabel: TextStyle = TextStyle(
         fontSize = 10.sp,
         fontWeight = FontWeight.SemiBold,
-        platformStyle = PlatformTextStyle(includeFontPadding = false),
+        platformStyle = noPad,
+        lineHeightStyle = line,
     )
 
-    /** Secondary explanatory text: empty-state reasons, timestamps, permission causes. */
-    val caption: TextStyle = TextStyle(
+    val stat: TextStyle = TextStyle(
+        fontSize = 20.sp,
+        fontWeight = FontWeight.Bold,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val protocolMark: TextStyle = TextStyle(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 10.5.sp,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 0.21.sp,
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val mono: TextStyle = TextStyle(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 13.5.sp,
+        fontFeatureSettings = "tnum",
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val monoHost: TextStyle = TextStyle(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.5.sp,
+        fontFeatureSettings = "tnum",
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val tabularNumeric: TextStyle = TextStyle(
         fontSize = 13.sp,
-        fontWeight = FontWeight.Normal,
+        fontFeatureSettings = "tnum",
+        platformStyle = noPad,
+        lineHeightStyle = line,
     )
 
-    /**
-     * Mono caption for the diagnostics line.
-     *
-     * requestId and error code are copy-paste evidence, so they are monospaced to make an
-     * ambiguous character in a hand-transcribed id impossible to misread.
-     */
     val monoCaption: TextStyle = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontSize = 12.sp,
         fontFeatureSettings = "tnum",
+        platformStyle = noPad,
+        lineHeightStyle = line,
+    )
+
+    val sheetItem: TextStyle = TextStyle(
+        fontSize = 15.sp,
+        fontWeight = FontWeight.Normal,
+        platformStyle = noPad,
+        lineHeightStyle = line,
     )
 }
 
 @Composable
-fun zephyrTypography(): Typography {
-    val base = Typography()
-    return remember {
-        base.copy(
-            headlineSmall = base.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-            titleMedium = base.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            bodyMedium = base.bodyMedium,
-            labelMedium = base.labelMedium,
-        )
-    }
-}
+fun zephyrTypography(): ZephyrTextStyles = ZephyrTextStyles

@@ -1,6 +1,7 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-
 package one.zephyr.mobile.feature.sessions
+
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,26 +22,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.LinkOff
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Translate
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.lerp as lerpColor
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.DropdownMenu
+import one.zephyr.mobile.ui.component.DropdownMenuItem
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.IconButton
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -744,7 +738,7 @@ private fun MissedOutputBadge(rows: Int, onIntent: (TerminalIntent) -> Unit, mod
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = Icons.Filled.ArrowDownward,
+            imageVector = ZephyrIcons.ArrowDown,
             contentDescription = null,
             tint = palette.onFloating,
             modifier = Modifier.size(16.dp),
@@ -796,41 +790,71 @@ private fun TerminalTopBar(
 ) {
     var encodingMenu by remember { mutableStateOf(false) }
     val palette = ZephyrTheme.palette
+    val chrome = lerpColor(Color(0xFF12161C), palette.brand.accent, 0.08f)
+    val dim = Color(0xFF7D8794)
+    val onBack = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    val cols = content.surface.size.columns
+    val rows = content.surface.size.rows
+    val user = content.connection.username
+    val hostLine = buildString {
+        if (user.isNotBlank()) append(user).append('@')
+        append(content.connection.host).append(':').append(content.connection.port)
+        if (cols > 0 && rows > 0) append(" · ").append(cols).append('×').append(rows)
+    }
+    val dotColor = when (content.transport) {
+        SessionTransport.CONNECTED -> palette.status.success
+        SessionTransport.CONNECTING -> palette.status.pendingSync
+        SessionTransport.DISCONNECTED -> palette.status.error
+        else -> dim
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = ZephyrSpacing.lg, vertical = ZephyrSpacing.sm),
+            .background(chrome)
+            .statusBarsPadding()
+            .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            // The connection name owns the primary line. A remote shell can set any window title it
-            // likes, so letting OSC 0 own this would let the far end impersonate another host.
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .clickable { onBack?.onBackPressed() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(ZephyrIcons.Back, contentDescription = "返回", tint = dim, modifier = Modifier.size(16.dp))
+        }
+        Column(Modifier.weight(1f).padding(start = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(6.dp).clip(CircleShape).background(dotColor))
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    text = content.connection.name,
+                    color = Color(0xFFE6EBF0),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
-                text = content.connection.name,
-                style = MaterialTheme.typography.titleMedium,
+                text = hostLine,
+                color = dim,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontSize = 10.5.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = transportLabel(content.transport),
-                    style = ZephyrTheme.typography.caption,
-                    color = transportColor(content.transport, palette),
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                )
-                remoteTitle?.takeIf { it.isNotBlank() }?.let { title ->
-                    Spacer(Modifier.width(ZephyrSpacing.sm))
-                    Text(
-                        text = title,
-                        style = ZephyrTheme.typography.caption,
-                        color = palette.onFloatingMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
         }
+        Text(
+            text = transportLabel(content.transport),
+            color = dim,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(end = 6.dp).semantics { liveRegion = LiveRegionMode.Polite },
+        )
 
         // Only Telnet negotiates a code page, so the picker is absent rather than disabled for SSH:
         // a greyed-out control would still suggest the setting means something there.
@@ -841,7 +865,7 @@ private fun TerminalTopBar(
                     onClick = { encodingMenu = true },
                     modifier = Modifier.semantics { contentDescription = encodingLabel },
                 ) {
-                    Icon(Icons.Filled.Translate, contentDescription = null)
+                    Icon(ZephyrIcons.Translate, contentDescription = null)
                 }
                 DropdownMenu(expanded = encodingMenu, onDismissRequest = { encodingMenu = false }) {
                     for (encoding in TerminalEncoding.entries) {
@@ -862,7 +886,7 @@ private fun TerminalTopBar(
             onClick = { onIntent(TerminalIntent.Minimise) },
             modifier = Modifier.semantics { contentDescription = minimiseLabel },
         ) {
-            Icon(Icons.Filled.Remove, contentDescription = null)
+            Icon(ZephyrIcons.Minus, contentDescription = null)
         }
     }
 }
@@ -1004,10 +1028,10 @@ private fun dockLabel(item: TerminalDockItem): String = when (item) {
 }
 
 private fun dockIcon(item: TerminalDockItem): ImageVector = when (item) {
-    TerminalDockItem.KEYBOARD -> Icons.Filled.Keyboard
-    TerminalDockItem.FILES -> Icons.Filled.Folder
-    TerminalDockItem.SNIPPETS -> Icons.Filled.Code
-    TerminalDockItem.NOTES -> Icons.Filled.Description
-    TerminalDockItem.SESSIONS -> Icons.Filled.Layers
-    TerminalDockItem.DISCONNECT -> Icons.Filled.LinkOff
+    TerminalDockItem.KEYBOARD -> ZephyrIcons.Keyboard
+    TerminalDockItem.FILES -> ZephyrIcons.File
+    TerminalDockItem.SNIPPETS -> ZephyrIcons.Notes
+    TerminalDockItem.NOTES -> ZephyrIcons.Notes
+    TerminalDockItem.SESSIONS -> ZephyrIcons.GridTools
+    TerminalDockItem.DISCONNECT -> ZephyrIcons.Disconnect
 }

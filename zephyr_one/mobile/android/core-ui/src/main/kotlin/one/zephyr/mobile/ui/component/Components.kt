@@ -11,17 +11,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -32,17 +25,12 @@ import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SyncStatus
 import one.zephyr.mobile.ui.R
+import one.zephyr.mobile.ui.icon.ZephyrIcons
 import one.zephyr.mobile.ui.theme.ZephyrRadius
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 
-/**
- * Protocol identity.
- *
- * MOBILE_EXPERIENCE.md 4.3: the protocol colour is an *aid*, never the identity, so the name is
- * always rendered as text next to the dot. That is also what keeps the chip usable for a colour-blind
- * user and readable by TalkBack.
- */
 @Composable
 fun ProtocolChip(protocol: Protocol, modifier: Modifier = Modifier) {
     val palette = ZephyrTheme.palette
@@ -63,16 +51,10 @@ fun ProtocolChip(protocol: Protocol, modifier: Modifier = Modifier) {
                 .clip(RoundedCornerShape(ZephyrRadius.pill))
                 .background(color),
         )
-        Text(text = protocol.wireName, style = ZephyrTheme.typography.tabularNumeric)
+        Text(text = protocol.wireName, style = ZephyrTextStyles.tabularNumeric)
     }
 }
 
-/**
- * Cleartext warning for Telnet.
- *
- * ZEPHYR_PARITY.md requires the risk to stay visible for the whole session rather than appearing once
- * at connect time, so this is a persistent banner and not a toast.
- */
 @Composable
 fun CleartextProtocolWarning(protocol: Protocol, modifier: Modifier = Modifier) {
     if (!protocol.isCleartext) return
@@ -89,19 +71,12 @@ fun CleartextProtocolWarning(protocol: Protocol, modifier: Modifier = Modifier) 
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm),
         ) {
-            Icon(Icons.Filled.Warning, contentDescription = null, tint = palette.status.warning)
+            Icon(ZephyrIcons.Warn, contentDescription = null, tint = palette.status.warning)
             Text(stringResource(R.string.protocol_cleartext_warning))
         }
     }
 }
 
-/**
- * A secret field's presence, never its value.
- *
- * The mask is rendered from [SecretPresence.MASK] and marked [clearAndSetSemantics] so a screen
- * reader announces "已保存，不显示原值" instead of reading six asterisks out one by one. Revealing is a
- * separate, verified action; this composable has no access to plaintext at all.
- */
 @Composable
 fun SecretPresenceField(
     label: String,
@@ -115,12 +90,12 @@ fun SecretPresenceField(
         stringResource(R.string.secret_not_set)
     }
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(label, style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.onFloatingMuted)
+        Text(label, style = ZephyrTextStyles.caption, color = ZephyrTheme.palette.onFloatingMuted)
         Spacer(Modifier.size(ZephyrSpacing.xs))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = if (presence.hasValue) SecretPresence.MASK else stateText,
-                style = ZephyrTheme.typography.mono,
+                style = ZephyrTextStyles.mono,
                 modifier = Modifier.semantics { contentDescription = label + "，" + stateText },
             )
             if (presence.hasValue && onReveal != null) {
@@ -131,12 +106,6 @@ fun SecretPresenceField(
     }
 }
 
-/**
- * Sync state for the 文件同步 card and the home top bar.
- *
- * Reads [SyncStatus] rather than a boolean so the caller cannot accidentally render "已同步" while
- * operations are still queued: pendingCount and conflictCount come straight from their tables.
- */
 @Composable
 fun SyncStatusPill(status: SyncStatus, modifier: Modifier = Modifier) {
     val palette = ZephyrTheme.palette
@@ -168,18 +137,17 @@ fun SyncStatusPill(status: SyncStatus, modifier: Modifier = Modifier) {
                     .clip(RoundedCornerShape(ZephyrRadius.pill))
                     .background(color),
             )
-            Text(text, style = ZephyrTheme.typography.tabularNumeric)
+            Text(text, style = ZephyrTextStyles.tabularNumeric)
         }
     }
 }
 
-/** Grouped section header. Lists use grouping and spacing, not a shadowed card per row. */
 @Composable
 fun SectionHeader(title: String, modifier: Modifier = Modifier) {
     Text(
-        text = title,
-        style = ZephyrTheme.typography.caption,
-        color = ZephyrTheme.palette.onFloatingMuted,
+        text = title.uppercase(),
+        style = ZephyrTextStyles.section,
+        color = ZephyrTheme.palette.onFloatingSubtle,
         modifier = modifier.padding(
             start = ZephyrSpacing.lg,
             end = ZephyrSpacing.lg,
@@ -189,12 +157,11 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier) {
     )
 }
 
-/** Monospace host:port, so a fingerprint or path cannot be confused by proportional glyphs. */
 @Composable
 fun MonoEndpoint(host: String, port: Int, modifier: Modifier = Modifier) {
     Text(
         text = host + ":" + port,
-        style = ZephyrTheme.typography.mono,
+        style = ZephyrTextStyles.monoHost,
         color = ZephyrTheme.palette.onFloatingMuted,
         modifier = modifier,
     )

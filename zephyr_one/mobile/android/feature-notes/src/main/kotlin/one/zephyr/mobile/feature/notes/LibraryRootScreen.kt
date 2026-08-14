@@ -1,5 +1,7 @@
 package one.zephyr.mobile.feature.notes
 
+import one.zephyr.mobile.ui.icon.ZephyrIcons
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -22,18 +24,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Note
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.IconButton
+import one.zephyr.mobile.ui.component.HorizontalDivider
+import one.zephyr.mobile.ui.component.Surface
+import one.zephyr.mobile.ui.component.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -162,7 +157,7 @@ fun LibraryRootScreen(
                         LibraryEntryCard(
                             title = stringResource(R.string.library_files),
                             detail = stringResource(R.string.library_files_detail, content.summary.recentFiles.size),
-                            icon = Icons.Filled.Folder,
+                            icon = ZephyrIcons.File,
                             tint = Color(0xFF64D2FF),
                             onClick = onOpenFiles,
                             modifier = Modifier.weight(1f),
@@ -170,7 +165,7 @@ fun LibraryRootScreen(
                         LibraryEntryCard(
                             title = stringResource(R.string.library_notes),
                             detail = stringResource(R.string.library_notes_detail, content.summary.noteCount),
-                            icon = Icons.Filled.Note,
+                            icon = ZephyrIcons.Notes,
                             tint = palette.status.warning,
                             onClick = onOpenNotes,
                             modifier = Modifier.weight(1f),
@@ -180,7 +175,7 @@ fun LibraryRootScreen(
                         LibraryEntryCard(
                             title = stringResource(R.string.library_snippets),
                             detail = stringResource(R.string.library_snippets_detail, content.summary.snippetCount),
-                            icon = Icons.Filled.Code,
+                            icon = ZephyrIcons.Notes,
                             tint = palette.protocol.ssh,
                             onClick = onOpenSnippets,
                             modifier = Modifier.weight(1f),
@@ -188,7 +183,7 @@ fun LibraryRootScreen(
                         LibraryEntryCard(
                             title = stringResource(R.string.library_downloads),
                             detail = stringResource(R.string.library_downloads_detail, content.summary.activeDownloadCount),
-                            icon = Icons.Filled.Download,
+                            icon = ZephyrIcons.Download,
                             tint = palette.protocol.vnc,
                             onClick = onOpenDownloads,
                             modifier = Modifier.weight(1f),
@@ -225,7 +220,7 @@ fun LibraryRootScreen(
                                 title = file.name,
                                 detail = listOf(RemotePath.parentOf(file.path), file.connectionLabel, RelativeTime.format(nowMs, file.touchedAt))
                                     .filter(String::isNotBlank).joinToString(" · "),
-                                icon = if (file.origin == RecentFileOrigin.DOWNLOADED) Icons.Filled.Download else Icons.Filled.Folder,
+                                icon = if (file.origin == RecentFileOrigin.DOWNLOADED) ZephyrIcons.Download else ZephyrIcons.File,
                                 tint = Color(0xFF64D2FF),
                                 mono = true,
                                 showDivider = index != files.lastIndex,
@@ -243,7 +238,7 @@ fun LibraryRootScreen(
                             RootRow(
                                 title = note.title.ifBlank { stringResource(R.string.library_untitled_note) },
                                 detail = listOf(note.groupPath, RelativeTime.format(nowMs, note.updatedAt)).filter(String::isNotBlank).joinToString(" · "),
-                                icon = Icons.Filled.Note,
+                                icon = ZephyrIcons.Notes,
                                 tint = palette.status.warning,
                                 showDivider = index != notes.lastIndex,
                                 onClick = { onOpenNote(note) },
@@ -261,7 +256,7 @@ fun LibraryRootScreen(
                                 title = snippet.name,
                                 detail = listOf(snippet.group, snippet.command.lineSequence().firstOrNull().orEmpty())
                                     .filter(String::isNotBlank).joinToString(" · "),
-                                icon = Icons.Filled.Code,
+                                icon = ZephyrIcons.Notes,
                                 tint = palette.protocol.ssh,
                                 mono = true,
                                 showDivider = index != snippets.lastIndex,
@@ -321,7 +316,7 @@ private fun LibrarySearch(value: String, onValueChange: (String) -> Unit) {
         shape = RoundedCornerShape(10.dp),
     ) {
         Row(Modifier.heightIn(min = 40.dp).padding(horizontal = ZephyrSpacing.md), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Search, null, tint = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.size(18.dp))
+            Icon(ZephyrIcons.Search, null, tint = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(ZephyrSpacing.sm))
             BasicTextField(
                 value = value,
