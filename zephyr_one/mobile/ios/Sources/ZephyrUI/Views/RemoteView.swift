@@ -8,6 +8,7 @@ import SwiftUI
 /// status, the certificate gate and the permission channels while reporting
 /// the engine's absence instead of faking a screen. Every decision routes
 /// through ``RemoteViewModel``.
+@MainActor
 public struct RemoteView: View {
 
     @ObservedObject var viewModel: RemoteViewModel

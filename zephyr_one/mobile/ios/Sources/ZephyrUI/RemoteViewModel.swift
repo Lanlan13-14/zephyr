@@ -107,6 +107,7 @@ public enum RemoteEvent: Equatable, Sendable {
 /// Owns the chrome and the trust/phase state machine. The pixels belong to
 /// the blocked remote engine, so the surface is an honest placeholder; every
 /// dial and every certificate decision goes through ``RemoteEnginePort``.
+@MainActor
 public final class RemoteViewModel: ObservableObject {
 
     @Published public private(set) var page: PageState<RemoteContent> = .initialLoading
@@ -127,6 +128,8 @@ public final class RemoteViewModel: ObservableObject {
     private var error: MobileError?
     private var certificate: RemoteCertificate?
     private var permissions: [RemoteChannelPermission] = RemoteChannelKind.allCases.map { RemoteChannelPermission(kind: $0) }
+    private var connectTask: Task<Void, Never>?
+    private var connectGeneration = 0
 
     public init(
         sessionId: String,
@@ -177,6 +180,7 @@ public final class RemoteViewModel: ObservableObject {
 
     public func connect() {
         guard let connection else { return }
+        guard connectTask == nil else { return }
         if !engine.isAvailable {
             error = UnavailableRemoteEngine.error(for: connection.`protocol`)
             recompute()
@@ -187,10 +191,12 @@ public final class RemoteViewModel: ObservableObject {
         status = status.advance(.resolving, clock())
         registerRow(connection, .connecting)
         recompute()
-        Task { await performConnect(connection) }
+        startConnect(connection)
     }
 
-    func performConnect(_ connection: Connection) async {
+    private func startConnect(_ connection: Connection) {
+        connectGeneration += 1
+        let generation = connectGeneration
         let request = RemoteConnectRequest(
             sessionId: sessionId,
             protocol: connection.`protocol`,
@@ -199,8 +205,19 @@ public final class RemoteViewModel: ObservableObject {
             username: connection.username,
             password: nil
         )
-        let outcome = await engine.connect(request)
-        handle(outcome)
+        connectTask = Task { [weak self, engine] in
+            let outcome = await engine.connect(request)
+            guard let self,
+                  !Task.isCancelled,
+                  generation == self.connectGeneration else { return }
+            self.connectTask = nil
+            self.handle(outcome)
+        }
+    }
+
+    func waitForPendingConnect() async {
+        let pending = connectTask
+        await pending?.value
     }
 
     private func handle(_ outcome: RemoteConnectOutcome) {
@@ -250,6 +267,7 @@ public final class RemoteViewModel: ObservableObject {
     /// (SCREEN_CATALOG.md 9/10).
     public func reconnect() {
         guard let connection else { return }
+        guard connectTask == nil else { return }
         if !engine.isAvailable {
             error = UnavailableRemoteEngine.error(for: connection.`protocol`)
             recompute()
@@ -259,7 +277,7 @@ public final class RemoteViewModel: ObservableObject {
         status = status.advance(.reconnecting, clock())
         status.attempt += 1
         recompute()
-        Task { await performConnect(connection) }
+        startConnect(connection)
     }
 
     /// Whether an automatic reconnect is warranted after the latest drop.
@@ -306,6 +324,9 @@ public final class RemoteViewModel: ObservableObject {
     // ---- session control ---------------------------------------------------------------------------
 
     public func disconnect() {
+        connectGeneration += 1
+        connectTask?.cancel()
+        connectTask = nil
         registry.close(sessionId, clock())
         status = status.advance(.disconnected, clock())
         recompute()

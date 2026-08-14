@@ -3,6 +3,7 @@ import XCTest
 
 /// S22/S23 remote view model: chrome per protocol, the connect/certificate
 /// flow and the engine-unavailable honesty.
+@MainActor
 final class RemoteViewModelTests: XCTestCase {
 
     private final class FakeEngine: RemoteEnginePort {
@@ -10,11 +11,13 @@ final class RemoteViewModelTests: XCTestCase {
         init(available: Bool = true) { self.available = available }
         var outcome: RemoteConnectOutcome = .connected(RemoteSessionStatus(phase: .connected, phaseSince: 1))
         var answeredTrust: Bool?
+        var connectCalls = 0
 
         var isAvailable: Bool { available }
 
         func connect(_ request: RemoteConnectRequest) async -> RemoteConnectOutcome {
-            outcome
+            connectCalls += 1
+            return outcome
         }
 
         func answerCertificate(sessionId: String, trust: Bool) async -> RemoteConnectOutcome {
@@ -64,7 +67,7 @@ final class RemoteViewModelTests: XCTestCase {
         vm.load()
         vm.connect()
         XCTAssertEqual(registry.row("r-1")?.transport, .connecting)
-        await vm.performConnect(rdp)
+        await vm.waitForPendingConnect()
         XCTAssertEqual(registry.row("r-1")?.transport, .connected)
         guard case let .content(value, _, _, _) = vm.page else {
             return XCTFail("expected content, got \(vm.page)")
@@ -81,7 +84,7 @@ final class RemoteViewModelTests: XCTestCase {
         let vm = makeVM(registry: registry, engine: engine, connection: UiTestData.connection(`protocol`: .rdp))
         vm.load()
         vm.connect()
-        await vm.performConnect(UiTestData.connection(`protocol`: .rdp))
+        await vm.waitForPendingConnect()
         guard case let .content(value, _, _, _) = vm.page else {
             return XCTFail("expected content, got \(vm.page)")
         }
@@ -103,11 +106,26 @@ final class RemoteViewModelTests: XCTestCase {
         let vm = makeVM(registry: registry, engine: engine, connection: UiTestData.connection(`protocol`: .rdp))
         vm.load()
         vm.connect()
-        await vm.performConnect(UiTestData.connection(`protocol`: .rdp))
+        await vm.waitForPendingConnect()
         await vm.performAnswerCertificate(trust: false)
         XCTAssertEqual(engine.answeredTrust, false)
         XCTAssertEqual(registry.row("r-1")?.transport, .disconnected)
         XCTAssertEqual(vm.message, RemoteViewModel.msgCertificateRejected)
+    }
+
+    func testRepeatedConnectWhilePendingStartsOneEngineRequest() async {
+        let registry = SessionRegistry()
+        let engine = FakeEngine()
+        let rdp = UiTestData.connection(`protocol`: .rdp)
+        let vm = makeVM(registry: registry, engine: engine, connection: rdp)
+        vm.load()
+
+        vm.connect()
+        vm.connect()
+        await vm.waitForPendingConnect()
+
+        XCTAssertEqual(engine.connectCalls, 1)
+        XCTAssertEqual(registry.row("r-1")?.transport, .connected)
     }
 
     func testChannelDeclineKeepsSession() {
