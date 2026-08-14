@@ -126,13 +126,13 @@ object ZephyrIcons {
                 ) {
                     moveTo(x + r, y)
                     lineTo(x + w - r, y)
-                    quadraticBezierTo(x + w, y, x + w, y + r)
+                    quadTo(x + w, y, x + w, y + r)
                     lineTo(x + w, y + h - r)
-                    quadraticBezierTo(x + w, y + h, x + w - r, y + h)
+                    quadTo(x + w, y + h, x + w - r, y + h)
                     lineTo(x + r, y + h)
-                    quadraticBezierTo(x, y + h, x, y + h - r)
+                    quadTo(x, y + h, x, y + h - r)
                     lineTo(x, y + r)
-                    quadraticBezierTo(x, y, x + r, y)
+                    quadTo(x, y, x + r, y)
                     close()
                 }
             }
