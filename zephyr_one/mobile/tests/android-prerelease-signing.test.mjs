@@ -4,7 +4,7 @@
  * assembleDebug used to pick up ~/.android/debug.keystore. CI creates a
  * fresh one on every runner, so zom-v1.0.0pre1 and pre2 could not update
  * each other. This suite pins the committed PKCS12, its SHA-256, and the
- * Gradle wiring that both build types must use it.
+ * Gradle wiring that every installable build type must use it.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,15 +46,28 @@ test('keystore SHA-256 matches the documented sideload identity', () => {
   assert.equal(match[1].toUpperCase(), EXPECTED_SHA256);
 });
 
-test('debug and release both sign with the committed PKCS12', () => {
+test('debug, release and optimized prerelease sign with the committed PKCS12', () => {
   const gradle = fs.readFileSync(GRADLE, 'utf8');
+  const buildTypes = gradle.slice(gradle.indexOf('buildTypes {'));
   assert.match(gradle, /create\("prerelease"\)/);
   assert.match(gradle, /storeFile = file\("signing\/zephyr-one-prerelease\.p12"\)/);
   assert.match(gradle, /keyAlias = "zephyr-one"/);
-  const debugBlock = gradle.match(/debug\s*\{[\s\S]*?\n        \}/);
-  const releaseBlock = gradle.match(/release\s*\{[\s\S]*?\n        \}/);
+  const debugBlock = buildTypes.match(/debug\s*\{[\s\S]*?\n        \}/);
+  const releaseBlock = buildTypes.match(/release\s*\{[\s\S]*?\n        \}/);
+  const prereleaseBlock = buildTypes.match(/create\("prerelease"\)\s*\{[\s\S]*?\n        \}/);
   assert.ok(debugBlock, 'debug buildType missing');
   assert.ok(releaseBlock, 'release buildType missing');
+  assert.ok(prereleaseBlock, 'prerelease buildType missing');
   assert.match(debugBlock[0], /signingConfig = signingConfigs\.getByName\("prerelease"\)/);
   assert.match(releaseBlock[0], /signingConfig = signingConfigs\.getByName\("prerelease"\)/);
+  assert.match(prereleaseBlock[0], /applicationIdSuffix = "\.debug"/);
+  assert.match(prereleaseBlock[0], /signingConfig = signingConfigs\.getByName\("prerelease"\)/);
+  assert.match(prereleaseBlock[0], /isDebuggable = false/);
+  assert.match(prereleaseBlock[0], /isMinifyEnabled = true/);
+  assert.match(prereleaseBlock[0], /isShrinkResources = true/);
+});
+
+test('Android rendering explicitly keeps hardware acceleration enabled', () => {
+  const manifest = fs.readFileSync(path.join(ANDROID_ROOT, 'app/src/main/AndroidManifest.xml'), 'utf8');
+  assert.match(manifest, /android:hardwareAccelerated="true"/);
 });

@@ -1,8 +1,12 @@
 # Zephyr One Android pre-release signing
 
 `zephyr-one-prerelease.p12` is the **stable** key every CI and local
-`assembleDebug` / `assembleRelease` uses. It exists so two APKs built on
+`assembleDebug` / `assemblePrerelease` / `assembleRelease` uses. It exists so two APKs built on
 different machines can update each other.
+
+GitHub pre-releases publish `assemblePrerelease`: it keeps the historical
+`one.zephyr.mobile.debug` package id for in-place updates, but is non-debuggable,
+R8-optimized and resource-shrunk for production-speed Compose rendering.
 
 This is **not** a Play Store upload key. The password is public because the
 keystore is in the repository. Treat it as a shared sideload identity, not a

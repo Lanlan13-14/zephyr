@@ -52,6 +52,17 @@ android {
             // Release must not permit cleartext or a trust-all verifier.
             manifestPlaceholders["usesCleartextTraffic"] = "false"
         }
+        create("prerelease") {
+            initWith(getByName("release"))
+            // Keep the package identity used by pre1-pre6 so this APK updates in place, while
+            // compiling it like release: non-debuggable, R8-optimized and resource-shrunk.
+            applicationIdSuffix = ".debug"
+            matchingFallbacks.add("release")
+            signingConfig = signingConfigs.getByName("prerelease")
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+        }
     }
 
     compileOptions {

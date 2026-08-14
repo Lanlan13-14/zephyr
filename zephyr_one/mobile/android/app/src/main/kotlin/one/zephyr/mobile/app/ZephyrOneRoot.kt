@@ -797,7 +797,11 @@ private fun routeTransition(
     reduceMotion: Boolean,
 ): ContentTransform {
     if (reduceMotion || initial is RootRoute.Root && target is RootRoute.Root) {
-        return EnterTransition.None togetherWith ExitTransition.None
+        return ContentTransform(
+            targetContentEnter = EnterTransition.None,
+            initialContentExit = ExitTransition.None,
+            sizeTransform = null,
+        )
     }
     val pushing = routeDepth(target) >= routeDepth(initial)
     val enter = if (pushing) {
@@ -834,9 +838,14 @@ private fun routeTransition(
             animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
         )
     }
-    return (enter togetherWith exit).apply {
-        targetContentZIndex = if (pushing) 1f else 0f
-    }
+    // Every route fills the window. AnimatedContent's default SizeTransform would still remeasure
+    // and clip both full-screen trees on every frame, unlike demo.html's fixed absolute pages.
+    return ContentTransform(
+        targetContentEnter = enter,
+        initialContentExit = exit,
+        targetContentZIndex = if (pushing) 1f else 0f,
+        sizeTransform = null,
+    )
 }
 
 @Composable

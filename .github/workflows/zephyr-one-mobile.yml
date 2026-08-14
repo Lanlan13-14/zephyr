@@ -124,7 +124,9 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      # Compile before test. `assembleDebug` is the step that would have caught
+      # Compile before test. `assemblePrerelease` links the same complete app while producing the
+      # optimized, non-debuggable APK users actually install. It preserves the historical `.debug`
+      # application id and committed signing identity, so pre-releases still update in place.
       # the four unresolved symbols: they live in :app, which no library
       # module's test task ever links.
       #
@@ -138,10 +140,10 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          gradle --no-daemon --stacktrace --continue :app:assembleDebug 2>&1 | tee /tmp/gradle-assemble.log || status=$?
+          gradle --no-daemon --stacktrace --continue :app:assemblePrerelease 2>&1 | tee /tmp/gradle-assemble.log || status=$?
           if [ "$status" -ne 0 ]; then
             bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
-              /tmp/gradle-assemble.log 'gradle :app:assembleDebug'
+              /tmp/gradle-assemble.log 'gradle :app:assemblePrerelease'
             exit "$status"
           fi
 
@@ -162,14 +164,17 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          apks=(app/build/outputs/apk/debug/*.apk)
+          apks=(app/build/outputs/apk/prerelease/*.apk)
           test "${#apks[@]}" -eq 1
           unzip -tq "${apks[0]}"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "${apks[0]}"
           version="$($ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")"
           test "$version" = '1.0.0'
+          package="$($ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | sed -n "s/package: name='\([^']*\)'.*/\1/p")"
+          test "$package" = 'one.zephyr.mobile.debug'
+          ! $ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | grep -q '^application-debuggable$'
 
-      # assembleDebug is signed with the committed pre-release PKCS12, not the
+      # assemblePrerelease is signed with the committed pre-release PKCS12, not the
       # per-runner debug.keystore. That is what lets successive pre-releases
       # update each other. Upload the APK so a green run yields a testable
       # build and the release job has something to attach.
@@ -177,8 +182,8 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: android-debug-apk
-          path: zephyr_one/mobile/android/app/build/outputs/apk/debug/*.apk
+          name: android-prerelease-apk
+          path: zephyr_one/mobile/android/app/build/outputs/apk/prerelease/*.apk
           if-no-files-found: error
       - name: Upload test reports
         if: always()
@@ -307,7 +312,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
-          name: android-debug-apk
+          name: android-prerelease-apk
           path: release-artifacts/android
       - uses: actions/download-artifact@v4
         with:
@@ -328,7 +333,7 @@ jobs:
           unzip -Z1 "${ipas[0]}" | grep -qx 'Payload/ZephyrOne.app/Info.plist'
           unzip -Z1 "${ipas[0]}" | grep -qx 'Payload/ZephyrOne.app/ZephyrOneMobileApp'
           mkdir -p dist-mobile
-          install -m 0644 "${apks[0]}" dist-mobile/zephyr-one-android-debug.apk
+          install -m 0644 "${apks[0]}" dist-mobile/zephyr-one-android-prerelease.apk
           install -m 0644 "${ipas[0]}" dist-mobile/zephyr-one-ios-unsigned.ipa
           test "$(find dist-mobile -maxdepth 1 -type f -name '*.apk' | wc -l)" -eq 1
           test "$(find dist-mobile -maxdepth 1 -type f -name '*.ipa' | wc -l)" -eq 1
@@ -359,7 +364,7 @@ jobs:
             Zephyr main. Sync is optional: the app is usable standalone on the device.
 
             ### This pre-release
-            - Android debug APK (installs as-is)
+            - Optimized Android pre-release APK (installs as-is and updates pre1+ in place)
             - Unsigned iOS 17+ IPA (requires signing before device installation)
             - Contracts suite + Android compile/test + iOS compile/test all green
 
@@ -389,6 +394,6 @@ jobs:
               --jq '.[] | select(.name | test("\\.ipa$"; "i")) | .name'
           )
           test "${#apk_names[@]}" -eq 1
-          test "${apk_names[0]}" = 'zephyr-one-android-debug.apk'
+          test "${apk_names[0]}" = 'zephyr-one-android-prerelease.apk'
           test "${#ipa_names[@]}" -eq 1
           test "${ipa_names[0]}" = 'zephyr-one-ios-unsigned.ipa'
