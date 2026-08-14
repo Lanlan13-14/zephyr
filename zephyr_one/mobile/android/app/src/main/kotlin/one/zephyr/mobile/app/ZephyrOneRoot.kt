@@ -55,6 +55,12 @@ import one.zephyr.mobile.feature.connections.ConnectionEditorRoute
 import one.zephyr.mobile.feature.connections.ConnectionEditorViewModel
 import one.zephyr.mobile.feature.connections.ConnectionListRoute
 import one.zephyr.mobile.feature.connections.ConnectionListViewModel
+import one.zephyr.mobile.feature.connections.ProtocolPickerScreen
+import one.zephyr.mobile.feature.tools.OpsSection
+import one.zephyr.mobile.feature.tools.ResourceKind
+import one.zephyr.mobile.feature.tools.OneSettingsAnchor
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.clickable
 import one.zephyr.mobile.feature.filesync.DirectoryAuthorizationResult
 import one.zephyr.mobile.feature.filesync.rememberDirectoryAuthorizer
 import one.zephyr.mobile.feature.notes.LibraryRootContent
@@ -96,6 +102,7 @@ import one.zephyr.mobile.model.SyncStatus
 import one.zephyr.mobile.model.SyncState
 import one.zephyr.mobile.model.Snippet
 import one.zephyr.mobile.data.session.SessionExecution
+import one.zephyr.mobile.ui.chrome.PushedPageHeader
 import one.zephyr.mobile.ui.island.FloatingIsland
 import one.zephyr.mobile.ui.island.IslandDestination
 import one.zephyr.mobile.ui.island.islandContentBottomInset
@@ -134,14 +141,15 @@ fun ZephyrOneRoot(
              * gate, and drawing a screen behind it would expose content to the recents screenshot. */
             locked -> LockGate(onUnlockRequested = onUnlockRequested)
 
-            /* S01/S02 (unlock + server binding) have no Compose implementation yet, so this says so
-             * instead of rendering an empty dashboard that merely looks broken. */
-            account == null -> NoticeScreen(text = NOT_BOUND)
+            /* Startup recovery is still opening the local workspace. The window already matches
+             * the dashboard colour, so this is a same-colour hold rather than a black flash. */
+            account == null -> Box(Modifier.fillMaxSize())
 
             else -> account?.let { activeAccount ->
                 key(activeAccount.generation) {
                     BoundRoot(
                         account = activeAccount,
+                        appContainer = container,
                         integrations = integrations,
                         vncEngine = container.vncEngine,
                         rdpEngine = container.rdpEngine,
@@ -164,6 +172,8 @@ data class ZephyrOneIntegrations(
 
 sealed interface LibraryAction {
     data object Create : LibraryAction
+    data object CreateNote : LibraryAction
+    data object CreateSnippet : LibraryAction
     data object Files : LibraryAction
     data object Notes : LibraryAction
     data object Snippets : LibraryAction
@@ -183,11 +193,41 @@ private sealed interface RootRoute {
     data class ConnectionEditor(
         val connectionId: String?,
         val duplicateSourceId: String? = null,
+        val protocol: Protocol = Protocol.SSH,
     ) : RootRoute
+
+    data object ProtocolPicker : RootRoute
 
     data class SessionDetails(val sessionId: String) : RootRoute
 
     data object BatchExecution : RootRoute
+
+    data object Notes : RootRoute
+    data class NoteEditor(val noteId: String?) : RootRoute
+    data object Snippets : RootRoute
+    data class SnippetEditor(val snippetId: String?) : RootRoute
+    data object Files : RootRoute
+    data object Downloads : RootRoute
+    data object LibraryCreate : RootRoute
+
+    data object Appearance : RootRoute
+    data object Language : RootRoute
+    data object AppLock : RootRoute
+    data object Network : RootRoute
+    data object Diagnostics : RootRoute
+    data object FileSync : RootRoute
+    data object ClientToken : RootRoute
+    data object Conflicts : RootRoute
+    data object Devices : RootRoute
+    data object LocalShares : RootRoute
+    data object ServerBinding : RootRoute
+    data object ServerSettings : RootRoute
+    data object Backup : RootRoute
+    data object RuntimeStatus : RootRoute
+    data object AiSettings : RootRoute
+    data class Ops(val section: OpsSection) : RootRoute
+    data class ResourceList(val kind: ResourceKind) : RootRoute
+    data class ResourceEditor(val kind: ResourceKind, val entityId: String?) : RootRoute
 
     data class Terminal(val sessionId: String, val connectionId: String) : RootRoute
 
@@ -209,12 +249,38 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
         when (route) {
             is RootRoute.Root -> listOf(TAG_ROOT, route.destination.name)
             is RootRoute.ConnectionEditor ->
-                listOf(TAG_EDITOR, route.connectionId ?: "", route.duplicateSourceId ?: "")
+                listOf(TAG_EDITOR, route.connectionId ?: "", route.duplicateSourceId ?: "", route.protocol.name)
+            RootRoute.ProtocolPicker -> listOf(TAG_PROTOCOL)
             is RootRoute.SessionDetails -> listOf(TAG_SESSION_DETAILS, route.sessionId)
             RootRoute.BatchExecution -> listOf(TAG_BATCH)
             is RootRoute.Terminal -> listOf(TAG_TERMINAL, route.sessionId, route.connectionId)
             is RootRoute.Remote ->
                 listOf(TAG_REMOTE, route.sessionId, route.connectionId, route.protocol.name)
+            RootRoute.Notes -> listOf(TAG_NOTES)
+            is RootRoute.NoteEditor -> listOf(TAG_NOTE_EDITOR, route.noteId ?: "")
+            RootRoute.Snippets -> listOf(TAG_SNIPPETS)
+            is RootRoute.SnippetEditor -> listOf(TAG_SNIPPET_EDITOR, route.snippetId ?: "")
+            RootRoute.Files -> listOf(TAG_FILES)
+            RootRoute.Downloads -> listOf(TAG_DOWNLOADS)
+            RootRoute.LibraryCreate -> listOf(TAG_LIBRARY_CREATE)
+            RootRoute.Appearance -> listOf(TAG_APPEARANCE)
+            RootRoute.Language -> listOf(TAG_LANGUAGE)
+            RootRoute.AppLock -> listOf(TAG_APP_LOCK)
+            RootRoute.Network -> listOf(TAG_NETWORK)
+            RootRoute.Diagnostics -> listOf(TAG_DIAGNOSTICS)
+            RootRoute.FileSync -> listOf(TAG_FILE_SYNC)
+            RootRoute.ClientToken -> listOf(TAG_CLIENT_TOKEN)
+            RootRoute.Conflicts -> listOf(TAG_CONFLICTS)
+            RootRoute.Devices -> listOf(TAG_DEVICES)
+            RootRoute.LocalShares -> listOf(TAG_SHARES)
+            RootRoute.ServerBinding -> listOf(TAG_BINDING)
+            RootRoute.ServerSettings -> listOf(TAG_SERVER_SETTINGS)
+            RootRoute.Backup -> listOf(TAG_BACKUP)
+            RootRoute.RuntimeStatus -> listOf(TAG_RUNTIME)
+            RootRoute.AiSettings -> listOf(TAG_AI)
+            is RootRoute.Ops -> listOf(TAG_OPS, route.section.name)
+            is RootRoute.ResourceList -> listOf(TAG_RESOURCE_LIST, route.kind.name)
+            is RootRoute.ResourceEditor -> listOf(TAG_RESOURCE_EDITOR, route.kind.name, route.entityId ?: "")
         }
     },
     restore = { saved ->
@@ -229,7 +295,42 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
             TAG_EDITOR -> RootRoute.ConnectionEditor(
                 connectionId = saved.getOrNull(1)?.takeIf { it.isNotEmpty() },
                 duplicateSourceId = saved.getOrNull(2)?.takeIf { it.isNotEmpty() },
+                protocol = Protocol.entries.firstOrNull { it.name == saved.getOrNull(3) } ?: Protocol.SSH,
             )
+
+            TAG_PROTOCOL -> RootRoute.ProtocolPicker
+
+            TAG_NOTES -> RootRoute.Notes
+            TAG_NOTE_EDITOR -> RootRoute.NoteEditor(saved.getOrNull(1)?.takeIf { it.isNotEmpty() })
+            TAG_SNIPPETS -> RootRoute.Snippets
+            TAG_SNIPPET_EDITOR -> RootRoute.SnippetEditor(saved.getOrNull(1)?.takeIf { it.isNotEmpty() })
+            TAG_FILES -> RootRoute.Files
+            TAG_DOWNLOADS -> RootRoute.Downloads
+            TAG_LIBRARY_CREATE -> RootRoute.LibraryCreate
+            TAG_APPEARANCE -> RootRoute.Appearance
+            TAG_LANGUAGE -> RootRoute.Language
+            TAG_APP_LOCK -> RootRoute.AppLock
+            TAG_NETWORK -> RootRoute.Network
+            TAG_DIAGNOSTICS -> RootRoute.Diagnostics
+            TAG_FILE_SYNC -> RootRoute.FileSync
+            TAG_CLIENT_TOKEN -> RootRoute.ClientToken
+            TAG_CONFLICTS -> RootRoute.Conflicts
+            TAG_DEVICES -> RootRoute.Devices
+            TAG_SHARES -> RootRoute.LocalShares
+            TAG_BINDING -> RootRoute.ServerBinding
+            TAG_SERVER_SETTINGS -> RootRoute.ServerSettings
+            TAG_BACKUP -> RootRoute.Backup
+            TAG_RUNTIME -> RootRoute.RuntimeStatus
+            TAG_AI -> RootRoute.AiSettings
+            TAG_OPS -> RootRoute.Ops(
+                OpsSection.entries.firstOrNull { it.name == saved.getOrNull(1) } ?: OpsSection.DOCKER,
+            )
+            TAG_RESOURCE_LIST -> ResourceKind.entries.firstOrNull { it.name == saved.getOrNull(1) }
+                ?.let(RootRoute::ResourceList)
+                ?: RootRoute.Root(IslandDestination.TOOLS)
+            TAG_RESOURCE_EDITOR -> ResourceKind.entries.firstOrNull { it.name == saved.getOrNull(1) }
+                ?.let { RootRoute.ResourceEditor(it, saved.getOrNull(2)?.takeIf { id -> id.isNotEmpty() }) }
+                ?: RootRoute.Root(IslandDestination.TOOLS)
 
             TAG_SESSION_DETAILS -> saved.getOrNull(1)?.takeIf { it.isNotEmpty() }
                 ?.let(RootRoute::SessionDetails)
@@ -266,6 +367,7 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
 @Composable
 private fun BoundRoot(
     account: AccountContainer,
+    appContainer: AppContainer,
     integrations: ZephyrOneIntegrations,
     vncEngine: one.zephyr.mobile.protocol.vnc.VncEngine,
     rdpEngine: one.zephyr.mobile.protocol.rdp.RdpEngine,
@@ -291,6 +393,10 @@ private fun BoundRoot(
     /* Non-suspend entry point for callbacks that are not suspend (island taps, click handlers). */
     val notice: (String) -> Unit = { message -> scope.launch { messages.emit(message) } }
 
+    BackHandler(enabled = route !is RootRoute.Root) {
+        route = popRoute(route)
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         val current = route
 
@@ -300,7 +406,9 @@ private fun BoundRoot(
                 account = account,
                 ownerUserId = ownerUserId,
                 syncStatus = syncStatus,
-                onOpenEditor = { id -> route = RootRoute.ConnectionEditor(id) },
+                onOpenEditor = { id ->
+                    route = if (id == null) RootRoute.ProtocolPicker else RootRoute.ConnectionEditor(id)
+                },
                 onDuplicateConnection = { id -> route = RootRoute.ConnectionEditor(null, id) },
                 onOpenSession = { sessionId, connectionId, protocol ->
                     route = routeForProtocol(sessionId, connectionId, protocol)
@@ -310,19 +418,56 @@ private fun BoundRoot(
                 integrations = integrations,
                 onOpenSessionDetails = { sessionId -> route = RootRoute.SessionDetails(sessionId) },
                 onOpenBatch = { route = RootRoute.BatchExecution },
+                onLibraryAction = { action ->
+                    route = when (action) {
+                        LibraryAction.Create -> RootRoute.LibraryCreate
+                        LibraryAction.CreateNote -> RootRoute.NoteEditor(null)
+                        LibraryAction.CreateSnippet -> RootRoute.SnippetEditor(null)
+                        LibraryAction.Files, is LibraryAction.RecentFile -> RootRoute.Files
+                        LibraryAction.Notes -> RootRoute.Notes
+                        is LibraryAction.OpenNote -> RootRoute.NoteEditor(action.value.noteId)
+                        LibraryAction.Snippets -> RootRoute.Snippets
+                        is LibraryAction.OpenSnippet -> RootRoute.SnippetEditor(action.value.id)
+                        LibraryAction.Downloads -> RootRoute.Downloads
+                    }
+                },
+                onOpenBinding = { route = RootRoute.ServerBinding },
+                onOpenTool = { entry ->
+                    route = when (entry) {
+                        ToolEntry.BATCH_EXEC -> RootRoute.BatchExecution
+                        ToolEntry.DOCKER -> RootRoute.Ops(OpsSection.DOCKER)
+                        ToolEntry.MONITOR -> RootRoute.Ops(OpsSection.METRICS)
+                        ToolEntry.LOGS -> RootRoute.Ops(OpsSection.LOGS)
+                        ToolEntry.PROXY -> RootRoute.ResourceList(ResourceKind.PROXY)
+                        ToolEntry.SSH_KEY -> RootRoute.ResourceList(ResourceKind.SSH_KEY)
+                        ToolEntry.JUMP_HOST -> RootRoute.ResourceList(ResourceKind.JUMP_HOST)
+                        ToolEntry.AI_WORKSPACE -> RootRoute.AiSettings
+                        ToolEntry.FILE_SYNC -> RootRoute.FileSync
+                        ToolEntry.CLIENT_TOKEN -> RootRoute.ClientToken
+                        ToolEntry.SERVER_SETTINGS -> RootRoute.ServerSettings
+                        ToolEntry.BACKUP_RESTORE -> RootRoute.Backup
+                        ToolEntry.RUNTIME_STATUS -> RootRoute.RuntimeStatus
+                        ToolEntry.APPEARANCE -> RootRoute.Appearance
+                        ToolEntry.LANGUAGE -> RootRoute.Language
+                        ToolEntry.APP_LOCK -> RootRoute.AppLock
+                        ToolEntry.NETWORK -> RootRoute.Network
+                        ToolEntry.DIAGNOSTICS -> RootRoute.Diagnostics
+                    }
+                },
                 vncEngine = vncEngine,
                 rdpEngine = rdpEngine,
             )
 
             is RootRoute.ConnectionEditor -> ConnectionEditorRoute(
                 viewModel = viewModel(
-                    key = "editor:" + (current.connectionId ?: "new"),
+                    key = "editor:" + (current.connectionId ?: ("new:" + current.protocol.name)),
                     factory = ConnectionEditorViewModel.factory(
                         connections = account.connections,
                         resources = account.resources,
                         ownerUserId = ownerUserId,
                         connectionId = current.connectionId,
                         duplicateSourceId = current.duplicateSourceId,
+                        initialProtocol = current.protocol,
                         newIdFactory = { UUID.randomUUID().toString() },
                         registerSensitiveSink = account::registerSensitiveSink,
                         unregisterSensitiveSink = account::unregisterSensitiveSink,
@@ -336,6 +481,138 @@ private fun BoundRoot(
                         protocol = connection.protocol,
                     )
                 },
+                onMessage = { messages.emit(it) },
+            )
+
+            RootRoute.ProtocolPicker -> ProtocolPickerScreen(
+                onSelect = { protocol -> route = RootRoute.ConnectionEditor(null, protocol = protocol) },
+                onBack = { route = RootRoute.Root(IslandDestination.HOME) },
+            )
+
+            RootRoute.Notes -> NotesDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                onBack = { route = RootRoute.Root(IslandDestination.LIBRARY) },
+                onOpen = { note -> route = RootRoute.NoteEditor(note.noteId) },
+                onCreate = { route = RootRoute.NoteEditor(null) },
+            )
+            is RootRoute.NoteEditor -> NoteEditorDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                noteId = current.noteId,
+                onBack = { route = RootRoute.Notes },
+                onMessage = { messages.emit(it) },
+            )
+            RootRoute.Snippets -> SnippetsDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                onBack = { route = RootRoute.Root(IslandDestination.LIBRARY) },
+                onOpen = { snippet -> route = RootRoute.SnippetEditor(snippet.id) },
+                onCreate = { route = RootRoute.SnippetEditor(null) },
+                onInsert = { notice("插入需要一个已打开的终端会话") },
+                onRun = { notice("执行需要 SSH 引擎（ADR-002）和 execute 权限") },
+            )
+            is RootRoute.SnippetEditor -> SnippetEditorDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                snippetId = current.snippetId,
+                onBack = { route = RootRoute.Snippets },
+                onMessage = { messages.emit(it) },
+            )
+            RootRoute.Files -> FilesDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                onBack = { route = RootRoute.Root(IslandDestination.LIBRARY) },
+                onOpenConnection = { notice(UnavailableSftpMessage) },
+            )
+            RootRoute.Downloads -> DownloadsDestination(onBack = { route = RootRoute.Root(IslandDestination.LIBRARY) })
+            RootRoute.LibraryCreate -> {
+                LibraryCreateDialog(
+                    onDismiss = { route = RootRoute.Root(IslandDestination.LIBRARY) },
+                    onNote = { route = RootRoute.NoteEditor(null) },
+                    onSnippet = { route = RootRoute.SnippetEditor(null) },
+                    onFiles = { route = RootRoute.Files },
+                )
+            }
+            RootRoute.Appearance -> AppearanceDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
+            RootRoute.Language -> LanguageDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
+            RootRoute.AppLock -> AppLockDestination(account, appContainer, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
+            RootRoute.Network -> NetworkDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
+            RootRoute.Diagnostics -> DiagnosticsLiveDestination(
+                account = account,
+                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+                onExport = { notice(diagnosticExport(account)) },
+            )
+            RootRoute.FileSync -> FileSyncDestination(
+                account = account,
+                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+                onOpenTokens = { route = RootRoute.ClientToken },
+                onOpenConflicts = { route = RootRoute.Conflicts },
+                onOpenDevices = { route = RootRoute.Devices },
+                onOpenShares = { route = RootRoute.LocalShares },
+                onUnbind = if (account.isLocalMode) null else ({ route = RootRoute.ServerBinding }),
+                onSyncNow = { if (!account.isLocalMode) scope.launch { account.syncEngine.syncNow() } },
+            )
+            RootRoute.ClientToken -> ClientTokenLiveDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                onBack = { route = RootRoute.FileSync },
+                onMessage = { messages.emit(it) },
+            )
+            RootRoute.Conflicts -> ConflictCenterDestination(
+                account = account,
+                onBack = { route = RootRoute.FileSync },
+                onMessage = notice,
+            )
+            RootRoute.Devices -> DeviceListDestination(
+                account = account,
+                onBack = { route = RootRoute.FileSync },
+                onMessage = notice,
+            )
+            RootRoute.LocalShares -> LocalSharesDestination(
+                account = account,
+                onBack = { route = RootRoute.FileSync },
+                onMessage = notice,
+            )
+            RootRoute.ServerBinding -> BindingScreen(
+                container = appContainer,
+                onBack = { route = RootRoute.Root(if (account.isLocalMode) IslandDestination.HOME else IslandDestination.TOOLS) },
+                onBound = { route = RootRoute.Root(IslandDestination.HOME) },
+                onMessage = notice,
+            )
+            RootRoute.ServerSettings -> ServerSettingsLiveDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+                onMessage = notice,
+            )
+            RootRoute.Backup -> BackupDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
+            RootRoute.RuntimeStatus -> RuntimeDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
+            RootRoute.AiSettings -> AiSettingsLiveDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+            )
+            is RootRoute.Ops -> OpsDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                section = current.section,
+                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+            )
+            is RootRoute.ResourceList -> ResourceListDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                kind = current.kind,
+                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+                onCreate = { route = RootRoute.ResourceEditor(current.kind, null) },
+                onOpen = { id -> route = RootRoute.ResourceEditor(current.kind, id) },
+            )
+            is RootRoute.ResourceEditor -> ResourceEditorDestination(
+                account = account,
+                ownerUserId = ownerUserId,
+                kind = current.kind,
+                entityId = current.entityId,
+                onBack = { route = RootRoute.ResourceList(current.kind) },
                 onMessage = { messages.emit(it) },
             )
 
@@ -378,6 +655,7 @@ private fun BoundRoot(
             RootRoute.BatchExecution -> BatchExecutionDestination(
                 account = account,
                 ownerUserId = ownerUserId,
+                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
                 onMessage = { messages.emit(it) },
             )
         }
@@ -413,6 +691,9 @@ private fun RootDestination(
     integrations: ZephyrOneIntegrations,
     onOpenSessionDetails: (String) -> Unit,
     onOpenBatch: () -> Unit,
+    onLibraryAction: (LibraryAction) -> Unit,
+    onOpenTool: (ToolEntry) -> Unit,
+    onOpenBinding: () -> Unit,
     vncEngine: one.zephyr.mobile.protocol.vnc.VncEngine,
     rdpEngine: one.zephyr.mobile.protocol.rdp.RdpEngine,
 ) {
@@ -430,8 +711,8 @@ private fun RootDestination(
             val status by listSyncStatus.collectAsState(initial = SyncStatus.unbound())
 
             Column(Modifier.fillMaxSize()) {
-                if (account.isLocalMode && integrations.onOpenServerBinding != null) {
-                    LocalModeBanner(onBindServer = integrations.onOpenServerBinding)
+                if (account.isLocalMode) {
+                    LocalModeBanner(onBindServer = onOpenBinding)
                 }
                 ConnectionListRoute(
                     viewModel = viewModel(
@@ -464,7 +745,7 @@ private fun RootDestination(
                 onTestConnection = integrations.onTestConnection,
                 onShareConnection = integrations.onShareConnection,
                     onCreate = { onOpenEditor(null) },
-                    onOpenAccount = integrations.onOpenAccount,
+                    onOpenAccount = integrations.onOpenAccount ?: onOpenBinding,
                     localMode = account.isLocalMode,
                     onMessage = onMessage,
                     modifier = if (account.isLocalMode) Modifier.weight(1f) else Modifier,
@@ -518,17 +799,15 @@ private fun RootDestination(
             account = account,
             ownerUserId = ownerUserId,
             nowMs = nowMs,
-            integrations = integrations,
-            onNotice = onNotice,
+            onAction = onLibraryAction,
         )
 
         IslandDestination.TOOLS -> ToolsDestination(
             account = account,
             ownerUserId = ownerUserId,
             syncStatus = syncStatus,
-            integrations = integrations,
             onOpenBatch = onOpenBatch,
-            onNotice = onNotice,
+            onOpenTool = onOpenTool,
         )
     }
 }
@@ -538,8 +817,7 @@ private fun LibraryDestination(
     account: AccountContainer,
     ownerUserId: String,
     nowMs: Long,
-    integrations: ZephyrOneIntegrations,
-    onNotice: (String) -> Unit,
+    onAction: (LibraryAction) -> Unit,
 ) {
     val notes by account.notes.observeNotes(ownerUserId).collectAsState(initial = emptyList())
     val snippets by account.notes.observeSnippets(ownerUserId).collectAsState(initial = emptyList())
@@ -561,23 +839,36 @@ private fun LibraryDestination(
         conflictCount = notes.count { it.syncState == SyncState.CONFLICTED } +
             snippets.count { it.syncState == SyncState.CONFLICTED },
     )
-    val dispatch: (LibraryAction) -> Unit = { action ->
-        integrations.onLibraryAction?.invoke(action)
-            ?: onNotice("${libraryActionTitle(action)}尚未接入当前 Android 宿主")
-    }
-
+    var creating by remember { mutableStateOf(false) }
     LibraryRootRoute(
         content = LibraryRootContent(summary, activeNotes, snippets.filter { it.deletedAt == null }),
         nowMs = nowMs,
-        onCreateResource = { dispatch(LibraryAction.Create) },
-        onOpenFiles = { dispatch(LibraryAction.Files) },
-        onOpenNotes = { dispatch(LibraryAction.Notes) },
-        onOpenSnippets = { dispatch(LibraryAction.Snippets) },
-        onOpenDownloads = { dispatch(LibraryAction.Downloads) },
-        onOpenRecentFile = { dispatch(LibraryAction.RecentFile(it)) },
-        onOpenNote = { dispatch(LibraryAction.OpenNote(it)) },
-        onOpenSnippet = { dispatch(LibraryAction.OpenSnippet(it)) },
+        onCreateResource = { creating = true },
+        onOpenFiles = { onAction(LibraryAction.Files) },
+        onOpenNotes = { onAction(LibraryAction.Notes) },
+        onOpenSnippets = { onAction(LibraryAction.Snippets) },
+        onOpenDownloads = { onAction(LibraryAction.Downloads) },
+        onOpenRecentFile = { onAction(LibraryAction.RecentFile(it)) },
+        onOpenNote = { onAction(LibraryAction.OpenNote(it)) },
+        onOpenSnippet = { onAction(LibraryAction.OpenSnippet(it)) },
     )
+    if (creating) {
+        LibraryCreateDialog(
+            onDismiss = { creating = false },
+            onNote = {
+                creating = false
+                onAction(LibraryAction.CreateNote)
+            },
+            onSnippet = {
+                creating = false
+                onAction(LibraryAction.CreateSnippet)
+            },
+            onFiles = {
+                creating = false
+                onAction(LibraryAction.Files)
+            },
+        )
+    }
 }
 
 @Composable
@@ -585,9 +876,8 @@ private fun ToolsDestination(
     account: AccountContainer,
     ownerUserId: String,
     syncStatus: Flow<SyncStatus>,
-    integrations: ZephyrOneIntegrations,
     onOpenBatch: () -> Unit,
-    onNotice: (String) -> Unit,
+    onOpenTool: (ToolEntry) -> Unit,
 ) {
     val connections by account.connections.observeAll(ownerUserId).collectAsState(initial = emptyList())
     val proxies by account.resources.observeProxies(ownerUserId).collectAsState(initial = emptyList())
@@ -605,70 +895,37 @@ private fun ToolsDestination(
         pendingSyncCount = status.pendingCount,
         conflictCount = status.conflictCount,
     )
-    val openExternal: (ToolEntry) -> Unit = { entry ->
-        integrations.onOpenTool?.invoke(entry)
-            ?: onNotice("${toolEntryTitle(entry)}尚未接入当前 Android 宿主")
-    }
-
     ToolsRootRoute(
         inventory = inventory,
         summaries = ToolsRootSummaries(),
-        onAddTool = { openExternal(ToolEntry.PROXY) },
+        onAddTool = { onOpenTool(ToolEntry.PROXY) },
         onOpenBatchExecution = onOpenBatch,
-        onOpenDocker = { openExternal(ToolEntry.DOCKER) },
-        onOpenMonitor = { openExternal(ToolEntry.MONITOR) },
-        onOpenLogs = { openExternal(ToolEntry.LOGS) },
-        onOpenProxies = { openExternal(ToolEntry.PROXY) },
-        onOpenSshKeys = { openExternal(ToolEntry.SSH_KEY) },
-        onOpenJumpHosts = { openExternal(ToolEntry.JUMP_HOST) },
-        onOpenAiWorkspace = { openExternal(ToolEntry.AI_WORKSPACE) },
-        onOpenFileSync = { openExternal(ToolEntry.FILE_SYNC) },
-        onOpenClientToken = { openExternal(ToolEntry.CLIENT_TOKEN) },
-        onOpenServerSettings = { openExternal(ToolEntry.SERVER_SETTINGS) },
-        onOpenBackupRestore = { openExternal(ToolEntry.BACKUP_RESTORE) },
-        onOpenRuntimeStatus = { openExternal(ToolEntry.RUNTIME_STATUS) },
-        onOpenAppearance = { openExternal(ToolEntry.APPEARANCE) },
-        onOpenLanguage = { openExternal(ToolEntry.LANGUAGE) },
-        onOpenAppLock = { openExternal(ToolEntry.APP_LOCK) },
-        onOpenNetwork = { openExternal(ToolEntry.NETWORK) },
-        onOpenDiagnostics = { openExternal(ToolEntry.DIAGNOSTICS) },
-        onUnavailableTool = { _, reason -> onNotice(reason) },
+        onOpenDocker = { onOpenTool(ToolEntry.DOCKER) },
+        onOpenMonitor = { onOpenTool(ToolEntry.MONITOR) },
+        onOpenLogs = { onOpenTool(ToolEntry.LOGS) },
+        onOpenProxies = { onOpenTool(ToolEntry.PROXY) },
+        onOpenSshKeys = { onOpenTool(ToolEntry.SSH_KEY) },
+        onOpenJumpHosts = { onOpenTool(ToolEntry.JUMP_HOST) },
+        onOpenAiWorkspace = { onOpenTool(ToolEntry.AI_WORKSPACE) },
+        onOpenFileSync = { onOpenTool(ToolEntry.FILE_SYNC) },
+        onOpenClientToken = { onOpenTool(ToolEntry.CLIENT_TOKEN) },
+        onOpenServerSettings = { onOpenTool(ToolEntry.SERVER_SETTINGS) },
+        onOpenBackupRestore = { onOpenTool(ToolEntry.BACKUP_RESTORE) },
+        onOpenRuntimeStatus = { onOpenTool(ToolEntry.RUNTIME_STATUS) },
+        onOpenAppearance = { onOpenTool(ToolEntry.APPEARANCE) },
+        onOpenLanguage = { onOpenTool(ToolEntry.LANGUAGE) },
+        onOpenAppLock = { onOpenTool(ToolEntry.APP_LOCK) },
+        onOpenNetwork = { onOpenTool(ToolEntry.NETWORK) },
+        onOpenDiagnostics = { onOpenTool(ToolEntry.DIAGNOSTICS) },
+        onUnavailableTool = { entry, _ -> onOpenTool(entry) },
     )
-}
-
-private fun libraryActionTitle(action: LibraryAction): String = when (action) {
-    LibraryAction.Create -> "新建资料"
-    LibraryAction.Files, is LibraryAction.RecentFile -> "文件"
-    LibraryAction.Notes, is LibraryAction.OpenNote -> "笔记"
-    LibraryAction.Snippets, is LibraryAction.OpenSnippet -> "代码片段"
-    LibraryAction.Downloads -> "下载"
-}
-
-private fun toolEntryTitle(entry: ToolEntry): String = when (entry) {
-    ToolEntry.BATCH_EXEC -> "远程批量"
-    ToolEntry.DOCKER -> "Docker"
-    ToolEntry.MONITOR -> "监控"
-    ToolEntry.LOGS -> "日志"
-    ToolEntry.PROXY -> "Proxy"
-    ToolEntry.SSH_KEY -> "SSH Key"
-    ToolEntry.JUMP_HOST -> "JumpHost"
-    ToolEntry.AI_WORKSPACE -> "AI 助理"
-    ToolEntry.FILE_SYNC -> "文件同步"
-    ToolEntry.CLIENT_TOKEN -> "Client Token"
-    ToolEntry.SERVER_SETTINGS -> "服务器设置"
-    ToolEntry.BACKUP_RESTORE -> "备份恢复"
-    ToolEntry.RUNTIME_STATUS -> "运行状态"
-    ToolEntry.APPEARANCE -> "外观"
-    ToolEntry.LANGUAGE -> "语言"
-    ToolEntry.APP_LOCK -> "本地解锁"
-    ToolEntry.NETWORK -> "网络"
-    ToolEntry.DIAGNOSTICS -> "诊断"
 }
 
 @Composable
 private fun BatchExecutionDestination(
     account: AccountContainer,
     ownerUserId: String,
+    onBack: () -> Unit,
     onMessage: suspend (String) -> Unit,
 ) {
     val toolsViewModel: BatchExecutionViewModel = viewModel(
@@ -682,24 +939,23 @@ private fun BatchExecutionDestination(
         ),
     )
     val state by toolsViewModel.state.collectAsState()
-    BatchExecutionScreen(
-        state = state,
-        onIntent = { toolsViewModel.dispatch(it) },
-        onRetry = toolsViewModel::clearSelection,
-    )
+    Column(Modifier.fillMaxSize()) {
+        PushedPageHeader(title = "远程批量", onBack = onBack)
+        BatchExecutionScreen(
+            state = state,
+            onIntent = { toolsViewModel.dispatch(it) },
+            onRetry = toolsViewModel::clearSelection,
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 
 @Composable
 private fun SessionDetailsScreen(row: SessionRow?, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
-    Column(Modifier.fillMaxSize().padding(ZephyrSpacing.lg)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
-            }
-            Text("会话详情", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(Modifier.height(ZephyrSpacing.lg))
+    Column(Modifier.fillMaxSize()) {
+        PushedPageHeader(title = "会话详情", onBack = onBack)
+        Column(Modifier.padding(horizontal = ZephyrSpacing.lg)) {
         if (row == null) {
             Text("会话已关闭或不存在", color = one.zephyr.mobile.ui.theme.ZephyrTheme.palette.onFloatingMuted)
         } else {
@@ -711,6 +967,7 @@ private fun SessionDetailsScreen(row: SessionRow?, onBack: () -> Unit) {
             row.latencyMs?.let { DetailLine("延迟", it.toString() + " ms", mono = true) }
             row.detail?.let { DetailLine("状态", it) }
             row.revokedReason?.let { DetailLine("权限", it) }
+        }
         }
     }
 }
@@ -925,6 +1182,21 @@ private fun NoticeScreen(text: String) {
     }
 }
 
+private fun popRoute(route: RootRoute): RootRoute = when (route) {
+    is RootRoute.Root -> route
+    is RootRoute.ConnectionEditor, RootRoute.ProtocolPicker -> RootRoute.Root(IslandDestination.HOME)
+    is RootRoute.Terminal, is RootRoute.Remote, is RootRoute.SessionDetails ->
+        RootRoute.Root(IslandDestination.SESSIONS)
+    is RootRoute.NoteEditor -> RootRoute.Notes
+    is RootRoute.SnippetEditor -> RootRoute.Snippets
+    RootRoute.Notes, RootRoute.Snippets, RootRoute.Files, RootRoute.Downloads, RootRoute.LibraryCreate ->
+        RootRoute.Root(IslandDestination.LIBRARY)
+    is RootRoute.ResourceEditor -> RootRoute.ResourceList(route.kind)
+    RootRoute.ClientToken, RootRoute.Conflicts, RootRoute.Devices, RootRoute.LocalShares -> RootRoute.FileSync
+    RootRoute.ServerBinding -> RootRoute.Root(IslandDestination.HOME)
+    else -> RootRoute.Root(IslandDestination.TOOLS)
+}
+
 private fun routeForProtocol(sessionId: String, connectionId: String, protocol: Protocol): RootRoute =
     if (protocol.isTerminal) {
         RootRoute.Terminal(sessionId, connectionId)
@@ -945,9 +1217,9 @@ private fun onTerminalDock(
 ) {
     when (item) {
         TerminalDockItem.SESSIONS -> navigate(RootRoute.Root(IslandDestination.SESSIONS))
-        TerminalDockItem.FILES -> onNotice(PENDING_SFTP)
-        TerminalDockItem.SNIPPETS -> onNotice(PENDING_SNIPPETS)
-        TerminalDockItem.NOTES -> onNotice(PENDING_NOTES)
+        TerminalDockItem.FILES -> navigate(RootRoute.Files)
+        TerminalDockItem.SNIPPETS -> navigate(RootRoute.Snippets)
+        TerminalDockItem.NOTES -> navigate(RootRoute.Notes)
         /* Handled inside the terminal itself: KEYBOARD toggles the IME and DISCONNECT is consumed by
          * the ViewModel before it reaches this callback. */
         TerminalDockItem.KEYBOARD, TerminalDockItem.DISCONNECT -> Unit
@@ -1020,26 +1292,41 @@ internal fun secretRefForPresence(
 
 private const val TAG_ROOT = "root"
 private const val TAG_EDITOR = "editor"
+private const val TAG_PROTOCOL = "protocol"
 private const val TAG_SESSION_DETAILS = "session-details"
 private const val TAG_BATCH = "batch"
 private const val TAG_TERMINAL = "terminal"
 private const val TAG_REMOTE = "remote"
+private const val TAG_NOTES = "notes"
+private const val TAG_NOTE_EDITOR = "note-editor"
+private const val TAG_SNIPPETS = "snippets"
+private const val TAG_SNIPPET_EDITOR = "snippet-editor"
+private const val TAG_FILES = "files"
+private const val TAG_DOWNLOADS = "downloads"
+private const val TAG_LIBRARY_CREATE = "library-create"
+private const val TAG_APPEARANCE = "appearance"
+private const val TAG_LANGUAGE = "language"
+private const val TAG_APP_LOCK = "app-lock"
+private const val TAG_NETWORK = "network"
+private const val TAG_DIAGNOSTICS = "diagnostics"
+private const val TAG_FILE_SYNC = "file-sync"
+private const val TAG_CLIENT_TOKEN = "client-token"
+private const val TAG_CONFLICTS = "conflicts"
+private const val TAG_DEVICES = "devices"
+private const val TAG_SHARES = "shares"
+private const val TAG_BINDING = "binding"
+private const val TAG_SERVER_SETTINGS = "server-settings"
+private const val TAG_BACKUP = "backup"
+private const val TAG_RUNTIME = "runtime"
+private const val TAG_AI = "ai"
+private const val TAG_OPS = "ops"
+private const val TAG_RESOURCE_LIST = "resource-list"
+private const val TAG_RESOURCE_EDITOR = "resource-editor"
+private const val UnavailableSftpMessage = "此版本尚未内置 SFTP 引擎，无法访问远程文件"
 
 private const val FIELD_PASSWORD = "password"
 private const val FIELD_PRIVATE_KEY = "privateKey"
 
-private const val PENDING_BIND_SERVER = "连接服务器功能即将上线：绑定 Zephyr 主端后可启用同步。"
-private const val NOT_BOUND =
-    "尚未绑定账号。请先在主端创建 Client Token，再在本机完成绑定（S01/S02 界面尚未实现）。"
-private const val PENDING_LIBRARY = "资料（笔记 / 最近文件 / 代码片段）界面尚未实现。"
-private const val PENDING_DUPLICATE = "复制连接尚未实现。"
-private const val PENDING_TEST = "连接测试尚未实现：原生协议引擎未链接。"
-private const val PENDING_SHARE = "共享权限界面尚未实现。"
-private const val PENDING_ACCOUNT = "账号界面尚未实现。"
-private const val PENDING_SESSION_DETAILS = "会话详情界面尚未实现。"
-private const val PENDING_SFTP = "SFTP 浏览界面尚未实现。"
-private const val PENDING_SNIPPETS = "代码片段界面尚未实现。"
-private const val PENDING_NOTES = "笔记界面尚未实现。"
 /* The SAF picker is wired (see RemoteDestination), so the placeholder is gone. These two report
  * its outcomes; cancelling deliberately has no message. */
 private const val DRIVE_AUTHORIZED = "已授权目录，远端共享名："

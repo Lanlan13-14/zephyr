@@ -9,8 +9,10 @@ import androidx.work.WorkManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import one.zephyr.mobile.app.di.AppContainer
 
 /**
@@ -20,6 +22,12 @@ import one.zephyr.mobile.app.di.AppContainer
  * application-scoped object per concern, and a hand-written container makes the construction order
  * visible: the secret store must exist before the database, and the lock must exist before anything
  * that can hold decrypted material. An annotation processor hides that ordering.
+ *
+ * Recovery used to run inside three `runBlocking` calls on the main thread. That is the black
+ * screen the user sees on launch: Application.onCreate finishes only after journal replay, binding
+ * restore and local-workspace open all return, and the window theme was solid black until then.
+ * Recovery still happens first relative to WorkManager and any Activity *use* of the account, but
+ * it now runs on Dispatchers.IO while MainActivity paints a splash-coloured first frame.
  */
 class ZephyrOneApplication : Application(), Configuration.Provider {
 
@@ -28,34 +36,35 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
     lateinit var container: AppContainer
         private set
 
+    private val readyState = MutableStateFlow(false)
+    val ready: StateFlow<Boolean> = readyState.asStateFlow()
+
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
         container.clearPendingBindingAuthentication()
-        // Journal replay is the first account-shaped action. It must finish before WorkManager or
-        // binding recovery can reopen credentials and an encrypted mirror from a revoked scope.
-        runBlocking(Dispatchers.IO) {
-            container.bindingCoordinator.completePendingTeardown()
-        }
-        // A database tombstone can outlive its journal if the process died after the journal clear.
-        container.sweepErasedAccountDatabases()
-        // Recovery completes before any Activity or persisted worker can observe the container.
-        runBlocking(Dispatchers.IO) {
-            container.bindingCoordinator.restoreActiveBinding(bootstrap = false)
-        }
-        // Local-first: an unbound device still opens a fully usable workspace. Sync is optional on
-        // mobile, so the app must never be unusable just because no server binding is present.
-        runBlocking(Dispatchers.IO) {
-            val workspace = container.ensureLocalWorkspace()
-            if (workspace.isLocalMode) workspace.activate()
-        }
-        if (!container.isLocalMode) {
-            applicationScope.launch {
-                runCatching { container.bindingCoordinator.bootstrapRestoredBinding() }
-            }
-        }
         WorkManager.initialize(this, workManagerConfiguration)
         ProcessLifecycleOwner.get().lifecycle.addObserver(LockLifecycleObserver())
+        applicationScope.launch {
+            runCatching { container.bindingCoordinator.completePendingTeardown() }
+            // A database tombstone can outlive its journal if the process died after the journal clear.
+            runCatching { container.sweepErasedAccountDatabases() }
+            runCatching { container.bindingCoordinator.restoreActiveBinding(bootstrap = false) }
+            // Local-first: an unbound device still opens a fully usable workspace. Sync is optional
+            // on mobile, so the app must never be unusable just because no server binding is present.
+            val workspace = runCatching { container.ensureLocalWorkspace() }
+                .recoverCatching { container.ensureLocalWorkspace() }
+                .getOrNull()
+            if (workspace != null && workspace.isLocalMode) {
+                runCatching { workspace.activate() }
+            }
+            if (!container.isLocalMode) {
+                launch {
+                    runCatching { container.bindingCoordinator.bootstrapRestoredBinding() }
+                }
+            }
+            readyState.value = true
+        }
     }
 
     /**

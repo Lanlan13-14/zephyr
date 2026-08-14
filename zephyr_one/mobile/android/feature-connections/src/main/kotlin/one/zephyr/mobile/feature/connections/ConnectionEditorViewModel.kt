@@ -70,6 +70,7 @@ class ConnectionEditorViewModel(
     private val ownerUserId: String,
     private val connectionId: String?,
     private val duplicateSourceId: String?,
+    private val initialProtocol: Protocol = Protocol.SSH,
     private val newIdFactory: () -> String,
     private val tester: ConnectionTester = UnavailableConnectionTester,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -119,7 +120,9 @@ class ConnectionEditorViewModel(
         }
         if (connectionId == null) {
             page.value = PageState.Content(
-                ConnectionEditorUiState(ConnectionDraft.create(ownerUserId, newIdFactory())),
+                ConnectionEditorUiState(
+                    ConnectionDraft.create(ownerUserId, newIdFactory(), protocol = initialProtocol),
+                ),
             )
             return
         }
@@ -339,6 +342,7 @@ class ConnectionEditorViewModel(
             ownerUserId: String,
             connectionId: String?,
             duplicateSourceId: String? = null,
+            initialProtocol: Protocol = Protocol.SSH,
             newIdFactory: () -> String,
             tester: ConnectionTester = UnavailableConnectionTester,
             registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
@@ -351,6 +355,7 @@ class ConnectionEditorViewModel(
                 ownerUserId = ownerUserId,
                 connectionId = connectionId,
                 duplicateSourceId = duplicateSourceId,
+                initialProtocol = initialProtocol,
                 newIdFactory = newIdFactory,
                 tester = tester,
                 registerSensitiveSink = registerSensitiveSink,

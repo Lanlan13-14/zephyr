@@ -251,6 +251,14 @@ class AccountContainer(
 
     val settings: SettingsRepository = SettingsRepository(database, writeGateway)
 
+    val tokens: one.zephyr.mobile.data.repository.ClientTokenRepository =
+        one.zephyr.mobile.data.repository.ClientTokenRepository(
+            db = database,
+            gateway = writeGateway,
+            secretStore = secretStore,
+            boundOwnerUserId = binding.userId,
+        )
+
     val syncState: SyncStateRepository = SyncStateRepository(database)
 
     val conflicts: ConflictRepository = ConflictRepository(database)
@@ -445,7 +453,20 @@ class AccountContainer(
 
     /** Callers persist through [one.zephyr.mobile.data.repository.BindingRepository] as well. */
     fun updateSyncSettings(transform: (SyncSettings) -> SyncSettings) {
-        syncSettings.value = transform(syncSettings.value)
+        val next = transform(syncSettings.value)
+        syncSettings.value = next
+        if (!localMode) {
+            accountScope.launch {
+                runCatching {
+                    appContainer.bindings.saveBinding(
+                        binding = binding,
+                        automaticEnabled = next.automaticEnabled,
+                        intervalSec = next.intervalSec,
+                        policy = next.networkPolicy,
+                    )
+                }
+            }
+        }
     }
 
     val syncEngine: SyncEngine = SyncEngine(

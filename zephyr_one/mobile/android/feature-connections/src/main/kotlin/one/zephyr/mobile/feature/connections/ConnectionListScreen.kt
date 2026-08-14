@@ -68,6 +68,8 @@ import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.Residency
 import one.zephyr.mobile.model.SyncState
 import one.zephyr.mobile.model.SyncStatus
+import one.zephyr.mobile.ui.chrome.HeaderIconButton
+import one.zephyr.mobile.ui.chrome.RootPageHeader
 import one.zephyr.mobile.ui.format.RelativeTime
 import one.zephyr.mobile.ui.island.islandContentBottomInset
 import one.zephyr.mobile.ui.state.PageStateScaffold
@@ -185,18 +187,8 @@ private fun DashboardHeader(
     onSyncNow: (() -> Unit)?,
     onOpenAccount: (() -> Unit)?,
 ) {
-    Column(
-        Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, top = 14.dp, bottom = 4.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = stringResource(R.string.connections_title),
-                color = ZephyrTheme.palette.onBackground,
-                fontSize = 23.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.sp,
-                modifier = Modifier.weight(1f),
-            )
+    Column {
+        RootPageHeader(title = stringResource(R.string.connections_title)) {
             HeaderIconButton(
                 description = stringResource(R.string.connections_create),
                 onClick = onCreate,
@@ -215,27 +207,12 @@ private fun DashboardHeader(
                 }
             }
         }
-        Spacer(Modifier.height(10.dp))
-        SearchField(query = query, onQueryChange = onQueryChange)
+        SearchField(
+            query = query,
+            onQueryChange = onQueryChange,
+            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
+        )
     }
-}
-
-@Composable
-private fun HeaderIconButton(
-    description: String,
-    onClick: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    Surface(
-        modifier = Modifier
-            .size(38.dp)
-            .semantics { contentDescription = description }
-            .clickable(role = Role.Button, onClick = onClick),
-        shape = CircleShape,
-        color = ZephyrTheme.palette.surfaces.elevated,
-        contentColor = ZephyrTheme.palette.brand.accent,
-        content = { Box(contentAlignment = Alignment.Center) { content() } },
-    )
 }
 
 @Composable
@@ -273,7 +250,7 @@ private fun SyncPill(status: SyncStatus, localMode: Boolean, onClick: (() -> Uni
 }
 
 @Composable
-private fun SearchField(query: String, onQueryChange: (String) -> Unit) {
+private fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier: Modifier = Modifier) {
     val palette = ZephyrTheme.palette
     val searchLabel = stringResource(R.string.connections_search_label)
     BasicTextField(
@@ -282,7 +259,7 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit) {
         singleLine = true,
         textStyle = TextStyle(color = palette.onBackground, fontSize = 13.5.sp),
         cursorBrush = androidx.compose.ui.graphics.SolidColor(palette.brand.accent),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(36.dp)
             .semantics { contentDescription = searchLabel },

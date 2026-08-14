@@ -1,0 +1,38 @@
+package one.zephyr.mobile.app
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Test
+import java.io.File
+
+class StartupThemeTest {
+
+    private val androidRoot = File(".").canonicalFile.let { current ->
+        generateSequence(current) { it.parentFile }.first { File(it, "app/src/main/res/values/themes.xml").exists() }
+    }
+
+    @Test
+    fun `launch theme is frost light not black`() {
+        val theme = File(androidRoot, "app/src/main/res/values/themes.xml").readText()
+        val colors = File(androidRoot, "app/src/main/res/values/colors.xml").readText()
+        assertFalse(theme.contains("@android:color/black"))
+        assert(theme.contains("@color/zephyr_splash"))
+        assert(colors.contains("#FFF2F4F7"))
+    }
+
+    @Test
+    fun `application no longer blocks the main thread on recovery`() {
+        val source = File(androidRoot, "app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneApplication.kt").readText()
+        assertFalse(source.contains("runBlocking"))
+        assert(source.contains("readyState"))
+        assert(source.contains("applicationScope.launch"))
+    }
+
+    @Test
+    fun `activity waits for recovery before drawing the tree`() {
+        val source = File(androidRoot, "app/src/main/kotlin/one/zephyr/mobile/app/MainActivity.kt").readText()
+        assert(source.contains("enableEdgeToEdge"))
+        assert(source.contains("app.ready"))
+        assertFalse(source.contains("runBlocking"))
+    }
+}

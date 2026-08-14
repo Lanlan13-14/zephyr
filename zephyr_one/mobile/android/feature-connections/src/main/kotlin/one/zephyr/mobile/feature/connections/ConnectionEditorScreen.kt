@@ -62,6 +62,7 @@ import one.zephyr.mobile.model.RdpTouchMode
 import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SecretState
 import one.zephyr.mobile.model.TerminalEncoding
+import one.zephyr.mobile.ui.chrome.PushedPageHeader
 import one.zephyr.mobile.ui.component.CleartextProtocolWarning
 import one.zephyr.mobile.ui.component.SectionHeader
 import one.zephyr.mobile.ui.state.PageStateScaffold
@@ -89,28 +90,16 @@ fun ConnectionEditorScreen(
     var confirmDiscard by remember { mutableStateOf(false) }
 
     Column(modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = ZephyrSpacing.sm, vertical = ZephyrSpacing.sm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(
-                onClick = {
-                    // Unsaved work is confirmed before it is lost (SCREEN_CATALOG.md 6).
-                    val dirty = (state as? PageState.Content)?.value?.draft?.isDirty == true
-                    if (dirty) confirmDiscard = true else onBack()
-                },
-            ) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = stringResource(R.string.editor_back))
-            }
-            Text(
-                text = stringResource(
-                    if (isCreate) R.string.editor_title_create else R.string.editor_title_edit,
-                ),
-                style = MaterialTheme.typography.titleLarge,
-            )
-        }
+        PushedPageHeader(
+            title = stringResource(
+                if (isCreate) R.string.editor_title_create else R.string.editor_title_edit,
+            ),
+            onBack = {
+                val dirty = (state as? PageState.Content)?.value?.draft?.isDirty == true
+                if (dirty) confirmDiscard = true else onBack()
+            },
+            backDescription = stringResource(R.string.editor_back),
+        )
 
         PageStateScaffold(state = state, modifier = Modifier.fillMaxSize()) { ui ->
             Column(

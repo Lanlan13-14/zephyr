@@ -3,9 +3,12 @@
      core-ui at runtime, because the four palettes are switchable while the app runs and an XML
      theme cannot follow that. -->
 <resources>
-    <style name="Theme.ZephyrOne" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
+    <style name="Theme.ZephyrOne" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Match Frost light background so the first frame is the dashboard, not a black flash. -->
+        <item name="android:windowBackground">@color/zephyr_splash</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
 </resources>

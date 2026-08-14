@@ -1,0 +1,109 @@
+package one.zephyr.mobile.feature.connections
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import one.zephyr.mobile.model.Protocol
+import one.zephyr.mobile.ui.chrome.PushedPageHeader
+import one.zephyr.mobile.ui.component.CleartextProtocolWarning
+import one.zephyr.mobile.ui.theme.ZephyrRadius
+import one.zephyr.mobile.ui.theme.ZephyrSpacing
+import one.zephyr.mobile.ui.theme.ZephyrTheme
+
+/**
+ * Demo page-conntype. New connections pick a protocol first so the editor opens with the
+ * right port, sections and Telnet warning already in place.
+ */
+@Composable
+fun ProtocolPickerScreen(
+    onSelect: (Protocol) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxSize()) {
+        PushedPageHeader(
+            title = stringResource(R.string.editor_title_create),
+            onBack = onBack,
+        )
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = ZephyrSpacing.lg),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.protocol_picker_lead),
+                color = ZephyrTheme.palette.onFloatingMuted,
+                fontSize = 13.sp,
+                modifier = Modifier.semantics { heading() },
+            )
+            Protocol.entries.forEach { protocol ->
+                ProtocolCard(protocol = protocol, onClick = { onSelect(protocol) })
+            }
+            Spacer(Modifier.height(ZephyrSpacing.xxl))
+        }
+    }
+}
+
+@Composable
+private fun ProtocolCard(protocol: Protocol, onClick: () -> Unit) {
+    val palette = ZephyrTheme.palette
+    val (title, detail) = when (protocol) {
+        Protocol.SSH -> stringResource(R.string.protocol_ssh_title) to stringResource(R.string.protocol_ssh_detail)
+        Protocol.TELNET -> stringResource(R.string.protocol_telnet_title) to stringResource(R.string.protocol_telnet_detail)
+        Protocol.RDP -> stringResource(R.string.protocol_rdp_title) to stringResource(R.string.protocol_rdp_detail)
+        Protocol.VNC -> stringResource(R.string.protocol_vnc_title) to stringResource(R.string.protocol_vnc_detail)
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onClick),
+        color = palette.surfaces.content,
+        shape = RoundedCornerShape(ZephyrRadius.md),
+        border = BorderStroke(1.dp, palette.surfaces.outline.copy(alpha = 0.35f)),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(detail, fontSize = 12.sp, color = palette.onFloatingMuted)
+                }
+                Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = palette.onFloatingMuted)
+            }
+            if (protocol.isCleartext) CleartextProtocolWarning(protocol)
+        }
+    }
+}
+
+fun protocolPickerCopy(protocol: Protocol): Pair<String, String> = when (protocol) {
+    Protocol.SSH -> "SSH" to "安全 Shell · 支持 SFTP、代码片段、批量执行、JumpHost 多级隧道"
+    Protocol.TELNET -> "Telnet" to "未加密 · 账号口令与终端内容明文传输 · 仅用于可信内网或设备 console"
+    Protocol.RDP -> "RDP" to "Windows 远程桌面 · 声音/剪贴板/存储等通道重定向"
+    Protocol.VNC -> "VNC" to "跨平台远程桌面 · 未知弱安全模式不自动降级"
+}

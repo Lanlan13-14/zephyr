@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Frost light background from ZephyrPalette. Must match the first Compose frame. -->
+    <color name="zephyr_splash">#FFF2F4F7</color>
+</resources>

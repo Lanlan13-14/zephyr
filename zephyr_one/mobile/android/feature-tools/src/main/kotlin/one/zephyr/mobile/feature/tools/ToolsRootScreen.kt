@@ -55,6 +55,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import one.zephyr.mobile.model.ActionGate
+import one.zephyr.mobile.ui.chrome.HeaderAddButton
+import one.zephyr.mobile.ui.chrome.RootPageHeader
 import one.zephyr.mobile.ui.island.islandContentBottomInset
 import one.zephyr.mobile.ui.theme.ZephyrRadius
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
@@ -148,10 +150,12 @@ fun ToolsRootScreen(
     onUnavailableTool: (ToolEntry, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxSize().padding(horizontal = ZephyrSpacing.lg)) {
-        ToolsHeader(onAddTool)
+    Column(modifier.fillMaxSize()) {
+        RootPageHeader(title = stringResource(R.string.tools_root_title)) {
+            HeaderAddButton(stringResource(R.string.tools_root_add), onAddTool)
+        }
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().padding(horizontal = ZephyrSpacing.lg),
             contentPadding = PaddingValues(bottom = islandContentBottomInset()),
             verticalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm),
         ) {
@@ -167,31 +171,11 @@ fun ToolsRootScreen(
                                 detail = toolDetail(entry, summaries, inventory, gate),
                                 gate = gate,
                                 showDivider = index != rows.lastIndex,
-                                onClick = {
-                                    if (gate.isAllowed) onOpenTool(entry)
-                                    else if (gate is ActionGate.Disabled) onUnavailableTool(entry, gate.reason)
-                                },
+                                onClick = { onOpenTool(entry) },
                             )
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ToolsHeader(onAddTool: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 62.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            stringResource(R.string.tools_root_title),
-            fontSize = 23.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.weight(1f).semantics { heading() },
-        )
-        Surface(shape = CircleShape, color = ZephyrTheme.palette.surfaces.elevated) {
-            IconButton(onClick = onAddTool, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.Add, stringResource(R.string.tools_root_add), tint = ZephyrTheme.palette.brand.accent)
             }
         }
     }

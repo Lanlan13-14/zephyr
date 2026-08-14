@@ -53,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import one.zephyr.mobile.model.Note
 import one.zephyr.mobile.model.Snippet
+import one.zephyr.mobile.ui.chrome.HeaderAddButton
+import one.zephyr.mobile.ui.chrome.RootPageHeader
 import one.zephyr.mobile.ui.format.RelativeTime
 import one.zephyr.mobile.ui.island.islandContentBottomInset
 import one.zephyr.mobile.ui.theme.ZephyrRadius
@@ -145,10 +147,12 @@ fun LibraryRootScreen(
     val snippets = remember(content, query, section) { content.snippets(query, section) }
     val palette = ZephyrTheme.palette
 
-    Column(modifier.fillMaxSize().padding(horizontal = ZephyrSpacing.lg)) {
-        RootHeader(stringResource(R.string.library_title), stringResource(R.string.library_create), onCreateResource)
+    Column(modifier.fillMaxSize()) {
+        RootPageHeader(title = stringResource(R.string.library_title)) {
+            HeaderAddButton(stringResource(R.string.library_create), onCreateResource)
+        }
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().padding(horizontal = ZephyrSpacing.lg),
             contentPadding = PaddingValues(bottom = islandContentBottomInset()),
             verticalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm),
         ) {
@@ -274,21 +278,6 @@ fun LibraryRootScreen(
                     fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = ZephyrSpacing.xs, vertical = ZephyrSpacing.sm),
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RootHeader(title: String, actionDescription: String, onAction: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 62.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(title, fontSize = 23.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).semantics { heading() })
-        Surface(shape = CircleShape, color = ZephyrTheme.palette.surfaces.elevated) {
-            IconButton(onClick = onAction, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.Add, contentDescription = actionDescription, tint = ZephyrTheme.palette.brand.accent)
             }
         }
     }

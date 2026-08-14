@@ -44,6 +44,7 @@ import one.zephyr.mobile.data.session.SessionRow
 import one.zephyr.mobile.data.session.SessionTransport
 import one.zephyr.mobile.model.ActionGate
 import one.zephyr.mobile.model.PageState
+import one.zephyr.mobile.ui.chrome.RootPageHeader
 import one.zephyr.mobile.ui.component.MonoEndpoint
 import one.zephyr.mobile.ui.component.ProtocolChip
 import one.zephyr.mobile.ui.component.SectionHeader
@@ -142,26 +143,21 @@ private fun ListHeader(
     onRequestBulkClose: () -> Unit,
     onClearHistory: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = ZephyrSpacing.lg, vertical = ZephyrSpacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(stringResource(R.string.sessions_title), style = MaterialTheme.typography.titleLarge)
-            Text(
-                text = stringResource(R.string.sessions_live_count, liveCount) +
-                    if (unreadCount > 0) "  " + stringResource(R.string.sessions_unread_count, unreadCount) else "",
-                style = ZephyrTheme.typography.caption,
-                color = ZephyrTheme.palette.onFloatingMuted,
-            )
+    Column(Modifier.fillMaxWidth()) {
+        RootPageHeader(title = stringResource(R.string.sessions_title)) {
+            if (selectionCount > 0) {
+                TextButton(onClick = onClearSelection) { Text(stringResource(R.string.sessions_clear_selection)) }
+            }
+            TextButton(onClick = onRequestBulkClose) { Text(stringResource(R.string.sessions_close_many)) }
+            TextButton(onClick = onClearHistory) { Text(stringResource(R.string.sessions_clear_history)) }
         }
-        if (selectionCount > 0) {
-            TextButton(onClick = onClearSelection) { Text(stringResource(R.string.sessions_clear_selection)) }
-        }
-        TextButton(onClick = onRequestBulkClose) { Text(stringResource(R.string.sessions_close_many)) }
-        TextButton(onClick = onClearHistory) { Text(stringResource(R.string.sessions_clear_history)) }
+        Text(
+            text = stringResource(R.string.sessions_live_count, liveCount) +
+                if (unreadCount > 0) "  " + stringResource(R.string.sessions_unread_count, unreadCount) else "",
+            style = ZephyrTheme.typography.caption,
+            color = ZephyrTheme.palette.onFloatingMuted,
+            modifier = Modifier.padding(horizontal = ZephyrSpacing.lg),
+        )
     }
 }
 

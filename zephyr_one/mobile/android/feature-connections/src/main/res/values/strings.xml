@@ -127,4 +127,14 @@
     <string name="editor_discard_confirm">放弃</string>
     <string name="editor_keep_editing">继续编辑</string>
     <string name="editor_back">返回</string>
+
+    <string name="protocol_picker_lead">选择协议</string>
+    <string name="protocol_ssh_title">SSH</string>
+    <string name="protocol_ssh_detail">安全 Shell · 支持 SFTP、代码片段、批量执行、JumpHost 多级隧道</string>
+    <string name="protocol_telnet_title">Telnet</string>
+    <string name="protocol_telnet_detail">未加密 · 账号口令与终端内容明文传输 · 仅用于可信内网或设备 console</string>
+    <string name="protocol_rdp_title">RDP</string>
+    <string name="protocol_rdp_detail">Windows 远程桌面 · 声音/剪贴板/存储等通道重定向</string>
+    <string name="protocol_vnc_title">VNC</string>
+    <string name="protocol_vnc_detail">跨平台远程桌面 · 未知弱安全模式不自动降级</string>
 </resources>
