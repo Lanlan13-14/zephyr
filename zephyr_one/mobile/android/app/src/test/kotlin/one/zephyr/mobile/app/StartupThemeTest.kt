@@ -7,6 +7,14 @@ import java.io.File
 
 class StartupThemeTest {
 
+    private fun codeOnly(source: String): String =
+        source
+            .replace(Regex("/\\*[\\s\\S]*?\\*/"), " ")
+            .replace(Regex("//[^\\n]*"), " ")
+            .replace(Regex("\"\"\"[\\s\\S]*?\"\"\""), "\"\"")
+            .replace(Regex("\"(?:\\\\.|[^\"\\\\\\n])*\""), "\"\"")
+
+
     private val androidRoot = File(".").canonicalFile.let { current ->
         generateSequence(current) { it.parentFile }.first { File(it, "app/src/main/res/values/themes.xml").exists() }
     }
@@ -22,7 +30,9 @@ class StartupThemeTest {
 
     @Test
     fun `application no longer blocks the main thread on recovery`() {
-        val source = File(androidRoot, "app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneApplication.kt").readText()
+        val source = codeOnly(
+            File(androidRoot, "app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneApplication.kt").readText(),
+        )
         assertFalse(source.contains("runBlocking"))
         assert(source.contains("readyState"))
         assert(source.contains("applicationScope.launch"))
@@ -30,7 +40,9 @@ class StartupThemeTest {
 
     @Test
     fun `activity waits for recovery before drawing the tree`() {
-        val source = File(androidRoot, "app/src/main/kotlin/one/zephyr/mobile/app/MainActivity.kt").readText()
+        val source = codeOnly(
+            File(androidRoot, "app/src/main/kotlin/one/zephyr/mobile/app/MainActivity.kt").readText(),
+        )
         assert(source.contains("enableEdgeToEdge"))
         assert(source.contains("app.ready"))
         assertFalse(source.contains("runBlocking"))
