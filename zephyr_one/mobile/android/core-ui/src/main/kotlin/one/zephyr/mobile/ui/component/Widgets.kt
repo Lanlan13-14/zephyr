@@ -2,6 +2,8 @@ package one.zephyr.mobile.ui.component
 
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -13,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -48,6 +52,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -264,19 +269,33 @@ fun SegmentedControl(
     ) {
         options.forEachIndexed { index, label ->
             val on = index == selectedIndex
+            val segmentColor by animateColorAsState(
+                targetValue = if (on) palette.surfaces.content else Color.Transparent,
+                animationSpec = tween(ZephyrMotionTokens.FAST_MS, easing = ZephyrMotionTokens.easeOut),
+                label = "segmentColor",
+            )
+            val labelColor by animateColorAsState(
+                targetValue = if (on) palette.onBackground else palette.onFloatingMuted,
+                animationSpec = tween(ZephyrMotionTokens.FAST_MS, easing = ZephyrMotionTokens.easeOut),
+                label = "segmentLabel",
+            )
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(7.dp))
-                    .background(if (on) palette.surfaces.content else Color.Transparent)
-                    .clickable(role = Role.Button) { onSelect(index) }
+                    .background(segmentColor)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        role = Role.Button,
+                    ) { onSelect(index) }
                     .padding(vertical = 5.dp, horizontal = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = label,
                     style = ZephyrTextStyles.chip.copy(fontWeight = FontWeight.SemiBold),
-                    color = if (on) palette.onBackground else palette.onFloatingMuted,
+                    color = labelColor,
                     maxLines = 1,
                 )
             }
@@ -292,21 +311,39 @@ fun ZephyrToggle(
     enabled: Boolean = true,
 ) {
     val palette = ZephyrTheme.palette
-    val track = if (checked) palette.status.success else palette.status.offline
+    val motion = ZephyrTheme.motion
+    val density = LocalDensity.current
+    val track by animateColorAsState(
+        targetValue = if (checked) palette.status.success else palette.status.offline,
+        animationSpec = tween(motion.scale(ZephyrMotionTokens.MED_MS), easing = ZephyrMotionTokens.easeOut),
+        label = "toggleTrack",
+    )
+    val thumbOffset by animateFloatAsState(
+        targetValue = with(density) { if (checked) 17.dp.toPx() else 0f },
+        animationSpec = tween(motion.scale(ZephyrMotionTokens.MED_MS), easing = ZephyrMotionTokens.easeOut),
+        label = "toggleThumb",
+    )
+    val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
             .size(width = 46.dp, height = 28.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(if (enabled) track else track.copy(alpha = 0.45f))
-            .clickable(enabled = enabled && onCheckedChange != null, role = Role.Switch) {
+            .clickable(
+                enabled = enabled && onCheckedChange != null,
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Switch,
+            ) {
                 onCheckedChange?.invoke(!checked)
             },
     ) {
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .padding(start = if (checked) 20.dp else 3.dp)
+                .padding(start = 3.dp)
                 .size(23.dp)
+                .graphicsLayer { translationX = thumbOffset }
                 .clip(CircleShape)
                 .background(Color.White),
         )
@@ -383,30 +420,56 @@ fun SettingsRow(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    titleColor: Color? = null,
+    subtitleColor: Color? = null,
     value: String? = null,
     showChevron: Boolean = false,
     selected: Boolean = false,
     showDivider: Boolean = true,
     onClick: (() -> Unit)? = null,
+    leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val palette = ZephyrTheme.palette
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val rowColor by animateColorAsState(
+        targetValue = if (pressed) palette.surfaces.elevated else Color.Transparent,
+        animationSpec = tween(ZephyrMotionTokens.FAST_MS, easing = ZephyrMotionTokens.easeOut),
+        label = "settingsRowPress",
+    )
     Column(modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 50.dp)
-                .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+                .background(rowColor)
+                .then(
+                    if (onClick != null) {
+                        Modifier.clickable(
+                            interactionSource = interaction,
+                            indication = null,
+                            role = Role.Button,
+                            onClick = onClick,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (leading != null) {
+                leading()
+                Spacer(Modifier.width(12.dp))
+            }
             Column(Modifier.weight(1f)) {
-                Text(title, style = ZephyrTextStyles.row, color = palette.onBackground)
+                Text(title, style = ZephyrTextStyles.row, color = titleColor ?: palette.onBackground)
                 if (subtitle != null) {
                     Text(
                         subtitle,
                         style = ZephyrTextStyles.hint,
-                        color = palette.onFloatingSubtle,
+                        color = subtitleColor ?: palette.onFloatingSubtle,
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }

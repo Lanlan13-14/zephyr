@@ -21,6 +21,7 @@ object LocaleController {
         val locales = when (language) {
             AppLanguage.SYSTEM -> LocaleList.getEmptyLocaleList()
             AppLanguage.ZH_HANS -> LocaleList.forLanguageTags("zh-CN")
+            AppLanguage.ZH_HANT -> LocaleList.forLanguageTags("zh-TW")
             AppLanguage.EN -> LocaleList.forLanguageTags("en")
         }
         if (Build.VERSION.SDK_INT >= 33) {

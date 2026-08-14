@@ -23,6 +23,7 @@
     <string name="tools_file_sync">文件同步</string>
     <string name="tools_client_token">Client Token</string>
     <string name="tools_server_settings">服务器设置</string>
+    <string name="tools_server">服务器</string>
     <string name="tools_backup">备份与恢复</string>
     <string name="tools_runtime_status">运行状态</string>
     <string name="tools_appearance">外观</string>

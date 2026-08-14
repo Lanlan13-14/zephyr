@@ -175,17 +175,28 @@ object ToolsCatalog {
         -> ActionGate.Allowed
     }
 
-    /** Sections in frozen order, each with its rows. Empty sections are impossible by construction. */
+    /** Sections in demo order. */
     fun sections(): List<ToolSection> = ToolSection.entries.toList()
 
-    fun rows(section: ToolSection): List<ToolEntry> = ToolEntry.of(section)
+    fun rows(section: ToolSection): List<ToolEntry> = when (section) {
+        ToolSection.REMOTE_OPS -> listOf(ToolEntry.BATCH_EXEC)
+        ToolSection.RESOURCES -> listOf(ToolEntry.PROXY, ToolEntry.SSH_KEY)
+        ToolSection.AI -> listOf(ToolEntry.AI_WORKSPACE)
+        ToolSection.FILE_SYNC -> listOf(ToolEntry.FILE_SYNC, ToolEntry.CLIENT_TOKEN)
+        ToolSection.SERVER -> listOf(ToolEntry.SERVER_SETTINGS)
+        ToolSection.ONE -> listOf(
+            ToolEntry.APPEARANCE,
+            ToolEntry.LANGUAGE,
+            ToolEntry.APP_LOCK,
+            ToolEntry.DIAGNOSTICS,
+        )
+    }
 
     /**
      * Rows a screen may render.
      *
-     * Nothing is filtered out today, and that is deliberate: the assertion in
-     * [ToolsCatalogTest.serverEntriesAreNeverHidden] fails if a future gate starts hiding the two
-     * entries the root island cannot host.
+     * Entries omitted by demo.html remain routable from contextual surfaces but are not shown on
+     * the tools home page.
      */
     fun visibleRows(section: ToolSection, inventory: ToolsInventory): List<ToolEntry> =
         rows(section).filter { gate(it, inventory).isVisible }

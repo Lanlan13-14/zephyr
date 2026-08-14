@@ -7,20 +7,19 @@ import org.junit.Test
 class AppLanguageTest {
 
     @Test
-    fun `only system chinese and english are stored`() {
+    fun `demo languages are stored in order`() {
         assertEquals(
-            listOf("system", "zh-Hans", "en"),
+            listOf("system", "zh-Hans", "zh-Hant", "en"),
             AppLanguage.stored.map { it.code },
         )
         assertFalse(AppLanguage.stored.any { it.code == "ja" })
-        assertFalse(AppLanguage.stored.any { it.code == "zh-Hant" })
     }
 
     @Test
-    fun `legacy packs fall back to system`() {
+    fun `stored and legacy tags resolve safely`() {
         assertEquals(AppLanguage.SYSTEM, AppLanguage.fromStored("ja"))
-        assertEquals(AppLanguage.SYSTEM, AppLanguage.fromStored("zh-Hant"))
-        assertEquals(AppLanguage.SYSTEM, AppLanguage.fromStored("zh-tw"))
+        assertEquals(AppLanguage.ZH_HANT, AppLanguage.fromStored("zh-Hant"))
+        assertEquals(AppLanguage.ZH_HANT, AppLanguage.fromStored("zh-tw"))
         assertEquals(AppLanguage.ZH_HANS, AppLanguage.fromStored("zh"))
         assertEquals(AppLanguage.ZH_HANS, AppLanguage.fromStored("zh-CN"))
         assertEquals(AppLanguage.EN, AppLanguage.fromStored("en-US"))

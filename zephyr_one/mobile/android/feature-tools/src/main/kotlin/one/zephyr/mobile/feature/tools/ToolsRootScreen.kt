@@ -49,18 +49,18 @@ data class ToolsRootSummaries(
     val docker: String = "容器、镜像与生命周期",
     val monitor: String = "CPU · 内存 · 磁盘 · 网络",
     val logs: String = "tail · 搜索 · 导出",
-    val proxy: String = "SOCKS5 / HTTP CONNECT",
+    val proxy: String = "SOCKS5:1080 默认",
     val sshKey: String = "secret 三态编辑",
     val jumpHost: String = "多跳路由依赖",
-    val ai: String = "Provider · Memory · Skills · Env",
-    val fileSync: String = "目录映射 · 冲突策略 · 调度",
-    val clientToken: String = "查看或旋转需敏感验证",
-    val serverSettings: String = "外观 · 笔记 · AI runtime",
+    val ai: String = "已启用 · Claude Opus · 协作模式",
+    val fileSync: String = "已开启 · 每 5 分钟 · 3 项待同步",
+    val clientToken: String = "查看/旋转需敏感验证",
+    val serverSettings: String = "设置 · 备份与恢复",
     val backup: String = "加密导出 · 校验 · 恢复",
     val runtimeStatus: String = "版本 · capability · runtime",
-    val appearance: String = "主题 · 深浅色",
+    val appearance: String = "Frost · 深色",
     val language: String = "跟随系统",
-    val appLock: String = "生物识别 · 回前台锁定",
+    val appLock: String = "生物识别 · 回前台 1 分钟",
     val network: String = "网络与后台策略",
     val diagnostics: String = "版本 · 日志导出",
 )
@@ -240,7 +240,7 @@ private fun toolTitle(entry: ToolEntry): String = when (entry) {
     ToolEntry.AI_WORKSPACE -> stringResource(R.string.tools_ai)
     ToolEntry.FILE_SYNC -> stringResource(R.string.tools_file_sync)
     ToolEntry.CLIENT_TOKEN -> stringResource(R.string.tools_client_token)
-    ToolEntry.SERVER_SETTINGS -> stringResource(R.string.tools_server_settings)
+    ToolEntry.SERVER_SETTINGS -> stringResource(R.string.tools_server)
     ToolEntry.BACKUP_RESTORE -> stringResource(R.string.tools_backup)
     ToolEntry.RUNTIME_STATUS -> stringResource(R.string.tools_runtime_status)
     ToolEntry.APPEARANCE -> stringResource(R.string.tools_appearance)
@@ -252,15 +252,14 @@ private fun toolTitle(entry: ToolEntry): String = when (entry) {
 
 private fun toolDetail(entry: ToolEntry, summaries: ToolsRootSummaries, inventory: ToolsInventory, gate: ActionGate): String {
     if (gate is ActionGate.Disabled) return gate.reason
-    val count = ToolsCatalog.detailCount(entry, inventory)
     return when (entry) {
-        ToolEntry.BATCH_EXEC -> count?.let { "$it 台可执行 · ${summaries.batch}" } ?: summaries.batch
+        ToolEntry.BATCH_EXEC -> summaries.batch
         ToolEntry.DOCKER -> summaries.docker
         ToolEntry.MONITOR -> summaries.monitor
         ToolEntry.LOGS -> summaries.logs
-        ToolEntry.PROXY -> count?.let { "$it 项 · ${summaries.proxy}" } ?: summaries.proxy
-        ToolEntry.SSH_KEY -> count?.let { "$it 项 · ${summaries.sshKey}" } ?: summaries.sshKey
-        ToolEntry.JUMP_HOST -> count?.let { "$it 项 · ${summaries.jumpHost}" } ?: summaries.jumpHost
+        ToolEntry.PROXY -> summaries.proxy
+        ToolEntry.SSH_KEY -> summaries.sshKey
+        ToolEntry.JUMP_HOST -> summaries.jumpHost
         ToolEntry.AI_WORKSPACE -> summaries.ai
         ToolEntry.FILE_SYNC -> summaries.fileSync
         ToolEntry.CLIENT_TOKEN -> summaries.clientToken
@@ -294,7 +293,7 @@ private fun toolIcon(entry: ToolEntry): ImageVector = when (entry) {
     ToolEntry.AI_WORKSPACE -> ZephyrIcons.AiSpark
     ToolEntry.FILE_SYNC -> ZephyrIcons.Refresh
     ToolEntry.CLIENT_TOKEN -> ZephyrIcons.Ticket
-    ToolEntry.SERVER_SETTINGS -> ZephyrIcons.Gear
+    ToolEntry.SERVER_SETTINGS -> ZephyrIcons.Server
     ToolEntry.BACKUP_RESTORE -> ZephyrIcons.Save
     ToolEntry.RUNTIME_STATUS -> ZephyrIcons.Server
     ToolEntry.APPEARANCE -> ZephyrIcons.Theme

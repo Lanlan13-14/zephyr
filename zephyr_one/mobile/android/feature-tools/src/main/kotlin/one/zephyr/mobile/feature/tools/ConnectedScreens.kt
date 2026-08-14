@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -412,19 +413,47 @@ fun ServerSettingsLiveRoute(
     val notesEnabled = dottedBool(payload, "notes.enabled", fallback = true) ||
         EntityCodec.bool(payload, "notes", fallback = true)
     val aiEnabled = dottedBool(payload, "ai.enabled", fallback = false)
-    val aiMemory = dottedBool(payload, "ai.memory.enabled", fallback = false)
-    val appearance = dottedText(payload, "appearance", fallback = "由主端维护")
+    val serverVersion = dottedText(payload, "version", fallback = "v2.4.1")
+    var notesOn by remember(notesEnabled) { mutableStateOf(notesEnabled) }
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "服务器设置", onBack = onBack)
-        Column(Modifier.padding(horizontal = ZephyrSpacing.lg), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            SettingLine("外观", appearance.ifBlank { "由主端维护" })
-            SettingLine("笔记功能", if (notesEnabled) "开启" else "关闭")
-            SettingLine("AI runtime", if (aiEnabled) "可用" else "未启用")
-            SettingLine("AI Memory", if (aiMemory) "开启" else "关闭")
+        Column(Modifier.padding(horizontal = ZephyrSpacing.lg)) {
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "笔记功能",
+                    subtitle = "关闭后导航不显示笔记入口，AI 笔记工具一并禁用",
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Switch(notesOn, { notesOn = it })
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "AI runtime",
+                    subtitle = "能力目录与本机对齐",
+                    trailing = {
+                        Text(
+                            if (aiEnabled) "可用" else "未启用",
+                            color = if (aiEnabled) ZephyrTheme.palette.status.success else ZephyrTheme.palette.onFloatingMuted,
+                        )
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "终端工作台",
+                    subtitle = "最小化窗口保持连接数 · 页面最多窗口数",
+                    showChevron = true,
+                    onClick = {},
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "版本 / 能力协商",
+                    value = serverVersion.ifBlank { "v2.4.1" },
+                    showDivider = false,
+                )
+            }
             Text(
-                "这些值来自本机镜像里的 serverSettings。普通用户只读；账号安全 / SMTP / 备案不在 One。",
+                "普通用户看到只读公共设置；admin 按服务端授权显示可编辑 section",
                 color = ZephyrTheme.palette.onFloatingMuted,
                 fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 24.dp),
             )
         }
     }
@@ -631,15 +660,34 @@ fun DiagnosticsLiveRoute(
             Modifier
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = ZephyrSpacing.lg),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            SettingLine("One", appVersion)
-            SettingLine("工作区", if (localMode) "本地" else bindingLabel)
-            SettingLine("待同步", pending.toString())
-            SettingLine("冲突", conflicts.toString())
-            lastError?.let { SettingLine("上次同步错误", it) }
-            TextButton(onClick = onExport) { Text("导出诊断") }
-            Text("诊断只含版本 / 模式 / 计数 / 错误码，不含 host / 用户 / 路径 / 密钥。", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "版本",
+                    value = "One $appVersion · 主端 v2.4.1",
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "检查更新",
+                    showChevron = true,
+                    onClick = {},
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "GitHub",
+                    showChevron = true,
+                    onClick = {},
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "开源许可证",
+                    showChevron = true,
+                    onClick = {},
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "导出诊断日志",
+                    showChevron = true,
+                    showDivider = false,
+                    onClick = onExport,
+                )
+            }
         }
     }
 }

@@ -107,7 +107,7 @@ fun SessionListScreen(
                             text = SessionListStates.labelFor(group).uppercase(),
                             style = ZephyrTextStyles.section,
                             color = ZephyrTheme.palette.onFloatingSubtle,
-                            modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 2.dp),
+                            modifier = Modifier.padding(start = 4.dp, top = 16.dp, bottom = 10.dp),
                         )
                     }
                     items(rows.size, key = { index -> rows[index].sessionId }) { index ->
@@ -169,11 +169,6 @@ private fun ListHeader(
             if (selectionCount > 0) {
                 TextButton(onClick = onClearSelection) { Text(stringResource(R.string.sessions_clear_selection)) }
             }
-            HeaderIconButton(
-                description = stringResource(R.string.sessions_close_many),
-                onClick = onRequestBulkClose,
-                icon = ZephyrIcons.Close,
-            )
         }
     }
 }

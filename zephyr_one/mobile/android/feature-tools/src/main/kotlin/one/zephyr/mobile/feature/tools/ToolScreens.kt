@@ -1,7 +1,10 @@
 package one.zephyr.mobile.feature.tools
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,15 +16,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.Button
 import one.zephyr.mobile.ui.component.FilterChip
+import one.zephyr.mobile.ui.component.LinearProgress
 import one.zephyr.mobile.ui.component.OutlinedTextField
 import one.zephyr.mobile.ui.component.Slider
 import one.zephyr.mobile.ui.component.Switch
@@ -38,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -61,6 +70,8 @@ import one.zephyr.mobile.security.LockDelay
 import one.zephyr.mobile.sync.SyncSettings
 import one.zephyr.mobile.ui.chrome.HeaderAddButton
 import one.zephyr.mobile.ui.chrome.PushedPageHeader
+import one.zephyr.mobile.ui.component.pressScale
+import one.zephyr.mobile.ui.theme.ZephyrRadius
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 import one.zephyr.mobile.ui.theme.ZephyrThemeId
@@ -75,6 +86,11 @@ fun AppearanceSettingsScreen(
     onBack: () -> Unit,
 ) {
     val palette = ZephyrTheme.palette
+    var terminalFont by remember { mutableStateOf(13) }
+    var ligatures by remember { mutableStateOf(false) }
+    var customBackground by remember { mutableStateOf(false) }
+    var customSelection by remember { mutableStateOf(false) }
+    var splitMode by remember { mutableStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = stringResource(R.string.tools_appearance), onBack = onBack)
         Column(
@@ -87,20 +103,29 @@ fun AppearanceSettingsScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ZephyrThemeId.entries.forEach { id ->
                     val on = id == themeId
+                    val interaction = remember { MutableInteractionSource() }
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { onTheme(id) }
-                            .padding(vertical = 4.dp),
+                            .height(82.dp)
+                            .pressScale(0.95f, interaction = interaction)
+                            .clip(RoundedCornerShape(ZephyrRadius.md))
+                            .background(palette.surfaces.content)
+                            .border(
+                                BorderStroke(2.dp, if (on) palette.brand.accent else Color.Transparent),
+                                RoundedCornerShape(ZephyrRadius.md),
+                            )
+                            .clickable(interactionSource = interaction, indication = null) { onTheme(id) }
+                            .padding(horizontal = 6.dp, vertical = 10.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Box(
                             Modifier
                                 .size(34.dp)
                                 .clip(CircleShape)
-                                .background(id.swatch()),
+                                .background(Brush.linearGradient(listOf(id.swatchLight(), id.swatch()))),
                         )
-                        Spacer(Modifier.height(8.dp))
                         Text(
                             id.wireName.replaceFirstChar { it.uppercase() },
                             color = if (on) palette.onBackground else palette.onFloatingMuted,
@@ -125,11 +150,60 @@ fun AppearanceSettingsScreen(
                     )
                 }
             }
+            SectionLabel("终端")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "终端字号",
+                    trailing = {
+                        one.zephyr.mobile.ui.component.SegmentedControl(
+                            options = listOf("12", "13", "14", "15"),
+                            selectedIndex = (terminalFont - 12).coerceIn(0, 3),
+                            onSelect = { terminalFont = it + 12 },
+                            modifier = Modifier.width(141.dp),
+                        )
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "终端背景来源",
+                    value = "纯黑 #07090C",
+                    showChevron = true,
+                    onClick = {},
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "允许终端字体连字",
+                    subtitle = "仅同样式 run 内",
+                    trailing = { Switch(ligatures, { ligatures = it }) },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "自定义终端背景色",
+                    subtitle = "所有配色模式生效",
+                    trailing = { Switch(customBackground, { customBackground = it }) },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "自定义选中色",
+                    subtitle = "选中背景 + 选中文字",
+                    trailing = { Switch(customSelection, { customSelection = it }) },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "分屏",
+                    subtitle = "双终端共享底部按钮 · 或一侧停靠工具",
+                    showDivider = false,
+                    trailing = {
+                        one.zephyr.mobile.ui.component.SegmentedControl(
+                            options = listOf("关", "双终端", "工具左", "工具右"),
+                            selectedIndex = splitMode,
+                            onSelect = { splitMode = it },
+                            modifier = Modifier.width(205.dp),
+                        )
+                    },
+                )
+            }
             Text(
                 stringResource(R.string.tools_appearance_note),
                 color = palette.onFloatingSubtle,
                 fontSize = 12.sp,
-                modifier = Modifier.padding(start = 4.dp, top = 14.dp, bottom = 24.dp),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 14.dp),
             )
         }
     }
@@ -141,6 +215,13 @@ private fun ZephyrThemeId.swatch(): Color = when (this) {
     ZephyrThemeId.LAVA -> Color(0xFFBF5A1F)
     ZephyrThemeId.ASAGI -> Color(0xFF4D9C8A)
     ZephyrThemeId.CYBER -> Color(0xFF4F9DA6)
+}
+
+private fun ZephyrThemeId.swatchLight(): Color = when (this) {
+    ZephyrThemeId.FROST -> Color(0xFFEEF2F7)
+    ZephyrThemeId.LAVA -> Color(0xFFF1E8DF)
+    ZephyrThemeId.ASAGI -> Color(0xFFEDF4F2)
+    ZephyrThemeId.CYBER -> Color(0xFFEEF3F5)
 }
 
 @Composable
@@ -156,11 +237,7 @@ fun LanguageSettingsScreen(
             one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.locale.AppLanguage.stored.forEachIndexed { index, lang ->
                     one.zephyr.mobile.ui.component.SettingsRow(
-                        title = when (lang) {
-                            one.zephyr.mobile.ui.locale.AppLanguage.SYSTEM -> stringResource(R.string.tools_language_system)
-                            one.zephyr.mobile.ui.locale.AppLanguage.ZH_HANS -> stringResource(R.string.tools_language_zh)
-                            one.zephyr.mobile.ui.locale.AppLanguage.EN -> stringResource(R.string.tools_language_en)
-                        },
+                        title = lang.nativeLabel,
                         selected = current == lang,
                         showDivider = index != one.zephyr.mobile.ui.locale.AppLanguage.stored.lastIndex,
                         onClick = { onSelect(lang.code) },
@@ -261,55 +338,170 @@ fun FileSyncScreen(
     onOpenConflicts: () -> Unit = {},
     onOpenDevices: () -> Unit = {},
     onOpenShares: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
     onUnbind: (() -> Unit)? = null,
     onBack: () -> Unit,
 ) {
+    val palette = ZephyrTheme.palette
+    val phase = when {
+        status.isRunning -> "正在同步"
+        status.conflictCount > 0 -> "需要处理冲突"
+        status.lastSuccessAt != null -> "镜像已同步"
+        else -> "镜像待同步"
+    }
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "文件同步", onBack = onBack)
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = ZephyrSpacing.lg),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            Text(
-                when {
-                    localMode -> "本地模式 · 未绑定服务器"
-                    status.isRunning -> "同步中"
-                    status.conflictCount > 0 -> "有 ${status.conflictCount} 个冲突"
-                    status.pendingCount > 0 -> "${status.pendingCount} 项待同步"
-                    status.lastSuccessAt != null -> "镜像已同步"
-                    else -> "尚未同步"
-                },
-                fontWeight = FontWeight.SemiBold,
-            )
-            TextButton(onClick = onSyncNow, enabled = !localMode && status.canSyncNow) { Text("立即同步") }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("自动同步", modifier = Modifier.weight(1f))
-                Switch(checked = settings.automaticEnabled, onCheckedChange = onAutomatic, enabled = !localMode)
+            one.zephyr.mobile.ui.component.GroupCard {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(48.dp).clip(CircleShape).background(palette.status.success.copy(alpha = .16f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            one.zephyr.mobile.ui.component.Icon(
+                                one.zephyr.mobile.ui.icon.ZephyrIcons.Refresh,
+                                contentDescription = null,
+                                tint = palette.status.success,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                            Text(phase, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (localMode) "本机镜像" else "上次成功 · 下次自动 ${intervalLabel(settings.intervalSec)}",
+                                color = palette.onFloatingSubtle,
+                                fontSize = 12.5.sp,
+                            )
+                        }
+                        Switch(settings.automaticEnabled, onAutomatic, enabled = !localMode)
+                    }
+                    LinearProgress(
+                        progress = if (status.isRunning) .55f else 0f,
+                        modifier = Modifier.padding(vertical = 14.dp),
+                        color = palette.status.success,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "cursor ${if (status.pendingCount > 0) status.pendingCount else 0} · 0 B/s",
+                            color = palette.onFloatingSubtle,
+                            fontSize = 12.5.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Button(onClick = onSyncNow, enabled = !localMode && status.canSyncNow) { Text("立即同步") }
+                    }
+                }
             }
-            var interval by remember(settings.intervalSec) { mutableStateOf(settings.intervalSec.toFloat()) }
-            Text("目标间隔 ${interval.toInt()} 秒")
-            Slider(
-                value = interval.coerceIn(30f, 3_600f),
-                onValueChange = { interval = it },
-                onValueChangeFinished = { onInterval(interval.toInt()) },
-                valueRange = 30f..3_600f,
-                enabled = !localMode,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = settings.networkPolicy == NetworkPolicy.ANY, onClick = { onPolicy(NetworkPolicy.ANY) }, label = { Text("任意网络") }, enabled = !localMode)
-                FilterChip(selected = settings.networkPolicy == NetworkPolicy.WIFI_ONLY, onClick = { onPolicy(NetworkPolicy.WIFI_ONLY) }, label = { Text("仅 Wi-Fi") }, enabled = !localMode)
+            one.zephyr.mobile.ui.component.SectionLabel("状态")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "冲突中心",
+                    showChevron = true,
+                    onClick = onOpenConflicts,
+                    leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Warn, palette.status.warning) },
+                    trailing = {
+                        if (status.conflictCount > 0) {
+                            Text(
+                                "${status.conflictCount} 个冲突",
+                                color = palette.status.warning,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(palette.status.warning.copy(alpha = .15f)).padding(horizontal = 9.dp, vertical = 4.dp),
+                            )
+                        }
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "One 设备",
+                    subtitle = "Pixel 8 Pro（本机）· iPad Air",
+                    showChevron = true,
+                    onClick = onOpenDevices,
+                    leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Devices) },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "Client Token",
+                    subtitle = "one-mobile-prod · lastUsed 2 分钟前",
+                    showChevron = true,
+                    onClick = onOpenTokens,
+                    leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Ticket) },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "本机共享目录",
+                    subtitle = "文件桥接 · 授权有效 · 只读",
+                    showChevron = true,
+                    onClick = onOpenShares,
+                    leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.File) },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "诊断",
+                    subtitle = "幂等 / 墓碑 / secret envelope 正常",
+                    showChevron = true,
+                    showDivider = false,
+                    onClick = onOpenDiagnostics,
+                    leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Activity) },
+                )
             }
-            TextButton(onClick = onOpenConflicts) { Text("冲突中心 ${status.conflictCount} ›") }
-            TextButton(onClick = onOpenDevices) { Text("One 设备 ›") }
-            TextButton(onClick = onOpenTokens) { Text("Client Token ›") }
-            TextButton(onClick = onOpenShares) { Text("本机共享目录 ›") }
-            if (onUnbind != null) {
-                TextButton(onClick = onUnbind) { Text("解绑并删除本地镜像") }
+            one.zephyr.mobile.ui.component.SectionLabel("策略")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "自动同步",
+                    trailing = { Switch(settings.automaticEnabled, onAutomatic, enabled = !localMode) },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "目标间隔",
+                    value = intervalLabel(settings.intervalSec),
+                    showChevron = true,
+                    onClick = { onInterval(nextInterval(settings.intervalSec)) },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "网络策略",
+                    value = if (settings.networkPolicy == NetworkPolicy.WIFI_ONLY) "仅 Wi-Fi 传大文件" else "任意网络",
+                    showChevron = true,
+                    onClick = {
+                        onPolicy(if (settings.networkPolicy == NetworkPolicy.WIFI_ONLY) NetworkPolicy.ANY else NetworkPolicy.WIFI_ONLY)
+                    },
+                )
+                if (onUnbind != null) {
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "解绑并删除本地镜像",
+                        subtitle = "先 revoke 后清本机 · 需敏感验证",
+                        titleColor = palette.status.error,
+                        showChevron = true,
+                        showDivider = false,
+                        onClick = onUnbind,
+                    )
+                }
             }
-            Text("解绑会先 revoke 设备再清本机镜像，需要敏感验证。", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
         }
+    }
+}
+
+private fun intervalLabel(seconds: Int): String = when {
+    seconds < 60 -> "$seconds 秒"
+    seconds % 60 == 0 -> "${seconds / 60} 分钟"
+    else -> "$seconds 秒"
+}
+
+private fun nextInterval(seconds: Int): Int {
+    val values = listOf(30, 60, 300, 900, 1800, 3600)
+    return values.firstOrNull { it > seconds } ?: values.first()
+}
+
+@Composable
+internal fun ToolRowIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: Color = ZephyrTheme.palette.onFloatingMuted,
+) {
+    Box(
+        Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)).background(ZephyrTheme.palette.surfaces.elevated),
+        contentAlignment = Alignment.Center,
+    ) {
+        one.zephyr.mobile.ui.component.Icon(icon, null, tint = tint, modifier = Modifier.size(17.dp))
     }
 }
 
@@ -352,22 +544,116 @@ fun ServerSettingsScreen(
 }
 
 @Composable
+fun ServerHubScreen(
+    onOpenSettings: () -> Unit,
+    onOpenBackup: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    Column(Modifier.fillMaxSize()) {
+        PushedPageHeader(title = "服务器", onBack = onBack)
+        Column(Modifier.padding(horizontal = ZephyrSpacing.lg)) {
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "设置",
+                    subtitle = "仅当前账号有权限且 One 有用途的项",
+                    showChevron = true,
+                    onClick = onOpenSettings,
+                    leading = {
+                        Box(
+                            Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)).background(palette.surfaces.elevated),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            one.zephyr.mobile.ui.component.Icon(
+                                one.zephyr.mobile.ui.icon.ZephyrIcons.Gear,
+                                contentDescription = null,
+                                tint = palette.onFloatingMuted,
+                                modifier = Modifier.size(17.dp),
+                            )
+                        }
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "备份与恢复",
+                    subtitle = "导出加密备份 · 导入需双密码",
+                    showChevron = true,
+                    showDivider = false,
+                    onClick = onOpenBackup,
+                    leading = {
+                        Box(
+                            Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)).background(palette.surfaces.elevated),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            one.zephyr.mobile.ui.component.Icon(
+                                one.zephyr.mobile.ui.icon.ZephyrIcons.Save,
+                                contentDescription = null,
+                                tint = palette.onFloatingMuted,
+                                modifier = Modifier.size(17.dp),
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun BackupRestoreScreen(localMode: Boolean, onBack: () -> Unit) {
+    var webDavEnabled by remember { mutableStateOf(false) }
+    val palette = ZephyrTheme.palette
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "备份与恢复", onBack = onBack)
-        Column(Modifier.padding(horizontal = ZephyrSpacing.lg), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).padding(horizontal = ZephyrSpacing.lg),
+        ) {
             SectionLabel("导出")
-            Text("范围 连接 / 笔记 / 片段 / 设置 · AES-256-GCM · v${BackupFlow.FORMAT_VERSION}")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "范围",
+                    subtitle = "连接 / 笔记 / 片段 / 设置 · AES-256-GCM · v${BackupFlow.FORMAT_VERSION}",
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "生成加密备份…",
+                    titleColor = palette.brand.accent,
+                    showDivider = false,
+                    onClick = {},
+                )
+            }
             SectionLabel("导入")
-            Text("从文件恢复… 影响确认 → 服务端验证 → 所有 One 重新绑定")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "从文件恢复…",
+                    subtitle = "影响确认 → 服务端验证 → 所有 One 重新绑定",
+                    titleColor = palette.brand.accent,
+                    showDivider = false,
+                    onClick = {},
+                )
+            }
+            SectionLabel("WebDAV 备份")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "启用 WebDAV 备份",
+                    subtitle = "账号级加密备份到独立目录 · 仅 HTTPS",
+                    trailing = { Switch(webDavEnabled, { webDavEnabled = it }) },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "地址",
+                    value = "https://dav.example.com/…",
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "立即备份",
+                    titleColor = palette.brand.accent,
+                    showDivider = false,
+                    onClick = {},
+                )
+            }
             Text(
-                if (localMode) {
-                    "本机可以导出加密备份并再导回来。绑定主端只是多一条可选的服务器备份，不是使用门槛。"
-                } else {
-                    "本机导出始终可用。主端备份任务是额外通道；失败时会明确显示「原数据已回滚 / 未改动」。"
-                },
-                color = ZephyrTheme.palette.onFloatingMuted,
+                "失败时明确显示「原数据已回滚 / 未改动」",
+                color = palette.onFloatingMuted,
                 fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
             )
         }
     }

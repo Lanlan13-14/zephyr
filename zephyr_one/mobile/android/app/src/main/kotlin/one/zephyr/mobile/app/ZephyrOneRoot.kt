@@ -1,5 +1,20 @@
 package one.zephyr.mobile.app
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontFamily
@@ -78,6 +94,7 @@ import one.zephyr.mobile.feature.tools.BatchExecutionScreen
 import one.zephyr.mobile.feature.tools.BatchExecutionViewModel
 import one.zephyr.mobile.feature.tools.BatchIntent
 import one.zephyr.mobile.feature.tools.NoopBatchAuditSink
+import one.zephyr.mobile.feature.tools.ServerHubScreen
 import one.zephyr.mobile.feature.tools.UnavailableRemotePorts
 import one.zephyr.mobile.feature.tools.ToolEntry
 import one.zephyr.mobile.feature.tools.ToolsInventory
@@ -100,7 +117,9 @@ import one.zephyr.mobile.ui.island.FloatingIsland
 import one.zephyr.mobile.ui.island.IslandDestination
 import one.zephyr.mobile.ui.island.islandContentBottomInset
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
+import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
 import java.util.UUID
+import kotlin.math.roundToInt
 
 /**
  * The root composable, and the app's only navigation authority.
@@ -214,6 +233,7 @@ private sealed interface RootRoute {
     data object Devices : RootRoute
     data object LocalShares : RootRoute
     data object ServerBinding : RootRoute
+    data object ServerHub : RootRoute
     data object ServerSettings : RootRoute
     data object Backup : RootRoute
     data object RuntimeStatus : RootRoute
@@ -267,6 +287,7 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
             RootRoute.Devices -> listOf(TAG_DEVICES)
             RootRoute.LocalShares -> listOf(TAG_SHARES)
             RootRoute.ServerBinding -> listOf(TAG_BINDING)
+            RootRoute.ServerHub -> listOf(TAG_SERVER)
             RootRoute.ServerSettings -> listOf(TAG_SERVER_SETTINGS)
             RootRoute.Backup -> listOf(TAG_BACKUP)
             RootRoute.RuntimeStatus -> listOf(TAG_RUNTIME)
@@ -311,6 +332,7 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
             TAG_DEVICES -> RootRoute.Devices
             TAG_SHARES -> RootRoute.LocalShares
             TAG_BINDING -> RootRoute.ServerBinding
+            TAG_SERVER -> RootRoute.ServerHub
             TAG_SERVER_SETTINGS -> RootRoute.ServerSettings
             TAG_BACKUP -> RootRoute.Backup
             TAG_RUNTIME -> RootRoute.RuntimeStatus
@@ -378,6 +400,9 @@ private fun BoundRoot(
     val messages = remember { MutableSharedFlow<String>(extraBufferCapacity = 8) }
     var toastMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val motion = ZephyrTheme.motion
+    val islandHiddenOffsetPx = with(LocalDensity.current) { 120.dp.roundToPx() }
+    var lastRoot by rememberSaveable { mutableStateOf(IslandDestination.HOME) }
 
     LaunchedEffect(messages) {
         messages.collect { message -> toastMessage = message }
@@ -386,6 +411,10 @@ private fun BoundRoot(
     /* Non-suspend entry point for callbacks that are not suspend (island taps, click handlers). */
     val notice: (String) -> Unit = { message -> scope.launch { messages.emit(message) } }
 
+    LaunchedEffect(route) {
+        (route as? RootRoute.Root)?.let { lastRoot = it.destination }
+    }
+
     BackHandler(enabled = route !is RootRoute.Root) {
         route = popRoute(route)
     }
@@ -393,7 +422,21 @@ private fun BoundRoot(
     Box(modifier = Modifier.fillMaxSize()) {
         val current = route
 
-        when (current) {
+        AnimatedContent(
+            targetState = current,
+            modifier = Modifier.fillMaxSize(),
+            contentKey = ::routeContentKey,
+            transitionSpec = {
+                routeTransition(
+                    initial = initialState,
+                    target = targetState,
+                    durationMillis = motion.scale(ZephyrMotionTokens.SHEET_MS),
+                    reduceMotion = motion.reduceMotion,
+                )
+            },
+            label = "pageStack",
+        ) { current ->
+            when (current) {
             is RootRoute.Root -> RootDestination(
                 destination = current.destination,
                 account = account,
@@ -437,7 +480,7 @@ private fun BoundRoot(
                         ToolEntry.AI_WORKSPACE -> RootRoute.AiSettings
                         ToolEntry.FILE_SYNC -> RootRoute.FileSync
                         ToolEntry.CLIENT_TOKEN -> RootRoute.ClientToken
-                        ToolEntry.SERVER_SETTINGS -> RootRoute.ServerSettings
+                        ToolEntry.SERVER_SETTINGS -> RootRoute.ServerHub
                         ToolEntry.BACKUP_RESTORE -> RootRoute.Backup
                         ToolEntry.RUNTIME_STATUS -> RootRoute.RuntimeStatus
                         ToolEntry.APPEARANCE -> RootRoute.Appearance
@@ -543,6 +586,7 @@ private fun BoundRoot(
                 onOpenConflicts = { route = RootRoute.Conflicts },
                 onOpenDevices = { route = RootRoute.Devices },
                 onOpenShares = { route = RootRoute.LocalShares },
+                onOpenDiagnostics = { route = RootRoute.Diagnostics },
                 onUnbind = if (account.isLocalMode) null else ({ route = RootRoute.ServerBinding }),
                 onSyncNow = { if (!account.isLocalMode) scope.launch { account.syncEngine.syncNow() } },
             )
@@ -573,13 +617,18 @@ private fun BoundRoot(
                 onBound = { route = RootRoute.Root(IslandDestination.HOME) },
                 onMessage = notice,
             )
+            RootRoute.ServerHub -> ServerHubScreen(
+                onOpenSettings = { route = RootRoute.ServerSettings },
+                onOpenBackup = { route = RootRoute.Backup },
+                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+            )
             RootRoute.ServerSettings -> ServerSettingsLiveDestination(
                 account = account,
                 ownerUserId = ownerUserId,
-                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+                onBack = { route = RootRoute.ServerHub },
                 onMessage = notice,
             )
-            RootRoute.Backup -> BackupDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
+            RootRoute.Backup -> BackupDestination(account, onBack = { route = RootRoute.ServerHub })
             RootRoute.RuntimeStatus -> RuntimeDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
             RootRoute.AiSettings -> AiSettingsLiveDestination(
                 account = account,
@@ -645,29 +694,132 @@ private fun BoundRoot(
                 onBack = { route = RootRoute.Root(IslandDestination.SESSIONS) },
             )
 
-            RootRoute.BatchExecution -> BatchExecutionDestination(
-                account = account,
-                ownerUserId = ownerUserId,
-                onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
-                onMessage = { messages.emit(it) },
+                RootRoute.BatchExecution -> BatchExecutionDestination(
+                    account = account,
+                    ownerUserId = ownerUserId,
+                    onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+                    onMessage = { messages.emit(it) },
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = current is RootRoute.Root,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = slideInVertically(
+                initialOffsetY = { islandHiddenOffsetPx },
+                animationSpec = tween(
+                    durationMillis = motion.scale(ZephyrMotionTokens.MED_MS),
+                    easing = ZephyrMotionTokens.easeOut,
+                ),
+            ) + fadeIn(tween(motion.scale(ZephyrMotionTokens.MED_MS))),
+            exit = slideOutVertically(
+                targetOffsetY = { islandHiddenOffsetPx },
+                animationSpec = tween(
+                    durationMillis = motion.scale(ZephyrMotionTokens.MED_MS),
+                    easing = ZephyrMotionTokens.easeOut,
+                ),
+            ) + fadeOut(tween(motion.scale(ZephyrMotionTokens.MED_MS))),
+        ) {
+            FloatingIsland(
+                selected = lastRoot,
+                onSelect = { destination -> route = RootRoute.Root(destination) },
             )
         }
 
-        /* Drawn last so it floats above content, and only over a root destination. The editor is a
-         * full-screen form and a session is immersive, so both hide the island (DEVELOPMENT.md 6.4). */
-        if (current is RootRoute.Root) {
-            FloatingIsland(
-                selected = current.destination,
-                onSelect = { destination -> route = RootRoute.Root(destination) },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
-        }
+        AiWorkspaceOverlay(
+            onOpenSettings = { route = RootRoute.AiSettings },
+            onNotice = notice,
+        )
 
         one.zephyr.mobile.ui.component.ZephyrToast(
             message = toastMessage,
             modifier = Modifier.align(Alignment.BottomCenter),
             onDismiss = { toastMessage = null },
         )
+    }
+}
+
+private fun routeContentKey(route: RootRoute): Any = when (route) {
+    is RootRoute.Root -> route.destination
+    is RootRoute.ConnectionEditor -> "editor:${route.connectionId}:${route.protocol.name}"
+    is RootRoute.NoteEditor -> "note:${route.noteId}"
+    is RootRoute.SnippetEditor -> "snippet:${route.snippetId}"
+    is RootRoute.ResourceList -> "resources:${route.kind.name}"
+    is RootRoute.ResourceEditor -> "resource-editor:${route.kind.name}:${route.entityId}"
+    is RootRoute.Terminal -> "terminal:${route.sessionId}"
+    is RootRoute.Remote -> "remote:${route.sessionId}:${route.protocol.name}"
+    is RootRoute.SessionDetails -> "session:${route.sessionId}"
+    else -> route
+}
+
+private fun routeDepth(route: RootRoute): Int = when (route) {
+    is RootRoute.Root -> 0
+    RootRoute.Notes,
+    RootRoute.Snippets,
+    RootRoute.Files,
+    RootRoute.Downloads,
+    RootRoute.FileSync,
+    RootRoute.ServerHub,
+    is RootRoute.ResourceList -> 1
+    is RootRoute.NoteEditor,
+    is RootRoute.SnippetEditor,
+    RootRoute.ClientToken,
+    RootRoute.Conflicts,
+    RootRoute.Devices,
+    RootRoute.LocalShares,
+    RootRoute.ServerSettings,
+    RootRoute.Backup,
+    is RootRoute.ResourceEditor -> 2
+    else -> 1
+}
+
+private fun routeTransition(
+    initial: RootRoute,
+    target: RootRoute,
+    durationMillis: Int,
+    reduceMotion: Boolean,
+): ContentTransform {
+    if (reduceMotion || initial is RootRoute.Root && target is RootRoute.Root) {
+        return EnterTransition.None togetherWith ExitTransition.None
+    }
+    val pushing = routeDepth(target) >= routeDepth(initial)
+    val enter = if (pushing) {
+        slideInHorizontally(
+            initialOffsetX = { it },
+            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
+        )
+    } else {
+        slideInHorizontally(
+            initialOffsetX = { (-it * 0.28f).roundToInt() },
+            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
+        ) + fadeIn(
+            initialAlpha = ZephyrMotionTokens.PAGE_BEHIND_ALPHA,
+            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
+        ) + scaleIn(
+            initialScale = ZephyrMotionTokens.PAGE_BEHIND_SCALE,
+            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
+        )
+    }
+    val exit = if (pushing) {
+        slideOutHorizontally(
+            targetOffsetX = { (-it * 0.28f).roundToInt() },
+            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
+        ) + fadeOut(
+            targetAlpha = ZephyrMotionTokens.PAGE_BEHIND_ALPHA,
+            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
+        ) + scaleOut(
+            targetScale = ZephyrMotionTokens.PAGE_BEHIND_SCALE,
+            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
+        )
+    } else {
+        slideOutHorizontally(
+            targetOffsetX = { it },
+            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
+        )
+    }
+    return (enter togetherWith exit).apply {
+        targetContentZIndex = if (pushing) 1f else 0f
     }
 }
 
@@ -704,28 +856,24 @@ private fun RootDestination(
                 if (account.isLocalMode) remember { flowOf(SyncStatus.unbound()) } else syncStatus
             val status by listSyncStatus.collectAsState(initial = SyncStatus.unbound())
 
-            Column(Modifier.fillMaxSize()) {
-                if (account.isLocalMode) {
-                    LocalModeBanner(onBindServer = onOpenBinding)
-                }
-                ConnectionListRoute(
-                    viewModel = viewModel(
-                        key = "connections",
-                        factory = ConnectionListViewModel.factory(
-                            connections = account.connections,
-                            settings = account.settings,
-                            shared = account.sharedResources,
-                            ownerUserId = ownerUserId,
-                            syncStatus = listSyncStatus,
-                            network = account.network,
-                            localMode = account.isLocalMode,
-                            syncNowAction = if (account.isLocalMode) {
-                                { /* Local mode has no server to sync with. */ }
-                            } else {
-                                { account.syncEngine.syncNow() }
-                            },
-                        ),
+            ConnectionListRoute(
+                viewModel = viewModel(
+                    key = "connections",
+                    factory = ConnectionListViewModel.factory(
+                        connections = account.connections,
+                        settings = account.settings,
+                        shared = account.sharedResources,
+                        ownerUserId = ownerUserId,
+                        syncStatus = listSyncStatus,
+                        network = account.network,
+                        localMode = account.isLocalMode,
+                        syncNowAction = if (account.isLocalMode) {
+                            { /* Local mode has no server to sync with. */ }
+                        } else {
+                            { account.syncEngine.syncNow() }
+                        },
                     ),
+                ),
                 syncStatus = status,
                 activity = activity,
                 nowMs = nowMs,
@@ -738,13 +886,11 @@ private fun RootDestination(
                 onDuplicateConnection = { connection -> onDuplicateConnection(connection.id) },
                 onTestConnection = integrations.onTestConnection,
                 onShareConnection = integrations.onShareConnection,
-                    onCreate = { onOpenEditor(null) },
-                    onOpenAccount = integrations.onOpenAccount ?: onOpenBinding,
-                    localMode = account.isLocalMode,
-                    onMessage = onMessage,
-                    modifier = if (account.isLocalMode) Modifier.weight(1f) else Modifier,
-                )
-            }
+                onCreate = { onOpenEditor(null) },
+                onOpenAccount = null,
+                localMode = account.isLocalMode,
+                onMessage = onMessage,
+            )
         }
 
         IslandDestination.SESSIONS -> SessionListRoute(
@@ -890,6 +1036,7 @@ private fun ToolsDestination(
             androidx.compose.ui.res.stringResource(one.zephyr.mobile.feature.tools.R.string.tools_language_system)
         one.zephyr.mobile.ui.locale.AppLanguage.ZH_HANS ->
             androidx.compose.ui.res.stringResource(one.zephyr.mobile.feature.tools.R.string.tools_language_zh)
+        one.zephyr.mobile.ui.locale.AppLanguage.ZH_HANT -> language.nativeLabel
         one.zephyr.mobile.ui.locale.AppLanguage.EN ->
             androidx.compose.ui.res.stringResource(one.zephyr.mobile.feature.tools.R.string.tools_language_en)
     }
@@ -1201,6 +1348,7 @@ private fun popRoute(route: RootRoute): RootRoute = when (route) {
         RootRoute.Root(IslandDestination.LIBRARY)
     is RootRoute.ResourceEditor -> RootRoute.ResourceList(route.kind)
     RootRoute.ClientToken, RootRoute.Conflicts, RootRoute.Devices, RootRoute.LocalShares -> RootRoute.FileSync
+    RootRoute.ServerSettings, RootRoute.Backup -> RootRoute.ServerHub
     RootRoute.ServerBinding -> RootRoute.Root(IslandDestination.HOME)
     else -> RootRoute.Root(IslandDestination.TOOLS)
 }
@@ -1323,6 +1471,7 @@ private const val TAG_CONFLICTS = "conflicts"
 private const val TAG_DEVICES = "devices"
 private const val TAG_SHARES = "shares"
 private const val TAG_BINDING = "binding"
+private const val TAG_SERVER = "server"
 private const val TAG_SERVER_SETTINGS = "server-settings"
 private const val TAG_BACKUP = "backup"
 private const val TAG_RUNTIME = "runtime"

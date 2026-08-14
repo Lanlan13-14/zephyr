@@ -4,6 +4,8 @@ package one.zephyr.mobile.feature.connections
 
 import one.zephyr.mobile.ui.icon.ZephyrIcons
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -12,6 +14,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -19,7 +23,6 @@ import androidx.compose.foundation.verticalScroll
 import one.zephyr.mobile.ui.component.AlertDialog
 import one.zephyr.mobile.ui.component.AssistChip
 import one.zephyr.mobile.ui.component.Button
-import one.zephyr.mobile.ui.component.Card
 import one.zephyr.mobile.ui.component.DropdownMenu
 import one.zephyr.mobile.ui.component.DropdownMenuItem
 import one.zephyr.mobile.ui.component.FilterChip
@@ -28,6 +31,7 @@ import one.zephyr.mobile.ui.component.IconButton
 import one.zephyr.mobile.ui.component.OutlinedButton
 import one.zephyr.mobile.ui.component.OutlinedTextField
 import one.zephyr.mobile.ui.component.Slider
+import one.zephyr.mobile.ui.component.SegmentedControl
 import one.zephyr.mobile.ui.component.Switch
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
@@ -41,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
 import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.ConnectionMode
 import one.zephyr.mobile.model.FileSyncDirectoryIntent
@@ -57,7 +62,9 @@ import one.zephyr.mobile.model.SecretState
 import one.zephyr.mobile.model.TerminalEncoding
 import one.zephyr.mobile.ui.chrome.PushedPageHeader
 import one.zephyr.mobile.ui.component.CleartextProtocolWarning
-import one.zephyr.mobile.ui.component.SectionHeader
+import one.zephyr.mobile.ui.component.GroupCard
+import one.zephyr.mobile.ui.component.HorizontalDivider
+import one.zephyr.mobile.ui.component.SectionLabel
 import one.zephyr.mobile.ui.state.PageStateScaffold
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
@@ -95,29 +102,38 @@ fun ConnectionEditorScreen(
         )
 
         PageStateScaffold(state = state, modifier = Modifier.fillMaxSize()) { ui ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = ZephyrSpacing.lg),
-            ) {
-                for (section in ui.sections) {
-                    SectionCard(title = sectionTitle(section)) {
-                        when (section) {
-                            EditorSection.BASIC -> BasicSection(ui, onIntent)
-                            EditorSection.AUTH -> AuthSection(ui, onIntent)
-                            EditorSection.ROUTE -> RouteSection(ui, onIntent)
-                            EditorSection.RDP_CHANNELS -> RdpChannelSection(ui, onIntent)
-                            EditorSection.RDP_DISPLAY -> RdpDisplaySection(ui, onIntent)
-                            EditorSection.FILE_SYNC -> FileSyncSection(ui, onIntent)
-                            EditorSection.METADATA -> MetadataSection(ui, onIntent)
+            Box(Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = ZephyrSpacing.lg)
+                        .padding(bottom = 112.dp),
+                ) {
+                    for (section in ui.sections) {
+                        SectionCard(title = sectionTitle(section)) {
+                            when (section) {
+                                EditorSection.BASIC -> BasicSection(ui, onIntent)
+                                EditorSection.AUTH -> AuthSection(ui, onIntent)
+                                EditorSection.ROUTE -> RouteSection(ui, onIntent)
+                                EditorSection.RDP_CHANNELS -> RdpChannelSection(ui, onIntent)
+                                EditorSection.RDP_DISPLAY -> RdpDisplaySection(ui, onIntent)
+                                EditorSection.FILE_SYNC -> FileSyncSection(ui, onIntent)
+                                EditorSection.METADATA -> MetadataSection(ui, onIntent)
+                            }
                         }
                     }
-                    Spacer(Modifier.height(ZephyrSpacing.md))
                 }
-
-                FixedActions(ui = ui, onIntent = onIntent)
-                Spacer(Modifier.height(ZephyrSpacing.xxl))
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(ZephyrTheme.palette.surfaces.floating)
+                        .navigationBarsPadding()
+                        .padding(horizontal = ZephyrSpacing.lg, vertical = 12.dp),
+                ) {
+                    FixedActions(ui = ui, onIntent = onIntent)
+                }
             }
         }
     }
@@ -186,8 +202,8 @@ private fun sectionTitle(section: EditorSection): String = when (section) {
 @Composable
 private fun SectionCard(title: String, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth()) {
-        SectionHeader(title)
-        Card(Modifier.fillMaxWidth()) {
+        SectionLabel(title)
+        GroupCard {
             Column(Modifier.padding(ZephyrSpacing.lg)) { content() }
         }
     }
@@ -205,24 +221,24 @@ private fun BasicSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
         onChange = { onIntent(EditorIntent.Name(it)) },
     )
 
-    Spacer(Modifier.height(ZephyrSpacing.md))
-    Text(stringResource(R.string.editor_field_protocol), style = ZephyrTheme.typography.caption)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-        for (protocol in Protocol.entries) {
-            FilterChip(
-                selected = draft.current.protocol == protocol,
-                onClick = { onIntent(EditorIntent.ProtocolChanged(protocol)) },
-                label = { Text(protocol.wireName) },
-            )
-        }
+    HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 54.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(stringResource(R.string.editor_field_protocol), color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(84.dp))
+        SegmentedControl(
+            options = Protocol.entries.map { it.wireName },
+            selectedIndex = Protocol.entries.indexOf(draft.current.protocol),
+            onSelect = { onIntent(EditorIntent.ProtocolChanged(Protocol.entries[it])) },
+            modifier = Modifier.weight(1f),
+        )
     }
-    // The warning stays attached to the choice rather than appearing only at connect time.
     if (draft.current.protocol.isCleartext) {
-        Spacer(Modifier.height(ZephyrSpacing.xs))
         CleartextProtocolWarning(draft.current.protocol)
     }
 
-    Spacer(Modifier.height(ZephyrSpacing.md))
+    HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
     Field(
         label = stringResource(R.string.editor_field_host),
         value = draft.current.host,
@@ -230,7 +246,7 @@ private fun BasicSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
         onChange = { onIntent(EditorIntent.Host(it)) },
     )
 
-    Spacer(Modifier.height(ZephyrSpacing.md))
+    HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
     Field(
         label = stringResource(R.string.editor_field_port),
         value = draft.current.port.toString(),
@@ -239,7 +255,7 @@ private fun BasicSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
         onChange = { onIntent(EditorIntent.Port(it)) },
     )
 
-    Spacer(Modifier.height(ZephyrSpacing.md))
+    HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
     Field(
         label = stringResource(R.string.editor_field_username),
         value = draft.current.username,
@@ -248,7 +264,7 @@ private fun BasicSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
     )
 
     if (draft.showsDomainField) {
-        Spacer(Modifier.height(ZephyrSpacing.md))
+        HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
         Field(
             label = stringResource(R.string.editor_field_domain),
             value = draft.current.rdp.domain,
@@ -258,16 +274,20 @@ private fun BasicSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
     }
 
     if (draft.showsEncodingField) {
-        Spacer(Modifier.height(ZephyrSpacing.md))
-        Text(stringResource(R.string.editor_field_encoding), style = ZephyrTheme.typography.caption)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm)) {
-            for (encoding in ConnectionDraft.availableEncodings(draft.current.protocol)) {
-                FilterChip(
-                    selected = draft.current.encoding == encoding,
-                    onClick = { onIntent(EditorIntent.Encoding(encoding)) },
-                    label = { Text(encoding.wireName) },
-                )
-            }
+        HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 54.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.editor_field_encoding), color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(84.dp))
+            SegmentedControl(
+                options = ConnectionDraft.availableEncodings(draft.current.protocol).map { it.wireName },
+                selectedIndex = ConnectionDraft.availableEncodings(draft.current.protocol).indexOf(draft.current.encoding).coerceAtLeast(0),
+                onSelect = { index ->
+                    onIntent(EditorIntent.Encoding(ConnectionDraft.availableEncodings(draft.current.protocol)[index]))
+                },
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -581,17 +601,20 @@ private fun FixedActions(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
             OutlinedButton(
                 onClick = { onIntent(EditorIntent.Test) },
                 enabled = !ui.testing && !ui.saving,
+                modifier = Modifier.weight(1f),
             ) { Text(stringResource(R.string.editor_action_test)) }
+
+            OutlinedButton(
+                onClick = { onIntent(EditorIntent.ConnectWithoutSaving) },
+                enabled = !ui.saving,
+                modifier = Modifier.weight(1f),
+            ) { Text(stringResource(R.string.editor_action_connect_unsaved)) }
 
             Button(
                 onClick = { onIntent(EditorIntent.Save) },
                 enabled = !ui.saving,
+                modifier = Modifier.weight(1f),
             ) { Text(stringResource(R.string.editor_action_save)) }
-        }
-
-        Spacer(Modifier.height(ZephyrSpacing.sm))
-        TextButton(onClick = { onIntent(EditorIntent.ConnectWithoutSaving) }) {
-            Text(stringResource(R.string.editor_action_connect_unsaved))
         }
     }
 }
@@ -626,19 +649,22 @@ private fun Field(
     keyboardType: KeyboardType = KeyboardType.Text,
     supporting: String? = null,
 ) {
-    Column(Modifier.fillMaxWidth()) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 54.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(84.dp))
         OutlinedTextField(
             value = value,
             onValueChange = onChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(label) },
+            modifier = Modifier.weight(1f),
             isError = issue != null,
             singleLine = true,
             supportingText = supporting?.let { { Text(it) } },
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType),
         )
-        issue?.let { IssueText(it) }
     }
+    issue?.let { IssueText(it) }
 }
 
 @Composable

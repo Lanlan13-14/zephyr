@@ -37,7 +37,7 @@ val LocalZephyrMotion: ProvidableCompositionLocal<ZephyrMotion> =
 
 /**
  * Root theme. Palette + motion only. There is no Material ColorScheme and no
- * MaterialTheme wrapper: screens must read [ZephyrTheme.palette] / typography.
+ * App theme wrapper: screens must read [ZephyrTheme.palette] / typography.
  */
 @Composable
 fun ZephyrTheme(

@@ -33,6 +33,7 @@ import one.zephyr.mobile.ui.component.Icon
 import one.zephyr.mobile.ui.component.Surface
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
+import one.zephyr.mobile.ui.component.pressScale
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -108,10 +109,7 @@ fun ConnectionListScreen(
         )
         FilterStrip(
             filter = filter,
-            availableTags = availableTags,
             onToggleProtocol = onToggleProtocol,
-            onToggleTag = onToggleTag,
-            onOwnershipChange = onOwnershipChange,
             onFavouritesOnlyChange = onFavouritesOnlyChange,
             onClearFilters = onClearFilters,
         )
@@ -220,13 +218,21 @@ private fun SyncPill(status: SyncStatus, localMode: Boolean, onClick: (() -> Uni
         status.lastSuccessAt != null -> stringResource(R.string.connections_synced) to palette.status.success
         else -> stringResource(R.string.connections_not_synced) to palette.status.offline
     }
+    val interaction = remember { MutableInteractionSource() }
     val clickModifier = if (onClick != null) {
-        Modifier.clickable(role = Role.Button, onClick = onClick)
+        Modifier.clickable(
+            interactionSource = interaction,
+            indication = null,
+            role = Role.Button,
+            onClick = onClick,
+        )
     } else {
         Modifier
     }
     Row(
-        modifier = clickModifier
+        modifier = Modifier
+            .pressScale(0.95f, enabled = onClick != null, interaction = interaction)
+            .then(clickModifier)
             .height(36.dp)
             .clip(RoundedCornerShape(19.dp))
             .background(palette.surfaces.elevated)
@@ -302,10 +308,7 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier
 @Composable
 private fun FilterStrip(
     filter: ConnectionFilter,
-    availableTags: List<String>,
     onToggleProtocol: (Protocol) -> Unit,
-    onToggleTag: (String) -> Unit,
-    onOwnershipChange: (OwnershipFacet) -> Unit,
     onFavouritesOnlyChange: (Boolean) -> Unit,
     onClearFilters: () -> Unit,
 ) {
@@ -333,31 +336,22 @@ private fun FilterStrip(
             selected = filter.favouritesOnly,
             onClick = { onFavouritesOnlyChange(!filter.favouritesOnly) },
         )
-        DashboardChip(
-            label = stringResource(R.string.connections_filter_shared),
-            selected = filter.ownership == OwnershipFacet.SHARED,
-            onClick = {
-                onOwnershipChange(
-                    if (filter.ownership == OwnershipFacet.SHARED) OwnershipFacet.ALL else OwnershipFacet.SHARED,
-                )
-            },
-        )
-        availableTags.forEach { tag ->
-            DashboardChip(
-                label = tag,
-                selected = tag in filter.tags,
-                onClick = { onToggleTag(tag) },
-            )
-        }
     }
 }
 
 @Composable
 private fun DashboardChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
     Surface(
         modifier = Modifier
             .height(32.dp)
-            .clickable(role = Role.Button, onClick = onClick),
+            .pressScale(0.95f, interaction = interaction)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            ),
         shape = RoundedCornerShape(16.dp),
         color = if (selected) ZephyrTheme.palette.brand.accent else ZephyrTheme.palette.surfaces.elevated,
         contentColor = if (selected) Color.White else ZephyrTheme.palette.onFloatingMuted,
@@ -390,6 +384,7 @@ private fun ConnectionCard(
     onAction: (ConnectionAction) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
     val moreActionDescription = stringResource(R.string.connection_action_more)
     val palette = ZephyrTheme.palette
     val protocolColor = protocolColor(connection.protocol)
@@ -397,8 +392,11 @@ private fun ConnectionCard(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 90.dp)
+            .pressScale(0.98f, interaction = interaction)
             .clickable(
                 enabled = ConnectionActions.gate(connection, ConnectionAction.USE).isAllowed,
+                interactionSource = interaction,
+                indication = null,
                 role = Role.Button,
             ) { onAction(ConnectionAction.USE) },
         shape = RoundedCornerShape(14.dp),
@@ -474,14 +472,19 @@ private fun ConnectionCard(
                 )
                 Spacer(Modifier.height(5.dp))
                 Box {
+                    val moreInteraction = remember { MutableInteractionSource() }
                     Box(
                         modifier = Modifier
                             .size(30.dp)
+                            .pressScale(0.9f, interaction = moreInteraction)
                             .clip(CircleShape)
                             .semantics {
                                 contentDescription = moreActionDescription
                             }
-                            .clickable {
+                            .clickable(
+                                interactionSource = moreInteraction,
+                                indication = null,
+                            ) {
                                 menuOpen = true
                             },
                         contentAlignment = Alignment.Center,

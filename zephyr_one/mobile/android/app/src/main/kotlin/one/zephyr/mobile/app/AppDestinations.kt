@@ -317,6 +317,7 @@ internal fun FileSyncDestination(
     onOpenConflicts: () -> Unit,
     onOpenDevices: () -> Unit,
     onOpenShares: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     onUnbind: (() -> Unit)?,
     onSyncNow: () -> Unit,
 ) {
@@ -334,6 +335,7 @@ internal fun FileSyncDestination(
         onOpenConflicts = onOpenConflicts,
         onOpenDevices = onOpenDevices,
         onOpenShares = onOpenShares,
+        onOpenDiagnostics = onOpenDiagnostics,
         onUnbind = onUnbind,
         onBack = onBack,
     )
