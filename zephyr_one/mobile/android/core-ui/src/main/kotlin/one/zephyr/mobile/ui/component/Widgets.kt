@@ -105,6 +105,34 @@ fun Text(
 }
 
 @Composable
+fun Text(
+    text: androidx.compose.ui.text.AnnotatedString,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    overflow: TextOverflow = TextOverflow.Clip,
+    maxLines: Int = Int.MAX_VALUE,
+    minLines: Int = 1,
+    softWrap: Boolean = true,
+    style: TextStyle = ZephyrTextStyles.body,
+) {
+    val fallback = resolvedContentColor(ZephyrTheme.palette.onBackground)
+    val resolved = if (color == Color.Unspecified) {
+        style.merge(TextStyle(color = fallback))
+    } else {
+        style.merge(TextStyle(color = color))
+    }
+    BasicText(
+        text = text,
+        modifier = modifier,
+        style = resolved,
+        overflow = overflow,
+        maxLines = maxLines,
+        minLines = minLines,
+        softWrap = softWrap,
+    )
+}
+
+@Composable
 fun Icon(
     imageVector: ImageVector,
     contentDescription: String?,
@@ -469,6 +497,7 @@ fun OutlinedTextField(
     singleLine: Boolean = false,
     minLines: Int = 1,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
+    textStyle: TextStyle = ZephyrTextStyles.body,
 ) {
     val palette = ZephyrTheme.palette
     Column(modifier) {
@@ -483,7 +512,7 @@ fun OutlinedTextField(
             singleLine = singleLine,
             minLines = minLines,
             maxLines = maxLines,
-            textStyle = ZephyrTextStyles.body.copy(color = palette.onBackground),
+            textStyle = textStyle.merge(TextStyle(color = palette.onBackground)),
             cursorBrush = SolidColor(if (isError) palette.status.error else palette.brand.accent),
             visualTransformation = visualTransformation,
             keyboardOptions = keyboardOptions,
