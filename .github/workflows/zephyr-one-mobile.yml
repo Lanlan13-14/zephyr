@@ -169,9 +169,10 @@ jobs:
           version="$($ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")"
           test "$version" = '1.0.0'
 
-      # assembleDebug produces a debug-signed APK that installs as-is. Upload it
-      # so a green run yields a testable build instead of leaving the binary on
-      # the discarded runner, and so the release job has something to attach.
+      # assembleDebug is signed with the committed pre-release PKCS12, not the
+      # per-runner debug.keystore. That is what lets successive pre-releases
+      # update each other. Upload the APK so a green run yields a testable
+      # build and the release job has something to attach.
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4

@@ -11,6 +11,19 @@ android {
     namespace = ZephyrBuild.APPLICATION_ID
     compileSdk = ZephyrBuild.COMPILE_SDK
 
+    // One committed PKCS12 for every machine. assembleDebug used to pick up
+    // ~/.android/debug.keystore, which CI regenerates on every runner, so
+    // successive pre-release APKs could not update each other.
+    signingConfigs {
+        create("prerelease") {
+            storeFile = file("signing/zephyr-one-prerelease.p12")
+            storePassword = "zephyr-one-prerelease"
+            keyAlias = "zephyr-one"
+            keyPassword = "zephyr-one-prerelease"
+            storeType = "PKCS12"
+        }
+    }
+
     defaultConfig {
         applicationId = ZephyrBuild.APPLICATION_ID
         minSdk = ZephyrBuild.MIN_SDK
@@ -29,10 +42,12 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("prerelease")
         }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("prerelease")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Release must not permit cleartext or a trust-all verifier.
             manifestPlaceholders["usesCleartextTraffic"] = "false"

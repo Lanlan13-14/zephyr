@@ -45,6 +45,9 @@ zephyr_agent/macos/Pods/
 zephyr_agent/macos/.symlinks/
 *.jks
 *.keystore
+# The committed pre-release PKCS12 is the stable sideload identity. See
+# zephyr_one/mobile/android/app/signing/README.md. Real store keys stay ignored.
+!zephyr_one/mobile/android/app/signing/zephyr-one-prerelease.p12
 
 # Agent token data
 data/agent-tokens.json
