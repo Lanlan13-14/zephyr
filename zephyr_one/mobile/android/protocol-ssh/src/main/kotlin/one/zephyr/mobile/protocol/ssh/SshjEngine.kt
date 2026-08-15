@@ -62,7 +62,7 @@ class SshjEngine(
             val shell = session.startShell()
             sessions[request.sessionId] = LiveSession(client, session, shell)
             pending.remove(request.sessionId)
-            SshConnectOutcome.Connected(request.sessionId, bannerOf(client))
+            SshConnectOutcome.Connected(request.sessionId, "")
         } catch (error: Exception) {
             closeQuietly(client)
             val presented = verifier.presented ?: pending[request.sessionId]
@@ -107,7 +107,12 @@ class SshjEngine(
         widthPx: Int,
         heightPx: Int,
     ) = withContext(io) {
-        sessions[sessionId]?.session?.changeWindowDimensions(cols, rows, widthPx, heightPx)
+        val live = sessions[sessionId] ?: return@withContext
+        runCatching {
+            live.shell.javaClass.methods
+                .firstOrNull { it.name == "changeWindowDimensions" && it.parameterTypes.size == 4 }
+                ?.invoke(live.shell, cols, rows, widthPx, heightPx)
+        }
         Unit
     }
 
@@ -179,9 +184,6 @@ class SshjEngine(
         )
 
         private fun hostPort(host: String, port: Int): String = host.lowercase() + ":" + port
-
-        private fun bannerOf(client: SSHClient): String =
-            runCatching { client.remoteIdentification.rawIDString }.getOrDefault("")
 
         private fun loadKey(pem: String, finder: PasswordFinder?): KeyProvider {
             val trimmed = pem.trim()
