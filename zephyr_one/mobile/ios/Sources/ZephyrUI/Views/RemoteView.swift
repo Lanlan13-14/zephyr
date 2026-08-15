@@ -22,7 +22,7 @@ public struct RemoteView: View {
 
     public var body: some View {
         content
-            .navigationBarHidden(true)
+            .zephyrNavigationBarHidden(true)
             .confirmationDialog(
                 "证书确认",
                 isPresented: $showCertificate,

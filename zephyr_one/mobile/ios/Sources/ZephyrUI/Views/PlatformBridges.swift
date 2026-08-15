@@ -119,6 +119,16 @@ extension View {
         return AnyView(self)
         #endif
     }
+
+    /// Full-bleed remote chrome hides the system bar. `navigationBarHidden`
+    /// is unavailable on macOS, so the host compile must not see it.
+    func zephyrNavigationBarHidden(_ hidden: Bool) -> some View {
+        #if canImport(UIKit)
+        return AnyView(navigationBarHidden(hidden))
+        #else
+        return AnyView(self)
+        #endif
+    }
 }
 
 extension ToolbarItemPlacement {

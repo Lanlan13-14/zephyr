@@ -71,6 +71,8 @@ test('iOS operation chrome uses the same RDP tool set', () => {
   assert.match(iosChrome, /\.clipboard, \.fileDrive, \.shortcuts, \.joystick, \.cad/);
   assert.match(iosView, /toolsPanel\(/);
   assert.match(iosView, /viewModel\.connect\(\)/);
+  assert.match(iosView, /zephyrNavigationBarHidden\(true\)/);
+  assert.doesNotMatch(iosView, /\.navigationBarHidden\(true\)/);
   assert.doesNotMatch(iosView, /case \.sound:/);
   assert.doesNotMatch(iosView, /case \.certificate:/);
 });
