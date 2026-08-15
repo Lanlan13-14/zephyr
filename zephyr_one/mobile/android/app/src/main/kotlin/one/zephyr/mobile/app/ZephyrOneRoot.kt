@@ -1169,7 +1169,6 @@ private fun ToolsDestination(
             language = languageLabel,
             ai = AiWorkspaceBinding.settingsSummary(prefs),
         ),
-        onAddTool = { onOpenTool(ToolEntry.PROXY) },
         onOpenBatchExecution = onOpenBatch,
         onOpenDocker = { onOpenTool(ToolEntry.DOCKER) },
         onOpenMonitor = { onOpenTool(ToolEntry.MONITOR) },

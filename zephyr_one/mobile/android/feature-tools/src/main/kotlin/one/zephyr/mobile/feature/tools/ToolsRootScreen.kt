@@ -37,7 +37,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import one.zephyr.mobile.model.ActionGate
-import one.zephyr.mobile.ui.chrome.HeaderAddButton
 import one.zephyr.mobile.ui.chrome.RootPageHeader
 import one.zephyr.mobile.ui.island.islandContentBottomInset
 import one.zephyr.mobile.ui.theme.ZephyrRadius
@@ -70,7 +69,6 @@ data class ToolsRootSummaries(
 fun ToolsRootRoute(
     inventory: ToolsInventory,
     summaries: ToolsRootSummaries,
-    onAddTool: () -> Unit,
     onOpenBatchExecution: () -> Unit,
     onOpenDocker: () -> Unit,
     onOpenMonitor: () -> Unit,
@@ -95,7 +93,6 @@ fun ToolsRootRoute(
     ToolsRootScreen(
         inventory = inventory,
         summaries = summaries,
-        onAddTool = onAddTool,
         onOpenTool = { entry ->
             when (entry) {
                 ToolEntry.BATCH_EXEC -> onOpenBatchExecution()
@@ -127,15 +124,12 @@ fun ToolsRootRoute(
 fun ToolsRootScreen(
     inventory: ToolsInventory,
     summaries: ToolsRootSummaries,
-    onAddTool: () -> Unit,
     onOpenTool: (ToolEntry) -> Unit,
     onUnavailableTool: (ToolEntry, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxSize()) {
-        RootPageHeader(title = stringResource(R.string.tools_root_title)) {
-            HeaderAddButton(stringResource(R.string.tools_root_add), onAddTool)
-        }
+        RootPageHeader(title = stringResource(R.string.tools_root_title))
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = ZephyrSpacing.lg),
             contentPadding = PaddingValues(bottom = islandContentBottomInset()),
