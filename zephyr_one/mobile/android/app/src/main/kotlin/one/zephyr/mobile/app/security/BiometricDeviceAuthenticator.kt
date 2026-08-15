@@ -9,6 +9,7 @@ import androidx.fragment.app.FragmentActivity
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
 import one.zephyr.mobile.security.AuthResult
 import one.zephyr.mobile.security.BiometricAvailability
@@ -156,6 +157,6 @@ class BiometricDeviceAuthenticator(
 
     private class Attempt(
         val prompt: BiometricPrompt,
-        val continuation: kotlin.coroutines.Continuation<AuthResult>,
+        val continuation: CancellableContinuation<AuthResult>,
     )
 }
