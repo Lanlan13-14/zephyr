@@ -2,7 +2,6 @@
 <!-- English UI. values/ is zh-Hans. -->
 <resources>
     <string name="tools_root_title">Tools</string>
-    <string name="tools_root_add">Add tool</string>
     <string name="tools_section_remote">Remote ops</string>
     <string name="tools_section_resources">Resources</string>
     <string name="tools_section_ai">AI</string>

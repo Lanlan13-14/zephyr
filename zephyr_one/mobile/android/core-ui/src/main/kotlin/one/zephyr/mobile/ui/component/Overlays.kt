@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
@@ -34,6 +36,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlin.math.min
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
@@ -246,10 +249,11 @@ fun AlertDialog(
             decorFitsSystemWindows = false,
         ),
     ) {
-        Box(
-            modifier
+        BoxWithConstraints(
+            modifier = modifier
                 .fillMaxSize()
                 .background(palette.surfaces.scrim)
+                .imePadding()
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
@@ -257,29 +261,39 @@ fun AlertDialog(
                 ),
             contentAlignment = Alignment.BottomCenter,
         ) {
+            val availableHeight = min(maxHeight.value - 20f, 640f).coerceAtLeast(120f).dp
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .heightIn(max = availableHeight)
                     .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
                     .navigationBarsPadding()
-                    .heightIn(max = 640.dp)
-                    .verticalScroll(rememberScrollState())
                     .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
             ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
+                        .weight(1f, fill = false)
                         .clip(RoundedCornerShape(ZephyrRadius.lg))
-                        .background(palette.surfaces.floating)
-                        .padding(top = 16.dp, bottom = 8.dp),
+                        .background(palette.surfaces.floating),
                 ) {
                     if (title != null) {
-                        Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp), contentAlignment = Alignment.Center) {
+                        Box(
+                            Modifier.fillMaxWidth().padding(top = 16.dp, start = 20.dp, end = 20.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             ProvideContentColor(palette.onBackground, title)
                         }
                     }
                     if (text != null) {
-                        Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             ProvideContentColor(palette.onFloatingMuted, text)
                         }
                     }

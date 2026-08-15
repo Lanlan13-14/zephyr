@@ -5,7 +5,6 @@
 -->
 <resources>
     <string name="tools_root_title">工具</string>
-    <string name="tools_root_add">添加工具</string>
     <string name="tools_section_remote">远程操作</string>
     <string name="tools_section_resources">资源</string>
     <string name="tools_section_ai">AI</string>
