@@ -78,10 +78,23 @@ fun TerminalRoute(
     autoConnect: Boolean = false,
     twoFingerScrollGoesRemote: Boolean = false,
     modifier: Modifier = Modifier,
+    workspace: TerminalWorkspaceState? = null,
+    onWorkspace: (TerminalWorkspaceState) -> Unit = {},
+    sessions: List<SessionRow> = emptyList(),
+    connections: List<Connection> = emptyList(),
+    notes: List<Note> = emptyList(),
+    snippets: List<Snippet> = emptyList(),
+    paneViewModels: Map<String, TerminalViewModel> = emptyMap(),
+    onSelectSession: (String) -> Unit = {},
+    onCloseSession: (String) -> Unit = {},
+    onAddSession: (Connection) -> Unit = {},
+    onOpenNote: (String) -> Unit = {},
+    onOpenDocker: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val remoteTitle by viewModel.title.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
 
     var keyboardVisible by remember { mutableStateOf(true) }
 
@@ -103,12 +116,15 @@ fun TerminalRoute(
                 // straight to the guard: nothing reads it speculatively.
                 TerminalAction.PASTE ->
                     clipboard.getText()?.text?.let { text -> viewModel.controller.onPaste(text) }
+                TerminalAction.COPY -> Unit
                 // The controller already returned the viewport to the live output.
                 TerminalAction.SCROLL_MODE -> Unit
                 TerminalAction.SNIPPETS -> onDock(TerminalDockItem.SNIPPETS)
-                TerminalAction.SESSIONS -> onDock(TerminalDockItem.SESSIONS)
+                TerminalAction.SESSIONS -> Unit
                 TerminalAction.FILES -> onDock(TerminalDockItem.FILES)
                 TerminalAction.NOTES -> onDock(TerminalDockItem.NOTES)
+                TerminalAction.STATS -> onDock(TerminalDockItem.STATS)
+                TerminalAction.THEME -> onDock(TerminalDockItem.THEME)
                 TerminalAction.DISCONNECT -> viewModel.disconnect()
             }
         }
@@ -124,6 +140,48 @@ fun TerminalRoute(
         state = state,
         surfaceRevision = viewModel.surfaceRevision,
         readFrame = readFrame,
+        remoteTitle = remoteTitle,
+        keyboardVisible = keyboardVisible,
+        onIntent = { intent ->
+            dispatch(
+                viewModel = viewModel,
+                intent = intent,
+                twoFingerScrollGoesRemote = twoFingerScrollGoesRemote,
+                onKeyboardVisible = { visible -> keyboardVisible = visible },
+            )
+        },
+        modifier = modifier,
+        viewModel = viewModel,
+        workspace = workspace,
+        onWorkspace = onWorkspace,
+        sessions = sessions,
+        connections = connections,
+        notes = notes,
+        snippets = snippets,
+        paneViewModels = paneViewModels,
+        onSelectSession = onSelectSession,
+        onCloseSession = onCloseSession,
+        onAddSession = onAddSession,
+        onOpenNote = onOpenNote,
+        onOpenDocker = onOpenDocker,
+        onMessage = { msg -> coroutineScope.launch { onMessage(msg) } },
+        onCopy = {
+            val selected = viewModel.readScrollback(0, 24)
+            if (selected.isNotBlank()) {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(selected))
+                coroutineScope.launch { onMessage("已复制 · " + (state as? PageState.Content)?.value?.connection?.name.orEmpty()) }
+            } else {
+                coroutineScope.launch { onMessage("已复制 · " + (state as? PageState.Content)?.value?.connection?.name.orEmpty()) }
+            }
+        },
+        onPaste = {
+            clipboard.getText()?.text?.let { text ->
+                viewModel.controller.onPaste(text)
+                coroutineScope.launch { onMessage("已粘贴到 " + (state as? PageState.Content)?.value?.connection?.name.orEmpty()) }
+            }
+        },
+    )
+}
         remoteTitle = remoteTitle,
         keyboardVisible = keyboardVisible,
         onIntent = { intent ->

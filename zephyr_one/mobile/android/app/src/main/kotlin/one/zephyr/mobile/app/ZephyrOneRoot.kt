@@ -94,6 +94,7 @@ import one.zephyr.mobile.feature.sessions.TerminalRoute
 import one.zephyr.mobile.feature.sessions.TerminalViewModel
 import one.zephyr.mobile.feature.sessions.SimpleVtEmulator
 import one.zephyr.mobile.feature.sessions.SshTerminalHost
+import one.zephyr.mobile.feature.sessions.TerminalWorkspaceState
 import one.zephyr.mobile.feature.tools.BatchExecutionScreen
 import one.zephyr.mobile.feature.tools.BatchExecutionViewModel
 import one.zephyr.mobile.feature.tools.BatchIntent
@@ -706,26 +707,62 @@ private fun BoundRoot(
                 onMessage = { messages.emit(it) },
             )
 
-            is RootRoute.Terminal -> TerminalRoute(
-                viewModel = viewModel(
-                    key = "terminal:" + current.sessionId,
-                    factory = TerminalViewModel.Factory(
-                        sessionId = current.sessionId,
-                        connectionId = current.connectionId,
-                        registry = account.sessions,
-                        connections = account.connections,
-                        host = SshTerminalHost(
-                            engine = sshEngine,
-                            findConnection = { id -> account.connections.find(id) },
+            is RootRoute.Terminal -> {
+                val termSessions by account.sessions.rows.collectAsState(initial = emptyList())
+                val termConnections by account.connections.observeAll(ownerUserId).collectAsState(initial = emptyList())
+                val termNotes by account.notes.observeNotes(ownerUserId).collectAsState(initial = emptyList())
+                val termSnippets by account.notes.observeSnippets(ownerUserId).collectAsState(initial = emptyList())
+                var termWorkspace by remember(current.sessionId) {
+                    mutableStateOf(TerminalWorkspaceState(paneA = current.sessionId))
+                }
+                TerminalRoute(
+                    viewModel = viewModel(
+                        key = "terminal:" + current.sessionId,
+                        factory = TerminalViewModel.Factory(
+                            sessionId = current.sessionId,
+                            connectionId = current.connectionId,
+                            registry = account.sessions,
+                            connections = account.connections,
+                            host = SshTerminalHost(
+                                engine = sshEngine,
+                                findConnection = { id -> account.connections.find(id) },
+                            ),
+                            emulator = SimpleVtEmulator(),
+                            secretProvider = { connection -> account.terminalCredentials(connection) },
                         ),
-                        emulator = SimpleVtEmulator(),
-                        secretProvider = { connection -> account.terminalCredentials(connection) },
                     ),
-                ),
-                onDock = { item -> onTerminalDock(item, notice) { route = it } },
-                onMessage = { messages.emit(it) },
-                autoConnect = true,
-            )
+                    onDock = { item -> onTerminalDock(item, notice) { route = it } },
+                    onMessage = { messages.emit(it) },
+                    autoConnect = true,
+                    workspace = termWorkspace,
+                    onWorkspace = { termWorkspace = it },
+                    sessions = termSessions,
+                    connections = termConnections,
+                    notes = termNotes,
+                    snippets = termSnippets,
+                    onSelectSession = { id ->
+                        val target = termSessions.firstOrNull { it.sessionId == id }
+                        if (target != null) route = RootRoute.Terminal(target.sessionId, target.connectionId)
+                    },
+                    onCloseSession = { id ->
+                        account.sessions.close(id, System.currentTimeMillis())
+                        if (id == current.sessionId) {
+                            val remaining = termSessions.filter { it.protocol.isTerminal && it.transport.isLive && it.sessionId != id }
+                            if (remaining.isEmpty()) {
+                                route = RootRoute.Root(IslandDestination.SESSIONS)
+                                notice("所有会话已关闭")
+                            } else {
+                                route = RootRoute.Terminal(remaining.first().sessionId, remaining.first().connectionId)
+                            }
+                        }
+                    },
+                    onAddSession = { connection ->
+                        route = routeForProtocol(UUID.randomUUID().toString(), connection.id, connection.protocol)
+                    },
+                    onOpenNote = { id -> route = RootRoute.NoteEditor(id) },
+                    onOpenDocker = { route = RootRoute.Ops(OpsSection.DOCKER) },
+                )
+            }
 
             is RootRoute.Remote -> RemoteDestination(
                 route = current,

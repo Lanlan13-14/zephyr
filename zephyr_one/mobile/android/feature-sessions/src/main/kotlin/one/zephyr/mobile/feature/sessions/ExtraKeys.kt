@@ -31,7 +31,19 @@ sealed interface ExtraKey {
 
 enum class KeyModifier { CTRL, ALT, SHIFT, FN }
 
-enum class TerminalAction { TOGGLE_KEYBOARD, PASTE, SCROLL_MODE, SNIPPETS, SESSIONS, FILES, NOTES, DISCONNECT }
+enum class TerminalAction {
+    TOGGLE_KEYBOARD,
+    PASTE,
+    COPY,
+    SCROLL_MODE,
+    SNIPPETS,
+    SESSIONS,
+    FILES,
+    NOTES,
+    STATS,
+    THEME,
+    DISCONNECT,
+}
 
 /**
  * Latch state for one modifier.
@@ -136,7 +148,29 @@ object ExtraKeysLayout {
 
     val default: List<List<ExtraKey>> = listOf(row1, row2)
 
-    val all: List<ExtraKey> = row1 + row2
+    /**
+     * Demo `#page-terminal .keyrow` — one horizontal row, system IME instead of a 键盘 key.
+     *
+     * Esc Tab Ctrl Alt ← ↓ ↑ → | ~ / -
+     */
+    val demoRow: List<ExtraKey> = listOf(
+        ExtraKey.Key("esc", "Esc", TerminalKeyStroke(TerminalKey.Escape)),
+        ExtraKey.Key("tab", "Tab", TerminalKeyStroke(TerminalKey.Tab)),
+        ExtraKey.Modifier("ctrl", "Ctrl", KeyModifier.CTRL),
+        ExtraKey.Modifier("alt", "Alt", KeyModifier.ALT),
+        ExtraKey.Key("left", "←", TerminalKeyStroke(TerminalKey.ArrowLeft)),
+        ExtraKey.Key("down", "↓", TerminalKeyStroke(TerminalKey.ArrowDown)),
+        ExtraKey.Key("up", "↑", TerminalKeyStroke(TerminalKey.ArrowUp)),
+        ExtraKey.Key("right", "→", TerminalKeyStroke(TerminalKey.ArrowRight)),
+        ExtraKey.Key("pipe", "|", TerminalKeyStroke(TerminalKey.Character('|'.code))),
+        ExtraKey.Key("tilde", "~", TerminalKeyStroke(TerminalKey.Character('~'.code))),
+        ExtraKey.Key("slash", "/", TerminalKeyStroke(TerminalKey.Character('/'.code))),
+        ExtraKey.Key("dash", "-", TerminalKeyStroke(TerminalKey.Character('-'.code))),
+    )
+
+    val all: List<ExtraKey> = row1 + row2 + demoRow.filterNot { key ->
+        row1.any { it.id == key.id } || row2.any { it.id == key.id }
+    }
 
     fun byId(id: String): ExtraKey? = all.firstOrNull { it.id == id }
 

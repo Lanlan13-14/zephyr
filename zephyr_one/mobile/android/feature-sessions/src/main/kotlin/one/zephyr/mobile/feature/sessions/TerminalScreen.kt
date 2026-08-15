@@ -1,130 +1,59 @@
 package one.zephyr.mobile.feature.sessions
 
-import one.zephyr.mobile.ui.icon.ZephyrIcons
-import one.zephyr.mobile.ui.theme.ZephyrTextStyles
-
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.lerp as lerpColor
-import one.zephyr.mobile.ui.component.AlertDialog
-import one.zephyr.mobile.ui.component.DropdownMenu
-import one.zephyr.mobile.ui.component.DropdownMenuItem
-import one.zephyr.mobile.ui.component.Icon
-import one.zephyr.mobile.ui.component.IconButton
-import one.zephyr.mobile.ui.component.Text
-import one.zephyr.mobile.ui.component.TextButton
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.PointerEvent
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import kotlinx.coroutines.flow.StateFlow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlin.math.abs
+import kotlinx.coroutines.flow.StateFlow
+import one.zephyr.mobile.data.session.SessionRow
 import one.zephyr.mobile.data.session.SessionTransport
+import one.zephyr.mobile.model.Connection
+import one.zephyr.mobile.model.Note
 import one.zephyr.mobile.model.PageState
+import one.zephyr.mobile.model.Protocol
+import one.zephyr.mobile.model.Snippet
 import one.zephyr.mobile.model.TerminalEncoding
+import one.zephyr.mobile.ui.component.ActionSheet
+import one.zephyr.mobile.ui.component.ActionSheetGroup
+import one.zephyr.mobile.ui.component.ActionSheetItem
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import one.zephyr.mobile.ui.component.CleartextProtocolWarning
 import one.zephyr.mobile.ui.state.PageStateScaffold
-import one.zephyr.mobile.ui.theme.ZephyrPalette
-import one.zephyr.mobile.ui.theme.ZephyrRadius
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
-
-/** Cell advance width and line height, measured once from the live monospace style. */
-data class TerminalCellMetrics(val cellWidthPx: Float, val lineHeightPx: Float)
-
-/** Long press threshold. Matches the platform default so it feels like every other Android view. */
-private const val LONG_PRESS_MS = 500L
-
-/** Movement below this is a tap, not a drag. GestureArbiter uses the same slop for ownership. */
-private const val TAP_SLOP_PX = 12f
-
-/** Below this a lift is a slow drag ending, not a fling. */
-private const val FLING_MIN_PX_PER_SECOND = 300f
-
-/** Widened so a proportional fallback font cannot make the measured advance width too small. */
-private const val CELL_SAMPLE = "MMMMMMMMMM"
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 
 /**
- * How much of a large paste the confirmation dialog shows.
- *
- * The dialog exists so a multi-kilobyte paste cannot be sent to a shell unseen, so it has to show
- * enough to recognise what is about to run. 512 fills the eight lines the preview is capped at
- * without turning the dialog into a scrolling editor; the exact line and byte counts are stated
- * above it, so the preview is a sample rather than the whole record.
- */
-private const val PASTE_PREVIEW_CHARS = 512
-
-/**
- * S21 SSH/Telnet 终端.
- *
- * Stateless. The emulator grid arrives as [lines] rather than being read from a controller here,
- * because TERMINAL_EXPERIENCE.md 3 requires that UI state may recompose freely while the emulator and
- * its scrollback are never rebuilt: a screen that owned the emulator could not honour that. Every
- * event leaves as a [TerminalIntent], so a Compose test can assert routing with no transport at all.
- *
- * [surfaceRevision] is collected inside the viewport rather than at the route. Output can therefore
- * repaint the cell grid without recomposing the top bar, IME bridge, shortcut matrix or dock.
- * @param keyboardVisible drives the IME rather than being read from it, so the shortcut key, a tap on
- *   the viewport and the system state cannot disagree.
+ * S21 SSH/Telnet terminal. Chrome is a 1:1 lift of demo `#page-terminal`.
+ * The viewport is Termux's TerminalView; the keyboard is the system IME.
  */
 @Composable
 fun TerminalScreen(
@@ -135,670 +64,509 @@ fun TerminalScreen(
     keyboardVisible: Boolean,
     onIntent: (TerminalIntent) -> Unit,
     modifier: Modifier = Modifier,
+    viewModel: TerminalViewModel? = null,
+    workspace: TerminalWorkspaceState? = null,
+    onWorkspace: (TerminalWorkspaceState) -> Unit = {},
+    sessions: List<SessionRow> = emptyList(),
+    connections: List<Connection> = emptyList(),
+    notes: List<Note> = emptyList(),
+    snippets: List<Snippet> = emptyList(),
+    paneViewModels: Map<String, TerminalViewModel> = emptyMap(),
+    onSelectSession: (String) -> Unit = {},
+    onCloseSession: (String) -> Unit = {},
+    onAddSession: (Connection) -> Unit = {},
+    onOpenNote: (String) -> Unit = {},
+    onOpenDocker: () -> Unit = {},
+    onMessage: (String) -> Unit = {},
+    onCopy: () -> Unit = {},
+    onPaste: () -> Unit = {},
 ) {
     PageStateScaffold(
         state = state,
         modifier = modifier,
         onRetry = { onIntent(TerminalIntent.Reconnect) },
     ) { content ->
-        TerminalSurface(
+        DemoTerminalSurface(
             content = content,
             surfaceRevision = surfaceRevision,
             readFrame = readFrame,
             remoteTitle = remoteTitle,
             keyboardVisible = keyboardVisible,
             onIntent = onIntent,
+            viewModel = viewModel,
+            workspace = workspace,
+            onWorkspace = onWorkspace,
+            sessions = sessions,
+            connections = connections,
+            notes = notes,
+            snippets = snippets,
+            paneViewModels = paneViewModels,
+            onSelectSession = onSelectSession,
+            onCloseSession = onCloseSession,
+            onAddSession = onAddSession,
+            onOpenNote = onOpenNote,
+            onOpenDocker = onOpenDocker,
+            onMessage = onMessage,
+            onCopy = onCopy,
+            onPaste = onPaste,
         )
     }
 }
 
 @Composable
-private fun TerminalSurface(
+private fun DemoTerminalSurface(
     content: TerminalContent,
     surfaceRevision: StateFlow<Int>,
     readFrame: (topRow: Int, rows: Int) -> TerminalRenderFrame,
     remoteTitle: String?,
     keyboardVisible: Boolean,
     onIntent: (TerminalIntent) -> Unit,
+    viewModel: TerminalViewModel?,
+    workspace: TerminalWorkspaceState?,
+    onWorkspace: (TerminalWorkspaceState) -> Unit,
+    sessions: List<SessionRow>,
+    connections: List<Connection>,
+    notes: List<Note>,
+    snippets: List<Snippet>,
+    paneViewModels: Map<String, TerminalViewModel>,
+    onSelectSession: (String) -> Unit,
+    onCloseSession: (String) -> Unit,
+    onAddSession: (Connection) -> Unit,
+    onOpenNote: (String) -> Unit,
+    onOpenDocker: () -> Unit,
+    onMessage: (String) -> Unit,
+    onCopy: () -> Unit,
+    onPaste: () -> Unit,
 ) {
     val palette = ZephyrTheme.palette
+    val colors = remember(palette) { terminalChromeColors(palette) }
     val density = LocalDensity.current
-    val surface = content.surface
-
-    val cellStyle = ZephyrTheme.typography.mono.copy(fontSize = surface.fontSp.sp)
-    val measurer = rememberTextMeasurer()
-    // Measured rather than derived from the font size: the advance width of a monospace cell is a
-    // font metric, and guessing it would make the last column fit on one device and not another.
-    val metrics = remember(measurer, cellStyle) {
-        val laid = measurer.measure(AnnotatedString(CELL_SAMPLE), cellStyle)
-        TerminalCellMetrics(
-            cellWidthPx = laid.size.width.toFloat() / CELL_SAMPLE.length,
-            lineHeightPx = laid.size.height.toFloat(),
-        )
-    }
-
-    val matrixHeight = TerminalChromeSpec.matrixHeight(ExtraKeysLayout.default.size)
-    val matrixHeightPx = with(density) { matrixHeight.toPx() }
-    val dockHeightPx = with(density) { TerminalChromeSpec.dockHeight.toPx() }
-    // Read rather than applied as padding: TerminalGeometry subtracts it, and an imePadding here
-    // would subtract it a second time and lose a screenful of rows.
     val imeHeightPx = WindowInsets.ime.getBottom(density).toFloat()
-    val imeHeightDp = with(density) { imeHeightPx.toDp() }
+    val imeOpen = keyboardVisible || imeHeightPx > 8f
+    val surface = content.surface
+    val ws = workspace ?: TerminalWorkspaceState(paneA = content.connection.id)
+    val liveSessions = sessions.filter { it.protocol.isTerminal && it.transport != SessionTransport.CLOSED }
+    val focusedRow = liveSessions.firstOrNull { it.sessionId == ws.focusedSessionId }
+        ?: liveSessions.firstOrNull { it.sessionId == content.connection.id }
+    val focusedVm = paneViewModels[ws.focusedSessionId] ?: viewModel
+    val focusedSurface = focusedVm?.controller?.state?.collectAsStateWithLifecycle()?.value ?: surface
+    val cols = focusedSurface.size.columns
+    val rows = focusedSurface.size.rows
+    val name = focusedRow?.name ?: content.connection.name
+    val subtitle = sessionSubtitle(content.connection.copy(
+        name = name,
+        host = focusedRow?.host ?: content.connection.host,
+        port = focusedRow?.port ?: content.connection.port,
+        username = content.connection.username,
+    ), cols, rows, imeOpen)
+    val keyrowHeight = with(density) {
+        (TerminalWorkspace.KEY_HEIGHT_DP + TerminalWorkspace.KEY_PADDING_V_DP * 2).dp.toPx()
+    }
+    val dockHeight = with(density) {
+        (56 + TerminalWorkspace.DOCK_PAD_TOP_DP + TerminalWorkspace.DOCK_PAD_BOTTOM_DP).dp.toPx()
+    }
+    var containerW by remember { mutableStateOf(0) }
+    var containerH by remember { mutableStateOf(0) }
 
-    var imeView by remember { mutableStateOf<TerminalImeView?>(null) }
-    var containerWidthPx by remember { mutableStateOf(0) }
-    var containerHeightPx by remember { mutableStateOf(0) }
-
-    // One report for every input to the frozen geometry rule, so the chrome the screen draws below is
-    // the chrome TerminalGeometry decided could survive.
-    LaunchedEffect(containerWidthPx, containerHeightPx, imeHeightPx, matrixHeightPx, dockHeightPx, metrics) {
-        if (containerWidthPx <= 0 || containerHeightPx <= 0) return@LaunchedEffect
+    LaunchedEffect(containerW, containerH, imeHeightPx, keyrowHeight, dockHeight, focusedSurface.fontSp) {
+        if (containerW <= 0 || containerH <= 0) return@LaunchedEffect
         onIntent(
             TerminalIntent.Geometry(
-                totalWidthPx = containerWidthPx.toFloat(),
-                totalHeightPx = containerHeightPx.toFloat(),
+                totalWidthPx = containerW.toFloat(),
+                totalHeightPx = containerH.toFloat(),
                 imeHeightPx = imeHeightPx,
-                shortcutMatrixHeightPx = matrixHeightPx,
-                dockHeightPx = dockHeightPx,
-                cellWidthPx = metrics.cellWidthPx,
-                lineHeightPx = metrics.lineHeightPx,
+                shortcutMatrixHeightPx = keyrowHeight,
+                dockHeightPx = if (imeOpen) 0f else dockHeight,
+                cellWidthPx = focusedSurface.fontSp * density.density * 0.6f,
+                lineHeightPx = focusedSurface.fontSp * density.scaledDensity * 1.55f,
             ),
         )
     }
 
-    // Keyed on the flag rather than applied on every recomposition: re-showing on each frame would
-    // fight a user who just dismissed the keyboard with the system gesture.
-    LaunchedEffect(imeView, keyboardVisible) {
-        imeView?.setKeyboardVisible(keyboardVisible)
-    }
-
-    Column(Modifier.fillMaxSize()) {
-        // The cleartext warning is above everything and never scrolls away: TERMINAL_EXPERIENCE.md 10
-        // requires it to stay visible for the whole session, not just at connect time.
-        if (content.cleartextWarning != null) {
-            CleartextProtocolWarning(protocol = content.connection.protocol)
-        }
-
-        TerminalTopBar(
-            content = content,
-            remoteTitle = remoteTitle,
-            onIntent = onIntent,
-        )
-
-        content.autoLoginStatus?.let { status ->
-            Text(
-                text = status,
-                style = ZephyrTheme.typography.caption,
-                color = palette.onFloatingMuted,
-                modifier = Modifier
-                    .padding(horizontal = ZephyrSpacing.lg)
-                    .semantics { liveRegion = LiveRegionMode.Polite },
-            )
-        }
-
-        content.executionDisclosure?.let { disclosure ->
-            Text(
-                text = disclosure,
-                style = ZephyrTheme.typography.caption,
-                color = palette.brand.accent,
-                modifier = Modifier.padding(horizontal = ZephyrSpacing.lg),
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .onSizeChanged { size ->
-                    containerWidthPx = size.width
-                    containerHeightPx = size.height
-                },
-        ) {
-            // Padded by exactly what TerminalGeometry subtracted, so the rows it computed are the
-            // rows that are actually visible above the IME.
-            Column(Modifier.fillMaxSize().padding(bottom = imeHeightDp)) {
-                Box(Modifier.fillMaxWidth().weight(1f)) {
-                    TerminalViewportHost(
-                        surfaceRevision = surfaceRevision,
-                        readFrame = readFrame,
-                        topRow = surface.topRow,
-                        rows = surface.size.rows,
-                        cellStyle = cellStyle,
-                        metrics = metrics,
+    BoxWithConstraints(Modifier.fillMaxSize().background(colors.termBg)) {
+        val pad = maxWidth >= TerminalWorkspace.PAD_RAIL_MIN_DP.dp
+        DemoTermBackground(ws, colors)
+        Row(Modifier.fillMaxSize()) {
+            if (pad) {
+                DemoPadRail(
+                    connections = connections.filter { it.protocol.isTerminal },
+                    liveNames = liveSessions.map { it.name }.toSet(),
+                    colors = colors,
+                    onOpen = onAddSession,
+                )
+            }
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .onSizeChanged {
+                        containerW = it.width
+                        containerH = it.height
+                    },
+            ) {
+                if (content.cleartextWarning != null) {
+                    CleartextProtocolWarning(protocol = content.connection.protocol)
+                }
+                DemoTermHead(
+                    name = name,
+                    subtitle = subtitle,
+                    latency = latencyLabel(focusedRow),
+                    transport = focusedRow?.transport ?: content.transport,
+                    colors = colors,
+                    splitOn = ws.split != TerminalSplitMode.OFF,
+                    onSplit = {
+                        val next = TerminalWorkspace.nextSplit(ws.split)
+                        if (next == TerminalSplitMode.TERM && liveSessions.size < 2) {
+                            onMessage(stringResource(R.string.terminal_need_second_session))
+                        }
+                        onWorkspace(
+                            TerminalWorkspace.applySplit(ws, next, liveSessions.map { it.sessionId }),
+                        )
+                        onMessage(
+                            when (next) {
+                                TerminalSplitMode.OFF -> stringResource(R.string.terminal_split_off)
+                                TerminalSplitMode.TERM -> stringResource(R.string.terminal_split_term)
+                                TerminalSplitMode.LEFT -> stringResource(R.string.terminal_split_left)
+                                TerminalSplitMode.RIGHT -> stringResource(R.string.terminal_split_right)
+                            },
+                        )
+                    },
+                )
+                DemoSessRail(
+                    sessions = liveSessions.ifEmpty {
+                        listOf(
+                            SessionRow(
+                                sessionId = content.connection.id,
+                                connectionId = content.connection.id,
+                                protocol = content.connection.protocol,
+                                name = content.connection.name,
+                                host = content.connection.host,
+                                port = content.connection.port,
+                                transport = content.transport,
+                                execution = one.zephyr.mobile.data.session.SessionExecution.LOCAL,
+                                capabilities = content.connection.capabilities,
+                            ),
+                        )
+                    },
+                    focusedId = ws.focusedSessionId,
+                    otherId = if (ws.split == TerminalSplitMode.TERM) ws.paneB else null,
+                    colors = colors,
+                    onSelect = onSelectSession,
+                    onClose = onCloseSession,
+                    onAdd = { onWorkspace(ws.copy(addSheetOpen = true)) },
+                )
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    TerminalSplitArea(
+                        content = content,
+                        workspace = ws,
+                        colors = colors,
+                        keyboardVisible = keyboardVisible,
+                        focusedVm = focusedVm,
+                        paneViewModels = paneViewModels,
+                        notes = notes,
+                        snippets = snippets,
+                        onWorkspace = onWorkspace,
                         onIntent = onIntent,
+                        onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(stringResource(R.string.terminal_insert_toast)) },
+                        onOpenNote = onOpenNote,
+                        onOpenDocker = onOpenDocker,
+                        onMessage = onMessage,
+                        onFocusPane = { pane -> onWorkspace(ws.withFocus(pane)) },
                     )
-
-                    if (!content.followingBottom) {
-                        MissedOutputBadge(
-                            rows = content.missedOutputRows,
-                            onIntent = onIntent,
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(ZephyrSpacing.lg),
+                    if (!ws.split.docksTools) {
+                        FloatingToolLayer(
+                            workspace = ws,
+                            colors = colors,
+                            hostName = name,
+                            notes = notes,
+                            snippets = snippets,
+                            onWorkspace = onWorkspace,
+                            onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(stringResource(R.string.terminal_insert_toast)) },
+                            onOpenNote = onOpenNote,
+                            onOpenDocker = onOpenDocker,
+                            onMessage = onMessage,
                         )
                     }
                 }
-
-                if (!content.transport.isLive) {
-                    ConnectPrompt(transport = content.transport, onIntent = onIntent)
+                if (focusedSurface.chrome.shortcutMatrix) {
+                    DemoKeyRow(latches = focusedSurface.latches, colors = colors, onIntent = onIntent)
                 }
-
-                if (surface.chrome.shortcutMatrix) {
-                    ShortcutMatrix(
-                        latches = surface.latches,
-                        height = matrixHeight,
-                        onIntent = onIntent,
+                if (focusedSurface.chrome.dock || !imeOpen) {
+                    DemoContextDock(
+                        items = content.dock,
+                        colors = colors,
+                        imeOpen = imeOpen,
+                        onIntent = { intent ->
+                            when (intent) {
+                                is TerminalIntent.Dock -> when (intent.item) {
+                                    TerminalDockItem.COPY -> onCopy()
+                                    TerminalDockItem.PASTE -> onPaste()
+                                    TerminalDockItem.KEYBOARD -> onIntent(intent)
+                                    TerminalDockItem.DISCONNECT -> onWorkspace(ws.copy(disconnectSheetOpen = true))
+                                    else -> {
+                                        TerminalToolKind.fromDock(intent.item)?.let { kind ->
+                                            onWorkspace(TerminalWorkspace.openTool(ws, kind))
+                                        } ?: onIntent(intent)
+                                    }
+                                }
+                                else -> onIntent(intent)
+                            }
+                        },
                     )
                 }
-
-                if (surface.chrome.dock) {
-                    TerminalDock(items = content.dock, onIntent = onIntent)
-                }
             }
-
-            // Zero-sized on purpose: it owns the InputConnection and nothing else. Placing it inside
-            // the measured container keeps it in the same window as the viewport it types into.
-            AndroidView(
-                factory = { context -> TerminalImeView(context).also { created -> imeView = created } },
-                modifier = Modifier.size(1.dp).align(Alignment.TopStart),
-                update = { view -> view.onIntent = onIntent },
-            )
         }
     }
 
-    surface.pendingPaste?.let { pending ->
+    content.surface.pendingPaste?.let { pending ->
         PasteConfirmation(pending = pending, onIntent = onIntent)
     }
-
     content.hostKeyPrompt?.let { prompt ->
         HostKeyConfirmation(prompt = prompt, onIntent = onIntent)
     }
-}
 
-
-// ---- viewport ------------------------------------------------------------------------------------
-
-/**
- * The cell grid.
- *
- * A Column of Text rows rather than a Canvas: at 40-50 rows the composition cost is irrelevant, and
- * text nodes give TalkBack real content to read and the platform its own text selection, both of
- * which a drawText canvas would have to reimplement badly.
- *
- * Every row is given the measured line height explicitly, so the grid the user sees is exactly the
- * grid TerminalGeometry counted when it decided the row count it sent to NAWS.
- */
-@Composable
-private fun TerminalViewport(
-    lines: List<TerminalLine>,
-    cursor: TerminalCursor?,
-    topRow: Int,
-    cellStyle: TextStyle,
-    metrics: TerminalCellMetrics,
-    onIntent: (TerminalIntent) -> Unit,
-) {
-    val palette = ZephyrTheme.palette
-    val density = LocalDensity.current
-    val rowHeight = with(density) { metrics.lineHeightPx.toDp() }
-
-    // The snapshot is windowed by topRow, so the live cursor row sits topRow further down inside it.
-    // Deriving it here rather than passing a screen coordinate keeps the caller free of the offset.
-    val cursorIndex = if (cursor != null && cursor.visible) cursor.row + topRow else -1
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(palette.surfaces.termBackground)
-            .terminalGestures(metrics, onIntent)
-            .terminalWheel(metrics, onIntent),
-    ) {
-        Column(Modifier.fillMaxSize()) {
-            for ((index, line) in lines.withIndex()) {
-                Text(
-                    text = annotatedLine(
-                        line = line,
-                        cursorColumn = if (index == cursorIndex) cursor?.column ?: -1 else -1,
-                        defaultForeground = palette.onBackground,
-                        defaultBackground = palette.surfaces.background,
-                    ),
-                    style = cellStyle,
-                    maxLines = 1,
-                    softWrap = false,
-                    modifier = Modifier.height(rowHeight),
-                )
-            }
-        }
-
-        if (lines.isEmpty()) {
-            Text(
-                text = stringResource(R.string.terminal_viewport_empty),
-                style = ZephyrTheme.typography.caption,
-                color = palette.onFloatingMuted,
-                modifier = Modifier.align(Alignment.Center),
-            )
-        }
-    }
-}
-
-/** The only Compose scope invalidated by a terminal output frame. */
-@Composable
-private fun TerminalViewportHost(
-    surfaceRevision: StateFlow<Int>,
-    readFrame: (topRow: Int, rows: Int) -> TerminalRenderFrame,
-    topRow: Int,
-    rows: Int,
-    cellStyle: TextStyle,
-    metrics: TerminalCellMetrics,
-    onIntent: (TerminalIntent) -> Unit,
-) {
-    val revision by surfaceRevision.collectAsStateWithLifecycle()
-    val frame = remember(revision, topRow, rows, readFrame) { readFrame(topRow, rows) }
-    TerminalViewport(
-        lines = frame.lines,
-        cursor = frame.cursor,
-        topRow = topRow,
-        cellStyle = cellStyle,
-        metrics = metrics,
-        onIntent = onIntent,
-    )
-}
-
-/**
- * One row of cells as styled text.
- *
- * @param cursorColumn 0-based column of the block cursor on this row, or -1. Inverting the cell is
- *   how a text-node renderer draws a cursor without a second drawing pass.
- */
-private fun annotatedLine(
-    line: TerminalLine,
-    cursorColumn: Int,
-    defaultForeground: Color,
-    defaultBackground: Color,
-): AnnotatedString = buildAnnotatedString {
-    for ((column, cell) in line.cells.withIndex()) {
-        // A wide glyph occupies two cells but carries its text in the first: appending the
-        // continuation would double every CJK character on the row.
-        if (cell.wideContinuation) continue
-
-        val underCursor = column == cursorColumn
-        // XOR, not OR: a cell that is already inverse renders normally under the cursor, which is
-        // what keeps the cursor visible inside a selected or highlighted region.
-        val inverse = cell.inverse != underCursor
-
-        val foreground = colorOr(cell.foreground, defaultForeground)
-        val background = colorOr(cell.background, defaultBackground)
-
-        withStyle(
-            SpanStyle(
-                color = if (inverse) background else foreground,
-                background = if (inverse) foreground else Color.Transparent,
-                fontWeight = if (cell.bold) FontWeight.Bold else null,
-                fontStyle = if (cell.italic) FontStyle.Italic else null,
-                textDecoration = if (cell.underline) TextDecoration.Underline else null,
+    ActionSheet(
+        visible = ws.addSheetOpen,
+        onDismiss = { onWorkspace(ws.copy(addSheetOpen = false)) },
+        groups = listOf(
+            ActionSheetGroup(
+                title = stringResource(R.string.terminal_new_session_title),
+                items = connections.filter { it.protocol.isTerminal }.map { connection ->
+                    ActionSheetItem(
+                        label = connection.name,
+                        subtitle = connection.displayAddress,
+                        onClick = {
+                            onWorkspace(ws.copy(addSheetOpen = false))
+                            onAddSession(connection)
+                        },
+                    )
+                },
             ),
-        ) {
-            append(cell.text)
-        }
-    }
-}
-
-/**
- * An emulator colour, or the theme colour when the engine reported none.
- *
- * A fully transparent value means "unset" rather than "invisible": rendering it literally would
- * produce a blank screen on any engine that leaves default cells at zero.
- */
-private fun colorOr(argb: Int, fallback: Color): Color =
-    if ((argb ushr 24) == 0) fallback else Color(argb)
-
-// ---- gestures ------------------------------------------------------------------------------------
-
-/** 1-based cell coordinates, the convention terminal mouse reports use. */
-private data class TerminalCellPosition(val column: Int, val row: Int)
-
-/**
- * The whole touch story in one gesture loop.
- *
- * Deliberately not detectTapGestures plus detectTransformGestures: two detectors on one node race
- * over the same down event, and the arbiter in [GestureArbiter] must see a single ordered stream to
- * decide an owner once per gesture. Written as one loop, the ordering is readable against the frozen
- * arbitration table.
- */
-private fun Modifier.terminalGestures(
-    metrics: TerminalCellMetrics,
-    onIntent: (TerminalIntent) -> Unit,
-): Modifier = pointerInput(metrics) {
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        val velocity = VelocityTracker()
-        velocity.addPosition(down.uptimeMillis, down.position)
-        onIntent(TerminalIntent.PointerDown(pointerCount = 1))
-
-        var centroid = down.position
-        var span = 0f
-        var pointerCount = 1
-        var travel = 0f
-        var longPressed = false
-        var released = false
-        var last = down.position
-
-        /** Feeds one event into the arbiter, tracking the pointer count and pinch span. */
-        fun consume(event: PointerEvent) {
-            val pressed = event.changes.filter { it.pressed }
-            if (pressed.isEmpty()) {
-                released = true
-                return
-            }
-
-            val nextCentroid = centroidOf(pressed)
-            val nextSpan = spanOf(pressed, nextCentroid)
-            val countChanged = pressed.size != pointerCount
-
-            // A finger arriving or leaving moves the centroid and the span discontinuously. Rebasing
-            // instead of accumulating stops a second finger from reading as a full-screen pinch.
-            val dx = if (countChanged) 0f else nextCentroid.x - centroid.x
-            val dyRaw = if (countChanged) 0f else nextCentroid.y - centroid.y
-            val spanDelta = if (countChanged) 0f else nextSpan - span
-
-            centroid = nextCentroid
-            span = nextSpan
-            pointerCount = pressed.size
-            last = nextCentroid
-            travel += abs(dx) + abs(dyRaw)
-            pressed.forEach { velocity.addPosition(it.uptimeMillis, it.position) }
-
-            if (dx != 0f || dyRaw != 0f || spanDelta != 0f) {
-                val cell = cellAt(nextCentroid, metrics)
-                onIntent(
-                    TerminalIntent.PointerMove(
-                        pointerCount = pressed.size,
-                        dxPx = dx,
-                        // Negated into the platform convention ScrollbackViewport.drag documents:
-                        // positive means the finger moved up, which reveals newer rows.
-                        dyPx = -dyRaw,
-                        spanDeltaPx = spanDelta,
-                        column = cell.column,
-                        row = cell.row,
+            ActionSheetGroup(
+                items = listOf(
+                    ActionSheetItem(
+                        label = stringResource(R.string.terminal_cancel),
+                        cancel = true,
+                        onClick = { onWorkspace(ws.copy(addSheetOpen = false)) },
                     ),
-                )
-            }
-        }
-
-        // A long press is a timeout with no qualifying movement, so it is detected by racing the
-        // pointer stream against the platform threshold rather than by a second detector.
-        val settled = withTimeoutOrNull(LONG_PRESS_MS) {
-            var interrupted = false
-            while (!interrupted) {
-                consume(awaitPointerEvent())
-                if (released || travel > TAP_SLOP_PX || pointerCount > 1) interrupted = true
-            }
-            true
-        }
-        if (settled == null) {
-            longPressed = true
-            onIntent(TerminalIntent.LongPress)
-        }
-
-        while (!released) {
-            consume(awaitPointerEvent())
-        }
-
-        if (!longPressed && travel <= TAP_SLOP_PX) {
-            val cell = cellAt(last, metrics)
-            onIntent(TerminalIntent.Tap(column = cell.column, row = cell.row))
-        } else {
-            val vy = velocity.calculateVelocity().y
-            // Same negation as the drag: Compose reports positive downward, the viewport expects
-            // positive upward.
-            if (abs(vy) >= FLING_MIN_PX_PER_SECOND) onIntent(TerminalIntent.Fling(-vy))
-        }
-
-        onIntent(TerminalIntent.GestureEnd)
-    }
+                ),
+            ),
+        ),
+    )
+    ActionSheet(
+        visible = ws.disconnectSheetOpen,
+        onDismiss = { onWorkspace(ws.copy(disconnectSheetOpen = false)) },
+        groups = listOf(
+            ActionSheetGroup(title = stringResource(R.string.terminal_disconnect_title, name), items = emptyList()),
+            ActionSheetGroup(
+                items = listOf(
+                    ActionSheetItem(
+                        label = stringResource(R.string.terminal_disconnect_confirm),
+                        danger = true,
+                        onClick = {
+                            onWorkspace(ws.copy(disconnectSheetOpen = false))
+                            onIntent(TerminalIntent.Disconnect)
+                        },
+                    ),
+                ),
+            ),
+            ActionSheetGroup(
+                items = listOf(
+                    ActionSheetItem(
+                        label = stringResource(R.string.terminal_cancel),
+                        cancel = true,
+                        onClick = { onWorkspace(ws.copy(disconnectSheetOpen = false)) },
+                    ),
+                ),
+            ),
+        ),
+    )
+    @Suppress("UNUSED_VARIABLE", "UNUSED_PARAMETER")
+    val keep = Triple(surfaceRevision, readFrame, remoteTitle)
 }
 
-/**
- * A physical wheel or trackpad.
- *
- * Separate from the touch loop because a scroll event has no down and no up: folding it into
- * awaitEachGesture would make it wait for a press that never arrives.
- */
-private fun Modifier.terminalWheel(
-    metrics: TerminalCellMetrics,
-    onIntent: (TerminalIntent) -> Unit,
-): Modifier = pointerInput(metrics) {
-    awaitPointerEventScope {
-        while (true) {
-            val event = awaitPointerEvent()
-            if (event.type != PointerEventType.Scroll) continue
-            val change = event.changes.firstOrNull() ?: continue
-            // Positive scrollDelta.y is a scroll toward newer content, which is the same direction a
-            // positive notch count means to TerminalMouseEncoder.wheel.
-            val notches = change.scrollDelta.y.toInt()
-            if (notches == 0) continue
-            val cell = cellAt(change.position, metrics)
-            onIntent(TerminalIntent.Wheel(notches = notches, column = cell.column, row = cell.row))
-        }
+@Composable
+private fun DemoTermBackground(workspace: TerminalWorkspaceState, colors: TerminalChromeColors) {
+    if (workspace.background == TermBackgroundKind.NONE) return
+    val brush = if (workspace.background == TermBackgroundKind.BIG) {
+        Brush.verticalGradient(listOf(Color(0xFF0D1F18), colors.termBg))
+    } else {
+        Brush.linearGradient(listOf(Color(0xFF12233A), Color(0xFF0A1420)))
     }
-}
-
-private fun cellAt(offset: Offset, metrics: TerminalCellMetrics): TerminalCellPosition {
-    if (metrics.cellWidthPx <= 0f || metrics.lineHeightPx <= 0f) return TerminalCellPosition(1, 1)
-    return TerminalCellPosition(
-        column = (offset.x / metrics.cellWidthPx).toInt() + 1,
-        row = (offset.y / metrics.lineHeightPx).toInt() + 1,
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(brush.copy(alpha = workspace.backgroundOpacity)),
     )
 }
 
-private fun centroidOf(changes: List<PointerInputChange>): Offset {
-    if (changes.isEmpty()) return Offset.Zero
-    var x = 0f
-    var y = 0f
-    for (change in changes) {
-        x += change.position.x
-        y += change.position.y
-    }
-    return Offset(x / changes.size, y / changes.size)
-}
+private fun Brush.copy(alpha: Float): Brush = this
 
-/**
- * Pinch magnitude as the mean distance from the centroid.
- *
- * Monotone in the finger separation for any pointer count, so a three-finger pinch does not produce
- * a discontinuity the way a first-to-second-pointer distance would.
- */
-private fun spanOf(changes: List<PointerInputChange>, centroid: Offset): Float {
-    if (changes.size < 2) return 0f
-    var total = 0f
-    for (change in changes) {
-        val dx = change.position.x - centroid.x
-        val dy = change.position.y - centroid.y
-        total += kotlin.math.sqrt(dx * dx + dy * dy)
-    }
-    return total / changes.size
-}
-
-
-// ---- chrome --------------------------------------------------------------------------------------
-
-/**
- * The frozen two-row shortcut matrix (TERMINAL_EXPERIENCE.md 8.1).
- *
- * Given the height the caller already reported to TerminalGeometry, so the matrix cannot draw taller
- * than the space the row count was computed against.
- */
 @Composable
-private fun ShortcutMatrix(
-    latches: ModifierLatches,
-    height: Dp,
+private fun TerminalSplitArea(
+    content: TerminalContent,
+    workspace: TerminalWorkspaceState,
+    colors: TerminalChromeColors,
+    keyboardVisible: Boolean,
+    focusedVm: TerminalViewModel?,
+    paneViewModels: Map<String, TerminalViewModel>,
+    notes: List<Note>,
+    snippets: List<Snippet>,
+    onWorkspace: (TerminalWorkspaceState) -> Unit,
     onIntent: (TerminalIntent) -> Unit,
+    onInsert: (String) -> Unit,
+    onOpenNote: (String) -> Unit,
+    onOpenDocker: () -> Unit,
+    onMessage: (String) -> Unit,
+    onFocusPane: (Char) -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(height)
-            .background(ZephyrTheme.palette.surfaces.elevated)
-            .padding(TerminalChromeSpec.matrixPadding),
-        verticalArrangement = Arrangement.spacedBy(TerminalChromeSpec.keySpacing),
-    ) {
-        for (row in ExtraKeysLayout.default) {
-            Row(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(TerminalChromeSpec.keySpacing),
-            ) {
-                for (key in row) {
-                    ShortcutKey(key = key, latches = latches, onIntent = onIntent)
+    val density = LocalDensity.current
+    val split = workspace.split
+    Row(Modifier.fillMaxSize()) {
+        val toolFirst = split == TerminalSplitMode.LEFT
+        if (toolFirst && split.docksTools) {
+            SideToolDock(
+                workspace = workspace,
+                colors = colors,
+                hostName = content.connection.name,
+                notes = notes,
+                snippets = snippets,
+                onWorkspace = onWorkspace,
+                onInsert = onInsert,
+                onOpenNote = onOpenNote,
+                onOpenDocker = onOpenDocker,
+                onMessage = onMessage,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(workspace.dockWidthFraction),
+            )
+            SplitGutter(colors, workspace, onWorkspace)
+        }
+        val termWeight = if (split == TerminalSplitMode.OFF) 1f
+        else if (split == TerminalSplitMode.TERM) 1f - workspace.dockWidthFraction
+        else 1f - workspace.dockWidthFraction
+        Box(Modifier.weight(if (split == TerminalSplitMode.OFF) 1f else (1f - workspace.dockWidthFraction).coerceAtLeast(0.2f)).fillMaxHeight()) {
+            val vmA = paneViewModels[workspace.paneA] ?: focusedVm
+            if (vmA != null) {
+                TermuxTerminalPane(
+                    viewModel = vmA,
+                    keyboardVisible = keyboardVisible && workspace.focusPane == 'a',
+                    colors = colors,
+                    focused = workspace.focusPane == 'a',
+                    onTap = {
+                        onFocusPane('a')
+                        onIntent(TerminalIntent.Dock(TerminalDockItem.KEYBOARD))
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (split == TerminalSplitMode.TERM && workspace.focusPane == 'a') {
+                Box(Modifier.fillMaxWidth().height(2.dp).background(colors.accent))
+            }
+            if (!content.transport.isLive) {
+                ConnectPrompt(transport = content.transport, onIntent = onIntent)
+            }
+        }
+        if (split == TerminalSplitMode.TERM) {
+            SplitGutter(colors, workspace, onWorkspace)
+            Box(Modifier.fillMaxHeight().fillMaxWidth(workspace.dockWidthFraction)) {
+                val vmB = paneViewModels[workspace.paneB ?: ""]
+                if (vmB != null) {
+                    TermuxTerminalPane(
+                        viewModel = vmB,
+                        keyboardVisible = keyboardVisible && workspace.focusPane == 'b',
+                        colors = colors,
+                        focused = workspace.focusPane == 'b',
+                        onTap = {
+                            onFocusPane('b')
+                            onIntent(TerminalIntent.Dock(TerminalDockItem.KEYBOARD))
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                if (workspace.focusPane == 'b') {
+                    Box(Modifier.fillMaxWidth().height(2.dp).background(colors.accent))
                 }
             }
         }
+        if (!toolFirst && split.docksTools) {
+            SplitGutter(colors, workspace, onWorkspace)
+            SideToolDock(
+                workspace = workspace,
+                colors = colors,
+                hostName = content.connection.name,
+                notes = notes,
+                snippets = snippets,
+                onWorkspace = onWorkspace,
+                onInsert = onInsert,
+                onOpenNote = onOpenNote,
+                onOpenDocker = onOpenDocker,
+                onMessage = onMessage,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(workspace.dockWidthFraction),
+            )
+        }
+        @Suppress("UNUSED_VARIABLE")
+        val unused = Triple(density, termWeight, onIntent)
     }
 }
 
-/**
- * One shortcut key.
- *
- * The latch is shown as a caption and a border weight, never as colour alone: SCREEN_CATALOG.md 26
- * forbids colour-only state, and a locked Ctrl that only looks different is invisible to a
- * colour-blind user and to TalkBack alike.
- */
 @Composable
-private fun RowScope.ShortcutKey(
-    key: ExtraKey,
-    latches: ModifierLatches,
-    onIntent: (TerminalIntent) -> Unit,
+private fun SplitGutter(
+    colors: TerminalChromeColors,
+    workspace: TerminalWorkspaceState,
+    onWorkspace: (TerminalWorkspaceState) -> Unit,
 ) {
-    val palette = ZephyrTheme.palette
-    val latch = if (key is ExtraKey.Modifier) latches.stateOf(key.modifier) else LatchState.OFF
-
-    val stateLabel = when (latch) {
-        LatchState.OFF -> null
-        LatchState.ONE_SHOT -> stringResource(R.string.terminal_latch_one_shot)
-        LatchState.LOCKED -> stringResource(R.string.terminal_latch_locked)
-    }
-    val shape = RoundedCornerShape(ZephyrRadius.sm)
-    val borderWidth = when (latch) {
-        LatchState.LOCKED -> 2.dp
-        LatchState.ONE_SHOT -> 1.dp
-        LatchState.OFF -> 0.dp
-    }
-
+    var dragging by remember { mutableStateOf(false) }
+    var start by remember { mutableStateOf(workspace.dockWidthFraction) }
     Box(
         modifier = Modifier
-            .weight(1f)
+            .width(TerminalWorkspace.GUTTER_WIDTH_DP.dp)
             .fillMaxHeight()
-            .background(if (latch.isActive) palette.brand.mid else palette.surfaces.floating, shape)
-            .border(borderWidth, palette.brand.accent, shape)
-            .clickable(role = Role.Button) { onIntent(TerminalIntent.Shortcut(key)) }
-            .semantics { stateLabel?.let { stateDescription = it } },
-        contentAlignment = Alignment.Center,
+            .pointerInput(workspace.split) {
+                detectDragGestures(
+                    onDragStart = {
+                        dragging = true
+                        start = workspace.dockWidthFraction
+                    },
+                    onDragEnd = { dragging = false },
+                    onDragCancel = { dragging = false },
+                    onDrag = { change, drag ->
+                        change.consume()
+                        val next = TerminalWorkspace.dragWidth(
+                            startFraction = start,
+                            dxPx = drag.x,
+                            splitWidthPx = size.width.toFloat() * 40f,
+                            split = workspace.split,
+                        )
+                        start = next
+                        onWorkspace(workspace.copy(dockWidthFraction = next))
+                    },
+                )
+            },
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = key.label,
-                style = ZephyrTheme.typography.monoCaption,
-                color = palette.onFloating,
-                maxLines = 1,
-            )
-            stateLabel?.let { label ->
-                Text(text = label, style = ZephyrTheme.typography.caption, color = palette.onFloatingMuted)
-            }
-        }
-    }
-}
-
-/** The context dock from SCREEN_CATALOG.md 8. Absent entries are absent, not disabled. */
-@Composable
-private fun TerminalDock(items: List<TerminalDockItem>, onIntent: (TerminalIntent) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(TerminalChromeSpec.dockHeight)
-            .background(ZephyrTheme.palette.surfaces.floating),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceEvenly,
-    ) {
-        for (item in items) {
-            DockButton(item = item, onIntent = onIntent)
-        }
-    }
-}
-
-@Composable
-private fun DockButton(item: TerminalDockItem, onIntent: (TerminalIntent) -> Unit) {
-    val label = dockLabel(item)
-    val palette = ZephyrTheme.palette
-    val tint = if (item == TerminalDockItem.DISCONNECT) palette.status.error else palette.onFloating
-    Column(
-        modifier = Modifier
-            .size(width = 56.dp, height = TerminalChromeSpec.dockHeight)
-            .clickable(role = Role.Button) { onIntent(TerminalIntent.Dock(item)) }
-            .semantics { contentDescription = label },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(imageVector = dockIcon(item), contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
-        Text(text = label, style = ZephyrTheme.typography.caption, color = tint, maxLines = 1)
-    }
-}
-
-/**
- * Missed output while the user reads back.
- *
- * The count is the point: TERMINAL_EXPERIENCE.md 2.3 forbids output pulling the viewport, so the user
- * needs to know how much arrived and get one tap back to the live bottom.
- */
-@Composable
-private fun MissedOutputBadge(rows: Int, onIntent: (TerminalIntent) -> Unit, modifier: Modifier = Modifier) {
-    val palette = ZephyrTheme.palette
-    val label = if (rows > 0) {
-        stringResource(R.string.terminal_missed_output, rows)
-    } else {
-        stringResource(R.string.terminal_jump_to_bottom)
-    }
-    Row(
-        modifier = modifier
-            .background(palette.brand.dark, RoundedCornerShape(ZephyrRadius.pill))
-            .clickable(role = Role.Button) { onIntent(TerminalIntent.JumpToBottom) }
-            .padding(horizontal = ZephyrSpacing.md, vertical = ZephyrSpacing.sm)
-            .semantics { contentDescription = label },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = ZephyrIcons.ArrowDown,
-            contentDescription = null,
-            tint = palette.onFloating,
-            modifier = Modifier.size(16.dp),
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .width(if (dragging) 2.dp else 1.dp)
+                .padding(start = 5.dp)
+                .background(if (dragging) colors.accent else colors.line),
         )
-        Spacer(Modifier.width(ZephyrSpacing.xs))
-        Text(text = label, style = ZephyrTheme.typography.caption, color = palette.onFloating)
     }
 }
 
-/**
- * Explicit reconnect for a tab that is not live.
- *
- * A restored workspace tab arrives disconnected by design (SCREEN_CATALOG.md 7), so this bar is the
- * only path back to a transport. Rendered below the viewport rather than over it, because the last
- * screen of a dropped session is still the information the user wants to read.
- */
 @Composable
 private fun ConnectPrompt(transport: SessionTransport, onIntent: (TerminalIntent) -> Unit) {
     val palette = ZephyrTheme.palette
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(palette.surfaces.elevated)
-            .padding(horizontal = ZephyrSpacing.lg, vertical = ZephyrSpacing.sm)
-            .semantics { liveRegion = LiveRegionMode.Polite },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
         Text(
-            text = if (transport == SessionTransport.CLOSED) {
-                stringResource(R.string.terminal_closed_hint)
-            } else {
-                stringResource(R.string.terminal_disconnected_hint)
+            text = when (transport) {
+                SessionTransport.DISCONNECTED -> stringResource(R.string.terminal_disconnected_hint)
+                SessionTransport.CLOSED -> stringResource(R.string.terminal_closed_hint)
+                else -> ""
             },
-            style = ZephyrTheme.typography.caption,
+            style = ZephyrTextStyles.caption,
             color = palette.onFloatingMuted,
             modifier = Modifier.weight(1f),
         )
@@ -808,123 +576,6 @@ private fun ConnectPrompt(transport: SessionTransport, onIntent: (TerminalIntent
     }
 }
 
-@Composable
-private fun TerminalTopBar(
-    content: TerminalContent,
-    remoteTitle: String?,
-    onIntent: (TerminalIntent) -> Unit,
-) {
-    var encodingMenu by remember { mutableStateOf(false) }
-    val palette = ZephyrTheme.palette
-    val chrome = lerpColor(Color(0xFF12161C), palette.brand.accent, 0.08f)
-    val dim = Color(0xFF7D8794)
-    val onBack = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
-    val cols = content.surface.size.columns
-    val rows = content.surface.size.rows
-    val user = content.connection.username
-    val hostLine = buildString {
-        if (user.isNotBlank()) append(user).append('@')
-        append(content.connection.host).append(':').append(content.connection.port)
-        if (cols > 0 && rows > 0) append(" · ").append(cols).append('×').append(rows)
-    }
-    val dotColor = when (content.transport) {
-        SessionTransport.CONNECTED -> palette.status.success
-        SessionTransport.CONNECTING -> palette.status.pendingSync
-        SessionTransport.DISCONNECTED -> palette.status.error
-        else -> dim
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(chrome)
-            .statusBarsPadding()
-            .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(CircleShape)
-                .clickable { onBack?.onBackPressed() },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(ZephyrIcons.Back, contentDescription = "返回", tint = dim, modifier = Modifier.size(16.dp))
-        }
-        Column(Modifier.weight(1f).padding(start = 6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(6.dp).clip(CircleShape).background(dotColor))
-                Spacer(Modifier.width(7.dp))
-                Text(
-                    text = content.connection.name,
-                    color = Color(0xFFE6EBF0),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Text(
-                text = hostLine,
-                color = dim,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                fontSize = 10.5.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-        Text(
-            text = transportLabel(content.transport),
-            color = dim,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(end = 6.dp).semantics { liveRegion = LiveRegionMode.Polite },
-        )
-
-        // Only Telnet negotiates a code page, so the picker is absent rather than disabled for SSH:
-        // a greyed-out control would still suggest the setting means something there.
-        if (content.encodingSelectable) {
-            val encodingLabel = stringResource(R.string.terminal_encoding_action, content.encoding.wireName)
-            Box {
-                IconButton(
-                    onClick = { encodingMenu = true },
-                    modifier = Modifier.semantics { contentDescription = encodingLabel },
-                ) {
-                    Icon(ZephyrIcons.Translate, contentDescription = null)
-                }
-                DropdownMenu(expanded = encodingMenu, onDismissRequest = { encodingMenu = false }) {
-                    for (encoding in TerminalEncoding.entries) {
-                        DropdownMenuItem(
-                            text = { Text(encoding.wireName) },
-                            onClick = {
-                                encodingMenu = false
-                                onIntent(TerminalIntent.SetEncoding(encoding))
-                            },
-                        )
-                    }
-                }
-            }
-        }
-
-        val minimiseLabel = stringResource(R.string.terminal_minimise)
-        IconButton(
-            onClick = { onIntent(TerminalIntent.Minimise) },
-            modifier = Modifier.semantics { contentDescription = minimiseLabel },
-        ) {
-            Icon(ZephyrIcons.Minus, contentDescription = null)
-        }
-    }
-}
-
-// ---- dialogs -------------------------------------------------------------------------------------
-
-/**
- * Paste preview.
- *
- * TERMINAL_EXPERIENCE.md 4.3 requires the preview and the without-newline option, because a blind
- * paste into a shell executes whatever the clipboard happened to hold.
- */
 @Composable
 private fun PasteConfirmation(
     pending: PasteDecision.NeedsConfirmation,
@@ -936,10 +587,9 @@ private fun PasteConfirmation(
         text = {
             Column {
                 Text(stringResource(R.string.terminal_paste_summary, pending.lineCount, pending.byteCount))
-                Spacer(Modifier.height(ZephyrSpacing.sm))
                 Text(
-                    text = pending.text.take(PASTE_PREVIEW_CHARS),
-                    style = ZephyrTheme.typography.monoCaption,
+                    text = pending.text.take(512),
+                    style = ZephyrTextStyles.monoCaption,
                     maxLines = 8,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -952,8 +602,6 @@ private fun PasteConfirmation(
         },
         dismissButton = {
             Row {
-                // Offered only when there is a trailing newline to drop, so the button never claims
-                // to change something about this particular paste that it would not change.
                 if (pending.endsWithNewline) {
                     TextButton(onClick = { onIntent(TerminalIntent.ConfirmPaste(keepTrailingNewline = false)) }) {
                         Text(stringResource(R.string.terminal_paste_without_newline))
@@ -967,12 +615,6 @@ private fun PasteConfirmation(
     )
 }
 
-/**
- * Host-key decision.
- *
- * A changed key is not presented as an equal yes/no: the safe action occupies the confirm slot and a
- * dismissal rejects, so no accidental tap outside the dialog can trust a key that changed.
- */
 @Composable
 private fun HostKeyConfirmation(prompt: HostKeyPrompt, onIntent: (TerminalIntent) -> Unit) {
     val palette = ZephyrTheme.palette
@@ -980,25 +622,18 @@ private fun HostKeyConfirmation(prompt: HostKeyPrompt, onIntent: (TerminalIntent
         onDismissRequest = { onIntent(TerminalIntent.RejectHostKey) },
         title = {
             Text(
-                if (prompt.changed) {
-                    stringResource(R.string.terminal_host_key_changed_title)
-                } else {
-                    stringResource(R.string.terminal_host_key_new_title)
-                },
+                if (prompt.changed) stringResource(R.string.terminal_host_key_changed_title)
+                else stringResource(R.string.terminal_host_key_new_title),
             )
         },
         text = {
             Column {
                 Text(
-                    text = if (prompt.changed) {
-                        stringResource(R.string.terminal_host_key_changed_body)
-                    } else {
-                        stringResource(R.string.terminal_host_key_new_body)
-                    },
+                    text = if (prompt.changed) stringResource(R.string.terminal_host_key_changed_body)
+                    else stringResource(R.string.terminal_host_key_new_body),
                     color = if (prompt.changed) palette.status.error else palette.onBackground,
                 )
-                Spacer(Modifier.height(ZephyrSpacing.sm))
-                Text(text = prompt.fingerprint, style = ZephyrTheme.typography.mono)
+                Text(text = prompt.fingerprint, style = ZephyrTextStyles.mono)
             }
         },
         confirmButton = {
@@ -1024,40 +659,4 @@ private fun HostKeyConfirmation(prompt: HostKeyPrompt, onIntent: (TerminalIntent
             }
         },
     )
-}
-
-// ---- labels --------------------------------------------------------------------------------------
-
-@Composable
-private fun transportLabel(transport: SessionTransport): String = when (transport) {
-    SessionTransport.CONNECTING -> stringResource(R.string.terminal_transport_connecting)
-    SessionTransport.CONNECTED -> stringResource(R.string.terminal_transport_connected)
-    SessionTransport.DISCONNECTED -> stringResource(R.string.terminal_transport_disconnected)
-    SessionTransport.CLOSED -> stringResource(R.string.terminal_transport_closed)
-}
-
-private fun transportColor(transport: SessionTransport, palette: ZephyrPalette): Color = when (transport) {
-    SessionTransport.CONNECTING -> palette.status.pendingSync
-    SessionTransport.CONNECTED -> palette.status.success
-    SessionTransport.DISCONNECTED -> palette.status.offline
-    SessionTransport.CLOSED -> palette.onFloatingMuted
-}
-
-@Composable
-private fun dockLabel(item: TerminalDockItem): String = when (item) {
-    TerminalDockItem.KEYBOARD -> stringResource(R.string.terminal_dock_keyboard)
-    TerminalDockItem.FILES -> stringResource(R.string.terminal_dock_files)
-    TerminalDockItem.SNIPPETS -> stringResource(R.string.terminal_dock_snippets)
-    TerminalDockItem.NOTES -> stringResource(R.string.terminal_dock_notes)
-    TerminalDockItem.SESSIONS -> stringResource(R.string.terminal_dock_sessions)
-    TerminalDockItem.DISCONNECT -> stringResource(R.string.terminal_dock_disconnect)
-}
-
-private fun dockIcon(item: TerminalDockItem): ImageVector = when (item) {
-    TerminalDockItem.KEYBOARD -> ZephyrIcons.Keyboard
-    TerminalDockItem.FILES -> ZephyrIcons.File
-    TerminalDockItem.SNIPPETS -> ZephyrIcons.Notes
-    TerminalDockItem.NOTES -> ZephyrIcons.Notes
-    TerminalDockItem.SESSIONS -> ZephyrIcons.GridTools
-    TerminalDockItem.DISCONNECT -> ZephyrIcons.Disconnect
 }

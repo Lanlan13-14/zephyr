@@ -40,16 +40,29 @@ import one.zephyr.mobile.model.TerminalEncoding
  */
 enum class TerminalDockItem {
     KEYBOARD,
+    COPY,
+    PASTE,
     FILES,
     SNIPPETS,
     NOTES,
-    SESSIONS,
+    STATS,
+    THEME,
     DISCONNECT,
     ;
 
     companion object {
-        fun forProtocol(protocol: Protocol): List<TerminalDockItem> =
-            entries.filter { it != FILES || protocol.supportsFiles }
+        /** Demo `.context-dock` order. Telnet hides 文件 rather than greying it out. */
+        fun forProtocol(protocol: Protocol): List<TerminalDockItem> = listOf(
+            KEYBOARD,
+            COPY,
+            PASTE,
+            FILES,
+            SNIPPETS,
+            NOTES,
+            STATS,
+            THEME,
+            DISCONNECT,
+        ).filter { it != FILES || protocol.supportsFiles }
     }
 }
 
@@ -119,6 +132,15 @@ class TerminalViewModel(
         transport = delegatingTransport,
         scope = viewModelScope,
     )
+
+    val termux: TermuxSessionBridge? = emulator as? TermuxSessionBridge
+
+    init {
+        termux?.writeBytes = { bytes ->
+            viewModelScope.launch { delegatingTransport.write(bytes) }
+            controller.consumeLatches()
+        }
+    }
 
     private val connectionState = MutableStateFlow<Connection?>(null)
     private val errorState = MutableStateFlow<MobileError?>(null)

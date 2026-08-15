@@ -517,6 +517,13 @@ class TerminalSurfaceController(
         stateFlow.value = stateFlow.value.copy(fontSp = TerminalGeometry.commitFontSp(fontSp))
     }
 
+    /** Clears one-shot modifier latches after Termux itself consumed a keystroke. */
+    fun consumeLatches() {
+        val current = stateFlow.value
+        if (!current.latches.anyActive) return
+        stateFlow.value = current.copy(latches = current.latches.consume())
+    }
+
     // ---- internals -----------------------------------------------------------------------------
 
     /**
