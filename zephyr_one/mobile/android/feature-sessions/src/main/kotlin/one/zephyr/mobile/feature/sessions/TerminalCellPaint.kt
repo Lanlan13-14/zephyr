@@ -40,5 +40,9 @@ object TerminalCellPaint {
         return 0.2126f * r + 0.7152f * g + 0.0722f * b
     }
 
-    private const val MIN_CONTRAST = 2.2f
+    /**
+     * Only the near-invisible cases: white-on-Frost is ~1.09, ANSI green-on-Frost is ~1.97.
+     * A WCAG-sized floor would wash every bright SGR colour into chrome ink.
+     */
+    private const val MIN_CONTRAST = 1.5f
 }

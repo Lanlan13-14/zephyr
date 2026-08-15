@@ -20,7 +20,7 @@ class TerminalCellPaintTest {
         val frostInk = 0xFF1C232B.toInt()
         val painted = TerminalCellPaint.foreground(0xFFFFFFFF.toInt(), frostInk, frostBg)
         assertEquals(frostInk, painted)
-        assertTrue(TerminalCellPaint.contrast(0xFFFFFFFF.toInt(), frostBg) < 2.2f)
+        assertTrue(TerminalCellPaint.contrast(0xFFFFFFFF.toInt(), frostBg) < 1.5f)
     }
 
     @Test
@@ -28,6 +28,7 @@ class TerminalCellPaintTest {
         val frostBg = 0xFFF2F4F7.toInt()
         val frostInk = 0xFF1C232B.toInt()
         val green = 0xFF00CD00.toInt()
+        assertTrue(TerminalCellPaint.contrast(green, frostBg) >= 1.5f)
         assertEquals(green, TerminalCellPaint.foreground(green, frostInk, frostBg))
     }
 }
