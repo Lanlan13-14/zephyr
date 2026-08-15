@@ -112,6 +112,29 @@ class RdpViewModelOperationTest {
     }
 
     @Test
+    fun unknownCertificateHoldsOnTheSessionPageUntilAccepted() = runTest(mainDispatcher) {
+        val engine = RecordingEngine(review = true)
+        val vm = viewModel(engine = engine)
+        backgroundScope.launch { vm.state.collect { } }
+        runCurrent()
+        vm.connect()
+        runCurrent()
+
+        val prompt = requireNotNull(content(vm).certificatePrompt)
+        assertEquals("AA:BB:CC:DD", prompt.review.sha256Fingerprint)
+        assertEquals(false, prompt.changed)
+        assertEquals(1, engine.connects)
+
+        vm.acceptCertificate()
+        runCurrent()
+        assertEquals(1, engine.trusts)
+        assertEquals(2, engine.connects)
+        assertNull(content(vm).certificatePrompt)
+        vm.disconnect()
+        runCurrent()
+    }
+
+    @Test
     fun disconnectClosesTheRegistryRowSoTheHostCanPopTheWindow() = runTest(mainDispatcher) {
         val registry = SessionRegistry()
         val engine = RecordingEngine()
@@ -171,27 +194,47 @@ class RdpViewModelOperationTest {
         return (state as PageState.Content<RemoteContent>).value
     }
 
-    private class RecordingEngine(private val available: Boolean = true) : RdpEngine {
+    private class RecordingEngine(
+        private val available: Boolean = true,
+        private val review: Boolean = false,
+    ) : RdpEngine {
         override val isAvailable: Boolean get() = available
         var lastRequest: RdpConnectRequest? = null
         var lastOutcome: RdpConnectOutcome? = null
         var disconnects = 0
+        var connects = 0
+        var trusts = 0
         val sent = mutableListOf<RdpInputEvent>()
 
         override suspend fun connect(request: RdpConnectRequest): RdpConnectOutcome {
             lastRequest = request
-            val outcome = if (!available) {
-                RdpConnectOutcome.Failed(
+            connects += 1
+            val outcome = when {
+                !available -> RdpConnectOutcome.Failed(
                     one.zephyr.mobile.model.MobileError.local(
                         AndroidRdpEngine.ENGINE_UNAVAILABLE,
                         "not packaged",
                     ),
                 )
-            } else {
-                RdpConnectOutcome.Connected(800, 600, request.channels)
+                review && trusts == 0 -> RdpConnectOutcome.CertificateReview(
+                    request = one.zephyr.mobile.protocol.rdp.RdpCertificateReview(
+                        host = request.host,
+                        port = request.port,
+                        subject = request.host,
+                        issuer = "",
+                        notBefore = 0L,
+                        notAfter = 0L,
+                        sha256Fingerprint = "AA:BB:CC:DD",
+                    ),
+                )
+                else -> RdpConnectOutcome.Connected(800, 600, request.channels)
             }
             lastOutcome = outcome
             return outcome
+        }
+
+        override suspend fun trustCertificate(sessionId: String, replaceExisting: Boolean) {
+            trusts += 1
         }
 
         override fun frames(sessionId: String): Flow<RdpFrame> = emptyFlow()

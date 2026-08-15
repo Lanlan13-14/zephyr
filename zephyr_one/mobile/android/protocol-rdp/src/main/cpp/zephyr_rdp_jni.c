@@ -67,6 +67,13 @@ static void event_callback(void* user, int32_t code, int32_t a, int32_t b, const
         jstring message = text ? (*env)->NewStringUTF(env, text) : NULL;
         if (method) (*env)->CallVoidMethod(env, session->sink, method, a, message);
         if (message) (*env)->DeleteLocalRef(env, message);
+    } else if (code == ZEPHYR_RDP_EV_LOG && text && text[0]) {
+        jmethodID method = sink_method(env, session->sink, "onCertificateFingerprint",
+                                       "(Ljava/lang/String;)V");
+        jstring fingerprint = (*env)->NewStringUTF(env, text);
+        if (method && fingerprint)
+            (*env)->CallVoidMethod(env, session->sink, method, fingerprint);
+        if (fingerprint) (*env)->DeleteLocalRef(env, fingerprint);
     } else if (code == ZEPHYR_RDP_EV_CLIPBOARD && text && a >= 2 && (a % 2) == 0) {
         jmethodID method = sink_method(env, session->sink, "onClipboard", "(Ljava/lang/String;)V");
         const uint8_t* bytes = (const uint8_t*)text;
@@ -156,7 +163,9 @@ static char* copy_password(JNIEnv* env, jcharArray value) {
         }
     }
     memset(chars, 0, (size_t)units * sizeof(jchar));
-    (*env)->ReleaseCharArrayElements(env, value, chars, 0);
+    /* JNI_ABORT: do not write the zeros back. Kotlin may retry create()
+     * with the same CharArray after a certificate-fingerprint review. */
+    (*env)->ReleaseCharArrayElements(env, value, chars, JNI_ABORT);
     return result;
 }
 
@@ -172,32 +181,60 @@ Java_one_zephyr_mobile_protocol_rdp_JniRdpNativeBridge_create(
     jclass cls = (*env)->GetObjectClass(env, config);
     if (!cls) return 0;
 
-    char* host = copy_utf8(env, (jstring)(*env)->GetObjectField(env, config, field(env, cls, "host", "Ljava/lang/String;")));
-    char* username = copy_utf8(env, (jstring)(*env)->GetObjectField(env, config, field(env, cls, "username", "Ljava/lang/String;")));
-    char* domain = copy_utf8(env, (jstring)(*env)->GetObjectField(env, config, field(env, cls, "domain", "Ljava/lang/String;")));
-    char* password = copy_password(env, (jcharArray)(*env)->GetObjectField(env, config, field(env, cls, "password", "[C")));
+    jfieldID host_id = field(env, cls, "host", "Ljava/lang/String;");
+    jfieldID username_id = field(env, cls, "username", "Ljava/lang/String;");
+    jfieldID domain_id = field(env, cls, "domain", "Ljava/lang/String;");
+    jfieldID password_id = field(env, cls, "password", "[C");
+    jfieldID port_id = field(env, cls, "port", "I");
+    jfieldID width_id = field(env, cls, "widthPx", "I");
+    jfieldID height_id = field(env, cls, "heightPx", "I");
+    jfieldID audio_id = field(env, cls, "audio", "Z");
+    jfieldID microphone_id = field(env, cls, "microphone", "Z");
+    jfieldID clipboard_id = field(env, cls, "clipboard", "Z");
+    jfieldID gfx_id = field(env, cls, "gfx", "Z");
+    jfieldID wallpaper_id = field(env, cls, "disableWallpaper", "Z");
+    jfieldID themes_id = field(env, cls, "disableThemes", "Z");
+    jfieldID menu_id = field(env, cls, "disableMenuAnims", "Z");
+    jfieldID drag_id = field(env, cls, "disableFullWindowDrag", "Z");
+    jfieldID font_id = field(env, cls, "allowFontSmoothing", "Z");
+    jfieldID ignore_id = field(env, cls, "ignoreCertificate", "Z");
+    if (!host_id || !username_id || !domain_id || !password_id || !port_id || !width_id ||
+        !height_id || !audio_id || !microphone_id || !clipboard_id || !gfx_id || !wallpaper_id ||
+        !themes_id || !menu_id || !drag_id || !font_id || !ignore_id ||
+        (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, cls);
+        return 0;
+    }
+
+    char* host = copy_utf8(env, (jstring)(*env)->GetObjectField(env, config, host_id));
+    char* username = copy_utf8(env, (jstring)(*env)->GetObjectField(env, config, username_id));
+    char* domain = copy_utf8(env, (jstring)(*env)->GetObjectField(env, config, domain_id));
+    char* password = copy_password(env, (jcharArray)(*env)->GetObjectField(env, config, password_id));
 
     zephyr_rdp_config native_config = {0};
     native_config.host = host;
-    native_config.port = (uint32_t)(*env)->GetIntField(env, config, field(env, cls, "port", "I"));
+    native_config.port = (uint32_t)(*env)->GetIntField(env, config, port_id);
     native_config.username = username;
     native_config.password = password;
     native_config.domain = domain;
-    native_config.width = (uint32_t)(*env)->GetIntField(env, config, field(env, cls, "widthPx", "I"));
-    native_config.height = (uint32_t)(*env)->GetIntField(env, config, field(env, cls, "heightPx", "I"));
+    native_config.width = (uint32_t)(*env)->GetIntField(env, config, width_id);
+    native_config.height = (uint32_t)(*env)->GetIntField(env, config, height_id);
     native_config.color_depth = 32;
     native_config.security = ZEPHYR_RDP_SEC_NLA;
-    native_config.ignore_certificate = 0;
-    native_config.audio_mode = (*env)->GetBooleanField(env, config, field(env, cls, "audio", "Z")) ? ZEPHYR_RDP_AUDIO_LOCAL : ZEPHYR_RDP_AUDIO_OFF;
-    native_config.microphone = (*env)->GetBooleanField(env, config, field(env, cls, "microphone", "Z"));
-    native_config.clipboard = (*env)->GetBooleanField(env, config, field(env, cls, "clipboard", "Z"));
+    native_config.ignore_certificate = (*env)->GetBooleanField(env, config, ignore_id) ? 1 : 0;
+    native_config.audio_mode = (*env)->GetBooleanField(env, config, audio_id)
+        ? ZEPHYR_RDP_AUDIO_LOCAL
+        : ZEPHYR_RDP_AUDIO_OFF;
+    native_config.microphone = (*env)->GetBooleanField(env, config, microphone_id);
+    native_config.clipboard = (*env)->GetBooleanField(env, config, clipboard_id);
     native_config.dynamic_resolution = 1;
-    native_config.gfx = (*env)->GetBooleanField(env, config, field(env, cls, "gfx", "Z")) ? 1 : 0;
-    native_config.disable_wallpaper = (*env)->GetBooleanField(env, config, field(env, cls, "disableWallpaper", "Z")) ? 1 : 0;
-    native_config.disable_themes = (*env)->GetBooleanField(env, config, field(env, cls, "disableThemes", "Z")) ? 1 : 0;
-    native_config.disable_menu_anims = (*env)->GetBooleanField(env, config, field(env, cls, "disableMenuAnims", "Z")) ? 1 : 0;
-    native_config.disable_full_window_drag = (*env)->GetBooleanField(env, config, field(env, cls, "disableFullWindowDrag", "Z")) ? 1 : 0;
-    native_config.allow_font_smoothing = (*env)->GetBooleanField(env, config, field(env, cls, "allowFontSmoothing", "Z")) ? 1 : 0;
+    native_config.gfx = (*env)->GetBooleanField(env, config, gfx_id) ? 1 : 0;
+    native_config.disable_wallpaper = (*env)->GetBooleanField(env, config, wallpaper_id) ? 1 : 0;
+    native_config.disable_themes = (*env)->GetBooleanField(env, config, themes_id) ? 1 : 0;
+    native_config.disable_menu_anims = (*env)->GetBooleanField(env, config, menu_id) ? 1 : 0;
+    native_config.disable_full_window_drag = (*env)->GetBooleanField(env, config, drag_id) ? 1 : 0;
+    native_config.allow_font_smoothing = (*env)->GetBooleanField(env, config, font_id) ? 1 : 0;
 
     android_rdp_session* session = (android_rdp_session*)calloc(1, sizeof(*session));
     if (session) {

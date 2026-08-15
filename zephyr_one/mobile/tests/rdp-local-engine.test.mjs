@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -36,4 +37,40 @@ test('CI packages the Android FreeRDP JNI library into the APK', () => {
   assert.match(workflow, /build-freerdp-android\.sh arm64-v8a/);
   assert.match(workflow, /ZEPHYR_ANDROID_FREERDP_ROOT/);
   assert.match(workflow, /lib\/arm64-v8a\/libzephyr_rdp_android\.so/);
+});
+
+test('Android installs filesDir as HOME before FreeRDP create', () => {
+  const runtime = read(path.join(ROOT, 'android/protocol-rdp/src/main/kotlin/one/zephyr/mobile/protocol/rdp/RdpAndroidRuntime.kt'));
+  assert.match(runtime, /android\.system\.Os/);
+  assert.match(runtime, /setenv/);
+  assert.match(runtime, /HOME/);
+  const application = read(path.join(ROOT, 'android/app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneApplication.kt'));
+  assert.match(application, /RdpAndroidRuntime\.installHome\(filesDir\)/);
+  const container = read(path.join(ROOT, 'android/app/src/main/kotlin/one/zephyr/mobile/app/di/AppContainer.kt'));
+  assert.match(container, /AndroidRdpEngine\(context\.filesDir\)/);
+  assert.doesNotMatch(container, /AndroidRdpEngine\(\)/);
+});
+
+test('JNI create fails closed when HOME is missing and surfaces the certificate fingerprint', () => {
+  const engine = read(path.join(ROOT, 'android/protocol-rdp/src/main/kotlin/one/zephyr/mobile/protocol/rdp/AndroidRdpEngine.kt'));
+  assert.match(engine, /SESSION_CREATE_FAILED/);
+  assert.match(engine, /CertificateReview/);
+  assert.match(engine, /ignoreCertificate/);
+  assert.match(engine, /stored != null && stored == presented/);
+  const jni = read(path.join(ROOT, 'android/protocol-rdp/src/main/cpp/zephyr_rdp_jni.c'));
+  assert.match(jni, /ignoreCertificate/);
+  assert.match(jni, /ZEPHYR_RDP_EV_LOG/);
+  assert.match(jni, /onCertificateFingerprint/);
+});
+
+test('create/HOME replica rejects a missing HOME install and unknown-cert auto-accept', () => {
+  const replica = path.join(ROOT, 'tests/rdp-android-create-replica.py');
+  const result = spawnSync('python3', [replica], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test('engine replica keeps the password across a stored-fingerprint retry', () => {
+  const replica = path.join(ROOT, 'tests/rdp-android-engine-replica.py');
+  const result = spawnSync('python3', [replica], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });

@@ -1,5 +1,6 @@
 package one.zephyr.mobile.protocol.rdp
 
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -121,6 +122,89 @@ class AndroidRdpEngineTest {
         engine.disconnect("s1")
     }
 
+    @Test
+    fun `create returning zero is session create failed`() = runTest {
+        val native = FakeNative(createHandle = 0L)
+        val engine = AndroidRdpEngine(native)
+
+        val outcome = engine.connect(request()) as RdpConnectOutcome.Failed
+
+        assertEquals(AndroidRdpEngine.SESSION_CREATE_FAILED, outcome.error.code)
+        assertEquals(1, native.createCalls)
+        assertEquals(0, native.freeCalls)
+    }
+
+    @Test
+    fun `filesDir constructor installs HOME before JNI create`() = runTest {
+        val native = FakeNative()
+        val homes = mutableListOf<File>()
+        val files = File.createTempFile("rdp-home", "dir").apply {
+            delete()
+            mkdirs()
+            deleteOnExit()
+        }
+        val engine = AndroidRdpEngine(
+            native = native,
+            homeDir = files,
+            installHome = { homes += it },
+        )
+
+        engine.connect(request())
+
+        assertEquals(listOf(files), homes)
+        engine.disconnect("s1")
+    }
+
+    @Test
+    fun `unknown fingerprint becomes a certificate review and is not retried`() = runTest {
+        val native = FakeNative(connectResult = FakeConnect.Reject("sha256:aabbccdd"))
+        val book = MemoryRdpFingerprintBook()
+        val engine = AndroidRdpEngine(native, fingerprints = book)
+
+        val outcome = engine.connect(request()) as RdpConnectOutcome.CertificateReview
+
+        assertEquals("AA:BB:CC:DD", outcome.request.sha256Fingerprint)
+        assertEquals(false, outcome.changed)
+        assertEquals(1, native.createCalls)
+        assertEquals(false, native.config?.ignoreCertificate)
+        assertEquals(null, book.find("server", 3389))
+
+        engine.trustCertificate("s1")
+        assertEquals("AA:BB:CC:DD", book.find("server", 3389))
+    }
+
+    @Test
+    fun `stored fingerprint retries once with ignoreCertificate`() = runTest {
+        val native = FakeNative(connectResult = FakeConnect.RejectThenAccept("aa:bb:cc:dd"))
+        val book = MemoryRdpFingerprintBook().apply { put("server", 3389, "AABBCCDD") }
+        val engine = AndroidRdpEngine(native, fingerprints = book)
+        val password = "secret".toCharArray()
+
+        val outcome = engine.connect(request(password = password))
+
+        assertEquals(RdpConnectOutcome.Connected(1080, 2400, setOf(RdpChannel.CLIPBOARD)), outcome)
+        assertEquals(2, native.createCalls)
+        assertEquals(true, native.config?.ignoreCertificate)
+        assertEquals(listOf("secret", "secret"), native.passwords)
+        assertArrayEquals(CharArray(password.size), password)
+        engine.disconnect("s1")
+    }
+
+    @Test
+    fun `changed fingerprint blocks instead of retrying with ignoreCertificate`() = runTest {
+        val native = FakeNative(connectResult = FakeConnect.Reject("sha256:ddeeff00"))
+        val book = MemoryRdpFingerprintBook().apply { put("server", 3389, "AABBCCDD") }
+        val engine = AndroidRdpEngine(native, fingerprints = book)
+
+        val outcome = engine.connect(request()) as RdpConnectOutcome.CertificateReview
+
+        assertEquals(true, outcome.changed)
+        assertEquals("AA:BB:CC:DD", outcome.previousFingerprint)
+        assertEquals("DD:EE:FF:00", outcome.request.sha256Fingerprint)
+        assertEquals(1, native.createCalls)
+        assertEquals(false, native.config?.ignoreCertificate)
+    }
+
     private fun request(password: CharArray? = null) = RdpConnectRequest(
         sessionId = "s1",
         host = "server",
@@ -142,13 +226,24 @@ class AndroidRdpEngineTest {
         sessionId, host, port, username, domain, password, widthPx, heightPx, channels, drive, quality, fps,
     )
 
-    private class FakeNative(private val available: Boolean = true) : RdpNativeBridge {
+    private sealed interface FakeConnect {
+        data object Accept : FakeConnect
+        data class Reject(val fingerprint: String? = null) : FakeConnect
+        data class RejectThenAccept(val fingerprint: String) : FakeConnect
+    }
+
+    private class FakeNative(
+        private val available: Boolean = true,
+        private val createHandle: Long = 7L,
+        private val connectResult: FakeConnect = FakeConnect.Accept,
+    ) : RdpNativeBridge {
         private val stopped = CountDownLatch(1)
         @Volatile var sink: NativeRdpSink? = null
         @Volatile var config: NativeRdpConfig? = null
         @Volatile var createCalls = 0
         @Volatile var stopCalls = 0
         @Volatile var freeCalls = 0
+        val passwords = mutableListOf<String>()
         val pointerEvents = mutableListOf<String>()
         val unicodeEvents = mutableListOf<Pair<Int, Boolean>>()
 
@@ -159,13 +254,35 @@ class AndroidRdpEngineTest {
             createCalls++
             this.config = config
             this.sink = sink
-            return 7L
+            passwords += config.password?.concatToString() ?: ""
+            config.password?.fill('\u0000')
+            return createHandle
         }
 
         override fun run(handle: Long): Int {
-            sink?.onConnected(1080, 2400)
-            stopped.await()
-            return 0
+            val result = connectResult
+            val accept = when (result) {
+                FakeConnect.Accept -> true
+                is FakeConnect.Reject -> {
+                    result.fingerprint?.let { sink?.onCertificateFingerprint(it) }
+                    false
+                }
+                is FakeConnect.RejectThenAccept -> {
+                    if (!config!!.ignoreCertificate) {
+                        sink?.onCertificateFingerprint(result.fingerprint)
+                        false
+                    } else {
+                        true
+                    }
+                }
+            }
+            if (accept) {
+                sink?.onConnected(1080, 2400)
+                stopped.await()
+                return 0
+            }
+            sink?.onError(-2, "certificate rejected")
+            return -2
         }
 
         override fun stop(handle: Long) { stopCalls++; stopped.countDown() }
