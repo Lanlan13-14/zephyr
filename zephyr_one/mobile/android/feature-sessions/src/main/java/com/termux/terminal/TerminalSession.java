@@ -175,7 +175,10 @@ public final class TerminalSession extends TerminalOutput {
     public void initializeEmulator(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
         mEmulator = new TerminalEmulator(this, columns, rows, cellWidthPixels, cellHeightPixels, mTranscriptRows, mClient);
 
-        if (mCustomInputStream != null || mCustomOutputStream != null) {
+        // Remote SSH/Telnet: no local PTY. The custom-stream constructor leaves mShellPath
+        // null; OutputListener is the byte sink. Going down the JNI path here would call
+        // createSubprocess(null, ...) the first time TerminalView laid out.
+        if (mShellPath == null || mCustomInputStream != null || mCustomOutputStream != null || mOutputListener != null) {
             if (mCustomInputStream != null) {
                 new Thread("TermSessionStreamReader[" + mHandle + "]") {
                     @Override
@@ -326,7 +329,9 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Notify the {@link #mClient} that the screen has changed. */
     protected void notifyScreenUpdate() {
-        mClient.onTextChanged(this);
+        if (mClient != null) {
+            mClient.onTextChanged(this);
+        }
     }
 
     /** Reset state for terminal emulator state. */

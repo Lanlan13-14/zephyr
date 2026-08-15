@@ -92,8 +92,8 @@ import one.zephyr.mobile.feature.sessions.TerminalCredentials
 import one.zephyr.mobile.feature.sessions.TerminalDockItem
 import one.zephyr.mobile.feature.sessions.TerminalRoute
 import one.zephyr.mobile.feature.sessions.TerminalViewModel
-import one.zephyr.mobile.feature.sessions.SimpleVtEmulator
 import one.zephyr.mobile.feature.sessions.SshTerminalHost
+import one.zephyr.mobile.feature.sessions.productionTerminalEmulator
 import one.zephyr.mobile.feature.sessions.TerminalWorkspaceState
 import one.zephyr.mobile.feature.tools.BatchExecutionScreen
 import one.zephyr.mobile.feature.tools.BatchExecutionViewModel
@@ -727,7 +727,7 @@ private fun BoundRoot(
                                 engine = sshEngine,
                                 findConnection = { id -> account.connections.find(id) },
                             ),
-                            emulator = SimpleVtEmulator(),
+                            emulator = productionTerminalEmulator(),
                             secretProvider = { connection -> account.terminalCredentials(connection) },
                         ),
                     ),

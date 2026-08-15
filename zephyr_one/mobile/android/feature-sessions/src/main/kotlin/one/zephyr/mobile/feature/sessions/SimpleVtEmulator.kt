@@ -1,16 +1,21 @@
 package one.zephyr.mobile.feature.sessions
 
 /**
- * Terminal VT emulator powered by Termux engine.
+ * JVM-safe Termux parser wrapper.
  *
- * Full ANSI/VT100/VT220/xterm/truecolor/256-color support with scrollback reflow,
- * wide CJK glyphs, cursor tracking, and DEC private modes.
+ * Production attaches a [TermuxSessionBridge] so [TerminalView] can paint. This class stays a
+ * snapshot adapter for unit tests: constructing [TerminalSession] here would pull android.os.Handler
+ * into every emulator test.
  */
 class SimpleVtEmulator(
     maxScrollback: Int = 4_000,
+    outputSink: ((ByteArray) -> Unit)? = null,
 ) : TerminalEmulator {
 
-    private val delegate = TermuxTerminalEmulator(maxScrollback = maxScrollback)
+    private val delegate = TermuxTerminalEmulator(
+        maxScrollback = maxScrollback,
+        outputSink = outputSink,
+    )
 
     override val isAvailable: Boolean get() = delegate.isAvailable
 
