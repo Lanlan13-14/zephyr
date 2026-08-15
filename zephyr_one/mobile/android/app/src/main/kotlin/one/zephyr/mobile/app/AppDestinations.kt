@@ -238,9 +238,11 @@ internal fun LanguageDestination(account: AccountContainer, onBack: () -> Unit) 
     LanguageSettingsScreen(
         selected = selected,
         onSelect = { code ->
-            LocaleController.apply(context, one.zephyr.mobile.ui.locale.AppLanguage.fromStored(code))
-            scope.launch {
-                account.settings.putStringPreference(SettingsRepository.PREF_LANGUAGE, code, System.currentTimeMillis())
+            if (code != selected) {
+                scope.launch {
+                    account.settings.putStringPreference(SettingsRepository.PREF_LANGUAGE, code, System.currentTimeMillis())
+                    LocaleController.applyIfNeeded(context, code)
+                }
             }
         },
         onBack = onBack,

@@ -25,4 +25,23 @@ class AppLanguageTest {
         assertEquals(AppLanguage.EN, AppLanguage.fromStored("en-US"))
         assertEquals(AppLanguage.SYSTEM, AppLanguage.fromStored(null))
     }
+
+    @Test
+    fun `locale manager tags map back to stored languages`() {
+        assertEquals(AppLanguage.SYSTEM, AppLanguage.fromLocaleTags(""))
+        assertEquals(AppLanguage.SYSTEM, AppLanguage.fromLocaleTags(null))
+        assertEquals(AppLanguage.ZH_HANS, AppLanguage.fromLocaleTags("zh-CN"))
+        assertEquals(AppLanguage.ZH_HANT, AppLanguage.fromLocaleTags("zh-TW,en"))
+        assertEquals(AppLanguage.EN, AppLanguage.fromLocaleTags("en"))
+    }
+
+    @Test
+    fun `locale apply is skipped when already applied or not yet loaded`() {
+        assertEquals(null, LocaleApplyPolicy.pending(null, AppLanguage.SYSTEM))
+        assertEquals(null, LocaleApplyPolicy.pending("system", AppLanguage.SYSTEM))
+        assertEquals(null, LocaleApplyPolicy.pending("en", AppLanguage.EN))
+        assertEquals(AppLanguage.EN, LocaleApplyPolicy.pending("en", AppLanguage.SYSTEM))
+        assertEquals(AppLanguage.SYSTEM, LocaleApplyPolicy.pending("system", AppLanguage.ZH_HANS))
+        assertEquals(AppLanguage.ZH_HANS, LocaleApplyPolicy.pending("zh-Hans", AppLanguage.EN))
+    }
 }

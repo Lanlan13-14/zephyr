@@ -56,12 +56,15 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 import one.zephyr.mobile.data.repository.ConnectionRepository
 import one.zephyr.mobile.data.repository.ResourceRepository
 import one.zephyr.mobile.model.Connection
@@ -960,9 +963,11 @@ class ResourceEditorViewModel(
     val message: SharedFlow<String> = messages
     private val done = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val finished: SharedFlow<Unit> = done
+    private val savingState = MutableStateFlow(false)
+    val saving: StateFlow<Boolean> = savingState.asStateFlow()
 
     init {
-        viewModelScope.launch { load() }
+        viewModelScope.launch(Dispatchers.IO) { load() }
     }
 
     private suspend fun load() {
@@ -995,27 +1000,58 @@ class ResourceEditorViewModel(
     }
 
     fun save() {
+        if (savingState.value) return
         viewModelScope.launch {
+            val blocked = when (kind) {
+                ResourceKind.PROXY -> proxy?.takeIf { !it.canSave }?.validate()?.firstOrNull()?.message
+                ResourceKind.SSH_KEY -> key?.takeIf { !it.canSave }?.validate()?.firstOrNull()?.message
+                ResourceKind.JUMP_HOST -> {
+                    val usable = usableConnectionIds()
+                    jump?.takeIf { !it.canSave(usable) }?.validate(usable)?.firstOrNull()?.message
+                }
+            }
+            if (blocked != null) {
+                messages.emit(blocked)
+                return@launch
+            }
+            savingState.value = true
             val outcome = runCatching {
-                when (kind) {
-                    ResourceKind.PROXY -> {
-                        val draft = proxy ?: return@launch
-                        if (!draft.canSave) error(draft.validate().firstOrNull()?.message ?: "无法保存")
-                        resources.saveProxy(draft.normalized(), draft.changedFields(), draft.password, ownerUserId, draft.isCreate)
-                    }
-                    ResourceKind.SSH_KEY -> {
-                        val draft = key ?: return@launch
-                        if (!draft.canSave) error(draft.validate().firstOrNull()?.message ?: "无法保存")
-                        resources.saveSshKey(draft.normalized(), draft.changedFields(), draft.privateKey, draft.passphrase, ownerUserId, draft.isCreate)
-                    }
-                    ResourceKind.JUMP_HOST -> {
-                        val draft = jump ?: return@launch
-                        val usable = usableConnectionIds()
-                        if (!draft.canSave(usable)) error(draft.validate(usable).firstOrNull()?.message ?: "无法保存")
-                        resources.saveJumpHost(draft.normalized(), draft.changedFields(), ownerUserId, draft.isCreate)
+                withContext(Dispatchers.IO) {
+                    when (kind) {
+                        ResourceKind.PROXY -> {
+                            val draft = proxy ?: error("无法保存")
+                            resources.saveProxy(
+                                draft.normalized(),
+                                draft.changedFields(),
+                                draft.password,
+                                ownerUserId,
+                                draft.isCreate,
+                            )
+                        }
+                        ResourceKind.SSH_KEY -> {
+                            val draft = key ?: error("无法保存")
+                            resources.saveSshKey(
+                                draft.normalized(),
+                                draft.changedFields(),
+                                draft.privateKey,
+                                draft.passphrase,
+                                ownerUserId,
+                                draft.isCreate,
+                            )
+                        }
+                        ResourceKind.JUMP_HOST -> {
+                            val draft = jump ?: error("无法保存")
+                            resources.saveJumpHost(
+                                draft.normalized(),
+                                draft.changedFields(),
+                                ownerUserId,
+                                draft.isCreate,
+                            )
+                        }
                     }
                 }
             }
+            savingState.value = false
             outcome.onSuccess {
                 messages.emit("已保存，待同步")
                 done.emit(Unit)
@@ -1050,6 +1086,7 @@ fun ResourceEditorRoute(
     val proxy by viewModel.proxyFlow.collectAsState()
     val key by viewModel.keyFlow.collectAsState()
     val jump by viewModel.jumpFlow.collectAsState()
+    val saving by viewModel.saving.collectAsState()
     LaunchedEffect(viewModel) { viewModel.message.collect { onMessage(it) } }
     LaunchedEffect(viewModel) { viewModel.finished.collect { onBack() } }
     val title = when (viewModel.kind) {
@@ -1059,35 +1096,78 @@ fun ResourceEditorRoute(
     }
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = title, onBack = onBack) {
-            TextButton(onClick = viewModel::save) { Text("保存") }
+            TextButton(onClick = viewModel::save, enabled = !saving) {
+                Text(if (saving) "保存中…" else "保存")
+            }
         }
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = ZephyrSpacing.lg),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(horizontal = ZephyrSpacing.lg)
+                .padding(top = 4.dp, bottom = 140.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             when (viewModel.kind) {
                 ResourceKind.PROXY -> proxy?.let { draft ->
-                    OutlinedTextField(draft.current.name, { value -> viewModel.setProxy { d -> d.withName(value) } }, label = { Text("名称") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(draft.current.host, { value -> viewModel.setProxy { d -> d.withHost(value) } }, label = { Text("主机") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(draft.current.port.toString(), { value ->
-                        value.toIntOrNull()?.let { port -> viewModel.setProxy { d -> d.withPort(port) } }
-                    }, label = { Text("端口") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        draft.current.name,
+                        { value -> viewModel.setProxy { d -> d.withName(value) } },
+                        label = { Text("名称") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        draft.current.host,
+                        { value -> viewModel.setProxy { d -> d.withHost(value) } },
+                        label = { Text("主机") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        draft.current.port.toString(),
+                        { value ->
+                            value.toIntOrNull()?.let { port -> viewModel.setProxy { d -> d.withPort(port) } }
+                        },
+                        label = { Text("端口") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ProxyType.entries.forEach { type ->
                             FilterChip(selected = draft.current.type == type, onClick = { viewModel.setProxy { d -> d.withType(type) } }, label = { Text(type.wireName) })
                         }
                     }
-                    OutlinedTextField(draft.current.username, { value -> viewModel.setProxy { d -> d.withUsername(value) } }, label = { Text("用户名") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        draft.current.username,
+                        { value -> viewModel.setProxy { d -> d.withUsername(value) } },
+                        label = { Text("用户名") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
                     SecretField(label = "密码（留空保持不变）") { value ->
                         viewModel.setProxy { d -> d.withPassword(if (value.isBlank()) SecretState.Unchanged else SecretState.Replace(value)) }
                     }
                 }
                 ResourceKind.SSH_KEY -> key?.let { draft ->
-                    OutlinedTextField(draft.current.name, { value -> viewModel.setKey { d -> d.withName(value) } }, label = { Text("名称") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(draft.current.remark, { value -> viewModel.setKey { d -> d.withRemark(value) } }, label = { Text("备注") }, modifier = Modifier.fillMaxWidth())
-                    SecretField(label = "私钥（留空保持不变）", minHeight = 140.dp) { value ->
+                    OutlinedTextField(
+                        draft.current.name,
+                        { value -> viewModel.setKey { d -> d.withName(value) } },
+                        label = { Text("名称") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        draft.current.remark,
+                        { value -> viewModel.setKey { d -> d.withRemark(value) } },
+                        label = { Text("备注") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SecretField(
+                        label = "私钥（留空保持不变）",
+                        minLines = 8,
+                        placeholder = "-----BEGIN OPENSSH PRIVATE KEY-----",
+                        mono = true,
+                    ) { value ->
                         viewModel.setKey { d -> d.withPrivateKey(if (value.isBlank()) SecretState.Unchanged else SecretState.Replace(value)) }
                     }
                     SecretField(label = "口令（留空保持不变）") { value ->
@@ -1113,7 +1193,9 @@ fun ResourceEditorRoute(
 @Composable
 private fun SecretField(
     label: String,
-    minHeight: androidx.compose.ui.unit.Dp = 56.dp,
+    minLines: Int = 1,
+    placeholder: String? = null,
+    mono: Boolean = false,
     onValue: (String) -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
@@ -1124,7 +1206,11 @@ private fun SecretField(
             onValue(value)
         },
         label = { Text(label) },
-        modifier = Modifier.fillMaxWidth().height(minHeight.coerceAtLeast(56.dp)),
+        placeholder = placeholder?.let { hint -> { Text(hint, color = ZephyrTheme.palette.onFloatingSubtle) } },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = minLines == 1,
+        minLines = minLines,
+        textStyle = if (mono) ZephyrTextStyles.mono else ZephyrTextStyles.body,
     )
 }
 

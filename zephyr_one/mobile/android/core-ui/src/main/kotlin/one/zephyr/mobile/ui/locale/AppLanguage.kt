@@ -23,5 +23,25 @@ enum class AppLanguage(
             EN.code, "en-US", "en-GB" -> EN
             else -> SYSTEM
         }
+
+        /** LocaleManager / Configuration tags. Empty means follow the system. */
+        fun fromLocaleTags(tags: String?): AppLanguage {
+            val first = tags?.split(',')?.firstOrNull()?.trim().orEmpty()
+            if (first.isEmpty()) return SYSTEM
+            return fromStored(first)
+        }
+    }
+}
+
+/**
+ * Locale writes must be idempotent. Setting applicationLocales to the same list still
+ * recreates the Activity, so a collectAsState(initial = "system") loop flashes the UI.
+ */
+object LocaleApplyPolicy {
+
+    fun pending(stored: String?, applied: AppLanguage): AppLanguage? {
+        if (stored == null) return null
+        val wanted = AppLanguage.fromStored(stored)
+        return if (wanted == applied) null else wanted
     }
 }
