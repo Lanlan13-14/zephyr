@@ -1,0 +1,13 @@
+diff --git a/winpr/libwinpr/thread/tls.c b/winpr/libwinpr/thread/tls.c
+index 416bebd..6472e97 100644
+--- a/winpr/libwinpr/thread/tls.c
++++ b/winpr/libwinpr/thread/tls.c
+@@ -42,7 +42,7 @@ DWORD TlsAlloc(void)
+ 		return TLS_OUT_OF_INDEXES;
+ 	if (key > UINT32_MAX)
+ 		return TLS_OUT_OF_INDEXES;
+-	return WINPR_ASSERTING_INT_CAST(DWORD, key);
++	return (DWORD)key;
+ }
+ 
+ LPVOID TlsGetValue(DWORD dwTlsIndex)
