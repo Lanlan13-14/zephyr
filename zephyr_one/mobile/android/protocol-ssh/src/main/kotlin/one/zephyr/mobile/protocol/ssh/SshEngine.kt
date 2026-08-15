@@ -1,6 +1,7 @@
 package one.zephyr.mobile.protocol.ssh
 
 import kotlinx.coroutines.flow.Flow
+import one.zephyr.mobile.model.MobileApiException
 import one.zephyr.mobile.model.MobileError
 
 /**
@@ -147,25 +148,25 @@ class UnavailableSshEngine : SshEngine {
         Result.failure(one.zephyr.mobile.model.MobileApiException(BLOCKED))
 
     override suspend fun stat(sessionId: String, path: String): Result<SftpEntry?> =
-        Result.failure(MobileApiException(NOT_LINKED))
+        Result.failure(MobileApiException(BLOCKED))
     override suspend fun createDirectory(sessionId: String, path: String): Result<Unit> =
-        Result.failure(MobileApiException(NOT_LINKED))
+        Result.failure(MobileApiException(BLOCKED))
     override suspend fun createFile(sessionId: String, path: String): Result<Unit> =
-        Result.failure(MobileApiException(NOT_LINKED))
+        Result.failure(MobileApiException(BLOCKED))
     override suspend fun rename(sessionId: String, from: String, to: String): Result<Unit> =
-        Result.failure(MobileApiException(NOT_LINKED))
+        Result.failure(MobileApiException(BLOCKED))
     override suspend fun delete(sessionId: String, path: String, recursive: Boolean): Result<Unit> =
-        Result.failure(MobileApiException(NOT_LINKED))
+        Result.failure(MobileApiException(BLOCKED))
 
     override suspend fun readFile(sessionId: String, path: String, maxBytes: Int): Result<SshRemoteFile> =
-        Result.failure(MobileApiException(NOT_LINKED))
+        Result.failure(MobileApiException(BLOCKED))
 
     override suspend fun writeFile(
         sessionId: String,
         path: String,
         bytes: ByteArray,
         expected: SshRemoteFileVersion?,
-    ): Result<SshRemoteFileVersion> = Result.failure(MobileApiException(NOT_LINKED))
+    ): Result<SshRemoteFileVersion> = Result.failure(MobileApiException(BLOCKED))
 
     override suspend fun exec(sessionId: String, command: String): Result<SshExecResult> =
         Result.failure(one.zephyr.mobile.model.MobileApiException(BLOCKED))
