@@ -7,8 +7,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import one.zephyr.mobile.R
+import one.zephyr.mobile.security.AppLockPreferences
+import one.zephyr.mobile.security.AuthResult
+import one.zephyr.mobile.security.UnlockPresentation
 import one.zephyr.mobile.BuildConfig
 import one.zephyr.mobile.app.di.AccountContainer
 import one.zephyr.mobile.data.repository.SettingsRepository
@@ -253,6 +258,9 @@ internal fun LanguageDestination(account: AccountContainer, onBack: () -> Unit) 
 internal fun AppLockDestination(account: AccountContainer, container: one.zephyr.mobile.app.di.AppContainer, onBack: () -> Unit) {
     val prefs by account.settings.observePreferences().collectAsState(initial = emptyMap())
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
     val enabled = prefs[SettingsRepository.PREF_APP_LOCK_ENABLED]?.let { one.zephyr.mobile.data.EntityCodec.bool(it, "value", false) } ?: false
     val delay = when (prefs[SettingsRepository.PREF_APP_LOCK_TIMEOUT]?.let { one.zephyr.mobile.data.EntityCodec.string(it, "value") }) {
         "1m" -> LockDelay.ONE_MINUTE
@@ -260,28 +268,82 @@ internal fun AppLockDestination(account: AccountContainer, container: one.zephyr
         else -> LockDelay.IMMEDIATE
     }
     val screenshot = prefs[SettingsRepository.PREF_SCREENSHOT_GUARD]?.let { one.zephyr.mobile.data.EntityCodec.bool(it, "value", false) } ?: false
-    val availability = when (container.appLock.availability()) {
+    val canEnable = container.appLock.availability() == BiometricAvailability.AVAILABLE
+    val availability = status ?: when (container.appLock.availability()) {
         BiometricAvailability.AVAILABLE -> "此设备可以使用系统生物识别或设备凭据"
         BiometricAvailability.NONE_ENROLLED -> "尚未录入生物识别或设备凭据，无法启用"
         BiometricAvailability.NO_HARDWARE, BiometricAvailability.HARDWARE_UNAVAILABLE, BiometricAvailability.UNSUPPORTED -> "此设备不支持平台认证，本地解锁不可用"
         else -> "平台认证当前不可用"
+    }
+    fun persistCache(nextEnabled: Boolean, nextDelay: LockDelay) {
+        AppLockCache.write(
+            context.getSharedPreferences(AppLockCache.PREFS, android.content.Context.MODE_PRIVATE),
+            nextEnabled,
+            nextDelay,
+        )
     }
     AppLockSettingsScreen(
         enabled = enabled,
         delay = delay,
         screenshotGuard = screenshot,
         availability = availability,
-        onEnabled = { value ->
+        canEnable = canEnable,
+        busy = busy,
+        onEnabled = onEnabled@{ value ->
+            if (busy) return@onEnabled
             scope.launch {
-                account.settings.putBooleanPreference(SettingsRepository.PREF_APP_LOCK_ENABLED, value, System.currentTimeMillis())
+                if (value) {
+                    if (!canEnable) return@launch
+                    busy = true
+                    val result = container.appLock.confirmLocalReveal(
+                        title = context.getString(R.string.unlock_enable_title),
+                        subtitle = context.getString(R.string.unlock_enable_subtitle),
+                    )
+                    busy = false
+                    when (result) {
+                        AuthResult.Success -> {
+                            status = null
+                            AppLockPreferences.apply(
+                                lock = container.appLock,
+                                enabled = true,
+                                delay = delay,
+                                lockOnEnable = false,
+                            )
+                            persistCache(true, delay)
+                            account.settings.putBooleanPreference(
+                                SettingsRepository.PREF_APP_LOCK_ENABLED,
+                                true,
+                                System.currentTimeMillis(),
+                            )
+                        }
+                        AuthResult.Cancelled -> status = null
+                        is AuthResult.Failed -> {
+                            status = UnlockPresentation.failureMessage(
+                                result,
+                                "平台认证当前不可用，无法启用本地解锁",
+                            )
+                        }
+                    }
+                } else {
+                    AppLockPreferences.apply(
+                        lock = container.appLock,
+                        enabled = false,
+                        delay = delay,
+                        lockOnEnable = false,
+                    )
+                    persistCache(false, delay)
+                    account.settings.putBooleanPreference(
+                        SettingsRepository.PREF_APP_LOCK_ENABLED,
+                        false,
+                        System.currentTimeMillis(),
+                    )
+                }
             }
         },
         onDelay = { value ->
-            val wire = when (value) {
-                LockDelay.ONE_MINUTE -> "1m"
-                LockDelay.FIVE_MINUTES -> "5m"
-                LockDelay.IMMEDIATE -> "immediate"
-            }
+            if (container.appLock.isEnabled) container.appLock.setDelay(value)
+            persistCache(enabled, value)
+            val wire = AppLockCache.timeoutWire(value)
             scope.launch { account.settings.putStringPreference(SettingsRepository.PREF_APP_LOCK_TIMEOUT, wire, System.currentTimeMillis()) }
         },
         onScreenshot = { value ->

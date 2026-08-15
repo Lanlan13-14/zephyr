@@ -18,6 +18,7 @@ class AppearancePrefsTest {
         assertEquals(ZephyrThemeId.FROST, prefs.themeId)
         assertEquals(AppearanceMode.AUTO, prefs.mode)
         assertFalse(prefs.lockEnabled)
+        assertFalse(prefs.lockRecorded)
         assertEquals(LockDelay.IMMEDIATE, prefs.lockTimeout)
         assertFalse(prefs.screenshotGuard)
     }
@@ -36,6 +37,7 @@ class AppearancePrefsTest {
         assertEquals(ZephyrThemeId.LAVA, prefs.themeId)
         assertEquals(AppearanceMode.DARK, prefs.mode)
         assertTrue(prefs.lockEnabled)
+        assertTrue(prefs.lockRecorded)
         assertEquals(LockDelay.FIVE_MINUTES, prefs.lockTimeout)
         assertTrue(prefs.screenshotGuard)
     }

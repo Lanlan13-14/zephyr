@@ -11,5 +11,8 @@
     <string name="unlock_subtitle">Continue with the device credential</string>
     <string name="unlock_locked_message">Locked</string>
     <string name="unlock_retry">Unlock again</string>
+    <string name="unlock_in_progress">Verifying…</string>
     <string name="unlock_unavailable">This device has no platform authenticator. Local unlock is unavailable.</string>
+    <string name="unlock_enable_title">Enable local unlock</string>
+    <string name="unlock_enable_subtitle">Confirm with biometrics or the device credential</string>
 </resources>

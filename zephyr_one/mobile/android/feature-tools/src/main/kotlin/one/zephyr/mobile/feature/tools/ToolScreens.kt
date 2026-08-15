@@ -271,6 +271,8 @@ fun AppLockSettingsScreen(
     delay: LockDelay,
     screenshotGuard: Boolean,
     availability: String,
+    canEnable: Boolean,
+    busy: Boolean = false,
     onEnabled: (Boolean) -> Unit,
     onDelay: (LockDelay) -> Unit,
     onScreenshot: (Boolean) -> Unit,
@@ -281,7 +283,11 @@ fun AppLockSettingsScreen(
         Column(Modifier.padding(horizontal = ZephyrSpacing.lg), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("启用本地解锁", modifier = Modifier.weight(1f))
-                Switch(checked = enabled, onCheckedChange = onEnabled)
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onEnabled,
+                    enabled = canEnable && !busy,
+                )
             }
             Text(availability, color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
             if (enabled) {

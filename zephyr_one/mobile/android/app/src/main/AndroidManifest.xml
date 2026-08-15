@@ -10,6 +10,9 @@
     <!-- App Lock authenticates with the platform credential only. DEVELOPMENT.md 1028 forbids
          One from inventing an unlock password, so there is no fallback to ask for. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Pre-P devices resolve the platform prompt through FingerprintManager. Harmless on newer
+         APIs; required for BIOMETRIC_WEAK + DEVICE_CREDENTIAL on API 26–27. -->
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
 
     <!-- 文件桥接 stays online while the user is away, which SCREEN_CATALOG.md 22 requires to be a
          foreground service with a visible stop action rather than a silent background socket. -->

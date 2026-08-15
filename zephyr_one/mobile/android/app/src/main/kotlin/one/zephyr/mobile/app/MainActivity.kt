@@ -18,8 +18,11 @@ import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonObject
+import one.zephyr.mobile.R
 import one.zephyr.mobile.data.EntityCodec
 import one.zephyr.mobile.data.repository.SettingsRepository
+import one.zephyr.mobile.security.AppLockPreferences
+import one.zephyr.mobile.security.AuthResult
 import one.zephyr.mobile.security.LockDelay
 import one.zephyr.mobile.security.LockState
 import one.zephyr.mobile.ui.theme.ZephyrPalette
@@ -53,15 +56,20 @@ class MainActivity : FragmentActivity() {
             ),
         )
         super.onCreate(savedInstanceState)
+        // Attach before the first composition. LockGate launches the platform prompt on the
+        // first RESUMED; if the host is still null that attempt dies as "没有可用的界面".
+        container.deviceAuthenticator.attach(this)
+        restoreLockFromCache()
 
         setContent {
             val ready by app.ready.collectAsState()
             val lockState by container.appLock.state.collectAsState()
             val account by container.accounts.collectAsState()
+            val cachedAppearance = remember { appearanceFromLockCache() }
             val themePrefs by remember(account) {
                 account?.settings?.observePreferences()?.map(::appearanceFromPrefs)
-                    ?: flowOf(AppearancePrefs())
-            }.collectAsState(initial = AppearancePrefs())
+                    ?: flowOf(cachedAppearance)
+            }.collectAsState(initial = cachedAppearance)
             val languageCode by remember(account) {
                 account?.settings?.observePreferences()?.map { prefs ->
                     prefs[SettingsRepository.PREF_LANGUAGE]?.let { EntityCodec.string(it, "value") }
@@ -78,7 +86,7 @@ class MainActivity : FragmentActivity() {
                 LocaleController.applyIfNeeded(this@MainActivity, languageCode)
             }
             LaunchedEffect(themePrefs.lockEnabled, themePrefs.lockTimeout) {
-                applyAppLock(themePrefs)
+                applyAppLock(themePrefs, lockOnEnable = false)
             }
             LaunchedEffect(themePrefs.screenshotGuard) {
                 persistScreenshotFlag(themePrefs.screenshotGuard)
@@ -96,11 +104,19 @@ class MainActivity : FragmentActivity() {
                     ZephyrOneRoot(
                         container = container,
                         locked = lockState == LockState.LOCKED,
-                        onUnlockRequested = { container.deviceAuthenticator.attach(this) },
+                        onUnlockRequested = { requestPlatformUnlock() },
                     )
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Restore from the synchronous cache before the first visible frame. Room
+        // preferences arrive later and only refine the delay / disable path.
+        restoreLockFromCache()
+        container.deviceAuthenticator.attach(this)
     }
 
     override fun onResume() {
@@ -114,30 +130,78 @@ class MainActivity : FragmentActivity() {
         container.account?.pruneRevokedShares()
     }
 
-    override fun onPause() {
+    override fun onDestroy() {
         container.deviceAuthenticator.detach(this)
-        super.onPause()
+        super.onDestroy()
     }
 
-    private fun applyAppLock(prefs: AppearancePrefs) {
-        val lock = container.appLock
-        if (!prefs.lockEnabled) {
-            if (lock.isEnabled) lock.disable()
-            return
-        }
-        if (!lock.isEnabled) lock.enable(prefs.lockTimeout)
-        else lock.setDelay(prefs.lockTimeout)
+    private fun appearancePrefsStore() =
+        getSharedPreferences(AppLockCache.PREFS, MODE_PRIVATE)
+
+    private fun restoreLockFromCache() {
+        val store = appearancePrefsStore()
+        applyAppLock(
+            enabled = AppLockCache.readEnabled(store),
+            delay = AppLockCache.readDelay(store),
+            lockOnEnable = true,
+        )
+    }
+
+    private fun appearanceFromLockCache(): AppearancePrefs {
+        val store = appearancePrefsStore()
+        val recorded = store.contains(AppLockCache.KEY_ENABLED)
+        return AppearancePrefs(
+            lockEnabled = AppLockCache.readEnabled(store),
+            lockTimeout = AppLockCache.readDelay(store),
+            screenshotGuard = store.getBoolean(KEY_SCREENSHOT_PROTECTION, false),
+            lockRecorded = recorded,
+        )
+    }
+
+    private fun applyAppLock(prefs: AppearancePrefs, lockOnEnable: Boolean) {
+        if (!shouldApplyLockPreference(prefs)) return
+        applyAppLock(
+            enabled = prefs.lockEnabled,
+            delay = prefs.lockTimeout,
+            lockOnEnable = shouldLockWhenApplying(container.appLock.isEnabled, prefs.lockEnabled, lockOnEnable),
+        )
+        persistAppLockCache(prefs.lockEnabled, prefs.lockTimeout)
+    }
+
+    private fun applyAppLock(enabled: Boolean, delay: LockDelay, lockOnEnable: Boolean) {
+        AppLockPreferences.apply(
+            lock = container.appLock,
+            enabled = enabled,
+            delay = delay,
+            lockOnEnable = lockOnEnable,
+        )
+    }
+
+    private fun persistAppLockCache(enabled: Boolean, delay: LockDelay) {
+        AppLockCache.write(appearancePrefsStore(), enabled, delay)
+    }
+
+    /**
+     * Hosts the platform prompt. attach is not enough: BiometricPrompt only appears after
+     * [one.zephyr.mobile.security.AppLock.unlock] asks the authenticator.
+     */
+    private suspend fun requestPlatformUnlock(): AuthResult {
+        container.deviceAuthenticator.attach(this)
+        return container.appLock.unlock(
+            title = getString(R.string.unlock_title),
+            subtitle = getString(R.string.unlock_subtitle),
+        )
     }
 
     private fun persistScreenshotFlag(enabled: Boolean) {
-        getSharedPreferences(PREFS_APPEARANCE, MODE_PRIVATE)
+        appearancePrefsStore()
             .edit()
             .putBoolean(KEY_SCREENSHOT_PROTECTION, enabled)
             .apply()
     }
 
     private fun applyScreenshotProtection() {
-        val protect = getSharedPreferences(PREFS_APPEARANCE, MODE_PRIVATE)
+        val protect = appearancePrefsStore()
             .getBoolean(KEY_SCREENSHOT_PROTECTION, false)
         if (protect) {
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
@@ -147,7 +211,6 @@ class MainActivity : FragmentActivity() {
     }
 
     private companion object {
-        const val PREFS_APPEARANCE = "zephyr-one-appearance"
         const val KEY_SCREENSHOT_PROTECTION = "screenshot-protection"
     }
 }
@@ -160,6 +223,7 @@ internal data class AppearancePrefs(
     val lockEnabled: Boolean = false,
     val lockTimeout: LockDelay = LockDelay.default,
     val screenshotGuard: Boolean = false,
+    val lockRecorded: Boolean = false,
 )
 
 internal fun appearanceFromPrefs(prefs: Map<String, JsonObject>): AppearancePrefs {
@@ -183,5 +247,23 @@ internal fun appearanceFromPrefs(prefs: Map<String, JsonObject>): AppearancePref
             else -> LockDelay.IMMEDIATE
         },
         screenshotGuard = flag(SettingsRepository.PREF_SCREENSHOT_GUARD, false),
+        lockRecorded = SettingsRepository.PREF_APP_LOCK_ENABLED in prefs,
     )
 }
+
+/**
+ * An empty Room table is not "the user turned the lock off". Applying that would disable a
+ * cache-restored lock and then persist false over the cache.
+ */
+internal fun shouldApplyLockPreference(prefs: AppearancePrefs): Boolean =
+    prefs.lockRecorded || prefs.lockEnabled
+
+/**
+ * Enabling from settings leaves the session unlocked. Restoring the same flag onto a process
+ * that has not enabled yet must lock immediately, or the dashboard flashes first.
+ */
+internal fun shouldLockWhenApplying(
+    alreadyEnabled: Boolean,
+    enabled: Boolean,
+    lockOnEnable: Boolean,
+): Boolean = lockOnEnable || (!alreadyEnabled && enabled)

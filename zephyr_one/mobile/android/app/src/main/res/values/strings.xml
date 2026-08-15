@@ -13,5 +13,8 @@
     <string name="unlock_subtitle">使用设备凭据继续</string>
     <string name="unlock_locked_message">已锁定</string>
     <string name="unlock_retry">重新解锁</string>
+    <string name="unlock_in_progress">正在验证…</string>
     <string name="unlock_unavailable">此设备不支持平台认证，本地解锁不可用。</string>
+    <string name="unlock_enable_title">启用本地解锁</string>
+    <string name="unlock_enable_subtitle">确认使用系统生物识别或设备凭据</string>
 </resources>

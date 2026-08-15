@@ -51,6 +51,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -112,6 +115,8 @@ import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SyncStatus
 import one.zephyr.mobile.model.SyncState
 import one.zephyr.mobile.model.Snippet
+import one.zephyr.mobile.security.AuthResult
+import one.zephyr.mobile.security.UnlockPresentation
 import one.zephyr.mobile.data.session.SessionExecution
 import one.zephyr.mobile.ui.chrome.PushedPageHeader
 import one.zephyr.mobile.ui.island.FloatingIsland
@@ -143,7 +148,7 @@ import kotlin.math.roundToInt
 fun ZephyrOneRoot(
     container: AppContainer,
     locked: Boolean,
-    onUnlockRequested: () -> Unit,
+    onUnlockRequested: suspend () -> AuthResult,
     modifier: Modifier = Modifier,
     integrations: ZephyrOneIntegrations = ZephyrOneIntegrations(),
 ) {
@@ -1283,7 +1288,22 @@ private fun RemoteDestination(
 }
 
 @Composable
-private fun LockGate(onUnlockRequested: () -> Unit) {
+private fun LockGate(onUnlockRequested: suspend () -> AuthResult) {
+    val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var authenticating by remember { mutableStateOf(false) }
+    var autoPrompted by remember { mutableStateOf(false) }
+    var failureMessage by remember { mutableStateOf<String?>(null) }
+    val unavailable = stringResource(R.string.unlock_unavailable)
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            if (autoPrompted || authenticating) return@repeatOnLifecycle
+            autoPrompted = true
+            authenticating = true
+            failureMessage = UnlockPresentation.failureMessage(onUnlockRequested(), unavailable)
+            authenticating = false
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1301,8 +1321,29 @@ private fun LockGate(onUnlockRequested: () -> Unit) {
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = ZephyrSpacing.sm),
         )
-        Button(onClick = onUnlockRequested, modifier = Modifier.padding(top = ZephyrSpacing.lg)) {
-            Text(text = stringResource(R.string.unlock_retry))
+        if (failureMessage != null) {
+            Text(
+                text = failureMessage!!,
+                style = ZephyrTextStyles.body,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = ZephyrSpacing.sm),
+            )
+        }
+        Button(
+            onClick = {
+                scope.launch {
+                    authenticating = true
+                    failureMessage = UnlockPresentation.failureMessage(onUnlockRequested(), unavailable)
+                    authenticating = false
+                }
+            },
+            modifier = Modifier.padding(top = ZephyrSpacing.lg),
+        ) {
+            Text(
+                text = stringResource(
+                    if (authenticating) R.string.unlock_in_progress else R.string.unlock_retry,
+                ),
+            )
         }
     }
 }

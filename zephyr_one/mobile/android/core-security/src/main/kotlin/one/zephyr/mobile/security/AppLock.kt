@@ -175,3 +175,42 @@ class AppLock(
         for (sink in snapshot) sink.onLocked()
     }
 }
+
+enum class AppLockApplyResult {
+    DISABLED,
+    UNAVAILABLE,
+    UNLOCKED,
+    LOCKED,
+    ALREADY_ENABLED,
+}
+
+/**
+ * Maps a stored preference onto [AppLock].
+ *
+ * Enabling from inside the running app must leave the session unlocked: the user just proved they
+ * can reach settings. Restoring the same preference at process start must lock immediately, or the
+ * first frame would show the dashboard before any prompt.
+ */
+object AppLockPreferences {
+    fun apply(
+        lock: AppLock,
+        enabled: Boolean,
+        delay: LockDelay,
+        lockOnEnable: Boolean,
+    ): AppLockApplyResult {
+        if (!enabled) {
+            if (lock.isEnabled) lock.disable()
+            return AppLockApplyResult.DISABLED
+        }
+        if (lock.isEnabled) {
+            lock.setDelay(delay)
+            return AppLockApplyResult.ALREADY_ENABLED
+        }
+        if (!lock.enable(delay)) return AppLockApplyResult.UNAVAILABLE
+        if (lockOnEnable) {
+            lock.lockNow()
+            return AppLockApplyResult.LOCKED
+        }
+        return AppLockApplyResult.UNLOCKED
+    }
+}
