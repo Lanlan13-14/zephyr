@@ -125,20 +125,25 @@ fun TerminalRoute(
                 TerminalAction.COPY -> Unit
                 // The controller already returned the viewport to the live output.
                 TerminalAction.SCROLL_MODE -> Unit
-                TerminalAction.SNIPPETS -> onDock(TerminalDockItem.SNIPPETS)
                 TerminalAction.SESSIONS -> Unit
-                TerminalAction.FILES -> onDock(TerminalDockItem.FILES)
-                TerminalAction.NOTES -> onDock(TerminalDockItem.NOTES)
-                TerminalAction.STATS -> onDock(TerminalDockItem.STATS)
-                TerminalAction.THEME -> onDock(TerminalDockItem.THEME)
                 TerminalAction.DISCONNECT -> viewModel.disconnect()
+                TerminalAction.SNIPPETS,
+                TerminalAction.FILES,
+                TerminalAction.NOTES,
+                TerminalAction.STATS,
+                TerminalAction.THEME ->
+                    openDockTool(action.toDockItem(), workspace, onWorkspace, onDock)
             }
         }
     }
 
-    LaunchedEffect(viewModel) {
+    LaunchedEffect(viewModel, workspace) {
         viewModel.dockEvent.collect { item ->
-            if (item == TerminalDockItem.KEYBOARD) keyboardVisible = !keyboardVisible else onDock(item)
+            if (item == TerminalDockItem.KEYBOARD) {
+                keyboardVisible = !keyboardVisible
+            } else {
+                openDockTool(item, workspace, onWorkspace, onDock)
+            }
         }
     }
 
@@ -187,6 +192,35 @@ fun TerminalRoute(
             }
         },
     )
+}
+
+private fun TerminalAction.toDockItem(): TerminalDockItem? = when (this) {
+    TerminalAction.FILES -> TerminalDockItem.FILES
+    TerminalAction.SNIPPETS -> TerminalDockItem.SNIPPETS
+    TerminalAction.NOTES -> TerminalDockItem.NOTES
+    TerminalAction.STATS -> TerminalDockItem.STATS
+    TerminalAction.THEME -> TerminalDockItem.THEME
+    TerminalAction.TOGGLE_KEYBOARD,
+    TerminalAction.PASTE,
+    TerminalAction.COPY,
+    TerminalAction.SCROLL_MODE,
+    TerminalAction.SESSIONS,
+    TerminalAction.DISCONNECT -> null
+}
+
+private fun openDockTool(
+    item: TerminalDockItem?,
+    workspace: TerminalWorkspaceState?,
+    onWorkspace: (TerminalWorkspaceState) -> Unit,
+    onDock: (TerminalDockItem) -> Unit,
+) {
+    if (item == null) return
+    val kind = TerminalToolKind.fromDock(item)
+    if (kind != null && workspace != null) {
+        onWorkspace(TerminalWorkspace.openTool(workspace, kind))
+        return
+    }
+    onDock(item)
 }
 
 /**
