@@ -64,11 +64,13 @@ class ManagedSshSessionPool(
     private suspend fun open(sessionId: String, connection: Connection) {
         val credentials = credentialsProvider(connection)
         try {
+            val privateKey = credentials.privateKey
+            val password = credentials.password
             val credential = when {
-                credentials.privateKey?.isNotEmpty() == true ->
-                    SshCredential.PrivateKey(credentials.privateKey.copyOf(), credentials.passphrase?.copyOf())
-                credentials.password?.isNotEmpty() == true ->
-                    SshCredential.Password(credentials.password.copyOf())
+                privateKey != null && privateKey.isNotEmpty() ->
+                    SshCredential.PrivateKey(privateKey.copyOf(), credentials.passphrase?.copyOf())
+                password != null && password.isNotEmpty() ->
+                    SshCredential.Password(password.copyOf())
                 else -> error("连接没有可用的 SSH 凭据")
             }
             val request = SshConnectRequest(
@@ -82,7 +84,6 @@ class ManagedSshSessionPool(
             )
             var outcome = engine.connect(request)
             if (outcome is SshConnectOutcome.HostKeyDecisionRequired) {
-                val decision = CompletableDeferred<Boolean>()
                 val decision = CompletableDeferred<Boolean>()
                 val prompt = ManagedHostKeyPrompt(
                     connectionName = connection.name,

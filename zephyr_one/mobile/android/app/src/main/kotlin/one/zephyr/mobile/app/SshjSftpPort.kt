@@ -12,6 +12,7 @@ import one.zephyr.mobile.feature.notes.SftpSessionHandle
 import one.zephyr.mobile.protocol.ssh.SftpEntry
 import one.zephyr.mobile.protocol.ssh.SshEngine
 import one.zephyr.mobile.protocol.ssh.SshRemoteFileConflict
+import one.zephyr.mobile.protocol.ssh.SshRemoteFileVersion
 
 class SshjSftpPort(
     private val pool: ManagedSshSessionPool,
@@ -48,7 +49,7 @@ class SshjSftpPort(
         engine.listDirectory(session(handle), path).getOrThrow().path
 
     override suspend fun list(handle: SftpSessionHandle, directory: String): List<RemoteEntry> =
-        engine.listDirectory(session(handle), directory).getOrThrow().entries.map(SftpEntry::remote)
+        engine.listDirectory(session(handle), directory).getOrThrow().entries.map { it.remote() }
 
     override suspend fun stat(handle: SftpSessionHandle, path: String): RemoteStat? =
         engine.stat(session(handle), path).getOrThrow()?.let {
