@@ -94,6 +94,7 @@ fun AiWorkspaceOverlay(
     var sheet by remember { mutableStateOf(AiSheetState()) }
     var lastOpen by remember { mutableStateOf(AiDetent.HALF) }
     var dragHeightPx by remember { mutableStateOf<Float?>(null) }
+    var seedHeightPx by remember { mutableStateOf<Float?>(null) }
     val heightAnim = remember { Animatable(0f) }
     val motion = ZephyrTheme.motion
     val palette = ZephyrTheme.palette
@@ -116,9 +117,13 @@ fun AiWorkspaceOverlay(
         val restHeightPx = AiSheetGeometry.heightPx(sheet.detent ?: lastOpen, containerHeightPx)
         LaunchedEffect(containerHeightPx, sheet.detent, lastOpen, dragHeightPx == null, motion.reduceMotion) {
             if (containerHeightPx <= 0f || dragHeightPx != null) return@LaunchedEffect
-            if (heightAnim.value == 0f) {
+            val seed = seedHeightPx
+            if (seed != null) {
+                heightAnim.snapTo(seed)
+                seedHeightPx = null
+            } else if (heightAnim.value == 0f) {
                 heightAnim.snapTo(restHeightPx)
-                return@LaunchedEffect
+                if (sheet.detent == null) return@LaunchedEffect
             }
             /* Closed uses lastOpen only as the off-screen height. Demo keeps the live height
              * while translating 105% — do not snap back to half mid-dismiss. */
@@ -203,7 +208,7 @@ fun AiWorkspaceOverlay(
                     },
                     onDrag = { dragHeightPx = it },
                     onSettle = { height, velocity, deltaY ->
-                        heightAnim.snapTo(height)
+                        seedHeightPx = height
                         dragHeightPx = null
                         sheet = sheet.copy(
                             detent = AiSheetMotion.settle(
@@ -318,7 +323,7 @@ private fun AiHandle(
     containerHeightPx: Float,
     currentHeightPx: () -> Float,
     onDrag: (Float) -> Unit,
-    onSettle: suspend (heightPx: Float, velocityPxPerMs: Float, dragDeltaYPx: Float) -> Unit,
+    onSettle: (heightPx: Float, velocityPxPerMs: Float, dragDeltaYPx: Float) -> Unit,
 ) {
     val palette = ZephyrTheme.palette
     Box(
