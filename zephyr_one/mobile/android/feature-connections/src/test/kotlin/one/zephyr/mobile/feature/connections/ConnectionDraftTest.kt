@@ -249,10 +249,18 @@ class ConnectionDraftTest {
 
     @Test
     fun blankReplacementFoldsToClear() {
-        val draft = ConnectionDraft.create(Fixtures.OWNER, "c-new")
+        val draft = ConnectionDraft.edit(Fixtures.connection(password = SecretPresence(hasValue = true)))
             .withPassword(SecretState.Replace("   "))
         // Storing an empty plaintext would leave a credential that cannot authenticate.
         assertEquals(SecretState.Clear, draft.password)
+    }
+
+    @Test
+    fun createKeepsABlankPasswordFieldVisible() {
+        val draft = ConnectionDraft.create(Fixtures.OWNER, "c-new")
+            .withPassword(SecretState.Replace("   "))
+        assertTrue(draft.password is SecretState.Replace)
+        assertEquals(SecretState.Unchanged, draft.secretStates()["password"])
     }
 
     @Test

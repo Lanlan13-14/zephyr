@@ -167,7 +167,9 @@ data class ConnectionDraft(
      * an empty plaintext as a new secret would store a credential that cannot authenticate.
      */
     fun withPassword(state: SecretState): ConnectionDraft {
-        val next = if (isCreate && state is SecretState.Replace && state.isBlank) {
+        val next = if (!hasStoredPassword() && state is SecretState.Replace && state.isBlank) {
+            /* A new row has no stored secret. Keep the empty field visible instead of
+             * folding to Clear, which would hide the input. */
             state
         } else {
             foldSecret(state)
@@ -175,6 +177,8 @@ data class ConnectionDraft(
         if (password !== next) password.wipePlaintext()
         return copy(password = next)
     }
+
+    private fun hasStoredPassword(): Boolean = original?.password?.hasValue == true
 
     fun withPrivateKey(state: SecretState): ConnectionDraft {
         val next = foldSecret(state)
