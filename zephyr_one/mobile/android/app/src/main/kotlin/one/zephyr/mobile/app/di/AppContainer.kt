@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import one.zephyr.mobile.BuildConfig
 import one.zephyr.mobile.app.AboutActionLauncher
+import one.zephyr.mobile.app.LauncherIconController
 import one.zephyr.mobile.contracts.BindingState
 import one.zephyr.mobile.model.AccountBinding
 import one.zephyr.mobile.model.NetworkPolicy
@@ -71,6 +72,9 @@ import one.zephyr.mobile.sync.SyncSettings
 class AppContainer(private val context: Context) {
 
     val aboutActions: AboutActionLauncher by lazy { AboutActionLauncher(context) }
+
+    /** Keeps the one enabled launcher alias aligned with the selected local colour theme. */
+    internal val launcherIcons: LauncherIconController by lazy { LauncherIconController(context) }
 
     /** Process-scoped protocol engines survive Activity recreation without orphaning sessions. */
     val vncEngine: VncEngine by lazy { SocketVncEngine() }
