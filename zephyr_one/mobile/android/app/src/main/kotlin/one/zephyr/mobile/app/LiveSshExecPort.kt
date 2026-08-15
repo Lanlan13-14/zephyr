@@ -8,23 +8,28 @@ import one.zephyr.mobile.feature.tools.SshExecPort
 import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.protocol.ssh.SshEngine
 
-/** Runs batch commands over the already-authenticated local SSH session for each connection. */
+/** Reuses a live terminal session or automatically opens a managed SSH session. */
 internal class LiveSshExecPort(
     private val engine: SshEngine,
     private val sessions: SessionRegistry,
+    private val managed: ManagedSshSessionPool,
 ) : SshExecPort {
     override val isAvailable: Boolean get() = engine.isAvailable
 
     override suspend fun exec(connectionId: String, command: String, timeoutSeconds: Int): ExecOutcome {
-        val live = sessions.rows.value.firstOrNull {
+        val existing = sessions.rows.value.firstOrNull {
             it.connectionId == connectionId && it.transport == SessionTransport.CONNECTED
-        } ?: return ExecOutcome.Failed(
-            MobileError.local("session_not_connected", "请先连接该 SSH 主机后再执行", true),
-        )
-        val result = withTimeoutOrNull(timeoutSeconds.coerceAtLeast(1) * 1_000L) {
-            engine.exec(live.sessionId, command)
+        }
+        val outcome = withTimeoutOrNull(timeoutSeconds.coerceAtLeast(1) * 1_000L) {
+            if (existing != null) {
+                engine.exec(existing.sessionId, command)
+            } else {
+                managed.withSession(connectionId) { sessionId ->
+                    engine.exec(sessionId, command)
+                }.getOrElse { return@withTimeoutOrNull Result.failure(it) }
+            }
         } ?: return ExecOutcome.TimedOut
-        return result.fold(
+        return outcome.fold(
             onSuccess = { value ->
                 ExecOutcome.Completed(
                     exitCode = value.exitCode,

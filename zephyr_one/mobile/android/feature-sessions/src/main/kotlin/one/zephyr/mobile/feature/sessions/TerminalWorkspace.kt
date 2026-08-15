@@ -120,7 +120,7 @@ object TerminalWorkspace {
     const val RAIL_CHIP_HEIGHT_DP = 34
     const val GUTTER_WIDTH_DP = 12
     const val SHEET_MID_FRACTION = 0.44f
-    const val SHEET_MAX_FRACTION = 0.74f
+    const val SHEET_MAX_FRACTION = 1.00f
     const val SHEET_DISMISS_FRACTION = 0.20f
     const val SHEET_DISMISS_VELOCITY_PX_PER_MS = 0.70f
     const val SHEET_PROJECTION_SECONDS = 0.12f

@@ -32,7 +32,8 @@ test('password reveal requires enabled lock and revealSecret capability twice', 
 
 test('reveal UI is absent unless allowed and reveals in place', () => {
   assert.match(ui, /if \(revealAllowed && state is SecretState\.Unchanged\)/);
-  assert.match(ui, /revealedValue \?: ConnectionDraft\.presenceFor/);
+  assert.match(ui, /revealedValue != null/);
+  assert.match(ui, /onEditRevealed\(value\)/);
   assert.match(ui, /EditorIntent\.RevealPassword/);
   assert.match(ui, /EditorIntent\.HidePassword/);
 });

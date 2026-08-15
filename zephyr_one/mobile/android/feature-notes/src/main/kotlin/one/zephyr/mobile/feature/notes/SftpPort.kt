@@ -104,6 +104,9 @@ interface SftpPort {
     /** True while the underlying transport is usable; drives the disconnected state. */
     suspend fun isOpen(handle: SftpSessionHandle): Boolean
 
+    /** Resolves `.`, `..`, and symlinks to a server canonical absolute path. */
+    suspend fun canonicalPath(handle: SftpSessionHandle, path: String): String
+
     suspend fun list(handle: SftpSessionHandle, directory: String): List<RemoteEntry>
 
     suspend fun stat(handle: SftpSessionHandle, path: String): RemoteStat?
@@ -174,6 +177,8 @@ object UnavailableSftpPort : SftpPort {
     override suspend fun close(handle: SftpSessionHandle) = fail()
 
     override suspend fun isOpen(handle: SftpSessionHandle): Boolean = false
+
+    override suspend fun canonicalPath(handle: SftpSessionHandle, path: String): String = fail()
 
     override suspend fun list(handle: SftpSessionHandle, directory: String): List<RemoteEntry> = fail()
 

@@ -12,7 +12,6 @@ import one.zephyr.mobile.protocol.ssh.SshConnectRequest
 import one.zephyr.mobile.protocol.ssh.SshCredential
 import one.zephyr.mobile.protocol.ssh.SshEngine
 import one.zephyr.mobile.protocol.ssh.SshRoute
-import one.zephyr.mobile.protocol.ssh.SshjEngine
 
 /**
  * SSH [TerminalHost] over [SshEngine].
@@ -92,7 +91,7 @@ class SshTerminalHost(
 
     override suspend fun trustHostKey(sessionId: String) {
         val remembered = lastRequest[sessionId] ?: return
-        (engine as? SshjEngine)?.acceptHostKey(sessionId, remembered.host, remembered.port)
+        engine.acceptHostKey(sessionId, remembered.host, remembered.port)
     }
 
     private fun credentialOf(request: TerminalOpenRequest): SshCredential = when {

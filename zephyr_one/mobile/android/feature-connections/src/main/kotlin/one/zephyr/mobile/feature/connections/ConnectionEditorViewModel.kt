@@ -223,6 +223,13 @@ class ConnectionEditorViewModel(
      * an operation is queued, which is exactly what happened regardless of connectivity
      * (SCREEN_CATALOG.md 2).
      */
+    fun editPasswordFromReveal(value: String) {
+        val content = (page.value as? PageState.Content)?.value ?: return
+        if (content.revealedPassword == null && content.draft.password !is one.zephyr.mobile.model.SecretState.Replace) return
+        val next = content.draft.withPassword(one.zephyr.mobile.model.SecretState.Replace(value))
+        mutate { it.copy(draft = next, revealedPassword = value) }
+    }
+
     fun hidePassword() {
         revealExpiryJob?.cancel()
         mutate { it.copy(revealedPassword = null) }
@@ -230,6 +237,12 @@ class ConnectionEditorViewModel(
 
     fun revealPassword() {
         val content = (page.value as? PageState.Content)?.value ?: return
+        val replacement = content.draft.password as? one.zephyr.mobile.model.SecretState.Replace
+        if (replacement != null) {
+            mutate { it.copy(revealedPassword = replacement.editingText()) }
+            armRevealExpiry()
+            return
+        }
         val connection = content.draft.original ?: return
         if (!ConnectionPasswordRevealPolicy.allowed(
                 localUnlockEnabled = passwordRevealEnabled(),
@@ -241,11 +254,15 @@ class ConnectionEditorViewModel(
             val value = passwordRevealer(connection) ?: return@launch
             if (!passwordRevealEnabled()) return@launch
             mutate { it.copy(revealedPassword = value) }
-            revealExpiryJob?.cancel()
-            revealExpiryJob = launch {
-                kotlinx.coroutines.delay(PASSWORD_REVEAL_MS)
-                mutate { it.copy(revealedPassword = null) }
-            }
+            armRevealExpiry()
+        }
+    }
+
+    private fun armRevealExpiry() {
+        revealExpiryJob?.cancel()
+        revealExpiryJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(PASSWORD_REVEAL_MS)
+            mutate { it.copy(revealedPassword = null) }
         }
     }
 

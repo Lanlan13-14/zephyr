@@ -34,6 +34,11 @@ data class SftpEntry(
     }
 }
 
+data class SftpDirectory(
+    val path: String,
+    val entries: List<SftpEntry>,
+)
+
 /**
  * How a transfer resolves a name that already exists at the destination.
  *

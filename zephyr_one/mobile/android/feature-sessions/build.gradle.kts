@@ -12,6 +12,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(project(":protocol-ssh"))
     implementation(project(":protocol-telnet"))
+    implementation(project(":feature-notes"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)

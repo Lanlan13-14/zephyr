@@ -323,33 +323,21 @@ public final class TerminalView extends View {
         // initially started with the alternate view or if activity is returned to from another app
         // and the alternate view was the one selected the last time.
         if (mClient.isTerminalViewSelected()) {
-            if (mClient.shouldEnforceCharBasedInput()) {
-                // Some keyboards seems do not reset the internal state on TYPE_NULL.
-                // Affects mostly Samsung stock keyboards.
-                // https://github.com/termux/termux-app/issues/686
-                // However, this is not a valid value as per AOSP since `InputType.TYPE_CLASS_*` is
-                // not set and it logs a warning:
-                // W/InputAttributes: Unexpected input class: inputType=0x00080090 imeOptions=0x02000000
-                // https://cs.android.com/android/platform/superproject/+/android-11.0.0_r40:packages/inputmethods/LatinIME/java/src/com/android/inputmethod/latin/InputAttributes.java;l=79
-                outAttrs.inputType = InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
-            } else {
-                // Using InputType.NULL is the most correct input type and avoids issues with other hacks.
-                //
-                // Previous keyboard issues:
-                // https://github.com/termux/termux-packages/issues/25
-                // https://github.com/termux/termux-app/issues/87.
-                // https://github.com/termux/termux-app/issues/126.
-                // https://github.com/termux/termux-app/issues/137 (japanese chars and TYPE_NULL).
-                outAttrs.inputType = InputType.TYPE_NULL;
-            }
+            // Zephyr deliberately uses the ordinary Android text IME (Gboard/Samsung/etc.), not
+            // Termux's TYPE_NULL or visible-password keyboard. This keeps Pinyin composition,
+            // candidate strip, clipboard, translation and voice input available. Terminal control
+            // keys live in Zephyr's shortcut row above the IME instead of changing the IME layout.
+            outAttrs.inputType = InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_NORMAL
+                | InputType.TYPE_TEXT_FLAG_MULTI_LINE;
         } else {
             // Corresponds to android:inputType="text"
-            outAttrs.inputType =  InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL;
+            outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL;
         }
 
-        // Note that IME_ACTION_NONE cannot be used as that makes it impossible to input newlines using the on-screen
-        // keyboard on Android TV (see https://github.com/termux/termux-app/issues/221).
-        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN;
+        outAttrs.imeOptions = EditorInfo.IME_ACTION_NONE
+            | EditorInfo.IME_FLAG_NO_FULLSCREEN
+            | EditorInfo.IME_FLAG_NO_EXTRACT_UI;
 
         return new BaseInputConnection(this, true) {
 

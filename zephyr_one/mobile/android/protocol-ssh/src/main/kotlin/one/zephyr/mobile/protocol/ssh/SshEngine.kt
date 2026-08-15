@@ -38,11 +38,25 @@ interface SshEngine {
 
     suspend fun disconnect(sessionId: String)
 
+    fun acceptHostKey(sessionId: String, host: String, port: Int) = Unit
+
     /** Measures one SSH request/reply round trip on an authenticated transport. */
     suspend fun measureLatency(sessionId: String): Long?
 
     /** SFTP, Docker, batch execution and snippets are SSH-only (`Protocol.supportsFiles`). */
-    suspend fun listDirectory(sessionId: String, path: String): Result<List<SftpEntry>>
+    suspend fun listDirectory(sessionId: String, path: String): Result<SftpDirectory>
+    suspend fun stat(sessionId: String, path: String): Result<SftpEntry?>
+    suspend fun createDirectory(sessionId: String, path: String): Result<Unit>
+    suspend fun createFile(sessionId: String, path: String): Result<Unit>
+    suspend fun rename(sessionId: String, from: String, to: String): Result<Unit>
+    suspend fun delete(sessionId: String, path: String, recursive: Boolean): Result<Unit>
+    suspend fun readFile(sessionId: String, path: String, maxBytes: Int): Result<SshRemoteFile>
+    suspend fun writeFile(
+        sessionId: String,
+        path: String,
+        bytes: ByteArray,
+        expected: SshRemoteFileVersion? = null,
+    ): Result<SshRemoteFileVersion>
 
     suspend fun exec(sessionId: String, command: String): Result<SshExecResult>
 }
@@ -73,6 +87,20 @@ sealed interface SshCredential {
 }
 
 data class SshExecResult(val exitCode: Int, val stdout: ByteArray, val stderr: ByteArray)
+
+data class SshRemoteFile(
+    val path: String,
+    val bytes: ByteArray,
+    val size: Long,
+    val modifiedAt: Long,
+    val permissions: Int,
+)
+
+data class SshRemoteFileVersion(
+    val path: String,
+    val size: Long,
+    val modifiedAt: Long,
+)
 
 sealed interface SshConnectOutcome {
     data class Connected(val sessionId: String, val serverBanner: String) : SshConnectOutcome
@@ -115,8 +143,29 @@ class UnavailableSshEngine : SshEngine {
 
     override suspend fun measureLatency(sessionId: String): Long? = null
 
-    override suspend fun listDirectory(sessionId: String, path: String): Result<List<SftpEntry>> =
+    override suspend fun listDirectory(sessionId: String, path: String): Result<SftpDirectory> =
         Result.failure(one.zephyr.mobile.model.MobileApiException(BLOCKED))
+
+    override suspend fun stat(sessionId: String, path: String): Result<SftpEntry?> =
+        Result.failure(MobileApiException(NOT_LINKED))
+    override suspend fun createDirectory(sessionId: String, path: String): Result<Unit> =
+        Result.failure(MobileApiException(NOT_LINKED))
+    override suspend fun createFile(sessionId: String, path: String): Result<Unit> =
+        Result.failure(MobileApiException(NOT_LINKED))
+    override suspend fun rename(sessionId: String, from: String, to: String): Result<Unit> =
+        Result.failure(MobileApiException(NOT_LINKED))
+    override suspend fun delete(sessionId: String, path: String, recursive: Boolean): Result<Unit> =
+        Result.failure(MobileApiException(NOT_LINKED))
+
+    override suspend fun readFile(sessionId: String, path: String, maxBytes: Int): Result<SshRemoteFile> =
+        Result.failure(MobileApiException(NOT_LINKED))
+
+    override suspend fun writeFile(
+        sessionId: String,
+        path: String,
+        bytes: ByteArray,
+        expected: SshRemoteFileVersion?,
+    ): Result<SshRemoteFileVersion> = Result.failure(MobileApiException(NOT_LINKED))
 
     override suspend fun exec(sessionId: String, command: String): Result<SshExecResult> =
         Result.failure(one.zephyr.mobile.model.MobileApiException(BLOCKED))

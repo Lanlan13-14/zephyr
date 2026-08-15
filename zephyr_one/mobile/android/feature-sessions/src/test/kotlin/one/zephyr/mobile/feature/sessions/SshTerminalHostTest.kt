@@ -8,6 +8,9 @@ import one.zephyr.mobile.protocol.ssh.SshConnectOutcome
 import one.zephyr.mobile.protocol.ssh.SshConnectRequest
 import one.zephyr.mobile.protocol.ssh.SshEngine
 import one.zephyr.mobile.protocol.ssh.SshExecResult
+import one.zephyr.mobile.protocol.ssh.SshRemoteFile
+import one.zephyr.mobile.protocol.ssh.SshRemoteFileVersion
+import one.zephyr.mobile.protocol.ssh.SftpDirectory
 import one.zephyr.mobile.protocol.ssh.SftpEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -65,9 +68,23 @@ class SshTerminalHostTest {
         override suspend fun send(sessionId: String, bytes: ByteArray) = Unit
         override suspend fun resize(sessionId: String, cols: Int, rows: Int, widthPx: Int, heightPx: Int) = Unit
         override suspend fun disconnect(sessionId: String) = Unit
+        override fun acceptHostKey(sessionId: String, host: String, port: Int) = Unit
         override suspend fun measureLatency(sessionId: String): Long? = null
-        override suspend fun listDirectory(sessionId: String, path: String): Result<List<SftpEntry>> =
+        override suspend fun listDirectory(sessionId: String, path: String): Result<SftpDirectory> =
             Result.failure(IllegalStateException("unused"))
+        override suspend fun stat(sessionId: String, path: String) = Result.success<SftpEntry?>(null)
+        override suspend fun createDirectory(sessionId: String, path: String) = Result.success(Unit)
+        override suspend fun createFile(sessionId: String, path: String) = Result.success(Unit)
+        override suspend fun rename(sessionId: String, from: String, to: String) = Result.success(Unit)
+        override suspend fun delete(sessionId: String, path: String, recursive: Boolean) = Result.success(Unit)
+        override suspend fun readFile(sessionId: String, path: String, maxBytes: Int) =
+            Result.failure<SshRemoteFile>(IllegalStateException("unused"))
+        override suspend fun writeFile(
+            sessionId: String,
+            path: String,
+            bytes: ByteArray,
+            expected: SshRemoteFileVersion?,
+        ) = Result.failure<SshRemoteFileVersion>(IllegalStateException("unused"))
         override suspend fun exec(sessionId: String, command: String): Result<SshExecResult> =
             Result.failure(IllegalStateException("unused"))
     }

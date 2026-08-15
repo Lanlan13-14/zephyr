@@ -15,7 +15,7 @@ const codeOnly = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/
 
 test('phone tools are an in-flow drawer with demo detents', () => {
   assert.match(ws, /SHEET_MID_FRACTION\s*=\s*0\.44f/);
-  assert.match(ws, /SHEET_MAX_FRACTION\s*=\s*0\.74f/);
+  assert.match(ws, /SHEET_MAX_FRACTION\s*=\s*1\.00f/);
   assert.match(ws, /SHEET_DISMISS_FRACTION\s*=\s*0\.20f/);
   assert.match(ws, /SHEET_DISMISS_VELOCITY_PX_PER_MS\s*=\s*0\.70f/);
   assert.match(screen, /TerminalToolSheet\(/);

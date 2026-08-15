@@ -3,6 +3,7 @@ package one.zephyr.mobile.protocol.ssh
 import java.io.InputStream
 import java.io.StringReader
 import java.security.PublicKey
+import java.util.EnumSet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.system.measureNanoTime
@@ -23,6 +24,8 @@ import net.schmizz.sshj.common.SSHPacket
 import net.schmizz.sshj.connection.channel.direct.PTYMode
 import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.sftp.FileMode
+import net.schmizz.sshj.sftp.OpenMode
+import net.schmizz.sshj.sftp.RenameFlags
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.userauth.keyprovider.KeyProvider
 import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile
@@ -30,6 +33,14 @@ import net.schmizz.sshj.userauth.keyprovider.PKCS8KeyFile
 import net.schmizz.sshj.userauth.password.PasswordFinder
 import net.schmizz.sshj.userauth.password.PasswordUtils
 import one.zephyr.mobile.model.MobileError
+
+class SshRemoteFileConflict(
+    val path: String,
+    val remoteSize: Long,
+    val remoteModifiedAt: Long,
+) : IllegalStateException("远端文件已变化：$path")
+
+private const val MAX_FILE_WRITE_BYTES = 1024 * 1024
 
 /** Live direct SSH transport: shell, SFTP, exec and request/reply latency probes. */
 class SshjEngine(
@@ -142,26 +153,149 @@ class SshjEngine(
         }.getOrNull()
     }
 
-    override suspend fun listDirectory(sessionId: String, path: String): Result<List<SftpEntry>> = withContext(io) {
+    override suspend fun listDirectory(sessionId: String, path: String): Result<SftpDirectory> = withContext(io) {
         runCatching {
             val live = sessions[sessionId] ?: error("SSH 会话已断开")
             live.client.newSFTPClient().use { sftp ->
-                sftp.ls(path).filterNot { it.name == "." || it.name == ".." }.map { entry ->
-                    val attrs = entry.attributes
-                    SftpEntry(
-                        name = entry.name,
-                        path = entry.path,
-                        isDirectory = entry.isDirectory,
-                        isSymlink = attrs.type == FileMode.Type.SYMLINK,
-                        size = attrs.size,
-                        modifiedAt = attrs.mtime * 1_000L,
-                        permissions = attrs.mode.mask and 0xFFF,
-                        owner = attrs.uid.toString(),
-                        group = attrs.gid.toString(),
-                    )
-                }
+                val canonicalPath = sftp.canonicalize(path)
+                val entries = sftp.ls(canonicalPath)
+                    .asSequence()
+                    .filterNot { it.name == "." || it.name == ".." }
+                    .map { entry ->
+                        val attrs = entry.attributes
+                        attrs.toEntry(entry.name, entry.path)
+                    }
+                    .sortedWith(compareByDescending<SftpEntry> { it.isDirectory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+                    .toList()
+                SftpDirectory(path = canonicalPath, entries = entries)
             }
         }
+    }
+
+    override suspend fun stat(sessionId: String, path: String): Result<SftpEntry?> = withContext(io) {
+        runCatching {
+            val live = sessions[sessionId] ?: error("SSH 会话已断开")
+            live.client.newSFTPClient().use { sftp ->
+                val canonical = sftp.canonicalize(path)
+                val attrs = sftp.stat(canonical)
+                attrs.toEntry(canonical.substringAfterLast('/').ifBlank { "/" }, canonical)
+            }
+        }
+    }
+
+    override suspend fun createDirectory(sessionId: String, path: String): Result<Unit> = sftpUnit(sessionId) { mkdir(path) }
+
+    override suspend fun createFile(sessionId: String, path: String): Result<Unit> = sftpUnit(sessionId) {
+        open(path, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.EXCL)).use { }
+    }
+
+    override suspend fun rename(sessionId: String, from: String, to: String): Result<Unit> = sftpUnit(sessionId) {
+        rename(from, to)
+    }
+
+    override suspend fun delete(sessionId: String, path: String, recursive: Boolean): Result<Unit> = sftpUnit(sessionId) {
+        val attrs = stat(path)
+        if (attrs.type == FileMode.Type.DIRECTORY) {
+            if (recursive) removeTree(this, path) else rmdir(path)
+        } else {
+            rm(path)
+        }
+    }
+
+    override suspend fun readFile(sessionId: String, path: String, maxBytes: Int): Result<SshRemoteFile> = withContext(io) {
+        runCatching {
+            require(maxBytes in 1..MAX_FILE_WRITE_BYTES) { "读取上限无效" }
+            val live = sessions[sessionId] ?: error("SSH 会话已断开")
+            live.client.newSFTPClient().use { sftp ->
+                val canonicalPath = sftp.canonicalize(path)
+                val attrs = sftp.stat(canonicalPath)
+                require(attrs.type == FileMode.Type.REGULAR) { "只能编辑普通文件" }
+                require(attrs.size <= maxBytes) { "文件过大，当前读取上限 ${maxBytes} bytes" }
+                val bytes = ByteArray(attrs.size.toInt())
+                sftp.open(canonicalPath, EnumSet.of(OpenMode.READ)).use { remote ->
+                    var offset = 0
+                    while (offset < bytes.size) {
+                        val read = remote.read(offset.toLong(), bytes, offset, bytes.size - offset)
+                        if (read <= 0) break
+                        offset += read
+                    }
+                    require(offset == bytes.size) { "远端文件读取不完整" }
+                }
+                SshRemoteFile(
+                    path = canonicalPath,
+                    bytes = bytes,
+                    size = attrs.size,
+                    modifiedAt = attrs.mtime * 1_000L,
+                    permissions = attrs.mode.mask and 0xFFF,
+                )
+            }
+        }
+    }
+
+    override suspend fun writeFile(
+        sessionId: String,
+        path: String,
+        bytes: ByteArray,
+        expected: SshRemoteFileVersion?,
+    ): Result<SshRemoteFileVersion> = withContext(io) {
+        runCatching {
+            require(bytes.size <= MAX_FILE_WRITE_BYTES) { "写入内容过大，当前上限 $MAX_FILE_WRITE_BYTES bytes" }
+            val live = sessions[sessionId] ?: error("SSH 会话已断开")
+            live.client.newSFTPClient().use { sftp ->
+                val canonicalPath = sftp.canonicalize(path)
+                val before = sftp.stat(canonicalPath)
+                if (expected != null && (before.size != expected.size || before.mtime * 1_000L != expected.modifiedAt)) {
+                    throw SshRemoteFileConflict(canonicalPath, before.size, before.mtime * 1_000L)
+                }
+                val temporary = "$canonicalPath.zephyr-${java.util.UUID.randomUUID()}.tmp"
+                try {
+                    sftp.open(temporary, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC)).use { remote ->
+                        var offset = 0
+                        while (offset < bytes.size) {
+                            val count = minOf(32 * 1024, bytes.size - offset)
+                            remote.write(offset.toLong(), bytes, offset, count)
+                            offset += count
+                        }
+                    }
+                    sftp.chmod(temporary, before.mode.mask and 0xFFF)
+                    sftp.rename(temporary, canonicalPath, EnumSet.of(RenameFlags.OVERWRITE))
+                } catch (failure: Throwable) {
+                    runCatching { sftp.rm(temporary) }
+                    throw failure
+                }
+                val after = sftp.stat(canonicalPath)
+                SshRemoteFileVersion(canonicalPath, after.size, after.mtime * 1_000L)
+            }
+        }
+    }
+
+    private suspend fun sftpUnit(
+        sessionId: String,
+        block: net.schmizz.sshj.sftp.SFTPClient.() -> Unit,
+    ): Result<Unit> = withContext(io) {
+        runCatching {
+            val live = sessions[sessionId] ?: error("SSH 会话已断开")
+            live.client.newSFTPClient().use { it.block() }
+        }
+    }
+
+    private fun net.schmizz.sshj.sftp.FileAttributes.toEntry(name: String, path: String) = SftpEntry(
+        name = name,
+        path = path,
+        isDirectory = type == FileMode.Type.DIRECTORY,
+        isSymlink = type == FileMode.Type.SYMLINK,
+        size = size,
+        modifiedAt = mtime * 1_000L,
+        permissions = mode.mask and 0xFFF,
+        owner = uid.toString(),
+        group = gid.toString(),
+    )
+
+    private fun removeTree(sftp: net.schmizz.sshj.sftp.SFTPClient, path: String) {
+        sftp.ls(path).filterNot { it.name == "." || it.name == ".." }.forEach { entry ->
+            if (entry.isDirectory) removeTree(sftp, entry.path) else sftp.rm(entry.path)
+        }
+        sftp.rmdir(path)
     }
 
     override suspend fun exec(sessionId: String, command: String): Result<SshExecResult> = withContext(io) {
@@ -180,7 +314,7 @@ class SshjEngine(
         }
     }
 
-    fun acceptHostKey(sessionId: String, host: String, port: Int) {
+    override fun acceptHostKey(sessionId: String, host: String, port: Int) {
         val key = pending.remove(sessionId) ?: return
         trusted[hostPort(host, port)] = key
     }
