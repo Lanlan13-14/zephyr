@@ -30,16 +30,11 @@ class TermuxTerminalEmulator(
             outputSink?.invoke(data.copyOfRange(offset, offset + count))
         }
 
-        override fun writeCodePoint(prepend: Int, codePoint: Int) {
-            val buffer = ByteArray(5)
-            var len = 0
-            if (prepend > 0) buffer[len++] = prepend.toByte()
-            val chars = Character.toChars(codePoint)
-            val bytes = String(chars).toByteArray(Charsets.UTF_8)
-            System.arraycopy(bytes, 0, buffer, len, bytes.size)
-            len += bytes.size
-            outputSink?.invoke(buffer.copyOf(len))
-        }
+        override fun titleChanged(oldTitle: String?, newTitle: String?) = Unit
+        override fun onCopyTextToClipboard(text: String?) = Unit
+        override fun onPasteTextFromClipboard() = Unit
+        override fun onBell() = Unit
+        override fun onColorsChanged() = Unit
     }
 
     private var emulator: TermuxCoreEmulator = TermuxCoreEmulator(
@@ -61,7 +56,7 @@ class TermuxTerminalEmulator(
     }
 
     override fun feed(bytes: ByteArray): EmulatorUpdate {
-        emulator.append(bytes, 0, bytes.size)
+        emulator.append(bytes, bytes.size)
         val screen: TerminalBuffer? = emulator.screen
         val transcriptRows = screen?.activeTranscriptRows ?: 0
         return EmulatorUpdate(

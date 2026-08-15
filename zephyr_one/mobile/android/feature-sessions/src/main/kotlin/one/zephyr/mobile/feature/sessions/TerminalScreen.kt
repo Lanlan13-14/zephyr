@@ -177,8 +177,8 @@ private fun DemoTerminalSurface(
 
     LaunchedEffect(containerW, containerH, imeHeightPx, keyrowHeight, dockHeight, focusedSurface.fontSp) {
         if (containerW <= 0 || containerH <= 0) return@LaunchedEffect
-        val cellW = with(density) { (focusedSurface.fontSp * 0.6f).sp.toPx() }
-        val lineH = with(density) { (focusedSurface.fontSp * 1.55f).sp.toPx() }
+        val cellW = (focusedSurface.fontSp * 0.6f) * density.density
+        val lineH = (focusedSurface.fontSp * 1.55f) * density.density
         onIntent(
             TerminalIntent.Geometry(
                 totalWidthPx = containerW.toFloat(),

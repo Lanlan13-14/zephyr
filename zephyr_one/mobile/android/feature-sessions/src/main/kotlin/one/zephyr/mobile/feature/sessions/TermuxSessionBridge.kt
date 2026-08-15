@@ -238,7 +238,7 @@ class TermuxSessionBridge(
         override fun onColorsChanged(session: TerminalSession) = onScreenChanged()
         override fun onTerminalCursorStateChange(state: Boolean) = Unit
         override fun setTerminalShellPid(session: TerminalSession, pid: Int) = Unit
-        override fun getTerminalCursorStyle(): Integer? = null
+        override fun getTerminalCursorStyle(): Int? = null
         override fun logError(tag: String, message: String) = Unit
         override fun logWarn(tag: String, message: String) = Unit
         override fun logInfo(tag: String, message: String) = Unit
