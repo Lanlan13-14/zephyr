@@ -321,9 +321,15 @@ fun AiWorkspaceOverlay(
             visible = AiSheetMotion.fabVisible(enabled, sheet.detent),
             modifier = Modifier.align(Alignment.BottomEnd),
             enter = fadeIn(tween(motion.scale(AiSheetGeometry.FAB_OPACITY_MS))) +
-                scaleIn(AiSheetGeometry.FAB_GONE_SCALE, tween(motion.scale(AiSheetGeometry.FAB_SCALE_MS), easing = ZephyrMotionTokens.easeOut)),
+                scaleIn(
+                    animationSpec = tween(motion.scale(AiSheetGeometry.FAB_SCALE_MS), easing = ZephyrMotionTokens.easeOut),
+                    initialScale = AiSheetGeometry.FAB_GONE_SCALE,
+                ),
             exit = fadeOut(tween(motion.scale(AiSheetGeometry.FAB_OPACITY_MS))) +
-                scaleOut(AiSheetGeometry.FAB_GONE_SCALE, tween(motion.scale(AiSheetGeometry.FAB_SCALE_MS), easing = ZephyrMotionTokens.easeOut)),
+                scaleOut(
+                    animationSpec = tween(motion.scale(AiSheetGeometry.FAB_SCALE_MS), easing = ZephyrMotionTokens.easeOut),
+                    targetScale = AiSheetGeometry.FAB_GONE_SCALE,
+                ),
         ) {
             val interaction = remember { MutableInteractionSource() }
             Surface(

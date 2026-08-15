@@ -197,6 +197,9 @@ test('chip controls match Docker and send uses the real runtime', () => {
   assert.match(models, /"none", "minimal", "low", "medium", "high", "xhigh"/);
   assert.match(models, /选择图片或文件（单文件最多 12MB）/);
   assert.match(models, /计划模式会要求复杂任务先规划/);
+  assert.match(overlay, /initialScale = AiSheetGeometry\.FAB_GONE_SCALE/);
+  assert.match(overlay, /targetScale = AiSheetGeometry\.FAB_GONE_SCALE/);
+  assert.doesNotMatch(overlay, /scaleIn\(AiSheetGeometry\.FAB_GONE_SCALE/);
   assert.match(overlay, /controller\.send\(text\)/);
   assert.doesNotMatch(overlay, /sendNotice\(/);
 });
