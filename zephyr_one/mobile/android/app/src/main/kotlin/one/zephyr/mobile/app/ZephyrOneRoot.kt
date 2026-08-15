@@ -61,6 +61,7 @@ import one.zephyr.mobile.app.di.AccountContainer
 import one.zephyr.mobile.app.di.AppContainer
 import one.zephyr.mobile.data.repository.ActivityRepository
 import one.zephyr.mobile.data.session.SessionRow
+import one.zephyr.mobile.data.session.SessionTransport
 import one.zephyr.mobile.feature.connections.ConnectionEditorRoute
 import one.zephyr.mobile.feature.connections.ConnectionEditorViewModel
 import one.zephyr.mobile.feature.connections.ConnectionListRoute
@@ -743,7 +744,17 @@ private fun BoundRoot(
             )
         }
 
-        AiWorkspaceOverlay(
+        val sessions by account.sessions.rows.collectAsState()
+        val overlaySession = when (val currentRoute = current) {
+            is RootRoute.Terminal -> sessions.firstOrNull { it.sessionId == currentRoute.sessionId }
+            is RootRoute.Remote -> sessions.firstOrNull { it.sessionId == currentRoute.sessionId }
+            else -> sessions.firstOrNull { it.transport == SessionTransport.CONNECTED }
+                ?: sessions.firstOrNull { it.transport.isLive }
+        }
+        BoundAiWorkspace(
+            account = account,
+            destination = lastRoot,
+            session = overlaySession,
             onOpenSettings = { route = RootRoute.AiSettings },
             onNotice = notice,
         )
@@ -1064,7 +1075,10 @@ private fun ToolsDestination(
     )
     ToolsRootRoute(
         inventory = inventory,
-        summaries = ToolsRootSummaries(language = languageLabel),
+        summaries = ToolsRootSummaries(
+            language = languageLabel,
+            ai = AiWorkspaceBinding.settingsSummary(prefs),
+        ),
         onAddTool = { onOpenTool(ToolEntry.PROXY) },
         onOpenBatchExecution = onOpenBatch,
         onOpenDocker = { onOpenTool(ToolEntry.DOCKER) },
