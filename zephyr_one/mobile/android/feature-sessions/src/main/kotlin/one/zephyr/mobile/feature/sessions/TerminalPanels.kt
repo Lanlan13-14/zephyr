@@ -73,12 +73,13 @@ internal fun TerminalToolBody(
 
 @Composable
 private fun FilesToolBody(colors: TerminalChromeColors, onMessage: (String) -> Unit) {
+    val blockedMsg = stringResource(R.string.terminal_sftp_blocked)
     Column {
-        ToolRow(colors, "nginx.conf", "12K") { onMessage(stringResource(R.string.terminal_sftp_blocked)) }
-        ToolRow(colors, "access.log", "210M") { onMessage(stringResource(R.string.terminal_sftp_blocked)) }
-        ToolRow(colors, "releases/", "dir") { onMessage(stringResource(R.string.terminal_sftp_blocked)) }
+        ToolRow(colors, "nginx.conf", "12K") { onMessage(blockedMsg) }
+        ToolRow(colors, "access.log", "210M") { onMessage(blockedMsg) }
+        ToolRow(colors, "releases/", "dir") { onMessage(blockedMsg) }
         ToolRow(colors, "上传到此目录…", null, icon = ZephyrIcons.Download) {
-            onMessage(stringResource(R.string.terminal_sftp_blocked))
+            onMessage(blockedMsg)
         }
     }
 }
@@ -142,12 +143,14 @@ private fun StatsToolBody(
     onOpenDocker: () -> Unit,
     onMessage: (String) -> Unit,
 ) {
+    val dockerLabel = stringResource(R.string.terminal_open_docker)
+    val statsBlockedMsg = stringResource(R.string.terminal_stats_blocked)
     Column {
         Meter(colors, "CPU", "—", 0f)
         Meter(colors, "内存", "—", 0f)
         Meter(colors, "磁盘 /", "—", 0f, warn = true)
         Text(
-            text = "DOCKER · " + stringResource(R.string.terminal_open_docker),
+            text = "DOCKER · $dockerLabel",
             color = colors.accent,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
@@ -157,16 +160,16 @@ private fun StatsToolBody(
                 .then(Modifier),
         )
         TermPressable(onClick = onOpenDocker, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp), scale = 0.99f) {
-            Text(stringResource(R.string.terminal_open_docker), color = colors.accent, fontSize = 12.sp)
+            Text(dockerLabel, color = colors.accent, fontSize = 12.sp)
         }
         Spacer(Modifier.height(6.dp))
         TermPressable(
-            onClick = { onMessage(stringResource(R.string.terminal_stats_blocked)) },
+            onClick = { onMessage(statsBlockedMsg) },
             modifier = Modifier.fillMaxWidth(),
             scale = 0.99f,
         ) {
             Text(
-                text = stringResource(R.string.terminal_stats_blocked),
+                text = statsBlockedMsg,
                 color = colors.dim,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(8.dp),

@@ -51,9 +51,11 @@ data class TerminalFloatingPanel(
     val heightPx: Float = Float.NaN,
 )
 
+const val DEFAULT_TERMINAL_DOCK_FRACTION = 0.38f
+
 data class TerminalWorkspaceState(
     val split: TerminalSplitMode = TerminalSplitMode.OFF,
-    val dockWidthFraction: Float = DEFAULT_DOCK_FRACTION,
+    val dockWidthFraction: Float = DEFAULT_TERMINAL_DOCK_FRACTION,
     val focusPane: Char = 'a',
     val paneA: String,
     val paneB: String? = null,

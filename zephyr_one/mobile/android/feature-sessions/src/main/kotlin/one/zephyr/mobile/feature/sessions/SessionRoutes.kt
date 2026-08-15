@@ -8,8 +8,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
-import kotlinx.coroutines.flow.Flow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import one.zephyr.mobile.data.session.SessionRow
+import one.zephyr.mobile.model.Connection
+import one.zephyr.mobile.model.Note
+import one.zephyr.mobile.model.PageState
+import one.zephyr.mobile.model.Snippet
 
 /**
  * Route bindings for S20 and S21.
@@ -180,19 +186,6 @@ fun TerminalRoute(
                 coroutineScope.launch { onMessage("已粘贴到 " + (state as? PageState.Content)?.value?.connection?.name.orEmpty()) }
             }
         },
-    )
-}
-        remoteTitle = remoteTitle,
-        keyboardVisible = keyboardVisible,
-        onIntent = { intent ->
-            dispatch(
-                viewModel = viewModel,
-                intent = intent,
-                twoFingerScrollGoesRemote = twoFingerScrollGoesRemote,
-                onKeyboardVisible = { visible -> keyboardVisible = visible },
-            )
-        },
-        modifier = modifier,
     )
 }
 

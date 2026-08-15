@@ -168,8 +168,17 @@ private fun DemoTerminalSurface(
     var containerW by remember { mutableStateOf(0) }
     var containerH by remember { mutableStateOf(0) }
 
+    val splitOffMsg = stringResource(R.string.terminal_split_off)
+    val splitTermMsg = stringResource(R.string.terminal_split_term)
+    val splitLeftMsg = stringResource(R.string.terminal_split_left)
+    val splitRightMsg = stringResource(R.string.terminal_split_right)
+    val needSecondMsg = stringResource(R.string.terminal_need_second_session)
+    val insertToastMsg = stringResource(R.string.terminal_insert_toast)
+
     LaunchedEffect(containerW, containerH, imeHeightPx, keyrowHeight, dockHeight, focusedSurface.fontSp) {
         if (containerW <= 0 || containerH <= 0) return@LaunchedEffect
+        val cellW = with(density) { (focusedSurface.fontSp * 0.6f).sp.toPx() }
+        val lineH = with(density) { (focusedSurface.fontSp * 1.55f).sp.toPx() }
         onIntent(
             TerminalIntent.Geometry(
                 totalWidthPx = containerW.toFloat(),
@@ -177,8 +186,8 @@ private fun DemoTerminalSurface(
                 imeHeightPx = imeHeightPx,
                 shortcutMatrixHeightPx = keyrowHeight,
                 dockHeightPx = if (imeOpen) 0f else dockHeight,
-                cellWidthPx = focusedSurface.fontSp * density.density * 0.6f,
-                lineHeightPx = focusedSurface.fontSp * density.scaledDensity * 1.55f,
+                cellWidthPx = cellW,
+                lineHeightPx = lineH,
             ),
         )
     }
@@ -217,17 +226,17 @@ private fun DemoTerminalSurface(
                     onSplit = {
                         val next = TerminalWorkspace.nextSplit(ws.split)
                         if (next == TerminalSplitMode.TERM && liveSessions.size < 2) {
-                            onMessage(stringResource(R.string.terminal_need_second_session))
+                            onMessage(needSecondMsg)
                         }
                         onWorkspace(
                             TerminalWorkspace.applySplit(ws, next, liveSessions.map { it.sessionId }),
                         )
                         onMessage(
                             when (next) {
-                                TerminalSplitMode.OFF -> stringResource(R.string.terminal_split_off)
-                                TerminalSplitMode.TERM -> stringResource(R.string.terminal_split_term)
-                                TerminalSplitMode.LEFT -> stringResource(R.string.terminal_split_left)
-                                TerminalSplitMode.RIGHT -> stringResource(R.string.terminal_split_right)
+                                TerminalSplitMode.OFF -> splitOffMsg
+                                TerminalSplitMode.TERM -> splitTermMsg
+                                TerminalSplitMode.LEFT -> splitLeftMsg
+                                TerminalSplitMode.RIGHT -> splitRightMsg
                             },
                         )
                     },
@@ -267,7 +276,7 @@ private fun DemoTerminalSurface(
                         snippets = snippets,
                         onWorkspace = onWorkspace,
                         onIntent = onIntent,
-                        onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(stringResource(R.string.terminal_insert_toast)) },
+                        onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(insertToastMsg) },
                         onOpenNote = onOpenNote,
                         onOpenDocker = onOpenDocker,
                         onMessage = onMessage,
@@ -281,7 +290,7 @@ private fun DemoTerminalSurface(
                             notes = notes,
                             snippets = snippets,
                             onWorkspace = onWorkspace,
-                            onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(stringResource(R.string.terminal_insert_toast)) },
+                            onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(insertToastMsg) },
                             onOpenNote = onOpenNote,
                             onOpenDocker = onOpenDocker,
                             onMessage = onMessage,

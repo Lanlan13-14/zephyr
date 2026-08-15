@@ -208,11 +208,10 @@ class TermuxSessionBridge(
     fun currentModes(): TerminalModes {
         val emulator = session.emulator ?: return TerminalModes()
         return TerminalModes(
-            cursorVisible = emulator.isCursorVisible,
-            alternateScreen = emulator.isShowingAltBuffer,
-            bracketedPaste = emulator.isBracketedPasteEnabled,
             mouseReporting = emulator.isMouseTrackingActive,
-            sgrMouse = true,
+            alternateBuffer = emulator.isShowingAltBuffer,
+            bracketedPaste = emulator.isBracketedPasteEnabled,
+            mouseProtocol = MouseProtocol.SGR,
         )
     }
 

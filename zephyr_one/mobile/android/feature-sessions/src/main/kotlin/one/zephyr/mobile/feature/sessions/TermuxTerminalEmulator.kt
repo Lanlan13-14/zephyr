@@ -70,11 +70,10 @@ class TermuxTerminalEmulator(
             dirtyRows = 0 until rows,
             title = emulator.title,
             modes = TerminalModes(
-                cursorVisible = emulator.isCursorVisible,
-                alternateScreen = emulator.isShowingAltBuffer,
-                bracketedPaste = emulator.isBracketedPasteEnabled,
                 mouseReporting = emulator.isMouseTrackingActive,
-                sgrMouse = true,
+                alternateBuffer = emulator.isShowingAltBuffer,
+                bracketedPaste = emulator.isBracketedPasteEnabled,
+                mouseProtocol = MouseProtocol.SGR,
             ),
         )
     }
