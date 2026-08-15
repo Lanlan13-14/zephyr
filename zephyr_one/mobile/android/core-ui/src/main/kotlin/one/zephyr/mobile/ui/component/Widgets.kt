@@ -66,7 +66,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import one.zephyr.mobile.ui.icon.ZephyrIcons
 import one.zephyr.mobile.ui.theme.ProvideContentColor
 import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
