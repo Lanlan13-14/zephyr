@@ -94,6 +94,7 @@ fun TerminalRoute(
     onSelectSession: (String) -> Unit = {},
     onCloseSession: (String) -> Unit = {},
     onAddSession: (Connection) -> Unit = {},
+    onCreateConnection: () -> Unit = {},
     onOpenNote: (String) -> Unit = {},
     onOpenDocker: () -> Unit = {},
 ) {
@@ -158,7 +159,7 @@ fun TerminalRoute(
                 viewModel = viewModel,
                 intent = intent,
                 twoFingerScrollGoesRemote = twoFingerScrollGoesRemote,
-                onKeyboardVisible = { visible -> keyboardVisible = visible },
+                onToggleKeyboard = { keyboardVisible = !keyboardVisible },
             )
         },
         modifier = modifier,
@@ -173,6 +174,7 @@ fun TerminalRoute(
         onSelectSession = onSelectSession,
         onCloseSession = onCloseSession,
         onAddSession = onAddSession,
+        onCreateConnection = onCreateConnection,
         onOpenNote = onOpenNote,
         onOpenDocker = onOpenDocker,
         onMessage = { msg -> coroutineScope.launch { onMessage(msg) } },
@@ -217,7 +219,7 @@ private fun openDockTool(
     if (item == null) return
     val kind = TerminalToolKind.fromDock(item)
     if (kind != null && workspace != null) {
-        onWorkspace(TerminalWorkspace.openTool(workspace, kind))
+        onWorkspace(TerminalWorkspace.openTool(workspace, kind, phone = true))
         return
     }
     onDock(item)
@@ -234,7 +236,7 @@ private fun dispatch(
     viewModel: TerminalViewModel,
     intent: TerminalIntent,
     twoFingerScrollGoesRemote: Boolean,
-    onKeyboardVisible: (Boolean) -> Unit,
+    onToggleKeyboard: () -> Unit,
 ) {
     val controller = viewModel.controller
     when (intent) {
@@ -291,7 +293,7 @@ private fun dispatch(
         is TerminalIntent.Dock -> {
             // The keyboard is the screen's own state: routing it through the ViewModel would make the
             // IME flag survive the screen it belongs to.
-            if (intent.item == TerminalDockItem.KEYBOARD) onKeyboardVisible(true) else viewModel.onDock(intent.item)
+            if (intent.item == TerminalDockItem.KEYBOARD) onToggleKeyboard() else viewModel.onDock(intent.item)
         }
     }
 }

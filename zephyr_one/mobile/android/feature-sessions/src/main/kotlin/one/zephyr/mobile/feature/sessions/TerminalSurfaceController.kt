@@ -21,6 +21,9 @@ import kotlinx.coroutines.launch
 interface TerminalTransport {
     suspend fun write(bytes: ByteArray)
 
+    /** Called when an asynchronous wire write/resize fails; never throw onto the UI dispatcher. */
+    fun onFailure(error: Throwable) = Unit
+
     /**
      * @param widthPx pixel dimensions travel with the resize because SSH window-change carries them
      *   and some full-screen programs use them for sixel/image sizing. Telnet NAWS ignores them.
@@ -570,7 +573,10 @@ class TerminalSurfaceController(
 
     private fun write(bytes: ByteArray) {
         if (bytes.isEmpty()) return
-        scope.launch { transport.write(bytes) }
+        scope.launch {
+            runCatching { transport.write(bytes) }
+                .onFailure(transport::onFailure)
+        }
     }
 
     private fun publishViewport() {

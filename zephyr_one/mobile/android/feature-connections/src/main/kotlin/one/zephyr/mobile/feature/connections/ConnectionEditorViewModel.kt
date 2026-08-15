@@ -73,6 +73,7 @@ class ConnectionEditorViewModel(
     private val initialProtocol: Protocol = Protocol.SSH,
     private val newIdFactory: () -> String,
     private val tester: ConnectionTester = UnavailableConnectionTester,
+    private val testCredentials: suspend (Connection, ConnectionDraft) -> ConnectionTestCredentials = { _, _ -> ConnectionTestCredentials() },
     private val clock: () -> Long = System::currentTimeMillis,
     private val registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
     private val unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
@@ -295,16 +296,22 @@ class ConnectionEditorViewModel(
         mutate { it.copy(testing = true, testResult = null) }
         viewModelScope.launch {
             val row = content.value.draft.normalized()
-            val result = runCatching { tester.test(row) }
-                .getOrElse { failure ->
-                    ConnectionTestResult.Failed(
-                        one.zephyr.mobile.model.MobileError.local(
-                            code = "test_failed",
-                            message = failure.message ?: MSG_TEST_FAILED,
-                            retryable = true,
-                        ),
-                    )
-                }
+            val credentials = runCatching { testCredentials(row, content.value.draft) }
+                .getOrDefault(ConnectionTestCredentials())
+            val result = try {
+                runCatching { tester.test(row, credentials) }
+                    .getOrElse { failure ->
+                        ConnectionTestResult.Failed(
+                            one.zephyr.mobile.model.MobileError.local(
+                                code = "test_failed",
+                                message = failure.message ?: MSG_TEST_FAILED,
+                                retryable = true,
+                            ),
+                        )
+                    }
+            } finally {
+                credentials.wipe()
+            }
             mutate { it.copy(testing = false, testResult = result) }
         }
     }
@@ -345,6 +352,7 @@ class ConnectionEditorViewModel(
             initialProtocol: Protocol = Protocol.SSH,
             newIdFactory: () -> String,
             tester: ConnectionTester = UnavailableConnectionTester,
+            testCredentials: suspend (Connection, ConnectionDraft) -> ConnectionTestCredentials = { _, _ -> ConnectionTestCredentials() },
             registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
             unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
@@ -358,6 +366,7 @@ class ConnectionEditorViewModel(
                 initialProtocol = initialProtocol,
                 newIdFactory = newIdFactory,
                 tester = tester,
+                testCredentials = testCredentials,
                 registerSensitiveSink = registerSensitiveSink,
                 unregisterSensitiveSink = unregisterSensitiveSink,
             ) as T

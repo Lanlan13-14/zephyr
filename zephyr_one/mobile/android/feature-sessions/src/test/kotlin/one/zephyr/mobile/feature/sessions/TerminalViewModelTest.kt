@@ -456,7 +456,7 @@ class TerminalViewModelTest {
     }
 
     @Test
-    fun acceptingAChangedHostKeyTrustsItAndSaysSo() = runTest(mainDispatcher) {
+    fun acceptingAChangedHostKeyTrustsItRedialsAndSaysSo() = runTest(mainDispatcher) {
         val host = FakeHost(outcome = TerminalOpenOutcome.HostKeyDecision("SHA256:abc", changed = true))
         val subject = subject(host = host)
         subscribe(subject)
@@ -470,6 +470,7 @@ class TerminalViewModelTest {
         runCurrent()
 
         assertEquals(1, host.trusted)
+        assertEquals(2, host.opens)
         // A changed key that was accepted must leave a trace the user can see afterwards.
         assertTrue(messages.contains(TerminalViewModel.HOST_KEY_CHANGED_ACCEPTED))
     }

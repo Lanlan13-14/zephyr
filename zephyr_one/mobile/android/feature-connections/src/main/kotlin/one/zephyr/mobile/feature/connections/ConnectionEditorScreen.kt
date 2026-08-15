@@ -692,28 +692,29 @@ private fun SecretEditor(
                     style = ZephyrTheme.typography.mono,
                     modifier = Modifier.weight(1f),
                 )
-                SegmentedControl(
-                    options = listOf(
-                        stringResource(R.string.editor_secret_keep),
-                        stringResource(R.string.editor_secret_replace),
-                        stringResource(R.string.editor_secret_clear),
-                    ),
-                    selectedIndex = when (state) {
-                        is SecretState.Unchanged -> 0
-                        is SecretState.Replace -> 1
-                        is SecretState.Clear -> 2
-                    },
-                    onSelect = {
-                        onChange(
-                            when (it) {
-                                0 -> SecretState.Unchanged
-                                1 -> SecretState.Replace("")
-                                else -> SecretState.Clear
-                            },
-                        )
-                    },
-                    modifier = Modifier.width(159.dp),
-                )
+                Row(
+                    modifier = Modifier.width(168.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (state !is SecretState.Replace) {
+                        OutlinedButton(
+                            onClick = { onChange(SecretState.Replace("")) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(stringResource(R.string.editor_secret_replace), maxLines = 1) }
+                    }
+                    if (state !is SecretState.Clear) {
+                        OutlinedButton(
+                            onClick = { onChange(SecretState.Clear) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(stringResource(R.string.editor_secret_clear), maxLines = 1) }
+                    }
+                    if (state !is SecretState.Unchanged) {
+                        OutlinedButton(
+                            onClick = { onChange(SecretState.Unchanged) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(stringResource(R.string.editor_secret_keep), maxLines = 1) }
+                    }
+                }
             }
         }
 

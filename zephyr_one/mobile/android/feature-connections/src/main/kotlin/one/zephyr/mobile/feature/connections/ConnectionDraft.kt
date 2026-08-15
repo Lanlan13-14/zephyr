@@ -264,6 +264,14 @@ data class ConnectionDraft(
     private fun outgoingSecret(state: SecretState): SecretState =
         if (state is SecretState.Replace && state.isBlank) SecretState.Unchanged else state
 
+    /** Copies only the active replacement for a one-shot connection test. Caller must wipe it. */
+    fun testPasswordChars(): CharArray? =
+        (password as? SecretState.Replace)?.editingText()?.toCharArray()
+
+    /** Copies only the active inline-key replacement for a one-shot test. Caller must wipe it. */
+    fun testPrivateKeyChars(): CharArray? =
+        (privateKey as? SecretState.Replace)?.editingText()?.toCharArray()
+
     // ---- validation ----------------------------------------------------------------------------
 
     /**

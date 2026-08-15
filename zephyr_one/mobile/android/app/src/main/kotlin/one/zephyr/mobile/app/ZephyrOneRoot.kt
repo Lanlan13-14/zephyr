@@ -67,6 +67,8 @@ import one.zephyr.mobile.data.session.SessionRow
 import one.zephyr.mobile.data.session.SessionTransport
 import one.zephyr.mobile.feature.connections.ConnectionEditorRoute
 import one.zephyr.mobile.feature.connections.ConnectionEditorViewModel
+import one.zephyr.mobile.feature.connections.ConnectionDraft
+import one.zephyr.mobile.feature.connections.ConnectionTestCredentials
 import one.zephyr.mobile.feature.connections.ConnectionListRoute
 import one.zephyr.mobile.feature.connections.ConnectionListViewModel
 import one.zephyr.mobile.feature.connections.ConnectionTestResult
@@ -102,7 +104,6 @@ import one.zephyr.mobile.feature.tools.BatchExecutionViewModel
 import one.zephyr.mobile.feature.tools.BatchIntent
 import one.zephyr.mobile.feature.tools.NoopBatchAuditSink
 import one.zephyr.mobile.feature.tools.ServerHubScreen
-import one.zephyr.mobile.feature.tools.UnavailableRemotePorts
 import one.zephyr.mobile.feature.tools.ToolEntry
 import one.zephyr.mobile.feature.tools.ToolsInventory
 import one.zephyr.mobile.feature.tools.ToolsRootRoute
@@ -534,7 +535,11 @@ private fun BoundRoot(
                         duplicateSourceId = current.duplicateSourceId,
                         initialProtocol = current.protocol,
                         newIdFactory = { UUID.randomUUID().toString() },
-                        tester = TcpReachabilityTester(),
+                        tester = ProtocolConnectionTester(
+                            ssh = DirectSshConnectionTester(appContainer.sshEngine),
+                            fallback = TcpReachabilityTester(),
+                        ),
+                        testCredentials = { connection, draft -> account.connectionTestCredentials(connection, draft) },
                         registerSensitiveSink = account::registerSensitiveSink,
                         unregisterSensitiveSink = account::unregisterSensitiveSink,
                     ),
@@ -732,6 +737,11 @@ private fun BoundRoot(
                 var termWorkspace by remember(current.sessionId) {
                     mutableStateOf(TerminalWorkspaceState(paneA = current.sessionId))
                 }
+                LaunchedEffect(termSessions, current.sessionId) {
+                    if (termSessions.firstOrNull { it.sessionId == current.sessionId }?.transport == SessionTransport.CLOSED) {
+                        route = RootRoute.Root(IslandDestination.SESSIONS)
+                    }
+                }
                 TerminalRoute(
                     viewModel = viewModel(
                         key = "terminal:" + current.sessionId,
@@ -776,6 +786,7 @@ private fun BoundRoot(
                     onAddSession = { connection ->
                         route = routeForProtocol(UUID.randomUUID().toString(), connection.id, connection.protocol)
                     },
+                    onCreateConnection = { route = RootRoute.ProtocolPicker },
                     onOpenNote = { id -> route = RootRoute.NoteEditor(id) },
                     onOpenDocker = { route = RootRoute.Ops(OpsSection.DOCKER) },
                 )
@@ -798,6 +809,7 @@ private fun BoundRoot(
 
                 RootRoute.BatchExecution -> BatchExecutionDestination(
                     account = account,
+                    sshEngine = appContainer.sshEngine,
                     ownerUserId = ownerUserId,
                     onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
                     onMessage = { messages.emit(it) },
@@ -1179,6 +1191,7 @@ private fun ToolsDestination(
 @Composable
 private fun BatchExecutionDestination(
     account: AccountContainer,
+    sshEngine: one.zephyr.mobile.protocol.ssh.SshEngine,
     ownerUserId: String,
     onBack: () -> Unit,
     onMessage: suspend (String) -> Unit,
@@ -1187,7 +1200,7 @@ private fun BatchExecutionDestination(
         key = "tools:batch",
         factory = BatchExecutionViewModel.factory(
             connections = account.connections,
-            exec = UnavailableRemotePorts,
+            exec = LiveSshExecPort(sshEngine, account.sessions),
             audit = NoopBatchAuditSink,
             ownerUserId = ownerUserId,
             network = account.network,
@@ -1585,6 +1598,23 @@ private fun AccountContainer.passwordChars(connection: Connection): CharArray? {
         fieldName = FIELD_PASSWORD,
     ) ?: return null
     return secretStore.getText(ref)?.toCharArray()
+}
+
+private suspend fun AccountContainer.connectionTestCredentials(
+    connection: Connection,
+    draft: ConnectionDraft,
+): ConnectionTestCredentials {
+    val replacementPassword = draft.testPasswordChars()
+    val replacementKey = draft.testPrivateKeyChars()
+    if (replacementPassword != null || replacementKey != null) {
+        return ConnectionTestCredentials(password = replacementPassword, privateKey = replacementKey)
+    }
+    val stored = terminalCredentials(connection)
+    return ConnectionTestCredentials(
+        password = stored.password,
+        privateKey = stored.privateKey,
+        passphrase = stored.passphrase,
+    )
 }
 
 private suspend fun AccountContainer.terminalCredentials(connection: Connection): TerminalCredentials {

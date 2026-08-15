@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class TermuxSessionBridge(
     private val maxScrollback: Int = 4_000,
-    var writeBytes: (ByteArray) -> Unit,
+    initialWriteBytes: (ByteArray) -> Unit = {},
     private val onTitle: (String?) -> Unit = {},
     private val onCopy: (String) -> Unit = {},
     private val onPasteRequested: () -> Unit = {},
@@ -38,6 +38,13 @@ class TermuxSessionBridge(
 ) : TerminalEmulator {
 
     override val isAvailable: Boolean = true
+
+    @Volatile
+    private var writeBytes: (ByteArray) -> Unit = initialWriteBytes
+
+    fun bindWriteBytes(writer: (ByteArray) -> Unit) {
+        writeBytes = writer
+    }
 
     private val client = BridgeSessionClient()
 
@@ -79,11 +86,18 @@ class TermuxSessionBridge(
         props.setProperty("foreground", scheme.foregroundHex)
         props.setProperty("background", scheme.backgroundHex)
         props.setProperty("cursor", scheme.cursorHex)
+        scheme.ansiArgb.forEachIndexed { index, argb ->
+            props.setProperty("color$index", String.format("#%06X", argb and 0xFFFFFF))
+        }
         TerminalColors.COLOR_SCHEME.updateWith(props)
         session.emulator?.mColors?.reset()
         snapshotColors.reset()
         attachedView?.get()?.onScreenUpdated()
         onScreenChanged()
+    }
+
+    fun setSelectionColors(backgroundArgb: Int?, foregroundArgb: Int?) {
+        attachedView?.get()?.setSelectionColors(backgroundArgb, foregroundArgb)
     }
 
     fun attach(view: TerminalView) {
@@ -274,12 +288,29 @@ data class TermuxColorScheme(
     val foregroundArgb: Int,
     val backgroundArgb: Int,
     val cursorArgb: Int,
+    val ansiArgb: IntArray = readableAnsiPalette(backgroundArgb),
 ) {
     val foregroundHex: String get() = hex(foregroundArgb)
     val backgroundHex: String get() = hex(backgroundArgb)
     val cursorHex: String get() = hex(cursorArgb)
 
     private fun hex(argb: Int): String = String.format("#%06X", argb and 0xFFFFFF)
+}
+
+internal fun readableAnsiPalette(backgroundArgb: Int): IntArray {
+    val light = TerminalCellPaint.contrast(0xFF14181D.toInt(), backgroundArgb) >
+        TerminalCellPaint.contrast(0xFFF2F4F7.toInt(), backgroundArgb)
+    return if (light) intArrayOf(
+        0xFF1C232B.toInt(), 0xFFB3261E.toInt(), 0xFF087F23.toInt(), 0xFF7A6200.toInt(),
+        0xFF1565C0.toInt(), 0xFF8E24AA.toInt(), 0xFF007C91.toInt(), 0xFF4A525B.toInt(),
+        0xFF5B6570.toInt(), 0xFFD32F2F.toInt(), 0xFF0B7A2C.toInt(), 0xFF8A6500.toInt(),
+        0xFF0D5BB5.toInt(), 0xFF7B1FA2.toInt(), 0xFF006B75.toInt(), 0xFF14181D.toInt(),
+    ) else intArrayOf(
+        0xFF000000.toInt(), 0xFFCD0000.toInt(), 0xFF00CD00.toInt(), 0xFFCDCD00.toInt(),
+        0xFF6495ED.toInt(), 0xFFCD00CD.toInt(), 0xFF00CDCD.toInt(), 0xFFE5E5E5.toInt(),
+        0xFF7F7F7F.toInt(), 0xFFFF0000.toInt(), 0xFF00FF00.toInt(), 0xFFFFFF00.toInt(),
+        0xFF5C5CFF.toInt(), 0xFFFF00FF.toInt(), 0xFF00FFFF.toInt(), 0xFFFFFFFF.toInt(),
+    )
 }
 
 /**
@@ -359,4 +390,4 @@ internal object TermuxHandleSeq {
  * live SSH stream.
  */
 fun productionTerminalEmulator(maxScrollback: Int = 4_000): TerminalEmulator =
-    TermuxSessionBridge(maxScrollback = maxScrollback, writeBytes = {})
+    TermuxSessionBridge(maxScrollback = maxScrollback)

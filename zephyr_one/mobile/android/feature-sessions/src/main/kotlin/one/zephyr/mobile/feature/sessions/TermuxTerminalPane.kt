@@ -55,13 +55,17 @@ fun TermuxTerminalPane(
         )
     }
 
-    LaunchedEffect(colors.termBg, colors.text) {
+    LaunchedEffect(colors.termBg, colors.text, colors.selectionBackground, colors.selectionForeground) {
         bridge?.applyScheme(
             TermuxColorScheme(
                 foregroundArgb = colors.text.toArgb(),
                 backgroundArgb = colors.termBg.toArgb(),
                 cursorArgb = colors.text.toArgb(),
             ),
+        )
+        bridge?.setSelectionColors(
+            colors.selectionBackground?.toArgb(),
+            colors.selectionForeground?.toArgb(),
         )
     }
 

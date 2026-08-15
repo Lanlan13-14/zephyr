@@ -126,6 +126,7 @@ class TerminalViewModel(
         override suspend fun write(bytes: ByteArray) = host.transportFor(sessionId).write(bytes)
         override suspend fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) =
             host.transportFor(sessionId).resize(columns, rows, widthPx, heightPx)
+        override fun onFailure(error: Throwable) = host.transportFor(sessionId).onFailure(error)
     }
 
     val controller = TerminalSurfaceController(
@@ -143,8 +144,11 @@ class TerminalViewModel(
     val termux: TermuxSessionBridge? = emulator as? TermuxSessionBridge
 
     init {
-        termux?.writeBytes = { bytes ->
-            viewModelScope.launch { delegatingTransport.write(bytes) }
+        termux?.bindWriteBytes { bytes ->
+            viewModelScope.launch {
+                runCatching { delegatingTransport.write(bytes) }
+                    .onFailure(delegatingTransport::onFailure)
+            }
             controller.consumeLatches()
         }
     }
@@ -166,6 +170,8 @@ class TerminalViewModel(
     val title: StateFlow<String?> = titleState.asStateFlow()
 
     private var outputJob: Job? = null
+    private var closureJob: Job? = null
+    private var latencyJob: Job? = null
     private val emulatorLock = Any()
     private var connectRequested = false
 
@@ -356,6 +362,8 @@ class TerminalViewModel(
                     registry.setTransport(sessionId, SessionTransport.CONNECTED, clock())
                     if (outcome.banner.isNotEmpty()) titleState.value = outcome.banner
                     startOutput()
+                    startClosureWatch()
+                    startLatencyProbe()
                 }
                 is TerminalOpenOutcome.HostKeyDecision -> {
                     // The session stays CONNECTING: nothing has been trusted, and a changed key
@@ -373,6 +381,29 @@ class TerminalViewModel(
             request.wipe()
             credentials.wipe()
             opening = false
+        }
+    }
+
+    private fun startClosureWatch() {
+        closureJob?.cancel()
+        closureJob = viewModelScope.launch {
+            host.closure(sessionId).collect { error ->
+                if (registry.find(sessionId)?.transport != SessionTransport.CONNECTED) return@collect
+                outputJob?.cancel()
+                latencyJob?.cancel()
+                registry.close(sessionId, clock(), error.message ?: REMOTE_CLOSED)
+                messages.tryEmit(REMOTE_CLOSED)
+            }
+        }
+    }
+
+    private fun startLatencyProbe() {
+        latencyJob?.cancel()
+        latencyJob = viewModelScope.launch {
+            while (registry.find(sessionId)?.transport == SessionTransport.CONNECTED) {
+                registry.setLatency(sessionId, runCatching { host.measureLatency(sessionId) }.getOrNull())
+                delay(LATENCY_INTERVAL_MS)
+            }
         }
     }
 
@@ -449,8 +480,9 @@ class TerminalViewModel(
         hostKeyState.value = null
         viewModelScope.launch {
             host.trustHostKey(sessionId)
-            // Re-opening rather than resuming: nothing was negotiated before the decision, so there
-            // is no half-open session to continue.
+            // The first socket was intentionally rejected by the verifier. Move out of CONNECTING
+            // before re-opening; otherwise connect() sees CONNECTING and returns without dialing.
+            registry.setTransport(sessionId, SessionTransport.DISCONNECTED, clock())
             connect()
         }
         if (prompt.changed) messages.tryEmit(HOST_KEY_CHANGED_ACCEPTED)
@@ -474,6 +506,8 @@ class TerminalViewModel(
 
     fun disconnect() {
         outputJob?.cancel()
+        closureJob?.cancel()
+        latencyJob?.cancel()
         registry.close(sessionId, clock())
         viewModelScope.launch { runCatching { host.close(sessionId) } }
     }
@@ -483,6 +517,20 @@ class TerminalViewModel(
     fun setEncoding(encoding: TerminalEncoding) {
         controller.setCharset(TerminalCharset.of(encoding))
         connectionState.value = connectionState.value?.copy(encoding = encoding)
+    }
+
+    suspend fun listRemoteDirectory(path: String) = host.listDirectory(sessionId, path)
+
+    suspend fun executeRemote(command: String) = host.exec(sessionId, command)
+
+    suspend fun remoteMetrics(): Result<RemoteMetrics> = host.exec(
+        sessionId,
+        "LC_ALL=C head -n 1 /proc/stat; " +
+            "LC_ALL=C awk '/MemTotal:/{t=\$2}/MemAvailable:/{a=\$2}END{print t,a}' /proc/meminfo; " +
+            "LC_ALL=C df -Pk / | awk 'NR==2{gsub(/%/,\"\",\$5);print \$5}'",
+    ).mapCatching { result ->
+        if (result.exitCode != 0) error(result.stderr.toString(Charsets.UTF_8).ifBlank { "读取远端指标失败" })
+        parseRemoteMetrics(result.stdout.toString(Charsets.UTF_8))
     }
 
     fun onDock(item: TerminalDockItem) {
@@ -524,6 +572,8 @@ class TerminalViewModel(
 
     override fun onCleared() {
         outputJob?.cancel()
+        closureJob?.cancel()
+        latencyJob?.cancel()
         // The emulator holds a native handle; leaking it would leak the whole scrollback buffer.
         synchronized(emulatorLock) { emulator.close() }
         super.onCleared()
@@ -555,9 +605,30 @@ class TerminalViewModel(
         const val HOST_KEY_CHANGED_ACCEPTED = "已接受变更后的主机密钥"
         const val DISCLOSURE_RELAY = "主端 relay：凭据保留在主端"
         const val DISCLOSURE_DIRECT = "本次原生直连：加密连接材料仅驻留会话内存"
+        const val REMOTE_CLOSED = "SSH 连接已断开"
+        private const val LATENCY_INTERVAL_MS = 5_000L
         private const val STOP_TIMEOUT_MS = 5_000L
         private const val RENDER_FRAME_INTERVAL_MS = 16L
     }
+}
+
+data class RemoteMetrics(val cpuPercent: Int, val memoryPercent: Int, val diskPercent: Int)
+
+internal fun parseRemoteMetrics(text: String): RemoteMetrics {
+    val lines = text.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
+    require(lines.size >= 3) { "远端指标响应不完整" }
+    val cpu = lines[0].split(Regex("\\s+")).mapNotNull(String::toLongOrNull)
+    require(cpu.size >= 4) { "远端 CPU 数据无效" }
+    val total = cpu.sum().coerceAtLeast(1L)
+    val idle = cpu.getOrElse(3) { 0L } + cpu.getOrElse(4) { 0L }
+    val memory = lines[1].split(Regex("\\s+")).mapNotNull(String::toLongOrNull)
+    require(memory.size >= 2 && memory[0] > 0) { "远端内存数据无效" }
+    val disk = lines[2].toIntOrNull() ?: error("远端磁盘数据无效")
+    return RemoteMetrics(
+        cpuPercent = (((total - idle) * 100L) / total).toInt().coerceIn(0, 100),
+        memoryPercent = (((memory[0] - memory[1]) * 100L) / memory[0]).toInt().coerceIn(0, 100),
+        diskPercent = disk.coerceIn(0, 100),
+    )
 }
 
 /**

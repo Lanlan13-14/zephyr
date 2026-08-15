@@ -69,16 +69,26 @@ class SshTerminalHost(
     override fun output(sessionId: String): Flow<ByteArray> =
         if (engine.isAvailable) engine.output(sessionId) else emptyFlow()
 
+    override fun closure(sessionId: String): Flow<Throwable> =
+        if (engine.isAvailable) engine.closure(sessionId) else emptyFlow()
+
     override fun transportFor(sessionId: String): TerminalTransport = object : TerminalTransport {
         override suspend fun write(bytes: ByteArray) = engine.send(sessionId, bytes)
         override suspend fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) =
             engine.resize(sessionId, columns, rows, widthPx, heightPx)
+        override fun onFailure(error: Throwable) = engine.reportFailure(sessionId, error)
     }
 
     override suspend fun close(sessionId: String) {
         lastRequest.remove(sessionId)
         engine.disconnect(sessionId)
     }
+
+    override suspend fun measureLatency(sessionId: String): Long? = engine.measureLatency(sessionId)
+
+    override suspend fun listDirectory(sessionId: String, path: String) = engine.listDirectory(sessionId, path)
+
+    override suspend fun exec(sessionId: String, command: String) = engine.exec(sessionId, command)
 
     override suspend fun trustHostKey(sessionId: String) {
         val remembered = lastRequest[sessionId] ?: return
