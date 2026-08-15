@@ -61,9 +61,15 @@ object AiSheetGeometry {
     fun fabEndDp(layout: AiLayout): Float =
         if (layout == AiLayout.PAD) FAB_END_PAD_DP else FAB_END_DP
     const val HANDLE_WIDTH_DP: Float = 38f
+    const val HANDLE_ACTIVE_WIDTH_DP: Float = 46f
     const val HANDLE_BAR_HEIGHT_DP: Float = 5f
-    const val HANDLE_TOP_PAD_DP: Float = 10f
-    const val HANDLE_BOTTOM_PAD_DP: Float = 6f
+    const val HANDLE_TOUCH_HEIGHT_DP: Float = 30f
+    const val HANDLE_PRESS_MS: Int = 120
+    const val HANDLE_TOP_PAD_DP: Float = 6f
+    const val HANDLE_BOTTOM_PAD_DP: Float = 2f
+    const val SPRING_STIFFNESS: Float = 620f
+    const val SPRING_DAMPING_RATIO: Float = 0.86f
+    const val RUBBER_BAND_CONSTANT: Float = 0.42f
     const val CORNER_DP: Float = 28f
     const val CHIP_HEIGHT_DP: Float = 28f
     const val CHIP_PRESS_SCALE: Float = 0.94f
@@ -90,6 +96,26 @@ object AiSheetGeometry {
 
     fun clampHeightPx(heightPx: Float, containerHeightPx: Float): Float =
         heightPx.coerceIn(minDragHeightPx(containerHeightPx), maxDragHeightPx(containerHeightPx))
+
+    /**
+     * Direct manipulation stays 1:1 inside the usable range. Past either edge the excess gets
+     * progressively heavier instead of hitting a hard wall under the finger.
+     */
+    fun dragHeightPx(rawHeightPx: Float, containerHeightPx: Float): Float {
+        val min = minDragHeightPx(containerHeightPx)
+        val max = maxDragHeightPx(containerHeightPx)
+        return when {
+            rawHeightPx < min -> min - rubberBand(min - rawHeightPx, containerHeightPx)
+            rawHeightPx > max -> max + rubberBand(rawHeightPx - max, containerHeightPx)
+            else -> rawHeightPx
+        }
+    }
+
+    private fun rubberBand(distancePx: Float, containerHeightPx: Float): Float {
+        if (distancePx <= 0f || containerHeightPx <= 0f) return 0f
+        val scaled = distancePx * RUBBER_BAND_CONSTANT
+        return (scaled * containerHeightPx) / (containerHeightPx + scaled)
+    }
 }
 
 /**

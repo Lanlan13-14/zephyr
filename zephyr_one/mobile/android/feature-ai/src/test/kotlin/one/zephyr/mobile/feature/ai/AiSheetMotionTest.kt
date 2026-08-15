@@ -175,6 +175,27 @@ class AiSheetMotionTest {
     }
 
     @Test
+    fun `drag is one to one in range and rubber bands past both edges`() {
+        assertEquals(440f, AiSheetGeometry.dragHeightPx(440f, phone))
+        val below = AiSheetGeometry.dragHeightPx(100f, phone)
+        val above = AiSheetGeometry.dragHeightPx(800f, phone)
+        assertTrue(below < 168f)
+        assertTrue(below > 100f)
+        assertTrue(above > 736f)
+        assertTrue(above < 800f)
+    }
+
+    @Test
+    fun `settle spring is fast critically biased and handle gives immediate feedback`() {
+        assertEquals(620f, AiSheetGeometry.SPRING_STIFFNESS)
+        assertEquals(0.86f, AiSheetGeometry.SPRING_DAMPING_RATIO)
+        assertEquals(38f, AiSheetGeometry.HANDLE_WIDTH_DP)
+        assertEquals(46f, AiSheetGeometry.HANDLE_ACTIVE_WIDTH_DP)
+        assertEquals(30f, AiSheetGeometry.HANDLE_TOUCH_HEIGHT_DP)
+        assertEquals(120, AiSheetGeometry.HANDLE_PRESS_MS)
+    }
+
+    @Test
     fun `durations match demo sheet and fab tokens`() {
         assertEquals(420, AiSheetGeometry.SHEET_MS)
         assertEquals(240, AiSheetGeometry.FAB_OPACITY_MS)

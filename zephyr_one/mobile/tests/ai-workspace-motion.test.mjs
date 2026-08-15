@@ -127,6 +127,21 @@ test('back walks expanded → half → peek → closed and picker first', () => 
   assert.match(overlay, /AiSheetMotion\.back\(sheet\)/);
 });
 
+test('handle uses direct manipulation, stable velocity and an interruptible spring', () => {
+  assert.match(overlay, /AiHandleVelocityEstimator\(\)/);
+  assert.match(overlay, /tracker\.velocityPxPerSecond\(\)/);
+  const estimator = read(path.join(ANDROID, 'feature-ai/src/main/kotlin/one/zephyr/mobile/feature/ai/AiHandleVelocityEstimator.kt'));
+  assert.match(estimator, /horizonMs: Long = 100L/);
+  assert.match(estimator, /numerator \/ denominator \* 1_000f/);
+  assert.match(overlay, /spring\(/);
+  assert.match(overlay, /initialVelocity = -releaseVelocityPxPerSecond/);
+  assert.match(overlay, /AiSheetGeometry\.dragHeightPx/);
+  assert.match(overlay, /HANDLE_ACTIVE_WIDTH_DP \/ AiSheetGeometry\.HANDLE_WIDTH_DP/);
+  assert.match(overlay, /graphicsLayer \{ scaleX = handleScaleX \}/);
+  assert.match(motion, /RUBBER_BAND_CONSTANT/);
+  assert.doesNotMatch(overlay, /System\.nanoTime\(\)/);
+});
+
 test('flick + 40px closes even when nearest detent is still half', () => {
   const current = heightPx('HALF', phone, fractions) - 50;
   assert.equal(nearest(current, phone, fractions), 'HALF');
@@ -162,7 +177,7 @@ test('unconfigured overlay does not invent the demo disk thread', () => {
     assert.doesNotMatch(src, /logrotate/);
     assert.doesNotMatch(src, /du -x --max-depth/);
   }
-  assert.match(host, /AiConversationPolicy\.local\(\)/);
+  assert.match(host, /AndroidAiRuntimeController/);
   assert.match(models, /Never invent the demo disk-usage thread/);
   assert.match(overlay, /AiEmptyTranscript/);
   assert.match(models, /还没有对话/);
@@ -175,12 +190,16 @@ test('root hosts the overlay as an overlay, not a pushed page', () => {
   assert.match(host, /enabled = chrome\.enabled/);
 });
 
-test('chip lists and send toast still match the demo', () => {
-  assert.match(models, /"Claude Opus", "Claude Sonnet", "GPT-5", "Gemini 3 Pro"/);
-  assert.match(models, /"协作", "自动", "只读"/);
-  assert.match(models, /"按能力确认", "自动确认", "全部询问"/);
-  assert.match(models, /"关闭", "low", "medium", "high"/);
-  assert.match(models, /需要联网才能发送/);
-  assert.match(models, /附件 · 图片\/文件，RDP\/VNC 走图片输入/);
-  assert.match(models, /计划 · 复杂任务先规划/);
+test('chip controls match Docker and send uses the real runtime', () => {
+  assert.match(models, /"standard", "plan", "goal"/);
+  assert.match(models, /"economy", "balanced", "delivery"/);
+  assert.match(models, /"ask", "auto", "yolo"/);
+  assert.match(models, /"none", "minimal", "low", "medium", "high", "xhigh"/);
+  assert.match(models, /选择图片或文件（单文件最多 12MB）/);
+  assert.match(models, /计划模式会要求复杂任务先规划/);
+  assert.match(overlay, /initialScale = AiSheetGeometry\.FAB_GONE_SCALE/);
+  assert.match(overlay, /targetScale = AiSheetGeometry\.FAB_GONE_SCALE/);
+  assert.doesNotMatch(overlay, /scaleIn\(AiSheetGeometry\.FAB_GONE_SCALE/);
+  assert.match(overlay, /controller\.send\(text\)/);
+  assert.doesNotMatch(overlay, /sendNotice\(/);
 });
