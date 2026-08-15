@@ -9,62 +9,63 @@ import org.junit.Test
 class AiWorkspaceCopyTest {
 
     @Test
-    fun `unconfigured workspace has no invented transcript`() {
+    fun `unconfigured workspace has no invented provider or transcript`() {
         val conversation = AiConversationPolicy.local()
+        val chrome = AiWorkspaceChrome()
         assertTrue(conversation.isEmpty)
-        assertFalse(AiWorkspaceChrome().hasRuntime)
+        assertFalse(chrome.hasRuntime)
+        assertEquals("未选择 Provider", chrome.provider)
+        assertEquals("未选择模型", chrome.model)
         assertEquals("还没有对话", AiWorkspaceCopy.EMPTY_TITLE)
-        assertTrue(AiWorkspaceCopy.EMPTY_BODY.contains("配置 Provider"))
         assertFalse(AiWorkspaceCopy.EMPTY_BODY.contains("prod-web-01"))
         assertFalse(AiWorkspaceCopy.EMPTY_BODY.contains("82%"))
     }
 
     @Test
-    fun `chip cycle matches demo option lists and wraps`() {
+    fun `chip cycle matches Docker options and wraps`() {
         val start = AiWorkspaceChrome()
-        val model = AiChipCycle.cycle(start, AiChipKind.MODEL)
-        assertEquals("Claude Sonnet", model.model)
-        var walking = start
-        repeat(AiChipCycle.MODELS.size) { walking = AiChipCycle.cycle(walking, AiChipKind.MODEL) }
-        assertEquals("Claude Opus", walking.model)
-        assertEquals("自动", AiChipCycle.cycle(start, AiChipKind.MODE).collaboration)
-        assertEquals("自动确认", AiChipCycle.cycle(start, AiChipKind.PERM).permission)
+        assertEquals("plan", AiChipCycle.cycle(start, AiChipKind.MODE).collaboration)
+        assertEquals("delivery", AiChipCycle.cycle(start, AiChipKind.RUN_PROFILE).runProfile)
+        assertEquals("auto", AiChipCycle.cycle(start, AiChipKind.PERM).permission)
         assertEquals("high", AiChipCycle.cycle(start, AiChipKind.THINK).thinking)
+        assertTrue(AiChipCycle.cycle(start, AiChipKind.PLAN).planEnabled)
         assertEquals(start, AiChipCycle.cycle(start, AiChipKind.ATTACH))
+        assertEquals(start, AiChipCycle.cycle(start, AiChipKind.MODEL))
     }
 
     @Test
-    fun `chip toasts match demo strings`() {
+    fun `chip copy includes real run controls`() {
         val chrome = AiWorkspaceChrome(memoryCount = 12, skillsEnabled = true)
-        assertEquals("模型：Claude Opus", AiWorkspaceCopy.chipToast(AiChipKind.MODEL, chrome))
-        assertEquals("协作模式：协作", AiWorkspaceCopy.chipToast(AiChipKind.MODE, chrome))
-        assertEquals("权限模式：按能力确认", AiWorkspaceCopy.chipToast(AiChipKind.PERM, chrome))
+        assertEquals("Provider：未选择 Provider", AiWorkspaceCopy.chipToast(AiChipKind.PROVIDER, chrome))
+        assertEquals("模型：未选择模型", AiWorkspaceCopy.chipToast(AiChipKind.MODEL, chrome))
+        assertEquals("协作模式：standard", AiWorkspaceCopy.chipToast(AiChipKind.MODE, chrome))
+        assertEquals("运行档位：balanced", AiWorkspaceCopy.chipToast(AiChipKind.RUN_PROFILE, chrome))
+        assertEquals("权限模式：ask", AiWorkspaceCopy.chipToast(AiChipKind.PERM, chrome))
         assertEquals("思考：medium", AiWorkspaceCopy.chipToast(AiChipKind.THINK, chrome))
         assertEquals(AiWorkspaceCopy.ATTACH, AiWorkspaceCopy.chipToast(AiChipKind.ATTACH, chrome))
-        assertEquals(AiWorkspaceCopy.PLAN, AiWorkspaceCopy.chipToast(AiChipKind.PLAN, chrome))
+        assertEquals("计划：关闭", AiWorkspaceCopy.chipToast(AiChipKind.PLAN, chrome))
         assertEquals("Memory 12 条 · Skills 启用 · Env 仅变量名", AiWorkspaceCopy.chipToast(AiChipKind.MEMORY, chrome))
         assertNull(AiWorkspaceCopy.chipToast(AiChipKind.SETTINGS, chrome))
-        assertEquals(8, AiChipCycle.chips(chrome).size)
+        assertEquals(10, AiChipCycle.chips(chrome).size)
     }
 
     @Test
-    fun `settings subtitle and send stay honest`() {
+    fun `settings subtitle and runtime status stay honest`() {
         assertEquals(
-            "已启用 · Claude Opus · 协作模式",
-            AiWorkspaceCopy.settingsSub(true, "Claude Opus", "协作"),
+            "已启用 · gpt-5 · standard模式",
+            AiWorkspaceCopy.settingsSub(true, "gpt-5", "standard"),
         )
-        assertEquals(AiWorkspaceCopy.DISABLED_SUB, AiWorkspaceCopy.settingsSub(false, "Claude Opus", "协作"))
-        assertEquals("向 Zephyr AI 提问 · Claude Opus", AiWorkspaceCopy.askPlaceholder("Claude Opus"))
+        assertEquals(AiWorkspaceCopy.DISABLED_SUB, AiWorkspaceCopy.settingsSub(false, "gpt-5", "standard"))
+        assertEquals("向 Zephyr AI 提问 · gpt-5", AiWorkspaceCopy.askPlaceholder("gpt-5"))
         assertEquals(AiWorkspaceCopy.SEND_OFFLINE, AiWorkspaceCopy.sendNotice(false))
-        assertEquals(AiWorkspaceCopy.SEND_OFFLINE, AiWorkspaceCopy.sendNotice(true))
+        assertEquals("", AiWorkspaceCopy.sendNotice(true))
     }
 
     @Test
-    fun `context prefers a live session and never fabricates prod-web-01`() {
+    fun `context prefers a live session and never fabricates prod host`() {
         val live = AiContextResolver.header("SSH", "edge-01", "首页")
         assertEquals("SSH · edge-01", live.label)
         assertEquals("上下文 SSH · edge-01 · 底层页面持续可见", AiWorkspaceCopy.contextLine(live))
-
         val page = AiContextResolver.header(null, null, "工具")
         assertEquals("工具", page.label)
         assertFalse(page.label.contains("prod-web-01"))
@@ -76,17 +77,14 @@ class AiWorkspaceCopyTest {
     }
 
     @Test
-    fun `allowing a tool does not invent an assistant result`() {
+    fun `permission decision changes only the matching trace`() {
         val items = listOf(
             AiTranscriptItem.User("ls"),
             AiTranscriptItem.ToolTrace("待确认 · terminal.execute · 风险：低", "ls"),
         )
         val allowed = AiConversationPolicy.decide(items, 1, allow = true)
         val denied = AiConversationPolicy.decide(items, 1, allow = false)
-        val trace = allowed[1] as AiTranscriptItem.ToolTrace
-        assertTrue(trace.approved)
-        assertFalse(trace.denied)
-        assertEquals(2, allowed.size)
+        assertTrue((allowed[1] as AiTranscriptItem.ToolTrace).approved)
         assertTrue((denied[1] as AiTranscriptItem.ToolTrace).denied)
         assertEquals(items, AiConversationPolicy.decide(items, 9, allow = true))
     }

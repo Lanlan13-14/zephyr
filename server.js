@@ -1267,7 +1267,7 @@ const aiHistoryService = new AiHistoryService(storage.rawDb(), aiHistoryServiceO
 const aiHistoryRuntime = new AiHistoryRuntimeController({ service: aiHistoryService });
 aiRuntimeBridge.setHistoryController(aiHistoryRuntime);
 registerAiHistoryRoutes(app, {
-    requireUser,
+    requireUser: requireAiUser,
     service: aiHistoryService,
     controller: aiHistoryRuntime,
     wakeHub: aiHistoryWakeHub,
@@ -2194,6 +2194,29 @@ function requireUser(req, res, next) {
     req.session = session;
     req.user = { userId: user.userId, username: user.username, role: user.role, status: user.status, email: user.email || '', isSuperAdmin: !!user.isSuperAdmin };
     next();
+}
+
+/**
+ * AI account plane accepts the normal browser/native SID or a live Zephyr One
+ * device access credential. Provider secrets and tool authority remain on the
+ * server; bearer access only resolves the same account after the SID expires.
+ */
+function requireAiUser(req, res, next) {
+    const session = currentSession(req);
+    if (session) return requireUser(req, res, next);
+    const auth = mobileV1Api?.requireDeviceAccess?.(req, res, { touch: true });
+    if (!auth) return undefined;
+    const user = auth.user;
+    req.mobileDevice = auth.device;
+    req.user = {
+        userId: user.userId,
+        username: user.username,
+        role: user.role,
+        status: user.status,
+        email: user.email || '',
+        isSuperAdmin: !!user.isSuperAdmin,
+    };
+    return next();
 }
 
 function requireAdmin(req, res, next) {
@@ -5718,7 +5741,7 @@ function handleAiRuntimeError(res, err) {
     return res.status(status).json({ error: err.message || 'AI runtime error', code: err.code || 'ai_runtime_error' });
 }
 
-app.get('/api/ai/runtime/status', requireUser, (req, res) => {
+app.get('/api/ai/runtime/status', requireAiUser, (req, res) => {
     res.json({
         enabled: !!aiRuntimeBridge.enabled,
         url: process.env.ZEPHYR_AI_URL ? '[set]' : '',
@@ -5726,7 +5749,7 @@ app.get('/api/ai/runtime/status', requireUser, (req, res) => {
     });
 });
 
-app.post('/api/ai/runtime/sessions', requireUser, async (req, res) => {
+app.post('/api/ai/runtime/sessions', requireAiUser, async (req, res) => {
     try {
         if (!aiRuntimeBridge.enabled) throw Object.assign(new Error('Go AI 运行时未启用'), { status: 503, code: 'ai_runtime_unavailable' });
         const data = await aiRuntimeBridge.createSession(req.user, { title: req.body?.title, metadata: req.body?.metadata });
@@ -5734,7 +5757,7 @@ app.post('/api/ai/runtime/sessions', requireUser, async (req, res) => {
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
-app.get('/api/ai/runtime/sessions', requireUser, async (req, res) => {
+app.get('/api/ai/runtime/sessions', requireAiUser, async (req, res) => {
     try {
         if (!aiRuntimeBridge.enabled) return res.json({ ok: true, sessions: [], enabled: false });
         const data = await aiRuntimeBridge.listSessions(req.user);
@@ -5742,21 +5765,21 @@ app.get('/api/ai/runtime/sessions', requireUser, async (req, res) => {
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
-app.get('/api/ai/runtime/sessions/:id/messages', requireUser, async (req, res) => {
+app.get('/api/ai/runtime/sessions/:id/messages', requireAiUser, async (req, res) => {
     try {
         const data = await aiRuntimeBridge.listMessages(req.user, req.params.id);
         res.json(data);
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
-app.get('/api/ai/runtime/sessions/:id/usage', requireUser, async (req, res) => {
+app.get('/api/ai/runtime/sessions/:id/usage', requireAiUser, async (req, res) => {
     try {
         const data = await aiRuntimeBridge.getSessionUsage(req.user, req.params.id);
         res.json(data);
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
-app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
+app.post('/api/ai/runtime/runs', requireAiUser, async (req, res) => {
     try {
         if (!aiRuntimeBridge.enabled) throw Object.assign(new Error('Go AI 运行时未启用'), { status: 503, code: 'ai_runtime_unavailable' });
         // Runtime knowledge must be resolved at the authenticated account
@@ -6012,14 +6035,14 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
-app.post('/api/ai/runtime/runs/:id/abort', requireUser, async (req, res) => {
+app.post('/api/ai/runtime/runs/:id/abort', requireAiUser, async (req, res) => {
     try {
         const data = await aiRuntimeBridge.abortRun(req.user, req.params.id);
         res.json(data);
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
-app.post('/api/ai/runtime/runs/:id/permission', requireUser, async (req, res) => {
+app.post('/api/ai/runtime/runs/:id/permission', requireAiUser, async (req, res) => {
     try {
         // Re-inject provider secret for mid-run resume (never stored in Go resume_json).
         let providerPayload;
@@ -6053,7 +6076,7 @@ app.post('/api/ai/runtime/runs/:id/permission', requireUser, async (req, res) =>
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
-app.post('/api/ai/runtime/runs/:id/capture-image', requireUser, express.raw({ type: ['image/png', 'image/jpeg', 'image/webp'], limit: '8mb' }), async (req, res) => {
+app.post('/api/ai/runtime/runs/:id/capture-image', requireAiUser, express.raw({ type: ['image/png', 'image/jpeg', 'image/webp'], limit: '8mb' }), async (req, res) => {
     try {
         const callId = String(req.query?.callId || '').trim();
         if (!callId || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'callId and image body required' });
@@ -6064,7 +6087,7 @@ app.post('/api/ai/runtime/runs/:id/capture-image', requireUser, express.raw({ ty
     }
 });
 
-app.post('/api/ai/runtime/runs/:id/capture', requireUser, async (req, res) => {
+app.post('/api/ai/runtime/runs/:id/capture', requireAiUser, async (req, res) => {
     try {
         const captureResult = req.body?.result ?? req.body?.capture ?? {};
         let providerPayload;
@@ -6106,7 +6129,7 @@ app.post('/api/ai/runtime/runs/:id/capture', requireUser, async (req, res) => {
 });
 
 /** SSE proxy: browser → Node (cookie auth) → Go (ticket). */
-app.get('/api/ai/runtime/runs/:id/events', requireUser, async (req, res) => {
+app.get('/api/ai/runtime/runs/:id/events', requireAiUser, async (req, res) => {
     if (!aiRuntimeBridge.enabled) return res.status(503).json({ error: 'AI runtime unavailable' });
     const runId = req.params.id;
     const ticket = String(req.query.ticket || '');
@@ -6146,7 +6169,7 @@ app.get('/api/ai/runtime/runs/:id/events', requireUser, async (req, res) => {
 });
 
 registerAiRoutes(app, {
-    requireUser,
+    requireUser: requireAiUser,
     storage,
     authz,
     resourceService,

@@ -2,18 +2,21 @@ package one.zephyr.mobile.feature.ai
 
 data class AiWorkspaceChrome(
     val enabled: Boolean = true,
-    val provider: String = "Claude",
-    val model: String = "Claude Opus",
-    val collaboration: String = "协作",
-    val permission: String = "按能力确认",
+    val providerId: String = "",
+    val provider: String = "未选择 Provider",
+    val model: String = "未选择模型",
+    val collaboration: String = "standard",
+    val runProfile: String = "balanced",
+    val permission: String = "ask",
     val thinking: String = "medium",
+    val planEnabled: Boolean = false,
     val memoryEnabled: Boolean = true,
     val memoryCount: Int = 0,
     val skillsEnabled: Boolean = true,
     val online: Boolean = false,
+    val runtimeAvailable: Boolean = false,
 ) {
-    /** A provider name is not a runtime. Conversation stays empty until a real transcript exists. */
-    val hasRuntime: Boolean = false
+    val hasRuntime: Boolean get() = runtimeAvailable
 }
 
 data class AiContextHeader(
@@ -28,8 +31,10 @@ data class AiRunBanner(
 )
 
 enum class AiChipKind {
+    PROVIDER,
     MODEL,
     MODE,
+    RUN_PROFILE,
     PERM,
     THINK,
     ATTACH,
@@ -53,6 +58,9 @@ sealed class AiTranscriptItem {
         val risk: String = "低",
         val approved: Boolean = false,
         val denied: Boolean = false,
+        val status: String = "pending",
+        val durationMs: Long? = null,
+        val result: String? = null,
     ) : AiTranscriptItem()
 }
 
@@ -63,10 +71,11 @@ data class AiConversation(
 }
 
 object AiChipCycle {
-    val MODELS: List<String> = listOf("Claude Opus", "Claude Sonnet", "GPT-5", "Gemini 3 Pro")
-    val COLLAB: List<String> = listOf("协作", "自动", "只读")
-    val PERM: List<String> = listOf("按能力确认", "自动确认", "全部询问")
-    val THINK: List<String> = listOf("关闭", "low", "medium", "high")
+    val MODELS: List<String> = emptyList()
+    val COLLAB: List<String> = listOf("standard", "plan", "goal")
+    val RUN_PROFILES: List<String> = listOf("economy", "balanced", "delivery")
+    val PERM: List<String> = listOf("ask", "auto", "yolo")
+    val THINK: List<String> = listOf("none", "minimal", "low", "medium", "high", "xhigh")
 
     fun next(value: String, options: List<String>): String {
         val index = options.indexOf(value)
@@ -75,29 +84,32 @@ object AiChipCycle {
     }
 
     fun cycle(chrome: AiWorkspaceChrome, kind: AiChipKind): AiWorkspaceChrome = when (kind) {
-        AiChipKind.MODEL -> chrome.copy(model = next(chrome.model, MODELS))
         AiChipKind.MODE -> chrome.copy(collaboration = next(chrome.collaboration, COLLAB))
+        AiChipKind.RUN_PROFILE -> chrome.copy(runProfile = next(chrome.runProfile, RUN_PROFILES))
         AiChipKind.PERM -> chrome.copy(permission = next(chrome.permission, PERM))
         AiChipKind.THINK -> chrome.copy(thinking = next(chrome.thinking, THINK))
-        AiChipKind.ATTACH, AiChipKind.PLAN, AiChipKind.MEMORY, AiChipKind.SETTINGS -> chrome
+        AiChipKind.PLAN -> chrome.copy(planEnabled = !chrome.planEnabled)
+        AiChipKind.PROVIDER, AiChipKind.MODEL, AiChipKind.ATTACH, AiChipKind.MEMORY, AiChipKind.SETTINGS -> chrome
     }
 
     fun chips(chrome: AiWorkspaceChrome): List<AiChipSpec> = listOf(
+        AiChipSpec(AiChipKind.PROVIDER, "Provider", chrome.provider),
         AiChipSpec(AiChipKind.MODEL, "模型", chrome.model),
         AiChipSpec(AiChipKind.MODE, "协作", chrome.collaboration),
+        AiChipSpec(AiChipKind.RUN_PROFILE, "运行", chrome.runProfile),
         AiChipSpec(AiChipKind.PERM, "权限", chrome.permission),
         AiChipSpec(AiChipKind.THINK, "思考", chrome.thinking),
         AiChipSpec(AiChipKind.ATTACH, "附件"),
-        AiChipSpec(AiChipKind.PLAN, "计划"),
+        AiChipSpec(AiChipKind.PLAN, "计划", if (chrome.planEnabled) "开启" else "关闭"),
         AiChipSpec(AiChipKind.MEMORY, "Memory/Skills"),
         AiChipSpec(AiChipKind.SETTINGS, "设置"),
     )
 }
 
 object AiWorkspaceCopy {
-    const val SEND_OFFLINE: String = "需要联网才能发送"
-    const val ATTACH: String = "附件 · 图片/文件，RDP/VNC 走图片输入"
-    const val PLAN: String = "计划 · 复杂任务先规划"
+    const val SEND_OFFLINE: String = "主端 AI Runtime 不可用"
+    const val ATTACH: String = "选择图片或文件（单文件最多 12MB）"
+    const val PLAN: String = "计划模式会要求复杂任务先规划"
     const val STOP: String = "已停止 run · 收起面板不取消，这里显式停止"
     const val TAKEOVER: String = "已接管 · AI 暂停操作，终端交还手动控制"
     const val ENABLED: String = "AI 助理已启用"
@@ -125,20 +137,19 @@ object AiWorkspaceCopy {
     }
 
     fun chipToast(kind: AiChipKind, chrome: AiWorkspaceChrome): String? = when (kind) {
+        AiChipKind.PROVIDER -> "Provider：" + chrome.provider
         AiChipKind.MODEL -> "模型：" + chrome.model
         AiChipKind.MODE -> "协作模式：" + chrome.collaboration
+        AiChipKind.RUN_PROFILE -> "运行档位：" + chrome.runProfile
         AiChipKind.PERM -> "权限模式：" + chrome.permission
         AiChipKind.THINK -> "思考：" + chrome.thinking
         AiChipKind.ATTACH -> ATTACH
-        AiChipKind.PLAN -> PLAN
+        AiChipKind.PLAN -> "计划：" + if (chrome.planEnabled) "开启" else "关闭"
         AiChipKind.MEMORY -> memoryChip(chrome)
         AiChipKind.SETTINGS -> null
     }
 
-    fun sendNotice(online: Boolean): String {
-        /* Demo send is a dead field: it always toasts this, even when a model name is shown. */
-        return if (online) SEND_OFFLINE else SEND_OFFLINE
-    }
+    fun sendNotice(online: Boolean): String = if (online) "" else SEND_OFFLINE
 
     fun contextLine(header: AiContextHeader): String {
         val tail = header.trailing
@@ -183,19 +194,23 @@ object AiPreferenceMapping {
         provider: String? = null,
         model: String? = null,
         collaboration: String? = null,
+        runProfile: String? = null,
         permission: String? = null,
         thinking: String? = null,
+        planEnabled: Boolean = false,
         memoryEnabled: Boolean = true,
         memoryCount: Int = 0,
         skillsEnabled: Boolean = true,
         online: Boolean = false,
     ): AiWorkspaceChrome = AiWorkspaceChrome(
         enabled = enabled,
-        provider = provider?.takeIf { it.isNotBlank() } ?: "Claude",
-        model = model?.takeIf { it.isNotBlank() } ?: "Claude Opus",
-        collaboration = collaboration?.takeIf { it.isNotBlank() } ?: "协作",
-        permission = permission?.takeIf { it.isNotBlank() } ?: "按能力确认",
+        provider = provider?.takeIf { it.isNotBlank() } ?: "未选择 Provider",
+        model = model?.takeIf { it.isNotBlank() } ?: "未选择模型",
+        collaboration = collaboration?.takeIf { it.isNotBlank() } ?: "standard",
+        runProfile = runProfile?.takeIf { it.isNotBlank() } ?: "balanced",
+        permission = permission?.takeIf { it.isNotBlank() } ?: "ask",
         thinking = thinking?.takeIf { it.isNotBlank() } ?: "medium",
+        planEnabled = planEnabled,
         memoryEnabled = memoryEnabled,
         memoryCount = memoryCount.coerceAtLeast(0),
         skillsEnabled = skillsEnabled,

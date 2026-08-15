@@ -235,6 +235,13 @@ class AccountContainer(
 
     val api: MobileApi = MobileApi(apiClient)
 
+    /** Server-owned AI runtime. Uses SID when present, then the bound device access credential. */
+    val aiRuntime: one.zephyr.mobile.network.AiRuntimeApi = one.zephyr.mobile.network.AiRuntimeApi(
+        endpoint = endpoint,
+        credentials = credentials,
+        appVersion = appVersion,
+    )
+
     val clientTokenManagement: ClientTokenManagementApi = ClientTokenManagementApi(apiClient)
 
     /** Shared-to-me reads go through their own client so no shared payload can reach the mirror. */

@@ -17,15 +17,15 @@ import org.junit.Test
 class AiWorkspaceBindingTest {
 
     @Test
-    fun `missing prefs keep demo defaults without inventing a runtime`() {
+    fun `missing prefs keep honest defaults without inventing a provider`() {
         val chrome = AiWorkspaceBinding.chrome(emptyMap())
         assertTrue(chrome.enabled)
-        assertEquals("Claude Opus", chrome.model)
-        assertEquals("协作", chrome.collaboration)
+        assertEquals("未选择模型", chrome.model)
+        assertEquals("standard", chrome.collaboration)
         assertEquals(0, chrome.memoryCount)
         assertFalse(chrome.hasRuntime)
         assertFalse(chrome.online)
-        assertEquals("已启用 · Claude Opus · 协作模式", AiWorkspaceBinding.settingsSummary(emptyMap()))
+        assertEquals("已启用 · 未选择模型 · standard模式", AiWorkspaceBinding.settingsSummary(emptyMap()))
     }
 
     @Test

@@ -3,16 +3,16 @@ package one.zephyr.mobile.app
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import one.zephyr.mobile.app.di.AccountContainer
 import one.zephyr.mobile.data.EntityCodec
 import one.zephyr.mobile.data.repository.SettingsRepository
 import one.zephyr.mobile.data.session.SessionRow
 import one.zephyr.mobile.feature.ai.AiContextHeader
 import one.zephyr.mobile.feature.ai.AiContextResolver
-import one.zephyr.mobile.feature.ai.AiConversationPolicy
 import one.zephyr.mobile.feature.ai.AiPageLabels
 import one.zephyr.mobile.feature.ai.AiPreferenceMapping
 import one.zephyr.mobile.feature.ai.AiWorkspaceChrome
@@ -32,14 +32,20 @@ internal fun BoundAiWorkspace(
     val chrome = AiWorkspaceBinding.chrome(prefs)
     val context = AiWorkspaceBinding.context(destination, session)
     val scope = rememberCoroutineScope()
+    val runtime = remember(account) {
+        AndroidAiRuntimeController(
+            account = account,
+            scope = scope,
+            chrome = { AiWorkspaceBinding.chrome(prefs) },
+            context = { AiWorkspaceBinding.runtimeContext(destination, session) },
+            persistChrome = { AiWorkspaceBinding.persist(account.settings, it) },
+        )
+    }
     AiWorkspaceOverlay(
         enabled = chrome.enabled,
         chrome = chrome,
         context = context,
-        conversation = AiConversationPolicy.local(),
-        onChromeChange = { next ->
-            scope.launch { AiWorkspaceBinding.persist(account.settings, next) }
-        },
+        controller = runtime,
         onOpenSettings = onOpenSettings,
         onNotice = onNotice,
     )
@@ -52,13 +58,15 @@ internal object AiWorkspaceBinding {
         provider = text(prefs, SettingsRepository.PREF_AI_PROVIDER),
         model = text(prefs, SettingsRepository.PREF_AI_MODEL),
         collaboration = text(prefs, SettingsRepository.PREF_AI_COLLAB),
+        runProfile = text(prefs, SettingsRepository.PREF_AI_RUN_PROFILE),
         permission = text(prefs, SettingsRepository.PREF_AI_PERM),
         thinking = text(prefs, SettingsRepository.PREF_AI_THINK),
+        planEnabled = flag(prefs, SettingsRepository.PREF_AI_PLANNER, false),
         memoryEnabled = flag(prefs, SettingsRepository.PREF_AI_MEMORY, true),
         memoryCount = 0,
         skillsEnabled = flag(prefs, SettingsRepository.PREF_AI_SKILLS, true),
         online = false,
-    )
+    ).copy(providerId = text(prefs, SettingsRepository.PREF_AI_PROVIDER_ID).orEmpty())
 
     fun context(destination: IslandDestination, session: SessionRow?): AiContextHeader {
         val live = session?.takeIf { it.transport.isLive }
@@ -69,6 +77,32 @@ internal object AiWorkspaceBinding {
         )
     }
 
+    /** Context is metadata only. Secret material and terminal/remote pixels are never guessed. */
+    fun runtimeContext(destination: IslandDestination, session: SessionRow?): JsonObject {
+        val live = session?.takeIf { it.transport.isLive }
+        val values = linkedMapOf<String, kotlinx.serialization.json.JsonElement>(
+            "source" to JsonPrimitive("zephyr-one-android"),
+            "page" to JsonPrimitive(AiPageLabels.island(destination.route)),
+            "locale" to JsonPrimitive("zh-CN"),
+        )
+        if (live != null) {
+            values["activeSessionId"] = JsonPrimitive(live.sessionId)
+            values["activeConnectionId"] = JsonPrimitive(live.connectionId)
+            values["activeProtocol"] = JsonPrimitive(live.protocol.wireName)
+            values["activeSessionName"] = JsonPrimitive(live.name)
+            values["activeSurface"] = JsonObject(
+                mapOf(
+                    "kind" to JsonPrimitive(if (live.protocol.isRemoteDesktop) "remote-desktop" else "terminal"),
+                    "protocol" to JsonPrimitive(live.protocol.wireName),
+                    "tabId" to JsonPrimitive(live.sessionId),
+                    "sessionId" to JsonPrimitive(live.sessionId),
+                    "connectionId" to JsonPrimitive(live.connectionId),
+                ),
+            )
+        }
+        return JsonObject(values)
+    }
+
     fun settingsSummary(prefs: Map<String, JsonObject>): String {
         val chrome = chrome(prefs)
         return AiWorkspaceCopy.settingsSub(chrome.enabled, chrome.model, chrome.collaboration)
@@ -76,10 +110,14 @@ internal object AiWorkspaceBinding {
 
     suspend fun persist(settings: SettingsRepository, chrome: AiWorkspaceChrome) {
         val now = System.currentTimeMillis()
+        settings.putStringPreference(SettingsRepository.PREF_AI_PROVIDER_ID, chrome.providerId, now)
+        settings.putStringPreference(SettingsRepository.PREF_AI_PROVIDER, chrome.provider, now)
         settings.putStringPreference(SettingsRepository.PREF_AI_MODEL, chrome.model, now)
         settings.putStringPreference(SettingsRepository.PREF_AI_COLLAB, chrome.collaboration, now)
+        settings.putStringPreference(SettingsRepository.PREF_AI_RUN_PROFILE, chrome.runProfile, now)
         settings.putStringPreference(SettingsRepository.PREF_AI_PERM, chrome.permission, now)
         settings.putStringPreference(SettingsRepository.PREF_AI_THINK, chrome.thinking, now)
+        settings.putBooleanPreference(SettingsRepository.PREF_AI_PLANNER, chrome.planEnabled, now)
     }
 
     private fun flag(prefs: Map<String, JsonObject>, key: String, fallback: Boolean): Boolean =
