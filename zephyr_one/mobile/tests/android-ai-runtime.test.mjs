@@ -33,6 +33,8 @@ test('Android AI attachment flow is system picker to bounded multipart upload', 
   assert.match(overlay, /12 \* 1024 \* 1024/);
   assert.match(overlay, /controller\.upload/);
   assert.match(api, /HttpUrl\.Companion\.toHttpUrl/);
+  assert.match(api, /toHttpUrlCompat\(\): HttpUrl = toHttpUrl\(\)/);
+  assert.doesNotMatch(api, /HttpUrl\.Companion\.toHttpUrl\(this\)/);
   assert.match(api, /MultipartBody\.Builder/);
   assert.match(api, /addFormDataPart\("sessionId"/);
   assert.match(api, /addFormDataPart\("file"/);

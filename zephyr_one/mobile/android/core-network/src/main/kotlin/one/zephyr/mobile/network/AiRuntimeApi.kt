@@ -291,7 +291,7 @@ class AiRuntimeApi(
 
     private fun pathSegment(value: String): String = value.replace("/", "_").take(200)
 
-    private fun String.toHttpUrlCompat(): HttpUrl = HttpUrl.Companion.toHttpUrl(this)
+    private fun String.toHttpUrlCompat(): HttpUrl = toHttpUrl()
     private fun String.toMediaTypeOrOctetStream(): MediaType =
         runCatching { toMediaType() }.getOrElse { OCTET_STREAM_MEDIA }
 
