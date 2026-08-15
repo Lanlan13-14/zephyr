@@ -15,7 +15,7 @@ final class TcpReachabilityTesterTests: XCTestCase {
             }
         )
         let result = try await tester.test(
-            UiTestData.connection(`protocol`: .rdp, host: "10.0.8.30", port: 3389)
+            UiTestData.connection(host: "10.0.8.30", protocol: .rdp, port: 3389)
         )
         XCTAssertEqual(result, .reachable(roundTripMs: 41))
     }
@@ -24,7 +24,7 @@ final class TcpReachabilityTesterTests: XCTestCase {
         let opened = LockedFlag()
         let tester = TcpReachabilityTester(connect: { _, _, _ in opened.value = true })
         let result = try await tester.test(
-            UiTestData.connection(`protocol`: .rdp, host: "  ", port: 3389)
+            UiTestData.connection(host: "  ", protocol: .rdp, port: 3389)
         )
         if case let .failed(error) = result {
             XCTAssertEqual(error.code, "test_no_host")
