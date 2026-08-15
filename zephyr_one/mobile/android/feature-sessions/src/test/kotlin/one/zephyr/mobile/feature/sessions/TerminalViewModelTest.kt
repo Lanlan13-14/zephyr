@@ -74,16 +74,24 @@ class TerminalViewModelTest {
         private var update: EmulatorUpdate = EmulatorUpdate(),
     ) : TerminalEmulator {
         val fed = mutableListOf<ByteArray>()
+        val resizes = mutableListOf<Pair<Int, Int>>()
         var closed = false
             private set
         var snapshotTopRow = -1
             private set
+        var lastColumns = 80
+            private set
+        var lastRows = 24
+            private set
+        override fun resize(columns: Int, rows: Int) {
+            lastColumns = columns
+            lastRows = rows
+            resizes += columns to rows
+        }
 
         fun nextUpdate(next: EmulatorUpdate) {
             update = next
         }
-
-        override fun resize(columns: Int, rows: Int) = Unit
 
         override fun feed(bytes: ByteArray): EmulatorUpdate {
             fed += bytes
@@ -390,6 +398,32 @@ class TerminalViewModelTest {
         assertEquals(24, lines.size)
         assertEquals(0, emulator.snapshotTopRow)
         assertEquals(4, subject.cursor().row)
+    }
+
+    @Test
+    fun geometryChangesResizeTheEmulatorNotJustThePty() = runTest(mainDispatcher) {
+        val emulator = FakeEmulator()
+        val subject = subject(emulator = emulator)
+        subscribe(subject)
+        runCurrent()
+
+        assertEquals(listOf(80 to 24), emulator.resizes)
+
+        subject.controller.onGeometry(
+            totalWidthPx = 800f,
+            totalHeightPx = 1000f,
+            imeHeightPx = 0f,
+            shortcutMatrixHeightPx = 100f,
+            dockHeightPx = 80f,
+            cellWidthPx = 10f,
+            lineHeightPx = 20f,
+        )
+        runCurrent()
+
+        val last = emulator.resizes.last()
+        assertTrue("emulator must leave the default 80x24, was $last", last != 80 to 24)
+        assertEquals(last.first, subject.controller.state.value.size.columns)
+        assertEquals(last.second, subject.controller.state.value.size.rows)
     }
 
     @Test

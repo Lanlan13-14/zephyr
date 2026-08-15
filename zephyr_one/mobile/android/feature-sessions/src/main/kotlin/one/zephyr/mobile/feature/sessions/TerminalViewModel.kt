@@ -133,6 +133,13 @@ class TerminalViewModel(
         scope = viewModelScope,
     )
 
+    /**
+     * The live Termux session the view attaches to.
+     *
+     * Only a [TermuxSessionBridge] has a [com.termux.terminal.TerminalSession]. Wrapping the
+     * parser as [SimpleVtEmulator] and casting that wrapper left the pane on an empty box
+     * while SSH output kept arriving.
+     */
     val termux: TermuxSessionBridge? = emulator as? TermuxSessionBridge
 
     init {
@@ -161,6 +168,19 @@ class TerminalViewModel(
     private var outputJob: Job? = null
     private val emulatorLock = Any()
     private var connectRequested = false
+
+    init {
+        viewModelScope.launch {
+            var lastSize: TerminalSize? = null
+            controller.state.collect { surface ->
+                val size = surface.size
+                if (size != lastSize && size.columns > 0 && size.rows > 0) {
+                    lastSize = size
+                    synchronized(emulatorLock) { emulator.resize(size.columns, size.rows) }
+                }
+            }
+        }
+    }
     @Volatile private var opening = false
 
     private data class CachedTerminalFrame(
@@ -367,8 +387,17 @@ class TerminalViewModel(
         outputJob?.cancel()
         outputJob = viewModelScope.launch {
             host.output(sessionId).collect { bytes ->
-                val update = withContext(emulatorDispatcher) {
-                    synchronized(emulatorLock) { emulator.feed(bytes) }
+                // Termux's emulator and TerminalView share one buffer. Feeding it off the main
+                // thread races onDraw and paints a blank grid. Snapshot-only emulators stay on
+                // the background dispatcher so unit tests do not need a Looper.
+                val update = if (termux != null) {
+                    withContext(Dispatchers.Main.immediate) {
+                        synchronized(emulatorLock) { emulator.feed(bytes) }
+                    }
+                } else {
+                    withContext(emulatorDispatcher) {
+                        synchronized(emulatorLock) { emulator.feed(bytes) }
+                    }
                 }
                 controller.onModes(update.modes)
                 controller.onOutput(update.newRows, update.transcriptRows)

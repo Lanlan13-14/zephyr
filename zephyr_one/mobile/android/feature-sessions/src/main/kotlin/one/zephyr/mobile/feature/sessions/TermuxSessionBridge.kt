@@ -12,8 +12,10 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.terminal.TextStyle
 import com.termux.terminal.WcWidth
+import android.os.Looper
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import java.lang.ref.WeakReference
 import java.util.Properties
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -39,6 +41,12 @@ class TermuxSessionBridge(
 
     private val client = BridgeSessionClient()
 
+    @Volatile
+    private var lastColumns: Int = 80
+
+    @Volatile
+    private var lastRows: Int = 24
+
     val session: TerminalSession = TerminalSession(
         /* in = */ null,
         /* out = */ null,
@@ -53,15 +61,15 @@ class TermuxSessionBridge(
             lastColumns = emulator.mColumns
             lastRows = emulator.mRows
         }
+        // SSH banners arrive before the first layout. Without an emulator they are dropped and
+        // the first paint is an empty grid on Frost's term background.
+        created.updateSize(lastColumns, lastRows, 8, 16)
     }
 
     private val snapshotColors = TerminalColors()
 
     @Volatile
-    private var lastColumns: Int = 80
-
-    @Volatile
-    private var lastRows: Int = 24
+    private var attachedView: WeakReference<TerminalView>? = null
 
     val columns: Int get() = session.emulator?.mColumns ?: lastColumns
     val rows: Int get() = session.emulator?.mRows ?: lastRows
@@ -74,11 +82,14 @@ class TermuxSessionBridge(
         TerminalColors.COLOR_SCHEME.updateWith(props)
         session.emulator?.mColors?.reset()
         snapshotColors.reset()
+        attachedView?.get()?.onScreenUpdated()
         onScreenChanged()
     }
 
     fun attach(view: TerminalView) {
+        attachedView = WeakReference(view)
         view.attachSession(session)
+        view.onScreenUpdated()
     }
 
     fun feedRemote(bytes: ByteArray) {
@@ -229,7 +240,17 @@ class TermuxSessionBridge(
     }
 
     private inner class BridgeSessionClient : TerminalSessionClient {
-        override fun onTextChanged(changedSession: TerminalSession) = onScreenChanged()
+        override fun onTextChanged(changedSession: TerminalSession) {
+            val view = attachedView?.get()
+            if (view != null) {
+                if (Looper.myLooper() == Looper.getMainLooper()) {
+                    view.onScreenUpdated()
+                } else {
+                    view.post { view.onScreenUpdated() }
+                }
+            }
+            onScreenChanged()
+        }
         override fun onTitleChanged(changedSession: TerminalSession) = onTitle(changedSession.title)
         override fun onSessionFinished(finishedSession: TerminalSession) = onFinished()
         override fun onCopyTextToClipboard(session: TerminalSession, text: String) = onCopy(text)
@@ -329,3 +350,13 @@ internal object TermuxHandleSeq {
     private val next = AtomicInteger(1)
     fun next(): Int = next.getAndIncrement()
 }
+
+/**
+ * Production emulator: a live Termux session the view can attach to.
+ *
+ * [SimpleVtEmulator] is the JVM snapshot wrapper. The app used to construct that wrapper and then
+ * `as? TermuxSessionBridge`, which is always null, so the pane painted an empty Frost box over a
+ * live SSH stream.
+ */
+fun productionTerminalEmulator(maxScrollback: Int = 4_000): TerminalEmulator =
+    TermuxSessionBridge(maxScrollback = maxScrollback, writeBytes = {})

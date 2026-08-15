@@ -30,7 +30,8 @@ test('new connections start with a visible password field', () => {
 test('app wires SSHJ instead of the unavailable stub', () => {
   const root = read(ROOT_KT);
   assert.match(root, /SshTerminalHost\(/);
-  assert.match(root, /SimpleVtEmulator\(/);
+  assert.match(root, /productionTerminalEmulator\(/);
+  assert.doesNotMatch(root, /emulator = SimpleVtEmulator\(/);
   assert.match(root, /autoConnect = true/);
   assert.doesNotMatch(root, /UnavailableTerminalHost\(TERMINAL_ENGINE_MISSING\)/);
   assert.match(read(CONTAINER), /SshjEngine\(/);
