@@ -140,6 +140,25 @@ data class RfbPixelFormat(
             greenShift = 5,
             blueShift = 0,
         )
+
+        /**
+         * 16bpp 5-5-5.
+         *
+         * Demo VNC 画质「性能」档. Still true-colour: changing quality never
+         * downgrades an unknown weak security type.
+         */
+        val RGB555 = RfbPixelFormat(
+            bitsPerPixel = 16,
+            depth = 15,
+            bigEndian = false,
+            trueColour = true,
+            redMax = 31,
+            greenMax = 31,
+            blueMax = 31,
+            redShift = 10,
+            greenShift = 5,
+            blueShift = 0,
+        )
     }
 }
 

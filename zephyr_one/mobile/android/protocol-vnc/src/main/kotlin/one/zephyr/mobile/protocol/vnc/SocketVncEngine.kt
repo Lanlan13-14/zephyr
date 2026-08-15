@@ -128,6 +128,9 @@ class SocketVncEngine(
     override fun clipboard(sessionId: String): Flow<String> =
         sessions[sessionId]?.clipboard ?: emptyFlow()
 
+    override fun latency(sessionId: String): Flow<Long> =
+        sessions[sessionId]?.latency ?: emptyFlow()
+
     override suspend fun disconnect(sessionId: String) {
         sessions.remove(sessionId)?.shutdown()
     }
@@ -261,6 +264,8 @@ private class SocketVncSession(
 
     private val frameChannel = Channel<VncFrame>(capacity = FRAME_BUFFER_CAPACITY)
     private val clipboardChannel = Channel<String>(capacity = CLIPBOARD_BUFFER_CAPACITY)
+    private val latencyChannel = Channel<Long>(capacity = Channel.CONFLATED)
+    private val updateLatency = RfbUpdateLatency()
     private val sendMutex = Mutex()
     private val stateMutex = Mutex()
     private val formatChangeMutex = Mutex()
@@ -269,6 +274,7 @@ private class SocketVncSession(
 
     val frames: Flow<VncFrame> = frameChannel.receiveAsFlow()
     val clipboard: Flow<String> = clipboardChannel.receiveAsFlow()
+    val latency: Flow<Long> = latencyChannel.receiveAsFlow()
 
     @Volatile
     private var width = info.width
@@ -305,6 +311,7 @@ private class SocketVncSession(
             RfbEncoder.framebufferUpdateRequest(false, 0, 0, width, height),
         )
         requestOutstanding = true
+        updateLatency.markRequested()
         readerJob = scope.launch { readLoop() }
     }
 
@@ -346,6 +353,7 @@ private class SocketVncSession(
                     )
                     pixelFormat = format
                     requestOutstanding = true
+                    updateLatency.markRequested()
                     result.complete(format)
                 }
             } finally {
@@ -416,6 +424,7 @@ private class SocketVncSession(
     }
 
     private suspend fun readFramebufferUpdate() {
+        updateLatency.sample()?.let { latencyChannel.trySend(it) }
         val updateHeader = channel.readFully(3)
         val rectangleCount = readU16(updateHeader, 1)
         val formatForUpdate = pixelFormat
@@ -517,10 +526,12 @@ private class SocketVncSession(
                 )
                 pixelFormat = nextFormat
                 requestOutstanding = true
+                updateLatency.markRequested()
                 formatResult?.complete(nextFormat)
             } else {
                 writeMessages(RfbEncoder.framebufferUpdateRequest(true, 0, 0, width, height))
                 requestOutstanding = true
+                updateLatency.markRequested()
             }
         } catch (failure: Throwable) {
             formatResult?.completeExceptionally(failure)
@@ -565,6 +576,8 @@ private class SocketVncSession(
         channel.close()
         frameChannel.close()
         clipboardChannel.close()
+        latencyChannel.close()
+        updateLatency.clear()
         val closed = VncSessionException(VncErrors.SESSION_NOT_FOUND, "VNC session is closed")
         pendingFormatResult?.completeExceptionally(closed)
         pendingResize?.complete(currentSize(serverResized = false))

@@ -32,20 +32,33 @@ import one.zephyr.mobile.protocol.vnc.VncEngine
 import one.zephyr.mobile.security.LockSensitiveSink
 
 /**
- * Colour depth, as S23's 画质/颜色 tool presents it.
+ * Demo VNC 画质三档, as `#vncquality` presents it.
  *
- * Two entries rather than a free-form pixel format editor: RFB lets a client ask for almost anything,
- * but the only choice a user can act on is "fewer bytes per pixel on a slow link" versus "accurate
- * colour", and offering shift/max fields would expose a protocol detail with no product meaning.
+ * 高质量 / 平衡 / 性能 land on RGB888 / RGB565 / RGB555. Changing quality never
+ * downgrades an unknown weak security type: handshake refusal stays a refusal.
  */
 enum class VncColourDepth(val label: String, val format: RfbPixelFormat) {
-    HIGH_COLOUR("16 位色 · 省流量", RfbPixelFormat.RGB565),
-    TRUE_COLOUR("24 位真彩", RfbPixelFormat.RGB888),
+    HIGH("高质量", RfbPixelFormat.RGB888),
+    BALANCED("平衡", RfbPixelFormat.RGB565),
+    PERFORMANCE("性能", RfbPixelFormat.RGB555),
     ;
+
+    fun next(): VncColourDepth = entries[(ordinal + 1) % entries.size]
 
     companion object {
         fun of(format: RfbPixelFormat): VncColourDepth =
-            entries.firstOrNull { it.format == format } ?: HIGH_COLOUR
+            entries.firstOrNull { it.format == format } ?: HIGH
+    }
+}
+
+/** Status-pill copy. Absent measurements stay a dash, never a zero. */
+object VncDemoStatus {
+    fun latencyLabel(latencyMs: Long?): String =
+        if (latencyMs == null) "—" else latencyMs.toString() + " ms"
+
+    fun statusText(latencyMs: Long?, width: Int, height: Int, quality: String?): String {
+        val size = if (width > 0 && height > 0) width.toString() + "×" + height else "—"
+        return latencyLabel(latencyMs) + " · " + size + " · " + (quality ?: "—")
     }
 }
 
@@ -83,7 +96,7 @@ class VncViewModel(
     private val authState = MutableStateFlow<RemoteAuthPrompt?>(null)
     private val loadedState = MutableStateFlow(false)
     private val statusState = MutableStateFlow(RemoteSessionStatus())
-    private val depthState = MutableStateFlow(VncColourDepth.HIGH_COLOUR)
+    private val depthState = MutableStateFlow(VncColourDepth.HIGH)
 
     private val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val message: SharedFlow<String> = messages
@@ -102,6 +115,7 @@ class VncViewModel(
 
     private var frameJob: Job? = null
     private var clipboardJob: Job? = null
+    private var latencyJob: Job? = null
     private var watchdogJob: Job? = null
     private var reconnectJob: Job? = null
 
@@ -262,8 +276,7 @@ class VncViewModel(
                     statusState.value = statusState.value.copy(
                         remoteWidthPx = outcome.widthPx,
                         remoteHeightPx = outcome.heightPx,
-                        negotiatedLabel = outcome.widthPx.toString() + "x" + outcome.heightPx +
-                            " · " + VncColourDepth.of(outcome.pixelFormat).label,
+                        negotiatedLabel = VncColourDepth.of(outcome.pixelFormat).label,
                     )
                     authState.value = null
                     // FIRST_FRAME rather than CONNECTED: the handshake succeeded, but section 13
@@ -332,7 +345,7 @@ class VncViewModel(
         reconnectJob?.cancel()
         registry.close(sessionId, clock())
         advance(RemotePhase.DISCONNECTED)
-        messages.tryEmit("会话已关闭")
+        messages.tryEmit(SESSION_CLOSED)
         viewModelScope.launch { runCatching { controller.disconnect() } }
     }
 
@@ -352,11 +365,22 @@ class VncViewModel(
         viewModelScope.launch {
             val applied = runCatching { engine.setPixelFormat(sessionId, depth.format) }
                 .getOrDefault(depthState.value.format)
-            depthState.value = VncColourDepth.of(applied)
+            val next = VncColourDepth.of(applied)
+            depthState.value = next
+            statusState.value = statusState.value.copy(negotiatedLabel = next.label)
             // A full repaint is required: every cached pixel is in the old format.
             controller.requestFullRepaint()
-            if (VncColourDepth.of(applied) != depth) messages.tryEmit(DEPTH_UNCHANGED)
+            if (next != depth) {
+                messages.tryEmit(DEPTH_UNCHANGED)
+            } else {
+                messages.tryEmit("画质 · " + next.label + " · 未知弱模式不自动降级")
+            }
         }
+    }
+
+    /** Demo `vncquality`: 高质量 → 平衡 → 性能. */
+    fun cycleQuality() {
+        setColourDepth(depthState.value.next())
     }
 
     fun acceptRemoteClipboard() {
@@ -391,6 +415,13 @@ class VncViewModel(
                 registry.markOutput(sessionId, foreground = true)
             }
         }
+        latencyJob?.cancel()
+        latencyJob = viewModelScope.launch {
+            engine.latency(sessionId).collect { sample ->
+                statusState.value = statusState.value.copy(latencyMs = sample)
+                registry.setLatency(sessionId, sample)
+            }
+        }
         clipboardJob?.cancel()
         clipboardJob = viewModelScope.launch {
             adapter.clipboard(sessionId).collect { text ->
@@ -410,9 +441,11 @@ class VncViewModel(
     private fun stopStreams() {
         frameJob?.cancel()
         clipboardJob?.cancel()
+        latencyJob?.cancel()
         watchdogJob?.cancel()
         frameJob = null
         clipboardJob = null
+        latencyJob = null
         watchdogJob = null
     }
 
@@ -537,6 +570,7 @@ class VncViewModel(
     companion object {
         const val DEPTH_UNCHANGED = "服务器未接受该颜色深度，已保留当前格式"
         const val CLIPBOARD_BLOCKED = "该连接未开启剪贴板通道，或授权不包含控制权限"
+        const val SESSION_CLOSED = "会话已关闭"
 
         /** Present in the security label of the two types that are not transport-encrypted. */
         private const val WEAK_SECURITY_MARKER = "VNC"

@@ -445,12 +445,19 @@ private fun compactStatus(
     } else {
         DASH
     }
-    val latency = content.status.latencyMs?.let { it.toString() + " ms" } ?: DASH
-    val fps = content.status.fps?.let { it.toString() + "FPS" } ?: content.fpsLabel
-    val parts = mutableListOf(latency, size, fps)
+    val third = if (content.connection.protocol == Protocol.VNC) {
+        content.pixelFormatLabel
+    } else {
+        content.status.fps?.let { it.toString() + "FPS" } ?: content.fpsLabel
+    }
+    val parts = mutableListOf(
+        VncDemoStatus.latencyLabel(content.status.latencyMs),
+        size,
+        third ?: DASH,
+    )
     if (!online) parts += stringResource(R.string.remote_offline)
     if (content.viewOnly) parts += stringResource(R.string.remote_view_only)
-    remoteTitle?.let { parts += it }
+    if (content.connection.protocol != Protocol.VNC) remoteTitle?.let { parts += it }
     return parts.joinToString(" · ")
 }
 
@@ -1616,7 +1623,7 @@ private fun dispatchDock(
         RemoteDockItem.CAD -> onIntent(RemoteIntent.SendShortcut(RdpShortcut.CAD))
         RemoteDockItem.RECONNECT -> onIntent(RemoteIntent.Reconnect)
         RemoteDockItem.DISCONNECT -> onOpenPanel(RemotePanel.DISCONNECT)
-        RemoteDockItem.VNC_QUALITY -> onOpenPanel(RemotePanel.QUALITY)
+        RemoteDockItem.VNC_QUALITY -> onIntent(RemoteIntent.CycleQuality)
     }
 }
 

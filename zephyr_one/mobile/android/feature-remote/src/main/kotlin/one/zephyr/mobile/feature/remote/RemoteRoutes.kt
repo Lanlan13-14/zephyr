@@ -208,7 +208,7 @@ private fun dispatchVnc(viewModel: VncViewModel, intent: RemoteIntent, onBack: (
         RemoteIntent.FitViewport -> controller.fitToWindow()
         RemoteIntent.CycleZoom -> controller.cycleZoom(one.zephyr.mobile.protocol.rdp.RdpDisplayPolicy.ZOOM_FACTORS)
         RemoteIntent.ToggleJoystick -> controller.toggleDragMode()
-        RemoteIntent.CycleQuality,
+        RemoteIntent.CycleQuality -> viewModel.cycleQuality()
         RemoteIntent.CycleResolution,
         RemoteIntent.CycleFps,
         is RemoteIntent.SendShortcut,

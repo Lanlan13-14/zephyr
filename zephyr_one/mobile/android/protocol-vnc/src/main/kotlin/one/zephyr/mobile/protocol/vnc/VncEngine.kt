@@ -35,6 +35,14 @@ interface VncEngine {
 
     fun clipboard(sessionId: String): Flow<String>
 
+    /**
+     * Measured FramebufferUpdateRequest → FramebufferUpdate round-trip, in ms.
+     *
+     * Default empty: an engine that cannot time the wire must not invent a number.
+     * The status pill shows a dash until a real sample arrives (REMOTE_DESKTOP_EXPERIENCE.md 11).
+     */
+    fun latency(sessionId: String): Flow<Long> = emptyFlow()
+
     suspend fun disconnect(sessionId: String)
 
     /**

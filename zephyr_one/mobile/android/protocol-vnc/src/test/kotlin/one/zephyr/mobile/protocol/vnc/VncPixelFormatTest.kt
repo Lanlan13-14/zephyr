@@ -25,6 +25,15 @@ class VncPixelFormatTest {
     }
 
     @Test
+    fun `RGB555 encodes the performance quality rung`() {
+        assertEquals("100f0001001f001f001f0a0500000000", RfbPixelFormat.RGB555.encode().toHex())
+        assertEquals(2, RfbPixelFormat.RGB555.bytesPerPixel)
+        assertEquals(5, RfbPixelFormat.RGB555.greenBits)
+        assertEquals(15, RfbPixelFormat.RGB555.depth)
+        assertTrue(RfbPixelFormat.RGB555.trueColour)
+    }
+
+    @Test
     fun `BGR888 differs from RGB888 only in the red and blue shifts`() {
         assertEquals("2018000100ff00ff00ff000810000000", RfbPixelFormat.BGR888.encode().toHex())
         assertEquals(0, RfbPixelFormat.BGR888.redShift)
@@ -34,7 +43,7 @@ class VncPixelFormatTest {
 
     @Test
     fun `encode and decode are exact inverses`() {
-        for (format in listOf(RfbPixelFormat.RGB888, RfbPixelFormat.BGR888, RfbPixelFormat.RGB565)) {
+        for (format in listOf(RfbPixelFormat.RGB888, RfbPixelFormat.BGR888, RfbPixelFormat.RGB565, RfbPixelFormat.RGB555)) {
             assertEquals(format, RfbPixelFormat.decode(format.encode()))
         }
     }
