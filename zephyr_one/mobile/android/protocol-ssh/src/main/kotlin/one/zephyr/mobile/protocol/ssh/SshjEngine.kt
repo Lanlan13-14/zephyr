@@ -122,10 +122,11 @@ class SshjEngine(
         live.shell.changeWindowDimensions(cols, rows, widthPx, heightPx)
     }
 
-    override suspend fun disconnect(sessionId: String) = withContext(io) {
+    override suspend fun disconnect(sessionId: String): Unit = withContext(io) {
         sessions.remove(sessionId)?.close()
         closeEvents.remove(sessionId)
         pending.remove(sessionId)
+        Unit
     }
 
     override suspend fun measureLatency(sessionId: String): Long? = withContext(io) {

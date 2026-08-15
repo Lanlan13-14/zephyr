@@ -229,7 +229,7 @@ class ConnectionEditorViewModel(
     }
 
     fun revealPassword() {
-        val content = current() ?: return
+        val content = (page.value as? PageState.Content)?.value ?: return
         val connection = content.draft.original ?: return
         if (!ConnectionPasswordRevealPolicy.allowed(
                 localUnlockEnabled = passwordRevealEnabled(),
