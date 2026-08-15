@@ -348,7 +348,16 @@ private fun FilterPill(section: LibrarySection, selected: Boolean, onClick: () -
         color = if (selected) ZephyrTheme.palette.brand.accent else ZephyrTheme.palette.surfaces.elevated,
         contentColor = if (selected) Color.White else ZephyrTheme.palette.onFloatingMuted,
         shape = RoundedCornerShape(18.dp),
-    ) { Box(Modifier.padding(horizontal = 13.dp, vertical = 8.dp), contentAlignment = Alignment.Center) { Text(label, fontSize = 12.5.sp) } }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 13.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(label, fontSize = 12.5.sp)
+        }
+    }
 }
 
 @Composable

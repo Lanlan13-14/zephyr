@@ -173,6 +173,7 @@ fun Surface(
             .clip(shape)
             .background(color)
             .then(if (border != null) Modifier.border(border, shape) else Modifier),
+        propagateMinConstraints = true,
     ) {
         ProvideContentColor(contentColor, content)
     }

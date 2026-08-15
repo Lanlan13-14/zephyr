@@ -156,7 +156,7 @@ fun HeaderIconButton(
         color = ZephyrTheme.palette.surfaces.elevated,
         contentColor = ZephyrTheme.palette.brand.accent,
     ) {
-        Box(contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             if (content != null) content()
             else Icon(icon, contentDescription = null, modifier = Modifier.size(PageChrome.actionIcon))
         }

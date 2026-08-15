@@ -186,10 +186,8 @@ private fun DashboardHeader(
             ) {
                 Icon(ZephyrIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
             }
-            Spacer(Modifier.width(8.dp))
             SyncPill(status = syncStatus, localMode = localMode, onClick = onSyncNow)
             if (onOpenAccount != null) {
-                Spacer(Modifier.width(8.dp))
                 HeaderIconButton(
                     description = stringResource(R.string.connections_account_menu),
                     onClick = onOpenAccount,
@@ -356,7 +354,12 @@ private fun DashboardChip(label: String, selected: Boolean, onClick: () -> Unit)
         color = if (selected) ZephyrTheme.palette.brand.accent else ZephyrTheme.palette.surfaces.elevated,
         contentColor = if (selected) Color.White else ZephyrTheme.palette.onFloatingMuted,
     ) {
-        Box(Modifier.padding(horizontal = 13.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 13.dp),
+            contentAlignment = Alignment.Center,
+        ) {
             Text(label, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, maxLines = 1)
         }
     }
