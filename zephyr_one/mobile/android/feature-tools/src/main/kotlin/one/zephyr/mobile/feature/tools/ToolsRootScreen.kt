@@ -213,14 +213,13 @@ private fun ToolRow(
             }
             Spacer(Modifier.width(ZephyrSpacing.md))
             Column(Modifier.weight(1f)) {
-                Text(toolTitle(entry), style = ZephyrTextStyles.row, color = ZephyrTheme.palette.onBackground.copy(alpha = alpha))
+                Text(toolTitle(entry), fontSize = 14.sp, color = ZephyrTheme.palette.onBackground.copy(alpha = alpha))
                 Text(
                     detail,
-                    style = ZephyrTextStyles.hint,
+                    fontSize = 11.5.sp,
                     color = if (gate is ActionGate.Disabled) ZephyrTheme.palette.status.warning else ZephyrTheme.palette.onFloatingMuted,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
             Icon(ZephyrIcons.Chevron, null, tint = ZephyrTheme.palette.onFloatingMuted.copy(alpha = alpha), modifier = Modifier.size(18.dp))

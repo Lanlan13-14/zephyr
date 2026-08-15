@@ -124,12 +124,13 @@ private fun ProtocolCard(protocol: Protocol, onClick: () -> Unit) {
                 Text(
                     if (protocol == Protocol.TELNET) "TEL" else protocol.wireName,
                     color = protocolColor,
-                    style = ZephyrTextStyles.protocolMark,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.ExtraBold,
                 )
             }
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(title, style = ZephyrTextStyles.bodyStrong.copy(fontSize = 15.sp))
+                    Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     if (protocol == Protocol.TELNET) {
                         Box(
                             Modifier
@@ -141,7 +142,7 @@ private fun ProtocolCard(protocol: Protocol, onClick: () -> Unit) {
                         }
                     }
                 }
-                Text(detail, fontSize = 12.sp, color = palette.onFloatingSubtle, modifier = Modifier.padding(top = 3.dp))
+                Text(detail, fontSize = 12.sp, color = palette.onFloatingSubtle)
             }
             Icon(ZephyrIcons.Chevron, contentDescription = null, tint = palette.onFloatingMuted)
         }

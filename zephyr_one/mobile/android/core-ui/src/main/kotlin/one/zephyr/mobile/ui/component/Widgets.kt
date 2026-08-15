@@ -90,12 +90,10 @@ fun Text(
     style: TextStyle = ZephyrTextStyles.body,
 ) {
     val fallback = resolvedContentColor(ZephyrTheme.palette.onBackground)
-    val customLineHeight = if (fontSize != TextUnit.Unspecified) (fontSize.value * 1.35f).sp else TextUnit.Unspecified
     val resolved = style.merge(
         TextStyle(
             color = if (color == Color.Unspecified) fallback else color,
             fontSize = fontSize,
-            lineHeight = customLineHeight,
             fontWeight = fontWeight,
             fontFamily = fontFamily,
             letterSpacing = letterSpacing,

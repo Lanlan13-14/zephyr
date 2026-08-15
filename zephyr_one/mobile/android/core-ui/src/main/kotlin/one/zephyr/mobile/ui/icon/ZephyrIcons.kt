@@ -154,7 +154,7 @@ object ZephyrIcons {
     }
 
     val Back: ImageVector by lazy {
-        strokes("back", listOf("M15 6l-6 6 6 6"), width = 2.4f, cap = StrokeCap.Round)
+        strokes("back", listOf("M15 5l-7 7 7 7"), width = 2.6f, cap = StrokeCap.Round)
     }
     val Search: ImageVector by lazy {
         strokes("search", listOf("M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0z", "M20 20l-3.5-3.5"), width = 2.2f, cap = StrokeCap.Round)

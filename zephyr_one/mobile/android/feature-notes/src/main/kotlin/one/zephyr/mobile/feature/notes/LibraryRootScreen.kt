@@ -302,8 +302,8 @@ private fun LibraryEntryCard(
             }
             Spacer(Modifier.width(ZephyrSpacing.md))
             Column(Modifier.weight(1f)) {
-                Text(title, style = ZephyrTextStyles.cardName.copy(fontSize = 13.5.sp), maxLines = 2)
-                Text(detail, style = ZephyrTextStyles.hint, color = ZephyrTheme.palette.onFloatingMuted, maxLines = 2, modifier = Modifier.padding(top = 2.dp))
+                Text(title, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                Text(detail, fontSize = 11.5.sp, color = ZephyrTheme.palette.onFloatingMuted, maxLines = 2)
             }
         }
     }
