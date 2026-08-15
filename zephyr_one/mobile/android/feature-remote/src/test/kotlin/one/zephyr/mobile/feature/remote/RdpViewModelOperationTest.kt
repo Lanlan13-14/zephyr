@@ -1,19 +1,21 @@
 package one.zephyr.mobile.feature.remote
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import one.zephyr.mobile.data.session.SessionRegistry
+import one.zephyr.mobile.data.session.SessionTransport
 import one.zephyr.mobile.model.PageState
-import one.zephyr.mobile.model.RdpChannel
 import one.zephyr.mobile.model.RdpFps
 import one.zephyr.mobile.model.RdpQuality
 import one.zephyr.mobile.model.RdpResolution
@@ -25,6 +27,7 @@ import one.zephyr.mobile.protocol.rdp.RdpFrame
 import one.zephyr.mobile.protocol.rdp.RdpInputEvent
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -45,8 +48,9 @@ class RdpViewModelOperationTest {
     }
 
     @Test
-    fun cycleQualityWalksDemoOrderAndStaysOnThePage() = runTest {
+    fun cycleQualityWalksDemoOrderAndStaysOnThePage() = runTest(mainDispatcher) {
         val vm = viewModel()
+        backgroundScope.launch { vm.state.collect { } }
         runCurrent()
 
         vm.cycleQuality()
@@ -58,13 +62,13 @@ class RdpViewModelOperationTest {
     }
 
     @Test
-    fun connectSendsTheCycledQualityAndFpsToTheEngine() = runTest {
+    fun connectSendsTheCycledQualityAndFpsToTheEngine() = runTest(mainDispatcher) {
         val engine = RecordingEngine()
         val vm = viewModel(engine = engine)
+        backgroundScope.launch { vm.state.collect { } }
         runCurrent()
         vm.cycleQuality()
         vm.cycleFps()
-        runCurrent()
         vm.connect()
         runCurrent()
 
@@ -72,39 +76,49 @@ class RdpViewModelOperationTest {
         assertEquals(RdpQuality.PERFORMANCE, request.quality)
         assertEquals(RdpFps.F45, request.fps)
         assertEquals(RdpConnectOutcome.Connected::class, engine.lastOutcome!!::class)
+        vm.disconnect()
+        runCurrent()
     }
 
     @Test
-    fun connectBeforeTheConnectionLoadsIsFlushedAfterInit() = runTest {
+    fun connectBeforeTheConnectionLoadsIsFlushedAfterInit() = runTest(mainDispatcher) {
         val engine = RecordingEngine()
-        val vm = viewModel(engine = engine)
+        val loaded = CompletableDeferred<one.zephyr.mobile.model.Connection>()
+        val vm = viewModel(engine = engine, findConnection = { loaded.await() })
+        backgroundScope.launch { vm.state.collect { } }
         vm.connect()
-        assertEquals(null, engine.lastRequest)
+        runCurrent()
+        assertNull(engine.lastRequest)
+        loaded.complete(RemoteFixtures.connection())
         runCurrent()
         assertEquals(RemoteFixtures.connection().host, engine.lastRequest?.host)
         assertEquals(RdpConnectOutcome.Connected::class, engine.lastOutcome!!::class)
+        vm.disconnect()
+        runCurrent()
     }
 
     @Test
-    fun disconnectClosesTheRegistryRowSoTheHostCanPopTheWindow() = runTest {
+    fun disconnectClosesTheRegistryRowSoTheHostCanPopTheWindow() = runTest(mainDispatcher) {
         val registry = SessionRegistry()
         val engine = RecordingEngine()
         val vm = viewModel(engine = engine, registry = registry)
+        backgroundScope.launch { vm.state.collect { } }
         runCurrent()
         vm.connect()
         runCurrent()
         val closed = async { vm.message.first() }
         vm.disconnect()
         runCurrent()
-        assertEquals(one.zephyr.mobile.data.session.SessionTransport.CLOSED, registry.find("s1")?.transport)
+        assertEquals(SessionTransport.CLOSED, registry.find("s1")?.transport)
         assertEquals(1, engine.disconnects)
         assertEquals(RdpViewModel.SESSION_CLOSED, closed.await())
     }
 
     @Test
-    fun sendShortcutAndCadDoNotDisconnect() = runTest {
+    fun sendShortcutAndCadDoNotDisconnect() = runTest(mainDispatcher) {
         val engine = RecordingEngine()
         val vm = viewModel(engine = engine)
+        backgroundScope.launch { vm.state.collect { } }
         runCurrent()
         vm.connect()
         runCurrent()
@@ -114,25 +128,27 @@ class RdpViewModelOperationTest {
         assertTrue(engine.sent.isNotEmpty())
         assertEquals(0, engine.disconnects)
         assertTrue(content(vm).status.hasSurface || content(vm).status.phase.isProgressing)
+        vm.disconnect()
+        runCurrent()
     }
 
     private fun viewModel(
         engine: RecordingEngine = RecordingEngine(),
         registry: SessionRegistry = SessionRegistry(),
-    ): RdpViewModel {
-        val connection = RemoteFixtures.connection(
-            rdp = RdpSettings(quality = RdpQuality.BALANCED, fps = RdpFps.F30, resolution = RdpResolution.AUTO),
-        )
-        return RdpViewModel(
-            sessionId = "s1",
-            connectionId = connection.id,
-            registry = registry,
-            findConnection = { connection },
-            engine = engine,
-            secretProvider = { "secret".toCharArray() },
-            driveProfileProvider = { null },
-        )
-    }
+        findConnection: suspend (String) -> one.zephyr.mobile.model.Connection? = {
+            RemoteFixtures.connection(
+                rdp = RdpSettings(quality = RdpQuality.BALANCED, fps = RdpFps.F30, resolution = RdpResolution.AUTO),
+            )
+        },
+    ): RdpViewModel = RdpViewModel(
+        sessionId = "s1",
+        connectionId = "c1",
+        registry = registry,
+        findConnection = findConnection,
+        engine = engine,
+        secretProvider = { "secret".toCharArray() },
+        driveProfileProvider = { null },
+    )
 
     private fun content(vm: RdpViewModel): RemoteContent {
         val state = vm.state.value
