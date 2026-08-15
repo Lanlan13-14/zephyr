@@ -78,6 +78,11 @@ class AppContainer(private val context: Context) {
     /** Reports unavailable until the packaged FreeRDP JNI library can be loaded. */
     val rdpEngine: RdpEngine by lazy { AndroidRdpEngine() }
 
+    /** Process-scoped SSH client. Direct password / key auth only. */
+    val sshEngine: one.zephyr.mobile.protocol.ssh.SshEngine by lazy {
+        one.zephyr.mobile.protocol.ssh.SshjEngine()
+    }
+
     /** Process lifetime scope used only to tear down a graph after that graph reports revocation. */
     private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

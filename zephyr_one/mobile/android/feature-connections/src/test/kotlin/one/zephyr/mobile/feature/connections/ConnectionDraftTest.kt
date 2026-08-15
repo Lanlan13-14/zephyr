@@ -46,6 +46,14 @@ class ConnectionDraftTest {
     // ---- port and protocol ---------------------------------------------------------------------
 
     @Test
+    fun createStartsWithAVisibleEmptyPasswordField() {
+        val draft = ConnectionDraft.create(Fixtures.OWNER, "c-new", Protocol.SSH)
+        assertTrue(draft.password is SecretState.Replace)
+        assertTrue((draft.password as SecretState.Replace).isBlank)
+        assertEquals(SecretState.Unchanged, draft.secretStates()["password"])
+    }
+
+    @Test
     fun createUsesProtocolDefaultPort() {
         assertEquals(22, ConnectionDraft.create(Fixtures.OWNER, "c-new", Protocol.SSH).current.port)
         assertEquals(3389, ConnectionDraft.create(Fixtures.OWNER, "c-new", Protocol.RDP).current.port)

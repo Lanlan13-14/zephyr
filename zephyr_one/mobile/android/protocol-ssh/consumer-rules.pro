@@ -1,3 +1,6 @@
-# Consumer rules for this module.
-# Kept intentionally empty: nothing here relies on reflection over its own types.
-# kotlinx.serialization keeps its own @Serializable metadata through the plugin's rules.
+# SSHJ discovers algorithms and key types by reflection.
+-keep class net.schmizz.sshj.** { *; }
+-keep class com.hierynomus.** { *; }
+-dontwarn net.schmizz.sshj.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.slf4j.**

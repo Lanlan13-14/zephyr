@@ -9,8 +9,7 @@ android {
 dependencies {
     api(project(":core-model"))
     implementation(libs.kotlinx.coroutines.android)
-    // Engine dependency is deliberately absent: ADR-002 in NATIVE_ENGINE_DECISIONS.md
-    // must pick libssh2 vs SSHJ on real hardware before a version is pinned here.
+    implementation(libs.sshj)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

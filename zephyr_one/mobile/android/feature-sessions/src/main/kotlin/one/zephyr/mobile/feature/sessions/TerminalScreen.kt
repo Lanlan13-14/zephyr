@@ -348,7 +348,7 @@ private fun TerminalViewport(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(palette.surfaces.background)
+            .background(palette.surfaces.termBackground)
             .terminalGestures(metrics, onIntent)
             .terminalWheel(metrics, onIntent),
     ) {

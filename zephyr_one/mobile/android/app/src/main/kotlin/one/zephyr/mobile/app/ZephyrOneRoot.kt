@@ -92,8 +92,8 @@ import one.zephyr.mobile.feature.sessions.TerminalCredentials
 import one.zephyr.mobile.feature.sessions.TerminalDockItem
 import one.zephyr.mobile.feature.sessions.TerminalRoute
 import one.zephyr.mobile.feature.sessions.TerminalViewModel
-import one.zephyr.mobile.feature.sessions.UnavailableTerminalEmulator
-import one.zephyr.mobile.feature.sessions.UnavailableTerminalHost
+import one.zephyr.mobile.feature.sessions.SimpleVtEmulator
+import one.zephyr.mobile.feature.sessions.SshTerminalHost
 import one.zephyr.mobile.feature.tools.BatchExecutionScreen
 import one.zephyr.mobile.feature.tools.BatchExecutionViewModel
 import one.zephyr.mobile.feature.tools.BatchIntent
@@ -171,6 +171,7 @@ fun ZephyrOneRoot(
                         integrations = integrations,
                         vncEngine = container.vncEngine,
                         rdpEngine = container.rdpEngine,
+                        sshEngine = container.sshEngine,
                     )
                 }
             }
@@ -392,6 +393,7 @@ private fun BoundRoot(
     integrations: ZephyrOneIntegrations,
     vncEngine: one.zephyr.mobile.protocol.vnc.VncEngine,
     rdpEngine: one.zephyr.mobile.protocol.rdp.RdpEngine,
+    sshEngine: one.zephyr.mobile.protocol.ssh.SshEngine,
 ) {
     var route: RootRoute by rememberSaveable(stateSaver = RootRouteSaver) {
         mutableStateOf(RootRoute.Root(IslandDestination.HOME))
@@ -688,17 +690,17 @@ private fun BoundRoot(
                         connectionId = current.connectionId,
                         registry = account.sessions,
                         connections = account.connections,
-                        /* No SSH/Telnet engine is linked yet (ADR-002 has not passed its M0 gate), so
-                         * the host reports unavailable with a structured error. A stub that appeared
-                         * to connect would be worse than none: the user would believe the session was
-                         * live and type credentials into it. */
-                        host = UnavailableTerminalHost(TERMINAL_ENGINE_MISSING),
-                        emulator = UnavailableTerminalEmulator(),
+                        host = SshTerminalHost(
+                            engine = sshEngine,
+                            findConnection = { id -> account.connections.find(id) },
+                        ),
+                        emulator = SimpleVtEmulator(),
                         secretProvider = { connection -> account.terminalCredentials(connection) },
                     ),
                 ),
                 onDock = { item -> onTerminalDock(item, notice) { route = it } },
                 onMessage = { messages.emit(it) },
+                autoConnect = true,
             )
 
             is RootRoute.Remote -> RemoteDestination(
@@ -1488,16 +1490,29 @@ private fun AccountContainer.passwordChars(connection: Connection): CharArray? {
     return secretStore.getText(ref)?.toCharArray()
 }
 
-private fun AccountContainer.terminalCredentials(connection: Connection): TerminalCredentials =
-    TerminalCredentials(
+private suspend fun AccountContainer.terminalCredentials(connection: Connection): TerminalCredentials {
+    val inlineKey = secretRefForPresence(
+        presence = connection.privateKey,
+        entityType = Connection.ENTITY_TYPE,
+        entityId = connection.id,
+        fieldName = FIELD_PRIVATE_KEY,
+    )?.let { secretStore.getText(it)?.toCharArray() }
+    val saved = connection.sshKeyId?.let { keyId ->
+        val key = resources.findSshKey(keyId) ?: return@let null
+        Triple(
+            secretRefForPresence(key.privateKey, one.zephyr.mobile.model.SshKey.ENTITY_TYPE, key.id, "privateKey")
+                ?.let { secretStore.getText(it)?.toCharArray() },
+            secretRefForPresence(key.passphrase, one.zephyr.mobile.model.SshKey.ENTITY_TYPE, key.id, "passphrase")
+                ?.let { secretStore.getText(it)?.toCharArray() },
+            key,
+        )
+    }
+    return TerminalCredentials(
         password = passwordChars(connection),
-        privateKey = secretRefForPresence(
-            presence = connection.privateKey,
-            entityType = Connection.ENTITY_TYPE,
-            entityId = connection.id,
-            fieldName = FIELD_PRIVATE_KEY,
-        )?.let { secretStore.getText(it)?.toCharArray() },
+        privateKey = inlineKey ?: saved?.first,
+        passphrase = saved?.second,
     )
+}
 
 /** Presence is the authorization gate; an explicit ref must also name this exact field. */
 internal fun secretRefForPresence(
@@ -1555,8 +1570,3 @@ private const val FIELD_PRIVATE_KEY = "privateKey"
  * its outcomes; cancelling deliberately has no message. */
 private const val DRIVE_AUTHORIZED = "已授权目录，远端共享名："
 private const val DRIVE_REFUSED = "系统未能保留该目录授权，请重新选择目录。"
-
-private val TERMINAL_ENGINE_MISSING: MobileError = MobileError.local(
-    code = "engine_unavailable",
-    message = "原生 SSH/Telnet 引擎尚未链接（ADR-002 未过 M0 门）",
-)

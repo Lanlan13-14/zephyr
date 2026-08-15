@@ -83,7 +83,7 @@ fun TerminalRoute(
     val remoteTitle by viewModel.title.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
 
-    var keyboardVisible by remember { mutableStateOf(false) }
+    var keyboardVisible by remember { mutableStateOf(true) }
 
     val readFrame = remember(viewModel) {
         { topRow: Int, rows: Int -> viewModel.renderFrame(topRow, rows) }

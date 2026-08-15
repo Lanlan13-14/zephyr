@@ -138,6 +138,8 @@ class TerminalViewModel(
 
     private var outputJob: Job? = null
     private val emulatorLock = Any()
+    private var connectRequested = false
+    @Volatile private var opening = false
 
     private data class CachedTerminalFrame(
         val topRow: Int,
@@ -251,6 +253,7 @@ class TerminalViewModel(
             connectionState.value = connection
             loadedState.value = true
             if (connection != null) controller.setCharset(TerminalCharset.of(connection.encoding))
+            if (connectRequested) connect()
         }
     }
 
@@ -263,7 +266,16 @@ class TerminalViewModel(
      * ViewModel serves both a fresh connect and a restored row. The caller decides.
      */
     fun connect() {
-        val connection = connectionState.value ?: return
+        connectRequested = true
+        val connection = connectionState.value
+        if (connection == null) return
+        if (opening) return
+        val existing = registry.find(sessionId)
+        if (existing?.transport == SessionTransport.CONNECTED ||
+            existing?.transport == SessionTransport.CONNECTING
+        ) {
+            return
+        }
         if (!emulator.isAvailable) {
             errorState.value = UnavailableTerminalEmulator.BLOCKED
             return
@@ -277,6 +289,7 @@ class TerminalViewModel(
             return
         }
         errorState.value = null
+        opening = true
         registerRow(connection, SessionTransport.CONNECTING)
 
         viewModelScope.launch {
@@ -317,6 +330,7 @@ class TerminalViewModel(
             // host means a host implementation that keeps the array cannot extend its lifetime.
             request.wipe()
             credentials.wipe()
+            opening = false
         }
     }
 

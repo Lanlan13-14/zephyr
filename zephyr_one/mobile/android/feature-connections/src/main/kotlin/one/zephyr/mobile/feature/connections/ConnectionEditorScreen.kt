@@ -674,54 +674,64 @@ private fun SecretEditor(
     multiline: Boolean = false,
 ) {
     Column(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(label, style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(72.dp))
-            Text(
-                text = ConnectionDraft.presenceFor(state, stored).let {
-                    if (it.hasValue) SecretPresence.MASK else stringResource(R.string.editor_secret_clear)
-                },
-                style = ZephyrTheme.typography.mono,
-                modifier = Modifier.weight(1f),
-            )
-            SegmentedControl(
-                options = listOf(
-                    stringResource(R.string.editor_secret_keep),
-                    stringResource(R.string.editor_secret_replace),
-                    stringResource(R.string.editor_secret_clear),
-                ),
-                selectedIndex = when (state) {
-                    is SecretState.Unchanged -> 0
-                    is SecretState.Replace -> 1
-                    is SecretState.Clear -> 2
-                },
-                onSelect = {
-                    onChange(
-                        when (it) {
-                            0 -> SecretState.Unchanged
-                            1 -> SecretState.Replace("")
-                            else -> SecretState.Clear
-                        },
-                    )
-                },
-                modifier = Modifier.width(159.dp),
-            )
+        if (stored.hasValue) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(label, style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(72.dp))
+                Text(
+                    text = ConnectionDraft.presenceFor(state, stored).let {
+                        if (it.hasValue) SecretPresence.MASK else stringResource(R.string.editor_secret_clear)
+                    },
+                    style = ZephyrTheme.typography.mono,
+                    modifier = Modifier.weight(1f),
+                )
+                SegmentedControl(
+                    options = listOf(
+                        stringResource(R.string.editor_secret_keep),
+                        stringResource(R.string.editor_secret_replace),
+                        stringResource(R.string.editor_secret_clear),
+                    ),
+                    selectedIndex = when (state) {
+                        is SecretState.Unchanged -> 0
+                        is SecretState.Replace -> 1
+                        is SecretState.Clear -> 2
+                    },
+                    onSelect = {
+                        onChange(
+                            when (it) {
+                                0 -> SecretState.Unchanged
+                                1 -> SecretState.Replace("")
+                                else -> SecretState.Clear
+                            },
+                        )
+                    },
+                    modifier = Modifier.width(159.dp),
+                )
+            }
         }
 
         if (state is SecretState.Replace) {
             FieldRow(
-                label = stringResource(R.string.editor_secret_new_value),
+                label = if (stored.hasValue) {
+                    stringResource(R.string.editor_secret_new_value)
+                } else {
+                    label
+                },
                 value = state.editingText(),
                 onValueChange = { onChange(SecretState.Replace(it)) },
                 singleLine = !multiline,
+                placeholder = if (stored.hasValue) "" else "可选",
                 visualTransformation = if (multiline) {
                     androidx.compose.ui.text.input.VisualTransformation.None
                 } else {
                     PasswordVisualTransformation()
                 },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = if (multiline) KeyboardType.Text else KeyboardType.Password,
+                ),
                 showDivider = false,
             )
         }

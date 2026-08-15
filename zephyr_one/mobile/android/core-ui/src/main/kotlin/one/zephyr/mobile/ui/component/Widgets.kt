@@ -534,7 +534,9 @@ fun FieldRow(
                 cursorBrush = SolidColor(palette.brand.accent),
                 visualTransformation = visualTransformation,
                 keyboardOptions = keyboardOptions,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 22.dp),
                 decorationBox = { inner ->
                     Box {
                         if (value.isEmpty() && placeholder.isNotEmpty()) {

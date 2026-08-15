@@ -72,8 +72,8 @@ data class ConnectionDraft(
     val isDirty: Boolean
         get() = isCreate ||
             current != original ||
-            password.contributesToFieldMask ||
-            privateKey.contributesToFieldMask
+            outgoingSecret(password).contributesToFieldMask ||
+            outgoingSecret(privateKey).contributesToFieldMask
 
     /**
      * Device-local directory intent, which the frozen entity registry does not publish as a
@@ -167,7 +167,11 @@ data class ConnectionDraft(
      * an empty plaintext as a new secret would store a credential that cannot authenticate.
      */
     fun withPassword(state: SecretState): ConnectionDraft {
-        val next = foldSecret(state)
+        val next = if (isCreate && state is SecretState.Replace && state.isBlank) {
+            state
+        } else {
+            foldSecret(state)
+        }
         if (password !== next) password.wipePlaintext()
         return copy(password = next)
     }
@@ -241,13 +245,20 @@ data class ConnectionDraft(
 
     /** Secret states keyed by registry field name, for the repository call. */
     fun secretStates(): Map<String, SecretState> = buildMap {
-        put("password", password)
+        put("password", outgoingSecret(password))
         // Telnet has no key auth, so a private-key state would be meaningless there other than a
         // clear, which withProtocol already produced.
         if (current.protocol != Protocol.TELNET || privateKey is SecretState.Clear) {
-            put("privateKey", privateKey)
+            put("privateKey", outgoingSecret(privateKey))
         }
     }
+
+    /**
+     * An untouched blank Replace is not a secret. Create starts in Replace so the field is visible;
+     * saving without typing must not persist an empty password or clear a stored one.
+     */
+    private fun outgoingSecret(state: SecretState): SecretState =
+        if (state is SecretState.Replace && state.isBlank) SecretState.Unchanged else state
 
     // ---- validation ----------------------------------------------------------------------------
 
@@ -360,6 +371,9 @@ data class ConnectionDraft(
                     host = "",
                     port = protocol.defaultPort,
                 ),
+                /* A new row has nothing to keep. Start in Replace so the password field is visible
+                 * instead of a masked "保持不变" that cannot be typed into. */
+                password = SecretState.Replace(""),
             )
 
         /**
@@ -374,6 +388,11 @@ data class ConnectionDraft(
                 original = connection,
                 current = connection,
                 portWasEdited = connection.port != connection.protocol.defaultPort,
+                password = if (connection.password.hasValue) {
+                    SecretState.Unchanged
+                } else {
+                    SecretState.Replace("")
+                },
             )
 
         /** Prefills a new owned row without copying secret presence or server authority metadata. */
@@ -400,6 +419,7 @@ data class ConnectionDraft(
                 original = null,
                 current = clean,
                 portWasEdited = clean.port != clean.protocol.defaultPort,
+                password = SecretState.Replace(""),
             )
         }
 
