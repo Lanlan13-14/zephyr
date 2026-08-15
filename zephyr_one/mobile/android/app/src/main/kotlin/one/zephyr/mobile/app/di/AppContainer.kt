@@ -79,8 +79,11 @@ class AppContainer(private val context: Context) {
     /** Process-scoped protocol engines survive Activity recreation without orphaning sessions. */
     val vncEngine: VncEngine by lazy { SocketVncEngine() }
 
-    /** Reports unavailable until the packaged FreeRDP JNI library can be loaded. */
-    val rdpEngine: RdpEngine by lazy { AndroidRdpEngine() }
+    /**
+     * Packaged FreeRDP. The filesDir is the process HOME FreeRDP 3.30 requires
+     * before `freerdp_settings_new`; without it JNI create() returns 0.
+     */
+    val rdpEngine: RdpEngine by lazy { AndroidRdpEngine(context.filesDir) }
 
     /** Process-scoped SSH client. Direct password / key auth only. */
     val sshEngine: one.zephyr.mobile.protocol.ssh.SshEngine by lazy {

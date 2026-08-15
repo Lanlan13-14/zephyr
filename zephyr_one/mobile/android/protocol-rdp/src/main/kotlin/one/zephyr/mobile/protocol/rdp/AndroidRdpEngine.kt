@@ -1,5 +1,6 @@
 package one.zephyr.mobile.protocol.rdp
 
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -17,11 +18,25 @@ import one.zephyr.mobile.model.RdpChannel
 class AndroidRdpEngine internal constructor(
     private val native: RdpNativeBridge,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val fingerprints: RdpFingerprintBook = MemoryRdpFingerprintBook(),
+    homeDir: File? = null,
+    installHome: (File) -> Unit = { RdpAndroidRuntime.installHome(it) },
 ) : RdpEngine {
 
     constructor() : this(JniRdpNativeBridge)
 
+    constructor(filesDir: File) : this(
+        native = JniRdpNativeBridge,
+        fingerprints = FileRdpFingerprintBook(File(filesDir, TRUST_FILE_NAME)),
+        homeDir = filesDir,
+    )
+
     private val sessions = ConcurrentHashMap<String, Session>()
+    private val pendingReviews = ConcurrentHashMap<String, PendingReview>()
+
+    init {
+        if (homeDir != null) installHome(homeDir)
+    }
 
     override val isAvailable: Boolean
         get() = native.isAvailable
@@ -47,74 +62,40 @@ class AndroidRdpEngine internal constructor(
             return failure(SESSION_EXISTS, "An RDP session with this id already exists", retryable = false)
         }
 
-        val (width, height) = RdpGeometry.normalize(request.widthPx, request.heightPx)
-        val session = Session()
-        if (sessions.putIfAbsent(request.sessionId, session) != null) {
-            return failure(SESSION_EXISTS, "An RDP session with this id already exists", retryable = false)
-        }
-
-        val display = RdpDisplayPolicy.nativeFlags(request.quality)
-        val config = NativeRdpConfig(
-            host = request.host,
-            port = request.port,
-            username = request.username,
-            domain = request.domain,
-            password = request.password,
-            widthPx = width,
-            heightPx = height,
-            audio = RdpChannel.AUDIO in request.channels,
-            microphone = RdpChannel.MICROPHONE in request.channels,
-            clipboard = RdpChannel.CLIPBOARD in request.channels,
-            gfx = display.gfx,
-            disableWallpaper = display.disableWallpaper,
-            disableThemes = display.disableThemes,
-            disableMenuAnims = display.disableMenuAnims,
-            disableFullWindowDrag = display.disableFullWindowDrag,
-            allowFontSmoothing = display.allowFontSmoothing,
-            requestedFps = request.fps.value,
-        )
-
         return try {
-            val handle = native.create(config, session.sink)
-            if (handle == 0L) {
-                sessions.remove(request.sessionId, session)
-                return failure(SESSION_CREATE_FAILED, "FreeRDP rejected the session settings")
-            }
-            session.handle = handle
-            val thread = Thread({
-                try {
-                    val result = native.run(handle)
-                    session.connectEvents.trySend(
-                        ConnectEvent.Error(result, "FreeRDP exited before reporting a connection"),
-                    )
-                } catch (error: Throwable) {
-                    session.connectEvents.trySend(ConnectEvent.Error(-1, error.message))
-                } finally {
-                    sessions.remove(request.sessionId, session)
-                    session.free(native)
-                    session.runThread = null
+            val stored = fingerprints.find(request.host, request.port)
+            val first = openNative(request, ignoreCertificate = false)
+            val presented = first.fingerprint?.let(RdpFingerprintBook::normalize)?.takeIf { it.isNotEmpty() }
+            if (first.outcome is RdpConnectOutcome.Connected) return first.outcome
+            if (presented != null) {
+                if (stored != null && stored == presented) {
+                    return openNative(request, ignoreCertificate = true).outcome
                 }
-            }, "zephyr-rdp-${request.sessionId}").apply { isDaemon = true }
-            session.runThread = thread
-            thread.start()
-            session.runStarted = true
-
-            when (val event = session.connectEvents.receive()) {
-                is ConnectEvent.Connected -> RdpConnectOutcome.Connected(event.width, event.height, request.channels)
-                is ConnectEvent.Error -> {
-                    stopAndJoin(request.sessionId, session)
-                    failure(NATIVE_CONNECT_FAILED, event.message ?: "FreeRDP connect failed", true)
-                }
+                pendingReviews[request.sessionId] = PendingReview(request.host, request.port, presented)
+                return RdpConnectOutcome.CertificateReview(
+                    request = RdpCertificateReview(
+                        host = request.host,
+                        port = request.port,
+                        subject = request.host,
+                        issuer = "",
+                        notBefore = 0L,
+                        notAfter = 0L,
+                        sha256Fingerprint = presented,
+                    ),
+                    changed = stored != null,
+                    previousFingerprint = stored,
+                )
             }
-        } catch (error: CancellationException) {
-            withContext(NonCancellable) { stopAndJoin(request.sessionId, session) }
-            throw error
-        } catch (error: Throwable) {
-            stopAndJoin(request.sessionId, session)
-            failure(NATIVE_CONNECT_FAILED, error.message ?: "FreeRDP connect failed", true)
+            first.outcome
         } finally {
             request.password?.fill('\u0000')
         }
+    }
+
+    override suspend fun trustCertificate(sessionId: String, replaceExisting: Boolean) {
+        val pending = pendingReviews.remove(sessionId) ?: return
+        if (replaceExisting) fingerprints.remove(pending.host, pending.port)
+        fingerprints.put(pending.host, pending.port, pending.fingerprint)
     }
 
     override fun frames(sessionId: String): Flow<RdpFrame> =
@@ -142,11 +123,107 @@ class AndroidRdpEngine internal constructor(
         sessions[sessionId]?.clipboard ?: kotlinx.coroutines.flow.emptyFlow()
 
     override suspend fun disconnect(sessionId: String) {
+        pendingReviews.remove(sessionId)
         val session = sessions.remove(sessionId) ?: return
         session.stop(native)
         withContext(ioDispatcher) {
             val thread = session.runThread
             if (thread != null && thread !== Thread.currentThread()) thread.join()
+        }
+    }
+
+    private suspend fun openNative(
+        request: RdpConnectRequest,
+        ignoreCertificate: Boolean,
+    ): NativeAttempt {
+        if (sessions.containsKey(request.sessionId)) {
+            return NativeAttempt(failure(SESSION_EXISTS, "An RDP session with this id already exists", false))
+        }
+
+        val (width, height) = RdpGeometry.normalize(request.widthPx, request.heightPx)
+        val session = Session()
+        if (sessions.putIfAbsent(request.sessionId, session) != null) {
+            return NativeAttempt(failure(SESSION_EXISTS, "An RDP session with this id already exists", false))
+        }
+
+        val display = RdpDisplayPolicy.nativeFlags(request.quality)
+        // JNI copy_password historically wrote zeros back into the Java array.
+        // The stored-fingerprint retry is a second create() in this same connect(),
+        // so each attempt must own a fresh copy.
+        val attemptPassword = request.password?.copyOf()
+        val config = NativeRdpConfig(
+            host = request.host,
+            port = request.port,
+            username = request.username,
+            domain = request.domain,
+            password = attemptPassword,
+            widthPx = width,
+            heightPx = height,
+            audio = RdpChannel.AUDIO in request.channels,
+            microphone = RdpChannel.MICROPHONE in request.channels,
+            clipboard = RdpChannel.CLIPBOARD in request.channels,
+            gfx = display.gfx,
+            disableWallpaper = display.disableWallpaper,
+            disableThemes = display.disableThemes,
+            disableMenuAnims = display.disableMenuAnims,
+            disableFullWindowDrag = display.disableFullWindowDrag,
+            allowFontSmoothing = display.allowFontSmoothing,
+            requestedFps = request.fps.value,
+            ignoreCertificate = ignoreCertificate,
+        )
+
+        return try {
+            val handle = native.create(config, session.sink)
+            if (handle == 0L) {
+                sessions.remove(request.sessionId, session)
+                return NativeAttempt(
+                    failure(SESSION_CREATE_FAILED, "FreeRDP rejected the session settings"),
+                    session.fingerprint,
+                )
+            }
+            session.handle = handle
+            val thread = Thread({
+                try {
+                    val result = native.run(handle)
+                    session.connectEvents.trySend(
+                        ConnectEvent.Error(result, "FreeRDP exited before reporting a connection"),
+                    )
+                } catch (error: Throwable) {
+                    session.connectEvents.trySend(ConnectEvent.Error(-1, error.message))
+                } finally {
+                    sessions.remove(request.sessionId, session)
+                    session.free(native)
+                    session.runThread = null
+                }
+            }, "zephyr-rdp-${request.sessionId}").apply { isDaemon = true }
+            session.runThread = thread
+            thread.start()
+            session.runStarted = true
+
+            when (val event = session.connectEvents.receive()) {
+                is ConnectEvent.Connected -> NativeAttempt(
+                    RdpConnectOutcome.Connected(event.width, event.height, request.channels),
+                    session.fingerprint,
+                )
+                is ConnectEvent.Error -> {
+                    stopAndJoin(request.sessionId, session)
+                    NativeAttempt(
+                        failure(NATIVE_CONNECT_FAILED, event.message ?: "FreeRDP connect failed", true),
+                        session.fingerprint,
+                    )
+                }
+            }
+        } catch (error: CancellationException) {
+            withContext(NonCancellable) { stopAndJoin(request.sessionId, session) }
+            throw error
+        } catch (error: Throwable) {
+            stopAndJoin(request.sessionId, session)
+            NativeAttempt(
+                failure(NATIVE_CONNECT_FAILED, error.message ?: "FreeRDP connect failed", true),
+                session.fingerprint,
+            )
+        } finally {
+            attemptPassword?.fill('\u0000')
         }
     }
 
@@ -167,6 +244,7 @@ class AndroidRdpEngine internal constructor(
         @Volatile var handle: Long = 0L
         @Volatile var runStarted: Boolean = false
         @Volatile var runThread: Thread? = null
+        @Volatile var fingerprint: String? = null
         private var pointerButtons: Int = 0
 
         val connectEvents = Channel<ConnectEvent>(capacity = 1)
@@ -193,6 +271,10 @@ class AndroidRdpEngine internal constructor(
 
             override fun onClipboard(text: String) {
                 clipboard.tryEmit(text)
+            }
+
+            override fun onCertificateFingerprint(value: String) {
+                fingerprint = value
             }
         }
 
@@ -260,6 +342,17 @@ class AndroidRdpEngine internal constructor(
         data class Error(val code: Int, val message: String?) : ConnectEvent
     }
 
+    private data class NativeAttempt(
+        val outcome: RdpConnectOutcome,
+        val fingerprint: String? = null,
+    )
+
+    private data class PendingReview(
+        val host: String,
+        val port: Int,
+        val fingerprint: String,
+    )
+
     companion object {
         const val ENGINE_UNAVAILABLE = "rdp_engine_unavailable"
         const val DRIVE_UNSUPPORTED = "rdp_drive_provider_unavailable"
@@ -267,6 +360,7 @@ class AndroidRdpEngine internal constructor(
         const val SESSION_EXISTS = "rdp_session_exists"
         const val SESSION_CREATE_FAILED = "rdp_session_create_failed"
         const val NATIVE_CONNECT_FAILED = "rdp_connect_failed"
+        const val TRUST_FILE_NAME = "rdp-trust.properties"
         private const val FRAME_BUFFER_CAPACITY = 32
         private const val CLIPBOARD_BUFFER_CAPACITY = 4
         private const val MAX_WHEEL_STEP = 255
@@ -295,6 +389,7 @@ internal data class NativeRdpConfig(
     val disableFullWindowDrag: Boolean = true,
     val allowFontSmoothing: Boolean = true,
     val requestedFps: Int = 30,
+    val ignoreCertificate: Boolean = false,
 )
 
 internal interface NativeRdpSink {
@@ -302,6 +397,7 @@ internal interface NativeRdpSink {
     fun onError(code: Int, message: String?)
     fun onFrame(x: Int, y: Int, width: Int, height: Int, rgba: ByteArray)
     fun onClipboard(text: String)
+    fun onCertificateFingerprint(fingerprint: String)
 }
 
 internal interface RdpNativeBridge {

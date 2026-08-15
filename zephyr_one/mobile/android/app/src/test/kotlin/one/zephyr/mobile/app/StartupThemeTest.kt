@@ -36,6 +36,7 @@ class StartupThemeTest {
         assertFalse(source.contains("runBlocking"))
         assert(source.contains("readyState"))
         assert(source.contains("applicationScope.launch"))
+        assert(source.contains("RdpAndroidRuntime.installHome"))
     }
 
     @Test

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.app.di.AppContainer
+import one.zephyr.mobile.protocol.rdp.RdpAndroidRuntime
 
 /**
  * Process entry point.
@@ -41,6 +42,7 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        RdpAndroidRuntime.installHome(filesDir)
         container = AppContainer(this)
         container.clearPendingBindingAuthentication()
         WorkManager.initialize(this, workManagerConfiguration)
