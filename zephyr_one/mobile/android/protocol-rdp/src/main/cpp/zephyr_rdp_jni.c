@@ -16,7 +16,7 @@ static JNIEnv* current_env(android_rdp_session* session, int* attached) {
     *attached = 0;
     if ((*session->vm)->GetEnv(session->vm, (void**)&env, JNI_VERSION_1_6) == JNI_OK)
         return env;
-    if ((*session->vm)->AttachCurrentThread(session->vm, (void**)&env, NULL) != JNI_OK)
+    if ((*session->vm)->AttachCurrentThread(session->vm, &env, NULL) != JNI_OK)
         return NULL;
     *attached = 1;
     return env;

@@ -55,7 +55,7 @@ target_include_directories(zephyr_rdp_android PRIVATE
     "${FREERDP_INCLUDE}"
     "${WINPR_INCLUDE}"
 )
-target_compile_options(zephyr_rdp_android PRIVATE -Wall -Wextra -Werror)
+target_compile_options(zephyr_rdp_android PRIVATE -Wall -Wextra -Werror -Wno-deprecated-declarations)
 target_link_options(zephyr_rdp_android PRIVATE "-Wl,--exclude-libs,ALL")
 target_link_libraries(zephyr_rdp_android PRIVATE
     "-Wl,--start-group"

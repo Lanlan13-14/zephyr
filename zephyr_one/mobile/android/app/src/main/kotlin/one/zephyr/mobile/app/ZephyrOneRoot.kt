@@ -479,6 +479,7 @@ private fun BoundRoot(
                 },
                 onMessage = { messages.emit(it) },
                 onNotice = notice,
+                onTestConnection = testConnection,
                 integrations = integrations,
                 onOpenSessionDetails = { sessionId -> route = RootRoute.SessionDetails(sessionId) },
                 onOpenBatch = { route = RootRoute.BatchExecution },
@@ -960,6 +961,7 @@ private fun RootDestination(
     onOpenSession: (String, String, Protocol) -> Unit,
     onMessage: suspend (String) -> Unit,
     onNotice: (String) -> Unit,
+    onTestConnection: (Connection) -> Unit,
     integrations: ZephyrOneIntegrations,
     onOpenSessionDetails: (String) -> Unit,
     onOpenBatch: () -> Unit,
@@ -1010,7 +1012,7 @@ private fun RootDestination(
                 /* Opens the source row rather than pre-filling a copy: the editor has no duplicate
                  * mode, and silently editing the original would be the wrong write. */
                 onDuplicateConnection = { connection -> onDuplicateConnection(connection.id) },
-                onTestConnection = testConnection,
+                onTestConnection = onTestConnection,
                 onShareConnection = integrations.onShareConnection,
                 onCreate = { onOpenEditor(null) },
                 onOpenAccount = null,

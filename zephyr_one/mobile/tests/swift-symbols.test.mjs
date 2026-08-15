@@ -482,8 +482,9 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'NSNull',
     'Date', 'DateFormatter', 'TimeInterval', 'TimeZone', 'Locale', 'UUID', 'NSObject',
     'NotificationCenter',
-    // Network path observation and iOS opportunistic background scheduling.
-    'NWPathMonitor',
+    // Network path observation, TCP reachability, and iOS opportunistic background scheduling.
+    'NWPathMonitor', 'NWConnection', 'NWEndpoint', 'Host', 'Port',
+    'NSError', 'NSPOSIXErrorDomain', 'ETIMEDOUT', 'ENOTSUP',
     'BGTaskScheduler', 'BGTask', 'BGAppRefreshTaskRequest', 'BGProcessingTaskRequest',
     /* Reached only by UserDefaultsKeyValueStore, which is the one file allowed to
      * know how the file-sync rows are stored. Every rule above it is written

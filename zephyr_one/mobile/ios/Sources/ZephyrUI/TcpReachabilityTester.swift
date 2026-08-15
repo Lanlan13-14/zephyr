@@ -5,17 +5,17 @@ import Network
 
 /// Local TCP reachability. Independent of any protocol engine and of the
 /// main end. Measures the time to complete a TCP handshake.
-public struct TcpReachabilityTester: ConnectionTester {
+public struct TcpReachabilityTester: ConnectionTester, @unchecked Sendable {
     public var timeoutMs: Int
-    public var nowMs: () -> Int64
-    public var connect: (String, Int, Int) async throws -> Void
+    public var nowMs: @Sendable () -> Int64
+    public var connect: @Sendable (String, Int, Int) async throws -> Void
 
     public init(
         timeoutMs: Int = 5_000,
-        nowMs: @escaping () -> Int64 = {
+        nowMs: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
         },
-        connect: @escaping (String, Int, Int) async throws -> Void = { host, port, timeoutMs in
+        connect: @escaping @Sendable (String, Int, Int) async throws -> Void = { host, port, timeoutMs in
             try await TcpReachabilityTester.open(host: host, port: port, timeoutMs: timeoutMs)
         }
     ) {
@@ -57,7 +57,7 @@ public struct TcpReachabilityTester: ConnectionTester {
             )
             let lock = NSLock()
             var finished = false
-            func finish(_ result: Result<Void, Error>) {
+            @Sendable func finish(_ result: Result<Void, Error>) {
                 lock.lock()
                 defer { lock.unlock() }
                 guard !finished else { return }
