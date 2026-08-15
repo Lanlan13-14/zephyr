@@ -370,7 +370,7 @@ html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
 #page-terminal .term-view{ position:relative; z-index:1; }
 .term-head{ display:flex; align-items:center; gap:6px; flex:none;
   padding:calc(env(safe-area-inset-top,0px) + 12px) 14px 12px; background:var(--t-chrome); border-bottom:1px solid var(--t-line); }
-#page-terminal .back-btn{ flex:none; width:30px; height:30px; border-radius:50%; background:transparent; color:var(--t-dim); }
+#page-terminal .back-btn{ flex:none; width:34px; height:34px; border-radius:50%; background:transparent; color:var(--t-dim); }
 #page-terminal .back-btn:active{ background:var(--t-chrome-2); color:var(--t-text); }
 .term-title{ flex:1; min-width:0; overflow:hidden; padding-left:2px; }
 .term-title .t1{ font-size:14px; font-weight:650; color:#e6ebf0; display:flex; align-items:center; gap:7px;
@@ -380,7 +380,7 @@ html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:-.01em; }
 .term-head .term-end{ display:flex; align-items:center; gap:6px; flex:none; }
 .term-lat{ font-family:var(--mono); font-size:11px; color:var(--t-dim); font-variant-numeric:tabular-nums; }
-.term-split-btn{ width:30px; height:30px; border-radius:8px; display:grid; place-items:center; color:var(--t-dim);
+.term-split-btn{ width:34px; height:34px; border-radius:9px; display:grid; place-items:center; color:var(--t-dim);
   background:transparent; transition:transform var(--dur-press) var(--ease-out), color var(--dur-fast) ease, background var(--dur-fast) ease; }
 .term-split-btn:active{ transform:scale(.9); background:var(--t-chrome-2); }
 .term-split-btn.on{ color:var(--accent); background:color-mix(in srgb, var(--accent) 16%, transparent); }
@@ -416,11 +416,22 @@ html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
 #page-terminal:not(.split-term) #pane-a{ flex:1 1 auto; }
 #page-terminal.split-term #pane-b{ display:flex; flex:0 0 auto; width:var(--dock-w, 50%); min-width:0; }
 #page-terminal.split-term #pane-a{ flex:0 0 auto; width:calc(100% - var(--dock-w, 50%)); min-width:0; }
-.term-gutter{ display:none; width:12px; flex:none; margin:0 -5px; z-index:3; cursor:col-resize; touch-action:none;
+.term-gutter{ display:none; width:18px; flex:none; margin:0 -8px; z-index:3; cursor:col-resize; touch-action:none;
   position:relative; background:transparent; }
 .term-gutter::before{ content:""; position:absolute; top:0; bottom:0; left:50%; width:1px; margin-left:-0.5px;
   background:var(--t-line); transition:background 120ms ease, width 120ms ease; }
 .term-gutter:hover::before, .term-gutter.dragging::before{ background:var(--accent); width:2px; margin-left:-1px; }
+/* 手机端上下分屏：pane-b 在下方，拖杠横躺并带可见抓手 */
+#page-terminal.split-term.split-v .term-split{ flex-direction:column; }
+#page-terminal.split-term.split-v #pane-a{ width:auto; height:calc(100% - var(--dock-w, 50%)); }
+#page-terminal.split-term.split-v #pane-b{ width:auto; height:var(--dock-w, 50%); }
+#page-terminal.split-term.split-v .term-gutter{ width:auto; height:22px; margin:-9px 0; cursor:row-resize; }
+#page-terminal.split-term.split-v .term-gutter::before{ top:50%; bottom:auto; left:0; right:0; width:auto; height:1px; margin:-0.5px 0 0; }
+#page-terminal.split-term.split-v .term-gutter:hover::before, #page-terminal.split-term.split-v .term-gutter.dragging::before{ height:2px; margin:-1px 0 0; width:auto; }
+#page-terminal.split-term.split-v .term-gutter::after{ content:""; position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%); width:38px; height:5px; border-radius:3px;
+  background:var(--t-dim); opacity:.55; transition:background 120ms ease, opacity 120ms ease; }
+#page-terminal.split-term.split-v .term-gutter.dragging::after{ background:var(--accent); opacity:1; }
 .term-dock{ display:none; flex:0 0 auto; width:var(--dock-w, 38%); min-width:180px; max-width:72%;
   flex-direction:column; background:var(--t-chrome); border-inline-start:1px solid var(--t-line); min-height:0; }
 #page-terminal.dock-on .term-gutter,
@@ -444,11 +455,11 @@ html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
 .term-view .p{ color:color-mix(in srgb, var(--accent) 45%, #7ee787); } .term-view .h{ color:#79c0ff; } .term-view .w{ color:#ffa657; } .term-view .d{ color:var(--t-dim); }
 .cursor{ display:inline-block; width:7px; height:15px; background:var(--t-text); vertical-align:-2px; animation:blink 1.06s steps(1) infinite; }
 @keyframes blink{ 50%{ opacity:0; } }
-.keyrow{ flex:none; display:flex; gap:6px; padding:7px 10px; overflow-x:auto; scrollbar-width:none;
+.keyrow{ flex:none; display:flex; gap:6px; padding:8px 10px; overflow-x:auto; scrollbar-width:none;
   background:var(--t-chrome); border-top:1px solid var(--t-line);
   transition:transform 180ms var(--ease-out), opacity 180ms var(--ease-out); }
 .keyrow::-webkit-scrollbar{ display:none; }
-.key{ min-width:44px; height:36px; padding:0 12px; border-radius:8px; flex:none;
+.key{ min-width:46px; height:40px; padding:0 13px; border-radius:9px; flex:none;
   background:var(--t-chrome-2); color:var(--t-text); font-family:var(--mono); font-size:12.5px; display:grid; place-items:center;
   transition:transform var(--dur-press) var(--ease-out), background var(--dur-press) ease; }
 .key:active{ transform:scale(.93); }
@@ -702,6 +713,29 @@ html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
 .tp-stat .l{ display:flex; justify-content:space-between; font-size:11px; color:#8b949e; font-family:var(--mono); }
 .tp-stat .meter{ background:#262c36; margin-top:5px; }
 .tp-sec{ font-size:10px; font-weight:700; color:#5d6773; letter-spacing:.08em; padding:8px 8px 4px; }
+
+/* ===== 手机端工具抽屉（替代浮窗）：推挤式底部面板，终端/快捷键条保持可见 ===== */
+.tsheet{ flex:none; height:0; overflow:hidden; background:var(--t-chrome); border-top:1px solid transparent;
+  display:flex; flex-direction:column; position:relative; z-index:6;
+  transition:height 260ms var(--ease-drawer), border-color 200ms ease; }
+.tsheet.open{ border-top-color:var(--t-line); }
+.tsheet.no-anim{ transition:none; }
+.tsheet-grab{ flex:none; padding:8px 0 5px; display:grid; place-items:center; cursor:grab; touch-action:none; }
+.tsheet-grab i{ width:38px; height:5px; border-radius:3px; background:var(--t-dim); opacity:.55; display:block;
+  transition:background 120ms ease, opacity 120ms ease; }
+.tsheet-grab:active i{ background:var(--accent); opacity:1; }
+.tsheet-tabs{ flex:none; display:flex; align-items:center; gap:6px; padding:0 10px 7px; overflow-x:auto; scrollbar-width:none; }
+.tsheet-tabs::-webkit-scrollbar{ display:none; }
+.tsheet-tab{ display:flex; align-items:center; gap:6px; height:30px; padding:0 11px; border-radius:15px; flex:none;
+  background:var(--t-chrome-2); color:var(--t-dim); font-size:12px; font-weight:600;
+  transition:transform var(--dur-press) var(--ease-out); }
+.tsheet-tab:active{ transform:scale(.94); }
+.tsheet-tab.on{ color:#fff; background:color-mix(in srgb, var(--accent) 32%, var(--t-chrome-2)); }
+html[data-scheme="light"] .tsheet-tab.on{ color:var(--accent); }
+.tsheet-tab svg{ width:13px; height:13px; fill:currentColor; }
+.tsheet-tab .tx{ font-size:15px; opacity:.6; padding-left:2px; line-height:1; }
+.tsheet-body{ flex:1; overflow-y:auto; padding:2px 8px 14px; scrollbar-width:none; overscroll-behavior:contain; }
+.tsheet-body::-webkit-scrollbar{ display:none; }
 
 .empty-note{ text-align:center; color:var(--text-3); font-size:13px; padding:26px 0 8px; }
 
@@ -1053,7 +1087,7 @@ html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
       <div class="term-end">
         <span class="term-lat" id="term-lat">23 ms</span>
         <button class="term-split-btn" id="term-split-btn" onclick="toggleSplit()" aria-label="分屏" title="分屏：双终端 / 工具停靠">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 4h8v16H3V4zm10 0h8v16h-8V4z"/></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path id="split-ic" d="M3 4h8v16H3V4zm10 0h8v16h-8V4z"/></svg>
         </button>
       </div>
     </div>
@@ -1090,6 +1124,11 @@ html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
       <button class="dock-item" onclick="openTPanel('stats')"><svg viewBox="0 0 24 24"><use href="#i-stats"/></svg>监控</button>
       <button class="dock-item" onclick="openTPanel('theme')"><svg viewBox="0 0 24 24"><use href="#i-theme"/></svg>外观</button>
       <button class="dock-item danger" onclick="confirmDisconnect(activeSession().name)"><svg viewBox="0 0 24 24"><use href="#i-disconnect"/></svg>断开</button>
+    </div>
+    <div class="tsheet" id="tsheet">
+      <div class="tsheet-grab" id="tsheet-grab"><i></i></div>
+      <div class="tsheet-tabs" id="tsheet-tabs"></div>
+      <div class="tsheet-body" id="tsheet-body"></div>
     </div>
     <div class="fake-ime" id="fake-ime">
       <div class="krow"><div class="k">q</div><div class="k">w</div><div class="k">e</div><div class="k">r</div><div class="k">t</div><div class="k">y</div><div class="k">u</div><div class="k">i</div><div class="k">o</div><div class="k">p</div></div>
@@ -1377,7 +1416,7 @@ html[data-scheme="light"] .tp-hbtn{ color:#66707c; }
           <button class="toggle" onclick="this.classList.toggle('on')"></button></div>
         <div class="row"><span class="r-body">自定义选中色<div class="r-sub">选中背景 + 选中文字</div></span>
           <button class="toggle" onclick="this.classList.toggle('on')"></button></div>
-        <div class="row" style="align-items:flex-start"><span class="r-body">分屏<div class="r-sub">双终端共享底部按钮 · 或一侧停靠工具</div></span>
+        <div class="row" style="align-items:flex-start"><span class="r-body">分屏<div class="r-sub">手机上下双终端 · 平板/桌面可左右或停靠工具</div></span>
           <div class="seg" id="seg-dock">
             <button data-d="off" class="on">关</button>
             <button data-d="term">双终端</button>
@@ -2209,6 +2248,7 @@ function openTerminal(i=0){
 function toggleIME(){
   const t = $('page-terminal');
   const on = t.classList.toggle('ime-on');
+  if(on && sheetOpen) closeTSheet();   /* 键盘与工具抽屉互斥 */
   $('fake-ime').classList.toggle('open', on);
   const sess = activeSession();
   $('term-sub').textContent = sess.sub + (on ? ' · 80×14 (resized)' : ' · 80×24');
@@ -2250,7 +2290,9 @@ const TPANEL_DEFS = {
     <div class="tp-row"><span style="flex:1">自定义选中色（背景+文字）</span><button class="tp-mini" onclick="this.classList.toggle('on')">开关</button></div>`},
 };
 let tz = 20, tpCount = 0;
+const isPhoneTerm = () => matchMedia('(max-width:767px)').matches;
 function openTPanel(kind){
+  if(isPhoneTerm()){ openTSheet(kind); return; }   /* 手机：底部抽屉 */
   if(splitMode==='left' || splitMode==='right'){ dockTool(kind); return; }
   const page = $('page-terminal');
   let p = page.querySelector(`.tpanel[data-k="${kind}"]`);
@@ -2326,6 +2368,81 @@ function termBg(kind, btn){
 }
 function termBgBlur(v){ $('term-bg').style.filter = `blur(${v}px)`; $('blur-v').textContent = v+'px'; }
 function termBgOp(v){ $('term-bg').style.opacity = v/100; $('bgop-v').textContent = v+'%'; }
+
+/* ================= 手机端工具抽屉：半屏/近全屏吸附，下滑关闭，与软键盘互斥 ================= */
+const SHEET_MID = 0.44, SHEET_MAX = 0.74, SHEET_DISMISS = 0.2;
+const sheetTools = []; let sheetCur = null, sheetOpen = false, sheetLastFrac = SHEET_MID;
+function renderTSheet(){
+  const tabs = $('tsheet-tabs'), body = $('tsheet-body'); if(!tabs || !body) return;
+  tabs.innerHTML = sheetTools.map(k=>{
+    const d = TPANEL_DEFS[k] || {title:k, icon:'i-file'};
+    return `<button class="tsheet-tab ${k===sheetCur?'on':''}" data-k="${k}">
+      <svg><use href="#${d.icon}"/></svg>${d.title.split('·')[0].trim()}<span class="tx" data-x="1">×</span></button>`;
+  }).join('');
+  tabs.querySelectorAll('.tsheet-tab').forEach(el=>el.addEventListener('click', e=>{
+    if(e.target.dataset.x){ closeTSheetTool(el.dataset.k); return; }
+    sheetCur = el.dataset.k; renderTSheet();
+  }));
+  body.innerHTML = (TPANEL_DEFS[sheetCur]||{}).body || '';
+}
+function tsheetSet(frac, anim=true){
+  const sh = $('tsheet'); if(!sh) return;
+  sh.classList.toggle('no-anim', !anim);
+  const hostH = sh.parentElement.getBoundingClientRect().height;
+  sh.style.height = Math.round(hostH * frac) + 'px';
+  if(frac > 0) sheetLastFrac = frac;
+}
+function openTSheet(kind){
+  const t = $('page-terminal');
+  if(t.classList.contains('ime-on')) toggleIME();          /* 与软键盘互斥，避免挤爆 */
+  if(sheetOpen && sheetCur===kind){ closeTSheet(); return; } /* 再点同一个 = 收起 */
+  if(!sheetTools.includes(kind)) sheetTools.push(kind);
+  sheetCur = kind; sheetOpen = true;
+  renderTSheet();
+  $('tsheet').classList.add('open');
+  tsheetSet(sheetLastFrac);
+}
+function closeTSheetTool(k){
+  const i = sheetTools.indexOf(k); if(i<0) return;
+  sheetTools.splice(i,1);
+  if(sheetCur===k) sheetCur = sheetTools[sheetTools.length-1] || null;
+  if(!sheetCur){ closeTSheet(); return; }
+  renderTSheet();
+}
+function closeTSheet(){
+  sheetOpen = false; sheetTools.length = 0; sheetCur = null;
+  $('tsheet').classList.remove('open');
+  tsheetSet(0);
+}
+(function initTSheet(){
+  const grab = $('tsheet-grab'), sh = $('tsheet'); if(!grab || !sh) return;
+  let drag=false, startY=0, startH=0, vel=0, lastY=0, lastT=0;
+  grab.addEventListener('pointerdown', e=>{
+    drag=true; sh.classList.add('no-anim');
+    startY=e.clientY; startH=sh.offsetHeight; lastY=e.clientY; lastT=performance.now(); vel=0;
+    try{ grab.setPointerCapture(e.pointerId); }catch(err){}
+    e.preventDefault();
+  });
+  grab.addEventListener('pointermove', e=>{
+    if(!drag) return;
+    const now=performance.now();
+    vel = (e.clientY-lastY)/Math.max(1,now-lastT); lastY=e.clientY; lastT=now;
+    const hostH = sh.parentElement.getBoundingClientRect().height;
+    const h = Math.max(0, Math.min(hostH*SHEET_MAX, startH - (e.clientY-startY)));
+    sh.style.height = h + 'px';
+  });
+  const end = e=>{
+    if(!drag) return; drag=false; sh.classList.remove('no-anim');
+    const hostH = sh.parentElement.getBoundingClientRect().height;
+    const cur = sh.offsetHeight / hostH;
+    if(vel > 0.7 || cur < SHEET_DISMISS){ closeTSheet(); return; }
+    const proj = cur - vel*0.12;
+    tsheetSet(Math.abs(proj-SHEET_MAX) < Math.abs(proj-SHEET_MID) ? SHEET_MAX : SHEET_MID);
+  };
+  grab.addEventListener('pointerup', end);
+  grab.addEventListener('pointercancel', end);
+})();
+
 let splitMode = 'off'; /* off | term | left | right */
 let dockW = 0.38;
 let termCurB = 1;
@@ -2333,37 +2450,54 @@ let focusP = 'a';
 const docked = [];
 let dockCur = null;
 function setDockSide(side, announce=true){
+  const phone = isPhoneTerm();
+  if(phone && (side==='left' || side==='right')){
+    /* 手机端没有侧停靠：工具统一走底部抽屉 */
+    document.querySelectorAll('#seg-dock button').forEach(b=>b.classList.toggle('on', b.dataset.d===splitMode));
+    toast('手机端工具用底部抽屉打开 · 侧停靠仅平板/桌面');
+    return;
+  }
   splitMode = side;
   const page = $('page-terminal');
   page.classList.toggle('dock-on', side==='left' || side==='right');
   page.classList.toggle('dock-left', side==='left');
   page.classList.toggle('dock-right', side==='right');
   page.classList.toggle('split-term', side==='term');
+  page.classList.toggle('split-v', side==='term' && phone);
   $('term-split-btn')?.classList.toggle('on', side!=='off');
+  $('split-ic')?.setAttribute('d', phone
+    ? 'M3 4h18v7H3V4zm0 9h18v7H3v-7z'      /* 上下分屏图标 */
+    : 'M3 4h8v16H3V4zm10 0h8v16h-8V4z');   /* 左右分屏图标 */
   document.querySelectorAll('#seg-dock button').forEach(b=>b.classList.toggle('on', b.dataset.d===side));
   applyDockWidth();
   if(side==='term'){
     if(TERM_SESSIONS.length<2){
-      toast('再开一个会话才能双终端'); 
-      /* 仍进入分屏，右栏给提示 */
+      toast('点上方 ＋ 再开一个会话，就是真双终端');
       termCurB = termCur;
-    } else if(termCurB===termCur || termCurB>=TERM_SESSIONS.length){
-      termCurB = (termCur+1) % TERM_SESSIONS.length;
+      $('term-view-b').innerHTML = '<div class="term-dock-empty" style="padding-top:44px;line-height:1.9">只有一个会话，这边先空着<br>点上方 ＋ 新建会话后自动填入</div>';
+    } else {
+      if(termCurB===termCur || termCurB>=TERM_SESSIONS.length){
+        termCurB = (termCur+1) % TERM_SESSIONS.length;
+      }
+      paintPane($('term-view-b'), TERM_SESSIONS[termCurB]);
     }
     focusP = 'a';
     paintPane($('term-view'), TERM_SESSIONS[termCur]);
-    paintPane($('term-view-b'), TERM_SESSIONS[termCurB]);
     $('pane-a')?.classList.add('focused');
     $('pane-b')?.classList.remove('focused');
     paintHead(); renderRail();
   }
   if((side==='left'||side==='right') && !dockCur) dockTool('stats', false);
   if(announce){
-    const msg = {off:'已关闭分屏', term:'双终端 · 点哪边，底部按钮打哪边', left:'工具停靠左侧', right:'工具停靠右侧'};
+    const msg = {off:'已关闭分屏',
+      term: phone ? '上下双终端 · 拖中间抓手调比例 · 双击复位' : '双终端 · 点哪边，底部按钮打哪边',
+      left:'工具停靠左侧', right:'工具停靠右侧'};
     toast(msg[side]||'分屏');
   }
 }
 function toggleSplit(){
+  /* 手机端：分屏就是上下双终端的开关，不做四态循环 */
+  if(isPhoneTerm()){ setDockSide(splitMode==='term' ? 'off' : 'term'); return; }
   const order = ['off','term','right','left'];
   setDockSide(order[(order.indexOf(splitMode)+1)%order.length]);
 }
@@ -2406,34 +2540,70 @@ function renderDock(){
 }
 (function initGutter(){
   const g = $('term-gutter'); if(!g) return;
-  let drag=false, startX=0, startW=0, splitW=0;
+  let drag=false, startX=0, startY=0, startW=0, splitW=0, splitH=0, vert=false;
   g.addEventListener('pointerdown', e=>{
     drag=true; g.classList.add('dragging');
-    startX=e.clientX;
-    splitW=$('term-split').getBoundingClientRect().width;
-    startW = dockW * splitW;
+    vert = $('page-terminal').classList.contains('split-v');
+    startX=e.clientX; startY=e.clientY;
+    const r = $('term-split').getBoundingClientRect();
+    splitW=r.width; splitH=r.height;
+    startW = dockW * (vert ? splitH : splitW);
     try{ g.setPointerCapture(e.pointerId); }catch(err){}
     e.preventDefault();
   });
   g.addEventListener('pointermove', e=>{
     if(!drag) return;
-    const dx = e.clientX - startX;
-    const signed = splitMode==='left' ? dx : -dx;
-    const next = Math.max(0.2, Math.min(0.7, (startW + signed) / splitW));
-    dockW = next; applyDockWidth();
+    let next;
+    if(vert){
+      /* pane-b 在下方：手指上拖 = 下方面板变高 */
+      next = (startW - (e.clientY - startY)) / splitH;
+    } else {
+      const dx = e.clientX - startX;
+      const signed = splitMode==='left' ? dx : -dx;
+      next = (startW + signed) / splitW;
+    }
+    dockW = Math.max(0.2, Math.min(0.7, next)); applyDockWidth();
   });
   const end = ()=>{ drag=false; g.classList.remove('dragging'); };
   g.addEventListener('pointerup', end);
   g.addEventListener('pointercancel', end);
+  g.addEventListener('dblclick', ()=>{ dockW = 0.5; applyDockWidth(); toast('已复位 50 / 50'); });
 })();
 
 
 function closeTopTPanel(){
+  if(sheetOpen){ closeTSheet(); return true; }
   const ps = [...document.querySelectorAll('#page-terminal .tpanel')];
   if(!ps.length) return false;
   ps.sort((a,b)=>(+b.style.zIndex||0)-(+a.style.zIndex||0))[0].remove();
   return true;
 }
+
+/* 横竖屏 / 窗口宽度跨过手机界线时：分屏方向、浮窗⇄抽屉自动迁移 */
+matchMedia('(max-width:767px)').addEventListener('change', e=>{
+  const page = $('page-terminal'); if(!page) return;
+  if(e.matches){
+    page.classList.toggle('split-v', splitMode==='term');
+    $('split-ic')?.setAttribute('d','M3 4h18v7H3V4zm0 9h18v7H3v-7z');
+    /* 桌面浮窗 → 收进抽屉 */
+    const ps = [...page.querySelectorAll('.tpanel')];
+    ps.forEach(p=>{ if(!sheetTools.includes(p.dataset.k)) sheetTools.push(p.dataset.k); p.remove(); });
+    /* 侧停靠 → 收进抽屉 */
+    if(splitMode==='left' || splitMode==='right'){
+      docked.forEach(k=>{ if(!sheetTools.includes(k)) sheetTools.push(k); });
+      const cur = dockCur; docked.length = 0; dockCur = null;
+      setDockSide('off', false);
+      sheetCur = cur || sheetTools[sheetTools.length-1] || null;
+    } else if(sheetTools.length){
+      sheetCur = sheetTools[sheetTools.length-1];
+    }
+    if(sheetTools.length){ sheetOpen = true; renderTSheet(); $('tsheet').classList.add('open'); tsheetSet(SHEET_MID); }
+  } else {
+    page.classList.remove('split-v');
+    $('split-ic')?.setAttribute('d','M3 4h8v16H3V4zm10 0h8v16h-8V4z');
+    if(sheetOpen){ const tools = [...sheetTools]; closeTSheet(); tools.forEach(k=>openTPanel(k)); }
+  }
+});
 
 /* ================= Remote desktop（RDP/VNC 共用控制器） ================= */
 const remoteState = {};
