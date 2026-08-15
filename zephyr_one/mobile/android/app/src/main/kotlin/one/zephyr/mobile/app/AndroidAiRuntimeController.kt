@@ -68,7 +68,7 @@ internal class AndroidAiRuntimeController(
         if (status is ApiResult.Failure) return fail(status)
         if (providers is ApiResult.Failure) return fail(providers)
         if (history is ApiResult.Failure) return fail(history)
-        val providerOptions = (providers as ApiResult.Success).value.map(AiProviderDto::toOption)
+        val providerOptions = (providers as ApiResult.Success).value.map { it.toOption() }
         val currentChrome = chrome()
         selectedProviderId = currentChrome.providerId.takeIf { id -> providerOptions.any { it.id == id } }
             ?: selectedProviderId.takeIf { id -> providerOptions.any { it.id == id } }

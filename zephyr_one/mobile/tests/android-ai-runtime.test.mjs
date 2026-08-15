@@ -14,6 +14,8 @@ test('Android AI uses the real server runtime and never the offline demo send', 
   const controller = read('android/app/src/main/kotlin/one/zephyr/mobile/app/AndroidAiRuntimeController.kt');
   const overlay = read('android/feature-ai/src/main/kotlin/one/zephyr/mobile/feature/ai/AiWorkspaceOverlay.kt');
   assert.match(host, /AndroidAiRuntimeController/);
+  assert.match(controller, /\.value\.map \{ it\.toOption\(\) \}/);
+  assert.doesNotMatch(controller, /AiProviderDto::toOption/);
   assert.match(controller, /account\.aiRuntime\.startRun/);
   assert.match(controller, /account\.aiRuntime\.stream/);
   assert.match(controller, /"text\.delta"/);
