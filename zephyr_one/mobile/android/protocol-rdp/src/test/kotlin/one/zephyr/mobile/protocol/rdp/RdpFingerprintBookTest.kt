@@ -22,7 +22,10 @@ class RdpFingerprintBookTest {
             "AA:BB:CC:DD",
             RdpFingerprintBook.normalize("AA:bb:CC:dd"),
         )
+        assertEquals("AA:BB:CC:DD", RdpFingerprintBook.normalize("aabb-ccdd"))
         assertEquals("", RdpFingerprintBook.normalize("not-hex"))
+        assertEquals("", RdpFingerprintBook.normalize("aa:bb:c"))
+        assertEquals("", RdpFingerprintBook.normalize(""))
     }
 
     @Test

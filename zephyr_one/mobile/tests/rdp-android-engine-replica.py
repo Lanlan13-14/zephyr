@@ -24,10 +24,17 @@ def normalize(raw: str | None) -> str:
     algo = value.split(":", 1)[0]
     if algo.lower() in {"sha256", "sha1"} and ":" in value:
         value = value.split(":", 1)[1]
-    hex_chars = "".join(ch.upper() for ch in value if ch in "0123456789abcdefABCDEF")
-    if not hex_chars:
+    hex_chars: list[str] = []
+    for ch in value:
+        if ch in " \t:-":
+            continue
+        if ch in "0123456789abcdefABCDEF":
+            hex_chars.append(ch.upper())
+        else:
+            return ""
+    if not hex_chars or len(hex_chars) % 2:
         return ""
-    return ":".join(hex_chars[i : i + 2] for i in range(0, len(hex_chars), 2))
+    return ":".join("".join(hex_chars[i : i + 2]) for i in range(0, len(hex_chars), 2))
 
 
 class FakeNative:

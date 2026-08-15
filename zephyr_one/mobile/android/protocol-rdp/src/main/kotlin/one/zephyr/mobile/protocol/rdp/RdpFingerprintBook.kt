@@ -29,10 +29,14 @@ interface RdpFingerprintBook {
             }
             val hex = buildString(value.length) {
                 for (ch in value) {
-                    if (ch in '0'..'9' || ch in 'a'..'f' || ch in 'A'..'F') append(ch.uppercaseChar())
+                    when (ch) {
+                        ' ', '\t', ':', '-' -> Unit
+                        in '0'..'9', in 'a'..'f', in 'A'..'F' -> append(ch.uppercaseChar())
+                        else -> return ""
+                    }
                 }
             }
-            if (hex.isEmpty()) return ""
+            if (hex.isEmpty() || hex.length % 2 != 0) return ""
             return hex.chunked(2).joinToString(":")
         }
     }

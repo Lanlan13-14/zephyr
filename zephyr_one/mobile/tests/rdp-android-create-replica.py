@@ -21,12 +21,19 @@ CONTAINER = ROOT / "android/app/src/main/kotlin/one/zephyr/mobile/app/di/AppCont
 def normalize(raw: str) -> str:
     value = raw.strip()
     algo = value.split(":", 1)[0]
-    if algo.lower() in {"sha256", "sha1"}:
+    if algo.lower() in {"sha256", "sha1"} and ":" in value:
         value = value.split(":", 1)[1]
-    hex_chars = "".join(ch.upper() for ch in value if ch in "0123456789abcdefABCDEF")
-    if not hex_chars:
+    hex_chars = []
+    for ch in value:
+        if ch in " \t:-":
+            continue
+        if ch in "0123456789abcdefABCDEF":
+            hex_chars.append(ch.upper())
+        else:
+            return ""
+    if not hex_chars or len(hex_chars) % 2:
         return ""
-    return ":".join(hex_chars[i : i + 2] for i in range(0, len(hex_chars), 2))
+    return ":".join("".join(hex_chars[i : i + 2]) for i in range(0, len(hex_chars), 2))
 
 
 def decide(stored: str | None, presented: str | None, create_ok: bool) -> str:
@@ -94,6 +101,12 @@ def main() -> int:
 
     if normalize("sha256:aabbccdd") != "AA:BB:CC:DD":
         raise AssertionError("normalize replica drifted")
+    if normalize("not-hex") != "":
+        raise AssertionError("normalize must reject leftover letters")
+    if normalize("aa:bb:c") != "":
+        raise AssertionError("normalize must reject odd-length hex")
+    book = ROOT / "android/protocol-rdp/src/main/kotlin/one/zephyr/mobile/protocol/rdp/RdpFingerprintBook.kt"
+    must_contain(book, "else -> return \"\"", "hex.length % 2 != 0")
     print("rdp-android-create-replica: ok")
     return 0
 
