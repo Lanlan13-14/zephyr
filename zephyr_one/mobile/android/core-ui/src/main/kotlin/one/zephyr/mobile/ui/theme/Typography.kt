@@ -24,6 +24,7 @@ object ZephyrTextStyles {
 
     val rootTitle: TextStyle = TextStyle(
         fontSize = 23.sp,
+        lineHeight = 28.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.sp,
         platformStyle = noPad,
@@ -32,6 +33,7 @@ object ZephyrTextStyles {
 
     val pushedTitle: TextStyle = TextStyle(
         fontSize = 18.sp,
+        lineHeight = 24.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.sp,
         platformStyle = noPad,
@@ -40,6 +42,7 @@ object ZephyrTextStyles {
 
     val section: TextStyle = TextStyle(
         fontSize = 12.sp,
+        lineHeight = 16.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.sp,
         platformStyle = noPad,
@@ -48,6 +51,7 @@ object ZephyrTextStyles {
 
     val body: TextStyle = TextStyle(
         fontSize = 14.sp,
+        lineHeight = 20.sp,
         fontWeight = FontWeight.Normal,
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -57,6 +61,7 @@ object ZephyrTextStyles {
 
     val cardName: TextStyle = TextStyle(
         fontSize = 14.5.sp,
+        lineHeight = 20.sp,
         fontWeight = FontWeight.SemiBold,
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -64,6 +69,7 @@ object ZephyrTextStyles {
 
     val row: TextStyle = TextStyle(
         fontSize = 14.sp,
+        lineHeight = 20.sp,
         fontWeight = FontWeight.Normal,
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -71,6 +77,7 @@ object ZephyrTextStyles {
 
     val caption: TextStyle = TextStyle(
         fontSize = 12.sp,
+        lineHeight = 16.sp,
         fontWeight = FontWeight.Normal,
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -78,6 +85,7 @@ object ZephyrTextStyles {
 
     val hint: TextStyle = TextStyle(
         fontSize = 11.5.sp,
+        lineHeight = 15.sp,
         fontWeight = FontWeight.Normal,
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -85,6 +93,7 @@ object ZephyrTextStyles {
 
     val chip: TextStyle = TextStyle(
         fontSize = 12.5.sp,
+        lineHeight = 16.sp,
         fontWeight = FontWeight.Medium,
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -92,6 +101,7 @@ object ZephyrTextStyles {
 
     val pill: TextStyle = TextStyle(
         fontSize = 12.sp,
+        lineHeight = 16.sp,
         fontWeight = FontWeight.Medium,
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -99,6 +109,7 @@ object ZephyrTextStyles {
 
     val islandLabel: TextStyle = TextStyle(
         fontSize = 10.sp,
+        lineHeight = 12.sp,
         fontWeight = FontWeight.SemiBold,
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -106,6 +117,7 @@ object ZephyrTextStyles {
 
     val stat: TextStyle = TextStyle(
         fontSize = 20.sp,
+        lineHeight = 24.sp,
         fontWeight = FontWeight.Bold,
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -114,6 +126,7 @@ object ZephyrTextStyles {
     val protocolMark: TextStyle = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontSize = 10.5.sp,
+        lineHeight = 14.sp,
         fontWeight = FontWeight.ExtraBold,
         letterSpacing = 0.sp,
         platformStyle = noPad,
@@ -123,6 +136,7 @@ object ZephyrTextStyles {
     val mono: TextStyle = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontSize = 13.5.sp,
+        lineHeight = 18.sp,
         fontFeatureSettings = "tnum",
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -131,6 +145,7 @@ object ZephyrTextStyles {
     val monoHost: TextStyle = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontSize = 11.5.sp,
+        lineHeight = 15.sp,
         fontFeatureSettings = "tnum",
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -138,6 +153,7 @@ object ZephyrTextStyles {
 
     val tabularNumeric: TextStyle = TextStyle(
         fontSize = 13.sp,
+        lineHeight = 17.sp,
         fontFeatureSettings = "tnum",
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -146,6 +162,7 @@ object ZephyrTextStyles {
     val monoCaption: TextStyle = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontSize = 12.sp,
+        lineHeight = 16.sp,
         fontFeatureSettings = "tnum",
         platformStyle = noPad,
         lineHeightStyle = line,
@@ -153,6 +170,7 @@ object ZephyrTextStyles {
 
     val sheetItem: TextStyle = TextStyle(
         fontSize = 15.sp,
+        lineHeight = 20.sp,
         fontWeight = FontWeight.Normal,
         platformStyle = noPad,
         lineHeightStyle = line,
