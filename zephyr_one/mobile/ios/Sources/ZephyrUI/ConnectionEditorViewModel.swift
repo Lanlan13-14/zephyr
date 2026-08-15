@@ -85,7 +85,7 @@ public final class ConnectionEditorViewModel: ObservableObject, LockSensitiveSin
         ownerUserId: String,
         connectionId: String?,
         newId: @escaping () -> String,
-        tester: ConnectionTester = UnavailableConnectionTester(),
+        tester: ConnectionTester = TcpReachabilityTester(),
         clock: @escaping () -> Int64 = { 0 }
     ) {
         self.connections = connections

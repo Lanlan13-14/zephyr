@@ -93,7 +93,7 @@
     <string name="remote_auth_exhausted">认证尝试次数已被服务器用尽，需要重新连接</string>
     <string name="remote_disconnect_title">断开会话</string>
     <string name="remote_disconnect_body">断开后不会保留远程端未保存的程序状态</string>
-    <string name="remote_engine_blocked_rdp">本构建未打包 FreeRDP 原生库，无法建立 RDP 会话</string>
+    <string name="remote_engine_blocked_rdp">本机构建未打包 FreeRDP，无法建立 RDP 会话。与主端无关。</string>
     <string name="remote_engine_blocked_vnc">VNC 原生内核尚未纳入构建：ADR-005 的许可结论未出</string>
     <string name="remote_tools">工具</string>
     <string name="remote_fps">帧率</string>

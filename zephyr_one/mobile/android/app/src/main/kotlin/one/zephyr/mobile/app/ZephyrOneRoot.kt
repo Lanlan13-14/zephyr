@@ -69,7 +69,9 @@ import one.zephyr.mobile.feature.connections.ConnectionEditorRoute
 import one.zephyr.mobile.feature.connections.ConnectionEditorViewModel
 import one.zephyr.mobile.feature.connections.ConnectionListRoute
 import one.zephyr.mobile.feature.connections.ConnectionListViewModel
+import one.zephyr.mobile.feature.connections.ConnectionTestResult
 import one.zephyr.mobile.feature.connections.ProtocolPickerScreen
+import one.zephyr.mobile.feature.connections.TcpReachabilityTester
 import one.zephyr.mobile.feature.tools.OpsSection
 import one.zephyr.mobile.feature.tools.ResourceKind
 import one.zephyr.mobile.feature.tools.OneSettingsAnchor
@@ -419,6 +421,19 @@ private fun BoundRoot(
 
     /* Non-suspend entry point for callbacks that are not suspend (island taps, click handlers). */
     val notice: (String) -> Unit = { message -> scope.launch { messages.emit(message) } }
+    val reachability = remember { TcpReachabilityTester() }
+    val testConnection: (Connection) -> Unit = { connection ->
+        scope.launch {
+            when (val result = reachability.test(connection)) {
+                is ConnectionTestResult.Reachable ->
+                    messages.emit(connection.host + ":" + connection.port + " · " + result.roundTripMs + " ms")
+                is ConnectionTestResult.Authenticated ->
+                    messages.emit(connection.host + ":" + connection.port + " · " + result.roundTripMs + " ms")
+                is ConnectionTestResult.Failed ->
+                    messages.emit(result.error.message)
+            }
+        }
+    }
 
     LaunchedEffect(route) {
         (route as? RootRoute.Root)?.let { lastRoot = it.destination }
@@ -518,6 +533,7 @@ private fun BoundRoot(
                         duplicateSourceId = current.duplicateSourceId,
                         initialProtocol = current.protocol,
                         newIdFactory = { UUID.randomUUID().toString() },
+                        tester = TcpReachabilityTester(),
                         registerSensitiveSink = account::registerSensitiveSink,
                         unregisterSensitiveSink = account::unregisterSensitiveSink,
                     ),
@@ -994,7 +1010,7 @@ private fun RootDestination(
                 /* Opens the source row rather than pre-filling a copy: the editor has no duplicate
                  * mode, and silently editing the original would be the wrong write. */
                 onDuplicateConnection = { connection -> onDuplicateConnection(connection.id) },
-                onTestConnection = integrations.onTestConnection,
+                onTestConnection = testConnection,
                 onShareConnection = integrations.onShareConnection,
                 onCreate = { onOpenEditor(null) },
                 onOpenAccount = null,

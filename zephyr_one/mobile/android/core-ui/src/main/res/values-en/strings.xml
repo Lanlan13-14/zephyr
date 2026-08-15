@@ -13,7 +13,7 @@
     <string name="state_offline_no_cache">This resource is online-only and unavailable offline</string>
     <string name="state_permission_denied">You do not have permission for this action: %1$s</string>
     <string name="state_not_found">Gone, or access was revoked</string>
-    <string name="state_fatal_incompatible">The main end is incompatible with this app</string>
+    <string name="state_fatal_incompatible">Cannot continue</string>
     <string name="action_retry">Retry</string>
     <string name="action_check_update">Check for updates</string>
     <string name="action_copy_diagnostics">Copy diagnostics</string>

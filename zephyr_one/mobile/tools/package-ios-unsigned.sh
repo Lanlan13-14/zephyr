@@ -166,7 +166,7 @@ private final class LocalComposition: ObservableObject {
             ownerUserId: ownerUserId,
             connectionId: connectionId,
             newId: { UUID().uuidString.lowercased() },
-            tester: UnavailableConnectionTester(),
+            tester: TcpReachabilityTester(),
             clock: LocalComposition.nowMs
         )
     }

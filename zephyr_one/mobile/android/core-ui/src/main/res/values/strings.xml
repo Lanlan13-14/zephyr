@@ -23,7 +23,7 @@
 
     <string name="state_permission_denied">你没有此操作的权限：%1$s</string>
     <string name="state_not_found">内容不存在或访问已被取消</string>
-    <string name="state_fatal_incompatible">主端版本与本应用不兼容</string>
+    <string name="state_fatal_incompatible">无法继续</string>
 
     <string name="action_retry">重试</string>
     <string name="action_check_update">检查更新</string>

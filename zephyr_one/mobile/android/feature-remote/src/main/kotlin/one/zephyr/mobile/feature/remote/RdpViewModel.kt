@@ -35,8 +35,10 @@ import one.zephyr.mobile.protocol.rdp.RdpConnectRequest
 import one.zephyr.mobile.protocol.rdp.RdpDisplayPolicy
 import one.zephyr.mobile.protocol.rdp.RdpDrivePolicy
 import one.zephyr.mobile.protocol.rdp.RdpDriveResolution
+import one.zephyr.mobile.protocol.rdp.AndroidRdpEngine
 import one.zephyr.mobile.protocol.rdp.RdpEngine
 import one.zephyr.mobile.protocol.rdp.RdpGeometry
+import one.zephyr.mobile.protocol.rdp.UnavailableRdpEngine
 
 /**
  * The surface size to ask the server for.
@@ -207,7 +209,13 @@ class RdpViewModel(
             return PageState.PermissionDenied(Capability.USE, "已失去该连接的使用权限")
         }
         aux.error?.let { error ->
-            return if (error.retryable) PageState.RetryableError(error) else PageState.FatalIncompatible(error)
+            // A missing JNI library is a local packaging fact, not a server-version clash.
+            // The screen already has EngineBlockedOverlay for engineAvailable=false.
+            if (error.code != AndroidRdpEngine.ENGINE_UNAVAILABLE &&
+                error.code != UnavailableRdpEngine.ENGINE_UNAVAILABLE
+            ) {
+                return if (error.retryable) PageState.RetryableError(error) else PageState.FatalIncompatible(error)
+            }
         }
 
         val driveAvailable = channels.drive is RdpDriveResolution.Mapped

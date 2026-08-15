@@ -20,6 +20,7 @@ import one.zephyr.mobile.model.RdpFps
 import one.zephyr.mobile.model.RdpQuality
 import one.zephyr.mobile.model.RdpResolution
 import one.zephyr.mobile.model.RdpSettings
+import one.zephyr.mobile.protocol.rdp.AndroidRdpEngine
 import one.zephyr.mobile.protocol.rdp.RdpConnectOutcome
 import one.zephyr.mobile.protocol.rdp.RdpConnectRequest
 import one.zephyr.mobile.protocol.rdp.RdpEngine
@@ -45,6 +46,19 @@ class RdpViewModelOperationTest {
     @After
     fun tearDown() {
         Dispatchers.resetMain()
+    }
+
+    @Test
+    fun missingEngineStaysOnTheSessionPageInsteadOfMainEndIncompatibility() = runTest(mainDispatcher) {
+        val engine = RecordingEngine(available = false)
+        val vm = viewModel(engine = engine)
+        backgroundScope.launch { vm.state.collect { } }
+        runCurrent()
+        vm.connect()
+        runCurrent()
+        val page = content(vm)
+        assertEquals(false, page.engineAvailable)
+        assertTrue(vm.state.value is PageState.Content<*>)
     }
 
     @Test
@@ -157,8 +171,8 @@ class RdpViewModelOperationTest {
         return (state as PageState.Content<RemoteContent>).value
     }
 
-    private class RecordingEngine : RdpEngine {
-        override val isAvailable: Boolean = true
+    private class RecordingEngine(private val available: Boolean = true) : RdpEngine {
+        override val isAvailable: Boolean get() = available
         var lastRequest: RdpConnectRequest? = null
         var lastOutcome: RdpConnectOutcome? = null
         var disconnects = 0
@@ -166,7 +180,16 @@ class RdpViewModelOperationTest {
 
         override suspend fun connect(request: RdpConnectRequest): RdpConnectOutcome {
             lastRequest = request
-            val outcome = RdpConnectOutcome.Connected(800, 600, request.channels)
+            val outcome = if (!available) {
+                RdpConnectOutcome.Failed(
+                    one.zephyr.mobile.model.MobileError.local(
+                        AndroidRdpEngine.ENGINE_UNAVAILABLE,
+                        "not packaged",
+                    ),
+                )
+            } else {
+                RdpConnectOutcome.Connected(800, 600, request.channels)
+            }
             lastOutcome = outcome
             return outcome
         }

@@ -131,9 +131,12 @@ fun <T> PageStateScaffold(
         }
 
         is PageState.FatalIncompatible -> CenteredStatus(modifier) {
-            StatusIcon(ZephyrIcons.SystemUpdate, ZephyrTheme.palette.status.error)
+            StatusIcon(ZephyrIcons.Error, ZephyrTheme.palette.status.error)
             Spacer(Modifier.height(ZephyrSpacing.lg))
-            Text(stringResource(R.string.state_fatal_incompatible), textAlign = TextAlign.Center)
+            Text(
+                text = state.error.message.ifBlank { stringResource(R.string.state_fatal_incompatible) },
+                textAlign = TextAlign.Center,
+            )
             Spacer(Modifier.height(ZephyrSpacing.md))
             DiagnosticsRow(state.error)
             if (onUpgrade != null) {

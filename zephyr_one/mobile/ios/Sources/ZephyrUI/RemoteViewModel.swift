@@ -54,7 +54,9 @@ public enum RemoteStates {
         if !connection.capabilities.canUse {
             return .permissionDenied(missing: .use, reason: SessionActions.reasonUseRevoked)
         }
-        if let error {
+        let engineMissing = error?.code == "rdp_engine_unavailable" ||
+            error?.code == "vnc_engine_unavailable"
+        if let error, !engineMissing {
             if error.retryable || error.isRegistryRetryable {
                 return .retryableError(error)
             }
@@ -68,7 +70,7 @@ public enum RemoteStates {
                 certificate: certificate,
                 toolbarVisible: toolbarVisible,
                 permissions: permissions,
-                engineUnavailable: false,
+                engineUnavailable: engineMissing,
                 disclosure: disclosureFor(connection)
             )
         )

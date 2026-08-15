@@ -55,14 +55,14 @@ final class RemoteViewModelTests: XCTestCase {
         XCTAssertFalse(vnc.contains(.resolution))
     }
 
-    func testUnavailableEngineIsFatal() {
+    func testUnavailableEngineStaysOnTheSessionPage() {
         let vm = makeVM(engine: FakeEngine(available: false), connection: UiTestData.connection(`protocol`: .rdp))
         vm.load()
         vm.connect()
-        guard case let .fatalIncompatible(error) = vm.page else {
-            return XCTFail("expected fatalIncompatible, got \(vm.page)")
+        guard case let .content(value, _, _, _) = vm.page else {
+            return XCTFail("expected content overlay, got \(vm.page)")
         }
-        XCTAssertEqual(error.code, "rdp_engine_unavailable")
+        XCTAssertTrue(value.engineUnavailable)
     }
 
     func testConnectOpensAndMarksConnected() async {

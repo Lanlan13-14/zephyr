@@ -61,6 +61,7 @@ __pycache__/
 
 # Vendored FreeRDP build tree and its vcpkg deps (never committed)
 zephyr_one/native/freerdp-core/.freerdp-dist/
+zephyr_one/native/freerdp-core/.freerdp-android/
 zephyr_one/native/freerdp-core/vcpkg_installed/
 zephyr_one/vcpkg_installed/
 # pnpm local store. .pnpm-store/v11/projects/<hash> is a junction back to

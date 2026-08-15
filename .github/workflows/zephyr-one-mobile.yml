@@ -113,8 +113,32 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          # compileSdk 35 per buildSrc/ZephyrBuild.kt.
-          packages: 'platforms;android-35 build-tools;35.0.0'
+          # compileSdk 35 per buildSrc/ZephyrBuild.kt. NDK is required to
+          # package libzephyr_rdp_android.so into the installable APK.
+          packages: 'platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018'
+
+      - name: Install FreeRDP Android build tools
+        working-directory: .
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Cache Android FreeRDP
+        uses: actions/cache@v4
+        with:
+          path: zephyr_one/native/freerdp-core/.freerdp-android
+          key: android-freerdp-3.30.0-cliprdr-v1-${{ hashFiles('zephyr_one/native/freerdp-core/scripts/build-freerdp-android.sh', 'zephyr_one/native/freerdp-core/patches/**') }}
+
+      - name: Build pinned Android FreeRDP
+        working-directory: .
+        env:
+          ZEPHYR_ANDROID_FREERDP_ROOT: ${{ github.workspace }}/zephyr_one/native/freerdp-core/.freerdp-android
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          export ANDROID_NDK_HOME="$sdk/ndk/27.2.12479018"
+          test -d "$ANDROID_NDK_HOME"
+          sh zephyr_one/native/freerdp-core/scripts/build-freerdp-android.sh arm64-v8a
+          test -f "$ZEPHYR_ANDROID_FREERDP_ROOT/arm64-v8a/.zephyr-freerdp-tag"
+          test "$(cat "$ZEPHYR_ANDROID_FREERDP_ROOT/arm64-v8a/.zephyr-freerdp-tag")" = '3.30.0+cliprdr-reassembly-limit-v1'
 
       # Gradle is provisioned by the action rather than by a committed wrapper.
       # The wrapper JAR is a binary artefact, and adding one that no human in
@@ -136,6 +160,8 @@ jobs:
       # kotlinc diagnostic is unreadable to anyone without repo credentials, which
       # is a slow way to find out that a name does not resolve.
       - name: Compile the application module
+        env:
+          ZEPHYR_ANDROID_FREERDP_ROOT: ${{ github.workspace }}/zephyr_one/native/freerdp-core/.freerdp-android
         shell: bash
         run: |
           set -o pipefail
@@ -173,6 +199,7 @@ jobs:
           package="$($ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | sed -n "s/package: name='\([^']*\)'.*/\1/p")"
           test "$package" = 'one.zephyr.mobile.debug'
           ! $ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | grep -q '^application-debuggable$'
+          unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_rdp_android.so'
 
       # assemblePrerelease is signed with the committed pre-release PKCS12, not the
       # per-runner debug.keystore. That is what lets successive pre-releases

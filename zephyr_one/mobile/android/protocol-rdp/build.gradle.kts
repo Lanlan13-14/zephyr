@@ -11,6 +11,9 @@ android {
 
     if (freeRdpAndroidRoot != null) {
         defaultConfig {
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
             externalNativeBuild {
                 cmake {
                     arguments += "-DZEPHYR_FREERDP_ANDROID_ROOT=$freeRdpAndroidRoot"
