@@ -27,7 +27,19 @@ sealed interface ConnectionTestResult {
  * module free of protocol dependencies and lets each protocol arrive independently.
  */
 interface ConnectionTester {
-    suspend fun test(connection: Connection): ConnectionTestResult
+    suspend fun test(connection: Connection, credentials: ConnectionTestCredentials = ConnectionTestCredentials()): ConnectionTestResult
+}
+
+class ConnectionTestCredentials(
+    val password: CharArray? = null,
+    val privateKey: CharArray? = null,
+    val passphrase: CharArray? = null,
+) {
+    fun wipe() {
+        password?.fill('\u0000')
+        privateKey?.fill('\u0000')
+        passphrase?.fill('\u0000')
+    }
 }
 
 /**
@@ -37,7 +49,7 @@ interface ConnectionTester {
  * worse than no button: the user would save a connection believing it was verified.
  */
 object UnavailableConnectionTester : ConnectionTester {
-    override suspend fun test(connection: Connection): ConnectionTestResult =
+    override suspend fun test(connection: Connection, credentials: ConnectionTestCredentials): ConnectionTestResult =
         ConnectionTestResult.Failed(
             MobileError.local(
                 code = "engine_unavailable",

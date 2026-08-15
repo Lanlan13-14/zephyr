@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -61,27 +62,68 @@ internal fun TerminalToolBody(
     onOpenNote: (String) -> Unit,
     onOpenDocker: () -> Unit,
     onMessage: (String) -> Unit,
+    viewModel: TerminalViewModel? = null,
 ) {
     when (kind) {
-        TerminalToolKind.FILES -> FilesToolBody(colors, onMessage)
+        TerminalToolKind.FILES -> FilesToolBody(colors, viewModel, onMessage)
         TerminalToolKind.SNIPPET -> SnippetToolBody(colors, snippets, onInsert)
         TerminalToolKind.NOTES -> NotesToolBody(colors, notes, onOpenNote)
-        TerminalToolKind.STATS -> StatsToolBody(colors, onOpenDocker, onMessage)
+        TerminalToolKind.STATS -> StatsToolBody(colors, viewModel, onOpenDocker)
         TerminalToolKind.THEME -> ThemeToolBody(colors, workspace, onWorkspace, onMessage)
     }
 }
 
 @Composable
-private fun FilesToolBody(colors: TerminalChromeColors, onMessage: (String) -> Unit) {
-    val blockedMsg = stringResource(R.string.terminal_sftp_blocked)
+private fun FilesToolBody(
+    colors: TerminalChromeColors,
+    viewModel: TerminalViewModel?,
+    onMessage: (String) -> Unit,
+) {
+    var path by remember { mutableStateOf(".") }
+    var loading by remember { mutableStateOf(false) }
+    var entries by remember { mutableStateOf<List<one.zephyr.mobile.protocol.ssh.SftpEntry>>(emptyList()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(viewModel, path) {
+        if (viewModel == null) {
+            error = "当前没有已连接的 SSH 会话"
+            return@LaunchedEffect
+        }
+        loading = true
+        viewModel.listRemoteDirectory(path).fold(
+            onSuccess = { entries = it; error = null },
+            onFailure = { error = it.message ?: "SFTP 目录加载失败" },
+        )
+        loading = false
+    }
     Column {
-        ToolRow(colors, "nginx.conf", "12K") { onMessage(blockedMsg) }
-        ToolRow(colors, "access.log", "210M") { onMessage(blockedMsg) }
-        ToolRow(colors, "releases/", "dir") { onMessage(blockedMsg) }
-        ToolRow(colors, "上传到此目录…", null, icon = ZephyrIcons.Download) {
-            onMessage(blockedMsg)
+        when {
+            loading -> EmptyToolBody(colors, "正在读取 SFTP · $path")
+            error != null -> EmptyToolBody(colors, error ?: "SFTP 失败")
+            entries.isEmpty() -> EmptyToolBody(colors, "$path · 空目录")
+            else -> entries.forEach { entry ->
+                ToolRow(colors, entry.name, if (entry.isDirectory) "dir" else formatBytes(entry.size)) {
+                    if (entry.isDirectory) path = entry.path else onMessage("${entry.path} · ${formatBytes(entry.size)}")
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun EmptyToolBody(colors: TerminalChromeColors, message: String) {
+    Text(
+        text = message,
+        color = colors.dim,
+        fontSize = 12.sp,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 28.dp),
+    )
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L * 1024L -> "${bytes / (1024L * 1024L * 1024L)}G"
+    bytes >= 1024L * 1024L -> "${bytes / (1024L * 1024L)}M"
+    bytes >= 1024L -> "${bytes / 1024L}K"
+    else -> "${bytes}B"
 }
 
 @Composable
@@ -90,13 +132,11 @@ private fun SnippetToolBody(
     snippets: List<Snippet>,
     onInsert: (String) -> Unit,
 ) {
-    val rows = snippets.take(8).ifEmpty {
-        listOf(
-            Snippet(id = "demo-1", ownerUserId = "", name = "du", command = "du -x --max-depth=1 / | sort -rn"),
-            Snippet(id = "demo-2", ownerUserId = "", name = "nginx", command = "systemctl reload nginx"),
-            Snippet(id = "demo-3", ownerUserId = "", name = "journal", command = "journalctl -u zephyr -n 200"),
-        )
+    if (snippets.isEmpty()) {
+        EmptyToolBody(colors, "还没有代码片段")
+        return
     }
+    val rows = snippets.take(8)
     Column {
         rows.forEach { snippet ->
             Row(
@@ -140,15 +180,36 @@ private fun NotesToolBody(
 @Composable
 private fun StatsToolBody(
     colors: TerminalChromeColors,
+    viewModel: TerminalViewModel?,
     onOpenDocker: () -> Unit,
-    onMessage: (String) -> Unit,
 ) {
     val dockerLabel = stringResource(R.string.terminal_open_docker)
-    val statsBlockedMsg = stringResource(R.string.terminal_stats_blocked)
+    var loading by remember { mutableStateOf(true) }
+    var metrics by remember { mutableStateOf<RemoteMetrics?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(viewModel) {
+        if (viewModel == null) {
+            loading = false
+            error = "当前没有已连接的 SSH 会话"
+            return@LaunchedEffect
+        }
+        viewModel.remoteMetrics().fold(
+            onSuccess = { metrics = it; error = null },
+            onFailure = { error = it.message ?: "读取远端监控失败" },
+        )
+        loading = false
+    }
     Column {
-        Meter(colors, "CPU", "—", 0f)
-        Meter(colors, "内存", "—", 0f)
-        Meter(colors, "磁盘 /", "—", 0f, warn = true)
+        when {
+            loading -> EmptyToolBody(colors, "正在读取远端监控…")
+            error != null -> EmptyToolBody(colors, error ?: "监控失败")
+            metrics != null -> {
+                val value = metrics ?: return@Column
+                Meter(colors, "CPU", "${value.cpuPercent}%", value.cpuPercent / 100f)
+                Meter(colors, "内存", "${value.memoryPercent}%", value.memoryPercent / 100f)
+                Meter(colors, "磁盘 /", "${value.diskPercent}%", value.diskPercent / 100f, warn = value.diskPercent >= 80)
+            }
+        }
         Text(
             text = "DOCKER · $dockerLabel",
             color = colors.accent,
@@ -163,18 +224,6 @@ private fun StatsToolBody(
             Text(dockerLabel, color = colors.accent, fontSize = 12.sp)
         }
         Spacer(Modifier.height(6.dp))
-        TermPressable(
-            onClick = { onMessage(statsBlockedMsg) },
-            modifier = Modifier.fillMaxWidth(),
-            scale = 0.99f,
-        ) {
-            Text(
-                text = statsBlockedMsg,
-                color = colors.dim,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(8.dp),
-            )
-        }
     }
 }
 
@@ -185,8 +234,6 @@ private fun ThemeToolBody(
     onWorkspace: (TerminalWorkspaceState) -> Unit,
     onMessage: (String) -> Unit,
 ) {
-    var customBg by remember { mutableStateOf(false) }
-    var customSel by remember { mutableStateOf(false) }
     Column {
         Text(
             text = stringResource(R.string.terminal_theme_source),
@@ -225,12 +272,13 @@ private fun ThemeToolBody(
             letterSpacing = 0.8.sp,
             modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
         )
-        BgRow(colors, stringResource(R.string.terminal_custom_bg_color), customBg, toggle = true) {
-            customBg = !customBg
-            onMessage(if (customBg) "已启用自定义背景色" else "已关闭")
+        BgRow(colors, stringResource(R.string.terminal_custom_bg_color), workspace.customBackgroundColor, toggle = true) {
+            val enabled = !workspace.customBackgroundColor
+            onWorkspace(workspace.copy(customBackgroundColor = enabled))
+            onMessage(if (enabled) "已启用自定义背景色" else "已关闭")
         }
-        BgRow(colors, stringResource(R.string.terminal_custom_sel_color), customSel, toggle = true) {
-            customSel = !customSel
+        BgRow(colors, stringResource(R.string.terminal_custom_sel_color), workspace.customSelectionColor, toggle = true) {
+            onWorkspace(workspace.copy(customSelectionColor = !workspace.customSelectionColor))
         }
     }
 }
@@ -441,160 +489,3 @@ internal fun SideToolDock(
         }
     }
 }
-
-@Composable
-internal fun FloatingToolLayer(
-    workspace: TerminalWorkspaceState,
-    colors: TerminalChromeColors,
-    hostName: String,
-    notes: List<Note>,
-    snippets: List<Snippet>,
-    onWorkspace: (TerminalWorkspaceState) -> Unit,
-    onInsert: (String) -> Unit,
-    onOpenNote: (String) -> Unit,
-    onOpenDocker: () -> Unit,
-    onMessage: (String) -> Unit,
-) {
-    var parent by remember { mutableStateOf(IntSize.Zero) }
-    val density = LocalDensity.current
-    Box(Modifier.fillMaxSize().onSizeChanged { parent = it }) {
-        workspace.floating.sortedBy { it.z }.forEachIndexed { index, panel ->
-            val (staggerX, staggerY) = TerminalWorkspace.floatingOffset(index)
-            val defaultW = with(density) {
-                (parent.width * TerminalWorkspace.FLOAT_DEFAULT_WIDTH_FRACTION)
-                    .coerceAtMost(TerminalWorkspace.FLOAT_DEFAULT_MAX_WIDTH_DP.dp.toPx())
-                    .coerceAtLeast(TerminalWorkspace.FLOAT_MIN_WIDTH_DP.dp.toPx())
-            }
-            val defaultH = (parent.height * TerminalWorkspace.FLOAT_DEFAULT_HEIGHT_FRACTION)
-                .coerceAtLeast(with(density) { TerminalWorkspace.FLOAT_MIN_HEIGHT_DP.dp.toPx() })
-            var x by remember(panel.kind, parent) {
-                mutableFloatStateOf(
-                    if (!panel.offsetXPx.isNaN()) panel.offsetXPx
-                    else parent.width * (staggerX / 100f),
-                )
-            }
-            var y by remember(panel.kind, parent) {
-                mutableFloatStateOf(
-                    if (!panel.offsetYPx.isNaN()) panel.offsetYPx
-                    else parent.height * (staggerY / 100f),
-                )
-            }
-            var w by remember(panel.kind, parent) {
-                mutableFloatStateOf(if (!panel.widthPx.isNaN()) panel.widthPx else defaultW)
-            }
-            var h by remember(panel.kind, parent) {
-                mutableFloatStateOf(if (!panel.heightPx.isNaN()) panel.heightPx else defaultH)
-            }
-            val laid = when (panel.layout) {
-                TermPanelLayout.FREE -> null
-                TermPanelLayout.LEFT_HALF -> Quad(0f, 0f, parent.width * 0.5f, parent.height.toFloat())
-                TermPanelLayout.RIGHT_HALF -> Quad(parent.width * 0.5f, 0f, parent.width * 0.5f, parent.height.toFloat())
-                TermPanelLayout.BOTTOM -> Quad(0f, parent.height * 0.55f, parent.width.toFloat(), parent.height * 0.45f)
-            }
-            val left = laid?.x ?: x
-            val top = laid?.y ?: y
-            val width = laid?.w ?: w
-            val height = laid?.h ?: h
-            Column(
-                modifier = Modifier
-                    .zIndex(panel.z.toFloat())
-                    .offset { IntOffset(left.roundToInt(), top.roundToInt()) }
-                    .width(with(density) { width.toDp() })
-                    .height(with(density) { height.toDp() })
-                    .shadow(18.dp, RoundedCornerShape(16.dp))
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(ZephyrPaletteMix(colors.accent, Color(0xEB12161C), 0.07f))
-                    .border(1.dp, colors.accent.copy(alpha = 0.22f), RoundedCornerShape(16.dp))
-                    .pointerInput(panel.kind) {
-                        detectDragGestures(
-                            onDragStart = { onWorkspace(TerminalWorkspace.raiseFloating(workspace, panel.kind)) },
-                            onDrag = { _, _ -> },
-                        )
-                    },
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pointerInput(panel.kind, panel.layout) {
-                            if (panel.layout != TermPanelLayout.FREE) return@pointerInput
-                            detectDragGestures { _, drag ->
-                                x = (x + drag.x).coerceIn(-40f, (parent.width - 80).toFloat())
-                                y = (y + drag.y).coerceIn(0f, (parent.height - 90).toFloat())
-                            }
-                        }
-                        .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(toolIcon(panel.kind), null, tint = colors.accent, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(7.dp))
-                    Text(
-                        text = toolTitle(panel.kind, hostName),
-                        color = Color(0xFFDBE2EA),
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                    )
-                    TermPressable(
-                        onClick = { onWorkspace(TerminalWorkspace.cycleLayout(workspace, panel.kind)) },
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .background(if (panel.layout != TermPanelLayout.FREE) colors.accent.copy(alpha = 0.18f) else Color.Transparent),
-                        scale = 0.88f,
-                    ) {
-                        Icon(ZephyrIcons.GridTools, stringResource(R.string.terminal_layout), tint = if (panel.layout != TermPanelLayout.FREE) colors.accent else Color(0xFF8B949E), modifier = Modifier.size(13.dp))
-                    }
-                    TermPressable(
-                        onClick = { onWorkspace(TerminalWorkspace.closeFloating(workspace, panel.kind)) },
-                        modifier = Modifier.size(26.dp).clip(CircleShape),
-                        scale = 0.88f,
-                    ) {
-                        Text("×", color = Color(0xFF8B949E), fontSize = 15.sp)
-                    }
-                }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.07f)))
-                Box(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(6.dp)) {
-                    TerminalToolBody(
-                        kind = panel.kind,
-                        colors = colors,
-                        notes = notes,
-                        snippets = snippets,
-                        workspace = workspace,
-                        onWorkspace = onWorkspace,
-                        onInsert = onInsert,
-                        onOpenNote = onOpenNote,
-                        onOpenDocker = onOpenDocker,
-                        onMessage = onMessage,
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.End)
-                        .size(28.dp)
-                        .pointerInput(panel.kind) {
-                            detectDragGestures { _, drag ->
-                                val minW = with(density) { TerminalWorkspace.FLOAT_MIN_WIDTH_DP.dp.toPx() }
-                                val minH = with(density) { TerminalWorkspace.FLOAT_MIN_HEIGHT_DP.dp.toPx() }
-                                w = (w + drag.x).coerceIn(minW, (parent.width - left).toFloat())
-                                h = (h + drag.y).coerceIn(minH, (parent.height - top).toFloat())
-                            }
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(ZephyrIcons.Fit, null, tint = Color(0xFF5D6773), modifier = Modifier.size(12.dp))
-                }
-            }
-        }
-    }
-}
-
-private data class Quad(val x: Float, val y: Float, val w: Float, val h: Float)
-
-private fun ZephyrPaletteMix(accent: Color, base: Color, fraction: Float): Color =
-    Color(
-        red = base.red + (accent.red - base.red) * fraction,
-        green = base.green + (accent.green - base.green) * fraction,
-        blue = base.blue + (accent.blue - base.blue) * fraction,
-        alpha = base.alpha,
-    )

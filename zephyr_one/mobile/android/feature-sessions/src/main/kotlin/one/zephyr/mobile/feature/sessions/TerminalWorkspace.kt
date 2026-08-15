@@ -1,7 +1,7 @@
 package one.zephyr.mobile.feature.sessions
 
 /**
- * Demo `#page-terminal` split / dock / floating-panel state.
+ * Demo `#page-terminal` split / dock / in-flow tool-sheet state.
  *
  * `toggleSplit` walks off → term → right → left → off, matching
  * `index__2_.html` `toggleSplit()` / `setDockSide()`.
@@ -39,19 +39,8 @@ enum class TerminalToolKind {
 
 enum class TermBackgroundKind { NONE, IMAGE, BIG }
 
-enum class TermPanelLayout { FREE, LEFT_HALF, RIGHT_HALF, BOTTOM }
-
-data class TerminalFloatingPanel(
-    val kind: TerminalToolKind,
-    val z: Int,
-    val layout: TermPanelLayout = TermPanelLayout.FREE,
-    val offsetXPx: Float = Float.NaN,
-    val offsetYPx: Float = Float.NaN,
-    val widthPx: Float = Float.NaN,
-    val heightPx: Float = Float.NaN,
-)
-
 const val DEFAULT_TERMINAL_DOCK_FRACTION = 0.38f
+const val DEFAULT_TERMINAL_SHEET_FRACTION = 0.44f
 
 data class TerminalWorkspaceState(
     val split: TerminalSplitMode = TerminalSplitMode.OFF,
@@ -61,13 +50,16 @@ data class TerminalWorkspaceState(
     val paneB: String? = null,
     val docked: List<TerminalToolKind> = emptyList(),
     val dockCurrent: TerminalToolKind? = null,
-    val floating: List<TerminalFloatingPanel> = emptyList(),
+    val sheetTools: List<TerminalToolKind> = emptyList(),
+    val sheetCurrent: TerminalToolKind? = null,
+    val sheetFraction: Float = 0f,
     val background: TermBackgroundKind = TermBackgroundKind.NONE,
     val backgroundBlurPx: Float = 0f,
     val backgroundOpacity: Float = 0.55f,
+    val customBackgroundColor: Boolean = false,
+    val customSelectionColor: Boolean = false,
     val addSheetOpen: Boolean = false,
     val disconnectSheetOpen: Boolean = false,
-    val nextZ: Int = 20,
 ) {
     val focusedSessionId: String
         get() = if (split == TerminalSplitMode.TERM && focusPane == 'b') {
@@ -127,11 +119,11 @@ object TerminalWorkspace {
     const val SPLIT_BTN_SIZE_DP = 30
     const val RAIL_CHIP_HEIGHT_DP = 34
     const val GUTTER_WIDTH_DP = 12
-    const val FLOAT_MIN_WIDTH_DP = 200
-    const val FLOAT_MIN_HEIGHT_DP = 160
-    const val FLOAT_DEFAULT_WIDTH_FRACTION = 0.78f
-    const val FLOAT_DEFAULT_MAX_WIDTH_DP = 330
-    const val FLOAT_DEFAULT_HEIGHT_FRACTION = 0.44f
+    const val SHEET_MID_FRACTION = 0.44f
+    const val SHEET_MAX_FRACTION = 0.74f
+    const val SHEET_DISMISS_FRACTION = 0.20f
+    const val SHEET_DISMISS_VELOCITY_PX_PER_MS = 0.70f
+    const val SHEET_PROJECTION_SECONDS = 0.12f
 
     val splitCycle: List<TerminalSplitMode> = listOf(
         TerminalSplitMode.OFF,
@@ -185,57 +177,55 @@ object TerminalWorkspace {
         )
     }
 
-    fun openTool(state: TerminalWorkspaceState, kind: TerminalToolKind): TerminalWorkspaceState {
-        if (state.split.docksTools) {
-            val docked = if (kind in state.docked) state.docked else state.docked + kind
-            return state.copy(docked = docked, dockCurrent = kind)
-        }
-        val existing = state.floating.firstOrNull { it.kind == kind }
-        val z = state.nextZ + 1
-        return if (existing != null) {
-            state.copy(
-                floating = state.floating.map { if (it.kind == kind) it.copy(z = z) else it },
-                nextZ = z,
+    fun openTool(
+        state: TerminalWorkspaceState,
+        kind: TerminalToolKind,
+        phone: Boolean = true,
+    ): TerminalWorkspaceState {
+        if (!phone) {
+            val base = if (state.split.docksTools) state else applySplit(
+                state = state,
+                side = TerminalSplitMode.RIGHT,
+                sessionIds = listOfNotNull(state.paneA, state.paneB),
             )
-        } else {
-            val index = state.floating.size
-            state.copy(
-                floating = state.floating + TerminalFloatingPanel(
-                    kind = kind,
-                    z = z,
-                    offsetXPx = Float.NaN,
-                    offsetYPx = Float.NaN,
-                ).also { it },
-                nextZ = z,
-                /* index is used by the renderer to stagger the first paint */
-            ).let { next ->
-                if (index == 0) next else next
-            }
+            val docked = if (kind in base.docked) base.docked else base.docked + kind
+            return base.copy(docked = docked, dockCurrent = kind)
         }
-    }
-
-    fun closeFloating(state: TerminalWorkspaceState, kind: TerminalToolKind): TerminalWorkspaceState =
-        state.copy(floating = state.floating.filterNot { it.kind == kind })
-
-    fun raiseFloating(state: TerminalWorkspaceState, kind: TerminalToolKind): TerminalWorkspaceState {
-        val z = state.nextZ + 1
+        if (state.sheetCurrent == kind && state.sheetFraction > 0f) return closeSheet(state)
+        val tools = if (kind in state.sheetTools) state.sheetTools else state.sheetTools + kind
         return state.copy(
-            floating = state.floating.map { if (it.kind == kind) it.copy(z = z) else it },
-            nextZ = z,
+            sheetTools = tools,
+            sheetCurrent = kind,
+            sheetFraction = if (state.sheetFraction > 0f) state.sheetFraction else SHEET_MID_FRACTION,
         )
     }
 
-    fun cycleLayout(state: TerminalWorkspaceState, kind: TerminalToolKind): TerminalWorkspaceState {
-        val order = TermPanelLayout.entries
+    fun selectSheetTool(state: TerminalWorkspaceState, kind: TerminalToolKind): TerminalWorkspaceState =
+        if (kind in state.sheetTools) state.copy(sheetCurrent = kind) else state
+
+    fun closeSheetTool(state: TerminalWorkspaceState, kind: TerminalToolKind): TerminalWorkspaceState {
+        val tools = state.sheetTools.filterNot { it == kind }
+        if (tools.isEmpty()) return closeSheet(state)
         return state.copy(
-            floating = state.floating.map { panel ->
-                if (panel.kind != kind) panel
-                else {
-                    val next = order[(order.indexOf(panel.layout) + 1) % order.size]
-                    panel.copy(layout = next)
-                }
-            },
+            sheetTools = tools,
+            sheetCurrent = if (state.sheetCurrent == kind) tools.last() else state.sheetCurrent,
         )
+    }
+
+    fun closeSheet(state: TerminalWorkspaceState): TerminalWorkspaceState =
+        state.copy(sheetTools = emptyList(), sheetCurrent = null, sheetFraction = 0f)
+
+    fun setSheetFraction(state: TerminalWorkspaceState, fraction: Float): TerminalWorkspaceState =
+        state.copy(sheetFraction = fraction.coerceIn(0f, SHEET_MAX_FRACTION))
+
+    fun settleSheet(current: Float, velocityPxPerMs: Float): Float {
+        if (velocityPxPerMs > SHEET_DISMISS_VELOCITY_PX_PER_MS || current < SHEET_DISMISS_FRACTION) return 0f
+        val projected = current - velocityPxPerMs * SHEET_PROJECTION_SECONDS
+        return if (kotlin.math.abs(projected - SHEET_MAX_FRACTION) < kotlin.math.abs(projected - SHEET_MID_FRACTION)) {
+            SHEET_MAX_FRACTION
+        } else {
+            SHEET_MID_FRACTION
+        }
     }
 
     fun undock(state: TerminalWorkspaceState, kind: TerminalToolKind): TerminalWorkspaceState {
@@ -257,10 +247,5 @@ object TerminalWorkspace {
         if (splitWidthPx <= 0f) return startFraction
         val signed = if (split == TerminalSplitMode.LEFT) dxPx else -dxPx
         return clampDockWidth(startFraction + signed / splitWidthPx)
-    }
-
-    fun floatingOffset(index: Int): Pair<Float, Float> {
-        val off = (index % 3) * 16f
-        return (6f + off / 3f) to (8f + off)
     }
 }

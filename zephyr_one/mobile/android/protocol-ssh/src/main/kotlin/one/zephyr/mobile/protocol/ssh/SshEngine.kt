@@ -25,12 +25,21 @@ interface SshEngine {
     /** Terminal bytes from the remote PTY. */
     fun output(sessionId: String): Flow<ByteArray>
 
+    /** Emits once when read/write detects a remote close or transport error. */
+    fun closure(sessionId: String): Flow<Throwable>
+
+    /** Reports a failed asynchronous terminal write without throwing on the UI scope. */
+    fun reportFailure(sessionId: String, error: Throwable)
+
     suspend fun send(sessionId: String, bytes: ByteArray)
 
     /** Reports the visible terminal geometry. Both cells and pixels, per TERMINAL_EXPERIENCE.md 6. */
     suspend fun resize(sessionId: String, cols: Int, rows: Int, widthPx: Int, heightPx: Int)
 
     suspend fun disconnect(sessionId: String)
+
+    /** Measures one SSH request/reply round trip on an authenticated transport. */
+    suspend fun measureLatency(sessionId: String): Long?
 
     /** SFTP, Docker, batch execution and snippets are SSH-only (`Protocol.supportsFiles`). */
     suspend fun listDirectory(sessionId: String, path: String): Result<List<SftpEntry>>
@@ -94,11 +103,17 @@ class UnavailableSshEngine : SshEngine {
 
     override fun output(sessionId: String): Flow<ByteArray> = kotlinx.coroutines.flow.emptyFlow()
 
+    override fun closure(sessionId: String): Flow<Throwable> = kotlinx.coroutines.flow.emptyFlow()
+
+    override fun reportFailure(sessionId: String, error: Throwable) = Unit
+
     override suspend fun send(sessionId: String, bytes: ByteArray) = Unit
 
     override suspend fun resize(sessionId: String, cols: Int, rows: Int, widthPx: Int, heightPx: Int) = Unit
 
     override suspend fun disconnect(sessionId: String) = Unit
+
+    override suspend fun measureLatency(sessionId: String): Long? = null
 
     override suspend fun listDirectory(sessionId: String, path: String): Result<List<SftpEntry>> =
         Result.failure(one.zephyr.mobile.model.MobileApiException(BLOCKED))

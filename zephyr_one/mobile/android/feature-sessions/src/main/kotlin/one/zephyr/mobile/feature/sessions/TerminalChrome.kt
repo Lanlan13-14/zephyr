@@ -70,6 +70,8 @@ data class TerminalChromeColors(
     val pending: Color,
     val err: Color,
     val offline: Color,
+    val selectionBackground: Color? = null,
+    val selectionForeground: Color? = null,
 )
 
 fun terminalChromeColors(palette: ZephyrPalette): TerminalChromeColors {
@@ -364,21 +366,11 @@ internal fun DemoKeyRow(
 internal fun DemoContextDock(
     items: List<TerminalDockItem>,
     colors: TerminalChromeColors,
-    imeOpen: Boolean,
     onIntent: (TerminalIntent) -> Unit,
 ) {
-    val hidden by animateFloatAsState(
-        targetValue = if (imeOpen) 1f else 0f,
-        animationSpec = tween(180, easing = ZephyrMotionTokens.easeOut),
-        label = "dockHide",
-    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .graphicsLayer {
-                translationY = 90f * hidden
-                alpha = 1f - hidden
-            }
             .background(colors.chrome)
             .padding(start = 8.dp, end = 8.dp, top = TerminalWorkspace.DOCK_PAD_TOP_DP.dp)
             .navigationBarsPadding()

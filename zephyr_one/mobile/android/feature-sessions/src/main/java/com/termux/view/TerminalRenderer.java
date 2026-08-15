@@ -55,7 +55,8 @@ public final class TerminalRenderer {
 
     /** Render the terminal to a canvas with at a specified row scroll, and an optional rectangular selection. */
     public final void render(TerminalEmulator mEmulator, Canvas canvas, int topRow,
-                             int selectionY1, int selectionY2, int selectionX1, int selectionX2) {
+                             int selectionY1, int selectionY2, int selectionX1, int selectionX2,
+                             Integer selectionBackground, Integer selectionForeground) {
         final boolean reverseVideo = mEmulator.isReverseVideo();
         final int endRow = topRow + mEmulator.mRows;
         final int columns = mEmulator.mColumns;
@@ -124,7 +125,10 @@ public final class TerminalRenderer {
                         }
                         drawTextRun(canvas, line, palette, heightOffset, lastRunStartColumn, columnWidthSinceLastRun,
                             lastRunStartIndex, charsSinceLastRun, measuredWidthForRun,
-                            cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection);
+                            cursorColor, cursorShape, lastRunStyle,
+                            reverseVideo || invertCursorTextColor || (lastRunInsideSelection && selectionBackground == null),
+                            lastRunInsideSelection ? selectionBackground : null,
+                            lastRunInsideSelection ? selectionForeground : null);
                     }
                     measuredWidthForRun = 0.f;
                     lastRunStyle = style;
@@ -152,13 +156,17 @@ public final class TerminalRenderer {
                 invertCursorTextColor = true;
             }
             drawTextRun(canvas, line, palette, heightOffset, lastRunStartColumn, columnWidthSinceLastRun, lastRunStartIndex, charsSinceLastRun,
-                measuredWidthForRun, cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection);
+                measuredWidthForRun, cursorColor, cursorShape, lastRunStyle,
+                reverseVideo || invertCursorTextColor || (lastRunInsideSelection && selectionBackground == null),
+                lastRunInsideSelection ? selectionBackground : null,
+                lastRunInsideSelection ? selectionForeground : null);
         }
     }
 
     private void drawTextRun(Canvas canvas, char[] text, int[] palette, float y, int startColumn, int runWidthColumns,
                              int startCharIndex, int runWidthChars, float mes, int cursor, int cursorStyle,
-                             long textStyle, boolean reverseVideo) {
+                             long textStyle, boolean reverseVideo,
+                             Integer selectionBackground, Integer selectionForeground) {
         int foreColor = TextStyle.decodeForeColor(textStyle);
         final int effect = TextStyle.decodeEffect(textStyle);
         int backColor = TextStyle.decodeBackColor(textStyle);
@@ -185,6 +193,9 @@ public final class TerminalRenderer {
             foreColor = backColor;
             backColor = tmp;
         }
+
+        if (selectionBackground != null) backColor = selectionBackground;
+        if (selectionForeground != null) foreColor = selectionForeground;
 
         float left = startColumn * mFontWidth;
         float right = left + runWidthColumns * mFontWidth;

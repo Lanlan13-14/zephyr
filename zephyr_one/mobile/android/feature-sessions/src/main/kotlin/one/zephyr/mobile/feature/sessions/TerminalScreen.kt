@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
@@ -21,8 +22,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -75,6 +78,7 @@ fun TerminalScreen(
     onSelectSession: (String) -> Unit = {},
     onCloseSession: (String) -> Unit = {},
     onAddSession: (Connection) -> Unit = {},
+    onCreateConnection: () -> Unit = {},
     onOpenNote: (String) -> Unit = {},
     onOpenDocker: () -> Unit = {},
     onMessage: (String) -> Unit = {},
@@ -104,6 +108,7 @@ fun TerminalScreen(
             onSelectSession = onSelectSession,
             onCloseSession = onCloseSession,
             onAddSession = onAddSession,
+            onCreateConnection = onCreateConnection,
             onOpenNote = onOpenNote,
             onOpenDocker = onOpenDocker,
             onMessage = onMessage,
@@ -132,6 +137,7 @@ private fun DemoTerminalSurface(
     onSelectSession: (String) -> Unit,
     onCloseSession: (String) -> Unit,
     onAddSession: (Connection) -> Unit,
+    onCreateConnection: () -> Unit,
     onOpenNote: (String) -> Unit,
     onOpenDocker: () -> Unit,
     onMessage: (String) -> Unit,
@@ -139,10 +145,22 @@ private fun DemoTerminalSurface(
     onPaste: () -> Unit,
 ) {
     val palette = ZephyrTheme.palette
-    val colors = remember(palette) { terminalChromeColors(palette) }
+    val baseColors = remember(palette) { terminalChromeColors(palette) }
+    val colors = remember(baseColors, workspace?.customBackgroundColor, workspace?.customSelectionColor) {
+        baseColors.copy(
+            termBg = if (workspace?.customBackgroundColor == true) {
+                if (palette.dark) Color(0xFF101820) else Color(0xFFE7EDF4)
+            } else baseColors.termBg,
+            selectionBackground = if (workspace?.customSelectionColor == true) baseColors.accent.copy(alpha = 0.72f) else null,
+            selectionForeground = if (workspace?.customSelectionColor == true) Color.White else null,
+        )
+    }
     val density = LocalDensity.current
     val imeHeightPx = WindowInsets.ime.getBottom(density).toFloat()
-    val imeOpen = keyboardVisible || imeHeightPx > 8f
+    // keyboardVisible is a request; only the real inset proves that the system IME is onscreen.
+    // Treating a pending request as open made the context dock alpha=0 while it still occupied
+    // height, producing the blank band reported on device.
+    val imeOpen = imeHeightPx > 8f
     val surface = content.surface
     val ws = workspace ?: TerminalWorkspaceState(paneA = content.connection.id)
     val liveSessions = sessions.filter { it.protocol.isTerminal && it.transport != SessionTransport.CLOSED }
@@ -159,12 +177,6 @@ private fun DemoTerminalSurface(
         port = focusedRow?.port ?: content.connection.port,
         username = content.connection.username,
     ), cols, rows, imeOpen)
-    val keyrowHeight = with(density) {
-        (TerminalWorkspace.KEY_HEIGHT_DP + TerminalWorkspace.KEY_PADDING_V_DP * 2).dp.toPx()
-    }
-    val dockHeight = with(density) {
-        (56 + TerminalWorkspace.DOCK_PAD_TOP_DP + TerminalWorkspace.DOCK_PAD_BOTTOM_DP).dp.toPx()
-    }
     var containerW by remember { mutableStateOf(0) }
     var containerH by remember { mutableStateOf(0) }
 
@@ -175,7 +187,7 @@ private fun DemoTerminalSurface(
     val needSecondMsg = stringResource(R.string.terminal_need_second_session)
     val insertToastMsg = stringResource(R.string.terminal_insert_toast)
 
-    LaunchedEffect(containerW, containerH, imeHeightPx, keyrowHeight, dockHeight, focusedSurface.fontSp) {
+    LaunchedEffect(containerW, containerH, focusedSurface.fontSp) {
         if (containerW <= 0 || containerH <= 0) return@LaunchedEffect
         val cellW = (focusedSurface.fontSp * 0.6f) * density.density
         val lineH = (focusedSurface.fontSp * 1.55f) * density.density
@@ -183,9 +195,10 @@ private fun DemoTerminalSurface(
             TerminalIntent.Geometry(
                 totalWidthPx = containerW.toFloat(),
                 totalHeightPx = containerH.toFloat(),
-                imeHeightPx = imeHeightPx,
-                shortcutMatrixHeightPx = keyrowHeight,
-                dockHeightPx = if (imeOpen) 0f else dockHeight,
+                // containerH is the measured terminal canvas only. Chrome and IME are outside it.
+                imeHeightPx = 0f,
+                shortcutMatrixHeightPx = 0f,
+                dockHeightPx = 0f,
                 cellWidthPx = cellW,
                 lineHeightPx = lineH,
             ),
@@ -208,10 +221,10 @@ private fun DemoTerminalSurface(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .onSizeChanged {
-                        containerW = it.width
-                        containerH = it.height
-                    },
+                    // The activity uses adjustNothing so the terminal owns IME avoidance. Lift the
+                    // complete terminal stack above the system keyboard: viewport -> shortcut row.
+                    // The context dock is removed while IME is open, matching demo `.ime-on`.
+                    .imePadding(),
             ) {
                 if (content.cleartextWarning != null) {
                     CleartextProtocolWarning(protocol = content.connection.protocol)
@@ -262,9 +275,17 @@ private fun DemoTerminalSurface(
                     colors = colors,
                     onSelect = onSelectSession,
                     onClose = onCloseSession,
-                    onAdd = { onWorkspace(ws.copy(addSheetOpen = true)) },
+                    onAdd = onCreateConnection,
                 )
-                Box(Modifier.weight(1f).fillMaxWidth()) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .onSizeChanged {
+                            containerW = it.width
+                            containerH = it.height
+                        },
+                ) {
                     TerminalSplitArea(
                         content = content,
                         workspace = ws,
@@ -282,45 +303,48 @@ private fun DemoTerminalSurface(
                         onMessage = onMessage,
                         onFocusPane = { pane -> onWorkspace(ws.withFocus(pane)) },
                     )
-                    if (!ws.split.docksTools) {
-                        FloatingToolLayer(
-                            workspace = ws,
-                            colors = colors,
-                            hostName = name,
-                            notes = notes,
-                            snippets = snippets,
-                            onWorkspace = onWorkspace,
-                            onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(insertToastMsg) },
-                            onOpenNote = onOpenNote,
-                            onOpenDocker = onOpenDocker,
-                            onMessage = onMessage,
-                        )
-                    }
                 }
-                if (focusedSurface.chrome.shortcutMatrix) {
-                    DemoKeyRow(latches = focusedSurface.latches, colors = colors, onIntent = onIntent)
-                }
-                if (focusedSurface.chrome.dock || !imeOpen) {
+                // Row 1 is permanent and hugs the system IME. Row 2 is the context dock and is
+                // removed while IME is open, matching the demo/Termux stack exactly.
+                DemoKeyRow(latches = focusedSurface.latches, colors = colors, onIntent = onIntent)
+                if (!imeOpen) {
                     DemoContextDock(
                         items = content.dock,
                         colors = colors,
-                        imeOpen = imeOpen,
                         onIntent = { intent ->
                             when (intent) {
                                 is TerminalIntent.Dock -> when (intent.item) {
                                     TerminalDockItem.COPY -> onCopy()
                                     TerminalDockItem.PASTE -> onPaste()
-                                    TerminalDockItem.KEYBOARD -> onIntent(intent)
+                                    TerminalDockItem.KEYBOARD -> {
+                                        onWorkspace(TerminalWorkspace.closeSheet(ws))
+                                        onIntent(intent)
+                                    }
                                     TerminalDockItem.DISCONNECT -> onWorkspace(ws.copy(disconnectSheetOpen = true))
                                     else -> {
                                         TerminalToolKind.fromDock(intent.item)?.let { kind ->
-                                            onWorkspace(TerminalWorkspace.openTool(ws, kind))
+                                            onWorkspace(TerminalWorkspace.openTool(ws, kind, phone = !pad))
                                         } ?: onIntent(intent)
                                     }
                                 }
                                 else -> onIntent(intent)
                             }
                         },
+                    )
+                }
+                if (!imeOpen && !pad && ws.sheetFraction > 0f && ws.sheetCurrent != null) {
+                    TerminalToolSheet(
+                        workspace = ws,
+                        colors = colors,
+                        hostName = name,
+                        viewModel = focusedVm,
+                        notes = notes,
+                        snippets = snippets,
+                        onWorkspace = onWorkspace,
+                        onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(insertToastMsg) },
+                        onOpenNote = onOpenNote,
+                        onOpenDocker = onOpenDocker,
+                        onMessage = onMessage,
                     )
                 }
             }
@@ -405,11 +429,11 @@ private fun DemoTermBackground(workspace: TerminalWorkspaceState, colors: Termin
     Box(
         Modifier
             .fillMaxSize()
-            .background(brush.copy(alpha = workspace.backgroundOpacity)),
+            .blur(workspace.backgroundBlurPx.dp)
+            .graphicsLayer { alpha = workspace.backgroundOpacity }
+            .background(brush),
     )
 }
-
-private fun Brush.copy(alpha: Float): Brush = this
 
 @Composable
 private fun TerminalSplitArea(

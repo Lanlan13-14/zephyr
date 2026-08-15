@@ -157,8 +157,22 @@ class AppLock(
     /**
      * Sensitive local reveals reuse the platform prompt, but callers must still hold a main-end
      * grant for the actions listed in DEVELOPMENT.md 617.
+     *
+     * Enabling and revealing are deliberately separate: reveal is invalid until local unlock has
+     * already been enabled, while enable needs one proof before that state exists.
      */
+    suspend fun confirmEnable(title: String, subtitle: String): AuthResult {
+        if (!authenticator.availability().canAuthenticate) {
+            return AuthResult.Failed(authenticator.availability(), "platform authentication unavailable")
+        }
+        return authenticator.authenticate(title, subtitle)
+    }
+
+    /** Sensitive reveal requires local unlock to already be enabled. */
     suspend fun confirmLocalReveal(title: String, subtitle: String): AuthResult {
+        if (!isEnabled) {
+            return AuthResult.Failed(BiometricAvailability.UNSUPPORTED, "local unlock is disabled")
+        }
         if (!authenticator.availability().canAuthenticate) {
             return AuthResult.Failed(authenticator.availability(), "platform authentication unavailable")
         }

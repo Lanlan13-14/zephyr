@@ -23,7 +23,8 @@ test('missing RDP engine is not shown as a main-end incompatibility', () => {
 test('connection test is a local TCP handshake, not a main-end or engine call', () => {
   const root = read(path.join(ROOT, 'android/app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneRoot.kt'));
   assert.match(root, /TcpReachabilityTester\(/);
-  assert.match(root, /tester = TcpReachabilityTester\(/);
+  assert.match(root, /fallback = TcpReachabilityTester\(/);
+  assert.match(root, /ProtocolConnectionTester\(/);
   assert.match(root, /onTestConnection = testConnection/);
   const tester = read(path.join(ROOT, 'android/feature-connections/src/main/kotlin/one/zephyr/mobile/feature/connections/TcpReachabilityTester.kt'));
   assert.match(tester, /Socket\(\)/);

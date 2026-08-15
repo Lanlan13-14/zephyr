@@ -295,7 +295,7 @@ internal fun AppLockDestination(account: AccountContainer, container: one.zephyr
                 if (value) {
                     if (!canEnable) return@launch
                     busy = true
-                    val result = container.appLock.confirmLocalReveal(
+                    val result = container.appLock.confirmEnable(
                         title = context.getString(R.string.unlock_enable_title),
                         subtitle = context.getString(R.string.unlock_enable_subtitle),
                     )

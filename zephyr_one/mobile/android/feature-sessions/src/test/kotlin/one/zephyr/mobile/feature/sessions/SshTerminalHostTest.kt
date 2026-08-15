@@ -60,9 +60,12 @@ class SshTerminalHostTest {
             return SshConnectOutcome.Failed(one.zephyr.mobile.model.MobileError.local("unused", "unused"))
         }
         override fun output(sessionId: String): Flow<ByteArray> = emptyFlow()
+        override fun closure(sessionId: String): Flow<Throwable> = emptyFlow()
+        override fun reportFailure(sessionId: String, error: Throwable) = Unit
         override suspend fun send(sessionId: String, bytes: ByteArray) = Unit
         override suspend fun resize(sessionId: String, cols: Int, rows: Int, widthPx: Int, heightPx: Int) = Unit
         override suspend fun disconnect(sessionId: String) = Unit
+        override suspend fun measureLatency(sessionId: String): Long? = null
         override suspend fun listDirectory(sessionId: String, path: String): Result<List<SftpEntry>> =
             Result.failure(IllegalStateException("unused"))
         override suspend fun exec(sessionId: String, command: String): Result<SshExecResult> =

@@ -27,6 +27,8 @@ import one.zephyr.mobile.security.LockSensitiveSink
 /** Everything the S11 form renders. */
 data class ConnectionEditorUiState(
     val draft: ConnectionDraft,
+    val passwordRevealAllowed: Boolean = false,
+    val revealedPassword: String? = null,
     val inventory: RouteInventory = RouteInventory(),
     val proxies: List<Proxy> = emptyList(),
     val sshKeys: List<SshKey> = emptyList(),
@@ -73,6 +75,9 @@ class ConnectionEditorViewModel(
     private val initialProtocol: Protocol = Protocol.SSH,
     private val newIdFactory: () -> String,
     private val tester: ConnectionTester = UnavailableConnectionTester,
+    private val testCredentials: suspend (Connection, ConnectionDraft) -> ConnectionTestCredentials = { _, _ -> ConnectionTestCredentials() },
+    private val passwordRevealEnabled: () -> Boolean = { false },
+    private val passwordRevealer: suspend (Connection) -> String? = { null },
     private val clock: () -> Long = System::currentTimeMillis,
     private val registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
     private val unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
@@ -86,6 +91,7 @@ class ConnectionEditorViewModel(
 
     private val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val message: SharedFlow<String> = messages
+    private var revealExpiryJob: kotlinx.coroutines.Job? = null
 
     init {
         registerSensitiveSink(this)
@@ -132,7 +138,16 @@ class ConnectionEditorViewModel(
             // A row the user may see but not edit opens read-only rather than pretending to save.
             !existing.capabilities.canEdit ->
                 PageState.PermissionDenied(Capability.EDIT, REASON_NO_EDIT)
-            else -> PageState.Content(ConnectionEditorUiState(ConnectionDraft.edit(existing)))
+            else -> PageState.Content(
+                ConnectionEditorUiState(
+                    draft = ConnectionDraft.edit(existing),
+                    passwordRevealAllowed = ConnectionPasswordRevealPolicy.allowed(
+                        localUnlockEnabled = passwordRevealEnabled(),
+                        hasStoredPassword = existing.password.hasValue,
+                        canRevealSecret = existing.capabilities.canRevealSecret,
+                    ),
+                ),
+            )
         }
     }
 
@@ -208,6 +223,32 @@ class ConnectionEditorViewModel(
      * an operation is queued, which is exactly what happened regardless of connectivity
      * (SCREEN_CATALOG.md 2).
      */
+    fun hidePassword() {
+        revealExpiryJob?.cancel()
+        mutate { it.copy(revealedPassword = null) }
+    }
+
+    fun revealPassword() {
+        val content = (page.value as? PageState.Content)?.value ?: return
+        val connection = content.draft.original ?: return
+        if (!ConnectionPasswordRevealPolicy.allowed(
+                localUnlockEnabled = passwordRevealEnabled(),
+                hasStoredPassword = connection.password.hasValue,
+                canRevealSecret = connection.capabilities.canRevealSecret,
+            ) || !content.passwordRevealAllowed
+        ) return
+        viewModelScope.launch {
+            val value = passwordRevealer(connection) ?: return@launch
+            if (!passwordRevealEnabled()) return@launch
+            mutate { it.copy(revealedPassword = value) }
+            revealExpiryJob?.cancel()
+            revealExpiryJob = launch {
+                kotlinx.coroutines.delay(PASSWORD_REVEAL_MS)
+                mutate { it.copy(revealedPassword = null) }
+            }
+        }
+    }
+
     fun save(thenConnect: Boolean = false) {
         val content = page.value as? PageState.Content ?: return
         val ui = content.value
@@ -295,16 +336,22 @@ class ConnectionEditorViewModel(
         mutate { it.copy(testing = true, testResult = null) }
         viewModelScope.launch {
             val row = content.value.draft.normalized()
-            val result = runCatching { tester.test(row) }
-                .getOrElse { failure ->
-                    ConnectionTestResult.Failed(
-                        one.zephyr.mobile.model.MobileError.local(
-                            code = "test_failed",
-                            message = failure.message ?: MSG_TEST_FAILED,
-                            retryable = true,
-                        ),
-                    )
-                }
+            val credentials = runCatching { testCredentials(row, content.value.draft) }
+                .getOrDefault(ConnectionTestCredentials())
+            val result = try {
+                runCatching { tester.test(row, credentials) }
+                    .getOrElse { failure ->
+                        ConnectionTestResult.Failed(
+                            one.zephyr.mobile.model.MobileError.local(
+                                code = "test_failed",
+                                message = failure.message ?: MSG_TEST_FAILED,
+                                retryable = true,
+                            ),
+                        )
+                    }
+            } finally {
+                credentials.wipe()
+            }
             mutate { it.copy(testing = false, testResult = result) }
         }
     }
@@ -316,7 +363,8 @@ class ConnectionEditorViewModel(
 
     /** Lock/background/navigation disposal all call this same non-persisting cleanup path. */
     fun clearSecretBuffers() {
-        mutate { it.copy(draft = it.draft.wipeSecretBuffers()) }
+        revealExpiryJob?.cancel()
+        mutate { it.copy(draft = it.draft.wipeSecretBuffers(), revealedPassword = null) }
     }
 
     override fun onLocked() {
@@ -335,6 +383,7 @@ class ConnectionEditorViewModel(
         const val MSG_SAVE_FAILED = "保存未完成，请重试"
         const val MSG_NOTHING_CHANGED = "没有需要保存的修改"
         const val MSG_TEST_FAILED = "测试未完成"
+        private const val PASSWORD_REVEAL_MS = 30_000L
 
         fun factory(
             connections: ConnectionRepository,
@@ -345,6 +394,9 @@ class ConnectionEditorViewModel(
             initialProtocol: Protocol = Protocol.SSH,
             newIdFactory: () -> String,
             tester: ConnectionTester = UnavailableConnectionTester,
+            testCredentials: suspend (Connection, ConnectionDraft) -> ConnectionTestCredentials = { _, _ -> ConnectionTestCredentials() },
+            passwordRevealEnabled: () -> Boolean = { false },
+            passwordRevealer: suspend (Connection) -> String? = { null },
             registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
             unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
@@ -358,6 +410,9 @@ class ConnectionEditorViewModel(
                 initialProtocol = initialProtocol,
                 newIdFactory = newIdFactory,
                 tester = tester,
+                testCredentials = testCredentials,
+                passwordRevealEnabled = passwordRevealEnabled,
+                passwordRevealer = passwordRevealer,
                 registerSensitiveSink = registerSensitiveSink,
                 unregisterSensitiveSink = unregisterSensitiveSink,
             ) as T

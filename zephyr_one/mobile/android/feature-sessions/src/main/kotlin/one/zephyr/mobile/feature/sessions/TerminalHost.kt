@@ -181,6 +181,18 @@ interface TerminalHost {
 
     suspend fun close(sessionId: String)
 
+    /** Completes when the remote stream ends, carrying an error for failed writes/reads. */
+    fun closure(sessionId: String): Flow<Throwable> = emptyFlow()
+
+    /** Real round-trip probe on the established transport. */
+    suspend fun measureLatency(sessionId: String): Long? = null
+
+    suspend fun listDirectory(sessionId: String, path: String): Result<List<one.zephyr.mobile.protocol.ssh.SftpEntry>> =
+        Result.failure(IllegalStateException("SFTP unavailable"))
+
+    suspend fun exec(sessionId: String, command: String): Result<one.zephyr.mobile.protocol.ssh.SshExecResult> =
+        Result.failure(IllegalStateException("SSH exec unavailable"))
+
     /** Accepts and remembers a presented host key after the user confirmed it. */
     suspend fun trustHostKey(sessionId: String) = Unit
 }

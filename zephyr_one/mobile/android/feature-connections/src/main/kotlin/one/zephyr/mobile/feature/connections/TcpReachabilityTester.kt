@@ -24,7 +24,10 @@ class TcpReachabilityTester(
     },
 ) : ConnectionTester {
 
-    override suspend fun test(connection: Connection): ConnectionTestResult = withContext(Dispatchers.IO) {
+    override suspend fun test(
+        connection: Connection,
+        credentials: ConnectionTestCredentials,
+    ): ConnectionTestResult = withContext(Dispatchers.IO) {
         val host = connection.host.trim()
         if (host.isEmpty()) {
             return@withContext ConnectionTestResult.Failed(

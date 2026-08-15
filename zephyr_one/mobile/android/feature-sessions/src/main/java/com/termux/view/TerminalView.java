@@ -68,7 +68,15 @@ public final class TerminalView extends View {
 
     /** The top row of text to display. Ranges from -activeTranscriptRows to 0. */
     int mTopRow;
-    int[] mDefaultSelectors = new int[]{-1,-1,-1,-1};
+    private int[] mDefaultSelectors = new int[]{-1,-1,-1,-1};
+    private Integer mSelectionBackgroundColor;
+    private Integer mSelectionForegroundColor;
+
+    public void setSelectionColors(@Nullable Integer backgroundColor, @Nullable Integer foregroundColor) {
+        mSelectionBackgroundColor = backgroundColor;
+        mSelectionForegroundColor = foregroundColor;
+        invalidate();
+    }
 
     float mScaleFactor = 1.f;
     final GestureAndScaleRecognizer mGestureRecognizer;
@@ -1021,7 +1029,14 @@ public final class TerminalView extends View {
                 mTextSelectionCursorController.getSelectors(sel);
             }
 
-            mRenderer.render(mEmulator, canvas, mTopRow, sel[0], sel[1], sel[2], sel[3]);
+            mRenderer.render(
+                mEmulator,
+                canvas,
+                mTopRow,
+                sel[0], sel[1], sel[2], sel[3],
+                mSelectionBackgroundColor,
+                mSelectionForegroundColor
+            );
 
             // render the text selection handles
             renderTextSelection();

@@ -66,7 +66,7 @@ test('enabling local unlock requires a successful platform prompt', () => {
   const screen = read('feature-tools/src/main/kotlin/one/zephyr/mobile/feature/tools/ToolScreens.kt');
   const destClean = codeOnly(dest);
   const screenClean = codeOnly(screen);
-  assert.match(destClean, /confirmLocalReveal/);
+  assert.match(destClean, /confirmEnable/);
   assert.match(destClean, /AppLockPreferences\.apply/);
   assert.match(destClean, /AppLockCache\.write/);
   assert.match(screenClean, /canEnable/);

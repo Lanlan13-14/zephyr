@@ -55,24 +55,15 @@ public struct TcpReachabilityTester: ConnectionTester, @unchecked Sendable {
                 port: NWEndpoint.Port(rawValue: UInt16(port)) ?? .any,
                 using: .tcp
             )
-            let lock = NSLock()
-            var finished = false
-            @Sendable func finish(_ result: Result<Void, Error>) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !finished else { return }
-                finished = true
-                connection.cancel()
-                continuation.resume(with: result)
-            }
+            let finisher = TcpConnectionFinisher(connection: connection, continuation: continuation)
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    finish(.success(()))
+                    finisher.finish(.success(()))
                 case let .failed(error):
-                    finish(.failure(error))
+                    finisher.finish(.failure(error))
                 case .cancelled:
-                    finish(.failure(CancellationError()))
+                    finisher.finish(.failure(CancellationError()))
                 default:
                     break
                 }
@@ -81,7 +72,7 @@ public struct TcpReachabilityTester: ConnectionTester, @unchecked Sendable {
             DispatchQueue.global(qos: .userInitiated).asyncAfter(
                 deadline: .now() + .milliseconds(timeoutMs)
             ) {
-                finish(.failure(NSError(domain: NSPOSIXErrorDomain, code: Int(ETIMEDOUT))))
+                finisher.finish(.failure(NSError(domain: NSPOSIXErrorDomain, code: Int(ETIMEDOUT))))
             }
         }
         #else
@@ -89,3 +80,29 @@ public struct TcpReachabilityTester: ConnectionTester, @unchecked Sendable {
         #endif
     }
 }
+
+#if canImport(Network)
+private final class TcpConnectionFinisher: @unchecked Sendable {
+    private let lock = NSLock()
+    private let connection: NWConnection
+    private let continuation: CheckedContinuation<Void, Error>
+    private var finished = false
+
+    init(connection: NWConnection, continuation: CheckedContinuation<Void, Error>) {
+        self.connection = connection
+        self.continuation = continuation
+    }
+
+    func finish(_ result: Result<Void, Error>) {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
+        finished = true
+        lock.unlock()
+        connection.cancel()
+        continuation.resume(with: result)
+    }
+}
+#endif

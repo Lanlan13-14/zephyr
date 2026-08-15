@@ -69,6 +69,8 @@
     <string name="editor_secret_keep">Keep</string>
     <string name="editor_secret_replace">Replace</string>
     <string name="editor_secret_clear">Clear</string>
+    <string name="editor_secret_reveal">View</string>
+    <string name="editor_secret_hide">Hide</string>
     <string name="editor_secret_new_value">New value</string>
     <string name="editor_mode_direct">Direct</string>
     <string name="editor_mode_proxy">Proxy</string>

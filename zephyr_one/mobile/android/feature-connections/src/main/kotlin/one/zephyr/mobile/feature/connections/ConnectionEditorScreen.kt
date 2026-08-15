@@ -193,6 +193,10 @@ sealed interface EditorIntent {
     data class Visibility(val value: String) : EditorIntent
     data class RepairRoute(val field: String) : EditorIntent
     data object Test : EditorIntent
+    data object RevealPassword : EditorIntent
+
+    data object HidePassword : EditorIntent
+
     data object Save : EditorIntent
     data object SaveAndConnect : EditorIntent
     data object ConnectWithoutSaving : EditorIntent
@@ -314,6 +318,10 @@ private fun AuthSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) ->
         label = stringResource(R.string.editor_field_password),
         stored = draft.original?.password ?: SecretPresence.absent,
         state = draft.password,
+        revealAllowed = ui.passwordRevealAllowed,
+        revealedValue = ui.revealedPassword,
+        onReveal = { onIntent(EditorIntent.RevealPassword) },
+        onHide = { onIntent(EditorIntent.HidePassword) },
         onChange = { onIntent(EditorIntent.Password(it)) },
     )
 
@@ -674,6 +682,10 @@ private fun SecretEditor(
     label: String,
     stored: SecretPresence,
     state: SecretState,
+    revealAllowed: Boolean = false,
+    revealedValue: String? = null,
+    onReveal: () -> Unit = {},
+    onHide: () -> Unit = {},
     onChange: (SecretState) -> Unit,
     multiline: Boolean = false,
 ) {
@@ -686,34 +698,46 @@ private fun SecretEditor(
             ) {
                 Text(label, style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(72.dp))
                 Text(
-                    text = ConnectionDraft.presenceFor(state, stored).let {
+                    text = revealedValue ?: ConnectionDraft.presenceFor(state, stored).let {
                         if (it.hasValue) SecretPresence.MASK else stringResource(R.string.editor_secret_clear)
                     },
                     style = ZephyrTheme.typography.mono,
                     modifier = Modifier.weight(1f),
                 )
-                SegmentedControl(
-                    options = listOf(
-                        stringResource(R.string.editor_secret_keep),
-                        stringResource(R.string.editor_secret_replace),
-                        stringResource(R.string.editor_secret_clear),
-                    ),
-                    selectedIndex = when (state) {
-                        is SecretState.Unchanged -> 0
-                        is SecretState.Replace -> 1
-                        is SecretState.Clear -> 2
-                    },
-                    onSelect = {
-                        onChange(
-                            when (it) {
-                                0 -> SecretState.Unchanged
-                                1 -> SecretState.Replace("")
-                                else -> SecretState.Clear
-                            },
-                        )
-                    },
-                    modifier = Modifier.width(159.dp),
-                )
+                Row(
+                    modifier = Modifier.width(if (revealAllowed) 228.dp else 168.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (revealAllowed && state is SecretState.Unchanged) {
+                        OutlinedButton(
+                            onClick = if (revealedValue == null) onReveal else onHide,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                stringResource(if (revealedValue == null) R.string.editor_secret_reveal else R.string.editor_secret_hide),
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                    if (state !is SecretState.Replace) {
+                        OutlinedButton(
+                            onClick = { onChange(SecretState.Replace("")) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(stringResource(R.string.editor_secret_replace), maxLines = 1) }
+                    }
+                    if (state !is SecretState.Clear) {
+                        OutlinedButton(
+                            onClick = { onChange(SecretState.Clear) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(stringResource(R.string.editor_secret_clear), maxLines = 1) }
+                    }
+                    if (state !is SecretState.Unchanged) {
+                        OutlinedButton(
+                            onClick = { onChange(SecretState.Unchanged) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(stringResource(R.string.editor_secret_keep), maxLines = 1) }
+                    }
+                }
             }
         }
 

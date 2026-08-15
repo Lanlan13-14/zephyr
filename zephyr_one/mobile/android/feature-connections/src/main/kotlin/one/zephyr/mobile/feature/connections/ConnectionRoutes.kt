@@ -6,6 +6,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.Flow
 import one.zephyr.mobile.model.ActivityEvent
 import one.zephyr.mobile.model.Connection
@@ -96,6 +99,17 @@ fun ConnectionEditorRoute(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    LaunchedEffect(lifecycleOwner, viewModel) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            try {
+                kotlinx.coroutines.awaitCancellation()
+            } finally {
+                viewModel.hidePassword()
+            }
+        }
+    }
 
     // The route leaves composition when the app lock covers it, the process backgrounds or the
     // account graph is revoked. Do not let its ViewModel retain typed password/private-key buffers.
@@ -146,6 +160,8 @@ private fun dispatch(viewModel: ConnectionEditorViewModel, intent: EditorIntent)
         is EditorIntent.JumpRemoved -> viewModel.removeJumpHost(intent.value)
         is EditorIntent.JumpMoved -> viewModel.moveJumpHost(intent.from, intent.to)
         is EditorIntent.Password -> viewModel.setPassword(intent.value)
+        EditorIntent.RevealPassword -> viewModel.revealPassword()
+        EditorIntent.HidePassword -> viewModel.hidePassword()
         is EditorIntent.PrivateKey -> viewModel.setPrivateKey(intent.value)
         // The Windows domain lives inside RdpSettings, so the editor edits it through this intent
         // rather than through a field of its own.
