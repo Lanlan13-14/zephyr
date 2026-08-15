@@ -17,7 +17,11 @@ final class TcpReachabilityTesterTests: XCTestCase {
         let result = try await tester.test(
             UiTestData.connection(host: "10.0.8.30", protocol: .rdp, port: 3389)
         )
-        XCTAssertEqual(result, .reachable(roundTripMs: 41))
+        if case let .reachable(ms) = result {
+            XCTAssertEqual(ms, 41)
+        } else {
+            XCTFail("expected reachable, got \(result)")
+        }
     }
 
     func testEmptyHostDoesNotConnect() async throws {
