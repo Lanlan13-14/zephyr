@@ -90,7 +90,7 @@ private fun FilesToolBody(
         }
         loading = true
         viewModel.listRemoteDirectory(path).fold(
-            onSuccess = { entries = it; error = null },
+            onSuccess = { entries = it.entries; error = null },
             onFailure = { error = it.message ?: "SFTP 目录加载失败" },
         )
         loading = false
