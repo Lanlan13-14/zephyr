@@ -400,10 +400,7 @@ class TerminalViewModel(
     private fun startLatencyProbe() {
         latencyJob?.cancel()
         latencyJob = viewModelScope.launch {
-            while (registry.find(sessionId)?.transport == SessionTransport.CONNECTED) {
-                registry.setLatency(sessionId, runCatching { host.measureLatency(sessionId) }.getOrNull())
-                delay(LATENCY_INTERVAL_MS)
-            }
+            registry.setLatency(sessionId, runCatching { host.measureLatency(sessionId) }.getOrNull())
         }
     }
 
@@ -606,7 +603,6 @@ class TerminalViewModel(
         const val DISCLOSURE_RELAY = "主端 relay：凭据保留在主端"
         const val DISCLOSURE_DIRECT = "本次原生直连：加密连接材料仅驻留会话内存"
         const val REMOTE_CLOSED = "SSH 连接已断开"
-        private const val LATENCY_INTERVAL_MS = 5_000L
         private const val STOP_TIMEOUT_MS = 5_000L
         private const val RENDER_FRAME_INTERVAL_MS = 16L
     }
