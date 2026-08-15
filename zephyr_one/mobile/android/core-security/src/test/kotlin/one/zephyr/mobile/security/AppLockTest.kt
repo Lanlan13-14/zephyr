@@ -101,15 +101,50 @@ class AppLockTest {
     }
 
     @Test
-    fun `confirm local reveal refuses unavailable hardware`() = runTest {
+    fun `enable confirmation refuses unavailable hardware`() = runTest {
         val authenticator = FakeAuthenticator(availability = BiometricAvailability.NO_HARDWARE)
+        val lock = AppLock(authenticator)
+
+        val result = lock.confirmEnable("t", "s")
+
+        assertTrue(result is AuthResult.Failed)
+        assertEquals(BiometricAvailability.NO_HARDWARE, (result as AuthResult.Failed).availability)
+        assertEquals(0, authenticator.authenticateCalls)
+    }
+
+    @Test
+    fun `enable confirmation authenticates before lock is enabled`() = runTest {
+        val authenticator = FakeAuthenticator()
+        val lock = AppLock(authenticator)
+
+        val result = lock.confirmEnable("t", "s")
+
+        assertEquals(AuthResult.Success, result)
+        assertEquals(1, authenticator.authenticateCalls)
+        assertFalse(lock.isEnabled)
+    }
+
+    @Test
+    fun `confirm local reveal refuses when local unlock is disabled`() = runTest {
+        val authenticator = FakeAuthenticator()
         val lock = AppLock(authenticator)
 
         val result = lock.confirmLocalReveal("t", "s")
 
         assertTrue(result is AuthResult.Failed)
-        assertEquals(BiometricAvailability.NO_HARDWARE, (result as AuthResult.Failed).availability)
         assertEquals(0, authenticator.authenticateCalls)
+    }
+
+    @Test
+    fun `confirm local reveal authenticates when local unlock is enabled`() = runTest {
+        val authenticator = FakeAuthenticator()
+        val lock = AppLock(authenticator)
+        assertTrue(lock.enable(LockDelay.IMMEDIATE))
+
+        val result = lock.confirmLocalReveal("t", "s")
+
+        assertEquals(AuthResult.Success, result)
+        assertEquals(1, authenticator.authenticateCalls)
     }
 
     @Test

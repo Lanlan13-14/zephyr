@@ -540,6 +540,10 @@ private fun BoundRoot(
                             fallback = TcpReachabilityTester(),
                         ),
                         testCredentials = { connection, draft -> account.connectionTestCredentials(connection, draft) },
+                        passwordRevealEnabled = { appContainer.appLock.isEnabled },
+                        passwordRevealer = { connection ->
+                            account.revealConnectionPassword(connection, appContainer)
+                        },
                         registerSensitiveSink = account::registerSensitiveSink,
                         unregisterSensitiveSink = account::unregisterSensitiveSink,
                     ),
@@ -1598,6 +1602,25 @@ private fun AccountContainer.passwordChars(connection: Connection): CharArray? {
         fieldName = FIELD_PASSWORD,
     ) ?: return null
     return secretStore.getText(ref)?.toCharArray()
+}
+
+private suspend fun AccountContainer.revealConnectionPassword(
+    connection: Connection,
+    appContainer: AppContainer,
+): String? {
+    if (!appContainer.appLock.isEnabled || !connection.capabilities.canRevealSecret) return null
+    val result = appContainer.appLock.confirmLocalReveal(
+        title = "查看连接密码",
+        subtitle = connection.name + " · 认证后显示 30 秒",
+    )
+    if (result !is AuthResult.Success || !appContainer.appLock.isEnabled) return null
+    val ref = secretRefForPresence(
+        presence = connection.password,
+        entityType = Connection.ENTITY_TYPE,
+        entityId = connection.id,
+        fieldName = FIELD_PASSWORD,
+    ) ?: return null
+    return secretStore.getText(ref)
 }
 
 private suspend fun AccountContainer.connectionTestCredentials(

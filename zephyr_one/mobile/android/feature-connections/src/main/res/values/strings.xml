@@ -82,6 +82,8 @@
     <string name="editor_secret_keep">保持不变</string>
     <string name="editor_secret_replace">替换</string>
     <string name="editor_secret_clear">清除</string>
+    <string name="editor_secret_reveal">查看</string>
+    <string name="editor_secret_hide">隐藏</string>
     <string name="editor_secret_new_value">新的值</string>
 
     <string name="editor_mode_direct">直连</string>
