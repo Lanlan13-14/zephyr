@@ -74,3 +74,15 @@ test('engine replica keeps the password across a stored-fingerprint retry', () =
   const result = spawnSync('python3', [replica], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
+
+test('Android FreeRDP drops the TlsAlloc sign assertion for bionic pthread_key_t', () => {
+  const patch = read(path.join(ROOT, '../../zephyr_one/native/freerdp-core/patches/freerdp-3.30.0-tlsalloc-bionic-assert.patch'));
+  assert.match(patch, /winpr\/libwinpr\/thread\/tls\.c/);
+  assert.match(patch, /^\+\s*return \(DWORD\)key/m);
+  assert.doesNotMatch(patch, /^\+\s*return WINPR_ASSERTING_INT_CAST\(DWORD, key\)/m);
+  const script = read(path.join(ROOT, '../../zephyr_one/native/freerdp-core/scripts/build-freerdp-android.sh'));
+  assert.match(script, /TLS_PATCH_FILE=.*tlsalloc-bionic-assert\.patch/);
+  assert.match(script, /tlsalloc-bionic-v1/);
+  const workflow = read(path.join(ROOT, '../../.github/workflows/zephyr-one-mobile.yml'));
+  assert.match(workflow, /tlsalloc-bionic-v1/);
+});

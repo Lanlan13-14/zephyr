@@ -138,7 +138,7 @@ jobs:
           test -d "$ANDROID_NDK_HOME"
           sh zephyr_one/native/freerdp-core/scripts/build-freerdp-android.sh arm64-v8a
           test -f "$ZEPHYR_ANDROID_FREERDP_ROOT/arm64-v8a/.zephyr-freerdp-tag"
-          test "$(cat "$ZEPHYR_ANDROID_FREERDP_ROOT/arm64-v8a/.zephyr-freerdp-tag")" = '3.30.0+cliprdr-reassembly-limit-v1'
+          test "$(cat "$ZEPHYR_ANDROID_FREERDP_ROOT/arm64-v8a/.zephyr-freerdp-tag")" = '3.30.0+cliprdr-reassembly-limit-v1+tlsalloc-bionic-v1'
 
       # Gradle is provisioned by the action rather than by a committed wrapper.
       # The wrapper JAR is a binary artefact, and adding one that no human in

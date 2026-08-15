@@ -6,7 +6,7 @@ set -eu
 
 TAG="3.30.0"
 COMMIT="6b107f0aadbabc47941c5a5b893b88c01792af6d"
-PATCH_REV="cliprdr-reassembly-limit-v1"
+PATCH_REV="cliprdr-reassembly-limit-v1+tlsalloc-bionic-v1"
 STAMP_VALUE="$TAG+$PATCH_REV"
 OPENSSL_VER="3.3.2"
 CJSON_VER="1.7.18"
@@ -16,6 +16,7 @@ ABI="${1:-arm64-v8a}"
 HERE="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 CRATE="$(CDPATH= cd -- "$HERE/.." && pwd)"
 PATCH_FILE="$CRATE/patches/freerdp-3.30.0-cliprdr-reassembly-limit.patch"
+TLS_PATCH_FILE="$CRATE/patches/freerdp-3.30.0-tlsalloc-bionic-assert.patch"
 PREFIX="${ZEPHYR_ANDROID_FREERDP_ROOT:-$CRATE/.freerdp-android}"
 ABI_PREFIX="$PREFIX/$ABI"
 JOBS="${ZEPHYR_FREERDP_JOBS:-$(nproc 2>/dev/null || echo 4)}"
@@ -139,6 +140,17 @@ fi
 grep -q '^#define FREERDP_ZEPHYR_CLIPRDR_REASSEMBLY_LIMIT 1$' \
   "$SRC/include/freerdp/client/channels.h" || {
   echo "ERROR: cliprdr patch was not applied" >&2
+  exit 2
+}
+
+TLS_PATCH_INPUT="$WORKDIR/freerdp-tlsalloc-bionic.lf.patch"
+tr -d '\015' < "$TLS_PATCH_FILE" > "$TLS_PATCH_INPUT"
+if grep -q 'WINPR_ASSERTING_INT_CAST(DWORD, key)' "$SRC/winpr/libwinpr/thread/tls.c"; then
+  git -C "$SRC" apply --check --unidiff-zero --whitespace=error-all "$TLS_PATCH_INPUT"
+  git -C "$SRC" apply --unidiff-zero --whitespace=error-all "$TLS_PATCH_INPUT"
+fi
+grep -q 'WINPR_ASSERTING_INT_CAST(DWORD, key)' "$SRC/winpr/libwinpr/thread/tls.c" && {
+  echo "ERROR: tlsalloc bionic patch was not applied" >&2
   exit 2
 }
 
