@@ -1479,24 +1479,50 @@ private fun routeForProtocol(sessionId: String, connectionId: String, protocol: 
     }
 
 /**
+ * Where a dock tap goes if the terminal itself did not consume it.
+ *
+ * Demo dock items either stay on the terminal (clipboard / IME / disconnect) or open an in-session
+ * tool. This mapper is the fallback for ExtraKeys and hosts that have no workspace yet. Exhaustive
+ * on [TerminalDockItem] so a new dock entry cannot compile until someone decides.
+ */
+internal enum class TerminalDockLeave {
+    STAY,
+    FILES,
+    SNIPPETS,
+    NOTES,
+    STATS,
+    APPEARANCE,
+}
+
+internal fun terminalDockLeave(item: TerminalDockItem): TerminalDockLeave = when (item) {
+    TerminalDockItem.FILES -> TerminalDockLeave.FILES
+    TerminalDockItem.SNIPPETS -> TerminalDockLeave.SNIPPETS
+    TerminalDockItem.NOTES -> TerminalDockLeave.NOTES
+    TerminalDockItem.STATS -> TerminalDockLeave.STATS
+    TerminalDockItem.THEME -> TerminalDockLeave.APPEARANCE
+    TerminalDockItem.COPY,
+    TerminalDockItem.PASTE,
+    TerminalDockItem.KEYBOARD,
+    TerminalDockItem.DISCONNECT -> TerminalDockLeave.STAY
+}
+
+/**
  * Terminal dock routing.
  *
- * 会话 is the only item with a destination that exists. The rest are enumerated rather than handled
- * by an `else` so that adding a dock item forces a decision here instead of silently doing nothing.
+ * In-session tools are opened by [TerminalWorkspace] first. This is only the host fallback.
  */
 private fun onTerminalDock(
     item: TerminalDockItem,
     onNotice: (String) -> Unit,
     navigate: (RootRoute) -> Unit,
 ) {
-    when (item) {
-        TerminalDockItem.SESSIONS -> navigate(RootRoute.Root(IslandDestination.SESSIONS))
-        TerminalDockItem.FILES -> navigate(RootRoute.Files)
-        TerminalDockItem.SNIPPETS -> navigate(RootRoute.Snippets)
-        TerminalDockItem.NOTES -> navigate(RootRoute.Notes)
-        /* Handled inside the terminal itself: KEYBOARD toggles the IME and DISCONNECT is consumed by
-         * the ViewModel before it reaches this callback. */
-        TerminalDockItem.KEYBOARD, TerminalDockItem.DISCONNECT -> Unit
+    when (terminalDockLeave(item)) {
+        TerminalDockLeave.STAY -> Unit
+        TerminalDockLeave.FILES -> navigate(RootRoute.Files)
+        TerminalDockLeave.SNIPPETS -> navigate(RootRoute.Snippets)
+        TerminalDockLeave.NOTES -> navigate(RootRoute.Notes)
+        TerminalDockLeave.STATS -> navigate(RootRoute.Ops(OpsSection.DOCKER))
+        TerminalDockLeave.APPEARANCE -> navigate(RootRoute.Appearance)
     }
 }
 

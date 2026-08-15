@@ -507,11 +507,37 @@ public final class TerminalEmulator {
      * Accept bytes (typically from the pseudo-teletype) and process them.
      *
      * @param buffer a byte array containing the bytes to be processed
-     * @param length the number of bytes in the array to process
+     * @param length the number of bytes in the array to process, starting at index 0
      */
     public void append(byte[] buffer, int length) {
-        for (int i = 0; i < length; i++)
+        append(buffer, 0, length);
+    }
+
+    /**
+     * Accept a slice of bytes and process them.
+     *
+     * Remote sessions keep a larger receive buffer and only a window of it is valid. The two-argument
+     * form cannot express that window; {@link TerminalSession#appendFromRemote(byte[], int, int)}
+     * therefore needs this overload.
+     *
+     * @param buffer a byte array containing the bytes to be processed
+     * @param offset the first index in {@code buffer} to process
+     * @param length the number of bytes to process
+     */
+    public void append(byte[] buffer, int offset, int length) {
+        if (buffer == null || length <= 0) {
+            return;
+        }
+        if (offset < 0 || offset > buffer.length || length > buffer.length - offset) {
+            throw new IllegalArgumentException(
+                    "append range out of bounds: offset=" + offset
+                            + ", length=" + length
+                            + ", size=" + buffer.length);
+        }
+        final int end = offset + length;
+        for (int i = offset; i < end; i++) {
             processByte(buffer[i]);
+        }
     }
 
     private void processByte(byte byteToProcess) {
