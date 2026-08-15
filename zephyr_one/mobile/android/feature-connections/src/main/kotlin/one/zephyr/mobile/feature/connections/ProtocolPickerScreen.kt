@@ -53,7 +53,11 @@ fun ProtocolPickerScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxSize()) {
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(ZephyrTheme.palette.surfaces.background),
+    ) {
         PushedPageHeader(
             title = stringResource(R.string.editor_title_create),
             onBack = onBack,

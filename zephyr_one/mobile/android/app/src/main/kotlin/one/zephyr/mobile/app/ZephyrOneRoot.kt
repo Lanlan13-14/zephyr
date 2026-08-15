@@ -444,7 +444,11 @@ private fun BoundRoot(
             },
             label = "pageStack",
         ) { current ->
-            when (current) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = ZephyrTheme.palette.surfaces.background,
+            ) {
+                when (current) {
             is RootRoute.Root -> RootDestination(
                 destination = current.destination,
                 account = account,
@@ -571,12 +575,32 @@ private fun BoundRoot(
             )
             RootRoute.Downloads -> DownloadsDestination(onBack = { route = RootRoute.Root(IslandDestination.LIBRARY) })
             RootRoute.LibraryCreate -> {
-                LibraryCreateDialog(
-                    onDismiss = { route = RootRoute.Root(IslandDestination.LIBRARY) },
-                    onNote = { route = RootRoute.NoteEditor(null) },
-                    onSnippet = { route = RootRoute.SnippetEditor(null) },
-                    onFiles = { route = RootRoute.Files },
-                )
+                Box(Modifier.fillMaxSize()) {
+                    LibraryDestination(
+                        account = account,
+                        ownerUserId = ownerUserId,
+                        nowMs = System.currentTimeMillis(),
+                        onAction = { action ->
+                            route = when (action) {
+                                LibraryAction.Create -> RootRoute.LibraryCreate
+                                LibraryAction.CreateNote -> RootRoute.NoteEditor(null)
+                                LibraryAction.CreateSnippet -> RootRoute.SnippetEditor(null)
+                                LibraryAction.Files, is LibraryAction.RecentFile -> RootRoute.Files
+                                LibraryAction.Notes -> RootRoute.Notes
+                                is LibraryAction.OpenNote -> RootRoute.NoteEditor(action.value.noteId)
+                                LibraryAction.Snippets -> RootRoute.Snippets
+                                is LibraryAction.OpenSnippet -> RootRoute.SnippetEditor(action.value.id)
+                                LibraryAction.Downloads -> RootRoute.Downloads
+                            }
+                        },
+                    )
+                    LibraryCreateDialog(
+                        onDismiss = { route = RootRoute.Root(IslandDestination.LIBRARY) },
+                        onNote = { route = RootRoute.NoteEditor(null) },
+                        onSnippet = { route = RootRoute.SnippetEditor(null) },
+                        onFiles = { route = RootRoute.Files },
+                    )
+                }
             }
             RootRoute.Appearance -> AppearanceDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
             RootRoute.Language -> LanguageDestination(account, onBack = { route = RootRoute.Root(IslandDestination.TOOLS) })
@@ -725,6 +749,7 @@ private fun BoundRoot(
                     onMessage = { messages.emit(it) },
                 )
             }
+            }
         }
 
         AnimatedVisibility(
@@ -814,7 +839,12 @@ private fun routeTransition(
     durationMillis: Int,
     reduceMotion: Boolean,
 ): ContentTransform {
-    if (reduceMotion || initial is RootRoute.Root && target is RootRoute.Root) {
+    if (
+        reduceMotion ||
+        (initial is RootRoute.Root && target is RootRoute.Root) ||
+        (initial is RootRoute.Root && target is RootRoute.LibraryCreate) ||
+        (initial is RootRoute.LibraryCreate && target is RootRoute.Root)
+    ) {
         return ContentTransform(
             targetContentEnter = EnterTransition.None,
             initialContentExit = ExitTransition.None,
@@ -1021,11 +1051,10 @@ private fun LibraryDestination(
         conflictCount = notes.count { it.syncState == SyncState.CONFLICTED } +
             snippets.count { it.syncState == SyncState.CONFLICTED },
     )
-    var creating by remember { mutableStateOf(false) }
     LibraryRootRoute(
         content = LibraryRootContent(summary, activeNotes, snippets.filter { it.deletedAt == null }),
         nowMs = nowMs,
-        onCreateResource = { creating = true },
+        onCreateResource = { onAction(LibraryAction.Create) },
         onOpenFiles = { onAction(LibraryAction.Files) },
         onOpenNotes = { onAction(LibraryAction.Notes) },
         onOpenSnippets = { onAction(LibraryAction.Snippets) },
@@ -1034,23 +1063,6 @@ private fun LibraryDestination(
         onOpenNote = { onAction(LibraryAction.OpenNote(it)) },
         onOpenSnippet = { onAction(LibraryAction.OpenSnippet(it)) },
     )
-    if (creating) {
-        LibraryCreateDialog(
-            onDismiss = { creating = false },
-            onNote = {
-                creating = false
-                onAction(LibraryAction.CreateNote)
-            },
-            onSnippet = {
-                creating = false
-                onAction(LibraryAction.CreateSnippet)
-            },
-            onFiles = {
-                creating = false
-                onAction(LibraryAction.Files)
-            },
-        )
-    }
 }
 
 @Composable

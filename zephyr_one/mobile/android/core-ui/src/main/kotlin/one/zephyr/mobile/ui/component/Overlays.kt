@@ -241,7 +241,10 @@ fun AlertDialog(
     val palette = ZephyrTheme.palette
     Dialog(
         onDismissRequest = onDismissRequest,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
     ) {
         Box(
             modifier
@@ -259,6 +262,8 @@ fun AlertDialog(
                     .fillMaxWidth()
                     .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
                     .navigationBarsPadding()
+                    .heightIn(max = 640.dp)
+                    .verticalScroll(rememberScrollState())
                     .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
             ) {
                 Column(
@@ -289,8 +294,8 @@ fun AlertDialog(
                         ProvideContentColor(palette.status.error, confirmButton)
                     }
                 }
-                Spacer(Modifier.height(8.dp))
                 if (dismissButton != null) {
+                    Spacer(Modifier.height(8.dp))
                     Box(
                         Modifier
                             .fillMaxWidth()

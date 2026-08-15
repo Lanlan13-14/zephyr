@@ -93,7 +93,11 @@ fun ConnectionEditorScreen(
 ) {
     var confirmDiscard by remember { mutableStateOf(false) }
 
-    Column(modifier.fillMaxSize()) {
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(ZephyrTheme.palette.surfaces.background),
+    ) {
         PushedPageHeader(
             title = stringResource(
                 if (isCreate) R.string.editor_title_create else R.string.editor_title_edit,
