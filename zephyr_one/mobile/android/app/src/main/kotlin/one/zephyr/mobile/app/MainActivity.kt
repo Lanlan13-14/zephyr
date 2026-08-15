@@ -66,10 +66,11 @@ class MainActivity : FragmentActivity() {
             val lockState by container.appLock.state.collectAsState()
             val account by container.accounts.collectAsState()
             val cachedAppearance = remember { appearanceFromLockCache() }
-            val themePrefs by remember(account) {
-                account?.settings?.observePreferences()?.map(::appearanceFromPrefs)
-                    ?: flowOf(cachedAppearance)
-            }.collectAsState(initial = cachedAppearance)
+            val loadedThemePrefs by remember(account) {
+                account?.settings?.observePreferences()?.map { appearanceFromPrefs(it) }
+                    ?: flowOf(null)
+            }.collectAsState(initial = null)
+            val themePrefs = loadedThemePrefs ?: cachedAppearance
             val languageCode by remember(account) {
                 account?.settings?.observePreferences()?.map { prefs ->
                     prefs[SettingsRepository.PREF_LANGUAGE]?.let { EntityCodec.string(it, "value") }
@@ -82,6 +83,13 @@ class MainActivity : FragmentActivity() {
                 AppearanceMode.AUTO -> systemDark
             }
 
+            LaunchedEffect(ready, account, loadedThemePrefs?.themeId) {
+                // Wait until Room has emitted the active workspace's real preference instead of
+                // briefly forcing Frost while startup is still loading Lava/Asagi/Cyber.
+                if (ready && account != null) {
+                    loadedThemePrefs?.let { container.launcherIcons.apply(it.themeId) }
+                }
+            }
             LaunchedEffect(languageCode) {
                 LocaleController.applyIfNeeded(this@MainActivity, languageCode)
             }
