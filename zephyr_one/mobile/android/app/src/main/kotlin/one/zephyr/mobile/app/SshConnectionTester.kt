@@ -29,13 +29,15 @@ internal class DirectSshConnectionTester(private val engine: SshEngine) : Connec
                 MobileError.local("protocol_unsupported", "此测试器仅支持 SSH", false),
             )
         }
+        val privateKey = credentials.privateKey
+        val password = credentials.password
         val credential = when {
-            credentials.privateKey != null && credentials.privateKey.isNotEmpty() -> SshCredential.PrivateKey(
-                credentials.privateKey,
+            privateKey != null && privateKey.isNotEmpty() -> SshCredential.PrivateKey(
+                privateKey,
                 credentials.passphrase,
             )
-            credentials.password != null && credentials.password.isNotEmpty() ->
-                SshCredential.Password(credentials.password)
+            password != null && password.isNotEmpty() ->
+                SshCredential.Password(password)
             else -> return ConnectionTestResult.Failed(
                 MobileError.local("auth_missing", "请填写密码或选择 SSH Key", false),
             )
