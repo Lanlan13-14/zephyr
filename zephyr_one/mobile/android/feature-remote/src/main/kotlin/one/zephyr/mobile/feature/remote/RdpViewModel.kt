@@ -23,6 +23,8 @@ import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.PageState
 import one.zephyr.mobile.model.RdpChannel
+import one.zephyr.mobile.model.RdpFps
+import one.zephyr.mobile.model.RdpQuality
 import one.zephyr.mobile.model.RdpResolution
 import one.zephyr.mobile.model.Residency
 import one.zephyr.mobile.protocol.rdp.FileSyncShareProfile
@@ -30,6 +32,7 @@ import one.zephyr.mobile.protocol.rdp.PermissionState
 import one.zephyr.mobile.protocol.rdp.RdpChannelPolicy
 import one.zephyr.mobile.protocol.rdp.RdpConnectOutcome
 import one.zephyr.mobile.protocol.rdp.RdpConnectRequest
+import one.zephyr.mobile.protocol.rdp.RdpDisplayPolicy
 import one.zephyr.mobile.protocol.rdp.RdpDrivePolicy
 import one.zephyr.mobile.protocol.rdp.RdpDriveResolution
 import one.zephyr.mobile.protocol.rdp.RdpEngine
@@ -115,6 +118,10 @@ class RdpViewModel(
      */
     private val remoteRequestedState = MutableStateFlow<Set<RdpChannel>>(emptySet())
     private val driveState = MutableStateFlow<RdpDriveResolution?>(null)
+    private val qualityState = MutableStateFlow(RdpQuality.default)
+    private val resolutionState = MutableStateFlow(RdpResolution.default)
+    private val fpsState = MutableStateFlow(RdpFps.default)
+    @Volatile private var pendingConnect = false
 
     private val messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val message: SharedFlow<String> = messages
@@ -151,6 +158,9 @@ class RdpViewModel(
         val permanentlyDenied: Set<RdpChannel>,
         val remoteRequested: Set<RdpChannel>,
         val drive: RdpDriveResolution?,
+        val quality: RdpQuality,
+        val resolution: RdpResolution,
+        val fps: RdpFps,
     )
 
     val state: StateFlow<PageState<RemoteContent>> = combine(
@@ -165,8 +175,19 @@ class RdpViewModel(
             permanentlyDeniedState,
             remoteRequestedState,
             driveState,
-        ) { permissions, denied, requested, drive ->
-            ChannelAux(permissions, denied, requested, drive)
+            combine(qualityState, resolutionState, fpsState) { quality, resolution, fps ->
+                Triple(quality, resolution, fps)
+            },
+        ) { permissions, denied, requested, drive, display ->
+            ChannelAux(
+                permissions = permissions,
+                permanentlyDenied = denied,
+                remoteRequested = requested,
+                drive = drive,
+                quality = display.first,
+                resolution = display.second,
+                fps = display.third,
+            )
         },
     ) { connection, surface, row, aux, channels ->
         derive(connection, surface, row, aux, channels)
@@ -212,6 +233,9 @@ class RdpViewModel(
                 certificatePrompt = aux.certificate,
                 pendingPermissions = RemoteChannels.toRequest(rows, channels.remoteRequested),
                 captureLabels = RemoteChannels.activeCaptureLabels(rows),
+                quality = channels.quality,
+                resolution = channels.resolution,
+                fpsChoice = channels.fps,
                 // RDP presents a certificate rather than a bare password, so this screen has no
                 // weak-transport warning to raise; section 10 puts that burden on the VNC screen.
                 securityWarning = null,
@@ -242,7 +266,14 @@ class RdpViewModel(
                 controller.setPointerMode(RemotePointerMode.of(connection.rdp.touchMode))
                 controller.setSensitivity(connection.rdp.touchSensitivity)
                 controller.viewOnly = !connection.capabilities.canControl
+                qualityState.value = connection.rdp.quality
+                resolutionState.value = connection.rdp.resolution
+                fpsState.value = connection.rdp.fps
                 driveState.value = resolveDrive(connection)
+                if (pendingConnect) {
+                    pendingConnect = false
+                    connect()
+                }
             }
         }
     }
@@ -258,7 +289,11 @@ class RdpViewModel(
      * SECURING is the exception: a certificate review proves the handshake reached TLS.
      */
     fun connect() {
-        val connection = connectionState.value ?: return
+        val connection = connectionState.value
+        if (connection == null) {
+            pendingConnect = true
+            return
+        }
         errorState.value = null
         certificateState.value = null
         registerRow(connection, SessionTransport.CONNECTING)
@@ -267,7 +302,7 @@ class RdpViewModel(
         viewModelScope.launch {
             val surface = controller.state.value
             val (width, height) = RemoteSurfaceSizePolicy.sizeFor(
-                resolution = connection.rdp.resolution,
+                resolution = resolutionState.value,
                 viewportWidthPx = surface.geometry.viewportWidthPx.toInt(),
                 viewportHeightPx = surface.geometry.viewportHeightPx.toInt(),
             )
@@ -289,6 +324,8 @@ class RdpViewModel(
                     driveAvailable = mapping != null,
                 ),
                 drive = mapping,
+                quality = qualityState.value,
+                fps = fpsState.value,
             )
             when (val outcome = engine.connect(request)) {
                 is RdpConnectOutcome.Connected -> onConnected(connection, outcome, width, height)
@@ -322,10 +359,11 @@ class RdpViewModel(
             remoteWidthPx = outcome.widthPx,
             remoteHeightPx = outcome.heightPx,
             negotiatedLabel = RemoteSurfaceSizePolicy.labelOf(
-                connection.rdp.resolution,
+                resolutionState.value,
                 outcome.widthPx,
                 outcome.heightPx,
             ),
+            fps = fpsState.value.value,
         )
         if (outcome.widthPx != requestedWidth || outcome.heightPx != requestedHeight) {
             // Reported rather than hidden: a server that refused dynamic resolution is why the desktop
@@ -457,8 +495,10 @@ class RdpViewModel(
         frameJob?.cancel()
         clipboardJob?.cancel()
         watchdogJob?.cancel()
+        pendingConnect = false
         advance(RemotePhase.DISCONNECTED)
         registry.close(sessionId, clock())
+        messages.tryEmit(SESSION_CLOSED)
         viewModelScope.launch { runCatching { controller.disconnect() } }
     }
 
@@ -544,6 +584,65 @@ class RdpViewModel(
         controller.sendClipboard(text)
     }
 
+    fun cycleQuality() {
+        val next = RdpDisplayPolicy.nextQuality(qualityState.value)
+        qualityState.value = next
+        messages.tryEmit("画质模式 · " + RdpDisplayPolicy.qualityLabel(next) + " · 下次连接生效")
+    }
+
+    fun cycleResolution() {
+        val next = RdpDisplayPolicy.nextResolution(resolutionState.value)
+        resolutionState.value = next
+        val surface = controller.state.value
+        val (width, height) = RemoteSurfaceSizePolicy.sizeFor(
+            resolution = next,
+            viewportWidthPx = surface.geometry.viewportWidthPx.toInt(),
+            viewportHeightPx = surface.geometry.viewportHeightPx.toInt(),
+        )
+        if (statusState.value.hasSurface && next == RdpResolution.AUTO) {
+            controller.setViewportMode(RemoteViewportMode.DYNAMIC)
+            viewModelScope.launch {
+                runCatching { adapter.resize(sessionId, width, height) }
+            }
+        }
+        messages.tryEmit("分辨率 · " + RdpDisplayPolicy.resolutionLabel(next))
+    }
+
+    fun cycleFps() {
+        val next = RdpDisplayPolicy.nextFps(fpsState.value)
+        fpsState.value = next
+        statusState.value = statusState.value.copy(fps = next.value)
+        messages.tryEmit("目标帧率 · " + RdpDisplayPolicy.fpsLabel(next))
+    }
+
+    fun fitViewport() {
+        controller.fitToWindow()
+        messages.tryEmit("已适应窗口")
+    }
+
+    fun cycleZoom() {
+        val factor = controller.cycleZoom(RdpDisplayPolicy.ZOOM_FACTORS)
+        messages.tryEmit("缩放 · " + RdpDisplayPolicy.zoomLabel(factor))
+    }
+
+    fun toggleJoystick() {
+        val next = controller.toggleDragMode()
+        messages.tryEmit(
+            if (next == RemoteDragMode.VIEWPORT) "视区模式 · 拖动平移远程画面" else "指针模式 · 拖动驱动远程指针",
+        )
+    }
+
+    fun sendShortcut(shortcut: RdpShortcut) {
+        controller.sendInputs(shortcut.inputs())
+        messages.tryEmit("已发送 " + shortcut.label)
+    }
+
+    fun clickTrackpadButton(button: Int) {
+        controller.clickMouseButton(button)
+    }
+
+    fun sendCad() = sendShortcut(RdpShortcut.CAD)
+
     private fun registerRow(connection: Connection, transport: SessionTransport) {
         if (registry.find(sessionId) != null) {
             registry.setTransport(sessionId, transport, clock())
@@ -607,6 +706,7 @@ class RdpViewModel(
         const val CHANNEL_ENABLED = "已启用该通道："
         const val CHANNEL_CLOSED = "已关闭该通道，会话继续："
         const val CLIPBOARD_BLOCKED = "该连接未开启剪贴板通道，或授权不包含控制权限"
+        const val SESSION_CLOSED = "会话已关闭"
         const val DISCLOSURE_RELAY = "主端 relay：凭据保留在主端"
         const val DISCLOSURE_DIRECT = "本次原生直连：加密连接材料仅驻留会话内存"
         private const val STOP_TIMEOUT_MS = 5_000L

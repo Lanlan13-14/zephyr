@@ -3,8 +3,12 @@ package one.zephyr.mobile.feature.remote
 import one.zephyr.mobile.data.session.SessionTransport
 import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.RdpChannel
+import one.zephyr.mobile.model.RdpFps
+import one.zephyr.mobile.model.RdpQuality
+import one.zephyr.mobile.model.RdpResolution
 import one.zephyr.mobile.protocol.rdp.RdpCertificateReview
 import one.zephyr.mobile.protocol.rdp.RdpDriveResolution
+import one.zephyr.mobile.protocol.rdp.RdpDisplayPolicy
 
 /**
  * A certificate the user must decide about.
@@ -57,6 +61,9 @@ data class RemoteContent(
     val pendingPermissions: List<RdpChannel> = emptyList(),
     /** Mic/camera that are live. Section 8 requires these to stay visible for the whole session. */
     val captureLabels: List<String> = emptyList(),
+    val quality: RdpQuality = RdpQuality.default,
+    val resolution: RdpResolution = RdpResolution.default,
+    val fpsChoice: RdpFps = RdpFps.default,
     // ---- VNC only ----
     val securityLabel: String? = null,
     val pixelFormatLabel: String? = null,
@@ -65,6 +72,15 @@ data class RemoteContent(
 
     /** Blocking prompts. The surface stays visible underneath, but input must not reach it. */
     val hasBlockingPrompt: Boolean get() = certificatePrompt != null || authPrompt != null
+
+    val qualityLabel: String get() = RdpDisplayPolicy.qualityLabel(quality)
+
+    val resolutionLabel: String get() = RdpDisplayPolicy.resolutionLabel(resolution)
+
+    val fpsLabel: String get() = RdpDisplayPolicy.fpsLabel(fpsChoice)
+
+    val zoomLabel: String get() =
+        RdpDisplayPolicy.zoomLabel(RdpDisplayPolicy.ZOOM_FACTORS.getOrElse(surface.zoomIndex) { 1f })
 }
 
 /** Disclosure strings shared by both remote screens, matching the session list word for word. */

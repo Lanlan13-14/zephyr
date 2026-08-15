@@ -22,6 +22,25 @@ sealed interface RemoteIntent {
     /** The idle timer expired. Separate from [ToggleChrome] so auto-hide can never accidentally show. */
     data object HideChrome : RemoteIntent
 
+    /** Demo `#r-ball`: open or close the floating tools strip. */
+    data object ToggleToolsPanel : RemoteIntent
+
+    data object CycleQuality : RemoteIntent
+
+    data object CycleResolution : RemoteIntent
+
+    data object CycleFps : RemoteIntent
+
+    data object FitViewport : RemoteIntent
+
+    data object CycleZoom : RemoteIntent
+
+    data object ToggleJoystick : RemoteIntent
+
+    data class SendShortcut(val shortcut: RdpShortcut) : RemoteIntent
+
+    data class TrackpadClick(val button: Int) : RemoteIntent
+
     data class SetKeyboardVisible(val visible: Boolean) : RemoteIntent
 
     data class SetModifierBarVisible(val visible: Boolean) : RemoteIntent

@@ -192,12 +192,12 @@ Java_one_zephyr_mobile_protocol_rdp_JniRdpNativeBridge_create(
     native_config.microphone = (*env)->GetBooleanField(env, config, field(env, cls, "microphone", "Z"));
     native_config.clipboard = (*env)->GetBooleanField(env, config, field(env, cls, "clipboard", "Z"));
     native_config.dynamic_resolution = 1;
-    native_config.gfx = 1;
-    native_config.disable_wallpaper = 1;
-    native_config.disable_themes = 1;
-    native_config.disable_menu_anims = 1;
-    native_config.disable_full_window_drag = 1;
-    native_config.allow_font_smoothing = 1;
+    native_config.gfx = (*env)->GetBooleanField(env, config, field(env, cls, "gfx", "Z")) ? 1 : 0;
+    native_config.disable_wallpaper = (*env)->GetBooleanField(env, config, field(env, cls, "disableWallpaper", "Z")) ? 1 : 0;
+    native_config.disable_themes = (*env)->GetBooleanField(env, config, field(env, cls, "disableThemes", "Z")) ? 1 : 0;
+    native_config.disable_menu_anims = (*env)->GetBooleanField(env, config, field(env, cls, "disableMenuAnims", "Z")) ? 1 : 0;
+    native_config.disable_full_window_drag = (*env)->GetBooleanField(env, config, field(env, cls, "disableFullWindowDrag", "Z")) ? 1 : 0;
+    native_config.allow_font_smoothing = (*env)->GetBooleanField(env, config, field(env, cls, "allowFontSmoothing", "Z")) ? 1 : 0;
 
     android_rdp_session* session = (android_rdp_session*)calloc(1, sizeof(*session));
     if (session) {

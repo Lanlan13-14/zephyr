@@ -287,6 +287,7 @@ fun RemoteSurface(
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     RemoteGestureSignal.DragLockHaptic ->
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    is RemoteGestureSignal.ClickRipple -> Unit
                 }
             }
         }
@@ -494,6 +495,13 @@ private fun Modifier.remoteGestures(
 
             if (travel <= TAP_SLOP_PX) return
 
+            if (controller.state.value.dragMode == RemoteDragMode.VIEWPORT) {
+                dragging = true
+                controller.onPan(dx, dy)
+                event.changes.forEach { it.consume() }
+                return
+            }
+
             when (mode) {
                 RemotePointerMode.DIRECT -> {
                     if (!dragging) {
@@ -555,7 +563,8 @@ private fun Modifier.remoteGestures(
                 }
             }
 
-            dragging && mode == RemotePointerMode.DIRECT -> controller.onDragEnd()
+            dragging && mode == RemotePointerMode.DIRECT &&
+                controller.state.value.dragMode == RemoteDragMode.POINTER -> controller.onDragEnd()
         }
 
         controller.onGestureEnd()

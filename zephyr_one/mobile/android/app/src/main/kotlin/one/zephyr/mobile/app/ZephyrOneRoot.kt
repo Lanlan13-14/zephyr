@@ -1232,9 +1232,12 @@ private fun RemoteDestination(
     val nowMs = System.currentTimeMillis()
     val networkState by account.network.collectAsState(initial = null)
     val online = networkState?.connected == true
+    /* A workspace restore must not dial; a newly opened tab must. */
+    val autoConnect = account.sessions.find(route.sessionId)?.restoredFromWorkspace != true
 
     if (route.protocol == Protocol.VNC) {
         VncRemoteRoute(
+            autoConnect = autoConnect,
             viewModel = viewModel(
                 key = "vnc:" + route.sessionId,
                 factory = VncViewModel.Factory(
@@ -1334,6 +1337,7 @@ private fun RemoteDestination(
             onOpenAppSettings = permissionActions.openSettings,
             onPickDriveDirectory = pickDirectory,
             onMessage = onMessage,
+            autoConnect = autoConnect,
         )
     }
 }

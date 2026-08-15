@@ -41,12 +41,18 @@ final class RemoteViewModelTests: XCTestCase {
     }
 
     func testChromePerProtocol() {
-        XCTAssertTrue(RemoteStates.chrome(for: .rdp).contains(.sound))
-        XCTAssertTrue(RemoteStates.chrome(for: .rdp).contains(.certificate))
-        XCTAssertTrue(RemoteStates.chrome(for: .rdp).contains(.fileDrive))
-        XCTAssertFalse(RemoteStates.chrome(for: .vnc).contains(.sound))
-        XCTAssertFalse(RemoteStates.chrome(for: .vnc).contains(.fileDrive))
-        XCTAssertTrue(RemoteStates.chrome(for: .vnc).contains(.quality))
+        let rdp = RemoteStates.chrome(for: .rdp)
+        XCTAssertEqual(rdp.first, .pointerMode)
+        XCTAssertTrue(rdp.contains(.quality))
+        XCTAssertTrue(rdp.contains(.fileDrive))
+        XCTAssertTrue(rdp.contains(.cad))
+        XCTAssertTrue(rdp.contains(.shortcuts))
+        XCTAssertFalse(rdp.contains(.vncQuality))
+        let vnc = RemoteStates.chrome(for: .vnc)
+        XCTAssertTrue(vnc.contains(.vncQuality))
+        XCTAssertFalse(vnc.contains(.fileDrive))
+        XCTAssertFalse(vnc.contains(.cad))
+        XCTAssertFalse(vnc.contains(.resolution))
     }
 
     func testUnavailableEngineIsFatal() {
@@ -150,5 +156,6 @@ final class RemoteViewModelTests: XCTestCase {
         vm.disconnect()
         XCTAssertEqual(registry.row("r-1")?.transport, .closed)
         XCTAssertEqual(vm.event, .closed)
+        XCTAssertEqual(vm.message, "会话已关闭")
     }
 }

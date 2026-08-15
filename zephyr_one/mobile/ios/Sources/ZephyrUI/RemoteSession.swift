@@ -254,31 +254,39 @@ public struct RemoteChannelPermission: Equatable, Sendable {
 
 /// The floating toolbar set for RDP and VNC (SCREEN_CATALOG.md 9/10).
 public enum RemoteChromeItem: String, Sendable, CaseIterable {
-    case keyboard
     case pointerMode
+    case keyboard
+    case quality
+    case resolution
+    case fps
+    case fit
     case zoom
     case clipboard
-    case sound
-    case resolution
-    case quality
     case fileDrive
-    case certificate
+    case shortcuts
+    case joystick
+    case cad
     case reconnect
     case disconnect
+    case vncQuality
 
     public var title: String {
         switch self {
+        case .pointerMode: return "触控板"
         case .keyboard: return "键盘"
-        case .pointerMode: return "指针"
-        case .zoom: return "缩放"
+        case .quality: return "平衡"
+        case .resolution: return "自动"
+        case .fps: return "30FPS"
+        case .fit: return "适应"
+        case .zoom: return "100%"
         case .clipboard: return "剪贴板"
-        case .sound: return "声音"
-        case .resolution: return "分辨率"
-        case .quality: return "画质"
         case .fileDrive: return "文件"
-        case .certificate: return "证书"
+        case .shortcuts: return "快捷键"
+        case .joystick: return "视区"
+        case .cad: return "CAD"
         case .reconnect: return "重连"
         case .disconnect: return "断开"
+        case .vncQuality: return "高质量"
         }
     }
 }
@@ -314,6 +322,24 @@ public struct RemoteConnectRequest: Equatable, Sendable {
         self.port = port
         self.username = username
         self.password = password
+    }
+}
+
+public enum RdpShortcut: String, CaseIterable, Sendable {
+    case win
+    case cad
+    case altTab
+    case winR
+    case altF4
+
+    public var label: String {
+        switch self {
+        case .win: return "Win"
+        case .cad: return "Ctrl+Alt+Del"
+        case .altTab: return "Alt+Tab"
+        case .winR: return "Win+R"
+        case .altF4: return "Alt+F4"
+        }
     }
 }
 

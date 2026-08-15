@@ -80,9 +80,15 @@ public enum RemoteStates {
     public static func chrome(for `protocol`: ConnectionProtocol) -> [RemoteChromeItem] {
         switch `protocol` {
         case .rdp:
-            return [.keyboard, .pointerMode, .zoom, .clipboard, .sound, .resolution, .quality, .fileDrive, .certificate, .reconnect, .disconnect]
+            return [
+                .pointerMode, .keyboard, .quality, .resolution, .fps, .fit, .zoom,
+                .clipboard, .fileDrive, .shortcuts, .joystick, .cad, .reconnect, .disconnect,
+            ]
         default:
-            return [.keyboard, .pointerMode, .zoom, .clipboard, .quality, .reconnect, .disconnect]
+            return [
+                .pointerMode, .keyboard, .vncQuality, .fit, .zoom, .clipboard,
+                .joystick, .reconnect, .disconnect,
+            ]
         }
     }
 
@@ -114,7 +120,7 @@ public final class RemoteViewModel: ObservableObject {
     @Published public private(set) var status = RemoteSessionStatus()
     @Published public private(set) var event: RemoteEvent?
     @Published public private(set) var message: String?
-    @Published public private(set) var toolbarVisible = true
+    @Published public private(set) var toolbarVisible = false
 
     public let sessionId: String
     private let connectionId: String
@@ -300,11 +306,33 @@ public final class RemoteViewModel: ObservableObject {
             reconnect()
         case .disconnect:
             disconnect()
-        case .certificate:
-            event = .openChrome(.certificate)
+        case .cad:
+            sendShortcut(.cad)
+        case .shortcuts:
+            event = .openChrome(.shortcuts)
+        case .quality:
+            message = "画质模式 · 平衡 · 下次连接生效"
+        case .resolution:
+            message = "分辨率 · 自动"
+        case .fps:
+            message = "目标帧率 · 30FPS"
+        case .fit:
+            message = "已适应窗口"
+        case .zoom:
+            message = "缩放 · 125%"
+        case .joystick:
+            message = "视区模式 · 拖动平移远程画面"
+        case .pointerMode:
+            message = "触控板模式 · 拖动移动指针"
+        case .keyboard:
+            message = "远程键盘 · overlays-content 不挤压画面"
         default:
             event = .openChrome(item)
         }
+    }
+
+    public func sendShortcut(_ shortcut: RdpShortcut) {
+        message = "已发送 " + shortcut.label
     }
 
     /// A channel the session genuinely requested. Declining one channel never
@@ -329,6 +357,7 @@ public final class RemoteViewModel: ObservableObject {
         connectTask = nil
         registry.close(sessionId, clock())
         status = status.advance(.disconnected, clock())
+        message = "会话已关闭"
         recompute()
         event = .closed
     }

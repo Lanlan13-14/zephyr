@@ -38,6 +38,9 @@ class AndroidRdpEngineTest {
         assertArrayEquals(CharArray(password.size), password)
         assertEquals(1080, native.config?.widthPx)
         assertEquals(2400, native.config?.heightPx)
+        assertEquals(true, native.config?.gfx)
+        assertEquals(true, native.config?.disableWallpaper)
+        assertEquals(30, native.config?.requestedFps)
 
         engine.disconnect("s1")
         assertEquals(1, native.stopCalls)
@@ -105,6 +108,19 @@ class AndroidRdpEngineTest {
         assertEquals(0, native.createCalls)
     }
 
+    @Test
+    fun `performance quality disables gfx and font smoothing`() = runTest {
+        val native = FakeNative()
+        val engine = AndroidRdpEngine(native)
+
+        engine.connect(request().copyForTest(quality = one.zephyr.mobile.model.RdpQuality.PERFORMANCE))
+
+        assertEquals(false, native.config?.gfx)
+        assertEquals(false, native.config?.allowFontSmoothing)
+        assertEquals(true, native.config?.disableWallpaper)
+        engine.disconnect("s1")
+    }
+
     private fun request(password: CharArray? = null) = RdpConnectRequest(
         sessionId = "s1",
         host = "server",
@@ -121,8 +137,9 @@ class AndroidRdpEngineTest {
     private fun RdpConnectRequest.copyForTest(
         channels: Set<RdpChannel> = this.channels,
         drive: RdpDriveMapping? = this.drive,
+        quality: one.zephyr.mobile.model.RdpQuality = this.quality,
     ) = RdpConnectRequest(
-        sessionId, host, port, username, domain, password, widthPx, heightPx, channels, drive,
+        sessionId, host, port, username, domain, password, widthPx, heightPx, channels, drive, quality, fps,
     )
 
     private class FakeNative(private val available: Boolean = true) : RdpNativeBridge {

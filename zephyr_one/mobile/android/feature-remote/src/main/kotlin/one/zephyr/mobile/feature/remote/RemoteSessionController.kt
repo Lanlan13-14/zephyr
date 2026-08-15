@@ -32,9 +32,15 @@ data class RemoteSurfaceState(
     val pendingClipboard: RemoteClipboardOffer? = null,
     /** Published so the pointer panel's slider shows the value in force, not the stored default. */
     val sensitivity: Float = 1.5f,
+    /** Single-finger drag pans the picture instead of driving the remote pointer. */
+    val dragMode: RemoteDragMode = RemoteDragMode.POINTER,
+    val zoomIndex: Int = 0,
 ) {
     val canInteract: Boolean get() = geometry.isMeasured
 }
+
+/** What a one-finger drag does on the surface. */
+enum class RemoteDragMode { POINTER, VIEWPORT }
 
 /**
  * The single owner of one remote session's surface.
@@ -96,6 +102,8 @@ class RemoteSessionController(
     private var chrome = RemoteChromeState()
     private var latches = RemoteModifierLatches()
     private var pendingClipboard: RemoteClipboardOffer? = null
+    private var dragMode = RemoteDragMode.POINTER
+    private var zoomIndex = 0
 
     /**
      * Wakes the pump.
@@ -207,7 +215,65 @@ class RemoteSessionController(
     fun setViewportMode(next: RemoteViewportMode) {
         mode = next
         if (next != RemoteViewportMode.CUSTOM) rememberedScale = null
+        if (next == RemoteViewportMode.FIT) zoomIndex = 0
         retransform()
+    }
+
+    /** Demo 适应: back to fit, 100%. */
+    fun fitToWindow() {
+        zoomIndex = 0
+        setViewportMode(RemoteViewportMode.FIT)
+    }
+
+    fun currentZoomIndex(): Int = zoomIndex
+
+    /**
+     * Demo 缩放 cycle: 100 / 125 / 150 / 75 percent of the fitted scale.
+     *
+     * Anchored on the viewport centre so a tool-strip tap does not jump the picture toward
+     * wherever the last pinch happened.
+     */
+    fun cycleZoom(factors: FloatArray): Float {
+        if (!geometry.isMeasured || factors.isEmpty()) return transform.scale
+        zoomIndex = (zoomIndex + 1).mod(factors.size)
+        val target = (geometry.fitScale * factors[zoomIndex]).coerceIn(RemoteViewport.scaleRange(geometry))
+        val focusX = geometry.viewportWidthPx / 2f
+        val focusY = geometry.viewportHeightPx / 2f
+        val factor = if (transform.scale > 0f) target / transform.scale else 1f
+        transform = RemoteViewport.zoom(transform, geometry, factor, focusX, focusY)
+        mode = if (zoomIndex == 0) RemoteViewportMode.FIT else RemoteViewportMode.CUSTOM
+        rememberedScale = transform.scale
+        publish()
+        return factors[zoomIndex]
+    }
+
+    fun setDragMode(next: RemoteDragMode) {
+        if (next == dragMode) return
+        if (next == RemoteDragMode.VIEWPORT) submit(pointer.releaseAll())
+        dragMode = next
+        publish()
+    }
+
+    fun toggleDragMode(): RemoteDragMode {
+        val next = if (dragMode == RemoteDragMode.POINTER) RemoteDragMode.VIEWPORT else RemoteDragMode.POINTER
+        setDragMode(next)
+        return next
+    }
+
+    fun sendInputs(inputs: List<RemoteInput>) {
+        submit(inputs)
+    }
+
+    fun clickMouseButton(button: Int) {
+        val local = RemoteViewport.toLocal(pointer.state.cursor, transform)
+        gestureFlow.tryEmit(
+            RemoteGestureSignal.ClickRipple(
+                xPx = local.first,
+                yPx = local.second,
+                secondary = button == RemoteButton.SECONDARY,
+            ),
+        )
+        submit(pointer.clickAtCursor(button))
     }
 
     /** Pinch. Anchored on the focus so the pixel under the fingers stays under the fingers. */
@@ -436,10 +502,15 @@ class RemoteSessionController(
         publish()
     }
 
-    /** The idle timer expired. Only ever hides, so it cannot fight the user's own tap. */
+    fun toggleToolsPanel() {
+        chrome = RemoteChrome.toggleToolsPanel(chrome)
+        publish()
+    }
+
+    /** The idle timer expired. Only ever hides the tools panel, so the ball stays reachable. */
     fun hideChrome() {
         if (!chrome.mayAutoHide) return
-        chrome = chrome.copy(visible = false)
+        chrome = RemoteChrome.hideToolsPanel(chrome)
         publish()
     }
 
@@ -539,6 +610,8 @@ class RemoteSessionController(
             coalescedMoves = queue.coalescedMoves,
             pendingClipboard = pendingClipboard,
             sensitivity = pointer.sensitivity,
+            dragMode = dragMode,
+            zoomIndex = zoomIndex,
         )
         val current = stateFlow.value
         if (next == current) return
@@ -557,7 +630,9 @@ private fun RemoteSurfaceState.sameRemoteContentState(other: RemoteSurfaceState)
         chrome == other.chrome &&
         droppedPatches == other.droppedPatches &&
         pendingClipboard == other.pendingClipboard &&
-        sensitivity == other.sensitivity
+        sensitivity == other.sensitivity &&
+        dragMode == other.dragMode &&
+        zoomIndex == other.zoomIndex
 
 /**
  * Something the host must do that is not state.
@@ -569,4 +644,5 @@ private fun RemoteSurfaceState.sameRemoteContentState(other: RemoteSurfaceState)
 sealed interface RemoteGestureSignal {
     data object SecondaryClickHaptic : RemoteGestureSignal
     data object DragLockHaptic : RemoteGestureSignal
+    data class ClickRipple(val xPx: Float, val yPx: Float, val secondary: Boolean) : RemoteGestureSignal
 }

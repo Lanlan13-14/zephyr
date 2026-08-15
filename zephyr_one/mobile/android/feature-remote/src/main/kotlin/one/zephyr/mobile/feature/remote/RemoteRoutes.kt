@@ -127,6 +127,15 @@ private fun dispatchRdp(
     when (intent) {
         RemoteIntent.ToggleChrome -> controller.onSurfaceTapForChrome()
         RemoteIntent.HideChrome -> controller.hideChrome()
+        RemoteIntent.ToggleToolsPanel -> controller.toggleToolsPanel()
+        RemoteIntent.CycleQuality -> viewModel.cycleQuality()
+        RemoteIntent.CycleResolution -> viewModel.cycleResolution()
+        RemoteIntent.CycleFps -> viewModel.cycleFps()
+        RemoteIntent.FitViewport -> viewModel.fitViewport()
+        RemoteIntent.CycleZoom -> viewModel.cycleZoom()
+        RemoteIntent.ToggleJoystick -> viewModel.toggleJoystick()
+        is RemoteIntent.SendShortcut -> viewModel.sendShortcut(intent.shortcut)
+        is RemoteIntent.TrackpadClick -> viewModel.clickTrackpadButton(intent.button)
         is RemoteIntent.SetKeyboardVisible -> controller.setKeyboardVisible(intent.visible)
         is RemoteIntent.SetModifierBarVisible -> controller.setModifierBarVisible(intent.visible)
 
@@ -195,6 +204,16 @@ private fun dispatchVnc(viewModel: VncViewModel, intent: RemoteIntent, onBack: (
     when (intent) {
         RemoteIntent.ToggleChrome -> controller.onSurfaceTapForChrome()
         RemoteIntent.HideChrome -> controller.hideChrome()
+        RemoteIntent.ToggleToolsPanel -> controller.toggleToolsPanel()
+        RemoteIntent.FitViewport -> controller.fitToWindow()
+        RemoteIntent.CycleZoom -> controller.cycleZoom(one.zephyr.mobile.protocol.rdp.RdpDisplayPolicy.ZOOM_FACTORS)
+        RemoteIntent.ToggleJoystick -> controller.toggleDragMode()
+        RemoteIntent.CycleQuality,
+        RemoteIntent.CycleResolution,
+        RemoteIntent.CycleFps,
+        is RemoteIntent.SendShortcut,
+        -> Unit
+        is RemoteIntent.TrackpadClick -> controller.clickMouseButton(intent.button)
         is RemoteIntent.SetKeyboardVisible -> controller.setKeyboardVisible(intent.visible)
         is RemoteIntent.SetModifierBarVisible -> controller.setModifierBarVisible(intent.visible)
 

@@ -18,10 +18,11 @@ import org.junit.Test
 class RemoteChromeTest {
 
     @Test
-    fun chromeStartsVisibleWithTheDockShowing() {
+    fun chromeStartsVisibleWithTheToolsPanelHidden() {
         val state = RemoteChromeState()
         assertTrue(state.visible)
-        assertTrue(state.dockVisible)
+        assertFalse(state.dockVisible)
+        assertFalse(state.toolsPanelVisible)
         assertTrue(state.statusPillVisible)
         assertFalse(state.suppressedByGesture)
         assertFalse(state.gestureActive)
@@ -30,14 +31,12 @@ class RemoteChromeTest {
     }
 
     @Test
-    fun theImeReplacesTheDockRatherThanStackingAboveIt() {
+    fun theImeBringsTheModifierBarWithoutOpeningTheToolsPanel() {
         val open = RemoteChrome.setKeyboard(RemoteChromeState(), true)
         assertTrue(open.keyboardVisible)
         assertTrue(open.visible)
-        // The dock goes, the status pill stays: it is the only thing still reporting the phase.
         assertFalse(open.dockVisible)
         assertTrue(open.statusPillVisible)
-        // The modifier bar is what the remaining height is worth with the IME open.
         assertTrue(open.modifierBarVisible)
     }
 
@@ -58,7 +57,7 @@ class RemoteChromeTest {
         assertFalse(closed.keyboardVisible)
         // Still visible, because opening the IME made it visible and closing it is not a hide request.
         assertTrue(closed.visible)
-        assertTrue(closed.dockVisible)
+        assertFalse(closed.dockVisible)
         // The modifier bar is left where it was rather than being force-closed.
         assertTrue(closed.modifierBarVisible)
     }
@@ -75,11 +74,13 @@ class RemoteChromeTest {
     }
 
     @Test
-    fun aTapThatLandedOnNothingTogglesChrome() {
-        val hidden = RemoteChrome.onSurfaceTap(RemoteChromeState())
-        assertFalse(hidden.visible)
-        val shown = RemoteChrome.onSurfaceTap(hidden)
+    fun aTapThatLandedOnNothingTogglesTheToolsPanel() {
+        val shown = RemoteChrome.onSurfaceTap(RemoteChromeState())
+        assertTrue(shown.toolsPanelVisible)
         assertTrue(shown.visible)
+        val hidden = RemoteChrome.onSurfaceTap(shown)
+        assertFalse(hidden.toolsPanelVisible)
+        assertTrue(hidden.visible)
     }
 
     @Test
@@ -89,7 +90,7 @@ class RemoteChromeTest {
         var state = RemoteChrome.onRemoteInput(RemoteChromeState())
         state = RemoteChrome.onSurfaceTap(state)
         state = RemoteChrome.onSurfaceTap(state)
-        assertFalse(state.visible)
+        assertTrue(state.toolsPanelVisible)
     }
 
     @Test
@@ -103,7 +104,7 @@ class RemoteChromeTest {
 
     @Test
     fun autoHideWaitsForTheFingerToLift() {
-        val touching = RemoteChrome.onGestureStart(RemoteChromeState())
+        val touching = RemoteChrome.onGestureStart(RemoteChromeState(toolsPanelVisible = true))
         assertTrue(touching.gestureActive)
         assertFalse(touching.mayAutoHide)
 
@@ -114,13 +115,13 @@ class RemoteChromeTest {
 
     @Test
     fun autoHideIsBlockedWhileTheKeyboardIsOpen() {
-        // Hiding the modifier bar from under a typing user would be the worst possible moment.
-        val open = RemoteChrome.setKeyboard(RemoteChromeState(), true)
+        val open = RemoteChrome.setKeyboard(RemoteChromeState(toolsPanelVisible = true), true)
         assertFalse(open.mayAutoHide)
     }
 
     @Test
-    fun autoHideDoesNothingWhenChromeIsAlreadyHidden() {
+    fun autoHideDoesNothingWhenTheToolsPanelIsClosed() {
+        assertFalse(RemoteChromeState().mayAutoHide)
         assertFalse(RemoteChromeState(visible = false).mayAutoHide)
     }
 
@@ -151,52 +152,55 @@ class RemoteChromeTest {
          * is the one thing a remote surface must never do to its own pixels. */
         assertTrue(RemoteChrome.FADE_MS in 120..180)
         assertTrue(RemoteChrome.OFFSET_DP in 1..12)
-        assertEquals(4_000L, RemoteChrome.AUTO_HIDE_MS)
+        assertEquals(5_000L, RemoteChrome.AUTO_HIDE_MS)
     }
 
     @Test
-    fun theRdpDockCarriesSoundDriveAndCertificate() {
+    fun theRdpStripMatchesTheDemoOperationPage() {
         val items = RemoteDockItem.forProtocol(Protocol.RDP)
         assertEquals(
             listOf(
-                RemoteDockItem.KEYBOARD,
                 RemoteDockItem.POINTER_MODE,
-                RemoteDockItem.MODIFIERS,
+                RemoteDockItem.KEYBOARD,
+                RemoteDockItem.QUALITY,
+                RemoteDockItem.RESOLUTION,
+                RemoteDockItem.FPS,
+                RemoteDockItem.FIT,
+                RemoteDockItem.ZOOM,
                 RemoteDockItem.CLIPBOARD,
-                RemoteDockItem.DISPLAY,
-                RemoteDockItem.SOUND,
-                RemoteDockItem.CHANNELS,
                 RemoteDockItem.DRIVE,
-                RemoteDockItem.CERTIFICATE,
+                RemoteDockItem.SHORTCUTS,
+                RemoteDockItem.JOYSTICK,
+                RemoteDockItem.CAD,
                 RemoteDockItem.RECONNECT,
                 RemoteDockItem.DISCONNECT,
             ),
             items,
         )
-        // Quality is a VNC-side encoding choice; RDP negotiates it from the connection settings.
-        assertFalse(items.contains(RemoteDockItem.QUALITY))
+        assertFalse(items.contains(RemoteDockItem.VNC_QUALITY))
     }
 
     @Test
-    fun theVncDockOffersQualityAndNoRemoteDisk() {
+    fun theVncStripHasNoDriveCadOrRdpDisplayCycle() {
         val items = RemoteDockItem.forProtocol(Protocol.VNC)
         assertEquals(
             listOf(
-                RemoteDockItem.KEYBOARD,
                 RemoteDockItem.POINTER_MODE,
-                RemoteDockItem.MODIFIERS,
+                RemoteDockItem.KEYBOARD,
+                RemoteDockItem.VNC_QUALITY,
+                RemoteDockItem.FIT,
+                RemoteDockItem.ZOOM,
                 RemoteDockItem.CLIPBOARD,
-                RemoteDockItem.DISPLAY,
-                RemoteDockItem.QUALITY,
+                RemoteDockItem.JOYSTICK,
                 RemoteDockItem.RECONNECT,
                 RemoteDockItem.DISCONNECT,
             ),
             items,
         )
-        // Plain RFB has no file transfer and no certificate to review; offering either would be a lie.
         assertFalse(items.contains(RemoteDockItem.DRIVE))
-        assertFalse(items.contains(RemoteDockItem.SOUND))
-        assertFalse(items.contains(RemoteDockItem.CERTIFICATE))
+        assertFalse(items.contains(RemoteDockItem.CAD))
+        assertFalse(items.contains(RemoteDockItem.RESOLUTION))
+        assertFalse(items.contains(RemoteDockItem.FPS))
     }
 
     @Test

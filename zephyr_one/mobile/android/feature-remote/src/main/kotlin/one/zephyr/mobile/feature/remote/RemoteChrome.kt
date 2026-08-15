@@ -11,30 +11,32 @@ import one.zephyr.mobile.model.Protocol
  * check the screen has to remember to make.
  */
 enum class RemoteDockItem {
-    KEYBOARD,
     POINTER_MODE,
-    MODIFIERS,
-    CLIPBOARD,
-    DISPLAY,
-    SOUND,
-    CHANNELS,
-    DRIVE,
-    CERTIFICATE,
+    KEYBOARD,
     QUALITY,
+    RESOLUTION,
+    FPS,
+    FIT,
+    ZOOM,
+    CLIPBOARD,
+    DRIVE,
+    SHORTCUTS,
+    JOYSTICK,
+    CAD,
     RECONNECT,
     DISCONNECT,
+    VNC_QUALITY,
     ;
 
     companion object {
         fun forProtocol(protocol: Protocol): List<RemoteDockItem> = when (protocol) {
             Protocol.RDP -> listOf(
-                KEYBOARD, POINTER_MODE, MODIFIERS, CLIPBOARD, DISPLAY, SOUND,
-                CHANNELS, DRIVE, CERTIFICATE, RECONNECT, DISCONNECT,
+                POINTER_MODE, KEYBOARD, QUALITY, RESOLUTION, FPS, FIT, ZOOM,
+                CLIPBOARD, DRIVE, SHORTCUTS, JOYSTICK, CAD, RECONNECT, DISCONNECT,
             )
-            // No DRIVE and no CERTIFICATE: plain RFB has neither file transfer nor a certificate to
-            // review, and offering either would be a lie about what the session can do.
             Protocol.VNC -> listOf(
-                KEYBOARD, POINTER_MODE, MODIFIERS, CLIPBOARD, DISPLAY, QUALITY, RECONNECT, DISCONNECT,
+                POINTER_MODE, KEYBOARD, VNC_QUALITY, FIT, ZOOM, CLIPBOARD,
+                JOYSTICK, RECONNECT, DISCONNECT,
             )
             else -> emptyList()
         }
@@ -50,6 +52,8 @@ enum class RemoteDockItem {
  */
 data class RemoteChromeState(
     val visible: Boolean = true,
+    /** Demo `#rdp-panel`. Independent of [visible] so the ball/status stay up after it auto-hides. */
+    val toolsPanelVisible: Boolean = false,
     /**
      * True once this gesture actually delivered remote input.
      *
@@ -70,12 +74,12 @@ data class RemoteChromeState(
      * Chrome overlays the surface and never resizes the remote desktop, so with the IME open the only
      * thing worth the remaining height is the modifier bar (§6).
      */
-    val dockVisible: Boolean get() = visible && !keyboardVisible
+    val dockVisible: Boolean get() = toolsPanelVisible
 
     val statusPillVisible: Boolean get() = visible
 
-    /** Auto-hide is only allowed while nothing is being touched and no button is held. */
-    val mayAutoHide: Boolean get() = visible && !gestureActive && !keyboardVisible
+    /** Auto-hide is only allowed while the tools panel is up and nothing is being touched. */
+    val mayAutoHide: Boolean get() = toolsPanelVisible && !gestureActive && !keyboardVisible
 }
 
 /** Chrome transitions. Pure so the "a drag must not toggle chrome" rule is testable. */
@@ -85,14 +89,20 @@ object RemoteChrome {
     const val FADE_MS = 150
     const val OFFSET_DP = 6
 
-    /** Auto-hide delay once a session is connected and idle. */
-    const val AUTO_HIDE_MS = 4_000L
+    /** Demo `resetHide`: the tools panel closes after five idle seconds. */
+    const val AUTO_HIDE_MS = 5_000L
 
     fun onSurfaceTap(state: RemoteChromeState): RemoteChromeState = when {
         // The gesture that just ended drove the remote pointer, so its lift is not a chrome tap.
         state.suppressedByGesture -> state.copy(suppressedByGesture = false)
-        else -> state.copy(visible = !state.visible)
+        else -> state.copy(toolsPanelVisible = !state.toolsPanelVisible, visible = true)
     }
+
+    fun toggleToolsPanel(state: RemoteChromeState): RemoteChromeState =
+        state.copy(toolsPanelVisible = !state.toolsPanelVisible, visible = true)
+
+    fun hideToolsPanel(state: RemoteChromeState): RemoteChromeState =
+        if (!state.toolsPanelVisible) state else state.copy(toolsPanelVisible = false)
 
     fun onGestureStart(state: RemoteChromeState): RemoteChromeState =
         state.copy(gestureActive = true)

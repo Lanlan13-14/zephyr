@@ -53,6 +53,7 @@ class AndroidRdpEngine internal constructor(
             return failure(SESSION_EXISTS, "An RDP session with this id already exists", retryable = false)
         }
 
+        val display = RdpDisplayPolicy.nativeFlags(request.quality)
         val config = NativeRdpConfig(
             host = request.host,
             port = request.port,
@@ -64,6 +65,13 @@ class AndroidRdpEngine internal constructor(
             audio = RdpChannel.AUDIO in request.channels,
             microphone = RdpChannel.MICROPHONE in request.channels,
             clipboard = RdpChannel.CLIPBOARD in request.channels,
+            gfx = display.gfx,
+            disableWallpaper = display.disableWallpaper,
+            disableThemes = display.disableThemes,
+            disableMenuAnims = display.disableMenuAnims,
+            disableFullWindowDrag = display.disableFullWindowDrag,
+            allowFontSmoothing = display.allowFontSmoothing,
+            requestedFps = request.fps.value,
         )
 
         return try {
@@ -280,6 +288,13 @@ internal data class NativeRdpConfig(
     val audio: Boolean,
     val microphone: Boolean,
     val clipboard: Boolean,
+    val gfx: Boolean = true,
+    val disableWallpaper: Boolean = true,
+    val disableThemes: Boolean = true,
+    val disableMenuAnims: Boolean = true,
+    val disableFullWindowDrag: Boolean = true,
+    val allowFontSmoothing: Boolean = true,
+    val requestedFps: Int = 30,
 )
 
 internal interface NativeRdpSink {

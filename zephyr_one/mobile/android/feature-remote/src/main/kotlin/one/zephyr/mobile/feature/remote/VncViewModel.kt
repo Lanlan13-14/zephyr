@@ -115,6 +115,7 @@ class VncViewModel(
     private var interactivePassword: CharArray? = null
 
     private var securityLabel: String? = null
+    @Volatile private var pendingConnect = false
 
     val state: StateFlow<PageState<RemoteContent>> = combine(
         connectionState,
@@ -213,6 +214,10 @@ class VncViewModel(
                 // like one product rather than two ports.
                 controller.setPointerMode(RemotePointerMode.of(connection.rdp.touchMode))
                 controller.setSensitivity(connection.rdp.touchSensitivity)
+                if (pendingConnect) {
+                    pendingConnect = false
+                    connect()
+                }
             }
         }
     }
@@ -221,7 +226,11 @@ class VncViewModel(
 
     /** Opens the session. Explicit, so a restored workspace tab shows a framebuffer only on request. */
     fun connect() {
-        val connection = connectionState.value ?: return
+        val connection = connectionState.value
+        if (connection == null) {
+            pendingConnect = true
+            return
+        }
         reconnectJob?.cancel()
         errorState.value = null
         authState.value = null
@@ -318,10 +327,12 @@ class VncViewModel(
     fun disconnect() {
         interactivePassword?.fill('\u0000')
         interactivePassword = null
+        pendingConnect = false
         stopStreams()
         reconnectJob?.cancel()
         registry.close(sessionId, clock())
         advance(RemotePhase.DISCONNECTED)
+        messages.tryEmit("会话已关闭")
         viewModelScope.launch { runCatching { controller.disconnect() } }
     }
 

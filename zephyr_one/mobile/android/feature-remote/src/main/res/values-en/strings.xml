@@ -82,6 +82,15 @@
     <string name="remote_auth_exhausted">The server has exhausted authentication attempts. Reconnect to try again.</string>
     <string name="remote_disconnect_title">Disconnect session</string>
     <string name="remote_disconnect_body">Disconnecting will not keep unsaved program state on the remote</string>
-    <string name="remote_engine_blocked_rdp">The native RDP engine is not in this build: ADR-004 licensing is still open</string>
+    <string name="remote_engine_blocked_rdp">This build does not package the FreeRDP native library, so an RDP session cannot start</string>
     <string name="remote_engine_blocked_vnc">The native VNC engine is not in this build: ADR-005 licensing is still open</string>
+    <string name="remote_tools">Tools</string>
+    <string name="remote_fps">FPS</string>
+    <string name="remote_fit">Fit</string>
+    <string name="remote_zoom">Zoom</string>
+    <string name="remote_shortcuts">Shortcuts</string>
+    <string name="remote_joystick">Viewport</string>
+    <string name="remote_cad">CAD</string>
+    <string name="remote_mouse_left">Left</string>
+    <string name="remote_mouse_right">Right</string>
 </resources>

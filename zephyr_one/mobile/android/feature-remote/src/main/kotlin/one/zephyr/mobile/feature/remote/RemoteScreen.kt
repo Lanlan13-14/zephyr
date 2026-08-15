@@ -49,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
@@ -140,6 +141,7 @@ private enum class RemotePanel {
     DRIVE,
     CERTIFICATE,
     QUALITY,
+    SHORTCUTS,
     DISCONNECT,
 }
 
@@ -155,14 +157,19 @@ private fun RemoteSession(
     val chrome = content.surface.chrome
     var panel by remember { mutableStateOf<RemotePanel?>(null) }
     var imeView by remember { mutableStateOf<RemoteImeView?>(null) }
+    var ripple by remember { mutableStateOf<RemoteGestureSignal.ClickRipple?>(null) }
 
-    // Section 12: chrome fades out on its own once the session is idle. Suppressed while a finger is
-    // down, while the IME is up and while a panel is open, because all three mean the user is still
-    // using it.
+    // Demo resetHide: the tools panel closes after five idle seconds.
     LaunchedEffect(chrome.mayAutoHide, content.status.phase, panel) {
         if (!chrome.mayAutoHide || panel != null || !content.status.hasSurface) return@LaunchedEffect
         delay(RemoteChrome.AUTO_HIDE_MS)
         onIntent(RemoteIntent.HideChrome)
+    }
+
+    LaunchedEffect(controller) {
+        controller.gestureSignals.collect { signal ->
+            if (signal is RemoteGestureSignal.ClickRipple) ripple = signal
+        }
     }
 
     // Driven from state rather than toggled blind, so a dock tap and a tap on the surface cannot
@@ -181,8 +188,16 @@ private fun RemoteSession(
         when {
             !content.engineAvailable -> EngineBlockedOverlay(content.connection.protocol)
             content.status.phase.isProgressing -> PhaseOverlay(content = content, nowMs = nowMs)
+            content.transport == one.zephyr.mobile.data.session.SessionTransport.CLOSED -> Unit
             !content.status.hasSurface -> DisconnectedOverlay(content = content, onIntent = onIntent)
             else -> Unit
+        }
+
+        // Demo `disc-yes` pops the page. A user-ended session is CLOSED, not a retryable overlay.
+        LaunchedEffect(content.transport) {
+            if (content.transport == one.zephyr.mobile.data.session.SessionTransport.CLOSED) {
+                onIntent(RemoteIntent.Back)
+            }
         }
 
         // Section 8: a live mic or camera stays visible for the whole session, independently of the
@@ -200,7 +215,10 @@ private fun RemoteSession(
         ChromeLayer(
             visible = chrome.statusPillVisible,
             fromTop = true,
-            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(start = 10.dp, top = 10.dp),
         ) {
             StatusPill(
                 content = content,
@@ -209,6 +227,58 @@ private fun RemoteSession(
                 remoteTitle = remoteTitle,
                 onIntent = onIntent,
             )
+        }
+
+        ChromeLayer(
+            visible = chrome.dockVisible,
+            fromTop = true,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+        ) {
+            ToolsPanel(
+                items = content.dock,
+                content = content,
+                onOpenPanel = { target -> panel = target },
+                onIntent = onIntent,
+            )
+        }
+
+        IconButton(
+            onClick = { onIntent(RemoteIntent.ToggleToolsPanel) },
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 10.dp)
+                .size(44.dp)
+                .background(Color(0x9E14181E), androidx.compose.foundation.shape.CircleShape)
+                .border(1.dp, Color(0x24FFFFFF), androidx.compose.foundation.shape.CircleShape),
+        ) {
+            Icon(
+                imageVector = ZephyrIcons.GridTools,
+                contentDescription = stringResource(R.string.remote_tools),
+                tint = Color(0xFFE6EBF0),
+            )
+        }
+
+        if (content.surface.pointer.mode == RemotePointerMode.TRACKPAD) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 10.dp, bottom = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TrackpadButton(
+                    label = stringResource(R.string.remote_mouse_left),
+                    onClick = { onIntent(RemoteIntent.TrackpadClick(RemoteButton.PRIMARY)) },
+                )
+                TrackpadButton(
+                    label = stringResource(R.string.remote_mouse_right),
+                    onClick = { onIntent(RemoteIntent.TrackpadClick(RemoteButton.SECONDARY)) },
+                )
+            }
         }
 
         Column(
@@ -222,14 +292,29 @@ private fun RemoteSession(
             ChromeLayer(visible = chrome.modifierBarVisible, fromTop = false) {
                 ModifierBarRow(latches = content.surface.latches, onIntent = onIntent)
             }
-            ChromeLayer(visible = chrome.dockVisible, fromTop = false) {
-                DockRow(
-                    items = content.dock,
-                    content = content,
-                    onOpenPanel = { target -> panel = target },
-                    onIntent = onIntent,
-                )
-            }
+        }
+
+        IconButton(
+            onClick = { onIntent(RemoteIntent.Back) },
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .navigationBarsPadding()
+                .padding(start = 10.dp, bottom = 14.dp)
+                .size(40.dp)
+                .background(Color(0x990C0E12), androidx.compose.foundation.shape.CircleShape),
+        ) {
+            Icon(
+                imageVector = ZephyrIcons.Back,
+                contentDescription = stringResource(R.string.remote_back),
+                tint = Color(0xFFDBE2EA),
+            )
+        }
+
+        ripple?.let { mark ->
+            ClickRipple(
+                mark = mark,
+                onFinished = { if (ripple == mark) ripple = null },
+            )
         }
 
         // Zero-sized: it owns the InputConnection and nothing else. Inside the same window as the
@@ -248,15 +333,15 @@ private fun RemoteSession(
                 view.onHardwareKey = controller::onHardwareKey
             },
         )
-    }
 
-    panel?.let { open ->
-        PanelHost(
-            panel = open,
-            content = content,
-            onClose = { panel = null },
-            onIntent = onIntent,
-        )
+        panel?.let { open ->
+            PanelHost(
+                panel = open,
+                content = content,
+                onClose = { panel = null },
+                onIntent = onIntent,
+            )
+        }
     }
 
     // Blocking prompts, over everything including a panel: section 10 forbids a changed certificate
@@ -321,143 +406,57 @@ private fun StatusPill(
     onIntent: (RemoteIntent) -> Unit,
 ) {
     val palette = ZephyrTheme.palette
-    Column(
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .padding(horizontal = ZephyrSpacing.md, vertical = ZephyrSpacing.sm)
-            .background(palette.surfaces.floating, RoundedCornerShape(ZephyrRadius.lg))
-            .padding(horizontal = ZephyrSpacing.md, vertical = ZephyrSpacing.sm),
+            .background(Color(0x990C0E12), RoundedCornerShape(16.dp))
+            .padding(horizontal = 11.dp, vertical = 6.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite }
+            .clickable { onIntent(RemoteIntent.Minimise) },
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onIntent(RemoteIntent.Back) }) {
-                Icon(
-                    imageVector = ZephyrIcons.Back,
-                    contentDescription = stringResource(R.string.remote_back),
-                    tint = palette.onFloating,
-                )
-            }
-            Column(modifier = Modifier.padding(horizontal = ZephyrSpacing.sm)) {
-                Text(
-                    text = content.connection.name,
-                    style = ZephyrTextStyles.caption,
-                    color = palette.onFloating,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = remoteTitle ?: content.connection.displayAddress,
-                    style = ZephyrTheme.typography.monoCaption,
-                    color = palette.onFloatingMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(modifier = Modifier.width(ZephyrSpacing.sm))
-            if (!online) {
-                Icon(
-                    imageVector = ZephyrIcons.CloudOff,
-                    contentDescription = stringResource(R.string.remote_offline),
-                    tint = palette.status.offline,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            IconButton(onClick = { onIntent(RemoteIntent.Minimise) }) {
-                Icon(
-                    imageVector = ZephyrIcons.Minus,
-                    contentDescription = stringResource(R.string.remote_minimise),
-                    tint = palette.onFloatingMuted,
-                )
-            }
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-        ) {
-            Text(
-                text = phaseText(content.status, nowMs),
-                style = ZephyrTheme.typography.caption,
-                color = phaseColour(content.status.phase),
-            )
-            Spacer(modifier = Modifier.width(ZephyrSpacing.sm))
-            Text(
-                text = stringResource(pointerModeLabel(content.surface.pointer.mode)),
-                style = ZephyrTheme.typography.caption,
-                color = palette.onFloatingMuted,
-            )
-            if (content.viewOnly) {
-                Spacer(modifier = Modifier.width(ZephyrSpacing.sm))
-                Text(
-                    text = stringResource(R.string.remote_view_only),
-                    style = ZephyrTheme.typography.caption,
-                    color = palette.status.warning,
-                )
-            }
-        }
-
-        StatsRow(status = content.status, surface = content.surface)
-
-        content.executionDisclosure?.let { disclosure ->
-            Text(
-                text = disclosure,
-                style = ZephyrTheme.typography.caption,
-                color = palette.onFloatingMuted,
-            )
-        }
-        content.securityWarning?.let { warning ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = ZephyrIcons.Warn,
-                    contentDescription = null,
-                    tint = palette.status.warning,
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(modifier = Modifier.width(ZephyrSpacing.xs))
-                Text(
-                    text = warning,
-                    style = ZephyrTheme.typography.caption,
-                    color = palette.status.warning,
-                )
-            }
-        }
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .background(phaseColour(content.status.phase), androidx.compose.foundation.shape.CircleShape),
+        )
+        Spacer(modifier = Modifier.width(7.dp))
+        Text(
+            text = compactStatus(content, nowMs, online, remoteTitle),
+            style = ZephyrTheme.typography.monoCaption,
+            color = Color(0xFFDBE2EA),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
-/**
- * Negotiated size, encoding, FPS, latency and drops.
- *
- * Section 11 requires the *actual* numbers rather than the requested ones, and a dash rather than a
- * zero where the engine has not reported yet: a "0 ms" latency would be a claim, not a measurement.
- */
 @Composable
-private fun StatsRow(status: RemoteSessionStatus, surface: RemoteSurfaceState) {
-    val palette = ZephyrTheme.palette
-    val size = if (status.remoteWidthPx > 0) {
-        status.remoteWidthPx.toString() + "x" + status.remoteHeightPx
+private fun compactStatus(
+    content: RemoteContent,
+    nowMs: Long,
+    online: Boolean,
+    remoteTitle: String?,
+): String {
+    if (content.status.phase.isProgressing || !content.status.hasSurface) {
+        return phaseText(content.status, nowMs)
+    }
+    val size = if (content.status.remoteWidthPx > 0) {
+        content.status.remoteWidthPx.toString() + "×" + content.status.remoteHeightPx
     } else {
         DASH
     }
-    val parts = ArrayList<String>(5)
-    parts += size
-    status.negotiatedLabel?.let { parts += it }
-    parts += stringResource(R.string.remote_stat_fps, status.fps?.toString() ?: DASH)
-    parts += stringResource(R.string.remote_stat_latency, status.latencyMs?.toString() ?: DASH)
-    val dropped = status.droppedFrames + surface.droppedPatches
-    if (dropped > 0) parts += stringResource(R.string.remote_stat_dropped, dropped)
-    if (surface.coalescedMoves > 0) {
-        parts += stringResource(R.string.remote_stat_coalesced, surface.coalescedMoves)
-    }
-    Text(
-        text = parts.joinToString(" · "),
-        style = ZephyrTheme.typography.monoCaption,
-        color = palette.onFloatingMuted,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
+    val latency = content.status.latencyMs?.let { it.toString() + " ms" } ?: DASH
+    val fps = content.status.fps?.let { it.toString() + "FPS" } ?: content.fpsLabel
+    val parts = mutableListOf(latency, size, fps)
+    if (!online) parts += stringResource(R.string.remote_offline)
+    if (content.viewOnly) parts += stringResource(R.string.remote_view_only)
+    remoteTitle?.let { parts += it }
+    return parts.joinToString(" · ")
 }
 
-/** The bottom dock. Items come from the protocol, so VNC cannot grow a drive entry. */
+/** Demo `#rdp-panel`: a top floating strip of labelled tools. */
 @Composable
-private fun DockRow(
+private fun ToolsPanel(
     items: List<RemoteDockItem>,
     content: RemoteContent,
     onOpenPanel: (RemotePanel) -> Unit,
@@ -465,16 +464,17 @@ private fun DockRow(
 ) {
     Row(
         modifier = Modifier
-            .padding(ZephyrSpacing.sm)
-            .background(ZephyrTheme.palette.surfaces.floating, RoundedCornerShape(ZephyrRadius.pill))
+            .background(Color(0xC712161C), RoundedCornerShape(18.dp))
+            .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(18.dp))
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = ZephyrSpacing.sm, vertical = ZephyrSpacing.xs),
+            .padding(horizontal = 6.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         for (item in items) {
-            DockButton(
+            ToolButton(
                 item = item,
+                content = content,
                 selected = isDockSelected(item, content),
                 onClick = { dispatchDock(item, content, onOpenPanel, onIntent) },
             )
@@ -483,22 +483,100 @@ private fun DockRow(
 }
 
 @Composable
-private fun DockButton(item: RemoteDockItem, selected: Boolean, onClick: () -> Unit) {
+private fun ToolButton(
+    item: RemoteDockItem,
+    content: RemoteContent,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
     val palette = ZephyrTheme.palette
     val tint = when {
-        item == RemoteDockItem.DISCONNECT -> palette.status.error
+        item == RemoteDockItem.DISCONNECT -> Color(0xFFFF7B72)
         selected -> palette.brand.accent
-        else -> palette.onFloating
+        else -> Color(0xFFC3CCD6)
     }
-    val label = stringResource(dockLabel(item))
-    IconButton(
-        onClick = onClick,
+    val label = toolCaption(item, content)
+    Column(
         modifier = Modifier
-            .size(IslandTouchTarget)
+            .width(56.dp)
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp, horizontal = 4.dp)
             .semantics { contentDescription = label },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Icon(imageVector = dockIcon(item), contentDescription = null, tint = tint)
+        Icon(imageVector = dockIcon(item), contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        Text(
+            text = label,
+            style = ZephyrTheme.typography.caption,
+            color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
+}
+
+@Composable
+private fun toolCaption(item: RemoteDockItem, content: RemoteContent): String = when (item) {
+    RemoteDockItem.POINTER_MODE -> stringResource(
+        if (content.surface.pointer.mode == RemotePointerMode.TRACKPAD) {
+            R.string.remote_pointer_direct
+        } else {
+            R.string.remote_pointer_trackpad
+        },
+    )
+    RemoteDockItem.QUALITY -> content.qualityLabel
+    RemoteDockItem.RESOLUTION -> content.resolutionLabel
+    RemoteDockItem.FPS -> content.fpsLabel
+    RemoteDockItem.ZOOM -> content.zoomLabel
+    RemoteDockItem.VNC_QUALITY -> content.pixelFormatLabel ?: stringResource(R.string.remote_quality)
+    else -> stringResource(dockLabel(item))
+}
+
+@Composable
+private fun TrackpadButton(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(42.dp)
+            .background(Color(0xB812161C), RoundedCornerShape(12.dp))
+            .border(1.dp, Color(0x24FFFFFF), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = label, style = ZephyrTheme.typography.caption, color = Color(0xFFDBE2EA))
+    }
+}
+
+@Composable
+private fun ClickRipple(mark: RemoteGestureSignal.ClickRipple, onFinished: () -> Unit) {
+    var started by remember(mark) { mutableStateOf(false) }
+    val progress by animateFloatAsState(
+        targetValue = if (started) 1f else 0f,
+        animationSpec = tween(durationMillis = 320),
+        finishedListener = { onFinished() },
+        label = "rdpClickRipple",
+    )
+    LaunchedEffect(mark) { started = true }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    Box(
+        modifier = Modifier
+            .offset(
+                x = with(density) { mark.xPx.toDp() } - 17.dp,
+                y = with(density) { mark.yPx.toDp() } - 17.dp,
+            )
+            .size(34.dp)
+            .graphicsLayer {
+                scaleX = 0.35f + progress * 1.15f
+                scaleY = 0.35f + progress * 1.15f
+                alpha = 0.95f * (1f - progress)
+            }
+            .border(
+                2.dp,
+                if (mark.secondary) Color(0xFFFFD60A) else Color(0xE6FFFFFF),
+                androidx.compose.foundation.shape.CircleShape,
+            ),
+    )
 }
 
 /**
@@ -715,6 +793,7 @@ private fun PanelHost(
         RemotePanel.DRIVE -> DrivePanel(content = content, onClose = onClose, onIntent = onIntent)
         RemotePanel.CERTIFICATE -> CertificatePanel(content = content, onClose = onClose)
         RemotePanel.QUALITY -> QualityPanel(content = content, onClose = onClose, onIntent = onIntent)
+        RemotePanel.SHORTCUTS -> ShortcutsPanel(onClose = onClose, onIntent = onIntent)
         RemotePanel.DISCONNECT -> DisconnectPanel(onClose = onClose, onIntent = onIntent)
     }
 }
@@ -1073,6 +1152,37 @@ private fun QualityPanel(
     }
 }
 
+@Composable
+private fun ShortcutsPanel(onClose: () -> Unit, onIntent: (RemoteIntent) -> Unit) {
+    one.zephyr.mobile.ui.component.ActionSheet(
+        visible = true,
+        onDismiss = onClose,
+        groups = listOf(
+            one.zephyr.mobile.ui.component.ActionSheetGroup(
+                title = stringResource(R.string.remote_shortcuts),
+                items = RdpShortcut.sheetItems.map { shortcut ->
+                    one.zephyr.mobile.ui.component.ActionSheetItem(
+                        label = shortcut.label,
+                        onClick = {
+                            onClose()
+                            onIntent(RemoteIntent.SendShortcut(shortcut))
+                        },
+                    )
+                },
+            ),
+            one.zephyr.mobile.ui.component.ActionSheetGroup(
+                items = listOf(
+                    one.zephyr.mobile.ui.component.ActionSheetItem(
+                        label = stringResource(R.string.remote_cancel),
+                        cancel = true,
+                        onClick = onClose,
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
 /** Section 13: closing does not restore remote process state, so the sheet says so. */
 @Composable
 private fun DisconnectPanel(onClose: () -> Unit, onIntent: (RemoteIntent) -> Unit) {
@@ -1422,14 +1532,17 @@ private fun phaseColour(phase: RemotePhase): Color {
 private fun dockLabel(item: RemoteDockItem): Int = when (item) {
     RemoteDockItem.KEYBOARD -> R.string.remote_keyboard
     RemoteDockItem.POINTER_MODE -> R.string.remote_pointer
-    RemoteDockItem.MODIFIERS -> R.string.remote_modifiers
     RemoteDockItem.CLIPBOARD -> R.string.remote_clipboard
-    RemoteDockItem.DISPLAY -> R.string.remote_display
-    RemoteDockItem.SOUND -> R.string.remote_sound
-    RemoteDockItem.CHANNELS -> R.string.remote_channels
     RemoteDockItem.DRIVE -> R.string.remote_drive
-    RemoteDockItem.CERTIFICATE -> R.string.remote_certificate
     RemoteDockItem.QUALITY -> R.string.remote_quality
+    RemoteDockItem.RESOLUTION -> R.string.remote_display
+    RemoteDockItem.FPS -> R.string.remote_fps
+    RemoteDockItem.FIT -> R.string.remote_fit
+    RemoteDockItem.ZOOM -> R.string.remote_zoom
+    RemoteDockItem.SHORTCUTS -> R.string.remote_shortcuts
+    RemoteDockItem.JOYSTICK -> R.string.remote_joystick
+    RemoteDockItem.CAD -> R.string.remote_cad
+    RemoteDockItem.VNC_QUALITY -> R.string.remote_quality
     RemoteDockItem.RECONNECT -> R.string.remote_reconnect
     RemoteDockItem.DISCONNECT -> R.string.remote_disconnect
 }
@@ -1437,16 +1550,17 @@ private fun dockLabel(item: RemoteDockItem): Int = when (item) {
 private fun dockIcon(item: RemoteDockItem): ImageVector = when (item) {
     RemoteDockItem.KEYBOARD -> ZephyrIcons.Keyboard
     RemoteDockItem.POINTER_MODE -> ZephyrIcons.Pointer
-    RemoteDockItem.MODIFIERS -> ZephyrIcons.Notes
-    RemoteDockItem.CLIPBOARD -> ZephyrIcons.Paste
-    RemoteDockItem.DISPLAY -> ZephyrIcons.Fit
-    RemoteDockItem.SOUND -> ZephyrIcons.Volume
-    RemoteDockItem.CHANNELS -> ZephyrIcons.GridTools
+    RemoteDockItem.CLIPBOARD -> ZephyrIcons.Clipboard
     RemoteDockItem.DRIVE -> ZephyrIcons.File
-    RemoteDockItem.CERTIFICATE -> ZephyrIcons.Lock
-    RemoteDockItem.QUALITY -> ZephyrIcons.Tune
-    RemoteDockItem.RECONNECT -> ZephyrIcons.Refresh
-    RemoteDockItem.DISCONNECT -> ZephyrIcons.Close
+    RemoteDockItem.QUALITY, RemoteDockItem.VNC_QUALITY, RemoteDockItem.SHORTCUTS -> ZephyrIcons.Bolt
+    RemoteDockItem.RESOLUTION -> ZephyrIcons.Monitor
+    RemoteDockItem.FPS -> ZephyrIcons.Stats
+    RemoteDockItem.FIT -> ZephyrIcons.Fit
+    RemoteDockItem.ZOOM -> ZephyrIcons.Zoom
+    RemoteDockItem.JOYSTICK -> ZephyrIcons.Joystick
+    RemoteDockItem.CAD -> ZephyrIcons.Security
+    RemoteDockItem.RECONNECT -> ZephyrIcons.Reconnect
+    RemoteDockItem.DISCONNECT -> ZephyrIcons.Disconnect
 }
 
 /**
@@ -1459,18 +1573,10 @@ private fun dockIcon(item: RemoteDockItem): ImageVector = when (item) {
  */
 private fun isDockSelected(item: RemoteDockItem, content: RemoteContent): Boolean = when (item) {
     RemoteDockItem.KEYBOARD -> content.surface.chrome.keyboardVisible
-    RemoteDockItem.MODIFIERS -> content.surface.chrome.modifierBarVisible
     RemoteDockItem.POINTER_MODE -> content.surface.pointer.mode == RemotePointerMode.TRACKPAD
+    RemoteDockItem.JOYSTICK -> content.surface.dragMode == RemoteDragMode.VIEWPORT
     RemoteDockItem.DRIVE -> content.drive is RdpDriveResolution.Mapped
-    RemoteDockItem.CERTIFICATE -> content.certificatePrompt != null
-    RemoteDockItem.CLIPBOARD,
-    RemoteDockItem.DISPLAY,
-    RemoteDockItem.SOUND,
-    RemoteDockItem.CHANNELS,
-    RemoteDockItem.QUALITY,
-    RemoteDockItem.RECONNECT,
-    RemoteDockItem.DISCONNECT,
-    -> false
+    else -> false
 }
 
 /**
@@ -1490,20 +1596,27 @@ private fun dispatchDock(
     when (item) {
         RemoteDockItem.KEYBOARD ->
             onIntent(RemoteIntent.SetKeyboardVisible(!content.surface.chrome.keyboardVisible))
-
-        RemoteDockItem.MODIFIERS ->
-            onIntent(RemoteIntent.SetModifierBarVisible(!content.surface.chrome.modifierBarVisible))
-
-        RemoteDockItem.RECONNECT -> onIntent(RemoteIntent.Reconnect)
-        RemoteDockItem.POINTER_MODE -> onOpenPanel(RemotePanel.POINTER)
+        RemoteDockItem.POINTER_MODE -> {
+            val next = if (content.surface.pointer.mode == RemotePointerMode.DIRECT) {
+                RemotePointerMode.TRACKPAD
+            } else {
+                RemotePointerMode.DIRECT
+            }
+            onIntent(RemoteIntent.PointerMode(next))
+        }
+        RemoteDockItem.QUALITY -> onIntent(RemoteIntent.CycleQuality)
+        RemoteDockItem.RESOLUTION -> onIntent(RemoteIntent.CycleResolution)
+        RemoteDockItem.FPS -> onIntent(RemoteIntent.CycleFps)
+        RemoteDockItem.FIT -> onIntent(RemoteIntent.FitViewport)
+        RemoteDockItem.ZOOM -> onIntent(RemoteIntent.CycleZoom)
         RemoteDockItem.CLIPBOARD -> onOpenPanel(RemotePanel.CLIPBOARD)
-        RemoteDockItem.DISPLAY -> onOpenPanel(RemotePanel.DISPLAY)
-        RemoteDockItem.SOUND -> onOpenPanel(RemotePanel.SOUND)
-        RemoteDockItem.CHANNELS -> onOpenPanel(RemotePanel.CHANNELS)
         RemoteDockItem.DRIVE -> onOpenPanel(RemotePanel.DRIVE)
-        RemoteDockItem.CERTIFICATE -> onOpenPanel(RemotePanel.CERTIFICATE)
-        RemoteDockItem.QUALITY -> onOpenPanel(RemotePanel.QUALITY)
+        RemoteDockItem.SHORTCUTS -> onOpenPanel(RemotePanel.SHORTCUTS)
+        RemoteDockItem.JOYSTICK -> onIntent(RemoteIntent.ToggleJoystick)
+        RemoteDockItem.CAD -> onIntent(RemoteIntent.SendShortcut(RdpShortcut.CAD))
+        RemoteDockItem.RECONNECT -> onIntent(RemoteIntent.Reconnect)
         RemoteDockItem.DISCONNECT -> onOpenPanel(RemotePanel.DISCONNECT)
+        RemoteDockItem.VNC_QUALITY -> onOpenPanel(RemotePanel.QUALITY)
     }
 }
 

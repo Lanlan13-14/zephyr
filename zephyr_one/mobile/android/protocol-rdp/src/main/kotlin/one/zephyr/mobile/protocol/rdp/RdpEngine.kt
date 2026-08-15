@@ -3,6 +3,8 @@ package one.zephyr.mobile.protocol.rdp
 import kotlinx.coroutines.flow.Flow
 import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.RdpChannel
+import one.zephyr.mobile.model.RdpFps
+import one.zephyr.mobile.model.RdpQuality
 
 /**
  * The RDP engine boundary.
@@ -78,6 +80,8 @@ data class RdpConnectRequest(
     /** Already filtered by [RdpChannelPolicy]; the engine does not re-decide permissions. */
     val channels: Set<RdpChannel>,
     val drive: RdpDriveMapping?,
+    val quality: RdpQuality = RdpQuality.default,
+    val fps: RdpFps = RdpFps.default,
 ) {
     /**
      * Excluded from equals/hashCode/toString by hand-writing them: a data class would put the
