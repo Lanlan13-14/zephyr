@@ -511,6 +511,12 @@ class TerminalViewModel(
 
     fun minimise() = registry.setMinimised(sessionId, true)
 
+    fun selectedText(): String = termux?.selectedText().orEmpty()
+
+    fun clearSelection() {
+        termux?.clearSelection()
+    }
+
     fun setEncoding(encoding: TerminalEncoding) {
         controller.setCharset(TerminalCharset.of(encoding))
         connectionState.value = connectionState.value?.copy(encoding = encoding)

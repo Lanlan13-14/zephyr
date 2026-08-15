@@ -31,6 +31,7 @@ import one.zephyr.mobile.ui.component.TextButton
 import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -412,6 +413,20 @@ private fun BoundRoot(
     val messages = remember { MutableSharedFlow<String>(extraBufferCapacity = 8) }
     var toastMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val managedSsh = remember(account, sshEngine) {
+        ManagedSshSessionPool(
+            engine = sshEngine,
+            connectionProvider = account.connections::find,
+            credentialsProvider = account::terminalCredentials,
+        )
+    }
+    val managedHostKeyPrompt by managedSsh.prompt.collectAsState()
+    val managedSftp = remember(managedSsh, sshEngine, account.sessions) {
+        SshjSftpPort(managedSsh, sshEngine, account.sessions)
+    }
+    DisposableEffect(managedSsh) {
+        onDispose { scope.launch { managedSsh.closeAll() } }
+    }
     val motion = ZephyrTheme.motion
     val islandHiddenOffsetPx = with(LocalDensity.current) { 120.dp.roundToPx() }
     var lastRoot by rememberSaveable { mutableStateOf(IslandDestination.HOME) }
@@ -597,8 +612,9 @@ private fun BoundRoot(
             RootRoute.Files -> FilesDestination(
                 account = account,
                 ownerUserId = ownerUserId,
+                port = managedSftp,
                 onBack = { route = RootRoute.Root(IslandDestination.LIBRARY) },
-                onOpenConnection = { notice(UnavailableSftpMessage) },
+                onMessage = { notice(it) },
             )
             RootRoute.Downloads -> DownloadsDestination(onBack = { route = RootRoute.Root(IslandDestination.LIBRARY) })
             RootRoute.LibraryCreate -> {
@@ -793,6 +809,7 @@ private fun BoundRoot(
                     onCreateConnection = { route = RootRoute.ProtocolPicker },
                     onOpenNote = { id -> route = RootRoute.NoteEditor(id) },
                     onOpenDocker = { route = RootRoute.Ops(OpsSection.DOCKER) },
+                    sftpPort = managedSftp,
                 )
             }
 
@@ -814,6 +831,7 @@ private fun BoundRoot(
                 RootRoute.BatchExecution -> BatchExecutionDestination(
                     account = account,
                     sshEngine = appContainer.sshEngine,
+                    managedSsh = managedSsh,
                     ownerUserId = ownerUserId,
                     onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
                     onMessage = { messages.emit(it) },
@@ -860,6 +878,24 @@ private fun BoundRoot(
             onOpenSettings = { route = RootRoute.AiSettings },
             onNotice = notice,
         )
+
+        managedHostKeyPrompt?.let { prompt ->
+            one.zephyr.mobile.ui.component.AlertDialog(
+                onDismissRequest = { managedSsh.rejectHostKey() },
+                title = { Text(if (prompt.changed) "SSH 主机指纹已变化" else "确认 SSH 主机") },
+                text = {
+                    Text("${prompt.host}:${prompt.port}\n${prompt.algorithm} · ${prompt.fingerprint}\n\n确认后会自动继续当前操作。")
+                },
+                confirmButton = {
+                    TextButton(onClick = { managedSsh.acceptHostKey() }) {
+                        Text(if (prompt.changed) "接受新指纹" else "连接")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { managedSsh.rejectHostKey() }) { Text("取消") }
+                },
+            )
+        }
 
         one.zephyr.mobile.ui.component.ZephyrToast(
             message = toastMessage,
@@ -1195,6 +1231,7 @@ private fun ToolsDestination(
 private fun BatchExecutionDestination(
     account: AccountContainer,
     sshEngine: one.zephyr.mobile.protocol.ssh.SshEngine,
+    managedSsh: ManagedSshSessionPool,
     ownerUserId: String,
     onBack: () -> Unit,
     onMessage: suspend (String) -> Unit,
@@ -1203,7 +1240,7 @@ private fun BatchExecutionDestination(
         key = "tools:batch",
         factory = BatchExecutionViewModel.factory(
             connections = account.connections,
-            exec = LiveSshExecPort(sshEngine, account.sessions),
+            exec = LiveSshExecPort(sshEngine, account.sessions, managedSsh),
             audit = NoopBatchAuditSink,
             ownerUserId = ownerUserId,
             network = account.network,
@@ -1710,7 +1747,6 @@ private const val TAG_AI = "ai"
 private const val TAG_OPS = "ops"
 private const val TAG_RESOURCE_LIST = "resource-list"
 private const val TAG_RESOURCE_EDITOR = "resource-editor"
-private const val UnavailableSftpMessage = "此版本尚未内置 SFTP 引擎，无法访问远程文件"
 
 private const val FIELD_PASSWORD = "password"
 private const val FIELD_PRIVATE_KEY = "privateKey"

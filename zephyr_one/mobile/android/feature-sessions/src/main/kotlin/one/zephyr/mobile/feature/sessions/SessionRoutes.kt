@@ -97,6 +97,7 @@ fun TerminalRoute(
     onCreateConnection: () -> Unit = {},
     onOpenNote: (String) -> Unit = {},
     onOpenDocker: () -> Unit = {},
+    sftpPort: one.zephyr.mobile.feature.notes.SftpPort? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val remoteTitle by viewModel.title.collectAsStateWithLifecycle()
@@ -177,14 +178,16 @@ fun TerminalRoute(
         onCreateConnection = onCreateConnection,
         onOpenNote = onOpenNote,
         onOpenDocker = onOpenDocker,
+        sftpPort = sftpPort,
         onMessage = { msg -> coroutineScope.launch { onMessage(msg) } },
         onCopy = {
-            val selected = viewModel.readScrollback(0, 24)
-            if (selected.isNotBlank()) {
+            val selected = viewModel.selectedText()
+            if (selected.isNotEmpty()) {
                 clipboard.setText(androidx.compose.ui.text.AnnotatedString(selected))
-                coroutineScope.launch { onMessage("已复制 · " + (state as? PageState.Content)?.value?.connection?.name.orEmpty()) }
+                viewModel.clearSelection()
+                coroutineScope.launch { onMessage("已复制所选文本") }
             } else {
-                coroutineScope.launch { onMessage("已复制 · " + (state as? PageState.Content)?.value?.connection?.name.orEmpty()) }
+                coroutineScope.launch { onMessage("请先选择要复制的文本") }
             }
         },
         onPaste = {

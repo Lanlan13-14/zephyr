@@ -50,6 +50,8 @@ internal fun TerminalToolSheet(
     colors: TerminalChromeColors,
     hostName: String,
     viewModel: TerminalViewModel?,
+    connectionId: String,
+    sftpPort: one.zephyr.mobile.feature.notes.SftpPort?,
     notes: List<Note>,
     snippets: List<Snippet>,
     onWorkspace: (TerminalWorkspaceState) -> Unit,
@@ -173,14 +175,22 @@ internal fun TerminalToolSheet(
                 }
             }
 
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(start = 8.dp, end = 8.dp, bottom = 14.dp),
-            ) {
-                TerminalToolBody(
+            if (current == TerminalToolKind.FILES && sftpPort != null) {
+                one.zephyr.mobile.feature.notes.SftpBrowserPane(
+                    connectionId = connectionId,
+                    port = sftpPort,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    onMessage = onMessage,
+                )
+            } else {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 8.dp, end = 8.dp, bottom = 14.dp),
+                ) {
+                    TerminalToolBody(
                     kind = current,
                     colors = colors,
                     notes = notes,
@@ -191,8 +201,9 @@ internal fun TerminalToolSheet(
                     onOpenNote = onOpenNote,
                     onOpenDocker = onOpenDocker,
                     onMessage = onMessage,
-                    viewModel = viewModel,
-                )
+                        viewModel = viewModel,
+                    )
+                }
             }
         }
     }

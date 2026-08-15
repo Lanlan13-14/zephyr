@@ -193,6 +193,8 @@ sealed interface EditorIntent {
     data class Visibility(val value: String) : EditorIntent
     data class RepairRoute(val field: String) : EditorIntent
     data object Test : EditorIntent
+    data class EditRevealedPassword(val value: String) : EditorIntent
+
     data object RevealPassword : EditorIntent
 
     data object HidePassword : EditorIntent
@@ -322,6 +324,7 @@ private fun AuthSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) ->
         revealedValue = ui.revealedPassword,
         onReveal = { onIntent(EditorIntent.RevealPassword) },
         onHide = { onIntent(EditorIntent.HidePassword) },
+        onEditRevealed = { onIntent(EditorIntent.EditRevealedPassword(it)) },
         onChange = { onIntent(EditorIntent.Password(it)) },
     )
 
@@ -686,83 +689,131 @@ private fun SecretEditor(
     revealedValue: String? = null,
     onReveal: () -> Unit = {},
     onHide: () -> Unit = {},
+    onEditRevealed: (String) -> Unit = {},
     onChange: (SecretState) -> Unit,
     multiline: Boolean = false,
 ) {
-    Column(Modifier.fillMaxWidth()) {
-        if (stored.hasValue) {
+    val replacement = state as? SecretState.Replace
+    val showInput = !stored.hasValue || replacement != null || revealedValue != null
+    if (showInput) {
+        InlineSecretInput(
+            label = if (stored.hasValue) stringResource(R.string.editor_secret_new_value) else label,
+            value = replacement?.editingText() ?: revealedValue.orEmpty(),
+            existingHidden = stored.hasValue && revealedValue == null && replacement == null,
+            multiline = multiline,
+            revealed = revealedValue != null,
+            onValueChange = { value ->
+                if (revealedValue != null) onEditRevealed(value) else onChange(SecretState.Replace(value))
+            },
+        )
+        if (replacement != null && stored.hasValue && revealedValue == null) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.End,
             ) {
-                Text(label, style = ZephyrTheme.typography.caption, color = ZephyrTheme.palette.onFloatingMuted, modifier = Modifier.width(72.dp))
-                Text(
-                    text = revealedValue ?: ConnectionDraft.presenceFor(state, stored).let {
-                        if (it.hasValue) SecretPresence.MASK else stringResource(R.string.editor_secret_clear)
-                    },
-                    style = ZephyrTheme.typography.mono,
-                    modifier = Modifier.weight(1f),
-                )
-                Row(
-                    modifier = Modifier.width(if (revealAllowed) 228.dp else 168.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (revealAllowed && state is SecretState.Unchanged) {
-                        OutlinedButton(
-                            onClick = if (revealedValue == null) onReveal else onHide,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(
-                                stringResource(if (revealedValue == null) R.string.editor_secret_reveal else R.string.editor_secret_hide),
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                    if (state !is SecretState.Replace) {
-                        OutlinedButton(
-                            onClick = { onChange(SecretState.Replace("")) },
-                            modifier = Modifier.weight(1f),
-                        ) { Text(stringResource(R.string.editor_secret_replace), maxLines = 1) }
-                    }
-                    if (state !is SecretState.Clear) {
-                        OutlinedButton(
-                            onClick = { onChange(SecretState.Clear) },
-                            modifier = Modifier.weight(1f),
-                        ) { Text(stringResource(R.string.editor_secret_clear), maxLines = 1) }
-                    }
-                    if (state !is SecretState.Unchanged) {
-                        OutlinedButton(
-                            onClick = { onChange(SecretState.Unchanged) },
-                            modifier = Modifier.weight(1f),
-                        ) { Text(stringResource(R.string.editor_secret_keep), maxLines = 1) }
-                    }
+                TextButton(onClick = { onChange(SecretState.Unchanged) }) {
+                    Text(stringResource(R.string.editor_secret_keep))
                 }
             }
         }
+        return
+    }
 
-        if (state is SecretState.Replace) {
-            FieldRow(
-                label = if (stored.hasValue) {
-                    stringResource(R.string.editor_secret_new_value)
-                } else {
-                    label
-                },
-                value = state.editingText(),
-                onValueChange = { onChange(SecretState.Replace(it)) },
-                singleLine = !multiline,
-                placeholder = if (stored.hasValue) "" else "可选",
-                visualTransformation = if (multiline) {
-                    androidx.compose.ui.text.input.VisualTransformation.None
-                } else {
-                    PasswordVisualTransformation()
-                },
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = if (multiline) KeyboardType.Text else KeyboardType.Password,
-                ),
-                showDivider = false,
-            )
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            label,
+            style = ZephyrTheme.typography.caption,
+            color = ZephyrTheme.palette.onFloatingMuted,
+            modifier = Modifier.width(72.dp),
+        )
+        Text(
+            text = ConnectionDraft.presenceFor(state, stored).let {
+                if (it.hasValue) SecretPresence.MASK else stringResource(R.string.editor_secret_clear)
+            },
+            style = ZephyrTheme.typography.mono,
+            color = ZephyrTheme.palette.onFloatingMuted,
+            modifier = Modifier.weight(1f),
+        )
+        Row(
+            modifier = Modifier.width(if (revealAllowed) 196.dp else 128.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (revealAllowed && state is SecretState.Unchanged) {
+                IconButton(onClick = if (revealedValue == null) onReveal else onHide) {
+                    Icon(
+                        imageVector = if (revealedValue == null) ZephyrIcons.Eye else ZephyrIcons.EyeOff,
+                        contentDescription = stringResource(
+                            if (revealedValue == null) R.string.editor_secret_reveal else R.string.editor_secret_hide,
+                        ),
+                        tint = ZephyrTheme.palette.onFloatingMuted,
+                    )
+                }
+            }
+            OutlinedButton(
+                onClick = { onChange(SecretState.Replace("")) },
+                modifier = Modifier.weight(1f),
+            ) { Text(stringResource(R.string.editor_secret_replace), maxLines = 1) }
+            if (state !is SecretState.Clear) {
+                OutlinedButton(
+                    onClick = { onChange(SecretState.Clear) },
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.editor_secret_clear), maxLines = 1) }
+            }
         }
+    }
+}
+
+@Composable
+private fun InlineSecretInput(
+    label: String,
+    value: String,
+    existingHidden: Boolean,
+    multiline: Boolean,
+    revealed: Boolean,
+    onValueChange: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            label,
+            style = ZephyrTheme.typography.caption,
+            color = ZephyrTheme.palette.onFloatingMuted,
+            modifier = Modifier.width(72.dp),
+        )
+        androidx.compose.foundation.text.BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = !multiline,
+            textStyle = ZephyrTheme.typography.mono.copy(color = ZephyrTheme.palette.onBackground),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(ZephyrTheme.palette.brand.accent),
+            visualTransformation = if (multiline || revealed) {
+                androidx.compose.ui.text.input.VisualTransformation.None
+            } else {
+                PasswordVisualTransformation()
+            },
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = if (multiline || revealed) KeyboardType.Text else KeyboardType.Password,
+            ),
+            modifier = Modifier.weight(1f).heightIn(min = 32.dp),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isEmpty()) {
+                        Text(
+                            if (existingHidden) SecretPresence.MASK else "可选",
+                            color = ZephyrTheme.palette.onFloatingSubtle,
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
     }
 }
 

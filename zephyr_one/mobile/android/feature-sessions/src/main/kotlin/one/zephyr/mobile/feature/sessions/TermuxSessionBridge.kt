@@ -96,6 +96,12 @@ class TermuxSessionBridge(
         onScreenChanged()
     }
 
+    fun selectedText(): String = attachedView?.get()?.selectedText.orEmpty()
+
+    fun clearSelection() {
+        attachedView?.get()?.stopTextSelectionMode()
+    }
+
     fun setSelectionColors(backgroundArgb: Int?, foregroundArgb: Int?) {
         attachedView?.get()?.setSelectionColors(backgroundArgb, foregroundArgb)
     }
@@ -330,7 +336,7 @@ class ZephyrTerminalViewClient(
 
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
 
-    override fun shouldEnforceCharBasedInput(): Boolean = true
+    override fun shouldEnforceCharBasedInput(): Boolean = false
 
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
 

@@ -187,7 +187,7 @@ interface TerminalHost {
     /** Real round-trip probe on the established transport. */
     suspend fun measureLatency(sessionId: String): Long? = null
 
-    suspend fun listDirectory(sessionId: String, path: String): Result<List<one.zephyr.mobile.protocol.ssh.SftpEntry>> =
+    suspend fun listDirectory(sessionId: String, path: String): Result<one.zephyr.mobile.protocol.ssh.SftpDirectory> =
         Result.failure(IllegalStateException("SFTP unavailable"))
 
     suspend fun exec(sessionId: String, command: String): Result<one.zephyr.mobile.protocol.ssh.SshExecResult> =

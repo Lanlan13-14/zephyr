@@ -22,7 +22,6 @@ import one.zephyr.mobile.feature.notes.NoteEditorRoute
 import one.zephyr.mobile.feature.notes.NoteEditorViewModel
 import one.zephyr.mobile.feature.notes.NoteListRoute
 import one.zephyr.mobile.feature.notes.NoteListViewModel
-import one.zephyr.mobile.feature.notes.SftpPlaceholderRoute
 import one.zephyr.mobile.feature.notes.SnippetEditorRoute
 import one.zephyr.mobile.feature.notes.SnippetEditorViewModel
 import one.zephyr.mobile.feature.notes.SnippetListRoute
@@ -168,14 +167,16 @@ internal fun SnippetEditorDestination(
 internal fun FilesDestination(
     account: AccountContainer,
     ownerUserId: String,
+    port: one.zephyr.mobile.feature.notes.SftpPort,
     onBack: () -> Unit,
-    onOpenConnection: (Connection) -> Unit,
+    onMessage: (String) -> Unit,
 ) {
     val connections by account.connections.observeAll(ownerUserId).collectAsState(initial = emptyList())
-    SftpPlaceholderRoute(
+    one.zephyr.mobile.feature.notes.SftpBrowserRoute(
         connections = connections,
+        port = port,
         onBack = onBack,
-        onOpenConnection = onOpenConnection,
+        onMessage = onMessage,
     )
 }
 

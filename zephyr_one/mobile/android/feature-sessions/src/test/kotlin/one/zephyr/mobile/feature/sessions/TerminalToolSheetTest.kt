@@ -37,7 +37,7 @@ class TerminalToolSheetTest {
     fun projectedPositionSnapsToNearestDetent() {
         assertEquals(
             TerminalWorkspace.SHEET_MAX_FRACTION,
-            TerminalWorkspace.settleSheet(0.64f, -0.20f),
+            TerminalWorkspace.settleSheet(0.88f, -0.20f),
             0.001f,
         )
         assertEquals(
