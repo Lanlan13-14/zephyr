@@ -40,6 +40,11 @@ class AiWorkspaceBindingTest {
         )
         val chrome = AiWorkspaceBinding.chrome(prefs)
         assertFalse(chrome.enabled)
+        assertFalse(AiWorkspaceBinding.chrome(emptyMap(), catalogEnabled = false).enabled)
+        assertEquals(
+            "已停用 · 导航与工作区不再显示 AI",
+            AiWorkspaceBinding.settingsSummary(emptyMap(), catalogEnabled = false),
+        )
         assertEquals("Claude Sonnet", chrome.model)
         assertEquals("只读", chrome.collaboration)
         assertEquals("全部询问", chrome.permission)

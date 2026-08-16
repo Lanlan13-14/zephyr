@@ -194,6 +194,12 @@ private fun DemoTerminalSurface(
     val splitRightMsg = stringResource(R.string.terminal_split_right)
     val needSecondMsg = stringResource(R.string.terminal_need_second_session)
     val insertToastMsg = stringResource(R.string.terminal_insert_toast)
+    val openConnectionIds = liveSessions.mapTo(mutableSetOf()) { it.connectionId }.apply {
+        add(content.connection.id)
+    }
+    val addableConnections = connections.filter { connection ->
+        connection.protocol.isTerminal && connection.id !in openConnectionIds
+    }
 
     LaunchedEffect(containerW, containerH, focusedSurface.fontSp) {
         if (containerW <= 0 || containerH <= 0) return@LaunchedEffect
@@ -213,7 +219,8 @@ private fun DemoTerminalSurface(
         )
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(colors.termBg)) {
+    Box(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(colors.termBg)) {
         val pad = maxWidth >= TerminalWorkspace.PAD_RAIL_MIN_DP.dp
         DemoTermBackground(ws, colors)
         Row(Modifier.fillMaxSize()) {
@@ -380,7 +387,7 @@ private fun DemoTerminalSurface(
         groups = listOf(
             ActionSheetGroup(
                 title = stringResource(R.string.terminal_new_session_title),
-                items = connections.filter { it.protocol.isTerminal }.map { connection ->
+                items = addableConnections.map { connection ->
                     ActionSheetItem(
                         label = connection.name,
                         subtitle = connection.displayAddress,
@@ -430,6 +437,7 @@ private fun DemoTerminalSurface(
             ),
         ),
     )
+    }
     @Suppress("UNUSED_VARIABLE", "UNUSED_PARAMETER")
     val keep = Triple(surfaceRevision, readFrame, remoteTitle)
 }
