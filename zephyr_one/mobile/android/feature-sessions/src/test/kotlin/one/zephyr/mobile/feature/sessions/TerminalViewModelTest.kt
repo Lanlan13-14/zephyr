@@ -132,6 +132,8 @@ class TerminalViewModelTest {
             private set
         var trusted = 0
             private set
+        var latencyMeasurements = 0
+            private set
 
         override suspend fun open(request: TerminalOpenRequest): TerminalOpenOutcome {
             opens++
@@ -155,6 +157,11 @@ class TerminalViewModelTest {
         override suspend fun trustHostKey(sessionId: String) {
             trusted++
         }
+
+        override suspend fun measureLatency(sessionId: String): Long? {
+            latencyMeasurements++
+            return 12L
+        }
     }
 
     // ---- harness ---------------------------------------------------------------------------------
@@ -165,6 +172,7 @@ class TerminalViewModelTest {
         host: TerminalHost = FakeHost(),
         emulator: TerminalEmulator = FakeEmulator(),
         credentials: TerminalCredentials = TerminalCredentials(),
+        latencyRefreshMs: Long = 0L,
     ): TerminalViewModel = TerminalViewModel(
         sessionId = SESSION,
         connectionId = "c1",
@@ -175,6 +183,9 @@ class TerminalViewModelTest {
         secretProvider = { credentials },
         clock = { NOW },
         emulatorDispatcher = mainDispatcher,
+        // A connected ViewModel deliberately owns a repeating production probe. A non-positive
+        // test interval keeps the immediate measurement but disables recurrence.
+        latencyRefreshMs = latencyRefreshMs,
     )
 
     /** stateIn(WhileSubscribed) produces nothing without a collector. */
@@ -672,6 +683,25 @@ class TerminalViewModelTest {
         assertEquals(SessionTransport.CLOSED, registry.find(SESSION)?.transport)
         assertEquals(NOW, registry.find(SESSION)?.endedAt ?: 0L)
         assertEquals(listOf(SESSION), host.closedSessions)
+    }
+
+    @Test
+    fun latencyProbeRepeatsAtItsIntervalAndStopsWhenDisconnected() = runTest(mainDispatcher) {
+        val host = FakeHost()
+        val subject = subject(host = host, latencyRefreshMs = 5_000L)
+        subscribe(subject)
+        subject.connect()
+        runCurrent()
+
+        assertEquals(1, host.latencyMeasurements)
+        advanceTimeBy(5_000L)
+        runCurrent()
+        assertEquals(2, host.latencyMeasurements)
+
+        subject.disconnect()
+        advanceTimeBy(15_000L)
+        runCurrent()
+        assertEquals(2, host.latencyMeasurements)
     }
 
     @Test

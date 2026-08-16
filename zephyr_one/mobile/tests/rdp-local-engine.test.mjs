@@ -105,16 +105,21 @@ test('Android FreeRDP uses built-in NTLM crypto instead of an unavailable OpenSS
   assert.match(workflow, /ntlm-internal-crypto-v1/);
 });
 
-test('Android CI compiles once and reuses that variant for unit tests', () => {
+test('Android CI reuses release classes and bounds every unit-test module', () => {
   const workflow = read(path.join(ROOT, '../../.github/workflows/zephyr-one-mobile.yml'));
-  // `--no-daemon testDebugUnitTest` after assemblePrerelease recompiled the
-  // tree as debug and sat for 20+ minutes. Keep the daemon, reuse release
-  // classes, and never invoke the debug test task.
+  const rootBuild = read(path.join(ROOT, 'android/build.gradle.kts'));
+  // `--no-daemon testDebugUnitTest` after assemblePrerelease recompiled the tree as debug.
+  // Parallel test tasks also let a leaked module hide an earlier assertion until job timeout.
   assert.doesNotMatch(workflow, /gradle --no-daemon/);
   assert.match(workflow, /:app:assemblePrerelease/);
   assert.match(workflow, /testReleaseUnitTest/);
   assert.match(workflow, /-x :app:testReleaseUnitTest/);
   assert.match(workflow, /:app:testPrereleaseUnitTest/);
   assert.doesNotMatch(workflow, /gradle[^\n]*testDebugUnitTest/);
-  assert.match(workflow, /--console=plain/);
+  assert.match(workflow, /--no-parallel --max-workers=2/);
+  assert.match(workflow, /-Pzephyr\.unitTestTimeoutSeconds=90/);
+  assert.match(workflow, /timeout-minutes: 6/);
+  assert.match(rootBuild, /tasks\.withType<Test>\(\)\.configureEach/);
+  assert.match(rootBuild, /failFast = true/);
+  assert.match(rootBuild, /timeout\.set\(Duration\.ofSeconds\(seconds\)\)/);
 });

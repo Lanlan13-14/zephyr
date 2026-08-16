@@ -184,8 +184,13 @@ jobs:
             exit "$status"
           fi
 
+      # Run test tasks serially inside one warm Gradle invocation. With project parallelism enabled,
+      # core-ui could fail while feature-sessions had already entered a leaked coroutine; Gradle then
+      # waited for the leak and hid the useful assertion behind the job timeout. --no-parallel makes
+      # the first failed module stop the graph. The root build gives every Test task its own 90-second
+      # deadline and failFast=true, so a future leak is named and cancelled by Gradle itself.
       - name: Unit tests
-        timeout-minutes: 15
+        timeout-minutes: 6
         env:
           ZEPHYR_ANDROID_FREERDP_ROOT: ${{ github.workspace }}/zephyr_one/native/freerdp-core/.freerdp-android
         shell: bash
@@ -193,7 +198,8 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          stdbuf -oL -eL gradle --stacktrace --console=plain \
+          stdbuf -oL -eL gradle --stacktrace --console=plain --no-parallel --max-workers=2 \
+            -Pzephyr.unitTestTimeoutSeconds=90 \
             testReleaseUnitTest \
             -x :app:testReleaseUnitTest \
             :app:testPrereleaseUnitTest \
