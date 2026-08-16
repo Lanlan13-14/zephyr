@@ -155,35 +155,45 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      # One Gradle invocation, one daemon, one variant.
-      #
-      # The previous split (`--no-daemon :app:assemblePrerelease` then
-      # `--no-daemon testDebugUnitTest`) compiled the tree twice: first as the
-      # prerelease/release variant, then cold-started Gradle and compiled every
-      # module again as debug. That is why "Unit tests" sat for 20+ minutes after
-      # assemble had already succeeded — kotlinc was recompiling, not the JUnit
-      # cases themselves.
+      # Keep the Gradle daemon between these two steps (setup-gradle starts it).
+      # Do not merge assemble + tests into one invocation: the combined command
+      # sat on `:app:assemblePrerelease` with no further task lines because tee
+      # buffered the whole stream. Split the steps so GitHub shows progress, and
+      # force line-buffered stdout so kotlinc / test output appears live.
       #
       # assemblePrerelease already compiled every library as release. Reuse those
       # classes for library unit tests (`testReleaseUnitTest`) and run the app
-      # tests against the prerelease variant that assemble just produced. Skip
-      # :app:testReleaseUnitTest so we do not compile a third :app variant.
-      #
-      # Output is captured and re-emitted as ::error:: annotations on failure.
-      # Without that, a failure here is publicly visible only as "Process completed
-      # with exit code 1": job logs require an authenticated token, so the actual
-      # kotlinc diagnostic is unreadable to anyone without repo credentials, which
-      # is a slow way to find out that a name does not resolve.
-      - name: Compile the application module and run unit tests
-        timeout-minutes: 25
+      # tests against the prerelease variant. Skip :app:testReleaseUnitTest so we
+      # do not compile a third :app variant. Never run testDebugUnitTest — that
+      # recompiles the tree as debug and is what made "Unit tests" look hung.
+      - name: Compile the application module
+        timeout-minutes: 15
         env:
           ZEPHYR_ANDROID_FREERDP_ROOT: ${{ github.workspace }}/zephyr_one/native/freerdp-core/.freerdp-android
+          PYTHONUNBUFFERED: '1'
         shell: bash
+        working-directory: zephyr_one/mobile/android
         run: |
           set -o pipefail
           status=0
-          gradle --stacktrace --continue \
-            :app:assemblePrerelease \
+          stdbuf -oL -eL gradle --stacktrace --console=plain :app:assemblePrerelease \
+            2>&1 | stdbuf -oL -eL tee /tmp/gradle-assemble.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
+              /tmp/gradle-assemble.log 'gradle :app:assemblePrerelease'
+            exit "$status"
+          fi
+
+      - name: Unit tests
+        timeout-minutes: 12
+        env:
+          ZEPHYR_ANDROID_FREERDP_ROOT: ${{ github.workspace }}/zephyr_one/native/freerdp-core/.freerdp-android
+        shell: bash
+        working-directory: zephyr_one/mobile/android
+        run: |
+          set -o pipefail
+          status=0
+          stdbuf -oL -eL gradle --stacktrace --console=plain --continue \
             testReleaseUnitTest \
             -x :app:testReleaseUnitTest \
             :app:testPrereleaseUnitTest \
@@ -191,15 +201,12 @@ jobs:
             :core-model:test \
             :protocol-telnet:test \
             :protocol-zft2:test \
-            2>&1 | tee /tmp/gradle-assemble.log || status=$?
+            2>&1 | stdbuf -oL -eL tee /tmp/gradle-test.log || status=$?
           if [ "$status" -ne 0 ]; then
             bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
-              /tmp/gradle-assemble.log 'gradle :app:assemblePrerelease + unit tests'
+              /tmp/gradle-test.log 'gradle unit tests'
             exit "$status"
           fi
-          cp /tmp/gradle-assemble.log /tmp/gradle-test.log || true
-          # Keep the historical artifact name so annotate scripts and humans
-          # looking for /tmp/gradle-test.log still find the combined log.
 
       - name: Validate installable APK
         shell: bash
