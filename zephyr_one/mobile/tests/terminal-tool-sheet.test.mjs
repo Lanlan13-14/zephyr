@@ -42,6 +42,20 @@ test('IME button closes tool drawer before showing keyboard', () => {
   assert.match(screen, /TerminalWorkspace\.closeSheet\(ws\)[\s\S]*onIntent\(intent\)/);
 });
 
+test('tool drawer is a square chrome fill, not a rounded card', () => {
+  // The sheet sits flush under the dock. Top rounded clip + rounded border left the
+  // terminal canvas showing through the two top corners. Fill only; keep the drag
+  // handle's own 3.dp radius.
+  assert.match(sheet, /\.background\(colors\.chrome\)/);
+  assert.doesNotMatch(sheet, /RoundedCornerShape\(topStart/);
+  assert.doesNotMatch(sheet, /clip\(RoundedCornerShape\(topStart/);
+  assert.doesNotMatch(
+    sheet.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' '),
+    /\.border\s*\(/,
+  );
+  assert.match(sheet, /clip\(RoundedCornerShape\(3\.dp\)\)/);
+});
+
 test('FILES drawer with its text editor survives an open IME', () => {
   // The file browser embeds a text editor that needs the system keyboard. When the IME opens
   // inside it the drawer must stay composed (shrunk above the keyboard via imePadding), instead of

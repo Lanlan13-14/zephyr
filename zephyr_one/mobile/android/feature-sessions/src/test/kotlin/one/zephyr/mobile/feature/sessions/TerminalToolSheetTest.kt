@@ -1,11 +1,27 @@
 package one.zephyr.mobile.feature.sessions
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class TerminalToolSheetTest {
     private fun state() = TerminalWorkspaceState(paneA = "s1")
+
+    private fun codeOnly(source: String): String =
+        source
+            .replace(Regex("/\\*[\\s\\S]*?\\*/"), " ")
+            .replace(Regex("//[^\\n]*"), " ")
+
+    private val sheetSource: String by lazy {
+        val relative = "src/main/kotlin/one/zephyr/mobile/feature/sessions/TerminalToolSheet.kt"
+        val start = File(".").canonicalFile
+        val file = generateSequence(start) { it.parentFile }
+            .flatMap { root -> sequenceOf(File(root, relative), File(root, "feature-sessions/$relative")) }
+            .first { it.exists() }
+        file.readText()
+    }
 
     @Test
     fun phoneToolUsesInFlowSheetNeverFloatingState() {
@@ -67,6 +83,15 @@ class TerminalToolSheetTest {
         assertTrue(!TerminalToolKind.THEME.keepsIme)
         val opened = TerminalWorkspace.openTool(state(), TerminalToolKind.DOCKER, phone = true)
         assertEquals(TerminalToolKind.DOCKER, opened.sheetCurrent)
+    }
+
+    @Test
+    fun phoneSheetIsASquareChromeFillNotARoundedCard() {
+        val source = codeOnly(sheetSource)
+        assertTrue(source.contains(".background(colors.chrome)"))
+        assertFalse(source.contains("RoundedCornerShape(topStart"))
+        assertFalse(source.contains(".border("))
+        assertTrue(source.contains("clip(RoundedCornerShape(3.dp))"))
     }
 
     @Test
