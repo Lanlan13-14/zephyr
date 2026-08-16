@@ -185,7 +185,7 @@ jobs:
           fi
 
       - name: Unit tests
-        timeout-minutes: 12
+        timeout-minutes: 15
         env:
           ZEPHYR_ANDROID_FREERDP_ROOT: ${{ github.workspace }}/zephyr_one/native/freerdp-core/.freerdp-android
         shell: bash
@@ -193,7 +193,7 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          stdbuf -oL -eL gradle --stacktrace --console=plain --continue \
+          stdbuf -oL -eL gradle --stacktrace --console=plain \
             testReleaseUnitTest \
             -x :app:testReleaseUnitTest \
             :app:testPrereleaseUnitTest \

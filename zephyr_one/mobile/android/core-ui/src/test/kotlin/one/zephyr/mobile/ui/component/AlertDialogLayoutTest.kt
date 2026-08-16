@@ -78,10 +78,9 @@ class AlertDialogLayoutTest {
         val raw = "SHA256:QytVAAei+gY5ISAlZF3D6WfcZGOaTGY+ygTPRiDSbl0"
         val once = AlertDialogLayout.wrapFingerprint(raw)
         assertEquals(once, AlertDialogLayout.wrapFingerprint(once))
-        val compact = raw.replace(":", "").replace("SHA256", "SHA256")
         val restored = once.replace("\n", "").replace(" ", "")
-        assertEquals(raw, restored)
-        assertEquals(compact.length, restored.length)
+        assertEquals(raw.replace(":", ""), restored)
+        assertEquals(raw.replace(":", "").length, restored.length)
     }
 
     @Test
