@@ -47,3 +47,12 @@ test('editor and batch execution no longer use unavailable ports', () => {
 test('remote close pops terminal route', () => {
   assert.match(root, /SessionTransport\.CLOSED[\s\S]*RootRoute\.Root\(IslandDestination\.SESSIONS\)/);
 });
+
+test('terminal copy captures ClipboardManager outside the onCopy lambda', () => {
+  // PR #29 merge failed here: LocalClipboardManager.current is @Composable and
+  // cannot be read from productionTerminalEmulator's onCopy callback.
+  assert.match(root, /val clipboardManager = LocalClipboardManager\.current/);
+  assert.match(root, /clipboardManager\.setText\(AnnotatedString\(text\)\)/);
+  assert.doesNotMatch(root, /onCopy = \{ text ->[\s\S]*LocalClipboardManager\.current/);
+});
+

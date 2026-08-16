@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
-import android.graphics.Color as AndroidColor
 import android.view.ViewGroup
 import android.view.WindowManager
 import kotlinx.coroutines.delay
@@ -270,8 +269,6 @@ fun AlertDialog(
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             window.setBackgroundDrawableResource(android.R.color.transparent)
             window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            window.statusBarColor = AndroidColor.TRANSPARENT
-            window.navigationBarColor = AndroidColor.TRANSPARENT
         }
         BoxWithConstraints(
             modifier = modifier
