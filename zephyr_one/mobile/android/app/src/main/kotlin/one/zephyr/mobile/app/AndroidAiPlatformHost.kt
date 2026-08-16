@@ -24,19 +24,54 @@ internal class AndroidAiPlatformHost(
     private val workspace: LocalAiWorkspace,
 ) : Closeable {
     data class Endpoint(val url: String, val token: String)
-    private val token = randomToken()
-    private val server = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
-    private val executor = Executors.newFixedThreadPool(3) { Thread(it, "one-ai-platform").apply { isDaemon = true } }
+
+    private data class ActiveHost(
+        val token: String,
+        val server: ServerSocket,
+        val executor: java.util.concurrent.ExecutorService,
+        val endpoint: Endpoint,
+    )
+
+    private val lifecycleLock = Any()
+    @Volatile private var active: ActiveHost? = null
     @Volatile private var closed = false
-    val endpoint = Endpoint("http://127.0.0.1:${server.localPort}", token)
 
-    init { executor.execute { acceptLoop() } }
+    /**
+     * Starts the loopback bridge on demand.
+     *
+     * BoundAiWorkspace is part of the application's first composition. Binding a ServerSocket in
+     * this object's constructor therefore performed network I/O on Android's main thread and could
+     * throw NetworkOnMainThreadException before the first frame. Runtime startup owns an IO
+     * dispatcher, so keep construction inert and bind only from that path.
+     */
+    fun ensureStarted(): Endpoint = synchronized(lifecycleLock) {
+        check(!closed) { "本机 AI 平台 Host 已关闭" }
+        active?.let { return@synchronized it.endpoint }
 
-    private fun acceptLoop() {
-        while (!closed) runCatching { server.accept() }.onSuccess { socket -> executor.execute { socket.use(::handle) } }
+        val token = randomToken()
+        val server = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
+        val executor = Executors.newFixedThreadPool(3) {
+            Thread(it, "one-ai-platform").apply { isDaemon = true }
+        }
+        val started = ActiveHost(
+            token = token,
+            server = server,
+            executor = executor,
+            endpoint = Endpoint("http://127.0.0.1:${server.localPort}", token),
+        )
+        active = started
+        executor.execute { acceptLoop(started) }
+        started.endpoint
     }
 
-    private fun handle(socket: Socket) {
+    private fun acceptLoop(host: ActiveHost) {
+        while (!closed && !host.server.isClosed) {
+            runCatching { host.server.accept() }
+                .onSuccess { socket -> host.executor.execute { socket.use { handle(it, host.token) } } }
+        }
+    }
+
+    private fun handle(socket: Socket, token: String) {
         val input = BufferedInputStream(socket.getInputStream())
         val output = BufferedOutputStream(socket.getOutputStream())
         val requestLine = readLine(input)?.split(' ') ?: return
@@ -118,7 +153,15 @@ internal class AndroidAiPlatformHost(
     private fun readLine(input: BufferedInputStream): String? { val out = java.io.ByteArrayOutputStream(); while (out.size() < 16_384) { val b = input.read(); if (b < 0) return null; if (b == 10) break; if (b != 13) out.write(b) }; return out.toString("UTF-8") }
     private fun JsonObject.string(key: String) = (this[key] as? JsonPrimitive)?.content.orEmpty()
     private fun JsonObject.array(key: String) = (this[key] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content } ?: emptyList()
-    override fun close() { closed = true; server.close(); executor.shutdownNow() }
+    override fun close() {
+        val host = synchronized(lifecycleLock) {
+            if (closed) return
+            closed = true
+            active.also { active = null }
+        }
+        host?.server?.close()
+        host?.executor?.shutdownNow()
+    }
     private fun randomToken(): String { val b = ByteArray(32).also(SecureRandom()::nextBytes); return try { android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP or android.util.Base64.URL_SAFE) } finally { b.fill(0) } }
 
     companion object {
