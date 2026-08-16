@@ -47,6 +47,8 @@ function assertKeyLoginGuards({ loaderSrc, engineSrc, hostSrc, rootSrc, testerSr
   assert.match(poolSrc, /privateKey != null && privateKey\.isNotEmpty\(\)/);
   assert.match(proguardSrc, /keep class com\.hierynomus\.sshj\.\*\* \{ \*; \}/);
   assert.match(consumerSrc, /keep class com\.hierynomus\.sshj\.\*\* \{ \*; \}/);
+  assert.doesNotMatch(proguardSrc, /-keep class org\.bouncycastle\.\*\*/);
+  assert.doesNotMatch(consumerSrc, /-keep class org\.bouncycastle\.\*\*/);
 }
 
 function assertEditorGuards({ paneSrc, historySrc, adapterSrc, engineSrc }) {
@@ -123,6 +125,13 @@ test('guards reject the pre20 key parser and per-keystroke undo', () => {
       proguardSrc: proguard.replace('-keep class com.hierynomus.sshj.** { *; }\n', ''),
     }),
     /hierynomus/,
+  );
+  assert.throws(
+    () => assertKeyLoginGuards({
+      ...currentKey,
+      proguardSrc: proguard + '\n-keep class org.bouncycastle.** { *; }\n',
+    }),
+    /bouncycastle/,
   );
   assert.throws(
     () => assertKeyLoginGuards({

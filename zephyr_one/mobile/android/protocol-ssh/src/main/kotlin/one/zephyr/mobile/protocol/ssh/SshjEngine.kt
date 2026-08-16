@@ -50,6 +50,10 @@ class SshjEngine(
     private val io: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
 ) : SshEngine {
 
+    init {
+        AndroidSshSecurity.configure()
+    }
+
     private val sessions = ConcurrentHashMap<String, LiveSession>()
     private val closeEvents = ConcurrentHashMap<String, MutableSharedFlow<Throwable>>()
     private val pending = ConcurrentHashMap<String, HostKey>()
@@ -69,11 +73,15 @@ class SshjEngine(
         val client = SSHClient()
         val verifier = RecordingVerifier(hostPort(target.host, target.port))
         client.addHostKeyVerifier(verifier)
+        var stage = ConnectStage.TRANSPORT
         try {
             client.connect(target.host, target.port)
+            stage = ConnectStage.AUTHENTICATION
             authenticate(client, request)
+            stage = ConnectStage.PTY
             val terminalSession = client.startSession()
             terminalSession.allocatePTY("xterm-256color", request.cols, request.rows, 0, 0, emptyMap<PTYMode, Int>())
+            stage = ConnectStage.SHELL
             val shell = terminalSession.startShell()
             sessions[request.sessionId] = LiveSession(client, terminalSession, shell)
             closeEvents[request.sessionId] = MutableSharedFlow(replay = 1, extraBufferCapacity = 1)
@@ -86,7 +94,7 @@ class SshjEngine(
                 pending[request.sessionId] = presented
                 return@withContext SshConnectOutcome.HostKeyDecisionRequired(presented, known = null)
             }
-            SshConnectOutcome.Failed(mapError(error))
+            SshConnectOutcome.Failed(mapError(error, stage))
         }
     }
 
@@ -540,19 +548,32 @@ class SshjEngine(
         }
     }
 
+    private enum class ConnectStage(
+        val code: String,
+        val label: String,
+        val retryable: Boolean,
+    ) {
+        TRANSPORT("ssh_transport_failed", "SSH 传输握手失败", true),
+        AUTHENTICATION("ssh_auth_failed", "SSH 认证失败", false),
+        PTY("ssh_pty_failed", "SSH PTY 创建失败", true),
+        SHELL("ssh_shell_failed", "SSH Shell 启动失败", true),
+    }
+
     companion object {
         private const val LATENCY_PROBE_TIMEOUT_MS = 4_000
 
         private fun hostPort(host: String, port: Int): String = host.lowercase() + ":" + port
         private fun closeQuietly(client: SSHClient) { runCatching { client.disconnect() } }
-        private fun mapError(error: Exception): MobileError {
-            val message = error.message?.takeIf(String::isNotBlank) ?: error.javaClass.simpleName
-            val code = when {
-                error is IllegalArgumentException && message.contains("私钥") -> "ssh_key_invalid"
-                error is UserAuthException -> "ssh_auth_failed"
-                else -> "ssh_connect_failed"
+        private fun mapError(error: Exception, stage: ConnectStage): MobileError {
+            val root = generateSequence(error as Throwable?) { it.cause }.lastOrNull() ?: error
+            val cause = root.message?.takeIf(String::isNotBlank) ?: root.javaClass.simpleName
+            if (error is IllegalArgumentException && cause.contains("私钥")) {
+                return MobileError.local("ssh_key_invalid", cause, retryable = false)
             }
-            return MobileError.local(code, message, retryable = code == "ssh_connect_failed")
+            if (error is UserAuthException) {
+                return MobileError.local("ssh_auth_failed", "SSH 认证失败：$cause", retryable = false)
+            }
+            return MobileError.local(stage.code, "${stage.label}：$cause", retryable = stage.retryable)
         }
     }
 }
