@@ -231,6 +231,19 @@ jobs:
           unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_rdp_android.so'
           fragment_version="$(unzip -p "${apks[0]}" META-INF/androidx.fragment_fragment.version)"
           test "$fragment_version" = '1.8.5'
+          # Runtime SSH gate, not a source-level promise. pre21 retained the external
+          # BouncyCastleProvider under Android's existing "BC" provider name and made every SSH
+          # transport fail before authentication. OpenSSH v1 must remain, the conflicting provider
+          # must not be in the optimized APK.
+          dex_dir="$(mktemp -d)"
+          unzip -q "${apks[0]}" 'classes*.dex' -d "$dex_dir"
+          grep -aFq 'Lcom/hierynomus/sshj/userauth/keyprovider/OpenSSHKeyV1KeyFile;' "$dex_dir"/classes*.dex
+          if grep -aFq 'Lorg/bouncycastle/jce/provider/BouncyCastleProvider;' "$dex_dir"/classes*.dex; then
+            echo 'external BouncyCastleProvider must not ship in the Android APK' >&2
+            exit 1
+          fi
+          grep -aFq 'Lnet/i2p/crypto/eddsa/EdDSAPublicKey;' "$dex_dir"/classes*.dex
+          rm -rf "$dex_dir"
 
       # assemblePrerelease is signed with the committed pre-release PKCS12, not the
       # per-runner debug.keystore. That is what lets successive pre-releases
