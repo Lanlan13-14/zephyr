@@ -104,3 +104,15 @@ test('Android FreeRDP uses built-in NTLM crypto instead of an unavailable OpenSS
   }
   assert.match(workflow, /ntlm-internal-crypto-v1/);
 });
+
+test('Android CI compiles once and reuses that variant for unit tests', () => {
+  const workflow = read(path.join(ROOT, '../../.github/workflows/zephyr-one-mobile.yml'));
+  // Two `--no-daemon` Gradle invocations recompiled the tree as debug after
+  // assemblePrerelease, which is why "Unit tests" looked hung for 20+ minutes.
+  assert.doesNotMatch(workflow, /gradle --no-daemon/);
+  assert.match(workflow, /:app:assemblePrerelease/);
+  assert.match(workflow, /testReleaseUnitTest/);
+  assert.match(workflow, /-x :app:testReleaseUnitTest/);
+  assert.match(workflow, /:app:testPrereleaseUnitTest/);
+  assert.doesNotMatch(workflow, /gradle[^\n]*testDebugUnitTest/);
+});
