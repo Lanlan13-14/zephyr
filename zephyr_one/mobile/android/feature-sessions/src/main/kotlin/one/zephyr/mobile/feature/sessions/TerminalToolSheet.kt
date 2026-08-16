@@ -4,7 +4,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -96,9 +95,7 @@ internal fun TerminalToolSheet(
             Modifier
                 .fillMaxWidth()
                 .height(maxHeight * animatedFraction)
-                .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
-                .background(colors.chrome)
-                .border(width = 1.dp, color = colors.line, shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)),
+                .background(colors.chrome),
         ) {
             Box(
                 Modifier
