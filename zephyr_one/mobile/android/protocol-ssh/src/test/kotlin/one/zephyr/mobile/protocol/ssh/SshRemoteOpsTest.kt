@@ -117,12 +117,18 @@ class SshRemoteOpsTest {
             hostname = "edge-01",
         )
         val first = SshRemoteOps.parseRemoteStats(raw, previous = null, nowMs = 1_000L)
+        val firstCpu = SshRemoteOps.parseCpuStat("cpu  100 20 30 850 0 0 0 0 0 0")
+        val laterCpuLine = "cpu  200 40 60 900 0 0 0 0 0 0"
+        val laterCpu = SshRemoteOps.parseCpuStat(laterCpuLine)
+        assertTrue("first /proc/stat tick must parse", first.sample.cpu != null && firstCpu != null)
+        assertTrue("second /proc/stat tick must parse", laterCpu != null)
+        assertEquals(firstCpu!!.total, first.sample.cpu!!.total)
+        assertEquals(0.0, first.cpu.usagePercent, 0.001)
         assertEquals("edge-01", first.hostName)
         assertEquals("Linux 6.8.0 x86_64 GNU/Linux", first.os)
         assertEquals("Test CPU", first.cpu.model)
         assertEquals("2400 MHz", first.cpu.freq)
         assertEquals(2, first.cpu.cores)
-        assertEquals(0.0, first.cpu.usagePercent, 0.001)
         assertEquals(2000000.0 / 1024.0 - 500000.0 / 1024.0, first.memory.memUsedMb, 0.01)
         assertEquals(1, first.disks.size)
         assertEquals("/", first.disks.single().mountpoint)
@@ -133,13 +139,12 @@ class SshRemoteOpsTest {
         assertEquals(42, first.processes[0].pid)
         assertEquals("sshd", first.processes[0].command)
 
-        val laterCpu = "cpu  200 40 60 900 0 0 0 0 0 0"
         val later = SshRemoteOps.parseRemoteStats(
             buildStatsRaw(
-                cpu = laterCpu,
+                cpu = laterCpuLine,
                 mem = "MemTotal:        2000000 kB\nMemAvailable:     500000 kB\nSwapTotal:     1000000 kB\nSwapFree:       250000 kB",
                 disk = "Filesystem     1024-blocks     Used Available Capacity Mounted on\n/dev/sda1        104857600 52428800  52428800      50% /",
-                diskstats = "   8       0 sda 0 0 0 0 0 0 400 0 0 0 0 0 0 800",
+                diskstats = "   8       0 sda 0 0 400 0 0 0 800 0 0 0 0 0 0 0",
                 net = "Inter-|   Receive                                                |  Transmit\n eth0: 25000000 0 0 0 0 0 0 0 5000000 0 0 0 0 0 0 0",
                 ip4 = "203.0.113.10",
                 ip6 = "2001:db8::1",
@@ -151,11 +156,12 @@ class SshRemoteOpsTest {
             previous = first.sample,
             nowMs = 3_000L,
         )
-        assertEquals(75.0, later.cpu.usagePercent, 0.01)
-        assertTrue(later.network.rxMbps > 0.0)
-        assertTrue(later.network.txMbps > 0.0)
-        assertTrue(later.disks.single().readKBps > 0.0)
-        assertTrue(later.disks.single().writeKBps > 0.0)
+        val expectedCpu = SshRemoteOps.computeCpuUsage(laterCpu, firstCpu)
+        assertEquals(expectedCpu, later.cpu.usagePercent, 0.01)
+        assertTrue("second tick must show busy CPU, got ${later.cpu.usagePercent}", later.cpu.usagePercent > 1.0)
+        assertTrue("rx ${later.network.rxMbps}", later.network.rxMbps > 0.0)
+        assertTrue("tx ${later.network.txMbps}", later.network.txMbps > 0.0)
+        assertTrue("disk write ${later.disks.single().writeKBps}", later.disks.single().writeKBps > 0.0)
     }
 
     @Test

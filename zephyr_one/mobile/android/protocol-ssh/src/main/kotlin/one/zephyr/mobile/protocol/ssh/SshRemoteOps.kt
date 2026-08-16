@@ -284,10 +284,13 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
     }
 
     internal fun parseCpuStat(raw: String): CpuStat? {
-        val line = raw.lineSequence().firstOrNull { it.startsWith("cpu ") } ?: return null
-        val parts = line.trim().split(Regex("\\s+")).drop(1).mapNotNull(String::toLongOrNull)
-        if (parts.isEmpty()) return null
-        val idle = parts.getOrElse(3) { 0L } + parts.getOrElse(4) { 0L }
+        val line = raw.lineSequence()
+            .map(String::trim)
+            .firstOrNull { it.startsWith("cpu") && (it.length == 3 || it[3].isWhitespace()) }
+            ?: return null
+        val parts = line.split(Regex("\\s+")).drop(1).mapNotNull(String::toLongOrNull)
+        if (parts.size < 4) return null
+        val idle = parts[3] + parts.getOrElse(4) { 0L }
         return CpuStat(idle = idle, total = parts.sum())
     }
 
