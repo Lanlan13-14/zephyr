@@ -29,8 +29,12 @@ function assertKeyLoginGuards({ loaderSrc, engineSrc, hostSrc, rootSrc, testerSr
   assert.match(loaderSrc, /openssh-key-v1/);
   assert.doesNotMatch(loaderSrc, /pem\.contains\("bcrypt"/);
   assert.match(engineSrc, /SshPrivateKeyLoader\.load\(/);
+  assert.match(engineSrc, /private suspend fun <T> withSftp/);
+  assert.match(engineSrc, /suspend fun <T> withSftp\(block: suspend/);
   assert.doesNotMatch(engineSrc, /OpenSSHKeyFile\(\)\.also/);
   assert.doesNotMatch(engineSrc, /PKCS8KeyFile\(\)\.also/);
+  assert.doesNotMatch(loaderSrc, /bouncycastle/);
+  assert.doesNotMatch(loaderSrc, /EncryptionException/);
   assert.match(hostSrc, /isNullOrBlankChars/);
   assert.match(hostSrc, /!privateKey\.isNullOrBlankChars\(\)/);
   assert.match(rootSrc, /takeUnlessBlankSecret/);
@@ -122,6 +126,23 @@ test('guards reject the pre20 key parser and per-keystroke undo', () => {
       rootSrc: root.replaceAll('takeUnlessBlankSecret', 'identity'),
     }),
     /takeUnlessBlankSecret/,
+  );
+  assert.throws(
+    () => assertKeyLoginGuards({
+      ...currentKey,
+      engineSrc: engine.replaceAll('suspend fun <T> withSftp', 'fun <T> withSftp'),
+    }),
+    /suspend fun <T> withSftp/,
+  );
+  assert.throws(
+    () => assertKeyLoginGuards({
+      ...currentKey,
+      loaderSrc: loader.replace(
+        'import net.schmizz.sshj.userauth.password.PasswordUtils',
+        'import org.bouncycastle.openssl.EncryptionException\nimport net.schmizz.sshj.userauth.password.PasswordUtils',
+      ),
+    }),
+    /bouncycastle/,
   );
   assert.throws(
     () => assertEditorGuards({

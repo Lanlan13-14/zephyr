@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.PTYMode
@@ -310,12 +312,12 @@ class SshjEngine(
 
     private suspend fun sftpUnit(
         sessionId: String,
-        block: SFTPClient.() -> Unit,
+        block: suspend SFTPClient.() -> Unit,
     ): Result<Unit> = withContext(io) {
         runCatching { withSftp(sessionId) { it.block() } }
     }
 
-    private fun <T> withSftp(sessionId: String, block: (SFTPClient) -> T): T {
+    private suspend fun <T> withSftp(sessionId: String, block: suspend (SFTPClient) -> T): T {
         val live = sessions[sessionId] ?: error("SSH 会话已断开")
         return live.withSftp(block)
     }
@@ -515,26 +517,23 @@ class SshjEngine(
         @Volatile var closed: Boolean = false,
     ) {
         @Volatile private var sftpClient: SFTPClient? = null
-        private val sftpLock = Any()
+        private val sftpMutex = Mutex()
 
-        fun <T> withSftp(block: (SFTPClient) -> T): T {
+        suspend fun <T> withSftp(block: suspend (SFTPClient) -> T): T {
             if (closed) error("SSH 会话已断开")
-            synchronized(sftpLock) {
+            return sftpMutex.withLock {
                 if (closed) error("SSH 会话已断开")
                 val existing = sftpClient
                 val usable = existing?.takeIf { it.getSFTPEngine().getSubsystem().isOpen }
                 val active = usable ?: this.client.newSFTPClient().also { sftpClient = it }
-                return block(active)
+                block(active)
             }
         }
 
         fun close() {
-            synchronized(sftpLock) {
-                if (closed) return
-                closed = true
-                runCatching { sftpClient?.close() }
-                sftpClient = null
-            }
+            closed = true
+            runCatching { sftpClient?.close() }
+            sftpClient = null
             runCatching { shell.close() }
             runCatching { session.close() }
             closeQuietly(client)

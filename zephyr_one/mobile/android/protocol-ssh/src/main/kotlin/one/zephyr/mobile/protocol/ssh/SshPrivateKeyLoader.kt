@@ -11,7 +11,6 @@ import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile
 import net.schmizz.sshj.userauth.keyprovider.PKCS8KeyFile
 import net.schmizz.sshj.userauth.keyprovider.PuTTYKeyFile
 import net.schmizz.sshj.userauth.password.PasswordUtils
-import org.bouncycastle.openssl.EncryptionException
 
 /**
  * Loads an in-memory private key for SSH public-key auth.
@@ -134,7 +133,7 @@ object SshPrivateKeyLoader {
     private fun isDecryptionFailure(error: Throwable): Boolean {
         var current: Throwable? = error
         while (current != null) {
-            if (current is KeyDecryptionFailedException || current is EncryptionException) return true
+            if (current is KeyDecryptionFailedException) return true
             val text = (current.message ?: current.javaClass.simpleName).lowercase()
             if (
                 text.contains("decrypt") ||
