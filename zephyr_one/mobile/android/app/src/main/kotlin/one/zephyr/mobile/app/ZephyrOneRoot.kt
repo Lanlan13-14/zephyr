@@ -759,6 +759,7 @@ private fun BoundRoot(
                 var termWorkspace by remember(current.sessionId) {
                     mutableStateOf(TerminalWorkspaceState(paneA = current.sessionId))
                 }
+                val clipboardManager = LocalClipboardManager.current
                 LaunchedEffect(termSessions, current.sessionId) {
                     if (termSessions.firstOrNull { it.sessionId == current.sessionId }?.transport == SessionTransport.CLOSED) {
                         route = RootRoute.Root(IslandDestination.SESSIONS)
@@ -779,7 +780,7 @@ private fun BoundRoot(
                             emulator = productionTerminalEmulator(
                                 onCopy = { text ->
                                     if (text.isNotEmpty()) {
-                                        LocalClipboardManager.current.setText(AnnotatedString(text))
+                                        clipboardManager.setText(AnnotatedString(text))
                                     }
                                 },
                             ),
