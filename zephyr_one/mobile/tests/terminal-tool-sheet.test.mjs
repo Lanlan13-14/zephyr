@@ -38,3 +38,14 @@ test('drawer drag uses velocity projection and close threshold', () => {
 test('IME button closes tool drawer before showing keyboard', () => {
   assert.match(screen, /TerminalWorkspace\.closeSheet\(ws\)[\s\S]*onIntent\(intent\)/);
 });
+
+test('FILES drawer with its text editor survives an open IME', () => {
+  // The file browser embeds a text editor that needs the system keyboard. When the IME opens
+  // inside it the drawer must stay composed (shrunk above the keyboard via imePadding), instead of
+  // the whole tool sheet being removed — which made the file page vanish on focus.
+  assert.match(
+    codeOnly(screen),
+    /!imeOpen \|\| ws\.sheetCurrent == TerminalToolKind\.FILES/,
+  );
+  assert.match(sheet, /SftpBrowserPane\(/);
+});

@@ -335,7 +335,9 @@ private fun DemoTerminalSurface(
                         },
                     )
                 }
-                if (!imeOpen && !pad && ws.sheetFraction > 0f && ws.sheetCurrent != null) {
+                if (!pad && ws.sheetFraction > 0f && ws.sheetCurrent != null &&
+                    (!imeOpen || ws.sheetCurrent == TerminalToolKind.FILES)
+                ) {
                     TerminalToolSheet(
                         workspace = ws,
                         colors = colors,
