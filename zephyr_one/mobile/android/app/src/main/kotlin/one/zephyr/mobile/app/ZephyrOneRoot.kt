@@ -1681,17 +1681,26 @@ private suspend fun AccountContainer.connectionTestCredentials(
     connection: Connection,
     draft: ConnectionDraft,
 ): ConnectionTestCredentials {
-    val replacementPassword = draft.testPasswordChars()
-    val replacementKey = draft.testPrivateKeyChars()
-    if (replacementPassword != null || replacementKey != null) {
-        return ConnectionTestCredentials(password = replacementPassword, privateKey = replacementKey)
-    }
+    // Create starts the password field in Replace(""), which is not a secret. Treating that
+    // empty array as "user typed a password" hid the selected SSH key and made key login
+    // look like a failed password attempt.
+    val replacementPassword = draft.testPasswordChars().takeUnlessBlankSecret()
+    val replacementKey = draft.testPrivateKeyChars().takeUnlessBlankSecret()
     val stored = terminalCredentials(connection)
     return ConnectionTestCredentials(
-        password = stored.password,
-        privateKey = stored.privateKey,
+        password = replacementPassword ?: stored.password,
+        privateKey = replacementKey ?: stored.privateKey,
         passphrase = stored.passphrase,
     )
+}
+
+internal fun CharArray?.takeUnlessBlankSecret(): CharArray? {
+    if (this == null) return null
+    if (isEmpty() || all { it.isWhitespace() }) {
+        fill('\u0000')
+        return null
+    }
+    return this
 }
 
 internal suspend fun AccountContainer.terminalCredentials(connection: Connection): TerminalCredentials {

@@ -1,6 +1,8 @@
-# SSHJ discovers algorithms and key types by reflection.
+# SSHJ discovers algorithms, key types and key-file factories by reflection.
 -keep class net.schmizz.sshj.** { *; }
+-keep class com.hierynomus.sshj.** { *; }
 -keep class net.i2p.crypto.eddsa.** { *; }
+-keep class org.bouncycastle.** { *; }
 -dontwarn net.schmizz.sshj.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.slf4j.**
