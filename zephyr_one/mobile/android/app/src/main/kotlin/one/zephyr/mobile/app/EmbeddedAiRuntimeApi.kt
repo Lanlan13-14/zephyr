@@ -36,19 +36,19 @@ internal class EmbeddedAiRuntimeApi(
 
     suspend fun createSession(userId: String, generation: String, title: String): ApiResult<EmbeddedSession> =
         when (val result = post("/admin/sessions", EmbeddedCreateSession(userId, generation, title), EmbeddedCreateSession.serializer(), EmbeddedSessionResponse.serializer())) {
-            is ApiResult.Success -> ApiResult.Success(result.value.session, result.serverTime)
+            is ApiResult.Success -> ApiResult.Success(result.value.session, result.requestId)
             is ApiResult.Failure -> result
         }
 
     suspend fun listSessions(userId: String, generation: String): ApiResult<List<EmbeddedSession>> =
         when (val result = get("/admin/sessions?userId=${encode(userId)}&databaseGeneration=${encode(generation)}", EmbeddedSessionsResponse.serializer())) {
-            is ApiResult.Success -> ApiResult.Success(result.value.sessions, result.serverTime)
+            is ApiResult.Success -> ApiResult.Success(result.value.sessions, result.requestId)
             is ApiResult.Failure -> result
         }
 
     suspend fun messages(userId: String, generation: String, sessionId: String): ApiResult<List<EmbeddedMessage>> =
         when (val result = get("/admin/sessions/${encode(sessionId)}/messages?userId=${encode(userId)}&databaseGeneration=${encode(generation)}", EmbeddedMessagesResponse.serializer())) {
-            is ApiResult.Success -> ApiResult.Success(result.value.messages, result.serverTime)
+            is ApiResult.Success -> ApiResult.Success(result.value.messages, result.requestId)
             is ApiResult.Failure -> result
         }
 

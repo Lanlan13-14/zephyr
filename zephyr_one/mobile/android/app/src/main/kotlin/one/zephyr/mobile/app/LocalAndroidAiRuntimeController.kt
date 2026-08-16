@@ -152,7 +152,14 @@ internal class LocalAndroidAiRuntimeController(
     private fun persistAsync(){scope.launch{persist()}}; private suspend fun persist(){val p=catalog.providers.firstOrNull{it.id==providerId};persistChrome(AiWorkspaceChrome(enabled=catalog.enabled,providerId=providerId,provider=p?.name?:"未选择 Provider",model=modelId.ifBlank{"未选择模型"},collaboration=mode,runProfile=profile,permission=permission,thinking=thinking,planEnabled=plan,memoryEnabled=catalog.memoryEnabled,memoryCount=catalog.memories.size,skillsEnabled=catalog.skills.any{it.enabled},online=true,runtimeAvailable=catalog.enabled&&p!=null))}
     private fun LocalAiProvider.option()=AiProviderOption(id,name,models.filterNot{it.hidden}.map{AiModelOption(it.id,it.label,it.reasoning,it.inputImage,it.inputPdf,it.inputAudio,it.inputVideo)},true)
     private fun LocalAiProvider.wire(key:String)=EmbeddedProvider(id,name,type,baseUrl,key,defaultModel,models.map{it.id},apiMode,organization,parseHeaders(extraHeadersJson),buildJsonObject{temperature?.let{put("temperature",it)};topP?.let{put("top_p",it)};put("max_tokens",maxTokens);reasoningEffort?.let{put("reasoning_effort",it)};put("presence_penalty",presencePenalty);put("frequency_penalty",frequencyPenalty);put("use_previous_response_id",usePreviousResponse)})
-    private fun parseHeaders(raw:String):Map<String,String>=runCatching{one.zephyr.mobile.network.MobileJson.instance.decodeFromString<Map<String,String>>(raw)}.getOrElse{raw.lineSequence().mapNotNull{line->line.split(':',limit=2).takeIf{it.size==2}?.let{it[0].trim() to it[1].trim()}}.toMap()}
+    private fun parseHeaders(raw: String): Map<String, String> = runCatching {
+        one.zephyr.mobile.network.MobileJson.instance.decodeFromString<Map<String, String>>(raw)
+    }.getOrElse {
+        raw.lineSequence().mapNotNull { line ->
+            line.split(':', limit = 2).takeIf { parts -> parts.size == 2 }
+                ?.let { parts -> parts[0].trim() to parts[1].trim() }
+        }.toMap()
+    }
     private fun JsonObject.string(k:String)=(this[k] as? JsonPrimitive)?.contentOrNull.orEmpty()
     companion object { const val DEFAULT_GUIDANCE="你是 Zephyr One 本机 AI 运维代理。能用工具完成的任务必须实际调用工具；先取事实，再执行；写操作遵守确认策略。" }
 }
