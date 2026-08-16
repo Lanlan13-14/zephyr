@@ -7,9 +7,11 @@ enum class SftpOpenKind { DIRECTORY, IMAGE, MEDIA, TEXT, ARCHIVE, BINARY }
 
 object SftpOpenPolicy {
 
-    const val TEXT_EDIT_LIMIT = 2L * 1024 * 1024
-    const val IMAGE_PREVIEW_LIMIT = 8L * 1024 * 1024
-    const val MEDIA_PREVIEW_LIMIT = 32L * 1024 * 1024
+    const val TEXT_EDIT_LIMIT = 8L * 1024 * 1024
+    const val IMAGE_PREVIEW_LIMIT = 16L * 1024 * 1024
+    const val MEDIA_PREVIEW_LIMIT = 64L * 1024 * 1024
+    const val MEDIA_CACHE_LIMIT = 256L * 1024 * 1024
+
 
     fun kindOf(entry: RemoteEntry): SftpOpenKind = when {
         entry.isDirectory -> SftpOpenKind.DIRECTORY
@@ -32,8 +34,8 @@ object SftpOpenPolicy {
             "文件超过 ${formatBytes(TEXT_EDIT_LIMIT)}，拒绝作为文本打开"
         kind == SftpOpenKind.IMAGE && sizeBytes > IMAGE_PREVIEW_LIMIT ->
             "图片超过 ${formatBytes(IMAGE_PREVIEW_LIMIT)}，请下载后查看"
-        kind == SftpOpenKind.MEDIA && sizeBytes > MEDIA_PREVIEW_LIMIT ->
-            "媒体超过 ${formatBytes(MEDIA_PREVIEW_LIMIT)}，请下载后播放"
+        kind == SftpOpenKind.MEDIA && sizeBytes > MEDIA_CACHE_LIMIT ->
+            "媒体超过 ${formatBytes(MEDIA_CACHE_LIMIT)}，请下载后播放"
         else -> null
     }
 
@@ -70,9 +72,13 @@ data class SftpClipboard(
     val mode: SftpClipboardMode,
     val paths: List<String>,
     val sourceDirectory: String,
+    val sourceConnectionId: String = "",
 ) {
     val isEmpty: Boolean get() = paths.isEmpty()
     val count: Int get() = paths.size
+
+    fun sameHostAs(connectionId: String): Boolean =
+        sourceConnectionId.isBlank() || sourceConnectionId == connectionId
 }
 
 enum class SftpPasteConflictMode { OVERWRITE, SKIP, COMPATIBLE }

@@ -34,6 +34,9 @@ test('docker and monitor stay inside the SSH tool drawer', () => {
   assert.match(ops, /dockerMirrorsSetCommand/);
   assert.match(ops, /statsCommand/);
   assert.match(ops, /processSignalCommand/);
+  assert.match(ops, /dockerLogsCommand\(container\.target, tail = 200, follow = true\)/);
+  assert.match(ops, /client\.stream\(SshRemoteOps\.dockerPullCommand/);
+  assert.match(ops, /暂停滚动/);
   assert.match(tools, /HostDockerPanel\(/);
   assert.match(tools, /HostMonitorPanel\(/);
   assert.doesNotMatch(tools, /SSH 引擎尚未接入，当前无法读取容器状态/);

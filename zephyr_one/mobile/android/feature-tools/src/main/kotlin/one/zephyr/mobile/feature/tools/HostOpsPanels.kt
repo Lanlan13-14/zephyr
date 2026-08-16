@@ -57,12 +57,29 @@ import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 
-fun interface RemoteShell {
+interface RemoteShell {
     suspend fun run(command: String): RemoteShellResult
+
+    fun stream(command: String): kotlinx.coroutines.flow.Flow<RemoteShellChunk> =
+        kotlinx.coroutines.flow.flow {
+            val result = run(command)
+            if (result.stdout.isNotEmpty()) emit(RemoteShellChunk.Output(result.stdout))
+            if (result.stderr.isNotEmpty()) emit(RemoteShellChunk.Output(result.stderr))
+            emit(RemoteShellChunk.Closed(result.exitCode))
+        }
+}
+
+fun RemoteShell(block: suspend (String) -> RemoteShellResult): RemoteShell = object : RemoteShell {
+    override suspend fun run(command: String): RemoteShellResult = block(command)
 }
 
 data class RemoteShellResult(val exitCode: Int, val stdout: String, val stderr: String) {
     fun text(): String = stdout.ifBlank { stderr }
+}
+
+sealed interface RemoteShellChunk {
+    data class Output(val text: String) : RemoteShellChunk
+    data class Closed(val exitCode: Int) : RemoteShellChunk
 }
 
 private enum class DockerTab { CONTAINERS, IMAGES, MIRRORS }
@@ -194,6 +211,8 @@ fun HostDockerPanel(
     var mirrorDraft by remember { mutableStateOf("") }
     var logTarget by remember { mutableStateOf<DockerContainerInfo?>(null) }
     var logText by remember { mutableStateOf("") }
+    var logFollow by remember { mutableStateOf(true) }
+    var logPaused by remember { mutableStateOf(false) }
     var pendingRemove by remember { mutableStateOf<DockerContainerInfo?>(null) }
     var pendingImage by remember { mutableStateOf<Pair<DockerImageInfo, String?>?>(null) }
     var confirmRestart by remember { mutableStateOf(false) }
@@ -226,6 +245,28 @@ fun HostDockerPanel(
     }
 
     LaunchedEffect(shell) { loadAll(forceCheck = true) }
+
+    LaunchedEffect(shell, logTarget, logFollow) {
+        val client = shell
+        val container = logTarget
+        if (client == null || container == null || !logFollow) return@LaunchedEffect
+        runCatching {
+            client.stream(SshRemoteOps.dockerLogsCommand(container.target, tail = 200, follow = true)).collect { chunk ->
+                when (chunk) {
+                    is RemoteShellChunk.Output -> {
+                        logText = (logText + chunk.text).takeLast(80_000)
+                    }
+                    is RemoteShellChunk.Closed -> {
+                        logFollow = false
+                        if (chunk.exitCode != 0) onMessage("日志流结束（exit ${chunk.exitCode}）")
+                    }
+                }
+            }
+        }.onFailure { failure ->
+            logFollow = false
+            onMessage(failure.message ?: "日志流中断")
+        }
+    }
 
     fun run(label: String, command: String, after: (RemoteShellResult) -> Unit = {}) {
         val client = shell ?: return
@@ -266,11 +307,10 @@ fun HostDockerPanel(
             logTarget != null -> DockerLogPane(
                 title = "容器日志 · ${logTarget!!.name}",
                 text = logText,
-                onRefresh = {
-                    val target = logTarget ?: return@DockerLogPane
-                    run("已刷新日志", SshRemoteOps.dockerLogsCommand(target.target, tail = 400)) { logText = it.text() }
-                },
-                onClose = { logTarget = null; logText = "" },
+                following = logFollow,
+                paused = logPaused,
+                onTogglePause = { logPaused = !logPaused },
+                onClose = { logTarget = null; logText = ""; logFollow = false },
             )
             else -> {
                 Row(
@@ -289,7 +329,9 @@ fun HostDockerPanel(
                         onRestart = { run("已重启 ${it.name}", SshRemoteOps.dockerContainerActionCommand(DockerContainerAction.RESTART, it.target)) },
                         onLogs = { container ->
                             logTarget = container
-                            run("已打开日志", SshRemoteOps.dockerLogsCommand(container.target, tail = 400)) { logText = it.text() }
+                            logText = ""
+                            logFollow = true
+                            logPaused = false
                         },
                         onRemove = { pendingRemove = it },
                     )
@@ -314,9 +356,14 @@ fun HostDockerPanel(
                                     return@launch
                                 }
                                 runCatching {
-                                    val result = client.run(SshRemoteOps.dockerPullCommand(image))
-                                    pullLog += result.text().ifBlank { result.stderr }
-                                    if (result.exitCode != 0) error(result.stderr.ifBlank { "镜像拉取失败" })
+                                    var code = 0
+                                    client.stream(SshRemoteOps.dockerPullCommand(image)).collect { chunk ->
+                                        when (chunk) {
+                                            is RemoteShellChunk.Output -> pullLog = (pullLog + chunk.text).takeLast(20_000)
+                                            is RemoteShellChunk.Closed -> code = chunk.exitCode
+                                        }
+                                    }
+                                    if (code != 0) error("镜像拉取失败（exit $code）")
                                     onMessage("镜像拉取完成")
                                     loadAll()
                                 }.onFailure { failure ->
@@ -710,22 +757,39 @@ private fun DockerMirrorList(
 }
 
 @Composable
-private fun DockerLogPane(title: String, text: String, onRefresh: () -> Unit, onClose: () -> Unit) {
+private fun DockerLogPane(
+    title: String,
+    text: String,
+    following: Boolean,
+    paused: Boolean,
+    onTogglePause: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val scroll = rememberScrollState()
+    LaunchedEffect(text, paused) {
+        if (!paused) scroll.animateScrollTo(scroll.maxValue)
+    }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(title, color = ZephyrTheme.palette.onFloating, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1)
-            TextButton(onClick = onRefresh) { Text("刷新") }
+            TextButton(onClick = onTogglePause) { Text(if (paused) "继续滚动" else "暂停滚动") }
             TextButton(onClick = onClose) { Text("关闭") }
         }
+        Text(
+            if (following) "跟随中 · docker logs --timestamps -f" else "日志流已结束",
+            color = ZephyrTheme.palette.onFloatingSubtle,
+            fontSize = 10.sp,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+        )
         Text(
             text.ifBlank { "暂无日志" },
             color = ZephyrTheme.palette.onFloating,
             fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
-            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp).verticalScroll(rememberScrollState()),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp).verticalScroll(scroll),
         )
     }
 }

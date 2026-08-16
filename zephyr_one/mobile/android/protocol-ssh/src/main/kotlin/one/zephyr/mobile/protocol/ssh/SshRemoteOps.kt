@@ -92,10 +92,11 @@ object SshRemoteOps {
         }
     }
 
-    fun dockerLogsCommand(container: String, tail: Int = 400, follow: Boolean = false): String {
+    fun dockerLogsCommand(container: String, tail: Int = 200, follow: Boolean = true): String {
         val flags = buildString {
             append("--tail ")
             append(tail.coerceIn(1, 2000))
+            append(" --timestamps")
             if (follow) append(" -f")
         }
         return "docker logs $flags ${shellQuote(container)}"

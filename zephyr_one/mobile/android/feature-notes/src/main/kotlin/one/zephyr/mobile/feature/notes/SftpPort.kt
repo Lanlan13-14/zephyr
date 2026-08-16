@@ -175,6 +175,40 @@ interface SftpPort {
 
     /** Runs a shell command on the same SSH session. Used for compress / extract / copy / properties. */
     suspend fun exec(handle: SftpSessionHandle, command: String): RemoteExecResult
+
+    /** Streaming remote command. Cancel the collector to stop `docker logs -f` / a long pull. */
+    fun execStream(handle: SftpSessionHandle, command: String): kotlinx.coroutines.flow.Flow<RemoteExecChunk> =
+        kotlinx.coroutines.flow.flow {
+            val result = exec(handle, command)
+            if (result.stdout.isNotEmpty()) emit(RemoteExecChunk.Output(result.stdout, stderr = false))
+            if (result.stderr.isNotEmpty()) emit(RemoteExecChunk.Output(result.stderr, stderr = true))
+            emit(RemoteExecChunk.Closed(result.exitCode))
+        }
+
+    /**
+     * Stream-read [path] from [resumeFromBytes]. [onChunk] receives each payload.
+     * Implementations must not buffer the whole file.
+     */
+    suspend fun readStream(
+        handle: SftpSessionHandle,
+        path: String,
+        resumeFromBytes: Long,
+        onChunk: suspend (offset: Long, bytes: ByteArray, total: Long) -> Unit,
+    ): RemoteWriteReceipt
+
+    /**
+     * Stream-write [path] from [next] chunks. Used for uploads larger than memory.
+     */
+    suspend fun writeStream(
+        handle: SftpSessionHandle,
+        path: String,
+        next: suspend () -> ByteArray?,
+    ): RemoteWriteReceipt
+}
+
+sealed interface RemoteExecChunk {
+    data class Output(val text: String, val stderr: Boolean) : RemoteExecChunk
+    data class Closed(val exitCode: Int) : RemoteExecChunk
 }
 
 /**
@@ -245,4 +279,17 @@ object UnavailableSftpPort : SftpPort {
     ): Long = fail()
 
     override suspend fun exec(handle: SftpSessionHandle, command: String): RemoteExecResult = fail()
+
+    override suspend fun readStream(
+        handle: SftpSessionHandle,
+        path: String,
+        resumeFromBytes: Long,
+        onChunk: suspend (offset: Long, bytes: ByteArray, total: Long) -> Unit,
+    ): RemoteWriteReceipt = fail()
+
+    override suspend fun writeStream(
+        handle: SftpSessionHandle,
+        path: String,
+        next: suspend () -> ByteArray?,
+    ): RemoteWriteReceipt = fail()
 }

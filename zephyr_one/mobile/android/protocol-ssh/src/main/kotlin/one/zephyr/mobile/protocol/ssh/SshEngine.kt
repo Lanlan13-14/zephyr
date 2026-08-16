@@ -67,6 +67,66 @@ interface SshEngine {
     suspend fun chmod(sessionId: String, path: String, mode: Int): Result<Unit>
 
     suspend fun exec(sessionId: String, command: String): Result<SshExecResult>
+
+    /**
+     * Streaming exec for `docker logs -f` / `docker pull`.
+     * Completes after [SshExecEvent.Closed]. Cancel the collector to kill the remote process.
+     */
+    fun execStream(sessionId: String, command: String): Flow<SshExecEvent> =
+        kotlinx.coroutines.flow.flow {
+            val result = exec(sessionId, command).getOrElse { throw it }
+            if (result.stdout.isNotEmpty()) emit(SshExecEvent.Stdout(result.stdout))
+            if (result.stderr.isNotEmpty()) emit(SshExecEvent.Stderr(result.stderr))
+            emit(SshExecEvent.Closed(result.exitCode))
+        }
+
+    /**
+     * Stream a remote file in chunks so a 2 GiB download never sits in a ByteArray.
+     * [onChunk] is invoked on the IO dispatcher.
+     */
+    suspend fun readFileStream(
+        sessionId: String,
+        path: String,
+        offset: Long = 0L,
+        onChunk: suspend (offset: Long, bytes: ByteArray, total: Long) -> Unit,
+    ): Result<SshRemoteFileVersion> = readFileRange(sessionId, path, offset, Int.MAX_VALUE / 4).mapCatching { file ->
+        if (file.bytes.isNotEmpty()) onChunk(offset, file.bytes, file.size)
+        SshRemoteFileVersion(file.path, file.size, file.modifiedAt)
+    }
+
+    /**
+     * Stream-write [next] chunks to [path]. [next] returns the next payload or null at EOF.
+     */
+    suspend fun writeFileStream(
+        sessionId: String,
+        path: String,
+        expected: SshRemoteFileVersion? = null,
+        next: suspend () -> ByteArray?,
+    ): Result<SshRemoteFileVersion> {
+        val chunks = ArrayList<ByteArray>()
+        var total = 0
+        while (true) {
+            val chunk = next() ?: break
+            chunks += chunk
+            total += chunk.size
+            if (total > 8 * 1024 * 1024) {
+                return Result.failure(IllegalStateException("写入内容过大，当前引擎回退上限 8 MiB"))
+            }
+        }
+        val bytes = ByteArray(total)
+        var cursor = 0
+        for (chunk in chunks) {
+            System.arraycopy(chunk, 0, bytes, cursor, chunk.size)
+            cursor += chunk.size
+        }
+        return writeFile(sessionId, path, bytes, expected)
+    }
+}
+
+sealed interface SshExecEvent {
+    data class Stdout(val bytes: ByteArray) : SshExecEvent
+    data class Stderr(val bytes: ByteArray) : SshExecEvent
+    data class Closed(val exitCode: Int) : SshExecEvent
 }
 
 data class SshConnectRequest(

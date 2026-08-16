@@ -472,15 +472,19 @@ internal fun OpsDestination(
         section = section,
         onBack = onBack,
         shellFor = { connectionId ->
-            one.zephyr.mobile.feature.tools.RemoteShell { command ->
-                when (val outcome = exec.exec(connectionId, command, timeoutSeconds = 300)) {
-                    is one.zephyr.mobile.feature.tools.ExecOutcome.Completed ->
-                        one.zephyr.mobile.feature.tools.RemoteShellResult(outcome.exitCode, outcome.stdout, outcome.stderr)
-                    one.zephyr.mobile.feature.tools.ExecOutcome.TimedOut ->
-                        error("远程命令超时")
-                    is one.zephyr.mobile.feature.tools.ExecOutcome.Failed ->
-                        error(outcome.error.message)
+            object : one.zephyr.mobile.feature.tools.RemoteShell {
+                override suspend fun run(command: String): one.zephyr.mobile.feature.tools.RemoteShellResult {
+                    return when (val outcome = exec.exec(connectionId, command, timeoutSeconds = 300)) {
+                        is one.zephyr.mobile.feature.tools.ExecOutcome.Completed ->
+                            one.zephyr.mobile.feature.tools.RemoteShellResult(outcome.exitCode, outcome.stdout, outcome.stderr)
+                        one.zephyr.mobile.feature.tools.ExecOutcome.TimedOut ->
+                            error("远程命令超时")
+                        is one.zephyr.mobile.feature.tools.ExecOutcome.Failed ->
+                            error(outcome.error.message)
+                    }
                 }
+
+                override fun stream(command: String) = exec.execStream(connectionId, command)
             }
         },
         onMessage = onMessage,

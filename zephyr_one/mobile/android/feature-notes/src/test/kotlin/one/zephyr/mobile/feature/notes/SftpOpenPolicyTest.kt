@@ -33,6 +33,8 @@ class SftpOpenPolicyTest {
         assertTrue(text!!.contains("拒绝作为文本打开"))
         val image = SftpOpenPolicy.rejectReason(SftpOpenKind.IMAGE, SftpOpenPolicy.IMAGE_PREVIEW_LIMIT + 1)
         assertTrue(image!!.contains("请下载后查看"))
+        assertEquals(null, SftpOpenPolicy.rejectReason(SftpOpenKind.MEDIA, SftpOpenPolicy.MEDIA_PREVIEW_LIMIT))
+        assertTrue(SftpOpenPolicy.rejectReason(SftpOpenKind.MEDIA, SftpOpenPolicy.MEDIA_CACHE_LIMIT + 1)!!.contains("请下载后播放"))
     }
 
     @Test
@@ -41,6 +43,7 @@ class SftpOpenPolicyTest {
             mode = SftpClipboardMode.COPY,
             paths = listOf("/src/notes.txt", "/src/only.txt"),
             sourceDirectory = "/src",
+            sourceConnectionId = "host-a",
         )
         val existing = setOf("notes.txt")
         val overwrite = SftpClipboardOps.planPaste(clip, "/dst", existing, SftpPasteConflictMode.OVERWRITE)
@@ -54,6 +57,14 @@ class SftpOpenPolicyTest {
         val command = SftpClipboardOps.commandFor(compatible, cut = false)!!
         assertTrue(command.contains("cp -a -- '/src/notes.txt' '/dst/notes-复制.txt'"))
         assertTrue(command.startsWith("mkdir -p '/dst'"))
+    }
+
+    @Test
+    fun clipboardKnowsWhetherPasteIsSameHost() {
+        val clip = SftpClipboard(SftpClipboardMode.COPY, listOf("/a"), "/src", sourceConnectionId = "alpha")
+        assertTrue(clip.sameHostAs("alpha"))
+        assertTrue(!clip.sameHostAs("beta"))
+        assertTrue(SftpClipboard(SftpClipboardMode.COPY, listOf("/a"), "/src").sameHostAs("beta"))
     }
 
     @Test

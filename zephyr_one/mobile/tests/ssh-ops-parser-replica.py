@@ -93,6 +93,8 @@ def main() -> int:
         "systemctl restart docker",
         "ps -eo pid=,user=,pcpu=,pmem=,stat=,comm=,args=",
         "kill -s",
+        "docker logs",
+        "--timestamps",
     ):
         if needle not in text:
             raise AssertionError(f"missing {needle}")

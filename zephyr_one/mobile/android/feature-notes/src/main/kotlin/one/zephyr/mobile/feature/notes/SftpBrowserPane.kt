@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.horizontalScroll
@@ -18,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,14 +51,21 @@ private data class BrowserFile(
     val baseline: RemoteFileRead,
     val encoding: FileEncoding = FileEncoding.UTF8,
     val lineEnding: String = if (text.contains("\r\n")) "crlf" else "lf",
+    val tabSize: Int = 4,
+    val wrap: Boolean = true,
     val dirty: Boolean = false,
-)
+    val undo: List<String> = emptyList(),
+    val redo: List<String> = emptyList(),
+) {
+    val title: String get() = path.substringAfterLast('/').ifBlank { path }
+}
 
 private data class PreviewState(
     val path: String,
     val kind: SftpOpenKind,
     val bytes: ByteArray,
     val sizeBytes: Long,
+    val cacheFile: File? = null,
 )
 
 private data class TransferJob(
@@ -80,6 +89,9 @@ fun SftpBrowserPane(
     port: SftpPort,
     connectionId: String,
     modifier: Modifier = Modifier,
+    connectionName: String = "",
+    clipboard: SftpClipboard? = null,
+    onClipboard: (SftpClipboard?) -> Unit = {},
     onMessage: (String) -> Unit = {},
     onDirtyChanged: (Boolean) -> Unit = {},
 ) {
@@ -97,21 +109,27 @@ fun SftpBrowserPane(
     var sortKey by remember { mutableStateOf(FileSortKey.NAME) }
     var selecting by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var editor by remember { mutableStateOf<BrowserFile?>(null) }
+    var editors by remember { mutableStateOf<List<BrowserFile>>(emptyList()) }
+    var editorIndex by remember { mutableIntStateOf(0) }
+    val editor get() = editors.getOrNull(editorIndex)
     var preview by remember { mutableStateOf<PreviewState?>(null) }
     var pendingClose by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<SftpDialog?>(null) }
-    var clipboard by remember { mutableStateOf<SftpClipboard?>(null) }
+    var localClipboard by remember { mutableStateOf(clipboard) }
+    LaunchedEffect(clipboard) { localClipboard = clipboard }
+    var connecting by remember { mutableStateOf(false) }
+    var transfers by remember { mutableStateOf<List<SftpTransferOps.Transfer>>(emptyList()) }
     var transfer by remember { mutableStateOf<TransferJob?>(null) }
     var busy by remember { mutableStateOf(false) }
     var moreOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(editor?.dirty) { onDirtyChanged(editor?.dirty == true) }
+    var bundleTarget by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(editors.any { it.dirty }) { onDirtyChanged(editors.any { it.dirty }) }
 
-    val overlayOpen = editor != null || preview != null
+    val overlayOpen = editors.isNotEmpty() || preview != null
     BackHandler(enabled = overlayOpen || selecting) {
         when {
             editor?.dirty == true -> pendingClose = true
-            editor != null -> editor = null
+            editors.isNotEmpty() -> closeEditor(force = false)
             preview != null -> preview = null
             selecting -> {
                 selecting = false
@@ -126,8 +144,50 @@ fun SftpBrowserPane(
 
     fun currentHandle(): SftpSessionHandle = handle ?: error("SFTP 会话已断开")
 
+    fun setClip(value: SftpClipboard?) {
+        localClipboard = value
+        onClipboard(value)
+    }
+
     fun refresh() {
         revision++
+    }
+
+    fun reconnect() {
+        val old = handle
+        handle = null
+        if (old != null) {
+            scope.launch { runCatching { port.close(old) } }
+        }
+        revision++
+    }
+
+    fun upsertEditor(file: BrowserFile) {
+        val existing = editors.indexOfFirst { it.path == file.path }
+        editors = if (existing >= 0) editors.toMutableList().also { it[existing] = file } else editors + file
+        editorIndex = if (existing >= 0) existing else editors.lastIndex
+    }
+
+    fun updateActive(transform: (BrowserFile) -> BrowserFile) {
+        val current = editor ?: return
+        upsertEditor(transform(current))
+    }
+
+    fun closeEditor(force: Boolean, index: Int = editorIndex) {
+        val target = editors.getOrNull(index) ?: return
+        if (target.dirty && !force) {
+            editorIndex = index
+            pendingClose = true
+            return
+        }
+        val next = editors.toMutableList().also { it.removeAt(index) }
+        editors = next
+        editorIndex = editorIndex.coerceAtMost((next.size - 1).coerceAtLeast(0))
+    }
+
+    fun pushTransfer(job: SftpTransferOps.Transfer) {
+        transfers = listOf(job) + transfers.filterNot { it.id == job.id }.take(7)
+        transfer = TransferJob(job.label, job.fraction, job.detail.ifBlank { SftpOpenPolicy.formatBytes(job.loaded) })
     }
 
     val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
@@ -137,11 +197,35 @@ fun SftpBrowserPane(
                 val active = currentHandle()
                 uris.forEachIndexed { index, uri ->
                     val name = queryDisplayName(context, uri) ?: "upload-${index + 1}"
-                    transfer = TransferJob("上传 $name", index.toFloat() / uris.size, "${index + 1}/${uris.size}")
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: error("无法读取 $name")
-                    if (bytes.size > EDIT_WRITE_LIMIT) error("$name 超过 ${SftpOpenPolicy.formatBytes(EDIT_WRITE_LIMIT.toLong())}，当前版本请改用较小文件")
-                    port.upload(active, RemotePath.join(path, name), bytes)
+                    val remote = RemotePath.join(path, name)
+                    val total = querySize(context, uri)
+                    val id = "up-$name-${System.currentTimeMillis()}"
+                    pushTransfer(SftpTransferOps.Transfer(id, "上传 $name", SftpTransferOps.Direction.UPLOAD, remote, total = total, detail = "${index + 1}/${uris.size}"))
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val buffer = ByteArray(SftpTransferOps.STREAM_CHUNK)
+                        var loaded = 0L
+                        port.writeStream(active, remote) {
+                            val read = input.read(buffer)
+                            if (read <= 0) null else {
+                                loaded += read
+                                pushTransfer(
+                                    SftpTransferOps.Transfer(
+                                        id, "上传 $name", SftpTransferOps.Direction.UPLOAD, remote,
+                                        loaded = loaded, total = total,
+                                        detail = SftpOpenPolicy.formatBytes(loaded),
+                                    ),
+                                )
+                                buffer.copyOf(read)
+                            }
+                        }
+                    } ?: error("无法读取 $name")
+                    pushTransfer(
+                        SftpTransferOps.Transfer(
+                            id, "上传 $name", SftpTransferOps.Direction.UPLOAD, remote,
+                            loaded = total, total = total,
+                            status = SftpTransferOps.Status.DONE, detail = "完成",
+                        ),
+                    )
                 }
                 onMessage("已上传 ${uris.size} 个文件")
                 refresh()
@@ -151,24 +235,22 @@ fun SftpBrowserPane(
     var downloadTarget by remember { mutableStateOf<RemoteEntry?>(null) }
     val downloadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
         val entry = downloadTarget
+        val bundle = bundleTarget
         downloadTarget = null
-        if (uri == null || entry == null) return@rememberLauncherForActivityResult
+        bundleTarget = null
+        if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             runOp(onMessage, { busy = it }, { transfer = it }) {
                 val active = currentHandle()
-                context.contentResolver.openOutputStream(uri)?.use { output ->
-                    var offset = 0L
-                    val total = entry.sizeBytes.coerceAtLeast(1L)
-                    while (offset < entry.sizeBytes || entry.sizeBytes == 0L) {
-                        val chunk = port.readRange(active, entry.path, offset, 256 * 1024)
-                        if (chunk.bytes.isEmpty()) break
-                        output.write(chunk.bytes)
-                        offset += chunk.bytes.size
-                        transfer = TransferJob("下载 ${entry.name}", (offset.toFloat() / total).coerceIn(0f, 1f), SftpOpenPolicy.formatBytes(offset))
-                        if (chunk.bytes.size < 256 * 1024) break
-                    }
-                } ?: error("无法写入本机文件")
-                onMessage("已下载 ${entry.name}")
+                if (bundle != null) {
+                    streamDownload(port, active, bundle, uri, context, "打包下载", { pushTransfer(it) })
+                    runCatching { port.exec(active, SftpTransferOps.cleanupCommand(bundle)) }
+                    onMessage("已打包下载")
+                    return@runOp
+                }
+                val target = entry ?: return@runOp
+                streamDownload(port, active, target.path, uri, context, target.name, { pushTransfer(it) }, target.sizeBytes)
+                onMessage("已下载 ${target.name}")
             }
         }
     }
@@ -176,19 +258,29 @@ fun SftpBrowserPane(
     LaunchedEffect(connectionId, revision) {
         loading = true
         error = null
+        connecting = handle == null
         runCatching {
             val active = handle ?: port.open(connectionId).also {
                 handle = it
                 path = runCatching { port.canonicalPath(it, ".") }.getOrDefault("/")
                 pathDraft = path
             }
+            connecting = false
             val listed = port.list(active, path)
             path = runCatching { port.canonicalPath(active, path) }.getOrDefault(path)
             pathDraft = path
             entries = listed.sortedWith(compareByDescending<RemoteEntry> { it.isDirectory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
             selected = selected.intersect(listed.map { it.path }.toSet())
-        }.onFailure { error = it.displayMessage() }
+        }.onFailure {
+            connecting = false
+            error = if (handle == null) {
+                "无法自动连接${if (connectionName.isBlank()) "" else " $connectionName"}：${it.displayMessage()}"
+            } else {
+                it.displayMessage()
+            }
+        }
         loading = false
+        connecting = false
     }
 
     val visible = remember(entries, query, showHidden, sortKey) {
@@ -231,20 +323,34 @@ fun SftpBrowserPane(
             runOp(onMessage, { busy = it }, { transfer = it }) {
                 when (kind) {
                     SftpOpenKind.TEXT -> {
+                        val existing = editors.indexOfFirst { it.path == entry.path }
+                        if (existing >= 0) {
+                            editorIndex = existing
+                            return@runOp
+                        }
                         val read = port.read(currentHandle(), entry.path, SftpOpenPolicy.TEXT_EDIT_LIMIT)
                         require(!read.truncated) { "文件超过 ${SftpOpenPolicy.formatBytes(SftpOpenPolicy.TEXT_EDIT_LIMIT)}，拒绝编辑" }
                         require(!FileEncoding.looksBinary(read.bytes)) { "检测到二进制内容，拒绝编辑" }
                         val encoding = FileEncoding.guess(read.bytes)
-                        editor = BrowserFile(entry.path, encoding.decode(read.bytes), read, encoding)
+                        upsertEditor(BrowserFile(entry.path, encoding.decode(read.bytes), read, encoding))
                     }
-                    SftpOpenKind.IMAGE, SftpOpenKind.MEDIA -> {
+                    SftpOpenKind.IMAGE -> {
                         val read = port.readRange(
                             currentHandle(),
                             entry.path,
                             0L,
-                            SftpOpenPolicy.previewLimit(kind).toInt(),
+                            SftpOpenPolicy.IMAGE_PREVIEW_LIMIT.toInt(),
                         )
                         preview = PreviewState(entry.path, kind, read.bytes, entry.sizeBytes)
+                    }
+                    SftpOpenKind.MEDIA -> {
+                        val cache = File(context.cacheDir, "sftp-preview-${entry.path.hashCode()}.${SshFileKinds.extensionOf(entry.path).ifBlank { "bin" }}")
+                        cache.outputStream().use { output ->
+                            port.readStream(currentHandle(), entry.path, 0L) { _, bytes, _ ->
+                                output.write(bytes)
+                            }
+                        }
+                        preview = PreviewState(entry.path, kind, ByteArray(0), entry.sizeBytes, cacheFile = cache)
                     }
                     SftpOpenKind.ARCHIVE -> {
                         dialog = SftpDialog.PromptName(
@@ -329,16 +435,19 @@ fun SftpBrowserPane(
     fun copyOrCut(cut: Boolean) {
         val targets = selectedEntries()
         if (targets.isEmpty()) return
-        clipboard = SftpClipboard(
-            mode = if (cut) SftpClipboardMode.CUT else SftpClipboardMode.COPY,
-            paths = targets.map { it.path },
-            sourceDirectory = path,
+        setClip(
+            SftpClipboard(
+                mode = if (cut) SftpClipboardMode.CUT else SftpClipboardMode.COPY,
+                paths = targets.map { it.path },
+                sourceDirectory = path,
+                sourceConnectionId = connectionId,
+            ),
         )
         onMessage(if (cut) "已剪切 ${targets.size} 项" else "已复制 ${targets.size} 项")
     }
 
     fun pasteClipboard() {
-        val clip = clipboard ?: return
+        val clip = localClipboard ?: return
         val existing = entries.map { it.name }.toSet()
         val names = clip.paths.map(RemotePath::nameOf)
         if (names.any { it in existing }) {
@@ -346,14 +455,45 @@ fun SftpBrowserPane(
             return
         }
         applyPaste(
-            clip, SftpPasteConflictMode.COMPATIBLE, existing, port, path, currentHandle(),
+            clip, SftpPasteConflictMode.COMPATIBLE, existing, port, path, currentHandle(), connectionId,
             onMessage, { busy = it }, { transfer = it },
             {
-                if (clip.mode == SftpClipboardMode.CUT) clipboard = null
+                if (clip.mode == SftpClipboardMode.CUT) setClip(null)
                 refresh()
             },
             scope,
         )
+    }
+
+    fun openSelected() {
+        val targets = selectedEntries().filter { !it.isDirectory }
+        if (targets.isEmpty()) {
+            onMessage("请先勾选要打开的文件")
+            return
+        }
+        selecting = false
+        selected = emptySet()
+        scope.launch {
+            runOp(onMessage, { busy = it }, { transfer = it }) {
+                var opened = 0
+                targets.forEach { entry ->
+                    val kind = SftpOpenPolicy.kindOf(entry)
+                    if (kind != SftpOpenKind.TEXT) return@forEach
+                    SftpOpenPolicy.rejectReason(kind, entry.sizeBytes)?.let { return@forEach }
+                    if (editors.any { it.path == entry.path }) {
+                        opened += 1
+                        return@forEach
+                    }
+                    val read = port.read(currentHandle(), entry.path, SftpOpenPolicy.TEXT_EDIT_LIMIT)
+                    if (read.truncated || FileEncoding.looksBinary(read.bytes)) return@forEach
+                    val encoding = FileEncoding.guess(read.bytes)
+                    upsertEditor(BrowserFile(entry.path, encoding.decode(read.bytes), read, encoding))
+                    opened += 1
+                }
+                if (opened == 0) error("没有可同时打开的文本文件")
+                onMessage("已打开 $opened 个文件")
+            }
+        }
     }
 
     fun compressSelected() {
@@ -373,13 +513,24 @@ fun SftpBrowserPane(
     }
 
     fun downloadSelected() {
-        val entry = selectedEntries().singleOrNull() ?: return
-        if (entry.isDirectory) {
-            onMessage("目录请先压缩再下载")
+        val targets = selectedEntries()
+        if (targets.isEmpty()) return
+        if (targets.size == 1 && !targets.first().isDirectory) {
+            downloadTarget = targets.first()
+            downloadLauncher.launch(targets.first().name)
             return
         }
-        downloadTarget = entry
-        downloadLauncher.launch(entry.name)
+        scope.launch {
+            runOp(onMessage, { busy = it }, { transfer = it }) {
+                val name = SftpTransferOps.bundleName()
+                val remote = SftpTransferOps.remoteTempPath(name)
+                val id = "bundle-$name"
+                pushTransfer(SftpTransferOps.Transfer(id, "打包 $name", SftpTransferOps.Direction.ARCHIVE, remote, detail = "压缩中"))
+                port.exec(currentHandle(), SftpTransferOps.bundleCommand(targets.map { it.path }, remote)).requireOk("打包")
+                bundleTarget = remote
+                downloadLauncher.launch(name)
+            }
+        }
     }
 
     fun showSelectedProperties() {
@@ -395,11 +546,53 @@ fun SftpBrowserPane(
     Box(modifier.fillMaxSize()) {
         when {
             editor != null -> SftpTextEditor(
-                file = editor!!,
-                onChange = { text, encoding, ending ->
-                    editor = editor!!.copy(text = text, encoding = encoding, lineEnding = ending, dirty = true)
+                files = editors,
+                activeIndex = editorIndex,
+                onSelect = { editorIndex = it },
+                onCloseTab = { closeEditor(force = false, index = it) },
+                onChange = { text, encoding, ending, tabSize, wrap ->
+                    updateActive { current ->
+                        val history = (current.undo + current.text).takeLast(40)
+                        current.copy(
+                            text = text,
+                            encoding = encoding,
+                            lineEnding = ending,
+                            tabSize = tabSize,
+                            wrap = wrap,
+                            dirty = true,
+                            undo = history,
+                            redo = emptyList(),
+                        )
+                    }
                 },
-                onBack = { if (editor!!.dirty) pendingClose = true else editor = null },
+                onUndo = {
+                    updateActive { current ->
+                        val previous = current.undo.lastOrNull() ?: return@updateActive current
+                        current.copy(
+                            text = previous,
+                            undo = current.undo.dropLast(1),
+                            redo = current.redo + current.text,
+                            dirty = true,
+                        )
+                    }
+                },
+                onRedo = {
+                    updateActive { current ->
+                        val next = current.redo.lastOrNull() ?: return@updateActive current
+                        current.copy(
+                            text = next,
+                            redo = current.redo.dropLast(1),
+                            undo = current.undo + current.text,
+                            dirty = true,
+                        )
+                    }
+                },
+                onFormat = {
+                    updateActive { current ->
+                        current.copy(text = SftpEditorSupport.formatDocument(current.text, current.tabSize), dirty = true)
+                    }
+                },
+                onBack = { closeEditor(force = false) },
                 onSave = {
                     val current = editor ?: return@SftpTextEditor
                     scope.launch {
@@ -410,7 +603,9 @@ fun SftpBrowserPane(
                                 current.text.replace("\r\n", "\n")
                             }
                             val bytes = current.encoding.encode(normalized)
-                            if (bytes.size > EDIT_WRITE_LIMIT) error("文件超过 2 MiB，拒绝保存")
+                            if (bytes.size > SftpOpenPolicy.TEXT_EDIT_LIMIT) {
+                                error("文件超过 ${SftpOpenPolicy.formatBytes(SftpOpenPolicy.TEXT_EDIT_LIMIT)}，拒绝保存")
+                            }
                             val receipt = runCatching {
                                 port.write(
                                     currentHandle(), current.path, bytes,
@@ -423,13 +618,33 @@ fun SftpBrowserPane(
                                 }
                                 throw failure
                             }
-                            editor = current.copy(
-                                baseline = RemoteFileRead(current.path, bytes, receipt.mtimeMs, receipt.sha256),
-                                dirty = false,
+                            upsertEditor(
+                                current.copy(
+                                    baseline = RemoteFileRead(current.path, bytes, receipt.mtimeMs, receipt.sha256),
+                                    dirty = false,
+                                    undo = emptyList(),
+                                    redo = emptyList(),
+                                ),
                             )
                             onMessage("已保存")
                         }
                     }
+                },
+                onWorkspaceSearch = { query ->
+                    scope.launch {
+                        runOp(onMessage, { busy = it }, { transfer = it }) {
+                            val raw = port.exec(currentHandle(), SftpEditorSupport.workspaceSearchCommand(path, query)).requireOk("搜目录")
+                            val (hits, scanned) = SftpEditorSupport.parseWorkspaceHits(raw)
+                            dialog = SftpDialog.Properties(
+                                "搜目录 · $query · $scanned 个文件",
+                                hits.take(80).map { "${it.path}:${it.line}" to it.text },
+                            )
+                        }
+                    }
+                },
+                onOpenHit = { pathToOpen ->
+                    val name = RemotePath.nameOf(pathToOpen)
+                    openEntry(RemoteEntry(name, pathToOpen, false, 0L, 0L))
                 },
             )
             preview != null -> SftpPreviewPane(
@@ -459,15 +674,16 @@ fun SftpBrowserPane(
                     onNewFolder = { moreOpen = false; createFolder() },
                     onNewFile = { moreOpen = false; createFile() },
                     onUpload = { moreOpen = false; uploadLauncher.launch("*/*") },
-                    canPaste = clipboard != null,
+                    canPaste = localClipboard != null,
                     onPaste = { moreOpen = false; pasteClipboard() },
                 )
                 SftpSearchBar(query = query, onQuery = { query = it }, selecting = selecting, selectedCount = selected.size)
                 SftpActionBar(
                     selecting = selecting,
                     selectedCount = selected.size,
-                    canPaste = clipboard != null,
+                    canPaste = localClipboard != null,
                     onSelect = { selecting = !selecting; if (!selecting) selected = emptySet() },
+                    onOpen = { openSelected() },
                     onCopy = { copyOrCut(false) },
                     onCut = { copyOrCut(true) },
                     onPaste = { pasteClipboard() },
@@ -478,16 +694,33 @@ fun SftpBrowserPane(
                     onDownload = { downloadSelected() },
                     onProperties = { showSelectedProperties() },
                 )
-                transfer?.let { job ->
+                if (transfers.isNotEmpty()) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        Text(job.label, color = ZephyrTheme.palette.onFloatingMuted, fontSize = 11.sp)
-                        LinearProgress(progress = job.progress, modifier = Modifier.padding(top = 4.dp))
-                        Text(job.detail, color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 10.sp)
+                        Text("传输", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        transfers.take(5).forEach { job ->
+                            Text(job.label, color = ZephyrTheme.palette.onFloatingMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                            LinearProgress(progress = job.fraction, modifier = Modifier.padding(top = 4.dp))
+                            Text(
+                                (if (job.detail.isNotBlank()) job.detail + " · " else "") + job.status.name.lowercase(),
+                                color = ZephyrTheme.palette.onFloatingSubtle,
+                                fontSize = 10.sp,
+                            )
+                        }
+                    }
+                } else {
+                    transfer?.let { job ->
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Text(job.label, color = ZephyrTheme.palette.onFloatingMuted, fontSize = 11.sp)
+                            LinearProgress(progress = job.progress, modifier = Modifier.padding(top = 4.dp))
+                            Text(job.detail, color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 10.sp)
+                        }
                     }
                 }
                 when {
-                    loading -> SftpEmpty("正在连接并读取 $path…")
-                    error != null -> SftpError(error!!, onRetry = { refresh() })
+                    connecting || (loading && handle == null) ->
+                        SftpEmpty("正在自动连接${if (connectionName.isBlank()) "" else " $connectionName"}…")
+                    loading -> SftpEmpty("正在读取 $path…")
+                    error != null -> SftpError(error!!, onRetry = { reconnect() })
                     visible.isEmpty() -> SftpEmpty(if (query.isNotBlank()) "没有匹配 $query 的项目" else "$path · 空目录")
                     else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
                         items(visible, key = { it.path }) { entry ->
@@ -512,7 +745,7 @@ fun SftpBrowserPane(
                 onDismissRequest = { pendingClose = false },
                 title = { Text("放弃未保存修改？") },
                 text = { Text("返回文件列表会丢失当前修改。") },
-                confirmButton = { TextButton(onClick = { pendingClose = false; editor = null }) { Text("放弃") } },
+                confirmButton = { TextButton(onClick = { pendingClose = false; closeEditor(force = true) }) { Text("放弃") } },
                 dismissButton = { TextButton(onClick = { pendingClose = false }) { Text("继续编辑") } },
             )
         }
@@ -540,9 +773,20 @@ fun SftpBrowserPane(
                 onDismissRequest = { dialog = null },
                 title = { Text(current.title) },
                 text = {
-                    Column {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
                         current.lines.forEach { (label, value) ->
-                            Text("$label  $value", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                            val jump = label.contains(':') && label.startsWith("/")
+                            Text(
+                                "$label  $value",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                color = if (jump) ZephyrTheme.palette.brand.accent else ZephyrTheme.palette.onFloating,
+                                modifier = if (jump) Modifier.clickable {
+                                    dialog = null
+                                    val pathToOpen = label.substringBefore(':')
+                                    openEntry(RemoteEntry(RemotePath.nameOf(pathToOpen), pathToOpen, false, 0L, 0L))
+                                } else Modifier,
+                            )
                         }
                     }
                 },
@@ -565,7 +809,7 @@ fun SftpBrowserPane(
                 },
             )
             is SftpDialog.PasteConflict -> {
-                val clip = clipboard
+                val clip = localClipboard
                 AlertDialog(
                     onDismissRequest = { dialog = null },
                     title = { Text("目标已存在同名项目") },
@@ -576,24 +820,24 @@ fun SftpBrowserPane(
                                 dialog = null
                                 if (clip != null) applyPaste(
                                     clip, SftpPasteConflictMode.OVERWRITE, entries.map { it.name }.toSet(),
-                                    port, path, currentHandle(), onMessage, { busy = it }, { transfer = it },
-                                    { if (clip.mode == SftpClipboardMode.CUT) clipboard = null; refresh() }, scope,
+                                    port, path, currentHandle(), connectionId, onMessage, { busy = it }, { transfer = it },
+                                    { if (clip.mode == SftpClipboardMode.CUT) setClip(null); refresh() }, scope,
                                 )
                             }) { Text("覆盖") }
                             TextButton(onClick = {
                                 dialog = null
                                 if (clip != null) applyPaste(
                                     clip, SftpPasteConflictMode.SKIP, entries.map { it.name }.toSet(),
-                                    port, path, currentHandle(), onMessage, { busy = it }, { transfer = it },
-                                    { if (clip.mode == SftpClipboardMode.CUT) clipboard = null; refresh() }, scope,
+                                    port, path, currentHandle(), connectionId, onMessage, { busy = it }, { transfer = it },
+                                    { if (clip.mode == SftpClipboardMode.CUT) setClip(null); refresh() }, scope,
                                 )
                             }) { Text("跳过") }
                             TextButton(onClick = {
                                 dialog = null
                                 if (clip != null) applyPaste(
                                     clip, SftpPasteConflictMode.COMPATIBLE, entries.map { it.name }.toSet(),
-                                    port, path, currentHandle(), onMessage, { busy = it }, { transfer = it },
-                                    { if (clip.mode == SftpClipboardMode.CUT) clipboard = null; refresh() }, scope,
+                                    port, path, currentHandle(), connectionId, onMessage, { busy = it }, { transfer = it },
+                                    { if (clip.mode == SftpClipboardMode.CUT) setClip(null); refresh() }, scope,
                                 )
                             }) { Text("兼容") }
                         }
@@ -613,9 +857,11 @@ fun SftpBrowserPane(
                             runOp(onMessage, { busy = it }, { transfer = it }) {
                                 val bytes = currentFile.encoding.encode(currentFile.text)
                                 val receipt = port.write(currentHandle(), currentFile.path, bytes, null, null, force = true)
-                                editor = currentFile.copy(
-                                    baseline = RemoteFileRead(currentFile.path, bytes, receipt.mtimeMs, receipt.sha256),
-                                    dirty = false,
+                                upsertEditor(
+                                    currentFile.copy(
+                                        baseline = RemoteFileRead(currentFile.path, bytes, receipt.mtimeMs, receipt.sha256),
+                                        dirty = false,
+                                    ),
                                 )
                                 onMessage("已强制覆盖保存")
                             }
@@ -767,6 +1013,7 @@ private fun SftpActionBar(
     selectedCount: Int,
     canPaste: Boolean,
     onSelect: () -> Unit,
+    onOpen: () -> Unit,
     onCopy: () -> Unit,
     onCut: () -> Unit,
     onPaste: () -> Unit,
@@ -783,13 +1030,14 @@ private fun SftpActionBar(
     ) {
         MiniChip(if (selecting) "取消选择" else "选择", onSelect)
         if (selectedCount > 0) {
+            MiniChip("打开", onOpen)
             MiniChip("复制", onCopy)
             MiniChip("剪切", onCut)
             MiniChip("重命名", onRename, enabled = selectedCount == 1)
             MiniChip("删除", onDelete)
             MiniChip("压缩", onCompress)
             MiniChip("权限", onChmod, enabled = selectedCount == 1)
-            MiniChip("下载", onDownload, enabled = selectedCount == 1)
+            MiniChip("下载", onDownload, enabled = selectedCount >= 1)
             MiniChip("属性", onProperties)
         }
         MiniChip("粘贴", onPaste, enabled = canPaste)
@@ -850,11 +1098,27 @@ private fun SftpEntryRow(
 
 @Composable
 private fun SftpTextEditor(
-    file: BrowserFile,
-    onChange: (String, FileEncoding, String) -> Unit,
+    files: List<BrowserFile>,
+    activeIndex: Int,
+    onSelect: (Int) -> Unit,
+    onCloseTab: (Int) -> Unit,
+    onChange: (String, FileEncoding, String, Int, Boolean) -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onFormat: () -> Unit,
     onBack: () -> Unit,
     onSave: () -> Unit,
+    onWorkspaceSearch: (String) -> Unit,
+    onOpenHit: (String) -> Unit,
 ) {
+    val file = files.getOrNull(activeIndex) ?: return
+    var findQuery by remember { mutableStateOf("") }
+    var findOpen by remember { mutableStateOf(false) }
+    var outlineOpen by remember { mutableStateOf(false) }
+    var workspaceQuery by remember { mutableStateOf("") }
+    var workspaceOpen by remember { mutableStateOf(false) }
+    val hits = remember(file.text, findQuery) { SftpEditorSupport.findInText(file.text, findQuery) }
+    val outline = remember(file.text, file.path) { SftpEditorSupport.outline(file.text, file.path) }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().background(ZephyrTheme.palette.surfaces.content).padding(8.dp),
@@ -863,46 +1127,100 @@ private fun SftpTextEditor(
         ) {
             IconButton(onClick = onBack) { Icon(ZephyrIcons.Back, "返回文件列表") }
             Column(Modifier.weight(1f)) {
-                Text(file.path.substringAfterLast('/'), color = ZephyrTheme.palette.onFloating, fontWeight = FontWeight.SemiBold)
-                Text(if (file.dirty) "未保存" else file.path, color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 10.sp, maxLines = 1)
+                Text(file.title, color = ZephyrTheme.palette.onFloating, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(
+                    (if (file.dirty) "未保存 · " else "") + SftpEditorSupport.languageOf(file.path) + " · " + file.path,
+                    color = ZephyrTheme.palette.onFloatingSubtle,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                )
             }
             PrimaryButton(onClick = onSave, enabled = file.dirty) { Text("保存") }
         }
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            files.forEachIndexed { index, tab ->
+                AssistChip(
+                    onClick = { onSelect(index) },
+                    label = { Text((if (tab.dirty) "● " else "") + tab.title, fontSize = 11.sp) },
+                )
+                if (index == activeIndex) {
+                    TextButton(onClick = { onCloseTab(index) }) { Text("×") }
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             FileEncoding.entries.forEach { encoding ->
                 FilterChip(
                     selected = file.encoding == encoding,
-                    onClick = { onChange(encoding.decode(file.baseline.bytes), encoding, file.lineEnding) },
+                    onClick = { onChange(encoding.decode(file.baseline.bytes), encoding, file.lineEnding, file.tabSize, file.wrap) },
                     enabled = encoding.isAvailable,
                     label = { Text(encoding.label, fontSize = 11.sp) },
                 )
             }
-            FilterChip(
-                selected = file.lineEnding == "lf",
-                onClick = { onChange(file.text, file.encoding, "lf") },
-                label = { Text("LF", fontSize = 11.sp) },
-            )
-            FilterChip(
-                selected = file.lineEnding == "crlf",
-                onClick = { onChange(file.text, file.encoding, "crlf") },
-                label = { Text("CRLF", fontSize = 11.sp) },
-            )
+            FilterChip(selected = file.lineEnding == "lf", onClick = { onChange(file.text, file.encoding, "lf", file.tabSize, file.wrap) }, label = { Text("LF", fontSize = 11.sp) })
+            FilterChip(selected = file.lineEnding == "crlf", onClick = { onChange(file.text, file.encoding, "crlf", file.tabSize, file.wrap) }, label = { Text("CRLF", fontSize = 11.sp) })
+            FilterChip(selected = file.tabSize == 2, onClick = { onChange(file.text, file.encoding, file.lineEnding, 2, file.wrap) }, label = { Text("Tab 2", fontSize = 11.sp) })
+            FilterChip(selected = file.tabSize == 4, onClick = { onChange(file.text, file.encoding, file.lineEnding, 4, file.wrap) }, label = { Text("Tab 4", fontSize = 11.sp) })
+            FilterChip(selected = file.wrap, onClick = { onChange(file.text, file.encoding, file.lineEnding, file.tabSize, !file.wrap) }, label = { Text("换行", fontSize = 11.sp) })
+            AssistChip(onClick = onUndo, label = { Text("撤回", fontSize = 11.sp) })
+            AssistChip(onClick = onRedo, label = { Text("前进", fontSize = 11.sp) })
+            AssistChip(onClick = onFormat, label = { Text("格式化", fontSize = 11.sp) })
+            AssistChip(onClick = { findOpen = !findOpen }, label = { Text("查找", fontSize = 11.sp) })
+            AssistChip(onClick = { outlineOpen = !outlineOpen }, label = { Text("大纲", fontSize = 11.sp) })
+            AssistChip(onClick = { workspaceOpen = !workspaceOpen }, label = { Text("搜目录", fontSize = 11.sp) })
         }
-        BasicTextField(
-            value = file.text,
-            onValueChange = { onChange(it, file.encoding, file.lineEnding) },
-            modifier = Modifier.fillMaxSize().background(ZephyrTheme.palette.surfaces.background).padding(14.dp),
-            textStyle = androidx.compose.ui.text.TextStyle(
-                color = ZephyrTheme.palette.onFloating,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
-                lineHeight = 19.sp,
-            ),
-        )
+        if (findOpen) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = findQuery, onValueChange = { findQuery = it }, modifier = Modifier.weight(1f), singleLine = true, placeholder = { Text("在文件中查找") })
+                Text("${hits.size}", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp))
+            }
+            if (hits.isNotEmpty()) {
+                Column(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
+                    hits.take(40).forEach { hit ->
+                        Text("L${hit.line}:${hit.column}  ${hit.text}", color = ZephyrTheme.palette.onFloatingMuted, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+        if (workspaceOpen) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = workspaceQuery, onValueChange = { workspaceQuery = it }, modifier = Modifier.weight(1f), singleLine = true, placeholder = { Text("在当前 SFTP 目录搜索文本…") })
+                TextButton(onClick = { if (workspaceQuery.isNotBlank()) onWorkspaceSearch(workspaceQuery) }) { Text("搜索") }
+            }
+        }
+        Row(Modifier.fillMaxSize()) {
+            BasicTextField(
+                value = file.text,
+                onValueChange = { onChange(it, file.encoding, file.lineEnding, file.tabSize, file.wrap) },
+                modifier = Modifier.weight(1f).fillMaxSize().background(ZephyrTheme.palette.surfaces.background).padding(14.dp),
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    color = ZephyrTheme.palette.onFloating,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                ),
+            )
+            if (outlineOpen) {
+                Column(
+                    Modifier.width(160.dp).fillMaxSize().background(ZephyrTheme.palette.surfaces.content).verticalScroll(rememberScrollState()).padding(8.dp),
+                ) {
+                    Text("大纲", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp)
+                    if (outline.isEmpty()) Text("暂无符号", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp)
+                    outline.forEach { item ->
+                        Text("L${item.line}  ${item.name}", color = ZephyrTheme.palette.onFloating, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(vertical = 3.dp))
+                    }
+                    @Suppress("UNUSED_VARIABLE")
+                    val keepOpen = onOpenHit
+                }
+            }
+        }
     }
 }
 
@@ -946,10 +1264,9 @@ private fun SftpPreviewPane(
                     }
                 }
                 SftpOpenKind.MEDIA -> {
-                    val mediaFile = remember(preview.path, preview.bytes) {
-                        val ext = SshFileKinds.extensionOf(preview.path).ifBlank { "bin" }
-                        File(cacheDir, "sftp-preview-${preview.path.hashCode()}.$ext").apply {
-                            writeBytes(preview.bytes)
+                    val mediaFile = remember(preview.path, preview.cacheFile) {
+                        preview.cacheFile ?: File(cacheDir, "sftp-preview-${preview.path.hashCode()}.${SshFileKinds.extensionOf(preview.path).ifBlank { "bin" }}").apply {
+                            if (preview.bytes.isNotEmpty()) writeBytes(preview.bytes)
                         }
                     }
                     DisposableEffect(mediaFile) { onDispose { mediaFile.delete() } }
@@ -1058,6 +1375,54 @@ private fun queryDisplayName(context: android.content.Context, uri: Uri): String
     }
 }
 
+private fun querySize(context: android.content.Context, uri: Uri): Long {
+    val cursor = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
+    return cursor?.use {
+        if (it.moveToFirst()) it.getLong(0) else 0L
+    } ?: 0L
+}
+
+private suspend fun streamDownload(
+    port: SftpPort,
+    handle: SftpSessionHandle,
+    remotePath: String,
+    uri: Uri,
+    context: android.content.Context,
+    label: String,
+    push: (SftpTransferOps.Transfer) -> Unit,
+    knownSize: Long = 0L,
+) {
+    val id = "dl-$remotePath-${System.currentTimeMillis()}"
+    context.contentResolver.openOutputStream(uri)?.use { output ->
+        port.readStream(handle, remotePath, 0L) { offset, bytes, total ->
+            output.write(bytes)
+            push(
+                SftpTransferOps.Transfer(
+                    id = id,
+                    label = "下载 $label",
+                    direction = SftpTransferOps.Direction.DOWNLOAD,
+                    path = remotePath,
+                    loaded = offset + bytes.size,
+                    total = if (total > 0) total else knownSize,
+                    detail = SftpOpenPolicy.formatBytes(offset + bytes.size),
+                ),
+            )
+        }
+    } ?: error("无法写入本机文件")
+    push(
+        SftpTransferOps.Transfer(
+            id = id,
+            label = "下载 $label",
+            direction = SftpTransferOps.Direction.DOWNLOAD,
+            path = remotePath,
+            loaded = knownSize,
+            total = knownSize,
+            status = SftpTransferOps.Status.DONE,
+            detail = "完成",
+        ),
+    )
+}
+
 private suspend fun runOp(
     onMessage: (String) -> Unit,
     setBusy: (Boolean) -> Unit,
@@ -1082,6 +1447,7 @@ private fun applyPaste(
     port: SftpPort,
     directory: String,
     handle: SftpSessionHandle,
+    destinationConnectionId: String,
     onMessage: (String) -> Unit,
     setBusy: (Boolean) -> Unit,
     setTransfer: (TransferJob?) -> Unit,
@@ -1091,9 +1457,29 @@ private fun applyPaste(
     scope.launch {
         runOp(onMessage, setBusy, setTransfer) {
             val plan = SftpClipboardOps.planPaste(clip, directory, existing, mode)
-            val command = SftpClipboardOps.commandFor(plan, cut = clip.mode == SftpClipboardMode.CUT)
-                ?: error("没有可粘贴的项目")
-            port.exec(handle, command).requireOk("粘贴")
+            if (plan.copies.isEmpty()) error("没有可粘贴的项目")
+            if (clip.sameHostAs(destinationConnectionId)) {
+                val command = SftpClipboardOps.commandFor(plan, cut = clip.mode == SftpClipboardMode.CUT)
+                    ?: error("没有可粘贴的项目")
+                port.exec(handle, command).requireOk("粘贴")
+            } else {
+                val source = port.open(clip.sourceConnectionId)
+                try {
+                    for ((from, to) in plan.copies) {
+                        val chunks = ArrayList<ByteArray>()
+                        port.readStream(source, from, 0L) { _, bytes, _ -> chunks += bytes }
+                        var index = 0
+                        port.writeStream(handle, to) {
+                            if (index >= chunks.size) null else chunks[index++]
+                        }
+                        if (clip.mode == SftpClipboardMode.CUT) {
+                            runCatching { port.delete(source, from, recursive = true) }
+                        }
+                    }
+                } finally {
+                    runCatching { port.close(source) }
+                }
+            }
             onMessage("已粘贴 ${plan.copies.size} 项")
             onDone()
         }

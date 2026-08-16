@@ -85,6 +85,11 @@ class SshRemoteOpsTest {
         val quoted = SshRemoteOps.shellQuote("it's")
         assertEquals("'it'\\''s'", quoted)
         assertTrue(SshRemoteOps.dockerPullCommand("nginx:alpine").contains("'nginx:alpine'"))
+        val logs = SshRemoteOps.dockerLogsCommand("web")
+        assertTrue(logs.contains("--timestamps"))
+        assertTrue(logs.contains(" -f "))
+        assertTrue(logs.contains("'web'"))
+        assertFalse(SshRemoteOps.dockerLogsCommand("web", follow = false).contains(" -f"))
     }
 
     @Test

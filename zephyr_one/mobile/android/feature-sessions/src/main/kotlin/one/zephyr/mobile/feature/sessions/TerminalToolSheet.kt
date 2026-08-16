@@ -1,6 +1,7 @@
 package one.zephyr.mobile.feature.sessions
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -66,15 +67,28 @@ internal fun TerminalToolSheet(
     var liveFraction by remember { mutableFloatStateOf(workspace.sheetFraction) }
     var velocityPxPerMs by remember { mutableFloatStateOf(0f) }
     var lastMoveAtNanos by remember { mutableStateOf(0L) }
+    // First frame targets 0 so open animates 0 → detent instead of appearing at height.
+    var ready by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { ready = true }
 
     LaunchedEffect(workspace.sheetFraction, dragging) {
         if (!dragging) liveFraction = workspace.sheetFraction
     }
+    val desiredFraction = if (dragging) liveFraction else workspace.sheetFraction
     val animatedFraction by animateFloatAsState(
-        targetValue = if (dragging) liveFraction else workspace.sheetFraction,
-        animationSpec = tween(260, easing = ZephyrMotionTokens.easeDrawer),
+        targetValue = if (ready || dragging) desiredFraction else 0f,
+        animationSpec = if (dragging) {
+            snap()
+        } else {
+            tween(ZephyrMotionTokens.SHEET_MS, easing = ZephyrMotionTokens.easeDrawer)
+        },
         label = "terminalToolSheetHeight",
     )
+    LaunchedEffect(animatedFraction, dragging, workspace.sheetFraction, workspace.sheetCurrent) {
+        if (!dragging && workspace.sheetFraction == 0f && animatedFraction == 0f && workspace.sheetCurrent != null) {
+            onWorkspace(TerminalWorkspace.finishClose(workspace))
+        }
+    }
 
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val hostHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
@@ -82,8 +96,9 @@ internal fun TerminalToolSheet(
             Modifier
                 .fillMaxWidth()
                 .height(maxHeight * animatedFraction)
+                .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
                 .background(colors.chrome)
-                .border(width = 1.dp, color = colors.line),
+                .border(width = 1.dp, color = colors.line, shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)),
         ) {
             Box(
                 Modifier

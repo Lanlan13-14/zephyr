@@ -32,6 +32,9 @@ interface SshExecPort {
      * (ZEPHYR_PARITY.md 4.2).
      */
     suspend fun exec(connectionId: String, command: String, timeoutSeconds: Int): ExecOutcome
+
+    fun execStream(connectionId: String, command: String): kotlinx.coroutines.flow.Flow<RemoteShellChunk> =
+        kotlinx.coroutines.flow.emptyFlow()
 }
 
 /**

@@ -342,8 +342,8 @@ private fun DemoTerminalSurface(
                         },
                     )
                 }
-                if (!pad && ws.sheetFraction > 0f && ws.sheetCurrent != null &&
-                    (!imeOpen || ws.sheetCurrent?.keepsIme == true)
+                if (!pad && ws.sheetCurrent != null &&
+                    (!imeOpen || ws.sheetCurrent?.keepsIme == true || ws.sheetFraction == 0f)
                 ) {
                     TerminalToolSheet(
                         workspace = ws,

@@ -155,6 +155,42 @@ class SshjSftpPort(
         )
     }
 
+    override fun execStream(
+        handle: SftpSessionHandle,
+        command: String,
+    ): kotlinx.coroutines.flow.Flow<one.zephyr.mobile.feature.notes.RemoteExecChunk> =
+        kotlinx.coroutines.flow.flow {
+            engine.execStream(session(handle), command).collect { event ->
+                when (event) {
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Stdout ->
+                        emit(one.zephyr.mobile.feature.notes.RemoteExecChunk.Output(event.bytes.toString(Charsets.UTF_8), stderr = false))
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Stderr ->
+                        emit(one.zephyr.mobile.feature.notes.RemoteExecChunk.Output(event.bytes.toString(Charsets.UTF_8), stderr = true))
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Closed ->
+                        emit(one.zephyr.mobile.feature.notes.RemoteExecChunk.Closed(event.exitCode))
+                }
+            }
+        }
+
+    override suspend fun readStream(
+        handle: SftpSessionHandle,
+        path: String,
+        resumeFromBytes: Long,
+        onChunk: suspend (offset: Long, bytes: ByteArray, total: Long) -> Unit,
+    ): RemoteWriteReceipt {
+        val version = engine.readFileStream(session(handle), path, resumeFromBytes, onChunk).getOrThrow()
+        return RemoteWriteReceipt(version.path, version.modifiedAt, "")
+    }
+
+    override suspend fun writeStream(
+        handle: SftpSessionHandle,
+        path: String,
+        next: suspend () -> ByteArray?,
+    ): RemoteWriteReceipt {
+        val version = engine.writeFileStream(session(handle), path, expected = null, next = next).getOrThrow()
+        return RemoteWriteReceipt(version.path, version.modifiedAt, "")
+    }
+
     private fun SftpEntry.remote() = RemoteEntry(
         name, path, isDirectory, size, modifiedAt, permissions.toString(8), isSymlink,
     )

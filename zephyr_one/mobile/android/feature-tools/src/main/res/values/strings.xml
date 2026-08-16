@@ -70,7 +70,7 @@
     <string name="tools_batch_output_hide">收起 %1$s</string>
     <string name="tools_batch_output_show">查看 %1$s（%2$d 字符）</string>
     <string name="tools_batch_status_pending">等待中</string>
-    <string name="tools_batch_status_running">执行中</string>
+    <string name="tools_batch_status_running">连接并执行中</string>
     <string name="tools_batch_status_succeeded">成功</string>
     <string name="tools_batch_status_failed">失败</string>
     <string name="tools_batch_status_timed_out">超时</string>

@@ -18,9 +18,21 @@ class TerminalToolSheetTest {
     @Test
     fun tappingCurrentToolAgainClosesTheSheet() {
         val opened = TerminalWorkspace.openTool(state(), TerminalToolKind.FILES, phone = true)
-        val closed = TerminalWorkspace.openTool(opened, TerminalToolKind.FILES, phone = true)
-        assertEquals(0f, closed.sheetFraction, 0.001f)
-        assertTrue(closed.sheetTools.isEmpty())
+        val closing = TerminalWorkspace.openTool(opened, TerminalToolKind.FILES, phone = true)
+        assertEquals(0f, closing.sheetFraction, 0.001f)
+        assertEquals(TerminalToolKind.FILES, closing.sheetCurrent)
+        assertEquals(listOf(TerminalToolKind.FILES), closing.sheetTools)
+        val gone = TerminalWorkspace.finishClose(closing)
+        assertTrue(gone.sheetTools.isEmpty())
+        assertEquals(null, gone.sheetCurrent)
+    }
+
+    @Test
+    fun finishCloseDoesNotDropAnOpenSheet() {
+        val opened = TerminalWorkspace.openTool(state(), TerminalToolKind.FILES, phone = true)
+        val same = TerminalWorkspace.finishClose(opened)
+        assertEquals(TerminalToolKind.FILES, same.sheetCurrent)
+        assertEquals(TerminalWorkspace.SHEET_MID_FRACTION, same.sheetFraction, 0.001f)
     }
 
     @Test

@@ -205,13 +205,28 @@ private fun DockerToolBody(
 }
 
 private fun TerminalViewModel.asRemoteShell(): one.zephyr.mobile.feature.tools.RemoteShell =
-    one.zephyr.mobile.feature.tools.RemoteShell { command ->
-        val result = executeRemote(command).getOrThrow()
-        one.zephyr.mobile.feature.tools.RemoteShellResult(
-            exitCode = result.exitCode,
-            stdout = result.stdout.toString(Charsets.UTF_8),
-            stderr = result.stderr.toString(Charsets.UTF_8),
-        )
+    object : one.zephyr.mobile.feature.tools.RemoteShell {
+        override suspend fun run(command: String): one.zephyr.mobile.feature.tools.RemoteShellResult {
+            val result = executeRemote(command).getOrThrow()
+            return one.zephyr.mobile.feature.tools.RemoteShellResult(
+                exitCode = result.exitCode,
+                stdout = result.stdout.toString(Charsets.UTF_8),
+                stderr = result.stderr.toString(Charsets.UTF_8),
+            )
+        }
+
+        override fun stream(command: String) = kotlinx.coroutines.flow.flow {
+            executeRemoteStream(command).collect { event ->
+                when (event) {
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Stdout ->
+                        emit(one.zephyr.mobile.feature.tools.RemoteShellChunk.Output(event.bytes.toString(Charsets.UTF_8)))
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Stderr ->
+                        emit(one.zephyr.mobile.feature.tools.RemoteShellChunk.Output(event.bytes.toString(Charsets.UTF_8)))
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Closed ->
+                        emit(one.zephyr.mobile.feature.tools.RemoteShellChunk.Closed(event.exitCode))
+                }
+            }
+        }
     }
 
 @Composable

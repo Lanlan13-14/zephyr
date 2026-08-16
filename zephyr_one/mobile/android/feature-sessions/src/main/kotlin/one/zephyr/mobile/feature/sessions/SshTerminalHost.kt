@@ -89,6 +89,8 @@ class SshTerminalHost(
 
     override suspend fun exec(sessionId: String, command: String) = engine.exec(sessionId, command)
 
+    override fun execStream(sessionId: String, command: String) = engine.execStream(sessionId, command)
+
     override suspend fun trustHostKey(sessionId: String) {
         val remembered = lastRequest[sessionId] ?: return
         engine.acceptHostKey(sessionId, remembered.host, remembered.port)
