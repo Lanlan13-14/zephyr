@@ -67,7 +67,7 @@
     <string name="terminal_pasted">Pasted into %1$s</string>
     <string name="terminal_disconnect_title">Disconnect %1$s? The session cannot be restored</string>
     <string name="terminal_disconnect_confirm">Disconnect</string>
-    <string name="terminal_new_session_title">New session · pick a connection</string>
+    <string name="terminal_new_session_title">Open another host</string>
     <string name="terminal_bg_none">No custom background</string>
     <string name="terminal_bg_image">Image (demo gradient)</string>
     <string name="terminal_bg_big">Large background</string>

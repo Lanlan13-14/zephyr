@@ -86,7 +86,7 @@
     <string name="terminal_pasted">已粘贴到 %1$s</string>
     <string name="terminal_disconnect_title">断开 %1$s？会话不可恢复</string>
     <string name="terminal_disconnect_confirm">断开连接</string>
-    <string name="terminal_new_session_title">新建会话 · 选择连接</string>
+    <string name="terminal_new_session_title">再开一台主机</string>
     <string name="terminal_bg_none">不使用自定义背景</string>
     <string name="terminal_bg_image">图片（演示渐变）</string>
     <string name="terminal_bg_big">大背景</string>
