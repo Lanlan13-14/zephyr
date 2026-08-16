@@ -1196,6 +1196,9 @@ private fun ToolsDestination(
 ) {
     val connections by account.connections.observeAll(ownerUserId).collectAsState(initial = emptyList())
     val prefs by account.settings.observePreferences().collectAsState(initial = emptyMap())
+    val localAiCatalog by account.localAi.observe().collectAsState(
+        initial = one.zephyr.mobile.data.repository.LocalAiCatalog(enabled = false),
+    )
     val language = one.zephyr.mobile.ui.locale.AppLanguage.fromStored(
         prefs[one.zephyr.mobile.data.repository.SettingsRepository.PREF_LANGUAGE]?.let {
             one.zephyr.mobile.data.EntityCodec.string(it, "value")
@@ -1218,7 +1221,7 @@ private fun ToolsDestination(
         inventory = inventory,
         summaries = ToolsRootSummaries(
             language = languageLabel,
-            ai = AiWorkspaceBinding.settingsSummary(prefs),
+            ai = AiWorkspaceBinding.settingsSummary(prefs, localAiCatalog.enabled),
         ),
         onOpenBatchExecution = onOpenBatch,
         onOpenDocker = { onOpenTool(ToolEntry.DOCKER) },

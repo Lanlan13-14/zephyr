@@ -113,6 +113,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.lifecycle.service)
     implementation(libs.androidx.activity.compose)
+    // Biometric 1.2.0-alpha05 still declares Fragment 1.2.5 transitively. That legacy
+    // FragmentActivity rejects ActivityResultRegistry's high request codes, crashing every SAF
+    // picker (SFTP upload/download, AI attachment, directory authorizer). Pin a compatible
+    // Fragment implementation at the application boundary.
+    implementation(libs.androidx.fragment)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.navigation.compose)

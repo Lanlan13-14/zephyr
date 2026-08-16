@@ -773,7 +773,9 @@ fun SftpBrowserPane(
                 onDismissRequest = { dialog = null },
                 title = { Text(current.title) },
                 text = {
-                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                    // AlertDialog owns the sole bounded verticalScroll. Nesting another scrollable
+                    // Column here makes Compose measure it with infinite height and crash.
+                    Column {
                         current.lines.forEach { (label, value) ->
                             val jump = label.contains(':') && label.startsWith("/")
                             Text(

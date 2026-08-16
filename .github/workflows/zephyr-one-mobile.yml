@@ -229,6 +229,8 @@ jobs:
           test "$package" = 'one.zephyr.mobile.debug'
           ! $ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | grep -q '^application-debuggable$'
           unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_rdp_android.so'
+          fragment_version="$(unzip -p "${apks[0]}" META-INF/androidx.fragment_fragment.version)"
+          test "$fragment_version" = '1.8.5'
 
       # assemblePrerelease is signed with the committed pre-release PKCS12, not the
       # per-runner debug.keystore. That is what lets successive pre-releases

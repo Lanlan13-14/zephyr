@@ -30,7 +30,13 @@ internal fun BoundAiWorkspace(
     onNotice: (String) -> Unit,
 ) {
     val prefs by account.settings.observePreferences().collectAsState(initial = emptyMap())
-    val chrome = AiWorkspaceBinding.chrome(prefs)
+    val catalog by account.localAi.observe().collectAsState(
+        initial = one.zephyr.mobile.data.repository.LocalAiCatalog(enabled = false),
+    )
+    val chrome = AiWorkspaceBinding.chrome(prefs, catalog.enabled)
+    // Disabled means absent, not merely a closed sheet. Returning before controller construction
+    // removes the FAB immediately and disposes any live local runtime/loopback host when toggled.
+    if (!chrome.enabled) return
     val context = AiWorkspaceBinding.context(destination, session)
     val scope = rememberCoroutineScope()
     val runtime = remember(account) {
@@ -64,8 +70,14 @@ internal fun BoundAiWorkspace(
 
 internal object AiWorkspaceBinding {
 
-    fun chrome(prefs: Map<String, JsonObject>): AiWorkspaceChrome = AiPreferenceMapping.chrome(
-        enabled = flag(prefs, SettingsRepository.PREF_AI_ENABLED, true),
+    fun chrome(
+        prefs: Map<String, JsonObject>,
+        catalogEnabled: Boolean = true,
+    ): AiWorkspaceChrome = AiPreferenceMapping.chrome(
+        // The full local-AI settings page owns the authoritative switch in LocalAiCatalog. The
+        // legacy preference is still honoured for upgraded installs, but it must never turn a
+        // disabled catalog back on or leave the floating button visible.
+        enabled = catalogEnabled && flag(prefs, SettingsRepository.PREF_AI_ENABLED, true),
         provider = text(prefs, SettingsRepository.PREF_AI_PROVIDER),
         model = text(prefs, SettingsRepository.PREF_AI_MODEL),
         collaboration = text(prefs, SettingsRepository.PREF_AI_COLLAB),
@@ -114,8 +126,11 @@ internal object AiWorkspaceBinding {
         return JsonObject(values)
     }
 
-    fun settingsSummary(prefs: Map<String, JsonObject>): String {
-        val chrome = chrome(prefs)
+    fun settingsSummary(
+        prefs: Map<String, JsonObject>,
+        catalogEnabled: Boolean = true,
+    ): String {
+        val chrome = chrome(prefs, catalogEnabled)
         return AiWorkspaceCopy.settingsSub(chrome.enabled, chrome.model, chrome.collaboration)
     }
 
