@@ -79,6 +79,16 @@ value class SftpSessionHandle(val token: String)
  */
 data class DownloadProgress(val transferredBytes: Long, val totalBytes: Long?)
 
+/** One remote shell command run on the same SSH session the SFTP handle owns. */
+data class RemoteExecResult(val exitCode: Int, val stdout: String, val stderr: String) {
+    fun requireOk(label: String = "远程命令"): String {
+        if (exitCode != 0) {
+            error(stderr.ifBlank { stdout }.ifBlank { "$label 失败（exit $exitCode）" })
+        }
+        return stdout
+    }
+}
+
 /**
  * The narrow SFTP surface S31 is written against.
  *
@@ -136,6 +146,15 @@ interface SftpPort {
 
     suspend fun delete(handle: SftpSessionHandle, path: String, recursive: Boolean)
 
+    suspend fun chmod(handle: SftpSessionHandle, path: String, mode: Int)
+
+    suspend fun readRange(
+        handle: SftpSessionHandle,
+        path: String,
+        offset: Long,
+        maxBytes: Int,
+    ): RemoteFileRead
+
     suspend fun upload(handle: SftpSessionHandle, path: String, bytes: ByteArray): RemoteWriteReceipt
 
     /**
@@ -153,6 +172,9 @@ interface SftpPort {
         resumeFromBytes: Long,
         onProgress: (DownloadProgress) -> Unit,
     ): Long
+
+    /** Runs a shell command on the same SSH session. Used for compress / extract / copy / properties. */
+    suspend fun exec(handle: SftpSessionHandle, command: String): RemoteExecResult
 }
 
 /**
@@ -203,6 +225,15 @@ object UnavailableSftpPort : SftpPort {
 
     override suspend fun delete(handle: SftpSessionHandle, path: String, recursive: Boolean) = fail()
 
+    override suspend fun chmod(handle: SftpSessionHandle, path: String, mode: Int) = fail()
+
+    override suspend fun readRange(
+        handle: SftpSessionHandle,
+        path: String,
+        offset: Long,
+        maxBytes: Int,
+    ): RemoteFileRead = fail()
+
     override suspend fun upload(handle: SftpSessionHandle, path: String, bytes: ByteArray): RemoteWriteReceipt = fail()
 
     override suspend fun download(
@@ -212,4 +243,6 @@ object UnavailableSftpPort : SftpPort {
         resumeFromBytes: Long,
         onProgress: (DownloadProgress) -> Unit,
     ): Long = fail()
+
+    override suspend fun exec(handle: SftpSessionHandle, command: String): RemoteExecResult = fail()
 }

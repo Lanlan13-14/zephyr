@@ -20,6 +20,12 @@ enum class SftpAction {
     EDIT,
     RENAME,
     DELETE,
+    CHMOD,
+    COMPRESS,
+    EXTRACT,
+    COPY,
+    PASTE,
+    PROPERTIES,
 }
 
 /**
@@ -33,12 +39,22 @@ enum class SftpAction {
 object SftpCapabilities {
 
     fun required(action: SftpAction): Capability = when (action) {
-        SftpAction.LIST, SftpAction.STAT, SftpAction.READ, SftpAction.DOWNLOAD -> Capability.FILE_READ
+        SftpAction.LIST,
+        SftpAction.STAT,
+        SftpAction.READ,
+        SftpAction.DOWNLOAD,
+        SftpAction.COPY,
+        SftpAction.PROPERTIES,
+        -> Capability.FILE_READ
         SftpAction.UPLOAD,
         SftpAction.CREATE,
         SftpAction.EDIT,
         SftpAction.RENAME,
         SftpAction.DELETE,
+        SftpAction.CHMOD,
+        SftpAction.COMPRESS,
+        SftpAction.EXTRACT,
+        SftpAction.PASTE,
         -> Capability.FILE_WRITE
     }
 

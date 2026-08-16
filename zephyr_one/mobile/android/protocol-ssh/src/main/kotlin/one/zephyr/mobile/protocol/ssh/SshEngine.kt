@@ -52,12 +52,19 @@ interface SshEngine {
     suspend fun rename(sessionId: String, from: String, to: String): Result<Unit>
     suspend fun delete(sessionId: String, path: String, recursive: Boolean): Result<Unit>
     suspend fun readFile(sessionId: String, path: String, maxBytes: Int): Result<SshRemoteFile>
+    suspend fun readFileRange(
+        sessionId: String,
+        path: String,
+        offset: Long,
+        maxBytes: Int,
+    ): Result<SshRemoteFile>
     suspend fun writeFile(
         sessionId: String,
         path: String,
         bytes: ByteArray,
         expected: SshRemoteFileVersion? = null,
     ): Result<SshRemoteFileVersion>
+    suspend fun chmod(sessionId: String, path: String, mode: Int): Result<Unit>
 
     suspend fun exec(sessionId: String, command: String): Result<SshExecResult>
 }
@@ -161,12 +168,22 @@ class UnavailableSshEngine : SshEngine {
     override suspend fun readFile(sessionId: String, path: String, maxBytes: Int): Result<SshRemoteFile> =
         Result.failure(MobileApiException(BLOCKED))
 
+    override suspend fun readFileRange(
+        sessionId: String,
+        path: String,
+        offset: Long,
+        maxBytes: Int,
+    ): Result<SshRemoteFile> = Result.failure(MobileApiException(BLOCKED))
+
     override suspend fun writeFile(
         sessionId: String,
         path: String,
         bytes: ByteArray,
         expected: SshRemoteFileVersion?,
     ): Result<SshRemoteFileVersion> = Result.failure(MobileApiException(BLOCKED))
+
+    override suspend fun chmod(sessionId: String, path: String, mode: Int): Result<Unit> =
+        Result.failure(MobileApiException(BLOCKED))
 
     override suspend fun exec(sessionId: String, command: String): Result<SshExecResult> =
         Result.failure(one.zephyr.mobile.model.MobileApiException(BLOCKED))

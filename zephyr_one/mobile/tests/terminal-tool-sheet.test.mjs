@@ -45,7 +45,8 @@ test('FILES drawer with its text editor survives an open IME', () => {
   // the whole tool sheet being removed — which made the file page vanish on focus.
   assert.match(
     codeOnly(screen),
-    /!imeOpen \|\| ws\.sheetCurrent == TerminalToolKind\.FILES/,
+    /!imeOpen \|\| ws\.sheetCurrent\?\.keepsIme == true/,
   );
+  assert.match(ws, /this == FILES \|\| this == STATS \|\| this == DOCKER/);
   assert.match(sheet, /SftpBrowserPane\(/);
 });

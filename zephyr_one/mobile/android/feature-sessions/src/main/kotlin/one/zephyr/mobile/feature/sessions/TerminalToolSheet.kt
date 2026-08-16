@@ -182,6 +182,24 @@ internal fun TerminalToolSheet(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     onMessage = onMessage,
                 )
+            } else if (current == TerminalToolKind.STATS || current == TerminalToolKind.DOCKER) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    TerminalToolBody(
+                        kind = current,
+                        colors = colors,
+                        notes = notes,
+                        snippets = snippets,
+                        workspace = workspace,
+                        onWorkspace = onWorkspace,
+                        onInsert = onInsert,
+                        onOpenNote = onOpenNote,
+                        onOpenDocker = {
+                            onWorkspace(TerminalWorkspace.openTool(workspace, TerminalToolKind.DOCKER, phone = true))
+                        },
+                        onMessage = onMessage,
+                        viewModel = viewModel,
+                    )
+                }
             } else {
                 Box(
                     Modifier

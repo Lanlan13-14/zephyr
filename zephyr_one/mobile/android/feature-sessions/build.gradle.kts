@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":protocol-ssh"))
     implementation(project(":protocol-telnet"))
     implementation(project(":feature-notes"))
+    implementation(project(":feature-tools"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)

@@ -22,8 +22,14 @@ enum class TerminalToolKind {
     SNIPPET,
     NOTES,
     STATS,
+    DOCKER,
     THEME,
     ;
+
+    /** Drawers that embed a text field must stay composed while the system IME is open. */
+    val keepsIme: Boolean
+        get() = this == FILES || this == STATS || this == DOCKER
+}
 
     companion object {
         fun fromDock(item: TerminalDockItem): TerminalToolKind? = when (item) {

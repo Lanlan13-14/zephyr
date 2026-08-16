@@ -307,7 +307,9 @@ private fun DemoTerminalSurface(
                         onIntent = onIntent,
                         onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(insertToastMsg) },
                         onOpenNote = onOpenNote,
-                        onOpenDocker = onOpenDocker,
+                        onOpenDocker = {
+                            onWorkspace(TerminalWorkspace.openTool(ws, TerminalToolKind.DOCKER, phone = !pad))
+                        },
                         onMessage = onMessage,
                         onFocusPane = { pane -> onWorkspace(ws.withFocus(pane)) },
                     )
@@ -341,7 +343,7 @@ private fun DemoTerminalSurface(
                     )
                 }
                 if (!pad && ws.sheetFraction > 0f && ws.sheetCurrent != null &&
-                    (!imeOpen || ws.sheetCurrent == TerminalToolKind.FILES)
+                    (!imeOpen || ws.sheetCurrent?.keepsIme == true)
                 ) {
                     TerminalToolSheet(
                         workspace = ws,
@@ -355,7 +357,9 @@ private fun DemoTerminalSurface(
                         onWorkspace = onWorkspace,
                         onInsert = { text -> onIntent(TerminalIntent.Commit(text)); onMessage(insertToastMsg) },
                         onOpenNote = onOpenNote,
-                        onOpenDocker = onOpenDocker,
+                        onOpenDocker = {
+                            onWorkspace(TerminalWorkspace.openTool(ws, TerminalToolKind.DOCKER, phone = true))
+                        },
                         onMessage = onMessage,
                     )
                 }
@@ -481,6 +485,7 @@ private fun TerminalSplitArea(
                 onOpenNote = onOpenNote,
                 onOpenDocker = onOpenDocker,
                 onMessage = onMessage,
+                viewModel = focusedVm,
                 modifier = Modifier
                     .fillMaxHeight()
                     .fillMaxWidth(workspace.dockWidthFraction),
@@ -547,6 +552,7 @@ private fun TerminalSplitArea(
                 onOpenNote = onOpenNote,
                 onOpenDocker = onOpenDocker,
                 onMessage = onMessage,
+                viewModel = focusedVm,
                 modifier = Modifier
                     .fillMaxHeight()
                     .fillMaxWidth(workspace.dockWidthFraction),

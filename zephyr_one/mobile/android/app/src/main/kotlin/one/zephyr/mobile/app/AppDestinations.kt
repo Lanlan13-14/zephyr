@@ -462,10 +462,29 @@ internal fun OpsDestination(
     account: AccountContainer,
     ownerUserId: String,
     section: OpsSection,
+    exec: one.zephyr.mobile.feature.tools.SshExecPort,
     onBack: () -> Unit,
+    onMessage: (String) -> Unit,
 ) {
     val connections by account.connections.observeAll(ownerUserId).collectAsState(initial = emptyList())
-    DockerMonitorScreen(connections = connections, section = section, onBack = onBack)
+    DockerMonitorScreen(
+        connections = connections,
+        section = section,
+        onBack = onBack,
+        shellFor = { connectionId ->
+            one.zephyr.mobile.feature.tools.RemoteShell { command ->
+                when (val outcome = exec.exec(connectionId, command, timeoutSeconds = 300)) {
+                    is one.zephyr.mobile.feature.tools.ExecOutcome.Completed ->
+                        one.zephyr.mobile.feature.tools.RemoteShellResult(outcome.exitCode, outcome.stdout, outcome.stderr)
+                    one.zephyr.mobile.feature.tools.ExecOutcome.TimedOut ->
+                        error("远程命令超时")
+                    is one.zephyr.mobile.feature.tools.ExecOutcome.Failed ->
+                        error(outcome.error.message)
+                }
+            }
+        },
+        onMessage = onMessage,
+    )
 }
 
 @Composable

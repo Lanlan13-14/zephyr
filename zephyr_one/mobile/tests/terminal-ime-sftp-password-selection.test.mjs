@@ -22,7 +22,7 @@ const notes = read('android/feature-notes/src/main/kotlin/one/zephyr/mobile/feat
 const exec = read('android/app/src/main/kotlin/one/zephyr/mobile/app/LiveSshExecPort.kt');
 test('SFTP drawer expands fully and browser has navigation/edit safety', () => {
   assert.match(workspace, /SHEET_MAX_FRACTION = 1\.00f/);
-  for (const p of [/canonicalPath/, /parentPath/, /LazyColumn/, /port\.write\(/, /decodeUtf8Text/, /BackHandler/, /未保存/]) assert.match(pane, p);
+  for (const p of [/canonicalPath/, /parentPath/, /LazyColumn/, /port\.write\(/, /decodeUtf8Text/, /BackHandler/, /未保存/, /SftpTextEditor/, /SftpPreviewPane/]) assert.match(pane, p);
   assert.match(notes, /fun SftpBrowserRoute/);
   assert.doesNotMatch(notes, /prod-web-01|deploy-2026/);
   assert.match(exec, /managed\.withSession/);

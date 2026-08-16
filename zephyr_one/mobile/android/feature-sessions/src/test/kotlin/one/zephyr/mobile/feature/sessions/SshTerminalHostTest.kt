@@ -85,6 +85,13 @@ class SshTerminalHostTest {
             bytes: ByteArray,
             expected: SshRemoteFileVersion?,
         ) = Result.failure<SshRemoteFileVersion>(IllegalStateException("unused"))
+        override suspend fun readFileRange(
+            sessionId: String,
+            path: String,
+            offset: Long,
+            maxBytes: Int,
+        ) = Result.failure<SshRemoteFile>(IllegalStateException("unused"))
+        override suspend fun chmod(sessionId: String, path: String, mode: Int) = Result.success(Unit)
         override suspend fun exec(sessionId: String, command: String): Result<SshExecResult> =
             Result.failure(IllegalStateException("unused"))
     }

@@ -4,6 +4,7 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import one.zephyr.mobile.feature.notes.DownloadProgress
 import one.zephyr.mobile.feature.notes.RemoteEntry
+import one.zephyr.mobile.feature.notes.RemoteExecResult
 import one.zephyr.mobile.feature.notes.RemoteFileRead
 import one.zephyr.mobile.feature.notes.RemoteStat
 import one.zephyr.mobile.feature.notes.RemoteWriteReceipt
@@ -57,8 +58,18 @@ class SshjSftpPort(
         }
 
     override suspend fun read(handle: SftpSessionHandle, path: String, maxBytes: Long): RemoteFileRead {
-        val file = engine.readFile(session(handle), path, maxBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()).getOrThrow()
-        return RemoteFileRead(file.path, file.bytes, file.modifiedAt, sha256(file.bytes), truncated = false)
+        val file = engine.readFile(
+            session(handle),
+            path,
+            maxBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+        ).getOrThrow()
+        return RemoteFileRead(
+            file.path,
+            file.bytes,
+            file.modifiedAt,
+            sha256(file.bytes),
+            truncated = file.bytes.size.toLong() < file.size,
+        )
     }
 
     override suspend fun write(
@@ -102,6 +113,26 @@ class SshjSftpPort(
         engine.delete(session(handle), path, recursive).getOrThrow()
     }
 
+    override suspend fun chmod(handle: SftpSessionHandle, path: String, mode: Int) {
+        engine.chmod(session(handle), path, mode).getOrThrow()
+    }
+
+    override suspend fun readRange(
+        handle: SftpSessionHandle,
+        path: String,
+        offset: Long,
+        maxBytes: Int,
+    ): RemoteFileRead {
+        val file = engine.readFileRange(session(handle), path, offset, maxBytes).getOrThrow()
+        return RemoteFileRead(
+            file.path,
+            file.bytes,
+            file.modifiedAt,
+            sha256(file.bytes),
+            truncated = offset + file.bytes.size < file.size,
+        )
+    }
+
     override suspend fun upload(handle: SftpSessionHandle, path: String, bytes: ByteArray): RemoteWriteReceipt {
         val version = engine.writeFile(session(handle), path, bytes).getOrThrow()
         return RemoteWriteReceipt(version.path, version.modifiedAt, sha256(bytes))
@@ -114,6 +145,15 @@ class SshjSftpPort(
         resumeFromBytes: Long,
         onProgress: (DownloadProgress) -> Unit,
     ): Long = throw UnsupportedOperationException("SAF download sink is not available in this adapter")
+
+    override suspend fun exec(handle: SftpSessionHandle, command: String): RemoteExecResult {
+        val result = engine.exec(session(handle), command).getOrThrow()
+        return RemoteExecResult(
+            exitCode = result.exitCode,
+            stdout = result.stdout.toString(Charsets.UTF_8),
+            stderr = result.stderr.toString(Charsets.UTF_8),
+        )
+    }
 
     private fun SftpEntry.remote() = RemoteEntry(
         name, path, isDirectory, size, modifiedAt, permissions.toString(8), isSymlink,

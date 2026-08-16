@@ -48,6 +48,16 @@ class TerminalToolSheetTest {
     }
 
     @Test
+    fun dockerAndMonitorDrawersKeepTheIme() {
+        assertTrue(TerminalToolKind.FILES.keepsIme)
+        assertTrue(TerminalToolKind.STATS.keepsIme)
+        assertTrue(TerminalToolKind.DOCKER.keepsIme)
+        assertTrue(!TerminalToolKind.THEME.keepsIme)
+        val opened = TerminalWorkspace.openTool(state(), TerminalToolKind.DOCKER, phone = true)
+        assertEquals(TerminalToolKind.DOCKER, opened.sheetCurrent)
+    }
+
+    @Test
     fun tabletToolUsesInPageSideDock() {
         val opened = TerminalWorkspace.openTool(state(), TerminalToolKind.NOTES, phone = false)
         assertEquals(TerminalSplitMode.RIGHT, opened.split)
