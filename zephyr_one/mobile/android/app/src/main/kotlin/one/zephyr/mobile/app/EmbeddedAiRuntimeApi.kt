@@ -4,6 +4,7 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.json.JsonObject
@@ -34,13 +35,22 @@ internal class EmbeddedAiRuntimeApi(
     private val streamClient = client.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).build()
 
     suspend fun createSession(userId: String, generation: String, title: String): ApiResult<EmbeddedSession> =
-        post("/admin/sessions", EmbeddedCreateSession(userId, generation, title), EmbeddedCreateSession.serializer(), EmbeddedSessionResponse.serializer()).map { it.session }
+        when (val result = post("/admin/sessions", EmbeddedCreateSession(userId, generation, title), EmbeddedCreateSession.serializer(), EmbeddedSessionResponse.serializer())) {
+            is ApiResult.Success -> ApiResult.Success(result.value.session, result.serverTime)
+            is ApiResult.Failure -> result
+        }
 
     suspend fun listSessions(userId: String, generation: String): ApiResult<List<EmbeddedSession>> =
-        get("/admin/sessions?userId=${encode(userId)}&databaseGeneration=${encode(generation)}", EmbeddedSessionsResponse.serializer()).map { it.sessions }
+        when (val result = get("/admin/sessions?userId=${encode(userId)}&databaseGeneration=${encode(generation)}", EmbeddedSessionsResponse.serializer())) {
+            is ApiResult.Success -> ApiResult.Success(result.value.sessions, result.serverTime)
+            is ApiResult.Failure -> result
+        }
 
     suspend fun messages(userId: String, generation: String, sessionId: String): ApiResult<List<EmbeddedMessage>> =
-        get("/admin/sessions/${encode(sessionId)}/messages?userId=${encode(userId)}&databaseGeneration=${encode(generation)}", EmbeddedMessagesResponse.serializer()).map { it.messages }
+        when (val result = get("/admin/sessions/${encode(sessionId)}/messages?userId=${encode(userId)}&databaseGeneration=${encode(generation)}", EmbeddedMessagesResponse.serializer())) {
+            is ApiResult.Success -> ApiResult.Success(result.value.messages, result.serverTime)
+            is ApiResult.Failure -> result
+        }
 
     suspend fun start(body: EmbeddedStartRun): ApiResult<AiRunStartDto> =
         post("/admin/runs", body, EmbeddedStartRun.serializer(), AiRunStartDto.serializer())

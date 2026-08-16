@@ -72,8 +72,24 @@ internal class LocalAiWorkspace(
         val stdout = process.inputStream.readNBytes(MAX_STDOUT).toString(Charsets.UTF_8)
         val stderr = process.errorStream.readNBytes(MAX_STDERR).toString(Charsets.UTF_8)
         val out = mapOf("command" to command, "args" to safeArgs, "exitCode" to if (done) process.exitValue() else -1, "timedOut" to !done, "stdout" to stdout, "stderr" to stderr, "durationMs" to System.currentTimeMillis() - started)
-        FileOutputStream(audit, true).bufferedWriter().use { it.append(one.zephyr.mobile.network.MobileJson.instance.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), kotlinx.serialization.json.buildJsonObject { put("ts", started); put("command", command); put("exitCode", if (done) process.exitValue() else -1); put("timedOut", !done) })).appendLine() }
+        val auditLine = "{\"ts\":$started,\"command\":${jsonString(command)},\"exitCode\":${if (done) process.exitValue() else -1},\"timedOut\":${!done}}"
+        FileOutputStream(audit, true).bufferedWriter().use { writer -> writer.append(auditLine).appendLine() }
         out
+    }
+
+    private fun jsonString(value: String): String = buildString {
+        append('"')
+        value.forEach { ch ->
+            when (ch) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> if (ch.code < 0x20) append("\\u%04x".format(ch.code)) else append(ch)
+            }
+        }
+        append('"')
     }
 
     private fun confined(path: String, write: Boolean): File {
