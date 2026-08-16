@@ -415,6 +415,7 @@ private fun BoundRoot(
     val messages = remember { MutableSharedFlow<String>(extraBufferCapacity = 8) }
     var toastMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val clipboardManager = LocalClipboardManager.current
     val managedSsh = remember(account, sshEngine) {
         ManagedSshSessionPool(
             engine = sshEngine,
