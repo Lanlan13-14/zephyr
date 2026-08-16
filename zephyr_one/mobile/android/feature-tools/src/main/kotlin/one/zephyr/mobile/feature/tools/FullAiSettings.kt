@@ -93,7 +93,30 @@ fun FullAiSettingsRoute(repository: LocalAiRepository, bound: Boolean, onBack: (
         Nav("Skills 能力包","${c.skills.count{it.enabled}} 个启用",AiSettingsPage.SKILLS,open)
         Nav("本机沙箱","L2 · ${if(c.sandbox.enabled)"启用" else "停用"} · 默认无网络",AiSettingsPage.SANDBOX,open,false)
     }
-    Section("上下文与规划"); Card { NumberField("上下文窗口 Tokens",c.context.windowTokens){save(c.copy(context=c.context.copy(windowTokens=it)))};NumberField("最大输入字符数",c.context.maxInputChars){save(c.copy(context=c.context.copy(maxInputChars=it)))};NumberField("工具结果注入字符数",c.context.toolResultChars){save(c.copy(context=c.context.copy(toolResultChars=it)))};NumberField("工具调用轮次上限（0 无上限）",c.context.maxToolRounds){save(c.copy(context=c.context.copy(maxToolRounds=it)))};Toggle("代码补全",null,c.codeCompletionEnabled){save(c.copy(codeCompletionEnabled=it))};Toggle("任务规划器",null,c.planner.enabled){save(c.copy(planner=c.planner.copy(enabled=it))};Toggle("复杂任务先规划",null,c.planner.requirePlanBeforeTools){save(c.copy(planner=c.planner.copy(requirePlanBeforeTools=it))} }
+    Section("上下文与规划")
+    Card {
+        NumberField("上下文窗口 Tokens", c.context.windowTokens) {
+            save(c.copy(context = c.context.copy(windowTokens = it)))
+        }
+        NumberField("最大输入字符数", c.context.maxInputChars) {
+            save(c.copy(context = c.context.copy(maxInputChars = it)))
+        }
+        NumberField("工具结果注入字符数", c.context.toolResultChars) {
+            save(c.copy(context = c.context.copy(toolResultChars = it)))
+        }
+        NumberField("工具调用轮次上限（0 无上限）", c.context.maxToolRounds) {
+            save(c.copy(context = c.context.copy(maxToolRounds = it)))
+        }
+        Toggle("代码补全", null, c.codeCompletionEnabled) {
+            save(c.copy(codeCompletionEnabled = it))
+        }
+        Toggle("任务规划器", null, c.planner.enabled) {
+            save(c.copy(planner = c.planner.copy(enabled = it)))
+        }
+        Toggle("复杂任务先规划", null, c.planner.requirePlanBeforeTools) {
+            save(c.copy(planner = c.planner.copy(requirePlanBeforeTools = it)))
+        }
+    }
     Section("可选同步"); Card { Toggle("从主端同步 AI 数据",if(bound)"可选增量来源；本机配置始终可编辑、可运行" else "绑定主端后可选；未绑定不影响任何 AI 功能",c.syncFromMainEnabled){save(c.copy(syncFromMainEnabled=it))} }
 } }
 
