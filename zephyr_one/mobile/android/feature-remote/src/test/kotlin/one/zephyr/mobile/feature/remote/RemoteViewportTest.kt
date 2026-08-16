@@ -189,8 +189,8 @@ class RemoteViewportTest {
 
     @Test
     fun aTapOnTheLetterboxIsNotAClickAtTheNearestEdge() {
-        // Section 12 uses the letterbox to toggle chrome. Snapping it to the edge would send a click
-        // to the remote desktop and make the border unusable.
+        // The letterbox is inert. Snapping it to the edge would send an unintended click to the
+        // remote desktop; overlay tools are opened only from the floating orb.
         val transform = RemoteViewport.transformFor(RemoteViewportMode.FIT, geometry)
         assertNull(RemoteViewport.toRemote(124f, 0f, transform, geometry))
         assertNull(RemoteViewport.toRemote(376f, 0f, transform, geometry))

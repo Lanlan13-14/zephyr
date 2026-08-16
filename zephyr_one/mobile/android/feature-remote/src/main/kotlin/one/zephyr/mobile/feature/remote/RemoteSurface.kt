@@ -261,14 +261,10 @@ internal class RemoteRenderView(context: Context) : SurfaceView(context) {
  * arrives tens of times a second, and section 11 requires it on a separate high-priority path where
  * only moves coalesce. Chrome, sheets and prompts go through the intent surface instead - see
  * [RemoteIntent] for why the boundary is drawn here.
- *
- * @param onChromeTap called for a tap the remote did not consume, which is the section 12 rule that
- *   empty space toggles chrome while a pointer interaction never does.
  */
 @Composable
 fun RemoteSurface(
     controller: RemoteSessionController,
-    onChromeTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val surface by controller.state.collectAsStateWithLifecycle()
@@ -306,7 +302,7 @@ fun RemoteSurface(
                     requestResize = controller.state.value.mode == RemoteViewportMode.DYNAMIC,
                 )
             }
-            .remoteGestures(controller, onChromeTap)
+            .remoteGestures(controller)
             .remoteHardwarePointer(controller),
     ) {
         AndroidView(
@@ -400,7 +396,6 @@ private fun RemoteCursorMarker(surface: RemoteSurfaceState, modifier: Modifier =
  */
 private fun Modifier.remoteGestures(
     controller: RemoteSessionController,
-    onChromeTap: () -> Unit,
 ): Modifier = pointerInput(controller) {
     var lastTapUptime = 0L
 
@@ -556,10 +551,10 @@ private fun Modifier.remoteGestures(
                 lastTapUptime = down.uptimeMillis
                 if (doubleTap) {
                     controller.onDoubleTap(last.x, last.y)
-                } else if (!controller.onTap(last.x, last.y)) {
-                    // Fell on the letterbox, so it was never remote input. Section 12: empty space
-                    // toggles chrome.
-                    onChromeTap()
+                } else {
+                    // A surface tap is always remote input or a no-op in the letterbox. Overlay
+                    // tools have one explicit entry point: the floating orb.
+                    controller.onTap(last.x, last.y)
                 }
             }
 

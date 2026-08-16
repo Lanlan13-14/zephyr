@@ -86,3 +86,21 @@ test('Android FreeRDP drops the TlsAlloc sign assertion for bionic pthread_key_t
   const workflow = read(path.join(ROOT, '../../.github/workflows/zephyr-one-mobile.yml'));
   assert.match(workflow, /tlsalloc-bionic-v1/);
 });
+
+test('Android FreeRDP uses built-in NTLM crypto instead of an unavailable OpenSSL provider', () => {
+  const script = read(path.join(ROOT, '../../zephyr_one/native/freerdp-core/scripts/build-freerdp-android.sh'));
+  for (const primitive of ['MD4', 'RC4', 'MD5']) {
+    assert.match(script, new RegExp(`-DWITH_INTERNAL_${primitive}=ON`));
+    assert.match(script, new RegExp(`\\^#define WITH_INTERNAL_${primitive}`));
+  }
+  assert.match(script, /ntlm-internal-crypto-v1/);
+
+  const cmake = read(path.join(ROOT, 'android/protocol-rdp/src/main/cpp/CMakeLists.txt'));
+  assert.match(cmake, /ntlm-internal-crypto-v1/);
+
+  const workflow = read(path.join(ROOT, '../../.github/workflows/zephyr-one-mobile.yml'));
+  for (const primitive of ['MD4', 'RC4', 'MD5']) {
+    assert.match(workflow, new RegExp(`WITH_INTERNAL_${primitive}`));
+  }
+  assert.match(workflow, /ntlm-internal-crypto-v1/);
+});

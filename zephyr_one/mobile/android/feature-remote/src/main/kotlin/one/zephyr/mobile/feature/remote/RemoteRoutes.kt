@@ -125,7 +125,6 @@ private fun dispatchRdp(
 ) {
     val controller = viewModel.controller
     when (intent) {
-        RemoteIntent.ToggleChrome -> controller.onSurfaceTapForChrome()
         RemoteIntent.HideChrome -> controller.hideChrome()
         RemoteIntent.ToggleToolsPanel -> controller.toggleToolsPanel()
         RemoteIntent.CycleQuality -> viewModel.cycleQuality()
@@ -202,7 +201,6 @@ private fun dispatchRdp(
 private fun dispatchVnc(viewModel: VncViewModel, intent: RemoteIntent, onBack: () -> Unit) {
     val controller = viewModel.controller
     when (intent) {
-        RemoteIntent.ToggleChrome -> controller.onSurfaceTapForChrome()
         RemoteIntent.HideChrome -> controller.hideChrome()
         RemoteIntent.ToggleToolsPanel -> controller.toggleToolsPanel()
         RemoteIntent.FitViewport -> controller.fitToWindow()

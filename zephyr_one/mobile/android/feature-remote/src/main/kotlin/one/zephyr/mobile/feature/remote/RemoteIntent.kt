@@ -16,10 +16,7 @@ sealed interface RemoteIntent {
 
     // ---- chrome ----------------------------------------------------------------------------------
 
-    /** A tap that fell on the letterbox, or on the surface while there is nothing to control. */
-    data object ToggleChrome : RemoteIntent
-
-    /** The idle timer expired. Separate from [ToggleChrome] so auto-hide can never accidentally show. */
+    /** The idle timer expired. Hide-only so it can never accidentally show the tools strip. */
     data object HideChrome : RemoteIntent
 
     /** Demo `#r-ball`: open or close the floating tools strip. */

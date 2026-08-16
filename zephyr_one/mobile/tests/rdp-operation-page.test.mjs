@@ -27,8 +27,15 @@ test('RDP tool strip matches the demo operation page and not the old dock', () =
   assert.match(chrome, /POINTER_MODE, KEYBOARD, QUALITY, RESOLUTION, FPS, FIT, ZOOM/);
   assert.match(chrome, /CLIPBOARD, DRIVE, SHORTCUTS, JOYSTICK, CAD, RECONNECT, DISCONNECT/);
   assert.doesNotMatch(chrome, /SOUND, CHANNELS, DRIVE, CERTIFICATE, RECONNECT/);
-  assert.match(screen, /ToolsPanel\(/);
+  assert.match(screen, /DraggableToolsOrb\(/);
   assert.match(screen, /RemoteIntent\.ToggleToolsPanel/);
+  assert.match(screen, /RemoteToolsOrbGesture\.LONG_PRESS_MS/);
+  assert.match(screen, /RemoteToolsOrbGeometry\.move/);
+  assert.doesNotMatch(screen, /RemoteIntent\.ToggleChrome/);
+  assert.doesNotMatch(routes, /RemoteIntent\.ToggleChrome/);
+  const surface = read(path.join(ANDROID, 'feature-remote/src/main/kotlin/one/zephyr/mobile/feature/remote/RemoteSurface.kt'));
+  assert.doesNotMatch(surface, /onChromeTap/);
+  assert.match(surface, /controller\.onDoubleTap/);
   assert.match(screen, /remote_mouse_left/);
   assert.match(screen, /ClickRipple\(/);
   assert.doesNotMatch(screen, /DockRow\(/);

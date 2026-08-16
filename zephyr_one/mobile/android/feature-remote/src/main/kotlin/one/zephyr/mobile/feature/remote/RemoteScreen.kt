@@ -10,6 +10,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +22,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -42,9 +46,12 @@ import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -52,17 +59,29 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import one.zephyr.mobile.model.PageState
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.RdpSoundMode
@@ -181,7 +200,6 @@ private fun RemoteSession(
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         RemoteSurface(
             controller = controller,
-            onChromeTap = { onIntent(RemoteIntent.ToggleChrome) },
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -246,21 +264,11 @@ private fun RemoteSession(
             )
         }
 
-        IconButton(
+        DraggableToolsOrb(
+            stateKey = content.connection.id,
+            label = stringResource(R.string.remote_tools),
             onClick = { onIntent(RemoteIntent.ToggleToolsPanel) },
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 10.dp)
-                .size(44.dp)
-                .background(Color(0x9E14181E), androidx.compose.foundation.shape.CircleShape)
-                .border(1.dp, Color(0x24FFFFFF), androidx.compose.foundation.shape.CircleShape),
-        ) {
-            Icon(
-                imageVector = ZephyrIcons.GridTools,
-                contentDescription = stringResource(R.string.remote_tools),
-                tint = Color(0xFFE6EBF0),
-            )
-        }
+        )
 
         if (content.surface.pointer.mode == RemotePointerMode.TRACKPAD) {
             Row(
@@ -388,6 +396,161 @@ private fun ChromeLayer(
             .alpha(progress),
     ) {
         body()
+    }
+}
+
+/**
+ * The only gesture entry point for the tools strip.
+ *
+ * A short tap toggles the strip. Moving the orb is deliberately gated behind the platform long-press
+ * threshold: ordinary desktop gestures that begin near it cannot accidentally relocate it. Once
+ * armed, movement tracks the finger 1:1 and clamps to the safe drawing area. A completed drag never
+ * falls through to [onClick].
+ */
+@Composable
+private fun DraggableToolsOrb(
+    stateKey: String,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val density = LocalDensity.current
+    val layoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current
+    val haptics = LocalHapticFeedback.current
+    val currentOnClick by rememberUpdatedState(onClick)
+    val safeDrawing = WindowInsets.safeDrawing
+    val orbSizePx = with(density) { 44.dp.toPx() }
+    val marginPx = with(density) { 10.dp.toPx() }
+    var viewportWidthPx by remember { mutableIntStateOf(0) }
+    var viewportHeightPx by remember { mutableIntStateOf(0) }
+    var savedX by rememberSaveable(stateKey) { mutableStateOf<Float?>(null) }
+    var savedY by rememberSaveable(stateKey) { mutableStateOf<Float?>(null) }
+    var dragging by remember { mutableStateOf(false) }
+
+    val bounds = RemoteToolsOrbGeometry.bounds(
+        viewportWidthPx = viewportWidthPx,
+        viewportHeightPx = viewportHeightPx,
+        orbSizePx = orbSizePx,
+        marginPx = marginPx,
+        insetLeftPx = safeDrawing.getLeft(density, layoutDirection),
+        insetTopPx = safeDrawing.getTop(density),
+        insetRightPx = safeDrawing.getRight(density, layoutDirection),
+        insetBottomPx = safeDrawing.getBottom(density),
+    )
+    val position = RemoteToolsOrbGeometry.clamp(
+        if (savedX == null || savedY == null) {
+            RemoteToolsOrbGeometry.initial(bounds)
+        } else {
+            RemoteToolsOrbPosition(savedX!!, savedY!!)
+        },
+        bounds,
+    )
+
+    // Rotation and system-bar changes can shrink the safe region while the orb sits at an old edge.
+    LaunchedEffect(bounds, viewportWidthPx, viewportHeightPx) {
+        if (viewportWidthPx <= 0 || viewportHeightPx <= 0) return@LaunchedEffect
+        savedX = position.x
+        savedY = position.y
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onSizeChanged { size ->
+                viewportWidthPx = size.width
+                viewportHeightPx = size.height
+            },
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .offset { IntOffset(position.x.roundToInt(), position.y.roundToInt()) }
+                .size(44.dp)
+                .graphicsLayer {
+                    val pressedScale = if (dragging) 1.06f else 1f
+                    scaleX = pressedScale
+                    scaleY = pressedScale
+                }
+                .background(Color(0x9E14181E), androidx.compose.foundation.shape.CircleShape)
+                .border(1.dp, Color(0x24FFFFFF), androidx.compose.foundation.shape.CircleShape)
+                .semantics {
+                    contentDescription = label
+                    role = Role.Button
+                    onClick(label = label) {
+                        currentOnClick()
+                        true
+                    }
+                }
+                .pointerInput(bounds) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var lastPosition = down.position
+                        var lastUptime = down.uptimeMillis
+                        var travelPx = 0f
+                        var released = false
+                        var movedBeforeLongPress = false
+
+                        val endedEarly = withTimeoutOrNull(RemoteToolsOrbGesture.LONG_PRESS_MS) {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id }
+                                    ?: return@withTimeoutOrNull true
+                                lastUptime = change.uptimeMillis
+                                val delta = change.position - lastPosition
+                                lastPosition = change.position
+                                travelPx += delta.getDistance()
+                                if (!change.pressed) {
+                                    released = true
+                                    return@withTimeoutOrNull true
+                                }
+                                if (travelPx > RemoteToolsOrbGesture.TAP_SLOP_PX) {
+                                    movedBeforeLongPress = true
+                                    return@withTimeoutOrNull true
+                                }
+                            }
+                        }
+
+                        if (endedEarly != null) {
+                            if (released && !movedBeforeLongPress && RemoteToolsOrbGesture.isTap(
+                                    elapsedMs = lastUptime - down.uptimeMillis,
+                                    travelPx = travelPx,
+                                )
+                            ) {
+                                currentOnClick()
+                            }
+                            return@awaitEachGesture
+                        }
+
+                        dragging = true
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                val delta = change.positionChange()
+                                lastPosition = change.position
+                                val next = RemoteToolsOrbGeometry.move(
+                                    position = RemoteToolsOrbPosition(savedX ?: position.x, savedY ?: position.y),
+                                    dxPx = delta.x,
+                                    dyPx = delta.y,
+                                    bounds = bounds,
+                                )
+                                savedX = next.x
+                                savedY = next.y
+                                change.consume()
+                            }
+                        } finally {
+                            dragging = false
+                        }
+                    }
+                },
+        ) {
+            Icon(
+                imageVector = ZephyrIcons.GridTools,
+                contentDescription = null,
+                tint = Color(0xFFE6EBF0),
+            )
+        }
     }
 }
 

@@ -19,8 +19,8 @@ if(NOT EXISTS "${FREERDP_STAMP}")
 endif()
 file(READ "${FREERDP_STAMP}" FREERDP_STAMP_VALUE)
 string(STRIP "${FREERDP_STAMP_VALUE}" FREERDP_STAMP_VALUE)
-if(NOT FREERDP_STAMP_VALUE STREQUAL "3.30.0+cliprdr-reassembly-limit-v1+tlsalloc-bionic-v1")
-    message(FATAL_ERROR "FreeRDP ${ANDROID_ABI} must be 3.30.0+cliprdr-reassembly-limit-v1+tlsalloc-bionic-v1")
+if(NOT FREERDP_STAMP_VALUE STREQUAL "3.30.0+cliprdr-reassembly-limit-v1+tlsalloc-bionic-v1+ntlm-internal-crypto-v1")
+    message(FATAL_ERROR "FreeRDP ${ANDROID_ABI} must include the Android NTLM internal crypto build")
 endif()
 
 set(REQUIRED_ARCHIVES

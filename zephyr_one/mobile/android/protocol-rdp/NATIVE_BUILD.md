@@ -27,7 +27,7 @@ per Android ABI:
 The stamp must contain exactly:
 
 ```text
-3.30.0+cliprdr-reassembly-limit-v1
+3.30.0+cliprdr-reassembly-limit-v1+tlsalloc-bionic-v1+ntlm-internal-crypto-v1
 ```
 
 Build every requested ABI with the Android NDK and the same pinned source and
@@ -39,6 +39,13 @@ Android never exports `HOME`. FreeRDP 3.30 `freerdp_settings_new` fails
 closed when `GetKnownPath(KNOWN_PATH_HOME)` is NULL, so the engine must
 `setenv("HOME", filesDir)` before the first `create()`. Official aFreeRDP
 does the same in `LibFreeRDP.freerdp_new`.
+
+Android also cannot load OpenSSL 3's `legacy` provider from this statically
+linked APK. NLA uses NTLM, whose response and sealing paths require MD4, RC4,
+and MD5. The FreeRDP Android build must therefore match upstream aFreeRDP and
+set `WITH_INTERNAL_MD4`, `WITH_INTERNAL_RC4`, and `WITH_INTERNAL_MD5` to `ON`;
+otherwise the TLS connection reaches CredSSP and collapses into FreeRDP's
+generic `CONNECT_TRANSPORT_FAILED` error.
 
 The current C shim cannot yet implement two mobile contracts:
 

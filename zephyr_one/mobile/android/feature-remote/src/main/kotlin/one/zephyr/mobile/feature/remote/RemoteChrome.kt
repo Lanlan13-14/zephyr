@@ -46,23 +46,13 @@ enum class RemoteDockItem {
 /**
  * Whether the overlay chrome is showing.
  *
- * A value type rather than a boolean because the rule in REMOTE_DESKTOP_EXPERIENCE.md 12 is that a
- * tap toggles chrome but a pointer interaction must not, and that needs to remember whether the
- * current gesture already did something remote.
+ * A value type rather than a boolean because keyboard and modifier-bar visibility are independent
+ * from the tools strip. The tools strip itself has exactly one user entry point: the floating orb.
  */
 data class RemoteChromeState(
     val visible: Boolean = true,
     /** Demo `#rdp-panel`. Independent of [visible] so the ball/status stay up after it auto-hides. */
     val toolsPanelVisible: Boolean = false,
-    /**
-     * True once this gesture actually delivered remote input.
-     *
-     * Set where input is submitted rather than where a gesture begins, because those are different
-     * facts: every tap begins a gesture, but only a tap that landed on the framebuffer drove the
-     * remote pointer. Setting it at gesture start would make the section 12 rule swallow the first
-     * tap on the letterbox - the one tap that is supposed to toggle chrome.
-     */
-    val suppressedByGesture: Boolean = false,
     /** True between a first touch and the last lift. Blocks auto-hide, never the toggle. */
     val gestureActive: Boolean = false,
     val keyboardVisible: Boolean = false,
@@ -82,7 +72,7 @@ data class RemoteChromeState(
     val mayAutoHide: Boolean get() = toolsPanelVisible && !gestureActive && !keyboardVisible
 }
 
-/** Chrome transitions. Pure so the "a drag must not toggle chrome" rule is testable. */
+/** Chrome transitions. Pure so orb-only tool-panel access stays testable. */
 object RemoteChrome {
 
     /** §12: 120-180ms opacity plus a small offset. Never a scale, which would resample the frame. */
@@ -91,12 +81,6 @@ object RemoteChrome {
 
     /** Demo `resetHide`: the tools panel closes after five idle seconds. */
     const val AUTO_HIDE_MS = 5_000L
-
-    fun onSurfaceTap(state: RemoteChromeState): RemoteChromeState = when {
-        // The gesture that just ended drove the remote pointer, so its lift is not a chrome tap.
-        state.suppressedByGesture -> state.copy(suppressedByGesture = false)
-        else -> state.copy(toolsPanelVisible = !state.toolsPanelVisible, visible = true)
-    }
 
     fun toggleToolsPanel(state: RemoteChromeState): RemoteChromeState =
         state.copy(toolsPanelVisible = !state.toolsPanelVisible, visible = true)
@@ -110,14 +94,10 @@ object RemoteChrome {
     fun onGestureEnd(state: RemoteChromeState): RemoteChromeState =
         state.copy(gestureActive = false)
 
-    /** Called from the input funnel: this gesture has now touched the remote session. */
-    fun onRemoteInput(state: RemoteChromeState): RemoteChromeState =
-        if (state.suppressedByGesture) state else state.copy(suppressedByGesture = true)
-
     fun setKeyboard(state: RemoteChromeState, visible: Boolean): RemoteChromeState = state.copy(
         keyboardVisible = visible,
-        // Chrome comes back with the keyboard: dismissing the IME must not leave the user with no
-        // dock and no way to get it back except a blind tap.
+        // The tools orb is always reachable, so showing chrome here only keeps keyboard affordances
+        // visible while the IME owns the bottom of the viewport.
         visible = if (visible) true else state.visible,
         modifierBarVisible = if (visible) true else state.modifierBarVisible,
     )

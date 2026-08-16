@@ -342,9 +342,8 @@ class RemoteSessionController(
     /**
      * A tap on the surface.
      *
-     * @return true when the tap was consumed as remote input. False means it fell on the letterbox,
-     *   and the caller treats it as a chrome toggle instead - which is why this returns a value
-     *   rather than swallowing it.
+     * @return true when the tap was consumed as remote input. False means it fell on the letterbox
+     *   and is intentionally a no-op; only the floating tools orb controls overlay chrome.
      */
     fun onTap(localXPx: Float, localYPx: Float): Boolean {
         if (!geometry.isMeasured) return false
@@ -497,11 +496,6 @@ class RemoteSessionController(
 
     // ---- chrome ----------------------------------------------------------------------------------
 
-    fun onSurfaceTapForChrome() {
-        chrome = RemoteChrome.onSurfaceTap(chrome)
-        publish()
-    }
-
     fun toggleToolsPanel() {
         chrome = RemoteChrome.toggleToolsPanel(chrome)
         publish()
@@ -592,9 +586,8 @@ class RemoteSessionController(
         if (inputs.isEmpty() || viewOnly) return
         for (input in inputs) queue.offer(input)
         wake.trySend(Unit)
-        // The one place every input passes through, which is why the chrome rule is applied here: a
-        // gesture that reached the wire must not also toggle chrome when the finger lifts.
-        chrome = RemoteChrome.onRemoteInput(chrome)
+        // A wire-bound gesture does not affect overlay chrome. The floating tools orb is the only
+        // user gesture allowed to open or close the tools panel.
         publish()
     }
 

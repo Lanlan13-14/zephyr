@@ -6,7 +6,7 @@ set -eu
 
 TAG="3.30.0"
 COMMIT="6b107f0aadbabc47941c5a5b893b88c01792af6d"
-PATCH_REV="cliprdr-reassembly-limit-v1+tlsalloc-bionic-v1"
+PATCH_REV="cliprdr-reassembly-limit-v1+tlsalloc-bionic-v1+ntlm-internal-crypto-v1"
 STAMP_VALUE="$TAG+$PATCH_REV"
 OPENSSL_VER="3.3.2"
 CJSON_VER="1.7.18"
@@ -187,6 +187,9 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DWITH_PCSC=OFF \
   -DWITH_KRB5=OFF \
   -DWITH_OPENSSL=ON \
+  -DWITH_INTERNAL_MD4=ON \
+  -DWITH_INTERNAL_RC4=ON \
+  -DWITH_INTERNAL_MD5=ON \
   -DWITH_ZLIB=ON \
   -DOPENSSL_USE_STATIC_LIBS=ON \
   -DOPENSSL_ROOT_DIR="$ABI_PREFIX" \
@@ -218,6 +221,20 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
 
 cmake --build "$BUILD" --parallel "$JOBS"
+
+grep -q '^#define WITH_INTERNAL_MD4' "$BUILD/winpr/include/winpr/config.h" || {
+  echo "ERROR: Android WinPR was built without internal MD4; NLA/NTLM cannot authenticate" >&2
+  exit 2
+}
+grep -q '^#define WITH_INTERNAL_RC4' "$BUILD/winpr/include/winpr/config.h" || {
+  echo "ERROR: Android WinPR was built without internal RC4; NLA/NTLM cannot seal messages" >&2
+  exit 2
+}
+grep -q '^#define WITH_INTERNAL_MD5' "$BUILD/winpr/include/winpr/config.h" || {
+  echo "ERROR: Android WinPR was built without internal MD5; NLA/NTLM cannot sign messages" >&2
+  exit 2
+}
+
 cmake --install "$BUILD"
 
 # Channel common archives are required by protocol-rdp/CMakeLists.txt.
