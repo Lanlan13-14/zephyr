@@ -278,7 +278,7 @@ private fun DemoTerminalSurface(
                     colors = colors,
                     onSelect = onSelectSession,
                     onClose = onCloseSession,
-                    onAdd = onCreateConnection,
+                    onAdd = { onWorkspace(ws.copy(addSheetOpen = true)) },
                 )
                 Box(
                     Modifier

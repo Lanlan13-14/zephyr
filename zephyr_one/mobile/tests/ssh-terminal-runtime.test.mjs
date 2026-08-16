@@ -29,10 +29,12 @@ test('Termux system IME writes are bound to SSH and failures are caught', () => 
   assert.match(vm, /runCatching \{ delegatingTransport\.write\(bytes\) \}/);
 });
 
-test('SSHJ implements shell, SFTP, exec and request roundtrip latency', () => {
+test('SSHJ implements shell, SFTP, exec and tcp-handshake latency', () => {
   assert.match(sshj, /newSFTPClient\(\)/);
   assert.match(sshj, /startSession\(\)/);
-  assert.match(sshj, /sendGlobalRequest\("keepalive@openssh\.com"/);
+  assert.match(sshj, /Socket\(\)/);
+  assert.match(sshj, /InetSocketAddress\(host, port\)/);
+  assert.match(sshj, /remoteHostname/);
   assert.doesNotMatch(sshj, /Result\.failure\(UnsupportedOperationException/);
 });
 

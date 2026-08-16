@@ -51,6 +51,9 @@ enum class TerminalDockItem {
     ;
 
     companion object {
+        /** Refresh the top-bar latency reading every 5s while the session is live. */
+        private const val LATENCY_REFRESH_MS = 5_000L
+
         /** Demo `.context-dock` order. Telnet hides 文件 rather than greying it out. */
         fun forProtocol(protocol: Protocol): List<TerminalDockItem> = listOf(
             KEYBOARD,
@@ -400,7 +403,10 @@ class TerminalViewModel(
     private fun startLatencyProbe() {
         latencyJob?.cancel()
         latencyJob = viewModelScope.launch {
-            registry.setLatency(sessionId, runCatching { host.measureLatency(sessionId) }.getOrNull())
+            while (isActive) {
+                registry.setLatency(sessionId, runCatching { host.measureLatency(sessionId) }.getOrNull())
+                delay(LATENCY_REFRESH_MS)
+            }
         }
     }
 

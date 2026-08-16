@@ -203,3 +203,13 @@ test('chip controls match Docker and send uses the real runtime', () => {
   assert.match(overlay, /controller\.send\(text\)/);
   assert.doesNotMatch(overlay, /sendNotice\(/);
 });
+
+test('launcher FAB is long-press draggable and snaps to an edge', () => {
+  assert.match(overlay, /detectDragGesturesAfterLongPress\(/);
+  assert.match(overlay, /fabOffset = Offset\(/);
+  assert.match(overlay, /\.offset \{ IntOffset\(fabOffset\.x\.roundToInt\(\), fabOffset\.y\.roundToInt\(\)\) \}/);
+  // A long press starts the drag; a plain tap still opens the sheet.
+  assert.match(overlay, /\.clickable\(interactionSource = interaction, indication = null, role = Role\.Button\) \{[\s\S]*detent = AiSheetMotion\.open\(\)/);
+  // On release the FAB settles to the nearer vertical edge instead of hovering mid-screen.
+  assert.match(overlay, /snapX = if \(fabOffset\.x < -maxWidth\.value \/ 2f\)/);
+});

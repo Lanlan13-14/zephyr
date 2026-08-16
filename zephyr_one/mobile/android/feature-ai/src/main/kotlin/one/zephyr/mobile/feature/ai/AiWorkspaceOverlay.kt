@@ -23,7 +23,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -110,6 +114,7 @@ fun AiWorkspaceOverlay(
     var handlePressed by remember { mutableStateOf(false) }
     var seedHeightPx by remember { mutableStateOf<Float?>(null) }
     var picker by remember { mutableStateOf<AiPicker?>(null) }
+    var fabOffset by remember { mutableStateOf(Offset.Zero) }
     val heightAnim = remember { Animatable(0f) }
     val motion = ZephyrTheme.motion
     val palette = ZephyrTheme.palette
@@ -332,13 +337,46 @@ fun AiWorkspaceOverlay(
                 ),
         ) {
             val interaction = remember { MutableInteractionSource() }
+            val fabSizePx = with(density) { AiSheetGeometry.FAB_SIZE_DP.dp.toPx() }
+            val navBarPx = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding().toPx()
             Surface(
-                modifier = Modifier.navigationBarsPadding()
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset { IntOffset(fabOffset.x.roundToInt(), fabOffset.y.roundToInt()) }
+                    .navigationBarsPadding()
                     .padding(end = AiSheetGeometry.fabEndDp(layout).dp, bottom = AiSheetGeometry.FAB_BOTTOM_DP.dp)
                     .size(AiSheetGeometry.FAB_SIZE_DP.dp)
                     .shadow(12.dp, CircleShape, ambientColor = palette.islandShadow, spotColor = palette.islandShadow)
                     .pressScale(AiSheetGeometry.FAB_PRESS_SCALE, interaction = interaction)
                     .clip(CircleShape)
+                    .pointerInput(maxWidth, containerHeightPx, fabSizePx, navBarPx) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                fabOffset = Offset(
+                                    x = (fabOffset.x + dragAmount.x).coerceIn(
+                                        min = -maxWidth.value,
+                                        max = 0f,
+                                    ),
+                                    y = (fabOffset.y + dragAmount.y).coerceIn(
+                                        min = -containerHeightPx,
+                                        max = 0f,
+                                    ),
+                                )
+                            },
+                            onDragEnd = {
+                                val snapX = if (fabOffset.x < -maxWidth.value / 2f) {
+                                    -maxWidth.value + fabSizePx + with(density) {
+                                        AiSheetGeometry.fabEndDp(layout).dp.toPx()
+                                    } + navBarPx
+                                } else {
+                                    0f
+                                }
+                                fabOffset = Offset(snapX, fabOffset.y)
+                            },
+                        )
+                    }
                     .clickable(interactionSource = interaction, indication = null, role = Role.Button) {
                         sheet = sheet.copy(detent = AiSheetMotion.open())
                     },

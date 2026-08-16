@@ -394,6 +394,13 @@ internal object TermuxHandleSeq {
  * [SimpleVtEmulator] is the JVM snapshot wrapper. The app used to construct that wrapper and then
  * `as? TermuxSessionBridge`, which is always null, so the pane painted an empty Frost box over a
  * live SSH stream.
+ *
+ * [onCopy] writes selected text to the system clipboard. The view's floating toolbar copy action
+ * routes through [TermuxSessionBridge]'s TerminalSessionClient, so without wiring it here the
+ * system "复制" button silently does nothing.
  */
-fun productionTerminalEmulator(maxScrollback: Int = 4_000): TerminalEmulator =
-    TermuxSessionBridge(maxScrollback = maxScrollback)
+fun productionTerminalEmulator(
+    maxScrollback: Int = 4_000,
+    onCopy: (String) -> Unit = {},
+): TerminalEmulator =
+    TermuxSessionBridge(maxScrollback = maxScrollback, onCopy = onCopy)

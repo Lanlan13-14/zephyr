@@ -25,8 +25,11 @@ test('actual IME keeps shortcut row and removes only context dock', () => {
   assert.doesNotMatch(screen, /keyboardVisible \|\| imeHeightPx/);
 });
 
-test('session plus opens new connection protocol picker', () => {
-  assert.match(screen, /onAdd = onCreateConnection/);
+test('session plus opens the existing-connection picker, not the create screen', () => {
+  assert.match(screen, /onAdd = \{ onWorkspace\(ws\.copy\(addSheetOpen = true\)\) \}/);
+  assert.match(screen, /terminal_new_session_title/);
+  assert.match(screen, /onAddSession\(connection\)/);
+  // The "new connection" affordance lives in the connections library, not in the session rail.
   assert.match(routes, /onCreateConnection/);
   assert.match(root, /onCreateConnection = \{ route = RootRoute\.ProtocolPicker \}/);
 });

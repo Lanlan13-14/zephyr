@@ -2,11 +2,11 @@ package one.zephyr.mobile.protocol.ssh
 
 import java.io.InputStream
 import java.io.StringReader
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.security.PublicKey
 import java.util.EnumSet
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-import kotlin.system.measureNanoTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -143,13 +143,13 @@ class SshjEngine(
     override suspend fun measureLatency(sessionId: String): Long? = withContext(io) {
         val live = sessions[sessionId] ?: return@withContext null
         runCatching {
-            var nanos = 0L
-            nanos = measureNanoTime {
-                live.client.connection
-                    .sendGlobalRequest("keepalive@openssh.com", true, ByteArray(0))
-                    .retrieve(5, TimeUnit.SECONDS)
+            val host = live.client.remoteHostname
+            val port = live.client.remotePort
+            val started = System.nanoTime()
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(host, port), LATENCY_PROBE_TIMEOUT_MS)
             }
-            (nanos / 1_000_000L).coerceAtLeast(1L)
+            ((System.nanoTime() - started) / 1_000_000L).coerceAtLeast(1L)
         }.getOrNull()
     }
 
@@ -358,6 +358,8 @@ class SshjEngine(
     }
 
     companion object {
+        private const val LATENCY_PROBE_TIMEOUT_MS = 4_000
+
         private fun hostPort(host: String, port: Int): String = host.lowercase() + ":" + port
         private fun loadKey(pem: String, finder: PasswordFinder?): KeyProvider =
             if (pem.trim().contains("BEGIN OPENSSH PRIVATE KEY")) {
