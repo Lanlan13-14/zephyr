@@ -733,7 +733,9 @@ private fun BoundRoot(
                 account = account,
                 ownerUserId = ownerUserId,
                 section = current.section,
+                exec = LiveSshExecPort(sshEngine, account.sessions, managedSsh),
                 onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
+                onMessage = notice,
             )
             is RootRoute.ResourceList -> ResourceListDestination(
                 account = account,

@@ -193,6 +193,11 @@ interface TerminalHost {
     suspend fun exec(sessionId: String, command: String): Result<one.zephyr.mobile.protocol.ssh.SshExecResult> =
         Result.failure(IllegalStateException("SSH exec unavailable"))
 
+    fun execStream(
+        sessionId: String,
+        command: String,
+    ): Flow<one.zephyr.mobile.protocol.ssh.SshExecEvent> = emptyFlow()
+
     /** Accepts and remembers a presented host key after the user confirmed it. */
     suspend fun trustHostKey(sessionId: String) = Unit
 }

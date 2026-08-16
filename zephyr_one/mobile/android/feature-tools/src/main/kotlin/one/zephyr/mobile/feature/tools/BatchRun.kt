@@ -134,17 +134,19 @@ class BatchRun(
      * when the port itself failed to honour the deadline.
      */
     private suspend fun attempt(target: BatchTarget, plan: BatchPlan): ExecOutcome {
-        val budgetMs = (plan.timeoutSeconds + WATCHDOG_GRACE_SECONDS) * 1_000L
+        val budgetMs = (plan.timeoutSeconds + CONNECT_BUDGET_SECONDS + WATCHDOG_GRACE_SECONDS) * 1_000L
         return withTimeoutOrNull(budgetMs) {
             exec.exec(
                 connectionId = target.connectionId,
                 command = plan.command,
-                timeoutSeconds = plan.timeoutSeconds,
+                timeoutSeconds = plan.timeoutSeconds + CONNECT_BUDGET_SECONDS,
             )
         } ?: ExecOutcome.TimedOut
     }
 
     private companion object {
         const val WATCHDOG_GRACE_SECONDS = 5
+        /** Extra time so a host that is not already connected can be dialled first. */
+        const val CONNECT_BUDGET_SECONDS = 20
     }
 }

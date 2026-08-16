@@ -40,7 +40,13 @@ class SshRemoteFileConflict(
     val remoteModifiedAt: Long,
 ) : IllegalStateException("远端文件已变化：$path")
 
-private const val MAX_FILE_WRITE_BYTES = 1024 * 1024
+private const val MAX_FILE_WRITE_BYTES = 8 * 1024 * 1024
+private const val MAX_FILE_RANGE_BYTES = 32 * 1024 * 1024
+private const val STREAM_CHUNK_BYTES = 256 * 1024
+private const val DEFAULT_NEW_FILE_MODE = 0x1A4 // 0644
+
+
+
 
 /** Live direct SSH transport: shell, SFTP, exec and request/reply latency probes. */
 class SshjEngine(
@@ -202,24 +208,36 @@ class SshjEngine(
         }
     }
 
-    override suspend fun readFile(sessionId: String, path: String, maxBytes: Int): Result<SshRemoteFile> = withContext(io) {
+    override suspend fun readFile(sessionId: String, path: String, maxBytes: Int): Result<SshRemoteFile> =
+        readFileRange(sessionId, path, offset = 0L, maxBytes = maxBytes)
+
+    override suspend fun readFileRange(
+        sessionId: String,
+        path: String,
+        offset: Long,
+        maxBytes: Int,
+    ): Result<SshRemoteFile> = withContext(io) {
         runCatching {
-            require(maxBytes in 1..MAX_FILE_WRITE_BYTES) { "读取上限无效" }
+            require(offset >= 0L) { "读取偏移无效" }
+            require(maxBytes in 1..MAX_FILE_RANGE_BYTES) { "读取上限无效" }
             val live = sessions[sessionId] ?: error("SSH 会话已断开")
             live.client.newSFTPClient().use { sftp ->
                 val canonicalPath = sftp.canonicalize(path)
                 val attrs = sftp.stat(canonicalPath)
-                require(attrs.type == FileMode.Type.REGULAR) { "只能编辑普通文件" }
-                require(attrs.size <= maxBytes) { "文件过大，当前读取上限 ${maxBytes} bytes" }
-                val bytes = ByteArray(attrs.size.toInt())
-                sftp.open(canonicalPath, EnumSet.of(OpenMode.READ)).use { remote ->
-                    var offset = 0
-                    while (offset < bytes.size) {
-                        val read = remote.read(offset.toLong(), bytes, offset, bytes.size - offset)
-                        if (read <= 0) break
-                        offset += read
+                require(attrs.type == FileMode.Type.REGULAR) { "只能读取普通文件" }
+                val remaining = (attrs.size - offset).coerceAtLeast(0L)
+                val count = minOf(remaining, maxBytes.toLong()).toInt()
+                val bytes = ByteArray(count)
+                if (count > 0) {
+                    sftp.open(canonicalPath, EnumSet.of(OpenMode.READ)).use { remote ->
+                        var done = 0
+                        while (done < bytes.size) {
+                            val read = remote.read(offset + done, bytes, done, bytes.size - done)
+                            if (read <= 0) break
+                            done += read
+                        }
+                        require(done == bytes.size) { "远端文件读取不完整" }
                     }
-                    require(offset == bytes.size) { "远端文件读取不完整" }
                 }
                 SshRemoteFile(
                     path = canonicalPath,
@@ -242,23 +260,50 @@ class SshjEngine(
             require(bytes.size <= MAX_FILE_WRITE_BYTES) { "写入内容过大，当前上限 $MAX_FILE_WRITE_BYTES bytes" }
             val live = sessions[sessionId] ?: error("SSH 会话已断开")
             live.client.newSFTPClient().use { sftp ->
-                val canonicalPath = sftp.canonicalize(path)
-                val before = sftp.stat(canonicalPath)
-                if (expected != null && (before.size != expected.size || before.mtime * 1_000L != expected.modifiedAt)) {
-                    throw SshRemoteFileConflict(canonicalPath, before.size, before.mtime * 1_000L)
+                val leaf = path.substringAfterLast('/').ifBlank { path }
+                val parent = when {
+                    path == leaf -> ""
+                    path.lastIndexOf('/') <= 0 -> "/"
+                    else -> path.substringBeforeLast('/')
                 }
+                val canonicalParent = when {
+                    parent.isEmpty() -> sftp.canonicalize(".")
+                    parent == "/" -> "/"
+                    else -> sftp.canonicalize(parent)
+                }
+                val canonicalPath = if (leaf.isEmpty() || leaf == "/") {
+                    canonicalParent
+                } else if (canonicalParent == "/") {
+                    "/$leaf"
+                } else {
+                    "$canonicalParent/$leaf"
+                }
+                val before = runCatching { sftp.stat(canonicalPath) }.getOrNull()
+                if (expected != null) {
+                    if (before == null) {
+                        throw SshRemoteFileConflict(canonicalPath, 0L, 0L)
+                    }
+                    if (before.size != expected.size || before.mtime * 1_000L != expected.modifiedAt) {
+                        throw SshRemoteFileConflict(canonicalPath, before.size, before.mtime * 1_000L)
+                    }
+                }
+                val mode = before?.mode?.mask?.and(0xFFF) ?: DEFAULT_NEW_FILE_MODE
                 val temporary = "$canonicalPath.zephyr-${java.util.UUID.randomUUID()}.tmp"
                 try {
                     sftp.open(temporary, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC)).use { remote ->
-                        var offset = 0
-                        while (offset < bytes.size) {
-                            val count = minOf(32 * 1024, bytes.size - offset)
-                            remote.write(offset.toLong(), bytes, offset, count)
-                            offset += count
+                        var written = 0
+                        while (written < bytes.size) {
+                            val count = minOf(32 * 1024, bytes.size - written)
+                            remote.write(written.toLong(), bytes, written, count)
+                            written += count
                         }
                     }
-                    sftp.chmod(temporary, before.mode.mask and 0xFFF)
-                    sftp.rename(temporary, canonicalPath, EnumSet.of(RenameFlags.OVERWRITE))
+                    sftp.chmod(temporary, mode)
+                    if (before == null) {
+                        sftp.rename(temporary, canonicalPath)
+                    } else {
+                        sftp.rename(temporary, canonicalPath, EnumSet.of(RenameFlags.OVERWRITE))
+                    }
                 } catch (failure: Throwable) {
                     runCatching { sftp.rm(temporary) }
                     throw failure
@@ -268,6 +313,9 @@ class SshjEngine(
             }
         }
     }
+
+    override suspend fun chmod(sessionId: String, path: String, mode: Int): Result<Unit> =
+        sftpUnit(sessionId) { chmod(path, mode and 0xFFF) }
 
     private suspend fun sftpUnit(
         sessionId: String,
@@ -310,6 +358,133 @@ class SshjEngine(
                     remote.join()
                     SshExecResult(remote.exitStatus ?: -1, stdout.await(), stderr.await())
                 }
+            }
+        }
+    }
+
+    override fun execStream(sessionId: String, command: String): Flow<SshExecEvent> = callbackFlow {
+        require(command.isNotBlank()) { "远程命令不能为空" }
+        val live = sessions[sessionId] ?: error("SSH 会话已断开")
+        val commandSession = live.client.startSession()
+        val remote = commandSession.exec(command)
+        val stdoutJob = scope.launch {
+            val buffer = ByteArray(16 * 1024)
+            val input = remote.inputStream
+            while (true) {
+                val read = runCatching { input.read(buffer) }.getOrDefault(-1)
+                if (read < 0) break
+                if (read > 0) trySend(SshExecEvent.Stdout(buffer.copyOf(read)))
+            }
+        }
+        val stderrJob = scope.launch {
+            val buffer = ByteArray(8 * 1024)
+            val input = remote.errorStream
+            while (true) {
+                val read = runCatching { input.read(buffer) }.getOrDefault(-1)
+                if (read < 0) break
+                if (read > 0) trySend(SshExecEvent.Stderr(buffer.copyOf(read)))
+            }
+        }
+        val joinJob = scope.launch {
+            runCatching { remote.join() }
+            stdoutJob.join()
+            stderrJob.join()
+            trySend(SshExecEvent.Closed(remote.exitStatus ?: -1))
+            close()
+        }
+        awaitClose {
+            joinJob.cancel()
+            stdoutJob.cancel()
+            stderrJob.cancel()
+            runCatching { remote.close() }
+            runCatching { commandSession.close() }
+        }
+    }
+
+    override suspend fun readFileStream(
+        sessionId: String,
+        path: String,
+        offset: Long,
+        onChunk: suspend (offset: Long, bytes: ByteArray, total: Long) -> Unit,
+    ): Result<SshRemoteFileVersion> = withContext(io) {
+        runCatching {
+            require(offset >= 0L) { "读取偏移无效" }
+            val live = sessions[sessionId] ?: error("SSH 会话已断开")
+            live.client.newSFTPClient().use { sftp ->
+                val canonicalPath = sftp.canonicalize(path)
+                val attrs = sftp.stat(canonicalPath)
+                require(attrs.type == FileMode.Type.REGULAR) { "只能读取普通文件" }
+                sftp.open(canonicalPath, EnumSet.of(OpenMode.READ)).use { remote ->
+                    var cursor = offset
+                    val buffer = ByteArray(STREAM_CHUNK_BYTES)
+                    while (cursor < attrs.size) {
+                        val want = minOf(buffer.size.toLong(), attrs.size - cursor).toInt()
+                        val read = remote.read(cursor, buffer, 0, want)
+                        if (read <= 0) break
+                        onChunk(cursor, buffer.copyOf(read), attrs.size)
+                        cursor += read
+                    }
+                }
+                SshRemoteFileVersion(canonicalPath, attrs.size, attrs.mtime * 1_000L)
+            }
+        }
+    }
+
+    override suspend fun writeFileStream(
+        sessionId: String,
+        path: String,
+        expected: SshRemoteFileVersion?,
+        next: suspend () -> ByteArray?,
+    ): Result<SshRemoteFileVersion> = withContext(io) {
+        runCatching {
+            val live = sessions[sessionId] ?: error("SSH 会话已断开")
+            live.client.newSFTPClient().use { sftp ->
+                val leaf = path.substringAfterLast('/').ifBlank { path }
+                val parent = when {
+                    path == leaf -> ""
+                    path.lastIndexOf('/') <= 0 -> "/"
+                    else -> path.substringBeforeLast('/')
+                }
+                val canonicalParent = when {
+                    parent.isEmpty() -> sftp.canonicalize(".")
+                    parent == "/" -> "/"
+                    else -> sftp.canonicalize(parent)
+                }
+                val canonicalPath = if (leaf.isEmpty() || leaf == "/") {
+                    canonicalParent
+                } else if (canonicalParent == "/") {
+                    "/$leaf"
+                } else {
+                    "$canonicalParent/$leaf"
+                }
+                val before = runCatching { sftp.stat(canonicalPath) }.getOrNull()
+                if (expected != null) {
+                    if (before == null) throw SshRemoteFileConflict(canonicalPath, 0L, 0L)
+                    if (before.size != expected.size || before.mtime * 1_000L != expected.modifiedAt) {
+                        throw SshRemoteFileConflict(canonicalPath, before.size, before.mtime * 1_000L)
+                    }
+                }
+                val mode = before?.mode?.mask?.and(0xFFF) ?: DEFAULT_NEW_FILE_MODE
+                val temporary = "$canonicalPath.zephyr-${java.util.UUID.randomUUID()}.tmp"
+                try {
+                    sftp.open(temporary, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC)).use { remote ->
+                        var written = 0L
+                        while (true) {
+                            val chunk = next() ?: break
+                            if (chunk.isEmpty()) continue
+                            remote.write(written, chunk, 0, chunk.size)
+                            written += chunk.size
+                        }
+                    }
+                    sftp.chmod(temporary, mode)
+                    if (before == null) sftp.rename(temporary, canonicalPath)
+                    else sftp.rename(temporary, canonicalPath, EnumSet.of(RenameFlags.OVERWRITE))
+                } catch (failure: Throwable) {
+                    runCatching { sftp.rm(temporary) }
+                    throw failure
+                }
+                val after = sftp.stat(canonicalPath)
+                SshRemoteFileVersion(canonicalPath, after.size, after.mtime * 1_000L)
             }
         }
     }

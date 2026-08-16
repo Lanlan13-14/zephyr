@@ -532,14 +532,19 @@ class TerminalViewModel(
 
     suspend fun executeRemote(command: String) = host.exec(sessionId, command)
 
+    fun executeRemoteStream(command: String) = host.execStream(sessionId, command)
+
     suspend fun remoteMetrics(): Result<RemoteMetrics> = host.exec(
         sessionId,
-        "LC_ALL=C head -n 1 /proc/stat; " +
-            "LC_ALL=C awk '/MemTotal:/{t=\$2}/MemAvailable:/{a=\$2}END{print t,a}' /proc/meminfo; " +
-            "LC_ALL=C df -Pk / | awk 'NR==2{gsub(/%/,\"\",\$5);print \$5}'",
+        one.zephyr.mobile.protocol.ssh.SshRemoteOps.statsCommand,
     ).mapCatching { result ->
-        if (result.exitCode != 0) error(result.stderr.toString(Charsets.UTF_8).ifBlank { "读取远端指标失败" })
-        parseRemoteMetrics(result.stdout.toString(Charsets.UTF_8))
+        if (result.exitCode != 0 && result.stdout.isEmpty()) {
+            error(result.stderr.toString(Charsets.UTF_8).ifBlank { "读取远端指标失败" })
+        }
+        val snapshot = one.zephyr.mobile.protocol.ssh.SshRemoteOps.parseRemoteStats(
+            result.stdout.toString(Charsets.UTF_8),
+        )
+        parseRemoteMetrics(snapshot)
     }
 
     fun onDock(item: TerminalDockItem) {
@@ -625,19 +630,14 @@ class TerminalViewModel(
 
 data class RemoteMetrics(val cpuPercent: Int, val memoryPercent: Int, val diskPercent: Int)
 
-internal fun parseRemoteMetrics(text: String): RemoteMetrics {
-    val lines = text.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
-    require(lines.size >= 3) { "远端指标响应不完整" }
-    val cpu = lines[0].split(Regex("\\s+")).mapNotNull(String::toLongOrNull)
-    require(cpu.size >= 4) { "远端 CPU 数据无效" }
-    val total = cpu.sum().coerceAtLeast(1L)
-    val idle = cpu.getOrElse(3) { 0L } + cpu.getOrElse(4) { 0L }
-    val memory = lines[1].split(Regex("\\s+")).mapNotNull(String::toLongOrNull)
-    require(memory.size >= 2 && memory[0] > 0) { "远端内存数据无效" }
-    val disk = lines[2].toIntOrNull() ?: error("远端磁盘数据无效")
+internal fun parseRemoteMetrics(text: String): RemoteMetrics =
+    parseRemoteMetrics(one.zephyr.mobile.protocol.ssh.SshRemoteOps.parseRemoteStats(text))
+
+internal fun parseRemoteMetrics(snapshot: one.zephyr.mobile.protocol.ssh.HostStatsSnapshot): RemoteMetrics {
+    val disk = snapshot.disks.maxByOrNull { it.percent }?.percent ?: 0
     return RemoteMetrics(
-        cpuPercent = (((total - idle) * 100L) / total).toInt().coerceIn(0, 100),
-        memoryPercent = (((memory[0] - memory[1]) * 100L) / memory[0]).toInt().coerceIn(0, 100),
+        cpuPercent = snapshot.cpu.usagePercent.toInt().coerceIn(0, 100),
+        memoryPercent = snapshot.memory.memPercent.toInt().coerceIn(0, 100),
         diskPercent = disk.coerceIn(0, 100),
     )
 }

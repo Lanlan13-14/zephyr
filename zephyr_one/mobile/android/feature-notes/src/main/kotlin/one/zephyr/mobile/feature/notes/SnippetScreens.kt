@@ -2,33 +2,42 @@ package one.zephyr.mobile.feature.notes
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
+import one.zephyr.mobile.ui.component.ActionSheet
+import one.zephyr.mobile.ui.component.ActionSheetGroup
+import one.zephyr.mobile.ui.component.ActionSheetItem
 import one.zephyr.mobile.ui.component.AlertDialog
 import one.zephyr.mobile.ui.component.GroupCard
+import one.zephyr.mobile.ui.component.Icon
 import one.zephyr.mobile.ui.component.OutlinedTextField
 import one.zephyr.mobile.ui.component.PrimaryButton
 import one.zephyr.mobile.ui.component.SettingsRow
 import one.zephyr.mobile.ui.component.Switch
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
+import one.zephyr.mobile.ui.icon.ZephyrIcons
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
@@ -369,35 +379,188 @@ fun SftpBrowserRoute(
     onMessage: (String) -> Unit = {},
 ) {
     val available = connections.filter { it.protocol.supportsFiles && it.capabilities.canReadFiles }
-    var selectedId by remember(available) { mutableStateOf(available.firstOrNull()?.id) }
-    val selected = available.firstOrNull { it.id == selectedId }
+    val ids = available.joinToString("\u0000") { it.id }
+    var tabs by remember { mutableStateOf(SftpHostTabs()) }
+    var addOpen by remember { mutableStateOf(false) }
+    var clipboard by remember { mutableStateOf<SftpClipboard?>(null) }
+    LaunchedEffect(ids) {
+        val gone = tabs.openIds.filter { id -> available.none { it.id == id } }
+        gone.forEach { tabs = tabs.close(it) }
+    }
+    val focused = available.firstOrNull { it.id == tabs.focusedId }
+    val openHosts = tabs.openIds.mapNotNull { id -> available.firstOrNull { it.id == id } }
+    val addable = available.filter { it.id !in tabs.openIds }
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = "SFTP · ${selected?.name ?: "未选择连接"}", onBack = onBack)
-        if (available.size > 1) {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(available, key = { it.id }) { connection ->
-                    one.zephyr.mobile.ui.component.FilterChip(
-                        selected = selectedId == connection.id,
-                        onClick = { selectedId = connection.id },
-                        label = { Text(connection.name, maxLines = 1) },
-                    )
-                }
-            }
-        }
-        if (selected == null) {
+        PushedPageHeader(title = "SFTP · ${focused?.name ?: "选择主机"}", onBack = onBack)
+        if (available.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("没有可读取文件的 SSH 连接", color = ZephyrTheme.palette.onFloatingSubtle)
             }
-        } else {
-            SftpBrowserPane(
-                port = port,
-                connectionId = selected.id,
-                modifier = Modifier.fillMaxSize(),
-                onMessage = onMessage,
+            return
+        }
+        if (tabs.isEmpty) {
+            SftpHostPicker(
+                hosts = available,
+                onPick = { tabs = tabs.open(it.id) },
             )
+        } else {
+            SftpHostRail(
+                hosts = openHosts,
+                focusedId = tabs.focusedId,
+                canAdd = addable.isNotEmpty(),
+                onFocus = { tabs = tabs.focus(it) },
+                onClose = { tabs = tabs.close(it) },
+                onAdd = { addOpen = true },
+            )
+            Box(Modifier.fillMaxSize()) {
+                openHosts.sortedBy { if (it.id == tabs.focusedId) 1 else 0 }.forEach { host ->
+                    key(host.id) {
+                        SftpBrowserPane(
+                            port = port,
+                            connectionId = host.id,
+                            connectionName = host.name,
+                            clipboard = clipboard,
+                            onClipboard = { clipboard = it },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = if (host.id == tabs.focusedId) 1f else 0f },
+                            onMessage = onMessage,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    ActionSheet(
+        visible = addOpen,
+        onDismiss = { addOpen = false },
+        groups = listOf(
+            ActionSheetGroup(
+                title = "再开一台主机",
+                items = addable.map { host ->
+                    ActionSheetItem(
+                        label = host.name,
+                        subtitle = host.displayAddress,
+                        onClick = {
+                            addOpen = false
+                            tabs = tabs.open(host.id)
+                        },
+                    )
+                },
+            ),
+            ActionSheetGroup(
+                items = listOf(
+                    ActionSheetItem(
+                        label = "取消",
+                        cancel = true,
+                        onClick = { addOpen = false },
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+@Composable
+private fun SftpHostPicker(
+    hosts: List<one.zephyr.mobile.model.Connection>,
+    onPick: (one.zephyr.mobile.model.Connection) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 140.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Text(
+                "先选一台主机。打开后会自动连接，不必先去首页连上。点加号可以再开一台，从 A 复制到 B。",
+                color = ZephyrTheme.palette.onFloatingSubtle,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
+        items(hosts, key = { it.id }) { host ->
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(ZephyrTheme.palette.surfaces.content)
+                    .clickable { onPick(host) }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                Text(host.name, fontWeight = FontWeight.SemiBold)
+                Text(host.displayAddress, color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SftpHostRail(
+    hosts: List<one.zephyr.mobile.model.Connection>,
+    focusedId: String?,
+    canAdd: Boolean,
+    onFocus: (String) -> Unit,
+    onClose: (String) -> Unit,
+    onAdd: () -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(palette.surfaces.content)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        hosts.forEach { host ->
+            val on = host.id == focusedId
+            Row(
+                modifier = Modifier
+                    .height(34.dp)
+                    .padding(end = 8.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (on) palette.brand.accent.copy(alpha = 0.22f) else palette.surfaces.elevated)
+                    .clickable { onFocus(host.id) }
+                    .padding(start = 10.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(if (on) palette.status.success else palette.onFloatingSubtle),
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    host.name,
+                    color = if (on) palette.onFloating else palette.onFloatingMuted,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                    maxLines = 1,
+                )
+                Text(
+                    "×",
+                    color = palette.onFloatingSubtle,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .padding(start = 6.dp)
+                        .clickable { onClose(host.id) },
+                )
+            }
+        }
+        if (canAdd) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(palette.surfaces.elevated)
+                    .clickable(onClick = onAdd),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(ZephyrIcons.Plus, "再开一台", tint = palette.onFloatingMuted, modifier = Modifier.size(14.dp))
+            }
         }
     }
 }

@@ -68,7 +68,8 @@ internal fun TerminalToolBody(
         TerminalToolKind.FILES -> FilesToolBody(colors, viewModel, onMessage)
         TerminalToolKind.SNIPPET -> SnippetToolBody(colors, snippets, onInsert)
         TerminalToolKind.NOTES -> NotesToolBody(colors, notes, onOpenNote)
-        TerminalToolKind.STATS -> StatsToolBody(colors, viewModel, onOpenDocker)
+        TerminalToolKind.STATS -> StatsToolBody(viewModel, onOpenDocker, onMessage)
+        TerminalToolKind.DOCKER -> DockerToolBody(viewModel, onMessage)
         TerminalToolKind.THEME -> ThemeToolBody(colors, workspace, onWorkspace, onMessage)
     }
 }
@@ -179,53 +180,54 @@ private fun NotesToolBody(
 
 @Composable
 private fun StatsToolBody(
-    colors: TerminalChromeColors,
     viewModel: TerminalViewModel?,
     onOpenDocker: () -> Unit,
+    onMessage: (String) -> Unit,
 ) {
-    val dockerLabel = stringResource(R.string.terminal_open_docker)
-    var loading by remember { mutableStateOf(true) }
-    var metrics by remember { mutableStateOf<RemoteMetrics?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(viewModel) {
-        if (viewModel == null) {
-            loading = false
-            error = "当前没有已连接的 SSH 会话"
-            return@LaunchedEffect
+    one.zephyr.mobile.feature.tools.HostMonitorPanel(
+        shell = viewModel?.asRemoteShell(),
+        modifier = Modifier.fillMaxSize(),
+        onOpenDocker = onOpenDocker,
+        onMessage = onMessage,
+    )
+}
+
+@Composable
+private fun DockerToolBody(
+    viewModel: TerminalViewModel?,
+    onMessage: (String) -> Unit,
+) {
+    one.zephyr.mobile.feature.tools.HostDockerPanel(
+        shell = viewModel?.asRemoteShell(),
+        modifier = Modifier.fillMaxSize(),
+        onMessage = onMessage,
+    )
+}
+
+private fun TerminalViewModel.asRemoteShell(): one.zephyr.mobile.feature.tools.RemoteShell =
+    object : one.zephyr.mobile.feature.tools.RemoteShell {
+        override suspend fun run(command: String): one.zephyr.mobile.feature.tools.RemoteShellResult {
+            val result = executeRemote(command).getOrThrow()
+            return one.zephyr.mobile.feature.tools.RemoteShellResult(
+                exitCode = result.exitCode,
+                stdout = result.stdout.toString(Charsets.UTF_8),
+                stderr = result.stderr.toString(Charsets.UTF_8),
+            )
         }
-        viewModel.remoteMetrics().fold(
-            onSuccess = { metrics = it; error = null },
-            onFailure = { error = it.message ?: "读取远端监控失败" },
-        )
-        loading = false
-    }
-    Column {
-        when {
-            loading -> EmptyToolBody(colors, "正在读取远端监控…")
-            error != null -> EmptyToolBody(colors, error ?: "监控失败")
-            metrics != null -> {
-                val value = metrics ?: return@Column
-                Meter(colors, "CPU", "${value.cpuPercent}%", value.cpuPercent / 100f)
-                Meter(colors, "内存", "${value.memoryPercent}%", value.memoryPercent / 100f)
-                Meter(colors, "磁盘 /", "${value.diskPercent}%", value.diskPercent / 100f, warn = value.diskPercent >= 80)
+
+        override fun stream(command: String) = kotlinx.coroutines.flow.flow {
+            executeRemoteStream(command).collect { event ->
+                when (event) {
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Stdout ->
+                        emit(one.zephyr.mobile.feature.tools.RemoteShellChunk.Output(event.bytes.toString(Charsets.UTF_8)))
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Stderr ->
+                        emit(one.zephyr.mobile.feature.tools.RemoteShellChunk.Output(event.bytes.toString(Charsets.UTF_8)))
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Closed ->
+                        emit(one.zephyr.mobile.feature.tools.RemoteShellChunk.Closed(event.exitCode))
+                }
             }
         }
-        Text(
-            text = "DOCKER · $dockerLabel",
-            color = colors.accent,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.8.sp,
-            modifier = Modifier
-                .padding(horizontal = 8.dp, vertical = 8.dp)
-                .then(Modifier),
-        )
-        TermPressable(onClick = onOpenDocker, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp), scale = 0.99f) {
-            Text(dockerLabel, color = colors.accent, fontSize = 12.sp)
-        }
-        Spacer(Modifier.height(6.dp))
     }
-}
 
 @Composable
 private fun ThemeToolBody(
@@ -418,6 +420,7 @@ internal fun SideToolDock(
     onOpenDocker: () -> Unit,
     onMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
+    viewModel: TerminalViewModel? = null,
 ) {
     Column(
         modifier
@@ -463,7 +466,10 @@ internal fun SideToolDock(
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(colors.line))
-        Box(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(6.dp)) {
+        Box(Modifier.weight(1f).then(
+            if (workspace.dockCurrent == TerminalToolKind.STATS || workspace.dockCurrent == TerminalToolKind.DOCKER) Modifier
+            else Modifier.verticalScroll(rememberScrollState()),
+        ).padding(6.dp)) {
             val current = workspace.dockCurrent
             if (current == null) {
                 Text(
@@ -482,8 +488,11 @@ internal fun SideToolDock(
                     onWorkspace = onWorkspace,
                     onInsert = onInsert,
                     onOpenNote = onOpenNote,
-                    onOpenDocker = onOpenDocker,
+                    onOpenDocker = {
+                        onWorkspace(TerminalWorkspace.openTool(workspace, TerminalToolKind.DOCKER, phone = false))
+                    },
                     onMessage = onMessage,
+                    viewModel = viewModel,
                 )
             }
         }

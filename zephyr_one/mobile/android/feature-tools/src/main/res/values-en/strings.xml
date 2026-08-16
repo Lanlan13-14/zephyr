@@ -67,7 +67,7 @@
     <string name="tools_batch_output_hide">Hide %1$s</string>
     <string name="tools_batch_output_show">Show %1$s (%2$d chars)</string>
     <string name="tools_batch_status_pending">Waiting</string>
-    <string name="tools_batch_status_running">Running</string>
+    <string name="tools_batch_status_running">Connecting and running</string>
     <string name="tools_batch_status_succeeded">Succeeded</string>
     <string name="tools_batch_status_failed">Failed</string>
     <string name="tools_batch_status_timed_out">Timed out</string>

@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -699,14 +700,23 @@ fun DockerMonitorScreen(
     connections: List<Connection>,
     section: OpsSection,
     onBack: () -> Unit,
+    shellFor: (String) -> RemoteShell? = { null },
+    onMessage: (String) -> Unit = {},
 ) {
     val palette = ZephyrTheme.palette
-    val connection = connections.firstOrNull { it.protocol == Protocol.SSH && it.capabilities.canObserve }
-    val unavailable = UnavailableOpsPort()
+    val ssh = connections.filter { it.protocol == Protocol.SSH && it.capabilities.canObserve }
+    val sshIds = ssh.joinToString(separator = "\u0000") { it.id }
+    var selectedId by remember(sshIds) { mutableStateOf(ssh.firstOrNull()?.id) }
+    val selected = ssh.firstOrNull { it.id == selectedId } ?: ssh.firstOrNull()
+    val title = when (section) {
+        OpsSection.DOCKER -> "Docker"
+        OpsSection.METRICS -> "监控"
+        OpsSection.LOGS -> "日志"
+    }
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = "Docker / 监控", onBack = onBack) {
+        PushedPageHeader(title = title, onBack = onBack) {
             Text(
-                connection?.name ?: "未选择",
+                selected?.name ?: "未选择",
                 color = palette.protocol.ssh,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -716,88 +726,32 @@ fun DockerMonitorScreen(
                     .padding(horizontal = 8.dp, vertical = 3.dp),
             )
         }
-        Column(
-            Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = ZephyrSpacing.lg)
-                .padding(bottom = 140.dp),
-        ) {
-            Text(
-                "资源 · snapshot --".uppercase(),
-                style = ZephyrTheme.typography.section,
-                color = palette.onFloatingSubtle,
-                modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 10.dp),
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                DockerStatCard("--", "CPU", 0f, Modifier.weight(1f))
-                DockerStatCard("--", "内存", 0f, Modifier.weight(1f))
-            }
+        if (ssh.size > 1) {
             Row(
-                Modifier.fillMaxWidth().padding(top = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                DockerStatCard("--", "磁盘 /", 0f, Modifier.weight(1f), warning = true)
-                DockerStatCard("--", "网络", 0f, Modifier.weight(1f))
+                ssh.forEach { connection ->
+                    FilterChip(
+                        selected = selectedId == connection.id,
+                        onClick = { selectedId = connection.id },
+                        label = { Text(connection.name, maxLines = 1) },
+                    )
+                }
             }
-
-            SectionLabel("容器 · control 能力可启停")
-            GroupCard {
-                SettingsRow(
-                    title = if (connection == null) "暂无可观察 SSH 连接" else "暂无容器快照",
-                    subtitle = unavailable.let { "SSH 引擎尚未接入，当前无法读取容器状态" },
-                    showDivider = false,
-                )
-            }
-
-            SectionLabel("服务日志")
-            GroupCard {
-                SettingsRow(
-                    title = if (connection == null) "暂无服务日志" else connection.name,
-                    subtitle = "tail · 搜索 · 导出",
-                    showChevron = connection != null && unavailable.isAvailable,
-                    showDivider = false,
-                )
-            }
-
-            Text(
-                "离线时显示最后 snapshot 时间，不把旧值说成实时",
-                color = palette.onFloatingSubtle,
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
+        }
+        val activeShell = selected?.id?.let(shellFor)
+        when (section) {
+            OpsSection.DOCKER -> HostDockerPanel(shell = activeShell, modifier = Modifier.fillMaxSize(), onMessage = onMessage)
+            OpsSection.METRICS, OpsSection.LOGS -> HostMonitorPanel(
+                shell = activeShell,
+                modifier = Modifier.fillMaxSize(),
+                onMessage = onMessage,
             )
         }
-    }
-}
-
-@Composable
-private fun DockerStatCard(
-    value: String,
-    label: String,
-    progress: Float,
-    modifier: Modifier = Modifier,
-    warning: Boolean = false,
-) {
-    val palette = ZephyrTheme.palette
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(palette.surfaces.content)
-            .border(1.dp, palette.surfaces.outlineSoft, RoundedCornerShape(8.dp))
-            .padding(horizontal = 12.dp, vertical = 11.dp),
-    ) {
-        Text(
-            value,
-            color = if (warning) palette.status.warning else palette.onFloating,
-            fontSize = 17.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        LinearProgress(
-            progress = progress,
-            color = if (warning) palette.status.warning else palette.brand.accent,
-            modifier = Modifier.padding(top = 8.dp),
-        )
-        Text(label, color = palette.onFloatingMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 7.dp))
     }
 }
 

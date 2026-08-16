@@ -20,7 +20,10 @@ test('phone tools are an in-flow drawer with demo detents', () => {
   assert.match(ws, /SHEET_DISMISS_VELOCITY_PX_PER_MS\s*=\s*0\.70f/);
   assert.match(screen, /TerminalToolSheet\(/);
   assert.match(sheet, /height\(maxHeight \* animatedFraction\)/);
-  assert.match(sheet, /tween\(260, easing = ZephyrMotionTokens\.easeDrawer\)/);
+  assert.match(sheet, /tween\(ZephyrMotionTokens\.SHEET_MS, easing = ZephyrMotionTokens\.easeDrawer\)/);
+  assert.match(ws, /fun finishClose/);
+  assert.match(codeOnly(screen), /ws\.sheetCurrent != null/);
+  assert.doesNotMatch(codeOnly(screen), /ws\.sheetFraction > 0f && ws\.sheetCurrent/);
 });
 
 test('terminal no longer renders movable floating tool panels', () => {
@@ -45,7 +48,8 @@ test('FILES drawer with its text editor survives an open IME', () => {
   // the whole tool sheet being removed — which made the file page vanish on focus.
   assert.match(
     codeOnly(screen),
-    /!imeOpen \|\| ws\.sheetCurrent == TerminalToolKind\.FILES/,
+    /!imeOpen \|\| ws\.sheetCurrent\?\.keepsIme == true/,
   );
+  assert.match(ws, /this == FILES \|\| this == STATS \|\| this == DOCKER/);
   assert.match(sheet, /SftpBrowserPane\(/);
 });

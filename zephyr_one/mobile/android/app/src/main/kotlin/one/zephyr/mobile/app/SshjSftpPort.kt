@@ -4,6 +4,7 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import one.zephyr.mobile.feature.notes.DownloadProgress
 import one.zephyr.mobile.feature.notes.RemoteEntry
+import one.zephyr.mobile.feature.notes.RemoteExecResult
 import one.zephyr.mobile.feature.notes.RemoteFileRead
 import one.zephyr.mobile.feature.notes.RemoteStat
 import one.zephyr.mobile.feature.notes.RemoteWriteReceipt
@@ -57,8 +58,18 @@ class SshjSftpPort(
         }
 
     override suspend fun read(handle: SftpSessionHandle, path: String, maxBytes: Long): RemoteFileRead {
-        val file = engine.readFile(session(handle), path, maxBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()).getOrThrow()
-        return RemoteFileRead(file.path, file.bytes, file.modifiedAt, sha256(file.bytes), truncated = false)
+        val file = engine.readFile(
+            session(handle),
+            path,
+            maxBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+        ).getOrThrow()
+        return RemoteFileRead(
+            file.path,
+            file.bytes,
+            file.modifiedAt,
+            sha256(file.bytes),
+            truncated = file.bytes.size.toLong() < file.size,
+        )
     }
 
     override suspend fun write(
@@ -102,6 +113,26 @@ class SshjSftpPort(
         engine.delete(session(handle), path, recursive).getOrThrow()
     }
 
+    override suspend fun chmod(handle: SftpSessionHandle, path: String, mode: Int) {
+        engine.chmod(session(handle), path, mode).getOrThrow()
+    }
+
+    override suspend fun readRange(
+        handle: SftpSessionHandle,
+        path: String,
+        offset: Long,
+        maxBytes: Int,
+    ): RemoteFileRead {
+        val file = engine.readFileRange(session(handle), path, offset, maxBytes).getOrThrow()
+        return RemoteFileRead(
+            file.path,
+            file.bytes,
+            file.modifiedAt,
+            sha256(file.bytes),
+            truncated = offset + file.bytes.size < file.size,
+        )
+    }
+
     override suspend fun upload(handle: SftpSessionHandle, path: String, bytes: ByteArray): RemoteWriteReceipt {
         val version = engine.writeFile(session(handle), path, bytes).getOrThrow()
         return RemoteWriteReceipt(version.path, version.modifiedAt, sha256(bytes))
@@ -114,6 +145,51 @@ class SshjSftpPort(
         resumeFromBytes: Long,
         onProgress: (DownloadProgress) -> Unit,
     ): Long = throw UnsupportedOperationException("SAF download sink is not available in this adapter")
+
+    override suspend fun exec(handle: SftpSessionHandle, command: String): RemoteExecResult {
+        val result = engine.exec(session(handle), command).getOrThrow()
+        return RemoteExecResult(
+            exitCode = result.exitCode,
+            stdout = result.stdout.toString(Charsets.UTF_8),
+            stderr = result.stderr.toString(Charsets.UTF_8),
+        )
+    }
+
+    override fun execStream(
+        handle: SftpSessionHandle,
+        command: String,
+    ): kotlinx.coroutines.flow.Flow<one.zephyr.mobile.feature.notes.RemoteExecChunk> =
+        kotlinx.coroutines.flow.flow {
+            engine.execStream(session(handle), command).collect { event ->
+                when (event) {
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Stdout ->
+                        emit(one.zephyr.mobile.feature.notes.RemoteExecChunk.Output(event.bytes.toString(Charsets.UTF_8), stderr = false))
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Stderr ->
+                        emit(one.zephyr.mobile.feature.notes.RemoteExecChunk.Output(event.bytes.toString(Charsets.UTF_8), stderr = true))
+                    is one.zephyr.mobile.protocol.ssh.SshExecEvent.Closed ->
+                        emit(one.zephyr.mobile.feature.notes.RemoteExecChunk.Closed(event.exitCode))
+                }
+            }
+        }
+
+    override suspend fun readStream(
+        handle: SftpSessionHandle,
+        path: String,
+        resumeFromBytes: Long,
+        onChunk: suspend (offset: Long, bytes: ByteArray, total: Long) -> Unit,
+    ): RemoteWriteReceipt {
+        val version = engine.readFileStream(session(handle), path, resumeFromBytes, onChunk).getOrThrow()
+        return RemoteWriteReceipt(version.path, version.modifiedAt, "")
+    }
+
+    override suspend fun writeStream(
+        handle: SftpSessionHandle,
+        path: String,
+        next: suspend () -> ByteArray?,
+    ): RemoteWriteReceipt {
+        val version = engine.writeFileStream(session(handle), path, expected = null, next = next).getOrThrow()
+        return RemoteWriteReceipt(version.path, version.modifiedAt, "")
+    }
 
     private fun SftpEntry.remote() = RemoteEntry(
         name, path, isDirectory, size, modifiedAt, permissions.toString(8), isSymlink,

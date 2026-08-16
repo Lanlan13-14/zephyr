@@ -22,8 +22,13 @@ enum class TerminalToolKind {
     SNIPPET,
     NOTES,
     STATS,
+    DOCKER,
     THEME,
     ;
+
+    /** Drawers that embed a text field must stay composed while the system IME is open. */
+    val keepsIme: Boolean
+        get() = this == FILES || this == STATS || this == DOCKER
 
     companion object {
         fun fromDock(item: TerminalDockItem): TerminalToolKind? = when (item) {
@@ -213,7 +218,16 @@ object TerminalWorkspace {
     }
 
     fun closeSheet(state: TerminalWorkspaceState): TerminalWorkspaceState =
-        state.copy(sheetTools = emptyList(), sheetCurrent = null, sheetFraction = 0f)
+        state.copy(sheetFraction = 0f)
+
+    /**
+     * Drops the last tab after the close height animation has reached 0.
+     * Called only from the sheet, never from a dock tap — otherwise the node
+     * disappears before [animateFloatAsState] can run.
+     */
+    fun finishClose(state: TerminalWorkspaceState): TerminalWorkspaceState =
+        if (state.sheetFraction > 0f) state
+        else state.copy(sheetTools = emptyList(), sheetCurrent = null, sheetFraction = 0f)
 
     fun setSheetFraction(state: TerminalWorkspaceState, fraction: Float): TerminalWorkspaceState =
         state.copy(sheetFraction = fraction.coerceIn(0f, SHEET_MAX_FRACTION))

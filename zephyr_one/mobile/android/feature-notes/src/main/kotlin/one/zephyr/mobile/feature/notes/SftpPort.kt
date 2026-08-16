@@ -79,6 +79,16 @@ value class SftpSessionHandle(val token: String)
  */
 data class DownloadProgress(val transferredBytes: Long, val totalBytes: Long?)
 
+/** One remote shell command run on the same SSH session the SFTP handle owns. */
+data class RemoteExecResult(val exitCode: Int, val stdout: String, val stderr: String) {
+    fun requireOk(label: String = "远程命令"): String {
+        if (exitCode != 0) {
+            error(stderr.ifBlank { stdout }.ifBlank { "$label 失败（exit $exitCode）" })
+        }
+        return stdout
+    }
+}
+
 /**
  * The narrow SFTP surface S31 is written against.
  *
@@ -136,6 +146,15 @@ interface SftpPort {
 
     suspend fun delete(handle: SftpSessionHandle, path: String, recursive: Boolean)
 
+    suspend fun chmod(handle: SftpSessionHandle, path: String, mode: Int)
+
+    suspend fun readRange(
+        handle: SftpSessionHandle,
+        path: String,
+        offset: Long,
+        maxBytes: Int,
+    ): RemoteFileRead
+
     suspend fun upload(handle: SftpSessionHandle, path: String, bytes: ByteArray): RemoteWriteReceipt
 
     /**
@@ -153,6 +172,43 @@ interface SftpPort {
         resumeFromBytes: Long,
         onProgress: (DownloadProgress) -> Unit,
     ): Long
+
+    /** Runs a shell command on the same SSH session. Used for compress / extract / copy / properties. */
+    suspend fun exec(handle: SftpSessionHandle, command: String): RemoteExecResult
+
+    /** Streaming remote command. Cancel the collector to stop `docker logs -f` / a long pull. */
+    fun execStream(handle: SftpSessionHandle, command: String): kotlinx.coroutines.flow.Flow<RemoteExecChunk> =
+        kotlinx.coroutines.flow.flow {
+            val result = exec(handle, command)
+            if (result.stdout.isNotEmpty()) emit(RemoteExecChunk.Output(result.stdout, stderr = false))
+            if (result.stderr.isNotEmpty()) emit(RemoteExecChunk.Output(result.stderr, stderr = true))
+            emit(RemoteExecChunk.Closed(result.exitCode))
+        }
+
+    /**
+     * Stream-read [path] from [resumeFromBytes]. [onChunk] receives each payload.
+     * Implementations must not buffer the whole file.
+     */
+    suspend fun readStream(
+        handle: SftpSessionHandle,
+        path: String,
+        resumeFromBytes: Long,
+        onChunk: suspend (offset: Long, bytes: ByteArray, total: Long) -> Unit,
+    ): RemoteWriteReceipt
+
+    /**
+     * Stream-write [path] from [next] chunks. Used for uploads larger than memory.
+     */
+    suspend fun writeStream(
+        handle: SftpSessionHandle,
+        path: String,
+        next: suspend () -> ByteArray?,
+    ): RemoteWriteReceipt
+}
+
+sealed interface RemoteExecChunk {
+    data class Output(val text: String, val stderr: Boolean) : RemoteExecChunk
+    data class Closed(val exitCode: Int) : RemoteExecChunk
 }
 
 /**
@@ -203,6 +259,15 @@ object UnavailableSftpPort : SftpPort {
 
     override suspend fun delete(handle: SftpSessionHandle, path: String, recursive: Boolean) = fail()
 
+    override suspend fun chmod(handle: SftpSessionHandle, path: String, mode: Int) = fail()
+
+    override suspend fun readRange(
+        handle: SftpSessionHandle,
+        path: String,
+        offset: Long,
+        maxBytes: Int,
+    ): RemoteFileRead = fail()
+
     override suspend fun upload(handle: SftpSessionHandle, path: String, bytes: ByteArray): RemoteWriteReceipt = fail()
 
     override suspend fun download(
@@ -212,4 +277,19 @@ object UnavailableSftpPort : SftpPort {
         resumeFromBytes: Long,
         onProgress: (DownloadProgress) -> Unit,
     ): Long = fail()
+
+    override suspend fun exec(handle: SftpSessionHandle, command: String): RemoteExecResult = fail()
+
+    override suspend fun readStream(
+        handle: SftpSessionHandle,
+        path: String,
+        resumeFromBytes: Long,
+        onChunk: suspend (offset: Long, bytes: ByteArray, total: Long) -> Unit,
+    ): RemoteWriteReceipt = fail()
+
+    override suspend fun writeStream(
+        handle: SftpSessionHandle,
+        path: String,
+        next: suspend () -> ByteArray?,
+    ): RemoteWriteReceipt = fail()
 }
