@@ -1643,7 +1643,7 @@ private fun BatchExecutionViewModel.dispatch(intent: BatchIntent) {
  * Prefers the ref the mirror recorded and falls back to the conventional field ref, because a row
  * written before the ref was persisted still has its secret under the derived name.
  */
-private fun AccountContainer.passwordChars(connection: Connection): CharArray? {
+internal fun AccountContainer.passwordChars(connection: Connection): CharArray? {
     val ref = secretRefForPresence(
         presence = connection.password,
         entityType = Connection.ENTITY_TYPE,
@@ -1689,7 +1689,7 @@ private suspend fun AccountContainer.connectionTestCredentials(
     )
 }
 
-private suspend fun AccountContainer.terminalCredentials(connection: Connection): TerminalCredentials {
+internal suspend fun AccountContainer.terminalCredentials(connection: Connection): TerminalCredentials {
     val inlineKey = secretRefForPresence(
         presence = connection.privateKey,
         entityType = Connection.ENTITY_TYPE,

@@ -2,6 +2,7 @@ package one.zephyr.mobile.app.di
 
 import android.content.Context
 import android.net.Uri
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.app.binding.AccountDatabaseReadiness
+import one.zephyr.mobile.app.LocalAiWorkspace
 import one.zephyr.mobile.app.binding.BindingGeneration
 import one.zephyr.mobile.app.binding.BindingTeardownScope
 import one.zephyr.mobile.app.binding.ManagedBindingGraph
@@ -29,6 +31,7 @@ import one.zephyr.mobile.data.db.DevicePreferenceRow
 import one.zephyr.mobile.data.db.ZephyrDatabase
 import one.zephyr.mobile.data.repository.ConflictRepository
 import one.zephyr.mobile.data.repository.ConnectionRepository
+import one.zephyr.mobile.data.repository.LocalAiRepository
 import one.zephyr.mobile.data.repository.NoteRepository
 import one.zephyr.mobile.data.repository.ResourceRepository
 import one.zephyr.mobile.data.repository.SettingsRepository
@@ -262,6 +265,16 @@ class AccountContainer(
     val notes: NoteRepository = NoteRepository(database, writeGateway)
 
     val settings: SettingsRepository = SettingsRepository(database, writeGateway)
+
+    /** Full local AI authority. Server binding is never required to edit or run it. */
+    val localAi: LocalAiRepository = LocalAiRepository(database, secretStore)
+
+    internal val localAiWorkspace: LocalAiWorkspace = LocalAiWorkspace(
+        File(context.noBackupFilesDir, "ai-workspaces/$generation"),
+        localAi,
+    )
+
+    internal fun appContainer(): AppContainer = appContainer
 
     val tokens: one.zephyr.mobile.data.repository.ClientTokenRepository =
         one.zephyr.mobile.data.repository.ClientTokenRepository(

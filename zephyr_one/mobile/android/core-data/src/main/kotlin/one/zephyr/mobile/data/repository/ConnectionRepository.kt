@@ -77,6 +77,10 @@ class ConnectionRepository(
         db.overlayDao().forEntity(Connection.ENTITY_TYPE, connectionId)
             .associate { row -> row.fieldName to row.valueJson.trim().removeSurrounding("\"") }
 
+    suspend fun all(ownerUserId: String): List<Connection> =
+        db.mirrorDao().listByType(Connection.ENTITY_TYPE, ownerUserId)
+            .map { ConnectionMapper.fromRow(it, pending = it.hasPendingWrite, conflicted = false) }
+
     suspend fun search(query: String, ownerUserId: String): List<Connection> =
         db.mirrorDao().search(query, ownerUserId)
             .filter { it.entityType == Connection.ENTITY_TYPE }
