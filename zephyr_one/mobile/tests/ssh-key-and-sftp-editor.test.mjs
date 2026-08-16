@@ -48,10 +48,12 @@ function assertKeyLoginGuards({ loaderSrc, engineSrc, hostSrc, rootSrc, testerSr
 }
 
 function assertEditorGuards({ paneSrc, historySrc, adapterSrc, engineSrc }) {
-  assert.match(paneSrc, /TextFieldValue/);
+  assert.match(paneSrc, /var draft by remember\(file\.path\) \{ mutableStateOf\(file\.text\) \}/);
   assert.match(paneSrc, /SftpEditorHistory/);
   assert.match(paneSrc, /if \(file\.dirty\) delay\(140\)/);
   assert.match(paneSrc, /onValueChange = \{ draft = it \}/);
+  assert.doesNotMatch(paneSrc, /TextFieldValue/);
+  assert.doesNotMatch(paneSrc, /softWrap = file\.wrap/);
   assert.doesNotMatch(paneSrc, /val history = \(current\.undo \+ current\.text\)\.takeLast/);
   assert.match(historySrc, /coalesceMs/);
   assert.match(historySrc, /isSmallSingleRegionEdit/);

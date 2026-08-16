@@ -28,10 +28,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -1121,23 +1119,18 @@ private fun SftpTextEditor(
     var outlineOpen by remember { mutableStateOf(false) }
     var workspaceQuery by remember { mutableStateOf("") }
     var workspaceOpen by remember { mutableStateOf(false) }
-    var draft by remember(file.path) {
-        mutableStateOf(TextFieldValue(file.text, TextRange(file.text.length)))
-    }
+    var draft by remember(file.path) { mutableStateOf(file.text) }
     LaunchedEffect(file.path, file.generation) {
-        if (draft.text != file.text) {
-            val nextSelection = draft.selection.start.coerceIn(0, file.text.length)
-            draft = TextFieldValue(file.text, TextRange(nextSelection))
-        }
+        if (draft != file.text) draft = file.text
     }
     var analysisText by remember(file.path) { mutableStateOf(file.text) }
-    LaunchedEffect(draft.text, findOpen, outlineOpen, findQuery) {
+    LaunchedEffect(draft, findOpen, outlineOpen, findQuery) {
         if (!findOpen && !outlineOpen) {
-            analysisText = draft.text
+            analysisText = draft
             return@LaunchedEffect
         }
         delay(180)
-        analysisText = draft.text
+        analysisText = draft
     }
     val hits = remember(analysisText, findQuery, findOpen) {
         if (!findOpen || findQuery.isBlank()) emptyList() else SftpEditorSupport.findInText(analysisText, findQuery)
@@ -1146,16 +1139,16 @@ private fun SftpTextEditor(
         if (!outlineOpen) emptyList() else SftpEditorSupport.outline(analysisText, file.path)
     }
     fun commitDraft() {
-        if (draft.text != file.text) {
-            onChange(draft.text, file.encoding, file.lineEnding, file.tabSize, file.wrap)
+        if (draft != file.text) {
+            onChange(draft, file.encoding, file.lineEnding, file.tabSize, file.wrap)
         }
     }
     // First differing keystroke marks dirty immediately so BackHandler cannot
     // drop the file as clean. Later keystrokes stay local for 140ms.
-    LaunchedEffect(draft.text, file.path, file.encoding, file.lineEnding, file.tabSize, file.wrap) {
-        if (draft.text == file.text) return@LaunchedEffect
+    LaunchedEffect(draft, file.path, file.encoding, file.lineEnding, file.tabSize, file.wrap) {
+        if (draft == file.text) return@LaunchedEffect
         if (file.dirty) delay(140)
-        onChange(draft.text, file.encoding, file.lineEnding, file.tabSize, file.wrap)
+        onChange(draft, file.encoding, file.lineEnding, file.tabSize, file.wrap)
     }
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -1167,15 +1160,15 @@ private fun SftpTextEditor(
             Column(Modifier.weight(1f)) {
                 Text(file.title, color = ZephyrTheme.palette.onFloating, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(
-                    (if (file.dirty || draft.text != file.text) "未保存 · " else "") + SftpEditorSupport.languageOf(file.path) + " · " + file.path,
+                    (if (file.dirty || draft != file.text) "未保存 · " else "") + SftpEditorSupport.languageOf(file.path) + " · " + file.path,
                     color = ZephyrTheme.palette.onFloatingSubtle,
                     fontSize = 10.sp,
                     maxLines = 1,
                 )
             }
             PrimaryButton(
-                onClick = { onSave(draft.text) },
-                enabled = file.dirty || draft.text != file.text,
+                onClick = { onSave(draft) },
+                enabled = file.dirty || draft != file.text,
             ) { Text("保存") }
         }
         Row(
@@ -1185,7 +1178,7 @@ private fun SftpTextEditor(
             files.forEachIndexed { index, tab ->
                 AssistChip(
                     onClick = { commitDraft(); onSelect(index) },
-                    label = { Text((if (tab.dirty || (index == activeIndex && draft.text != file.text)) "● " else "") + tab.title, fontSize = 11.sp) },
+                    label = { Text((if (tab.dirty || (index == activeIndex && draft != file.text)) "● " else "") + tab.title, fontSize = 11.sp) },
                 )
                 if (index == activeIndex) {
                     TextButton(onClick = { commitDraft(); onCloseTab(index) }) { Text("×") }
@@ -1205,14 +1198,14 @@ private fun SftpTextEditor(
                     label = { Text(encoding.label, fontSize = 11.sp) },
                 )
             }
-            FilterChip(selected = file.lineEnding == "lf", onClick = { onChange(draft.text, file.encoding, "lf", file.tabSize, file.wrap) }, label = { Text("LF", fontSize = 11.sp) })
-            FilterChip(selected = file.lineEnding == "crlf", onClick = { onChange(draft.text, file.encoding, "crlf", file.tabSize, file.wrap) }, label = { Text("CRLF", fontSize = 11.sp) })
-            FilterChip(selected = file.tabSize == 2, onClick = { onChange(draft.text, file.encoding, file.lineEnding, 2, file.wrap) }, label = { Text("Tab 2", fontSize = 11.sp) })
-            FilterChip(selected = file.tabSize == 4, onClick = { onChange(draft.text, file.encoding, file.lineEnding, 4, file.wrap) }, label = { Text("Tab 4", fontSize = 11.sp) })
-            FilterChip(selected = file.wrap, onClick = { onChange(draft.text, file.encoding, file.lineEnding, file.tabSize, !file.wrap) }, label = { Text("换行", fontSize = 11.sp) })
-            AssistChip(onClick = { commitDraft(); onUndo(draft.text) }, label = { Text("撤回", fontSize = 11.sp) })
-            AssistChip(onClick = { commitDraft(); onRedo(draft.text) }, label = { Text("前进", fontSize = 11.sp) })
-            AssistChip(onClick = { commitDraft(); onFormat(draft.text) }, label = { Text("格式化", fontSize = 11.sp) })
+            FilterChip(selected = file.lineEnding == "lf", onClick = { onChange(draft, file.encoding, "lf", file.tabSize, file.wrap) }, label = { Text("LF", fontSize = 11.sp) })
+            FilterChip(selected = file.lineEnding == "crlf", onClick = { onChange(draft, file.encoding, "crlf", file.tabSize, file.wrap) }, label = { Text("CRLF", fontSize = 11.sp) })
+            FilterChip(selected = file.tabSize == 2, onClick = { onChange(draft, file.encoding, file.lineEnding, 2, file.wrap) }, label = { Text("Tab 2", fontSize = 11.sp) })
+            FilterChip(selected = file.tabSize == 4, onClick = { onChange(draft, file.encoding, file.lineEnding, 4, file.wrap) }, label = { Text("Tab 4", fontSize = 11.sp) })
+            FilterChip(selected = file.wrap, onClick = { onChange(draft, file.encoding, file.lineEnding, file.tabSize, !file.wrap) }, label = { Text("换行", fontSize = 11.sp) })
+            AssistChip(onClick = { commitDraft(); onUndo(draft) }, label = { Text("撤回", fontSize = 11.sp) })
+            AssistChip(onClick = { commitDraft(); onRedo(draft) }, label = { Text("前进", fontSize = 11.sp) })
+            AssistChip(onClick = { commitDraft(); onFormat(draft) }, label = { Text("格式化", fontSize = 11.sp) })
             AssistChip(onClick = { findOpen = !findOpen }, label = { Text("查找", fontSize = 11.sp) })
             AssistChip(onClick = { outlineOpen = !outlineOpen }, label = { Text("大纲", fontSize = 11.sp) })
             AssistChip(onClick = { workspaceOpen = !workspaceOpen }, label = { Text("搜目录", fontSize = 11.sp) })
@@ -1253,7 +1246,8 @@ private fun SftpTextEditor(
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                 ),
-                softWrap = file.wrap,
+                singleLine = false,
+                maxLines = Int.MAX_VALUE,
             )
             if (outlineOpen) {
                 Column(
