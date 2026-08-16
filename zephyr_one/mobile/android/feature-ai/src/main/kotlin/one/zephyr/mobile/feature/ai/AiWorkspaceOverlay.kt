@@ -258,7 +258,7 @@ fun AiWorkspaceOverlay(
                 }
             } else Spacer(Modifier.height(AiSheetGeometry.HANDLE_TOP_PAD_DP.dp))
 
-            AiContextBanner(context, runtime.runtimeEnabled)
+            AiContextBanner(context, true)
             AiToolStrip(
                 chrome = chrome,
                 runtime = runtime,
@@ -297,7 +297,7 @@ fun AiWorkspaceOverlay(
 
             AiComposer(
                 model = chrome.model,
-                enabled = runtime.runtimeEnabled && !runtime.running && runtime.waitingPermission == null,
+                enabled = !runtime.running && runtime.waitingPermission == null,
                 onSend = { text -> scope.launch { controller.send(text) } },
             )
         }

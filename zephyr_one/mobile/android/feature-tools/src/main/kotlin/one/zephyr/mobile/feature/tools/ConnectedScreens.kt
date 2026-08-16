@@ -620,11 +620,16 @@ fun ServerSettingsLiveRoute(
 
 @Composable
 fun AiSettingsLiveRoute(
-    settings: SettingsRepository,
-    ownerUserId: String,
+    localAi: one.zephyr.mobile.data.repository.LocalAiRepository,
+    bound: Boolean,
     onBack: () -> Unit,
 ) {
-    val prefs by settings.observePreferences().collectAsState(initial = emptyMap())
+    FullAiSettingsRoute(localAi, bound, onBack)
+}
+
+@Composable
+private fun LegacyAiSettingsLiveRoute(
+    settings: SettingsRepository,
     val scope = rememberCoroutineScope()
     fun flag(key: String, fallback: Boolean): Boolean =
         prefs[key]?.let { EntityCodec.bool(it, "value", fallback) } ?: fallback

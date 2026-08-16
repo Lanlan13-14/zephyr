@@ -90,6 +90,11 @@ class AppContainer(private val context: Context) {
         one.zephyr.mobile.protocol.ssh.SshjEngine()
     }
 
+    /** Packaged Go agent loop; binding only changes its optional data source. */
+    internal val embeddedAiRuntime: one.zephyr.mobile.app.EmbeddedAiRuntimeProcess by lazy {
+        one.zephyr.mobile.app.EmbeddedAiRuntimeProcess(context)
+    }
+
     /** Process lifetime scope used only to tear down a graph after that graph reports revocation. */
     private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

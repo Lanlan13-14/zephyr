@@ -99,6 +99,10 @@ class SettingsRepository(
         putPreference(key, JsonObject(mapOf("value" to JsonPrimitive(value))), nowMs)
     }
 
+    suspend fun deletePreference(key: String) {
+        db.devicePreferenceDao().delete(key)
+    }
+
     suspend fun booleanPreference(key: String, fallback: Boolean): Boolean =
         preference(key)?.let { EntityCodec.bool(it, "value", fallback) } ?: fallback
 

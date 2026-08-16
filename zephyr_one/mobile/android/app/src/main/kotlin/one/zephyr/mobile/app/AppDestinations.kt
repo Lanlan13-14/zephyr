@@ -614,12 +614,12 @@ internal fun DiagnosticsLiveDestination(
 @Composable
 internal fun AiSettingsLiveDestination(
     account: AccountContainer,
-    ownerUserId: String,
+    @Suppress("UNUSED_PARAMETER") ownerUserId: String,
     onBack: () -> Unit,
 ) {
     one.zephyr.mobile.feature.tools.AiSettingsLiveRoute(
-        settings = account.settings,
-        ownerUserId = ownerUserId,
+        localAi = account.localAi,
+        bound = !account.isLocalMode,
         onBack = onBack,
     )
 }

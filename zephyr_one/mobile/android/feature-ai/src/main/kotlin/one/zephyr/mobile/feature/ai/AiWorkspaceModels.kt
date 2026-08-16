@@ -107,7 +107,7 @@ object AiChipCycle {
 }
 
 object AiWorkspaceCopy {
-    const val SEND_OFFLINE: String = "主端 AI Runtime 不可用"
+    const val SEND_OFFLINE: String = "请先在本机 AI 设置中添加 Provider 与模型"
     const val ATTACH: String = "选择图片或文件（单文件最多 12MB）"
     const val PLAN: String = "计划模式会要求复杂任务先规划"
     const val STOP: String = "已停止 run · 收起面板不取消，这里显式停止"
@@ -116,7 +116,7 @@ object AiWorkspaceCopy {
     const val DISABLED: String = "AI 助理已停用 · AI 笔记工具一并禁用"
     const val DISABLED_SUB: String = "已停用 · 导航与工作区不再显示 AI"
     const val EMPTY_TITLE: String = "还没有对话"
-    const val EMPTY_BODY: String = "配置 Provider 并联网后，这里会显示当前会话的提问、工具确认和执行结果。"
+    const val EMPTY_BODY: String = "在本机配置 Provider 后即可直接对话；主端同步始终是可选项。"
     const val ASK_PREFIX: String = "向 Zephyr AI 提问"
     const val DEFAULT_PAGE: String = "当前页"
     const val TOOL_PENDING: String = "待确认"

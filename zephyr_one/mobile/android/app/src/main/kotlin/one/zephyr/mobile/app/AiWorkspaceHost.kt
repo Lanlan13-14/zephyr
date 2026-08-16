@@ -2,6 +2,7 @@ package one.zephyr.mobile.app
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -33,13 +34,23 @@ internal fun BoundAiWorkspace(
     val context = AiWorkspaceBinding.context(destination, session)
     val scope = rememberCoroutineScope()
     val runtime = remember(account) {
-        AndroidAiRuntimeController(
+        val managed = ManagedSshSessionPool(
+            engine = account.appContainer().sshEngine,
+            connectionProvider = account.connections::find,
+            credentialsProvider = account::terminalCredentials,
+        )
+        val exec = LiveSshExecPort(account.appContainer().sshEngine, account.sessions, managed)
+        val host = AndroidAiPlatformHost(account, exec, account.localAiWorkspace)
+        LocalAndroidAiRuntimeController(
             account = account,
             scope = scope,
-            chrome = { AiWorkspaceBinding.chrome(prefs) },
             context = { AiWorkspaceBinding.runtimeContext(destination, session) },
             persistChrome = { AiWorkspaceBinding.persist(account.settings, it) },
+            platformHost = host,
         )
+    }
+    DisposableEffect(runtime) {
+        onDispose { runtime.close() }
     }
     AiWorkspaceOverlay(
         enabled = chrome.enabled,

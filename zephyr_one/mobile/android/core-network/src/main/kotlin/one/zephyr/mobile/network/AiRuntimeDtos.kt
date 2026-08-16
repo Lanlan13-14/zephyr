@@ -201,7 +201,7 @@ data class AiRuntimeEvent(
 )
 
 @Serializable
-internal data class AiRuntimeEventEnvelope(
+data class AiRuntimeEventEnvelope(
     val type: String = "message",
     val runId: String = "",
     val seq: Long = 0,
