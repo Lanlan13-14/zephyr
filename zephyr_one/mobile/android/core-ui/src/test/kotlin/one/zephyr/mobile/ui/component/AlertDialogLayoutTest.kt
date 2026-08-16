@@ -79,8 +79,10 @@ class AlertDialogLayoutTest {
         val once = AlertDialogLayout.wrapFingerprint(raw)
         assertEquals(once, AlertDialogLayout.wrapFingerprint(once))
         val restored = once.replace("\n", "").replace(" ", "")
-        assertEquals(raw.replace(":", ""), restored)
-        assertEquals(raw.replace(":", "").length, restored.length)
+        // The algorithm separator is part of the OpenSSH fingerprint. Only payload separators in
+        // colon-hex TLS fingerprints are removed by wrapFingerprint.
+        assertEquals(raw, restored)
+        assertEquals(raw.length, restored.length)
     }
 
     @Test

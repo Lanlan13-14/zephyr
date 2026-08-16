@@ -113,6 +113,7 @@ class TerminalViewModel(
     private val secretProvider: suspend (Connection) -> TerminalCredentials,
     private val clock: () -> Long = System::currentTimeMillis,
     private val emulatorDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val latencyRefreshMs: Long = LATENCY_REFRESH_MS,
 ) : ViewModel() {
 
     /**
@@ -401,10 +402,11 @@ class TerminalViewModel(
     private fun startLatencyProbe() {
         latencyJob?.cancel()
         latencyJob = viewModelScope.launch {
-            while (isActive) {
+            do {
                 registry.setLatency(sessionId, runCatching { host.measureLatency(sessionId) }.getOrNull())
-                delay(LATENCY_REFRESH_MS)
-            }
+                if (latencyRefreshMs <= 0L) break
+                delay(latencyRefreshMs)
+            } while (isActive)
         }
     }
 
