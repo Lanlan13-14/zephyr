@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -51,9 +52,6 @@ enum class TerminalDockItem {
     ;
 
     companion object {
-        /** Refresh the top-bar latency reading every 5s while the session is live. */
-        private const val LATENCY_REFRESH_MS = 5_000L
-
         /** Demo `.context-dock` order. Telnet hides 文件 rather than greying it out. */
         fun forProtocol(protocol: Protocol): List<TerminalDockItem> = listOf(
             KEYBOARD,
@@ -610,6 +608,9 @@ class TerminalViewModel(
     }
 
     companion object {
+        /** Refresh the top-bar latency reading every 5s while the session is live. */
+        private const val LATENCY_REFRESH_MS = 5_000L
+
         const val CLEARTEXT_WARNING = "Telnet 为明文协议，凭据与输出在网络中不加密"
         const val HOST_KEY_CHANGED_ACCEPTED = "已接受变更后的主机密钥"
         const val DISCLOSURE_RELAY = "主端 relay：凭据保留在主端"

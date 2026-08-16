@@ -338,7 +338,9 @@ fun AiWorkspaceOverlay(
         ) {
             val interaction = remember { MutableInteractionSource() }
             val fabSizePx = with(density) { AiSheetGeometry.FAB_SIZE_DP.dp.toPx() }
-            val navBarPx = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding().toPx()
+            val navBarPx = with(density) {
+                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding().toPx()
+            }
             Surface(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -356,12 +358,12 @@ fun AiWorkspaceOverlay(
                                 change.consume()
                                 fabOffset = Offset(
                                     x = (fabOffset.x + dragAmount.x).coerceIn(
-                                        min = -maxWidth.value,
-                                        max = 0f,
+                                        -maxWidth.value,
+                                        0f,
                                     ),
                                     y = (fabOffset.y + dragAmount.y).coerceIn(
-                                        min = -containerHeightPx,
-                                        max = 0f,
+                                        -containerHeightPx,
+                                        0f,
                                     ),
                                 )
                             },
