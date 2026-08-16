@@ -111,7 +111,7 @@ fun SftpBrowserPane(
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
     var editors by remember { mutableStateOf<List<BrowserFile>>(emptyList()) }
     var editorIndex by remember { mutableIntStateOf(0) }
-    val editor get() = editors.getOrNull(editorIndex)
+    val editor = editors.getOrNull(editorIndex)
     var preview by remember { mutableStateOf<PreviewState?>(null) }
     var pendingClose by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<SftpDialog?>(null) }
@@ -124,23 +124,6 @@ fun SftpBrowserPane(
     var moreOpen by remember { mutableStateOf(false) }
     var bundleTarget by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(editors.any { it.dirty }) { onDirtyChanged(editors.any { it.dirty }) }
-
-    val overlayOpen = editors.isNotEmpty() || preview != null
-    BackHandler(enabled = overlayOpen || selecting) {
-        when {
-            editor?.dirty == true -> pendingClose = true
-            editors.isNotEmpty() -> closeEditor(force = false)
-            preview != null -> preview = null
-            selecting -> {
-                selecting = false
-                selected = emptySet()
-            }
-        }
-    }
-
-    DisposableEffect(connectionId, port) {
-        onDispose { handle?.let { scope.launch { port.close(it) } } }
-    }
 
     fun currentHandle(): SftpSessionHandle = handle ?: error("SFTP 会话已断开")
 
@@ -183,6 +166,23 @@ fun SftpBrowserPane(
         val next = editors.toMutableList().also { it.removeAt(index) }
         editors = next
         editorIndex = editorIndex.coerceAtMost((next.size - 1).coerceAtLeast(0))
+    }
+
+    val overlayOpen = editors.isNotEmpty() || preview != null
+    BackHandler(enabled = overlayOpen || selecting) {
+        when {
+            editor?.dirty == true -> pendingClose = true
+            editors.isNotEmpty() -> closeEditor(force = false)
+            preview != null -> preview = null
+            selecting -> {
+                selecting = false
+                selected = emptySet()
+            }
+        }
+    }
+
+    DisposableEffect(connectionId, port) {
+        onDispose { handle?.let { scope.launch { port.close(it) } } }
     }
 
     fun pushTransfer(job: SftpTransferOps.Transfer) {

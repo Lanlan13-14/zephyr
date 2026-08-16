@@ -488,7 +488,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
      * Only string values are produced by that format; numbers and nested objects are stored as
      * their raw token text. That is enough for ID / Names / Status / Ports / Size.
      */
-    internal fun parseFlatJsonObject(raw: String): Map<String, String> {
+    fun parseFlatJsonObject(raw: String): Map<String, String> {
         val out = linkedMapOf<String, String>()
         val body = raw.trim().removePrefix("{").removeSuffix("}")
         var index = 0
