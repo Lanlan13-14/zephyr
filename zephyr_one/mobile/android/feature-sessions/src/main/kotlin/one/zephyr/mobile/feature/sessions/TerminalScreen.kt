@@ -46,8 +46,13 @@ import one.zephyr.mobile.ui.component.ActionSheet
 import one.zephyr.mobile.ui.component.ActionSheetGroup
 import one.zephyr.mobile.ui.component.ActionSheetItem
 import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.AlertDialogLayout
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import one.zephyr.mobile.ui.theme.ZephyrRadius
 import one.zephyr.mobile.ui.component.CleartextProtocolWarning
 import one.zephyr.mobile.ui.state.PageStateScaffold
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
@@ -667,13 +672,22 @@ private fun HostKeyConfirmation(prompt: HostKeyPrompt, onIntent: (TerminalIntent
             )
         },
         text = {
-            Column {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = if (prompt.changed) stringResource(R.string.terminal_host_key_changed_body)
                     else stringResource(R.string.terminal_host_key_new_body),
                     color = if (prompt.changed) palette.status.error else palette.onBackground,
                 )
-                Text(text = prompt.fingerprint, style = ZephyrTextStyles.mono)
+                Text(
+                    text = AlertDialogLayout.wrapFingerprint(prompt.fingerprint),
+                    style = ZephyrTextStyles.mono,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = ZephyrSpacing.sm)
+                        .border(1.dp, palette.surfaces.outline, RoundedCornerShape(ZephyrRadius.sm))
+                        .padding(ZephyrSpacing.sm),
+                )
             }
         },
         confirmButton = {

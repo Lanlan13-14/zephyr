@@ -78,6 +78,7 @@
     <string name="remote_cert_issuer">颁发者：%1$s</string>
     <string name="remote_cert_validity">有效期：%1$s 至 %2$s</string>
     <string name="remote_cert_previous">此前记录的指纹：%1$s</string>
+    <string name="remote_cert_previous_label">此前记录的指纹</string>
     <string name="remote_cert_first_title">首次连接该服务器</string>
     <string name="remote_cert_first_body">请核对下面的指纹后再决定是否信任该服务器</string>
     <string name="remote_cert_changed_title">证书已变更</string>

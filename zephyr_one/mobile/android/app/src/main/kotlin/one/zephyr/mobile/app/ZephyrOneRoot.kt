@@ -893,7 +893,11 @@ private fun BoundRoot(
                 onDismissRequest = { managedSsh.rejectHostKey() },
                 title = { Text(if (prompt.changed) "SSH 主机指纹已变化" else "确认 SSH 主机") },
                 text = {
-                    Text("${prompt.host}:${prompt.port}\n${prompt.algorithm} · ${prompt.fingerprint}\n\n确认后会自动继续当前操作。")
+                    Text(
+                        "${prompt.host}:${prompt.port}\n${prompt.algorithm}\n" +
+                            one.zephyr.mobile.ui.component.AlertDialogLayout.wrapFingerprint(prompt.fingerprint) +
+                            "\n\n确认后会自动继续当前操作。",
+                    )
                 },
                 confirmButton = {
                     TextButton(onClick = { managedSsh.acceptHostKey() }) {

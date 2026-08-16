@@ -19,12 +19,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -32,13 +34,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import kotlin.math.min
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import android.view.ViewGroup
+import android.view.WindowManager
 import kotlinx.coroutines.delay
 import one.zephyr.mobile.ui.theme.ProvideContentColor
 import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
@@ -231,6 +237,10 @@ class ZephyrToastHostState {
 /**
  * Confirmation that looks like the demo action sheet, not a Material dialog.
  * Kept as `AlertDialog` so existing call sites only change the import.
+ *
+ * The platform Dialog is WRAP_CONTENT. Stretching it to MATCH_PARENT and
+ * measuring against the *window* (not the wrap height) is what keeps the
+ * cancel group on screen for SSH / RDP / VNC host-key prompts.
  */
 @Composable
 fun AlertDialog(
@@ -242,6 +252,7 @@ fun AlertDialog(
     text: (@Composable () -> Unit)? = null,
 ) {
     val palette = ZephyrTheme.palette
+    val sheetColor = Color(AlertDialogLayout.sheetArgb(palette.dark))
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(
@@ -249,9 +260,20 @@ fun AlertDialog(
             decorFitsSystemWindows = false,
         ),
     ) {
+        val composeView = LocalView.current
+        val configuration = LocalConfiguration.current
+        val screenWidthDp = configuration.screenWidthDp
+        val screenHeightDp = configuration.screenHeightDp.toFloat()
+        SideEffect {
+            val window = (composeView.parent as? DialogWindowProvider)?.window ?: return@SideEffect
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            window.setBackgroundDrawableResource(android.R.color.transparent)
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
         BoxWithConstraints(
             modifier = modifier
-                .fillMaxSize()
+                .width(screenWidthDp.dp)
+                .height(screenHeightDp.dp)
                 .background(palette.surfaces.scrim)
                 .imePadding()
                 .clickable(
@@ -261,7 +283,8 @@ fun AlertDialog(
                 ),
             contentAlignment = Alignment.BottomCenter,
         ) {
-            val availableHeight = min(maxHeight.value - 20f, 640f).coerceAtLeast(120f).dp
+            val windowHeightDp = maxOf(screenHeightDp, maxHeight.value)
+            val availableHeight = AlertDialogLayout.availableHeightDp(windowHeightDp).dp
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -275,7 +298,7 @@ fun AlertDialog(
                         .fillMaxWidth()
                         .weight(1f, fill = false)
                         .clip(RoundedCornerShape(ZephyrRadius.lg))
-                        .background(palette.surfaces.floating),
+                        .background(sheetColor),
                 ) {
                     if (title != null) {
                         Box(
@@ -314,7 +337,7 @@ fun AlertDialog(
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(ZephyrRadius.lg))
-                            .background(palette.surfaces.floating)
+                            .background(sheetColor)
                             .heightIn(min = 50.dp),
                         contentAlignment = Alignment.Center,
                     ) {
