@@ -67,6 +67,7 @@
     <string name="remote_cert_issuer">Issuer: %1$s</string>
     <string name="remote_cert_validity">Valid: %1$s – %2$s</string>
     <string name="remote_cert_previous">Previously recorded fingerprint: %1$s</string>
+    <string name="remote_cert_previous_label">Previously recorded fingerprint</string>
     <string name="remote_cert_first_title">First time connecting to this server</string>
     <string name="remote_cert_first_body">Check the fingerprint below before you trust this server</string>
     <string name="remote_cert_changed_title">Certificate changed</string>

@@ -35,7 +35,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.AlertDialogLayout
 import one.zephyr.mobile.ui.component.CircularProgressIndicator
+import androidx.compose.ui.text.style.TextAlign
 import one.zephyr.mobile.ui.component.FilterChip
 import one.zephyr.mobile.ui.component.Icon
 import one.zephyr.mobile.ui.component.IconButton
@@ -1418,8 +1420,9 @@ private fun CertificateFacts(prompt: RemoteCertificatePrompt) {
         // Bordered rather than inline: the fingerprint is the one string the user is expected to
         // compare against something else, so it gets a boundary instead of being a line of prose.
         Text(
-            text = review.sha256Fingerprint,
+            text = AlertDialogLayout.wrapFingerprint(review.sha256Fingerprint),
             style = ZephyrTheme.typography.mono,
+            textAlign = TextAlign.Start,
             modifier = Modifier
                 .fillMaxWidth()
                 .border(1.dp, palette.surfaces.outline, RoundedCornerShape(ZephyrRadius.sm))
@@ -1428,9 +1431,16 @@ private fun CertificateFacts(prompt: RemoteCertificatePrompt) {
         prompt.previousFingerprint?.let { previous ->
             Spacer(modifier = Modifier.height(ZephyrSpacing.xs))
             Text(
-                text = stringResource(R.string.remote_cert_previous, previous),
-                style = ZephyrTheme.typography.monoCaption,
+                text = stringResource(R.string.remote_cert_previous_label),
+                style = ZephyrTheme.typography.caption,
                 color = palette.status.warning,
+            )
+            Text(
+                text = AlertDialogLayout.wrapFingerprint(previous),
+                style = ZephyrTheme.typography.monoCaption,
+                textAlign = TextAlign.Start,
+                color = palette.status.warning,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
