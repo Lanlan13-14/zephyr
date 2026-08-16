@@ -4,6 +4,7 @@ import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SecretRef
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SecretProviderGateTest {
@@ -45,5 +46,27 @@ class SecretProviderGateTest {
                 "password",
             ),
         )
+    }
+
+    @Test
+    fun `an empty create-password field is not a replacement secret`() {
+        assertNull(null.takeUnlessBlankSecret())
+        val empty = CharArray(0)
+        assertNull(empty.takeUnlessBlankSecret())
+        val spaces = charArrayOf(' ', '\t')
+        assertNull(spaces.takeUnlessBlankSecret())
+        assertTrue(spaces.all { it.code == 0 })
+        val typed = charArrayOf('s', 'e', 'c', 'r', 'e', 't')
+        assertEquals("secret", typed.takeUnlessBlankSecret()?.concatToString())
+    }
+
+    @Test
+    fun `blank replacement password must not hide a stored ssh key`() {
+        val replacementPassword = "".toCharArray()
+        val storedKey = "-----BEGIN OPENSSH PRIVATE KEY-----".toCharArray()
+        val password = replacementPassword.takeUnlessBlankSecret()
+        val key = storedKey.takeUnlessBlankSecret()
+        assertNull(password)
+        assertEquals("-----BEGIN OPENSSH PRIVATE KEY-----", key?.concatToString())
     }
 }

@@ -37,7 +37,7 @@ class SshTerminalHost(
         }
         lastRequest[request.sessionId] = copyRequest(request)
         val route = SshRoute(listOf(RouteHop.Target(request.host, request.port)))
-        if (request.password == null && request.privateKey == null) {
+        if (request.password.isNullOrBlankChars() && request.privateKey.isNullOrBlankChars()) {
             request.wipe()
             return TerminalOpenOutcome.Failed(
                 MobileError.local(code = "auth_missing", message = "请先填写密码或选择 SSH Key", retryable = false),
@@ -96,14 +96,21 @@ class SshTerminalHost(
         engine.acceptHostKey(sessionId, remembered.host, remembered.port)
     }
 
-    private fun credentialOf(request: TerminalOpenRequest): SshCredential = when {
-        request.privateKey != null -> SshCredential.PrivateKey(
-            pem = request.privateKey.copyOf(),
-            passphrase = request.passphrase?.copyOf(),
-        )
-        request.password != null -> SshCredential.Password(request.password.copyOf())
-        else -> SshCredential.Interactive
+    private fun credentialOf(request: TerminalOpenRequest): SshCredential {
+        val privateKey = request.privateKey
+        val password = request.password
+        return when {
+            !privateKey.isNullOrBlankChars() -> SshCredential.PrivateKey(
+                pem = privateKey.copyOf(),
+                passphrase = request.passphrase?.copyOf(),
+            )
+            !password.isNullOrBlankChars() -> SshCredential.Password(password.copyOf())
+            else -> SshCredential.Interactive
+        }
     }
+
+    private fun CharArray?.isNullOrBlankChars(): Boolean =
+        this == null || this.isEmpty() || this.all { it.isWhitespace() }
 
     private fun copyRequest(request: TerminalOpenRequest): TerminalOpenRequest = request.copy(
         password = request.password?.copyOf(),

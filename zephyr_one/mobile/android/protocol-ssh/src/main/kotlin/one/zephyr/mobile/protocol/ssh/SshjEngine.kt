@@ -1,7 +1,6 @@
 package one.zephyr.mobile.protocol.ssh
 
 import java.io.InputStream
-import java.io.StringReader
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.PublicKey
@@ -20,18 +19,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
-import net.schmizz.sshj.common.SSHPacket
 import net.schmizz.sshj.connection.channel.direct.PTYMode
 import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.sftp.FileMode
 import net.schmizz.sshj.sftp.OpenMode
 import net.schmizz.sshj.sftp.RenameFlags
+import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
-import net.schmizz.sshj.userauth.keyprovider.KeyProvider
-import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile
-import net.schmizz.sshj.userauth.keyprovider.PKCS8KeyFile
-import net.schmizz.sshj.userauth.password.PasswordFinder
-import net.schmizz.sshj.userauth.password.PasswordUtils
+import net.schmizz.sshj.userauth.UserAuthException
 import one.zephyr.mobile.model.MobileError
 
 class SshRemoteFileConflict(
@@ -161,8 +156,7 @@ class SshjEngine(
 
     override suspend fun listDirectory(sessionId: String, path: String): Result<SftpDirectory> = withContext(io) {
         runCatching {
-            val live = sessions[sessionId] ?: error("SSH 会话已断开")
-            live.client.newSFTPClient().use { sftp ->
+            withSftp(sessionId) { sftp ->
                 val canonicalPath = sftp.canonicalize(path)
                 val entries = sftp.ls(canonicalPath)
                     .asSequence()
@@ -180,8 +174,7 @@ class SshjEngine(
 
     override suspend fun stat(sessionId: String, path: String): Result<SftpEntry?> = withContext(io) {
         runCatching {
-            val live = sessions[sessionId] ?: error("SSH 会话已断开")
-            live.client.newSFTPClient().use { sftp ->
+            withSftp(sessionId) { sftp ->
                 val canonical = sftp.canonicalize(path)
                 val attrs = sftp.stat(canonical)
                 attrs.toEntry(canonical.substringAfterLast('/').ifBlank { "/" }, canonical)
@@ -220,8 +213,7 @@ class SshjEngine(
         runCatching {
             require(offset >= 0L) { "读取偏移无效" }
             require(maxBytes in 1..MAX_FILE_RANGE_BYTES) { "读取上限无效" }
-            val live = sessions[sessionId] ?: error("SSH 会话已断开")
-            live.client.newSFTPClient().use { sftp ->
+            withSftp(sessionId) { sftp ->
                 val canonicalPath = sftp.canonicalize(path)
                 val attrs = sftp.stat(canonicalPath)
                 require(attrs.type == FileMode.Type.REGULAR) { "只能读取普通文件" }
@@ -258,8 +250,7 @@ class SshjEngine(
     ): Result<SshRemoteFileVersion> = withContext(io) {
         runCatching {
             require(bytes.size <= MAX_FILE_WRITE_BYTES) { "写入内容过大，当前上限 $MAX_FILE_WRITE_BYTES bytes" }
-            val live = sessions[sessionId] ?: error("SSH 会话已断开")
-            live.client.newSFTPClient().use { sftp ->
+            withSftp(sessionId) { sftp ->
                 val leaf = path.substringAfterLast('/').ifBlank { path }
                 val parent = when {
                     path == leaf -> ""
@@ -293,7 +284,7 @@ class SshjEngine(
                     sftp.open(temporary, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC)).use { remote ->
                         var written = 0
                         while (written < bytes.size) {
-                            val count = minOf(32 * 1024, bytes.size - written)
+                            val count = minOf(STREAM_CHUNK_BYTES, bytes.size - written)
                             remote.write(written.toLong(), bytes, written, count)
                             written += count
                         }
@@ -319,12 +310,14 @@ class SshjEngine(
 
     private suspend fun sftpUnit(
         sessionId: String,
-        block: net.schmizz.sshj.sftp.SFTPClient.() -> Unit,
+        block: SFTPClient.() -> Unit,
     ): Result<Unit> = withContext(io) {
-        runCatching {
-            val live = sessions[sessionId] ?: error("SSH 会话已断开")
-            live.client.newSFTPClient().use { it.block() }
-        }
+        runCatching { withSftp(sessionId) { it.block() } }
+    }
+
+    private fun <T> withSftp(sessionId: String, block: (SFTPClient) -> T): T {
+        val live = sessions[sessionId] ?: error("SSH 会话已断开")
+        return live.withSftp(block)
     }
 
     private fun net.schmizz.sshj.sftp.FileAttributes.toEntry(name: String, path: String) = SftpEntry(
@@ -409,8 +402,7 @@ class SshjEngine(
     ): Result<SshRemoteFileVersion> = withContext(io) {
         runCatching {
             require(offset >= 0L) { "读取偏移无效" }
-            val live = sessions[sessionId] ?: error("SSH 会话已断开")
-            live.client.newSFTPClient().use { sftp ->
+            withSftp(sessionId) { sftp ->
                 val canonicalPath = sftp.canonicalize(path)
                 val attrs = sftp.stat(canonicalPath)
                 require(attrs.type == FileMode.Type.REGULAR) { "只能读取普通文件" }
@@ -437,8 +429,7 @@ class SshjEngine(
         next: suspend () -> ByteArray?,
     ): Result<SshRemoteFileVersion> = withContext(io) {
         runCatching {
-            val live = sessions[sessionId] ?: error("SSH 会话已断开")
-            live.client.newSFTPClient().use { sftp ->
+            withSftp(sessionId) { sftp ->
                 val leaf = path.substringAfterLast('/').ifBlank { path }
                 val parent = when {
                     path == leaf -> ""
@@ -498,8 +489,8 @@ class SshjEngine(
         when (val credential = request.credential) {
             is SshCredential.Password -> client.authPassword(request.username, String(credential.value))
             is SshCredential.PrivateKey -> {
-                val finder = credential.passphrase?.let { PasswordUtils.createOneOff(it) }
-                client.authPublickey(request.username, loadKey(String(credential.pem), finder))
+                val provider = SshPrivateKeyLoader.load(String(credential.pem), credential.passphrase)
+                client.authPublickey(request.username, provider)
             }
             SshCredential.Interactive -> error("keyboard-interactive 尚未接入")
         }
@@ -523,9 +514,27 @@ class SshjEngine(
         val shell: Session.Shell,
         @Volatile var closed: Boolean = false,
     ) {
+        @Volatile private var sftpClient: SFTPClient? = null
+        private val sftpLock = Any()
+
+        fun <T> withSftp(block: (SFTPClient) -> T): T {
+            if (closed) error("SSH 会话已断开")
+            synchronized(sftpLock) {
+                if (closed) error("SSH 会话已断开")
+                val existing = sftpClient
+                val usable = existing?.takeIf { it.getSFTPEngine().getSubsystem().isOpen }
+                val active = usable ?: this.client.newSFTPClient().also { sftpClient = it }
+                return block(active)
+            }
+        }
+
         fun close() {
-            if (closed) return
-            closed = true
+            synchronized(sftpLock) {
+                if (closed) return
+                closed = true
+                runCatching { sftpClient?.close() }
+                sftpClient = null
+            }
             runCatching { shell.close() }
             runCatching { session.close() }
             closeQuietly(client)
@@ -536,17 +545,15 @@ class SshjEngine(
         private const val LATENCY_PROBE_TIMEOUT_MS = 4_000
 
         private fun hostPort(host: String, port: Int): String = host.lowercase() + ":" + port
-        private fun loadKey(pem: String, finder: PasswordFinder?): KeyProvider =
-            if (pem.trim().contains("BEGIN OPENSSH PRIVATE KEY")) {
-                OpenSSHKeyFile().also { it.init(StringReader(pem.trim()), finder) }
-            } else {
-                PKCS8KeyFile().also { it.init(StringReader(pem.trim()), finder) }
-            }
         private fun closeQuietly(client: SSHClient) { runCatching { client.disconnect() } }
-        private fun mapError(error: Exception): MobileError = MobileError.local(
-            "ssh_connect_failed",
-            error.message?.takeIf(String::isNotBlank) ?: error.javaClass.simpleName,
-            true,
-        )
+        private fun mapError(error: Exception): MobileError {
+            val message = error.message?.takeIf(String::isNotBlank) ?: error.javaClass.simpleName
+            val code = when {
+                error is IllegalArgumentException && message.contains("私钥") -> "ssh_key_invalid"
+                error is UserAuthException -> "ssh_auth_failed"
+                else -> "ssh_connect_failed"
+            }
+            return MobileError.local(code, message, retryable = code == "ssh_connect_failed")
+        }
     }
 }

@@ -28,11 +28,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.model.MobileApiException
 import one.zephyr.mobile.protocol.ssh.SshFileKinds
@@ -43,8 +46,6 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 
-private const val EDIT_WRITE_LIMIT = 2 * 1024 * 1024
-
 private data class BrowserFile(
     val path: String,
     val text: String,
@@ -54,8 +55,7 @@ private data class BrowserFile(
     val tabSize: Int = 4,
     val wrap: Boolean = true,
     val dirty: Boolean = false,
-    val undo: List<String> = emptyList(),
-    val redo: List<String> = emptyList(),
+    val generation: Int = 0,
 ) {
     val title: String get() = path.substringAfterLast('/').ifBlank { path }
 }
@@ -112,6 +112,7 @@ fun SftpBrowserPane(
     var editors by remember { mutableStateOf<List<BrowserFile>>(emptyList()) }
     var editorIndex by remember { mutableIntStateOf(0) }
     val editor = editors.getOrNull(editorIndex)
+    val histories = remember(connectionId) { mutableMapOf<String, SftpEditorHistory>() }
     var preview by remember { mutableStateOf<PreviewState?>(null) }
     var pendingClose by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<SftpDialog?>(null) }
@@ -164,6 +165,7 @@ fun SftpBrowserPane(
             return
         }
         val next = editors.toMutableList().also { it.removeAt(index) }
+        histories.remove(target.path)
         editors = next
         editorIndex = editorIndex.coerceAtMost((next.size - 1).coerceAtLeast(0))
     }
@@ -552,7 +554,14 @@ fun SftpBrowserPane(
                 onCloseTab = { closeEditor(force = false, index = it) },
                 onChange = { text, encoding, ending, tabSize, wrap ->
                     updateActive { current ->
-                        val history = (current.undo + current.text).takeLast(40)
+                        val sameText = current.text == text
+                        val sameMeta = current.encoding == encoding &&
+                            current.lineEnding == ending &&
+                            current.tabSize == tabSize &&
+                            current.wrap == wrap
+                        if (sameText && sameMeta) return@updateActive current
+                        val history = histories.getOrPut(current.path) { SftpEditorHistory() }
+                        history.record(current.text, text)
                         current.copy(
                             text = text,
                             encoding = encoding,
@@ -560,41 +569,32 @@ fun SftpBrowserPane(
                             tabSize = tabSize,
                             wrap = wrap,
                             dirty = true,
-                            undo = history,
-                            redo = emptyList(),
+                            generation = if (sameText) current.generation else current.generation + 1,
                         )
                     }
                 },
-                onUndo = {
+                onUndo = { latest ->
                     updateActive { current ->
-                        val previous = current.undo.lastOrNull() ?: return@updateActive current
-                        current.copy(
-                            text = previous,
-                            undo = current.undo.dropLast(1),
-                            redo = current.redo + current.text,
-                            dirty = true,
-                        )
+                        val previous = histories[current.path]?.undo(latest) ?: return@updateActive current
+                        current.copy(text = previous, dirty = true, generation = current.generation + 1)
                     }
                 },
-                onRedo = {
+                onRedo = { latest ->
                     updateActive { current ->
-                        val next = current.redo.lastOrNull() ?: return@updateActive current
-                        current.copy(
-                            text = next,
-                            redo = current.redo.dropLast(1),
-                            undo = current.undo + current.text,
-                            dirty = true,
-                        )
+                        val next = histories[current.path]?.redo(latest) ?: return@updateActive current
+                        current.copy(text = next, dirty = true, generation = current.generation + 1)
                     }
                 },
-                onFormat = {
+                onFormat = { latest ->
                     updateActive { current ->
-                        current.copy(text = SftpEditorSupport.formatDocument(current.text, current.tabSize), dirty = true)
+                        val formatted = SftpEditorSupport.formatDocument(latest, current.tabSize)
+                        histories.getOrPut(current.path) { SftpEditorHistory() }.record(latest, formatted)
+                        current.copy(text = formatted, dirty = true, generation = current.generation + 1)
                     }
                 },
                 onBack = { closeEditor(force = false) },
-                onSave = {
-                    val current = editor ?: return@SftpTextEditor
+                onSave = { latest ->
+                    val current = (editor ?: return@SftpTextEditor).copy(text = latest)
                     scope.launch {
                         runOp(onMessage, { busy = it }, { transfer = it }) {
                             val normalized = if (current.lineEnding == "crlf") {
@@ -618,12 +618,12 @@ fun SftpBrowserPane(
                                 }
                                 throw failure
                             }
+                            histories[current.path]?.clear()
                             upsertEditor(
                                 current.copy(
                                     baseline = RemoteFileRead(current.path, bytes, receipt.mtimeMs, receipt.sha256),
                                     dirty = false,
-                                    undo = emptyList(),
-                                    redo = emptyList(),
+                                    generation = current.generation + 1,
                                 ),
                             )
                             onMessage("已保存")
@@ -859,10 +859,12 @@ fun SftpBrowserPane(
                             runOp(onMessage, { busy = it }, { transfer = it }) {
                                 val bytes = currentFile.encoding.encode(currentFile.text)
                                 val receipt = port.write(currentHandle(), currentFile.path, bytes, null, null, force = true)
+                                histories[currentFile.path]?.clear()
                                 upsertEditor(
                                     currentFile.copy(
                                         baseline = RemoteFileRead(currentFile.path, bytes, receipt.mtimeMs, receipt.sha256),
                                         dirty = false,
+                                        generation = currentFile.generation + 1,
                                     ),
                                 )
                                 onMessage("已强制覆盖保存")
@@ -1105,11 +1107,11 @@ private fun SftpTextEditor(
     onSelect: (Int) -> Unit,
     onCloseTab: (Int) -> Unit,
     onChange: (String, FileEncoding, String, Int, Boolean) -> Unit,
-    onUndo: () -> Unit,
-    onRedo: () -> Unit,
-    onFormat: () -> Unit,
+    onUndo: (String) -> Unit,
+    onRedo: (String) -> Unit,
+    onFormat: (String) -> Unit,
     onBack: () -> Unit,
-    onSave: () -> Unit,
+    onSave: (String) -> Unit,
     onWorkspaceSearch: (String) -> Unit,
     onOpenHit: (String) -> Unit,
 ) {
@@ -1119,25 +1121,62 @@ private fun SftpTextEditor(
     var outlineOpen by remember { mutableStateOf(false) }
     var workspaceQuery by remember { mutableStateOf("") }
     var workspaceOpen by remember { mutableStateOf(false) }
-    val hits = remember(file.text, findQuery) { SftpEditorSupport.findInText(file.text, findQuery) }
-    val outline = remember(file.text, file.path) { SftpEditorSupport.outline(file.text, file.path) }
+    var draft by remember(file.path) {
+        mutableStateOf(TextFieldValue(file.text, TextRange(file.text.length)))
+    }
+    LaunchedEffect(file.path, file.generation) {
+        if (draft.text != file.text) {
+            val nextSelection = draft.selection.start.coerceIn(0, file.text.length)
+            draft = TextFieldValue(file.text, TextRange(nextSelection))
+        }
+    }
+    var analysisText by remember(file.path) { mutableStateOf(file.text) }
+    LaunchedEffect(draft.text, findOpen, outlineOpen, findQuery) {
+        if (!findOpen && !outlineOpen) {
+            analysisText = draft.text
+            return@LaunchedEffect
+        }
+        delay(180)
+        analysisText = draft.text
+    }
+    val hits = remember(analysisText, findQuery, findOpen) {
+        if (!findOpen || findQuery.isBlank()) emptyList() else SftpEditorSupport.findInText(analysisText, findQuery)
+    }
+    val outline = remember(analysisText, file.path, outlineOpen) {
+        if (!outlineOpen) emptyList() else SftpEditorSupport.outline(analysisText, file.path)
+    }
+    fun commitDraft() {
+        if (draft.text != file.text) {
+            onChange(draft.text, file.encoding, file.lineEnding, file.tabSize, file.wrap)
+        }
+    }
+    // First differing keystroke marks dirty immediately so BackHandler cannot
+    // drop the file as clean. Later keystrokes stay local for 140ms.
+    LaunchedEffect(draft.text, file.path, file.encoding, file.lineEnding, file.tabSize, file.wrap) {
+        if (draft.text == file.text) return@LaunchedEffect
+        if (file.dirty) delay(140)
+        onChange(draft.text, file.encoding, file.lineEnding, file.tabSize, file.wrap)
+    }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().background(ZephyrTheme.palette.surfaces.content).padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            IconButton(onClick = onBack) { Icon(ZephyrIcons.Back, "返回文件列表") }
+            IconButton(onClick = { commitDraft(); onBack() }) { Icon(ZephyrIcons.Back, "返回文件列表") }
             Column(Modifier.weight(1f)) {
                 Text(file.title, color = ZephyrTheme.palette.onFloating, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(
-                    (if (file.dirty) "未保存 · " else "") + SftpEditorSupport.languageOf(file.path) + " · " + file.path,
+                    (if (file.dirty || draft.text != file.text) "未保存 · " else "") + SftpEditorSupport.languageOf(file.path) + " · " + file.path,
                     color = ZephyrTheme.palette.onFloatingSubtle,
                     fontSize = 10.sp,
                     maxLines = 1,
                 )
             }
-            PrimaryButton(onClick = onSave, enabled = file.dirty) { Text("保存") }
+            PrimaryButton(
+                onClick = { onSave(draft.text) },
+                enabled = file.dirty || draft.text != file.text,
+            ) { Text("保存") }
         }
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
@@ -1145,11 +1184,11 @@ private fun SftpTextEditor(
         ) {
             files.forEachIndexed { index, tab ->
                 AssistChip(
-                    onClick = { onSelect(index) },
-                    label = { Text((if (tab.dirty) "● " else "") + tab.title, fontSize = 11.sp) },
+                    onClick = { commitDraft(); onSelect(index) },
+                    label = { Text((if (tab.dirty || (index == activeIndex && draft.text != file.text)) "● " else "") + tab.title, fontSize = 11.sp) },
                 )
                 if (index == activeIndex) {
-                    TextButton(onClick = { onCloseTab(index) }) { Text("×") }
+                    TextButton(onClick = { commitDraft(); onCloseTab(index) }) { Text("×") }
                 }
             }
         }
@@ -1166,14 +1205,14 @@ private fun SftpTextEditor(
                     label = { Text(encoding.label, fontSize = 11.sp) },
                 )
             }
-            FilterChip(selected = file.lineEnding == "lf", onClick = { onChange(file.text, file.encoding, "lf", file.tabSize, file.wrap) }, label = { Text("LF", fontSize = 11.sp) })
-            FilterChip(selected = file.lineEnding == "crlf", onClick = { onChange(file.text, file.encoding, "crlf", file.tabSize, file.wrap) }, label = { Text("CRLF", fontSize = 11.sp) })
-            FilterChip(selected = file.tabSize == 2, onClick = { onChange(file.text, file.encoding, file.lineEnding, 2, file.wrap) }, label = { Text("Tab 2", fontSize = 11.sp) })
-            FilterChip(selected = file.tabSize == 4, onClick = { onChange(file.text, file.encoding, file.lineEnding, 4, file.wrap) }, label = { Text("Tab 4", fontSize = 11.sp) })
-            FilterChip(selected = file.wrap, onClick = { onChange(file.text, file.encoding, file.lineEnding, file.tabSize, !file.wrap) }, label = { Text("换行", fontSize = 11.sp) })
-            AssistChip(onClick = onUndo, label = { Text("撤回", fontSize = 11.sp) })
-            AssistChip(onClick = onRedo, label = { Text("前进", fontSize = 11.sp) })
-            AssistChip(onClick = onFormat, label = { Text("格式化", fontSize = 11.sp) })
+            FilterChip(selected = file.lineEnding == "lf", onClick = { onChange(draft.text, file.encoding, "lf", file.tabSize, file.wrap) }, label = { Text("LF", fontSize = 11.sp) })
+            FilterChip(selected = file.lineEnding == "crlf", onClick = { onChange(draft.text, file.encoding, "crlf", file.tabSize, file.wrap) }, label = { Text("CRLF", fontSize = 11.sp) })
+            FilterChip(selected = file.tabSize == 2, onClick = { onChange(draft.text, file.encoding, file.lineEnding, 2, file.wrap) }, label = { Text("Tab 2", fontSize = 11.sp) })
+            FilterChip(selected = file.tabSize == 4, onClick = { onChange(draft.text, file.encoding, file.lineEnding, 4, file.wrap) }, label = { Text("Tab 4", fontSize = 11.sp) })
+            FilterChip(selected = file.wrap, onClick = { onChange(draft.text, file.encoding, file.lineEnding, file.tabSize, !file.wrap) }, label = { Text("换行", fontSize = 11.sp) })
+            AssistChip(onClick = { commitDraft(); onUndo(draft.text) }, label = { Text("撤回", fontSize = 11.sp) })
+            AssistChip(onClick = { commitDraft(); onRedo(draft.text) }, label = { Text("前进", fontSize = 11.sp) })
+            AssistChip(onClick = { commitDraft(); onFormat(draft.text) }, label = { Text("格式化", fontSize = 11.sp) })
             AssistChip(onClick = { findOpen = !findOpen }, label = { Text("查找", fontSize = 11.sp) })
             AssistChip(onClick = { outlineOpen = !outlineOpen }, label = { Text("大纲", fontSize = 11.sp) })
             AssistChip(onClick = { workspaceOpen = !workspaceOpen }, label = { Text("搜目录", fontSize = 11.sp) })
@@ -1199,15 +1238,22 @@ private fun SftpTextEditor(
         }
         Row(Modifier.fillMaxSize()) {
             BasicTextField(
-                value = file.text,
-                onValueChange = { onChange(it, file.encoding, file.lineEnding, file.tabSize, file.wrap) },
-                modifier = Modifier.weight(1f).fillMaxSize().background(ZephyrTheme.palette.surfaces.background).padding(14.dp),
+                value = draft,
+                onValueChange = { draft = it },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxSize()
+                    .background(ZephyrTheme.palette.surfaces.background)
+                    .verticalScroll(rememberScrollState())
+                    .then(if (file.wrap) Modifier else Modifier.horizontalScroll(rememberScrollState()))
+                    .padding(14.dp),
                 textStyle = androidx.compose.ui.text.TextStyle(
                     color = ZephyrTheme.palette.onFloating,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                 ),
+                softWrap = file.wrap,
             )
             if (outlineOpen) {
                 Column(

@@ -81,9 +81,10 @@ class SshjSftpPort(
         force: Boolean,
     ): RemoteWriteReceipt {
         var expectedVersion: SshRemoteFileVersion? = null
-        if (!force && expectedSha256 != null) {
-            val current = engine.readFile(session(handle), path, EDIT_READ_LIMIT).getOrThrow()
-            if (current.modifiedAt != expectedMtimeMs || sha256(current.bytes) != expectedSha256) {
+        if (!force && (expectedMtimeMs != null || expectedSha256 != null)) {
+            val current = engine.stat(session(handle), path).getOrThrow()
+                ?: throw SshRemoteFileConflict(path, 0L, 0L)
+            if (expectedMtimeMs != null && current.modifiedAt != expectedMtimeMs) {
                 throw SshRemoteFileConflict(path, current.size, current.modifiedAt)
             }
             expectedVersion = SshRemoteFileVersion(path, current.size, current.modifiedAt)
@@ -197,8 +198,4 @@ class SshjSftpPort(
 
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-
-    companion object {
-        private const val EDIT_READ_LIMIT = 512 * 1024
-    }
 }
