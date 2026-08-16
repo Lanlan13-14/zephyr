@@ -156,7 +156,9 @@ fun AiWorkspaceOverlay(
 
     LaunchedEffect(enabled) { sheet = AiSheetMotion.disable(enabled, sheet) }
     LaunchedEffect(sheet.detent) { sheet.detent?.let { lastOpen = it } }
-    LaunchedEffect(Unit) { controller.refresh() }
+    // Do not boot the packaged process while composing the application's first frame. The AI
+    // workspace is an overlay: its runtime is needed only after the user opens it.
+    LaunchedEffect(sheet.isOpen) { if (sheet.isOpen) controller.refresh() }
     LaunchedEffect(runtime.error) { runtime.error?.let(onNotice) }
 
     BackHandler(enabled = sheet.isOpen) {

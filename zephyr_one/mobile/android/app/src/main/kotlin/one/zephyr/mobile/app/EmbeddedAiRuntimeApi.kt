@@ -3,7 +3,9 @@ package one.zephyr.mobile.app
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerializationStrategy
@@ -62,30 +64,55 @@ internal class EmbeddedAiRuntimeApi(
         post("/admin/runs/${encode(runId)}/permission", body, EmbeddedPermissionDecision.serializer(), EmbeddedPermissionResponse.serializer())
 
     suspend fun stream(path: String, lastEventId: Long, onEvent: suspend (AiRuntimeEvent) -> Unit): ApiResult<Unit> {
-        val request = authorized(Request.Builder().url(endpoint().baseUrl + path).get()
-            .header("Accept", "text/event-stream").apply { if (lastEventId > 0) header("Last-Event-ID", "$lastEventId") }.build())
-        return try {
+        return runtimeCall("embedded_ai_stream_failed", "本机 AI 事件流中断") {
+            val endpoint = endpoint()
+            val request = authorized(
+                Request.Builder().url(endpoint.baseUrl + path).get()
+                    .header("Accept", "text/event-stream")
+                    .apply { if (lastEventId > 0) header("Last-Event-ID", "$lastEventId") }
+                    .build(),
+                endpoint,
+            )
             await(streamClient, request).use { response ->
-                if (!response.isSuccessful) return failure("embedded_ai_http_${response.code}", "本机 AI Runtime 请求失败（HTTP ${response.code}）")
-                val source = response.body?.source() ?: return failure("empty_ai_stream", "本机 AI 事件流为空")
-                val parser = EmbeddedSseParser(onEvent)
-                while (!source.exhausted()) parser.accept(source.readUtf8LineStrict(MAX_LINE))
-                parser.finish()
-                ApiResult.Success(Unit, null)
+                if (!response.isSuccessful) {
+                    failure("embedded_ai_http_${response.code}", "本机 AI Runtime 请求失败（HTTP ${response.code}）")
+                } else {
+                    val source = response.body?.source()
+                    if (source == null) {
+                        failure("empty_ai_stream", "本机 AI 事件流为空")
+                    } else {
+                        val parser = EmbeddedSseParser(onEvent)
+                        while (!source.exhausted()) parser.accept(source.readUtf8LineStrict(MAX_LINE))
+                        parser.finish()
+                        ApiResult.Success(Unit, null)
+                    }
+                }
             }
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { failure("embedded_ai_stream_failed", error.message ?: "本机 AI 事件流中断", true) }
+        }
     }
 
-    private suspend fun <B, R> post(path: String, body: B, bs: SerializationStrategy<B>, rs: DeserializationStrategy<R>): ApiResult<R> {
+    private suspend fun <B, R> post(
+        path: String,
+        body: B,
+        bs: SerializationStrategy<B>,
+        rs: DeserializationStrategy<R>,
+    ): ApiResult<R> = runtimeCall("embedded_ai_start_failed", "本机 AI Runtime 启动失败") {
+        val endpoint = endpoint()
         val json = MobileJson.instance.encodeToString(bs, body)
-        return execute(Request.Builder().url(endpoint().baseUrl + path).post(json.toRequestBody(JSON)).build(), rs)
+        val request = Request.Builder().url(endpoint.baseUrl + path)
+            .post(json.toRequestBody(JSON)).build()
+        execute(authorized(request, endpoint), rs)
     }
+
     private suspend fun <R> get(path: String, serializer: DeserializationStrategy<R>): ApiResult<R> =
-        execute(Request.Builder().url(endpoint().baseUrl + path).get().build(), serializer)
+        runtimeCall("embedded_ai_start_failed", "本机 AI Runtime 启动失败") {
+            val endpoint = endpoint()
+            val request = Request.Builder().url(endpoint.baseUrl + path).get().build()
+            execute(authorized(request, endpoint), serializer)
+        }
 
     private suspend fun <R> execute(request: Request, serializer: DeserializationStrategy<R>): ApiResult<R> = try {
-        await(client, authorized(request)).use { response ->
+        await(client, request).use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) return failure("embedded_ai_http_${response.code}", parseError(raw).ifBlank { "本机 AI Runtime 请求失败（HTTP ${response.code}）" })
             runCatching { MobileJson.instance.decodeFromString(serializer, raw) }
@@ -95,10 +122,27 @@ internal class EmbeddedAiRuntimeApi(
     catch (error: IOException) { failure("embedded_ai_unreachable", error.message ?: "本机 AI Runtime 不可达", true) }
 
     private fun endpoint(): EmbeddedAiRuntimeProcess.Endpoint {
-        val host = platformHost.endpoint
+        val host = platformHost.ensureStarted()
         return process.ensureStarted(host.url, host.token)
     }
-    private fun authorized(request: Request): Request = request.newBuilder().header("X-AI-Admin", endpoint().adminToken).build()
+    private fun authorized(
+        request: Request,
+        endpoint: EmbeddedAiRuntimeProcess.Endpoint,
+    ): Request = request.newBuilder().header("X-AI-Admin", endpoint.adminToken).build()
+
+    private suspend fun <T> runtimeCall(
+        code: String,
+        fallback: String,
+        block: suspend () -> ApiResult<T>,
+    ): ApiResult<T> = withContext(Dispatchers.IO) {
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            failure(code, failure.message ?: fallback, true)
+        }
+    }
     private fun parseError(raw: String): String = runCatching { MobileJson.instance.parseToJsonElement(raw).jsonObject["error"]?.toString()?.trim('"').orEmpty() }.getOrDefault("")
     private suspend fun await(http: OkHttpClient, request: Request): Response = suspendCancellableCoroutine { c ->
         val call = http.newCall(request); c.invokeOnCancellation { call.cancel() }
