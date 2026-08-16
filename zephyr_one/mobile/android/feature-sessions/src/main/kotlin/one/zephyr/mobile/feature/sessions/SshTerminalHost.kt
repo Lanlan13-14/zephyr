@@ -37,7 +37,7 @@ class SshTerminalHost(
         }
         lastRequest[request.sessionId] = copyRequest(request)
         val route = SshRoute(listOf(RouteHop.Target(request.host, request.port)))
-        if (request.password.isNullOrBlankChars() && request.privateKey.isNullOrBlankChars()) {
+        val credential = credentialOf(request) ?: run {
             request.wipe()
             return TerminalOpenOutcome.Failed(
                 MobileError.local(code = "auth_missing", message = "请先填写密码或选择 SSH Key", retryable = false),
@@ -48,7 +48,7 @@ class SshTerminalHost(
                 sessionId = request.sessionId,
                 route = route,
                 username = request.username,
-                credential = credentialOf(request),
+                credential = credential,
                 hostKeyPolicy = HostKeyPolicy.PROMPT_UNKNOWN_BLOCK_CHANGED,
                 cols = request.columns,
                 rows = request.rows,
@@ -96,21 +96,23 @@ class SshTerminalHost(
         engine.acceptHostKey(sessionId, remembered.host, remembered.port)
     }
 
-    private fun credentialOf(request: TerminalOpenRequest): SshCredential {
-        val privateKey = request.privateKey
-        val password = request.password
+    private fun credentialOf(request: TerminalOpenRequest): SshCredential? {
+        val privateKey = request.privateKey.usableSecret()
+        val password = request.password.usableSecret()
         return when {
-            !privateKey.isNullOrBlankChars() -> SshCredential.PrivateKey(
-                pem = privateKey.copyOf(),
-                passphrase = request.passphrase?.copyOf(),
+            privateKey != null -> SshCredential.PrivateKey(
+                pem = privateKey,
+                passphrase = request.passphrase.usableSecret(),
             )
-            !password.isNullOrBlankChars() -> SshCredential.Password(password.copyOf())
-            else -> SshCredential.Interactive
+            password != null -> SshCredential.Password(password)
+            else -> null
         }
     }
 
-    private fun CharArray?.isNullOrBlankChars(): Boolean =
-        this == null || this.isEmpty() || this.all { it.isWhitespace() }
+    private fun CharArray?.usableSecret(): CharArray? {
+        if (this == null || isEmpty() || all { it.isWhitespace() }) return null
+        return copyOf()
+    }
 
     private fun copyRequest(request: TerminalOpenRequest): TerminalOpenRequest = request.copy(
         password = request.password?.copyOf(),

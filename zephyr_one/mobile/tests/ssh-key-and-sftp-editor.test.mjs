@@ -35,8 +35,10 @@ function assertKeyLoginGuards({ loaderSrc, engineSrc, hostSrc, rootSrc, testerSr
   assert.doesNotMatch(engineSrc, /PKCS8KeyFile\(\)\.also/);
   assert.doesNotMatch(loaderSrc, /bouncycastle/);
   assert.doesNotMatch(loaderSrc, /EncryptionException/);
-  assert.match(hostSrc, /isNullOrBlankChars/);
-  assert.match(hostSrc, /!privateKey\.isNullOrBlankChars\(\)/);
+  assert.match(hostSrc, /usableSecret\(\)/);
+  assert.match(hostSrc, /privateKey != null -> SshCredential\.PrivateKey/);
+  assert.match(hostSrc, /credentialOf\(request\) \?: run/);
+  assert.doesNotMatch(hostSrc, /request\.privateKey != null -> SshCredential\.PrivateKey/);
   assert.match(rootSrc, /takeUnlessBlankSecret/);
   assert.match(rootSrc, /replacementPassword \?: stored\.password/);
   assert.match(rootSrc, /replacementKey \?: stored\.privateKey/);
@@ -135,6 +137,13 @@ test('guards reject the pre20 key parser and per-keystroke undo', () => {
       engineSrc: engine.replaceAll('suspend fun <T> withSftp', 'fun <T> withSftp'),
     }),
     /suspend fun <T> withSftp/,
+  );
+  assert.throws(
+    () => assertKeyLoginGuards({
+      ...currentKey,
+      hostSrc: host.replaceAll('usableSecret()', 'let { it }'),
+    }),
+    /usableSecret/,
   );
   assert.throws(
     () => assertKeyLoginGuards({
