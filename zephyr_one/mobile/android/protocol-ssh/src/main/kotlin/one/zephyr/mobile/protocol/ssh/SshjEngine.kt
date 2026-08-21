@@ -543,7 +543,7 @@ class SshjEngine internal constructor(
 
         suspend fun withShellWrite(block: suspend () -> Unit) {
             writeMutex.withLock {
-                withContext(io) { block() }
+                withContext(Dispatchers.IO) { block() }
             }
         }
 
