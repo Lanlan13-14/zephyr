@@ -618,4 +618,16 @@ class TerminalSurfaceControllerTest {
         assertEquals(GestureOwner.SELECTION, subject.state.value.gestureOwner)
         assertEquals(0, transport.writes.size)
     }
+
+    @Test
+    fun imeClipboardAndCandidateCommitsKeepCharacterOrder() = runTest {
+        val transport = RecordingTransport()
+        val subject = controller(backgroundScope, transport)
+
+        // Gboard / Samsung IME clipboard and candidate strip fire one commit per code point.
+        "netlab".forEach { ch -> subject.enqueueWrite(byteArrayOf(ch.code.toByte())) }
+        runCurrent()
+
+        assertEquals("netlab", transport.writes.joinToString("") { String(it) })
+    }
 }

@@ -147,10 +147,7 @@ class TerminalViewModel(
 
     init {
         termux?.bindWriteBytes { bytes ->
-            viewModelScope.launch {
-                runCatching { delegatingTransport.write(bytes) }
-                    .onFailure(delegatingTransport::onFailure)
-            }
+            controller.enqueueWrite(bytes)
             controller.consumeLatches()
         }
     }

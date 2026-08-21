@@ -135,15 +135,17 @@ class SshjEngine internal constructor(
         closeEvents[sessionId]?.tryEmit(error)
     }
 
-    override suspend fun send(sessionId: String, bytes: ByteArray) = withContext(io) {
+    override suspend fun send(sessionId: String, bytes: ByteArray) {
         val live = sessions[sessionId] ?: throw IllegalStateException("SSH 会话已断开")
-        try {
-            live.shell.outputStream.write(bytes)
-            live.shell.outputStream.flush()
-        } catch (error: Exception) {
-            sessions.remove(sessionId, live)
-            live.close()
-            throw error
+        live.withShellWrite {
+            try {
+                live.shell.outputStream.write(bytes)
+                live.shell.outputStream.flush()
+            } catch (error: Exception) {
+                sessions.remove(sessionId, live)
+                live.close()
+                throw error
+            }
         }
     }
 
@@ -537,6 +539,13 @@ class SshjEngine internal constructor(
     ) {
         @Volatile private var sftpClient: SFTPClient? = null
         private val sftpMutex = Mutex()
+        private val writeMutex = Mutex()
+
+        suspend fun withShellWrite(block: suspend () -> Unit) {
+            writeMutex.withLock {
+                withContext(Dispatchers.IO) { block() }
+            }
+        }
 
         suspend fun <T> withSftp(block: suspend (SFTPClient) -> T): T {
             if (closed) error("SSH 会话已断开")
