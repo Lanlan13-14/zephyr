@@ -1,5 +1,6 @@
 package one.zephyr.mobile.protocol.ssh
 
+import java.io.File
 import java.io.InputStream
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -46,9 +47,17 @@ private const val DEFAULT_NEW_FILE_MODE = 0x1A4 // 0644
 
 
 /** Live direct SSH transport: shell, SFTP, exec and request/reply latency probes. */
-class SshjEngine(
+class SshjEngine internal constructor(
     private val io: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    private val knownHosts: SshKnownHostsBook = MemorySshKnownHostsBook(),
 ) : SshEngine {
+
+    constructor() : this(Dispatchers.IO, MemorySshKnownHostsBook())
+
+    constructor(filesDir: File) : this(
+        io = Dispatchers.IO,
+        knownHosts = FileSshKnownHostsBook(File(filesDir, TRUST_FILE_NAME)),
+    )
 
     init {
         AndroidSshSecurity.configure()
@@ -57,7 +66,6 @@ class SshjEngine(
     private val sessions = ConcurrentHashMap<String, LiveSession>()
     private val closeEvents = ConcurrentHashMap<String, MutableSharedFlow<Throwable>>()
     private val pending = ConcurrentHashMap<String, HostKey>()
-    private val trusted = ConcurrentHashMap<String, HostKey>()
     private val scope = CoroutineScope(SupervisorJob() + io)
 
     override val isAvailable: Boolean = true
@@ -71,7 +79,7 @@ class SshjEngine(
         sessions.remove(request.sessionId)?.close()
         val target = request.route.target
         val client = SSHClient()
-        val verifier = RecordingVerifier(hostPort(target.host, target.port))
+        val verifier = RecordingVerifier(target.host, target.port)
         client.addHostKeyVerifier(verifier)
         var stage = ConnectStage.TRANSPORT
         try {
@@ -92,7 +100,7 @@ class SshjEngine(
             val presented = verifier.presented ?: pending[request.sessionId]
             if (presented != null && !verifier.accepted) {
                 pending[request.sessionId] = presented
-                return@withContext SshConnectOutcome.HostKeyDecisionRequired(presented, known = null)
+                return@withContext SshConnectOutcome.HostKeyDecisionRequired(presented, known = verifier.storedKey)
             }
             SshConnectOutcome.Failed(mapError(error, stage))
         }
@@ -492,7 +500,7 @@ class SshjEngine(
 
     override fun acceptHostKey(sessionId: String, host: String, port: Int) {
         val key = pending.remove(sessionId) ?: return
-        trusted[hostPort(host, port)] = key
+        knownHosts.put(host, port, key)
     }
 
     private fun authenticate(client: SSHClient, request: SshConnectRequest) {
@@ -506,13 +514,16 @@ class SshjEngine(
         }
     }
 
-    private inner class RecordingVerifier(private val scope: String) : HostKeyVerifier {
+    private inner class RecordingVerifier(private val host: String, private val port: Int) : HostKeyVerifier {
         @Volatile var presented: HostKey? = null
         @Volatile var accepted: Boolean = false
+        @Volatile var storedKey: HostKey? = null
+
         override fun verify(hostname: String, port: Int, key: PublicKey): Boolean {
             val seen = HostKey(key.algorithm, key.encoded)
             presented = seen
-            val known = trusted[hostPort(hostname, port)] ?: trusted[scope]
+            val known = knownHosts.find(this.host, this.port) ?: knownHosts.find(hostname, port)
+            storedKey = known
             return (known != null && known == seen).also { accepted = it }
         }
         override fun findExistingAlgorithms(hostname: String, port: Int): List<String> = emptyList()
@@ -560,9 +571,10 @@ class SshjEngine(
     }
 
     companion object {
+        const val TRUST_FILE_NAME = "ssh_known_hosts.properties"
         private const val LATENCY_PROBE_TIMEOUT_MS = 4_000
 
-        private fun hostPort(host: String, port: Int): String = host.lowercase() + ":" + port
+        private fun hostPort(host: String, port: Int): String = SshKnownHostsBook.key(host, port)
         private fun closeQuietly(client: SSHClient) { runCatching { client.disconnect() } }
         private fun mapError(error: Exception, stage: ConnectStage): MobileError {
             val root = generateSequence(error as Throwable?) { it.cause }.lastOrNull() ?: error

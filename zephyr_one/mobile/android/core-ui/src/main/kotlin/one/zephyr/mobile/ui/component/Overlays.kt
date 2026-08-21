@@ -262,18 +262,23 @@ fun AlertDialog(
     ) {
         val composeView = LocalView.current
         val configuration = LocalConfiguration.current
-        val screenWidthDp = configuration.screenWidthDp
         val screenHeightDp = configuration.screenHeightDp.toFloat()
         SideEffect {
-            val window = (composeView.parent as? DialogWindowProvider)?.window ?: return@SideEffect
-            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            window.setBackgroundDrawableResource(android.R.color.transparent)
-            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            var parent = composeView.parent
+            while (parent != null) {
+                if (parent is DialogWindowProvider) {
+                    val window = parent.window
+                    window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    window.setBackgroundDrawableResource(android.R.color.transparent)
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                    break
+                }
+                parent = parent.parent
+            }
         }
         BoxWithConstraints(
             modifier = modifier
-                .width(screenWidthDp.dp)
-                .height(screenHeightDp.dp)
+                .fillMaxSize()
                 .background(palette.surfaces.scrim)
                 .imePadding()
                 .clickable(

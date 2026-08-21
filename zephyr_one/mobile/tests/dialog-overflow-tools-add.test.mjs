@@ -25,11 +25,10 @@ test('alert dialog is bounded by the actual available window', () => {
   assert.match(alert, /\.heightIn\(max = availableHeight\)/);
   assert.match(alert, /\.navigationBarsPadding\(\)/);
   assert.match(alert, /setLayout\(ViewGroup\.LayoutParams\.MATCH_PARENT, ViewGroup\.LayoutParams\.MATCH_PARENT\)/);
-  assert.match(alert, /\.width\(screenWidthDp\.dp\)/);
-  assert.match(alert, /\.height\(screenHeightDp\.dp\)/);
+  assert.match(alert, /\.fillMaxSize\(\)/);
+  assert.match(alert, /DialogWindowProvider/);
   assert.match(layout, /fun availableHeightDp\(windowHeightDp: Float\)/);
   assert.doesNotMatch(alert, /val availableHeight = min\(maxHeight\.value - 20f, 640f\)/);
-  assert.doesNotMatch(alert, /modifier\s*\n\s*\.fillMaxSize\(\)/);
 });
 
 test('host-key and certificate sheets stay opaque and wrap the fingerprint', () => {
