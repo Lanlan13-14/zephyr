@@ -379,6 +379,16 @@ public final class TerminalView extends View {
 
             void sendTextToTerminal(CharSequence text) {
                 stopTextSelectionMode();
+                if (text == null || text.length() == 0) return;
+                // IME clipboard paste and candidate-strip commits arrive as one CharSequence.
+                // Sending them code-point by code-point launches one SSH write each, and those
+                // writes race so "netlab" lands as "nlteab". Control / Alt / Shift still take
+                // the per-code-point path because they must become escape sequences.
+                if (!mClient.readShiftKey() && !mClient.readControlKey() && !mClient.readAltKey()
+                        && !containsControlBesidesEscape(text)) {
+                    mTermSession.write(text.toString().replace('\n', '\r'));
+                    return;
+                }
                 final int textLengthInChars = text.length();
                 for (int i = 0; i < textLengthInChars; i++) {
                     char firstChar = text.charAt(i);
@@ -431,6 +441,15 @@ public final class TerminalView extends View {
 
                     inputCodePoint(KEY_EVENT_SOURCE_SOFT_KEYBOARD, codePoint, ctrlHeld, false);
                 }
+            }
+
+            boolean containsControlBesidesEscape(CharSequence text) {
+                final int n = text.length();
+                for (int i = 0; i < n; i++) {
+                    char ch = text.charAt(i);
+                    if (ch < 32 && ch != '\n' && ch != '\r' && ch != '\t' && ch != 27) return true;
+                }
+                return false;
             }
 
         };

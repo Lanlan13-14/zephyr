@@ -26,7 +26,21 @@ test('Termux system IME writes are bound to SSH and failures are caught', () => 
   assert.match(bridge, /fun bindWriteBytes/);
   assert.doesNotMatch(bridge, /writeBytes\s*=\s*\{\}/);
   assert.match(vm, /termux\?\.bindWriteBytes/);
-  assert.match(vm, /runCatching \{ delegatingTransport\.write\(bytes\) \}/);
+  assert.match(vm, /controller\.enqueueWrite\(bytes\)/);
+  assert.doesNotMatch(vm, /viewModelScope\.launch \{[\s\S]*delegatingTransport\.write\(bytes\)/);
+});
+
+test('IME clipboard and candidate commits keep byte order', () => {
+  const view = read('feature-sessions/src/main/java/com/termux/view/TerminalView.java');
+  const controller = read('feature-sessions/src/main/kotlin/one/zephyr/mobile/feature/sessions/TerminalSurfaceController.kt');
+  assert.match(view, /mTermSession\.write\(text\.toString\(\)\.replace\('\\n', '\\r'\)\)/);
+  assert.match(view, /containsControlBesidesEscape/);
+  assert.match(controller, /fun enqueueWrite\(bytes: ByteArray\)/);
+  assert.match(controller, /writeQueue/);
+  assert.match(controller, /writeMutex\.withLock/);
+  assert.match(sshj, /writeMutex/);
+  assert.match(sshj, /withShellWrite/);
+  assert.doesNotMatch(controller, /scope\.launch \{\s*runCatching \{ transport\.write\(bytes\) \}/);
 });
 
 test('SSHJ implements shell, SFTP, exec and tcp-handshake latency', () => {

@@ -2,6 +2,7 @@ package one.zephyr.mobile.feature.sessions
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -9,6 +10,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * The byte sink for one session.
@@ -129,6 +134,10 @@ class TerminalSurfaceController(
     private var deferredOutputRows = 0
 
     private var pinchBaseFontSp: Float = fontSp
+    private val writeMutex = Mutex()
+    private val writePumpStarted = AtomicBoolean(false)
+    private val writeQueue = Channel<ByteArray>(Channel.UNLIMITED)
+    private var writePump: Job? = null
 
     // ---- geometry ------------------------------------------------------------------------------
 
@@ -571,11 +580,41 @@ class TerminalSurfaceController(
         }
     }
 
+    /**
+     * Bytes from Termux's IME path (clipboard paste, candidate commit, voice input).
+     *
+     * Must join the same ordered pump as [write]: Gboard/Samsung split a pasted word into one
+     * code-point per callback, and launching a coroutine per callback reorders "netlab" into
+     * "nlteab" on the SSH socket.
+     */
+    fun enqueueWrite(bytes: ByteArray) = write(bytes)
+
     private fun write(bytes: ByteArray) {
         if (bytes.isEmpty()) return
+        ensureWritePump()
+        val queued = writeQueue.trySend(bytes.copyOf())
+        if (queued.isSuccess) return
         scope.launch {
-            runCatching { transport.write(bytes) }
-                .onFailure(transport::onFailure)
+            writeMutex.withLock {
+                runCatching { transport.write(bytes) }
+                    .onFailure(transport::onFailure)
+            }
+        }
+    }
+
+    private fun ensureWritePump() {
+        if (!writePumpStarted.compareAndSet(false, true)) return
+        writePump = scope.launch {
+            try {
+                for (chunk in writeQueue) {
+                    writeMutex.withLock {
+                        runCatching { transport.write(chunk) }
+                            .onFailure(transport::onFailure)
+                    }
+                }
+            } catch (_: CancellationException) {
+                writePumpStarted.set(false)
+            }
         }
     }
 
