@@ -87,7 +87,7 @@ class AppContainer(private val context: Context) {
 
     /** Process-scoped SSH client. Direct password / key auth only. */
     val sshEngine: one.zephyr.mobile.protocol.ssh.SshEngine by lazy {
-        one.zephyr.mobile.protocol.ssh.SshjEngine()
+        one.zephyr.mobile.protocol.ssh.SshjEngine(context.filesDir)
     }
 
     /** Packaged Go agent loop; binding only changes its optional data source. */
