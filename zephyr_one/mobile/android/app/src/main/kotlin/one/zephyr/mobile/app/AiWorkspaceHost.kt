@@ -47,7 +47,8 @@ internal fun BoundAiWorkspace(
             routePlanner = accountRoutePlanner(account),
         )
         val exec = LiveSshExecPort(account.appContainer().sshEngine, account.sessions, managed)
-        val host = AndroidAiPlatformHost(account, exec, account.localAiWorkspace)
+        val sftp = SshjSftpPort(managed, account.appContainer().sshEngine, account.sessions)
+        val host = AndroidAiPlatformHost(account, exec, account.localAiWorkspace, sftp)
         LocalAndroidAiRuntimeController(
             account = account,
             scope = scope,
