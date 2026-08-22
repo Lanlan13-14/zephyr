@@ -487,7 +487,7 @@ fun FileSyncScreen(
                 if (onBind != null) {
                     one.zephyr.mobile.ui.component.SettingsRow(
                         title = "绑定主端",
-                        subtitle = "系统浏览器批准设备公钥，不需要 Client Token",
+                        subtitle = "系统浏览器批准设备公钥",
                         showChevron = true,
                         showDivider = onUnbind == null,
                         onClick = onBind,
