@@ -1,22 +1,13 @@
 package one.zephyr.mobile.feature.sessions
 
 /**
- * Demo `#page-terminal` split / dock / in-flow tool-sheet state.
+ * Demo `#page-terminal` tool-sheet state.
  *
- * `toggleSplit` walks off → term → right → left → off, matching
- * `index__2_.html` `toggleSplit()` / `setDockSide()`.
+ * The old split mode (term↔term, tool dock left/right) is gone. A phone shows
+ * tools in a bottom sheet; a pad in landscape keeps the terminal on one side
+ * and the tool panel (or the home surface) on the other, with a draggable
+ * gutter between them.
  */
-enum class TerminalSplitMode {
-    OFF,
-    TERM,
-    RIGHT,
-    LEFT,
-    ;
-
-    val docksTools: Boolean get() = this == LEFT || this == RIGHT
-    val splitsTerms: Boolean get() = this == TERM
-}
-
 enum class TerminalToolKind {
     FILES,
     SNIPPET,
@@ -42,19 +33,23 @@ enum class TerminalToolKind {
     }
 }
 
+/** Which side of a landscape pad the terminal pane sits on. */
+enum class PadTermSide { LEFT, RIGHT }
+
 enum class TermBackgroundKind { NONE, IMAGE, BIG }
 
-const val DEFAULT_TERMINAL_DOCK_FRACTION = 0.38f
 const val DEFAULT_TERMINAL_SHEET_FRACTION = 0.44f
 
 data class TerminalWorkspaceState(
-    val split: TerminalSplitMode = TerminalSplitMode.OFF,
-    val dockWidthFraction: Float = DEFAULT_TERMINAL_DOCK_FRACTION,
-    val focusPane: Char = 'a',
-    val paneA: String,
-    val paneB: String? = null,
-    val docked: List<TerminalToolKind> = emptyList(),
-    val dockCurrent: TerminalToolKind? = null,
+    /* One terminal at a time: the split panes were removed because the second
+     * pane never had a real ViewModel wired and the mode confused more
+     * sessions than it helped. */
+    val activeSessionId: String,
+    /* Pad layout. padTermFraction is the terminal's share of the width;
+     * 1f means the terminal covers the whole row (the panel is hidden). */
+    val padTermSide: PadTermSide = PadTermSide.RIGHT,
+    val padTermFraction: Float = TerminalWorkspace.PAD_DEFAULT_TERM_FRACTION,
+    val padPanelTool: TerminalToolKind? = null,
     val sheetTools: List<TerminalToolKind> = emptyList(),
     val sheetCurrent: TerminalToolKind? = null,
     val sheetFraction: Float = 0f,
@@ -66,52 +61,22 @@ data class TerminalWorkspaceState(
     val addSheetOpen: Boolean = false,
     val disconnectSheetOpen: Boolean = false,
 ) {
-    val focusedSessionId: String
-        get() = if (split == TerminalSplitMode.TERM && focusPane == 'b') {
-            paneB ?: paneA
-        } else {
-            paneA
-        }
+    val focusedSessionId: String get() = activeSessionId
 
-    fun withFocus(pane: Char): TerminalWorkspaceState = copy(focusPane = pane)
+    fun withFocus(pane: Char): TerminalWorkspaceState = this
 
-    fun assignToFocused(sessionId: String): TerminalWorkspaceState {
-        if (split != TerminalSplitMode.TERM) return copy(paneA = sessionId, focusPane = 'a')
-        return if (focusPane == 'b') {
-            if (sessionId == paneA) copy(paneA = paneB ?: sessionId, paneB = sessionId)
-            else copy(paneB = sessionId)
-        } else {
-            if (sessionId == paneB) copy(paneB = paneA, paneA = sessionId)
-            else copy(paneA = sessionId)
-        }
-    }
+    fun assignToFocused(sessionId: String): TerminalWorkspaceState =
+        copy(activeSessionId = sessionId)
 
     fun closeSession(sessionId: String, remaining: List<String>): TerminalWorkspaceState? {
         val next = remaining.filterNot { it == sessionId }
         if (next.isEmpty()) return null
-        val clamp = { id: String? ->
-            when {
-                id == null || id == sessionId || id !in next -> next.first()
-                else -> id
-            }
-        }
-        var a = clamp(paneA)
-        var b = paneB?.let(clamp)
-        if (split == TerminalSplitMode.TERM && a == b && next.size > 1) {
-            b = next.first { it != a }
-        }
-        return copy(paneA = a, paneB = b)
+        return copy(activeSessionId = if (activeSessionId == sessionId) next.first() else activeSessionId)
     }
 }
 
 object TerminalWorkspace {
 
-    const val DEFAULT_DOCK_FRACTION = 0.38f
-    const val TERM_SPLIT_FRACTION = 0.50f
-    const val MIN_DOCK_FRACTION = 0.20f
-    const val MAX_DOCK_FRACTION = 0.70f
-    const val PAD_RAIL_MIN_DP = 768
-    const val PAD_RAIL_WIDTH_DP = 216
     const val KEY_HEIGHT_DP = 36
     const val KEY_PADDING_V_DP = 7
     const val KEY_GAP_DP = 6
@@ -130,56 +95,29 @@ object TerminalWorkspace {
     const val SHEET_DISMISS_VELOCITY_PX_PER_MS = 0.70f
     const val SHEET_PROJECTION_SECONDS = 0.12f
 
-    val splitCycle: List<TerminalSplitMode> = listOf(
-        TerminalSplitMode.OFF,
-        TerminalSplitMode.TERM,
-        TerminalSplitMode.RIGHT,
-        TerminalSplitMode.LEFT,
-    )
+    /* Pad two-pane layout: the terminal starts at half the row and can be
+     * dragged between a readable minimum and full width. */
+    const val PAD_RAIL_MIN_DP = 768
+    const val PAD_RAIL_WIDTH_DP = 216
+    const val PAD_DEFAULT_TERM_FRACTION = 0.50f
+    const val PAD_MIN_TERM_FRACTION = 0.30f
+    const val PAD_MAX_TERM_FRACTION = 1.00f
 
-    fun nextSplit(current: TerminalSplitMode): TerminalSplitMode {
-        val i = splitCycle.indexOf(current)
-        return splitCycle[(i + 1).coerceAtLeast(0) % splitCycle.size]
-    }
+    fun clampPadTermFraction(fraction: Float): Float =
+        fraction.coerceIn(PAD_MIN_TERM_FRACTION, PAD_MAX_TERM_FRACTION)
 
-    fun clampDockWidth(fraction: Float): Float =
-        fraction.coerceIn(MIN_DOCK_FRACTION, MAX_DOCK_FRACTION)
-
-    fun applySplit(
-        state: TerminalWorkspaceState,
-        side: TerminalSplitMode,
-        sessionIds: List<String>,
-    ): TerminalWorkspaceState {
-        val fraction = when (side) {
-            TerminalSplitMode.TERM ->
-                if (state.split == TerminalSplitMode.TERM) state.dockWidthFraction else TERM_SPLIT_FRACTION
-            TerminalSplitMode.LEFT, TerminalSplitMode.RIGHT ->
-                if (state.split.docksTools) state.dockWidthFraction else DEFAULT_DOCK_FRACTION
-            TerminalSplitMode.OFF -> state.dockWidthFraction
-        }
-        var paneB = state.paneB
-        if (side == TerminalSplitMode.TERM) {
-            paneB = when {
-                sessionIds.size < 2 -> state.paneA
-                paneB == null || paneB == state.paneA || paneB !in sessionIds ->
-                    sessionIds.firstOrNull { it != state.paneA } ?: state.paneA
-                else -> paneB
-            }
-        }
-        var docked = state.docked
-        var dockCurrent = state.dockCurrent
-        if (side.docksTools && dockCurrent == null) {
-            docked = listOf(TerminalToolKind.STATS)
-            dockCurrent = TerminalToolKind.STATS
-        }
-        return state.copy(
-            split = side,
-            dockWidthFraction = clampDockWidth(fraction),
-            paneB = paneB,
-            focusPane = 'a',
-            docked = docked,
-            dockCurrent = dockCurrent,
-        )
+    /**
+     * Horizontal drag on the gutter. Dragging towards the panel grows the
+     * terminal; at [PAD_MAX_TERM_FRACTION] the terminal is full-width and the
+     * panel is gone, which is the pad equivalent of closing the sheet.
+     */
+    fun dragPadTermFraction(startFraction: Float, dxPx: Float, rowWidthPx: Float, side: PadTermSide): Float {
+        if (rowWidthPx <= 0f) return startFraction
+        /* The gutter sits on the panel side of the terminal. When the terminal
+         * is on the right, dragging left (negative dx) widens it; when it is on
+         * the left, dragging right does. */
+        val signed = if (side == PadTermSide.RIGHT) -dxPx else dxPx
+        return clampPadTermFraction(startFraction + signed / rowWidthPx)
     }
 
     fun openTool(
@@ -188,13 +126,17 @@ object TerminalWorkspace {
         phone: Boolean = true,
     ): TerminalWorkspaceState {
         if (!phone) {
-            val base = if (state.split.docksTools) state else applySplit(
-                state = state,
-                side = TerminalSplitMode.RIGHT,
-                sessionIds = listOfNotNull(state.paneA, state.paneB),
+            /* Pad: the tool takes the panel side. Tapping the open tool again
+             * closes the panel back to the home surface, mirroring the phone
+             * sheet toggle. */
+            if (state.padPanelTool == kind) return state.copy(padPanelTool = null)
+            return state.copy(
+                padPanelTool = kind,
+                padTermFraction = clampPadTermFraction(
+                    if (state.padTermFraction >= PAD_MAX_TERM_FRACTION) PAD_DEFAULT_TERM_FRACTION
+                    else state.padTermFraction,
+                ),
             )
-            val docked = if (kind in base.docked) base.docked else base.docked + kind
-            return base.copy(docked = docked, dockCurrent = kind)
         }
         if (state.sheetCurrent == kind && state.sheetFraction > 0f) return closeSheet(state)
         val tools = if (kind in state.sheetTools) state.sheetTools else state.sheetTools + kind
@@ -218,7 +160,7 @@ object TerminalWorkspace {
     }
 
     fun closeSheet(state: TerminalWorkspaceState): TerminalWorkspaceState =
-        state.copy(sheetFraction = 0f)
+        state.copy(sheetFraction = 0f, padPanelTool = null)
 
     /**
      * Drops the last tab after the close height animation has reached 0.
@@ -240,26 +182,5 @@ object TerminalWorkspace {
         } else {
             SHEET_MID_FRACTION
         }
-    }
-
-    fun undock(state: TerminalWorkspaceState, kind: TerminalToolKind): TerminalWorkspaceState {
-        val docked = state.docked.filterNot { it == kind }
-        val current = when {
-            state.dockCurrent != kind -> state.dockCurrent
-            docked.isEmpty() -> null
-            else -> docked.last()
-        }
-        return state.copy(docked = docked, dockCurrent = current)
-    }
-
-    fun dragWidth(
-        startFraction: Float,
-        dxPx: Float,
-        splitWidthPx: Float,
-        split: TerminalSplitMode,
-    ): Float {
-        if (splitWidthPx <= 0f) return startFraction
-        val signed = if (split == TerminalSplitMode.LEFT) dxPx else -dxPx
-        return clampDockWidth(startFraction + signed / splitWidthPx)
     }
 }

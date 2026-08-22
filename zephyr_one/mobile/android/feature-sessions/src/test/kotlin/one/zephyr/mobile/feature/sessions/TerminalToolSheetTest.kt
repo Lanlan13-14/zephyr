@@ -7,7 +7,7 @@ import org.junit.Test
 import java.io.File
 
 class TerminalToolSheetTest {
-    private fun state() = TerminalWorkspaceState(paneA = "s1")
+    private fun state() = TerminalWorkspaceState(activeSessionId = "s1")
 
     private fun codeOnly(source: String): String =
         source
@@ -95,11 +95,40 @@ class TerminalToolSheetTest {
     }
 
     @Test
-    fun tabletToolUsesInPageSideDock() {
+    fun tabletToolUsesOppositePanel() {
+        /* Pad landscape: the tool takes the side opposite the terminal instead
+         * of a bottom sheet. Tapping the same tool again hands the side back
+         * to the home surface. */
         val opened = TerminalWorkspace.openTool(state(), TerminalToolKind.NOTES, phone = false)
-        assertEquals(TerminalSplitMode.RIGHT, opened.split)
-        assertEquals(TerminalToolKind.NOTES, opened.dockCurrent)
-        assertTrue(opened.docked.contains(TerminalToolKind.NOTES))
+        assertEquals(TerminalToolKind.NOTES, opened.padPanelTool)
         assertEquals(0f, opened.sheetFraction, 0.001f)
+        val closed = TerminalWorkspace.openTool(opened, TerminalToolKind.NOTES, phone = false)
+        assertEquals(null, closed.padPanelTool)
+    }
+
+    @Test
+    fun padGutterDragWidensAndNarrowsTheTerminal() {
+        /* Terminal on the right: dragging left (negative dx) grows it. */
+        val grown = TerminalWorkspace.dragPadTermFraction(0.5f, -200f, 1000f, PadTermSide.RIGHT)
+        assertEquals(0.7f, grown, 0.001f)
+        val shrunk = TerminalWorkspace.dragPadTermFraction(0.5f, 200f, 1000f, PadTermSide.RIGHT)
+        assertEquals(0.3f, shrunk, 0.001f)
+        /* Terminal on the left mirrors the direction. */
+        val grownLeft = TerminalWorkspace.dragPadTermFraction(0.5f, 200f, 1000f, PadTermSide.LEFT)
+        assertEquals(0.7f, grownLeft, 0.001f)
+        /* The drag can push the terminal to full width, hiding the panel. */
+        val full = TerminalWorkspace.dragPadTermFraction(0.9f, -400f, 1000f, PadTermSide.RIGHT)
+        assertEquals(TerminalWorkspace.PAD_MAX_TERM_FRACTION, full, 0.001f)
+        /* …and clamps at a readable minimum rather than collapsing the pane. */
+        val min = TerminalWorkspace.dragPadTermFraction(0.4f, 400f, 1000f, PadTermSide.RIGHT)
+        assertEquals(TerminalWorkspace.PAD_MIN_TERM_FRACTION, min, 0.001f)
+    }
+
+    @Test
+    fun openingAPadToolFromFullScreenRestoresTheDefaultHalf() {
+        val fullScreen = state().copy(padTermFraction = TerminalWorkspace.PAD_MAX_TERM_FRACTION)
+        val opened = TerminalWorkspace.openTool(fullScreen, TerminalToolKind.STATS, phone = false)
+        assertEquals(TerminalToolKind.STATS, opened.padPanelTool)
+        assertEquals(TerminalWorkspace.PAD_DEFAULT_TERM_FRACTION, opened.padTermFraction, 0.001f)
     }
 }

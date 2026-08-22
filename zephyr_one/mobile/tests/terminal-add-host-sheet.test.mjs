@@ -58,7 +58,7 @@ test('terminal plus guard rejects the pre19 below-screen sheet', () => {
     sftp: read('android/feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/SnippetScreens.kt'),
   };
   assert.throws(
-    () => assertTerminalAddHost({ ...current, screen: current.screen.replace('Box(Modifier.fillMaxSize()) {', 'Column(Modifier.fillMaxSize()) {') }),
+    () => assertTerminalAddHost({ ...current, screen: current.screen.replaceAll('Box(Modifier.fillMaxSize()) {', 'Column(Modifier.fillMaxSize()) {') }),
     /missing Box\(Modifier\.fillMaxSize/,
   );
   assert.throws(

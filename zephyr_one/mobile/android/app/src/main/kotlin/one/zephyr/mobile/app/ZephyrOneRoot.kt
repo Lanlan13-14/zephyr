@@ -93,6 +93,7 @@ import one.zephyr.mobile.feature.remote.RdpViewModel
 import one.zephyr.mobile.feature.remote.RemoteCredentials
 import one.zephyr.mobile.feature.remote.VncRemoteRoute
 import one.zephyr.mobile.feature.remote.VncViewModel
+import one.zephyr.mobile.feature.sessions.PadTermSide
 import one.zephyr.mobile.feature.sessions.SessionListRoute
 import one.zephyr.mobile.feature.sessions.SessionListViewModel
 import one.zephyr.mobile.feature.sessions.TerminalCredentials
@@ -781,7 +782,12 @@ private fun BoundRoot(
                 val termNotes by account.notes.observeNotes(ownerUserId).collectAsState(initial = emptyList())
                 val termSnippets by account.notes.observeSnippets(ownerUserId).collectAsState(initial = emptyList())
                 var termWorkspace by remember(current.sessionId) {
-                    mutableStateOf(TerminalWorkspaceState(paneA = current.sessionId))
+                    mutableStateOf(
+                        TerminalWorkspaceState(
+                            activeSessionId = current.sessionId,
+                            padTermSide = if (appContainer.padTermSideLeft) PadTermSide.LEFT else PadTermSide.RIGHT,
+                        ),
+                    )
                 }
                 LaunchedEffect(termSessions, current.sessionId) {
                     if (termSessions.firstOrNull { it.sessionId == current.sessionId }?.transport == SessionTransport.CLOSED) {
@@ -811,7 +817,12 @@ private fun BoundRoot(
                     onMessage = { messages.emit(it) },
                     autoConnect = true,
                     workspace = termWorkspace,
-                    onWorkspace = { termWorkspace = it },
+                    onWorkspace = { next ->
+                        if (next.padTermSide != termWorkspace.padTermSide) {
+                            appContainer.padTermSideLeft = next.padTermSide == PadTermSide.LEFT
+                        }
+                        termWorkspace = next
+                    },
                     sessions = termSessions,
                     connections = termConnections,
                     notes = termNotes,

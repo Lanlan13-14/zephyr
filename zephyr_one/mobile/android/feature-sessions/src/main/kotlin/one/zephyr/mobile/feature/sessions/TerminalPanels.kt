@@ -422,6 +422,9 @@ internal fun SideToolDock(
     modifier: Modifier = Modifier,
     viewModel: TerminalViewModel? = null,
 ) {
+    /* The pad panel hosts exactly one tool at a time; the tab strip of the old
+     * multi-dock is gone with the split mode. */
+    val current = workspace.padPanelTool
     Column(
         modifier
             .fillMaxHeight()
@@ -433,44 +436,35 @@ internal fun SideToolDock(
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            workspace.docked.forEach { kind ->
-                val on = kind == workspace.dockCurrent
+            if (current != null) {
                 TermPressable(
-                    onClick = { onWorkspace(workspace.copy(dockCurrent = kind)) },
+                    onClick = { onWorkspace(workspace.copy(padPanelTool = null)) },
                     modifier = Modifier
-                        .padding(end = 4.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (on) colors.accent.copy(alpha = 0.30f) else colors.chrome2)
+                        .background(colors.accent.copy(alpha = 0.30f))
                         .padding(horizontal = 10.dp)
                         .height(28.dp),
                     scale = 0.95f,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(toolIcon(kind), null, tint = if (on) Color.White else colors.dim, modifier = Modifier.size(12.dp))
+                        Icon(toolIcon(current), null, tint = Color.White, modifier = Modifier.size(12.dp))
                         Spacer(Modifier.width(5.dp))
                         Text(
-                            text = toolTitle(kind, hostName).substringBefore('·').trim(),
-                            color = if (on) Color.White else colors.dim,
+                            text = toolTitle(current, hostName).substringBefore('·').trim(),
+                            color = Color.White,
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        TermPressable(
-                            onClick = { onWorkspace(TerminalWorkspace.undock(workspace, kind)) },
-                            modifier = Modifier.padding(start = 4.dp),
-                            scale = 0.9f,
-                        ) {
-                            Text("×", color = (if (on) Color.White else colors.dim).copy(alpha = 0.7f), fontSize = 13.sp)
-                        }
+                        Text("×", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
                     }
                 }
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(colors.line))
         Box(Modifier.weight(1f).then(
-            if (workspace.dockCurrent == TerminalToolKind.STATS || workspace.dockCurrent == TerminalToolKind.DOCKER) Modifier
+            if (current == TerminalToolKind.STATS || current == TerminalToolKind.DOCKER) Modifier
             else Modifier.verticalScroll(rememberScrollState()),
         ).padding(6.dp)) {
-            val current = workspace.dockCurrent
             if (current == null) {
                 Text(
                     text = stringResource(R.string.terminal_dock_empty),
