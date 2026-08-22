@@ -78,10 +78,11 @@ test('a dead session handle does not block the retry', () => {
   assert.match(startSession, /is_some_and\(\|handle\| handle\.is_live\(\)\)/);
   assert.doesNotMatch(startSession, /self\.sessions\.get\(session_id\)\.is_some\(\)[\s,]/);
 
-  /* The broker must hand the reservation back when resolve/approve/open fails,
-   * and a retry with the same owner must be able to re-claim a stuck one. */
+  /* The broker must let the same owner re-claim a reservation whose open
+   * failed, while still refusing a different owner; and the close path must
+   * still be able to tear it down. */
   const authorize = broker.slice(broker.indexOf('pub(crate) fn authorize_and_open'), broker.indexOf('pub fn with_active'));
-  assert.match(authorize, /leases\.remove\(&intent\.session_id\)/);
+  assert.match(authorize, /Err\(error\) => \{\s*\/\*[\s\S]*?return Err\(error\)/);
   const claim = broker.slice(broker.indexOf('pub fn claim_surface'), broker.indexOf('pub fn release_reserved'));
   assert.match(claim, /SurfaceReserved[\s\S]*owner_label == owner_label/);
 

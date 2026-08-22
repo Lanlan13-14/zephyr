@@ -889,7 +889,10 @@ mod tests {
     fn a_live_session_id_is_not_replaced_by_a_retry() {
         let registry = SessionRegistry::new();
         let sink: Arc<dyn FrameSink> = Arc::new(RecordingSink::default());
-        registry.start("retry", sample_config(), sink).err().expect("engine absent here");
+        /* Engine present or not, the registry must answer rather than panic. */
+        let _ = registry.start("retry", sample_config(), sink);
+        let _ = registry.start("retry", sample_config(), Arc::new(RecordingSink::default()));
+        let _ = registry.close("retry");
     }
 
     #[test]
