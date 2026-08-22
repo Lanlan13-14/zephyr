@@ -545,7 +545,6 @@ private fun BoundRoot(
                         ToolEntry.JUMP_HOST -> RootRoute.ResourceList(ResourceKind.JUMP_HOST)
                         ToolEntry.AI_WORKSPACE -> RootRoute.AiSettings
                         ToolEntry.FILE_SYNC -> RootRoute.FileSync
-                        ToolEntry.CLIENT_TOKEN -> RootRoute.ClientToken
                         ToolEntry.SERVER_SETTINGS -> RootRoute.ServerHub
                         ToolEntry.BACKUP_RESTORE -> RootRoute.Backup
                         ToolEntry.RUNTIME_STATUS -> RootRoute.RuntimeStatus
@@ -701,7 +700,6 @@ private fun BoundRoot(
             RootRoute.FileSync -> FileSyncDestination(
                 account = account,
                 onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
-                onOpenTokens = { route = RootRoute.ClientToken },
                 onOpenConflicts = { route = RootRoute.Conflicts },
                 onOpenDevices = { route = RootRoute.Devices },
                 onOpenShares = { route = RootRoute.LocalShares },
@@ -1269,7 +1267,6 @@ private fun ToolsDestination(
         onOpenJumpHosts = { onOpenTool(ToolEntry.JUMP_HOST) },
         onOpenAiWorkspace = { onOpenTool(ToolEntry.AI_WORKSPACE) },
         onOpenFileSync = { onOpenTool(ToolEntry.FILE_SYNC) },
-        onOpenClientToken = { onOpenTool(ToolEntry.CLIENT_TOKEN) },
         onOpenServerSettings = { onOpenTool(ToolEntry.SERVER_SETTINGS) },
         onOpenBackupRestore = { onOpenTool(ToolEntry.BACKUP_RESTORE) },
         onOpenRuntimeStatus = { onOpenTool(ToolEntry.RUNTIME_STATUS) },

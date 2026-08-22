@@ -378,7 +378,6 @@ internal fun NetworkDestination(account: AccountContainer, onBack: () -> Unit) {
 internal fun FileSyncDestination(
     account: AccountContainer,
     onBack: () -> Unit,
-    onOpenTokens: () -> Unit,
     onOpenConflicts: () -> Unit,
     onOpenDevices: () -> Unit,
     onOpenShares: () -> Unit,
@@ -397,7 +396,6 @@ internal fun FileSyncDestination(
         onInterval = { seconds -> account.updateSyncSettings { it.copy(intervalSec = seconds) } },
         onPolicy = { policy -> account.updateSyncSettings { it.copy(networkPolicy = policy) } },
         onSyncNow = onSyncNow,
-        onOpenTokens = onOpenTokens,
         onOpenConflicts = onOpenConflicts,
         onOpenDevices = onOpenDevices,
         onOpenShares = onOpenShares,

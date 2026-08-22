@@ -352,7 +352,6 @@ fun FileSyncScreen(
     onInterval: (Int) -> Unit,
     onPolicy: (NetworkPolicy) -> Unit,
     onSyncNow: () -> Unit,
-    onOpenTokens: () -> Unit,
     onOpenConflicts: () -> Unit = {},
     onOpenDevices: () -> Unit = {},
     onOpenShares: () -> Unit = {},
@@ -448,13 +447,6 @@ fun FileSyncScreen(
                     showChevron = true,
                     onClick = onOpenDevices,
                     leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Devices) },
-                )
-                one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "Client Token",
-                    subtitle = if (localMode) "绑定后可管理旧 Agent Token，不是绑定前置" else "查看 / 旋转 / 删除需敏感验证",
-                    showChevron = true,
-                    onClick = onOpenTokens,
-                    leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Ticket) },
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "本机共享目录",
