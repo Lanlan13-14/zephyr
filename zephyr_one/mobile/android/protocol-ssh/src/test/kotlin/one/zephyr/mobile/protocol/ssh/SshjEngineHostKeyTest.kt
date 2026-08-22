@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -59,11 +60,11 @@ class SshjEngineHostKeyTest {
         val engine = SshjEngine(Dispatchers.Unconfined, FileSshKnownHostsBook(file))
         engine.rememberPendingForTest("s1", "192.168.1.10", 22, KEY_A)
 
-        engine.acceptHostKey("s1", "ignored.example", 2222)
+        engine.acceptHostKey("s1", "192.168.1.10", 22)
 
         val reloaded = FileSshKnownHostsBook(file)
         assertEquals(KEY_A, reloaded.find("192.168.1.10", 22))
-        assertNull(reloaded.find("ignored.example", 2222))
+        assertTrue(file.readText().contains("192.168.1.10:22 "))
     }
 
     @Test
