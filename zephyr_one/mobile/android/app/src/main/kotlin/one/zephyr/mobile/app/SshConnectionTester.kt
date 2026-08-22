@@ -15,8 +15,17 @@ import one.zephyr.mobile.protocol.ssh.SshCredential
 import one.zephyr.mobile.protocol.ssh.SshEngine
 import one.zephyr.mobile.protocol.ssh.SshRoute
 
-/** One-shot direct SSH test used by the connection editor. Never creates a terminal tab. */
-internal class DirectSshConnectionTester(private val engine: SshEngine) : ConnectionTester {
+/** One-shot SSH test used by the connection editor. Never creates a terminal tab.
+ *
+ * The stored route is dialled, not just the target's TCP port: a proxy or jump
+ * chain is part of the connection's reachability, and testing past it would
+ * report a working connection the real dialer cannot make. */
+internal class DirectSshConnectionTester(
+    private val engine: SshEngine,
+    private val routePlanner: suspend (Connection) -> SshRoute = {
+        SshRoute(listOf(RouteHop.Target(it.host, it.port)))
+    },
+) : ConnectionTester {
     override suspend fun test(
         connection: Connection,
         credentials: ConnectionTestCredentials,
@@ -44,11 +53,20 @@ internal class DirectSshConnectionTester(private val engine: SshEngine) : Connec
         }
         val sessionId = "test-" + UUID.randomUUID()
         var outcome: SshConnectOutcome
+        val route = try {
+            routePlanner(connection)
+        } catch (error: Exception) {
+            /* A route that does not resolve is a configuration error, not a
+             * network failure: say which field is wrong instead of timing out. */
+            return ConnectionTestResult.Failed(
+                MobileError.local("route_invalid", error.message ?: "路由配置无效", false),
+            )
+        }
         val elapsedNanos = measureNanoTime {
             outcome = engine.connect(
                 SshConnectRequest(
                     sessionId = sessionId,
-                    route = SshRoute(listOf(RouteHop.Target(connection.host, connection.port))),
+                    route = route,
                     username = connection.username,
                     credential = credential,
                     hostKeyPolicy = HostKeyPolicy.PROMPT_UNKNOWN_BLOCK_CHANGED,

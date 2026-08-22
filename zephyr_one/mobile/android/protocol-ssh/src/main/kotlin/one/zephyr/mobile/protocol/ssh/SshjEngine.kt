@@ -73,19 +73,74 @@ class SshjEngine internal constructor(
     override val isAvailable: Boolean = true
 
     override suspend fun connect(request: SshConnectRequest): SshConnectOutcome = withContext(io) {
-        if (request.route.hops.any { it !is RouteHop.Target }) {
+        sessions.remove(request.sessionId)?.close()
+        val jumps = request.route.hops.filterIsInstance<RouteHop.SshJump>()
+        if (request.route.hops.any { it !is RouteHop.Target && it !is RouteHop.SshJump }) {
             return@withContext SshConnectOutcome.Failed(
-                MobileError.local("route_unsupported", "当前 SSHJ 引擎尚未接入代理或跳板链", false),
+                MobileError.local("route_unsupported", "当前 SSHJ 引擎尚未接入代理链", false),
             )
         }
-        sessions.remove(request.sessionId)?.close()
         val target = request.route.target
-        val client = SSHClient()
-        val verifier = RecordingVerifier(target.host, target.port)
-        client.addHostKeyVerifier(verifier)
+        val chain = mutableListOf<SSHClient>()
         var stage = ConnectStage.TRANSPORT
+        /* Set by whichever hop presented an untrusted key before connect threw;
+         * keyed by hop so a jump fingerprint is never shown as the target's. */
+        var firstUntrusted: Pair<PendingHostKey, HostKey?>? = null
+        /* Declared here, not inside try, so the failure path can close the
+         * half-open target client after a jump error: the loop's chain holds
+         * only the hops, and a leaked target transport would sit on the last
+         * jump's direct-tcpip channel. */
+        val client = SSHClient()
         try {
-            client.connect(target.host, target.port)
+            /* Jump chain, main-end createRoutedSSHConnection semantics: hop 1 is
+             * dialed directly; each next hop is reached through a direct-tcpip
+             * channel on the previous client. Every hop authenticates with the
+             * connection's own credential and presents its own host key, keyed by
+             * the hop's host:port — approving one hop must never trust another. */
+            var upstream: SSHClient? = null
+            for (jump in jumps) {
+                val hopClient = SSHClient()
+                chain += hopClient
+                val hopVerifier = RecordingVerifier(jump.host, jump.port)
+                hopClient.addHostKeyVerifier(hopVerifier)
+                val from = upstream
+                try {
+                    if (from == null) {
+                        hopClient.connect(jump.host, jump.port)
+                    } else {
+                        /* SSHJ's jump-host transport: the direct-tcpip channel on the
+                         * previous client carries this hop's handshake. connectVia is
+                         * the SocketClient entry point that accepts a DirectConnection. */
+                        hopClient.connectVia(from.newDirectConnection(jump.host, jump.port))
+                    }
+                } catch (error: Exception) {
+                    val key = hopVerifier.presented
+                    if (key != null && !hopVerifier.accepted && firstUntrusted == null) {
+                        firstUntrusted = PendingHostKey(jump.host, jump.port, key) to hopVerifier.storedKey
+                    }
+                    throw error
+                }
+                stage = ConnectStage.AUTHENTICATION
+                authenticate(hopClient, request)
+                stage = ConnectStage.TRANSPORT
+                upstream = hopClient
+            }
+            val verifier = RecordingVerifier(target.host, target.port)
+            client.addHostKeyVerifier(verifier)
+            val from = upstream
+            try {
+                if (from == null) {
+                    client.connect(target.host, target.port)
+                } else {
+                    client.connectVia(from.newDirectConnection(target.host, target.port))
+                }
+            } catch (error: Exception) {
+                val key = verifier.presented
+                if (key != null && !verifier.accepted && firstUntrusted == null) {
+                    firstUntrusted = PendingHostKey(target.host, target.port, key) to verifier.storedKey
+                }
+                throw error
+            }
             stage = ConnectStage.AUTHENTICATION
             authenticate(client, request)
             stage = ConnectStage.PTY
@@ -93,16 +148,22 @@ class SshjEngine internal constructor(
             terminalSession.allocatePTY("xterm-256color", request.cols, request.rows, 0, 0, emptyMap<PTYMode, Int>())
             stage = ConnectStage.SHELL
             val shell = terminalSession.startShell()
-            sessions[request.sessionId] = LiveSession(client, terminalSession, shell)
+            sessions[request.sessionId] = LiveSession(client, terminalSession, shell, chain.toList())
             closeEvents[request.sessionId] = MutableSharedFlow(replay = 1, extraBufferCapacity = 1)
             pending.remove(request.sessionId)
             SshConnectOutcome.Connected(request.sessionId, "")
         } catch (error: Exception) {
-            closeQuietly(client)
-            val presented = verifier.presented ?: pending[request.sessionId]?.key
-            if (presented != null && !verifier.accepted) {
-                pending[request.sessionId] = PendingHostKey(target.host, target.port, presented)
-                return@withContext SshConnectOutcome.HostKeyDecisionRequired(presented, known = verifier.storedKey)
+            chain.forEach(::closeQuietly)
+            /* `client` is still a local here: sessions[...] is only set after a
+             * fully successful open, so a failed attempt must close it directly. */
+            runCatching { client.disconnect() }
+            val untrusted = firstUntrusted
+            if (untrusted != null) {
+                pending[request.sessionId] = untrusted.first
+                return@withContext SshConnectOutcome.HostKeyDecisionRequired(
+                    untrusted.first.key,
+                    known = untrusted.second,
+                )
             }
             SshConnectOutcome.Failed(mapError(error, stage))
         }
@@ -559,6 +620,10 @@ class SshjEngine internal constructor(
         val client: SSHClient,
         val session: Session,
         val shell: Session.Shell,
+        /* Every hop above the target's own client. Closing the target alone
+         * would leave the jump transports (and their direct-tcpip channels)
+         * open on the network. */
+        val chain: List<SSHClient> = emptyList(),
         @Volatile var closed: Boolean = false,
     ) {
         @Volatile private var sftpClient: SFTPClient? = null
@@ -589,6 +654,9 @@ class SshjEngine internal constructor(
             runCatching { shell.close() }
             runCatching { session.close() }
             closeQuietly(client)
+            /* The jumps' transports live on their own sockets; the target's
+             * direct-tcpip channel dies with them, not before. */
+            chain.forEach(::closeQuietly)
         }
     }
 

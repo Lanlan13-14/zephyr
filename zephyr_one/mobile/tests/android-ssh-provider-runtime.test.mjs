@@ -75,7 +75,9 @@ test('mutation guards catch provider collision and generic diagnostics', () => {
   assert.throws(
     () => assertRuntimeGuards({
       ...current,
-      engineSrc: engine.replace('stage = ConnectStage.AUTHENTICATION', '// stage lost'),
+      /* Every hop in a jump chain runs the auth stage, so the marker exists
+       * more than once. Removing them all must be caught. */
+      engineSrc: engine.replaceAll('stage = ConnectStage.AUTHENTICATION', '// stage lost'),
     }),
     /AUTHENTICATION/,
   );
