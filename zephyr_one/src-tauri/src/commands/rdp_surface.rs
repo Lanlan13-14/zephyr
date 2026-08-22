@@ -1083,6 +1083,16 @@ pub fn rdp_bridge(
         "input" => {
             let payload: BridgeInputRequest = bridge_payload(request.payload)?;
             broker.assert_active_owner(owner, &payload.session_id)?;
+            let handle = sessions.get(&payload.session_id).ok_or_else(|| {
+                "rdp_bridge_session_missing: native session is unavailable".to_owned()
+            })?;
+            if payload.control == "ctrl_alt_del" {
+                /* The secure-attention sequence is not bound to where a capture
+                 * frame placed the cursor: its only target is the session's
+                 * negotiation state. It does not need a capture ticket. */
+                handle.send_ctrl_alt_del();
+                return Ok(serde_json::json!({ "ok": true, "control": "ctrl_alt_del" }));
+            }
             let ticket = bridge
                 .captures
                 .lock()
@@ -1093,9 +1103,6 @@ pub fn rdp_bridge(
             if ticket.expires_at <= Instant::now() || ticket.capture_id != payload.capture_id {
                 return Err("rdp_bridge_stale_capture: capture expired or does not match".into());
             }
-            let handle = sessions.get(&payload.session_id).ok_or_else(|| {
-                "rdp_bridge_session_missing: native session is unavailable".to_owned()
-            })?;
             match payload.control.as_str() {
                 "text" | "clipboard_send" => {
                     let text = payload.text.unwrap_or_default();

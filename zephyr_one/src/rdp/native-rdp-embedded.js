@@ -124,6 +124,28 @@
         return { width: width, height: height };
     }
 
+    function geometryForOpen(view) {
+        /* The workspace window the user sees is a floating rounded-corner card.
+         * An initial corner/backing-store color fill that only the client area
+         * would repaint would shine through those corners, so the native window
+         * is told to paint them before the first frame arrives. */
+        var size = dimensions('auto', view.panel);
+        var style = window.getComputedStyle ? window.getComputedStyle(view.panel) : null;
+        var radius = 0;
+        var backdrop = '#101114';
+        if (style) {
+            var parsed = parseFloat(style.borderTopLeftRadius);
+            if (isFinite(parsed)) radius = parsed;
+            if (style.backgroundColor) backdrop = style.backgroundColor;
+        }
+        return {
+            width: size.width,
+            height: size.height,
+            cornerRadius: radius,
+            backdropColor: backdrop,
+        };
+    }
+
     function notifyAppStatus(sessionId, status) {
         window.postMessage({ source: 'zephyr-terminal', tabId: sessionId, status: status }, location.origin);
     }
@@ -142,6 +164,8 @@
         view.error.textContent = error || '';
         view.show.disabled = phase === 'checking' || phase === 'connecting' || phase === 'closed' || phase === 'error';
         view.focus.disabled = view.show.disabled;
+        /* CAD only has a target once the wire is up. */
+        view.cad.disabled = phase !== 'connected';
         view.close.disabled = phase === 'checking' || phase === 'connecting' || phase === 'closed';
         view.retry.hidden = phase !== 'closed' && phase !== 'error' && phase !== 'disconnected';
         notifyAppStatus(view.sessionId, phase === 'connected' ? 'connected' : phase === 'error' ? 'error' : phase);
@@ -155,9 +179,17 @@
             setPanelState(view, phase, 'Negotiating the native RDP session...', '');
         } else if (phase === 'closed') {
             setPanelState(view, phase, 'The native RDP window is closed.', '');
-        } else {
+        } else if (phase === 'disconnected') {
+            /* An auth/negotiation failure after the broker approved the open
+             * lands here: the surface exists but the session never went live.
+             * Reconnect is a legitimate reaction, so the panel stays instead
+             * of blanking the workspace window. */
             var detail = latestEvent(result);
             setPanelState(view, 'disconnected', 'The native RDP session ended.', detail);
+        } else {
+            /* surface-detached or a phase this client does not know: do not
+             * claim the session is over; keep polling for the next snapshot. */
+            setPanelState(view, 'disconnected', 'The native RDP surface is unavailable.', '');
         }
     }
 
@@ -168,6 +200,16 @@
         button.textContent = label;
         return button;
     }
+
+    /* One panel action row ↔ main-end rdp.html topbar tool. The native session
+     * has no WASM canvas to embed, so the matching capability is a shell
+     * command on the owner-checked session rather than an in-page widget. */
+    var TOOL_BAR = [
+        { label: 'Focus', action: 'focus', icon: 'fit' },
+        { label: 'Ctrl+Alt+Del', action: 'cad', icon: 'security' },
+        { label: 'Reconnect', action: 'retry', icon: 'reconnect' },
+        { label: 'Close session', action: 'close', icon: 'disconnect', danger: true },
+    ];
 
     function createPanel(sessionId, connectionId, title) {
         var panel = document.createElement('section');
@@ -199,13 +241,15 @@
         actions.className = 'zephyr-one-rdp-actions';
         var show = createButton('Show window');
         var focus = createButton('Focus');
+        var cad = createButton('Ctrl+Alt+Del');
         var retry = createButton('Reconnect', 'zephyr-one-rdp-button zephyr-one-rdp-primary');
         var close = createButton('Close session', 'zephyr-one-rdp-button zephyr-one-rdp-danger');
         retry.hidden = true;
+        cad.disabled = true;
         show.disabled = true;
         focus.disabled = true;
         close.disabled = true;
-        actions.append(show, focus, retry, close);
+        actions.append(show, focus, cad, retry, close);
         content.append(eyebrow, heading, status, error, actions);
         panel.appendChild(content);
 
@@ -216,6 +260,7 @@
             error: error,
             show: show,
             focus: focus,
+            cad: cad,
             retry: retry,
             close: close,
             sessionId: sessionId,
@@ -274,13 +319,15 @@
                 throw new Error(caps && caps.reason || 'Native FreeRDP is unavailable in this build.');
             }
             setPanelState(view, 'connecting', 'Opening the native RDP session...', '');
-            var size = dimensions('auto', view.panel);
+            var geometry = geometryForOpen(view);
             return shellRequest('open', {
                 sessionId: view.sessionId,
                 connectionId: view.connectionId,
-                width: size.width,
-                height: size.height,
+                width: geometry.width,
+                height: geometry.height,
                 dpi: Math.max(72, Math.min(480, Math.round((window.devicePixelRatio || 1) * 96))),
+                cornerRadius: geometry.cornerRadius,
+                backdropColor: geometry.backdropColor,
                 title: view.title,
             }, 120000);
         }).then(function (result) {
@@ -308,6 +355,18 @@
                 updateFromSnapshot(view, result);
             }).catch(function (error) {
                 setPanelState(view, 'error', 'The operating system denied window focus.', error.message);
+            });
+        });
+        view.cad.addEventListener('click', function () {
+            view.cad.disabled = true;
+            shellRequest('input', {
+                sessionId: view.sessionId,
+                captureId: '',
+                control: 'ctrl_alt_del',
+            }).then(function (result) {
+                updateFromSnapshot(view, result);
+            }).catch(function (error) {
+                setPanelState(view, 'error', 'Unable to send Ctrl+Alt+Del.', error.message);
             });
         });
         view.retry.addEventListener('click', function () { openSession(view); });

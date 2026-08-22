@@ -344,6 +344,22 @@ impl SessionHandle {
         let _ = (flags, code);
     }
 
+    /// Send the secure-attention sequence (Ctrl+Alt+Del) as three scancode
+    /// pairs. This is a negotiation-layer control, not a text gesture, so it
+    /// does not travel on the capture-bound AI input path.
+    pub fn send_ctrl_alt_del(&self) {
+        /* RDP scancodes: 0x1D Ctrl, 0x38 Alt, 0x53 Del, all with KBDEXT. */
+        const KBDEXT: u16 = 0x0100;
+        const RELEASE: u16 = 0x8000;
+        const DOWN: u16 = 0;
+        self.send_scancode(DOWN | KBDEXT, 0x1D);
+        self.send_scancode(DOWN | KBDEXT, 0x38);
+        self.send_scancode(DOWN | KBDEXT, 0x53);
+        self.send_scancode(RELEASE | KBDEXT, 0x53);
+        self.send_scancode(RELEASE | KBDEXT, 0x38);
+        self.send_scancode(RELEASE | KBDEXT, 0x1D);
+    }
+
     /// Re-assert Caps/Num/Scroll lock state. Without this a session inherits
     /// whatever the server believed at connect time and the locks drift.
     pub fn send_sync(&self, toggle_flags: u32) {
