@@ -570,20 +570,18 @@ test("a relay credential is scoped to the one session that minted it", async () 
 });
 
 test("a session can be refreshed and then closed", async () => {
-  /* Uses direct-ephemeral deliberately: the lifecycle
-   * being proved -- refresh extends the same grant, close destroys it, and a
-   * closed id cannot be revived -- is mode independent. */
   const opened = await device("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
     method: "POST",
     body: JSON.stringify({
-      mode: "direct-ephemeral",
       clientSessionNonce: crypto.randomBytes(24).toString("base64url"),
       requestedChannels: ["terminal"],
       deviceKeyVersion: 1,
     }),
   });
   const openedBody = await opened.json();
-  assert.equal(opened.status, 200, "direct session failed: " + JSON.stringify(openedBody).slice(0, 400));
+  assert.equal(opened.status, 200, "session failed: " + JSON.stringify(openedBody).slice(0, 400));
+  assert.equal(openedBody.mode, "relay-strict");
+  assert.equal(openedBody.useEnvelope, undefined);
   const sessionId = openedBody.sessionId;
   assert.ok(sessionId);
 
@@ -607,102 +605,34 @@ test("a session can be refreshed and then closed", async () => {
   assert.equal(again.status, 410, "refreshing a closed session must not succeed");
 });
 
-test("a direct-ephemeral envelope opens once, for this device only", async () => {
+test("shared sessions never carry a use envelope", async () => {
   const nonce = crypto.randomBytes(24).toString("base64url");
   const res = await device("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
     method: "POST",
     body: JSON.stringify({
-      mode: "direct-ephemeral",
       clientSessionNonce: nonce,
       requestedChannels: ["terminal"],
       deviceKeyVersion: 1,
     }),
   });
   const body = await res.json();
-  assert.equal(res.status, 200, "direct session failed: " + JSON.stringify(body).slice(0, 400));
-
-  // Owner policy may force relay. Both outcomes are contract-legal, so branch
-  // rather than assuming: what must never happen is a secret without direct mode.
-  if (body.mode === "relay-strict") {
-    assert.equal(body.useEnvelope, undefined, "downgraded to relay, so no envelope may appear");
-    return;
-  }
-
-  assert.equal(body.mode, "direct-ephemeral");
-  const env = body.useEnvelope;
-  assert.ok(env, "direct-ephemeral must carry a use envelope");
-  assert.equal(env.v, 1);
-  assert.equal(env.alg, "ML-KEM-768+HKDF-SHA256+AES-256-GCM");
-  assert.equal(env.purpose, "ssh", "an SSH connection maps to the ssh purpose");
-  assert.equal(env.clientNonce, nonce, "the envelope must bind the nonce the device sent");
-  assert.equal(env.sessionId, body.sessionId);
-  assert.equal(env.resourceId, state.connectionId);
-
-  // Open it with the device private key and prove it is the real credential.
-  const mod = await import(pathToFileURL(path.join(repoRoot, "mobile-v1-crypto.js")).href);
-  const mv1 = mod.default || mod;
-  const aad = mv1.sharedUseAadBytes({
-    serverId: state.serverId,
-    userId: state.borrower.userId,
-    deviceId: state.deviceId,
-    sessionId: env.sessionId,
-    resourceId: env.resourceId,
-    resourceRevision: env.resourceRevision,
-    purpose: env.purpose,
-    expiresAt: env.expiresAt,
-    clientNonce: env.clientNonce,
-  });
-  assert.equal(Buffer.from(env.aad, "base64").toString("hex"), aad.toString("hex"),
-    "the server AAD must be reproducible by the device");
-
-  const opened = mv1.openEnvelope({
-    envelope: env,
-    privateKey: state.kem.secretKey,
-    expectedAad: aad,
-  });
-  const material = JSON.parse(opened.toString("utf8"));
-  assert.equal(material.password, "owner-only-secret",
-    "direct mode exists precisely so the native core gets the real credential");
-  /* endpoint is a nested object, matching the field list in
-   * SHARED_RESOURCE_RESIDENCY.md 3.2 ("endpoint, username, password/private
-   * key/passphrase, domain, proxy/jump chain, host/cert policy"): host, port
-   * and protocol only mean anything together, and grouping them keeps a bare
-   * `host` from being read as a complete target. */
-  assert.equal(material.endpoint.host, "10.7.7.7");
-  assert.equal(material.endpoint.port, 22);
-  assert.equal(material.endpoint.protocol, "SSH");
-  assert.equal(material.username, "ops");
-
-  // No control-plane secret may ride along.
-  for (const forbidden of ["clientToken", "aiProviderApiKey", "aiEnvValue", "serverDataKey", "ownerSid", "refreshCredential"]) {
-    assert.equal(material[forbidden], undefined, forbidden + " must never appear in a use envelope");
-  }
-
+  assert.equal(res.status, 200, "session failed: " + JSON.stringify(body).slice(0, 400));
+  assert.equal(body.mode, "relay-strict");
+  assert.equal(body.useEnvelope, undefined, "strict broker must not seal connect material");
+  assert.ok(body.relay);
+  assert.ok(!JSON.stringify(body).includes("owner-only-secret"));
   state.directSessionId = body.sessionId;
-  state.directNonce = nonce;
 });
 
-test("a consumed direct envelope is not re-downloadable", async () => {
-  if (!state.directSessionId) return; // owner policy forced relay; nothing to replay
-
-  // Re-issuing requires a *new* nonce: replaying the old one must not return the
-  // same ciphertext, or a captured response would be reusable.
-  const replay = await device("/api/mobile/v1/shared/sessions/" + state.directSessionId + "/refresh", {
-    method: "POST",
-    body: JSON.stringify({ clientSessionNonce: state.directNonce }),
-  });
-  assert.equal(replay.status, 409, "reusing a spent nonce must be refused");
-  assert.equal((await replay.json()).error.code, "shared_session_consumed");
-
-  const fresh = await device("/api/mobile/v1/shared/sessions/" + state.directSessionId + "/refresh", {
+test("a closed relay session cannot be refreshed", async () => {
+  if (!state.directSessionId) return;
+  const closed = await device("/api/mobile/v1/shared/sessions/" + state.directSessionId, { method: "DELETE" });
+  assert.equal(closed.status, 200);
+  const again = await device("/api/mobile/v1/shared/sessions/" + state.directSessionId + "/refresh", {
     method: "POST",
     body: JSON.stringify({ clientSessionNonce: crypto.randomBytes(24).toString("base64url") }),
   });
-  assert.equal(fresh.status, 200, "a fresh nonce must be able to re-seal within the grant");
-  const body = await fresh.json();
-  if (body.useEnvelope) {
-    assert.notEqual(body.useEnvelope.clientNonce, state.directNonce);
-  }
+  assert.equal(again.status, 410);
 });
 
 test("an unsupported channel is refused rather than silently dropped", async () => {
@@ -829,7 +759,6 @@ test("the shared plane refuses a row the caller owns", async () => {
   const session = await ownerDevice("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
     method: "POST",
     body: JSON.stringify({
-      mode: "direct-ephemeral",
       clientSessionNonce: crypto.randomBytes(24).toString("base64url"),
       requestedChannels: ["terminal"],
       deviceKeyVersion: 1,
@@ -839,7 +768,7 @@ test("the shared plane refuses a row the caller owns", async () => {
     "an owner must not mint a shared session against their own row");
 });
 
-test("direct-ephemeral needs owner policy, not merely use", async () => {
+test("use without extra grants still stays relay-strict and secret-free", async () => {
   /* Owner policy, not client preference, decides whether real connect
    * material reaches the device. A grant of discover/view/use only must come
    * back as relay-strict with no envelope.
@@ -858,7 +787,6 @@ test("direct-ephemeral needs owner policy, not merely use", async () => {
   const res = await device("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
     method: "POST",
     body: JSON.stringify({
-      mode: "direct-ephemeral",
       clientSessionNonce: crypto.randomBytes(24).toString("base64url"),
       requestedChannels: ["terminal"],
       deviceKeyVersion: 1,
@@ -893,7 +821,6 @@ test("a session is bound to the device that opened it", async () => {
   const opened = await device("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
     method: "POST",
     body: JSON.stringify({
-      mode: "direct-ephemeral",
       clientSessionNonce: crypto.randomBytes(24).toString("base64url"),
       requestedChannels: ["terminal"],
       deviceKeyVersion: 1,
