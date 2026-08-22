@@ -253,6 +253,7 @@ object DtoMappers {
             "fileBridge" to dto.features.fileBridge,
             "blobTransfer" to dto.features.blobTransfer,
             "nearRealtimeWake" to dto.features.nearRealtimeWake,
+            "linkEnrollment" to dto.features.linkEnrollment,
         ),
         wake = WakeTransportCapabilities(
             enabled = dto.wake.enabled,

@@ -16,8 +16,8 @@
     {
       "path": "contracts/registries/error-registry.json",
       "freezePath": "FREEZE/zephyr one/contracts/error-registry.json",
-      "sha256": "4f214324a86d6dedded80136826388dff45854337da65e1834ef6ca2f113873a",
-      "bytes": 11910
+      "sha256": "da370932ddc2e00967c7cb42b784e2bb0777619be90eab8888f4d95023ee3017",
+      "bytes": 12838
     },
     {
       "path": "contracts/registries/ai-capability-baseline.json",

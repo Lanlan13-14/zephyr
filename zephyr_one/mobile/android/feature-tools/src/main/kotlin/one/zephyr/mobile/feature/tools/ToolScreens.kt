@@ -358,6 +358,7 @@ fun FileSyncScreen(
     onOpenShares: () -> Unit = {},
     onOpenDiagnostics: () -> Unit = {},
     onUnbind: (() -> Unit)? = null,
+    onBind: (() -> Unit)? = null,
     onBack: () -> Unit,
 ) {
     val palette = ZephyrTheme.palette
@@ -392,7 +393,11 @@ fun FileSyncScreen(
                         Column(Modifier.weight(1f).padding(start = 14.dp)) {
                             Text(phase, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                             Text(
-                                if (localMode) "本机镜像" else "上次成功 · 下次自动 ${intervalLabel(settings.intervalSec)}",
+                                when {
+                                    localMode -> "未绑定主端 · 本机工作区可离线使用"
+                                    status.lastSuccessAt != null -> "上次成功 · 下次自动 ${intervalLabel(settings.intervalSec)}"
+                                    else -> "等待首次同步 · 下次自动 ${intervalLabel(settings.intervalSec)}"
+                                },
                                 color = palette.onFloatingSubtle,
                                 fontSize = 12.5.sp,
                             )
@@ -406,7 +411,10 @@ fun FileSyncScreen(
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "cursor ${if (status.pendingCount > 0) status.pendingCount else 0} · 0 B/s",
+                            buildString {
+                                append("待推送 ${status.pendingCount}")
+                                if (status.lastError != null) append(" · 上次失败")
+                            },
                             color = palette.onFloatingSubtle,
                             fontSize = 12.5.sp,
                             modifier = Modifier.weight(1f),
@@ -436,28 +444,28 @@ fun FileSyncScreen(
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "One 设备",
-                    subtitle = "Pixel 8 Pro（本机）· iPad Air",
+                    subtitle = if (localMode) "未绑定 · 只显示本机" else "本机与已绑定设备",
                     showChevron = true,
                     onClick = onOpenDevices,
                     leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Devices) },
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "Client Token",
-                    subtitle = "one-mobile-prod · lastUsed 2 分钟前",
+                    subtitle = if (localMode) "绑定后可管理旧 Agent Token，不是绑定前置" else "查看 / 旋转 / 删除需敏感验证",
                     showChevron = true,
                     onClick = onOpenTokens,
                     leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Ticket) },
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "本机共享目录",
-                    subtitle = "文件桥接 · 授权有效 · 只读",
+                    subtitle = "文件桥接授权，只在本机生效",
                     showChevron = true,
                     onClick = onOpenShares,
                     leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.File) },
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "诊断",
-                    subtitle = "幂等 / 墓碑 / secret envelope 正常",
+                    subtitle = status.lastError?.code ?: if (localMode) "本机模式 · 无同步会话" else "幂等 / 墓碑 / secret envelope",
                     showChevron = true,
                     showDivider = false,
                     onClick = onOpenDiagnostics,
@@ -484,6 +492,15 @@ fun FileSyncScreen(
                         onPolicy(if (settings.networkPolicy == NetworkPolicy.WIFI_ONLY) NetworkPolicy.ANY else NetworkPolicy.WIFI_ONLY)
                     },
                 )
+                if (onBind != null) {
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "绑定主端",
+                        subtitle = "系统浏览器批准设备公钥，不需要 Client Token",
+                        showChevron = true,
+                        showDivider = onUnbind == null,
+                        onClick = onBind,
+                    )
+                }
                 if (onUnbind != null) {
                     one.zephyr.mobile.ui.component.SettingsRow(
                         title = "解绑并删除本地镜像",

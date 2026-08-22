@@ -129,11 +129,11 @@ public struct ServerBindingView: View {
                 )
             case .loadingTokens:
                 progressSection(
-                    title: "正在读取 Client Token",
-                    detail: "正在获取当前账号可用的 Token 元数据。"
+                    title: "正在准备设备绑定",
+                    detail: "Client Token 不再是绑定前置。"
                 )
             case .tokenChoice:
-                tokenSection
+                deviceSection
             case .device:
                 deviceSection
             case .binding:
@@ -311,7 +311,7 @@ public struct ServerBindingView: View {
     private var deviceSection: some View {
         Section(
             header: Text("设备与同步"),
-            footer: Text("绑定由主端确认后才会保存。首次 bootstrap 完成前不会显示文件同步已开启。")
+            footer: Text("绑定由系统浏览器批准设备公钥后才会保存。Client Token 不是前置条件。首次 bootstrap 完成前不会显示文件同步已开启。")
         ) {
             TextField("设备名", text: $viewModel.draft.deviceName)
                 .focused($focusedField, equals: .deviceName)

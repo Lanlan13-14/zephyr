@@ -188,13 +188,13 @@ final class ServerBindingFormTests: XCTestCase {
         viewModel.submitSecondFactor(code: "123456")
         await viewModel.waitForCurrentOperation()
 
-        XCTAssertEqual(.tokenChoice, viewModel.stage)
-        XCTAssertEqual(["t-1"], viewModel.availableTokens.map(\.id))
+        XCTAssertEqual(.device, viewModel.stage)
+        XCTAssertTrue(viewModel.availableTokens.isEmpty)
         XCTAssertGreaterThan(viewModel.totpClearGeneration, totpGeneration)
         let beginLoginCount = await recorder.beginLoginCount
         let listTokenCount = await recorder.listTokenCount
         XCTAssertEqual(1, beginLoginCount)
-        XCTAssertEqual(1, listTokenCount)
+        XCTAssertEqual(0, listTokenCount)
     }
 
     func testPasswordChangeIsABlockingStateAndClearsSensitiveCopies() async {
@@ -223,7 +223,7 @@ final class ServerBindingFormTests: XCTestCase {
         viewModel.submitCredentials(password: "credential-value")
         await viewModel.waitForCurrentOperation()
 
-        XCTAssertEqual(.tokenChoice, viewModel.stage)
+        XCTAssertEqual(.device, viewModel.stage)
         XCTAssertTrue(viewModel.availableTokens.isEmpty)
     }
 
@@ -239,8 +239,6 @@ final class ServerBindingFormTests: XCTestCase {
         viewModel.draft.username = "andy"
         viewModel.submitCredentials(password: "credential-value")
         await viewModel.waitForCurrentOperation()
-        viewModel.draft.selectedTokenId = "t-1"
-        XCTAssertTrue(viewModel.continueFromTokenChoice())
         viewModel.draft.deviceName = "Andy's iPhone"
         viewModel.draft.intervalSec = 300
         let buffers = ServerBindingSensitiveTextBuffers(
@@ -259,7 +257,7 @@ final class ServerBindingFormTests: XCTestCase {
         XCTAssertEqual(1, bindCount)
         XCTAssertTrue(receivedNonemptySecret)
         let registration = await recorder.registration
-        XCTAssertEqual("t-1", registration?.tokenID)
+        XCTAssertEqual("link-v2-enrollment", registration?.tokenID)
         XCTAssertEqual("Andy's iPhone", registration?.deviceName)
         XCTAssertEqual(300, registration?.syncIntervalSeconds)
         XCTAssertGreaterThan(viewModel.sensitiveClearGeneration, generation)
@@ -284,7 +282,7 @@ final class ServerBindingFormTests: XCTestCase {
         XCTAssertEqual(1, initialCallCount)
         await gate.release(.ready(accountID: "user-1", username: "andy"))
         await viewModel.waitForCurrentOperation()
-        XCTAssertEqual(.tokenChoice, viewModel.stage)
+        XCTAssertEqual(.device, viewModel.stage)
     }
 
     func testFailureUsesFixedRedactedCopyAndRetryResumesTheFailedOperation() async {
@@ -305,7 +303,7 @@ final class ServerBindingFormTests: XCTestCase {
         viewModel.retry(password: "credential-value", totpCode: "")
         await viewModel.waitForCurrentOperation()
 
-        XCTAssertEqual(.tokenChoice, viewModel.stage)
+        XCTAssertEqual(.device, viewModel.stage)
         let retryCallCount = await retry.callCount
         XCTAssertEqual(2, retryCallCount)
     }
@@ -439,7 +437,7 @@ final class ServerBindingFormTests: XCTestCase {
         viewModel.draft.username = "andy"
         viewModel.submitCredentials(password: "credential-value")
         await viewModel.waitForCurrentOperation()
-        XCTAssertEqual(.tokenChoice, viewModel.stage)
+        XCTAssertEqual(.device, viewModel.stage)
         let generation = viewModel.sensitiveClearGeneration
 
         viewModel.onLocked()

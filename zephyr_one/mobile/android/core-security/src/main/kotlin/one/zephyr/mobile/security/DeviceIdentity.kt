@@ -78,7 +78,7 @@ class DeviceIdentity(
     fun hasKeys(): Boolean =
         blobs.readMigratingLegacyRef(refPrivate) != null &&
             blobs.readMigratingLegacyRef(refPublic) != null &&
-            keyStore().containsAlias(signingAlias)
+            signingEntry() != null
 
     fun encryptionPublicKey(): ByteArray =
         blobs.readMigratingLegacyRef(refPublic)
@@ -91,13 +91,26 @@ class DeviceIdentity(
     fun <T> withPrivateKey(block: (ByteArray) -> T): T {
         val blob = blobs.readMigratingLegacyRef(refPrivate)
             ?: error("device encryption key is missing; rebind is required")
-        val wrapKey = KeystoreMasterKey.getOrCreate(wrapAlias)
-        val privateKey = KeystoreMasterKey.open(wrapKey, blob, aad("mlkem-private"))
+        val privateKey = openPrivateKey(blob)
         return try {
             block(privateKey)
         } finally {
             privateKey.fill(0)
         }
+    }
+
+    /**
+     * Signs arbitrary enrollment/bind proof bytes with the device ES256 key.
+     * Returns standard Base64 P1363, matching `mobile-v1-proof.js`.
+     */
+    fun signPayload(payload: ByteArray): String {
+        val entry = signingEntry()
+            ?: error("device signing key is missing; rebind is required")
+        val der = Signature.getInstance("SHA256withECDSA").apply {
+            initSign(entry.privateKey)
+            update(payload)
+        }.sign()
+        return Base64Codec.encode(derEcdsaToP1363(der))
     }
 
     /**
@@ -125,7 +138,7 @@ class DeviceIdentity(
             append(serverNonce)
         }.toByteArray(Charsets.UTF_8)
 
-        val entry = keyStore().getEntry(signingAlias, null) as? KeyStore.PrivateKeyEntry
+        val entry = signingEntry()
             ?: error("device signing key is missing; rebind is required")
         val der = Signature.getInstance("SHA256withECDSA").apply {
             initSign(entry.privateKey)
@@ -149,12 +162,16 @@ class DeviceIdentity(
         blobs.deleteCurrentAndLegacyRef(refPublic)
         val store = keyStore()
         if (store.containsAlias(signingAlias)) store.deleteEntry(signingAlias)
+        val legacySigning = deviceIdentityLegacyAlias(ALIAS_SIGNING, scope)
+        if (store.containsAlias(legacySigning)) store.deleteEntry(legacySigning)
         KeystoreMasterKey.delete(wrapAlias)
+        KeystoreMasterKey.delete(deviceIdentityLegacyAlias(KeystoreMasterKey.ALIAS_DEVICE_KEY_WRAP, scope))
     }
 
     private fun signingJwk(): Map<String, String> {
         ensureSigningKey()
         val certificate = keyStore().getCertificate(signingAlias)
+            ?: keyStore().getCertificate(deviceIdentityLegacyAlias(ALIAS_SIGNING, scope))
             ?: error("device signing key is missing; rebind is required")
         val publicKey = certificate.publicKey as ECPublicKey
         val fieldBytes = (publicKey.params.curve.field.fieldSize + 7) / 8
@@ -168,7 +185,9 @@ class DeviceIdentity(
 
     private fun ensureSigningKey() {
         val store = keyStore()
-        if (store.containsAlias(signingAlias)) return
+        if (store.containsAlias(signingAlias)
+            || store.containsAlias(deviceIdentityLegacyAlias(ALIAS_SIGNING, scope))
+        ) return
         val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER)
         val builder = KeyGenParameterSpec.Builder(signingAlias, KeyProperties.PURPOSE_SIGN)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
@@ -197,9 +216,40 @@ class DeviceIdentity(
         }
     }
 
+    private fun signingEntry(): KeyStore.PrivateKeyEntry? {
+        val store = keyStore()
+        (store.getEntry(signingAlias, null) as? KeyStore.PrivateKeyEntry)?.let { return it }
+        return store.getEntry(deviceIdentityLegacyAlias(ALIAS_SIGNING, scope), null)
+            as? KeyStore.PrivateKeyEntry
+    }
+
+    private fun openPrivateKey(blob: ByteArray): ByteArray {
+        val attempts = listOf(
+            wrapAlias to aad("mlkem-private"),
+            wrapAlias to legacyAad("mlkem-private"),
+            deviceIdentityLegacyAlias(KeystoreMasterKey.ALIAS_DEVICE_KEY_WRAP, scope)
+                to legacyAad("mlkem-private"),
+        )
+        var last: Exception? = null
+        for ((alias, boundAad) in attempts) {
+            val key = wrapKeyIfPresent(alias) ?: continue
+            try {
+                return KeystoreMasterKey.open(key, blob, boundAad)
+            } catch (failure: Exception) {
+                last = failure
+            }
+        }
+        throw last ?: error("device encryption key is missing; rebind is required")
+    }
+
+    private fun wrapKeyIfPresent(alias: String): javax.crypto.SecretKey? {
+        val store = keyStore()
+        return (store.getEntry(alias, null) as? KeyStore.SecretKeyEntry)?.secretKey
+    }
+
     private fun isSigningHardwareBacked(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
-        val entry = keyStore().getEntry(signingAlias, null) as? KeyStore.PrivateKeyEntry ?: return false
+        val entry = signingEntry() ?: return false
         return runCatching {
             val factory = java.security.KeyFactory.getInstance(entry.privateKey.algorithm, PROVIDER)
             val info = factory.getKeySpec(entry.privateKey, android.security.keystore.KeyInfo::class.java)
@@ -210,6 +260,13 @@ class DeviceIdentity(
     private fun keyStore(): KeyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
 
     private fun aad(purpose: String): ByteArray =
+        (
+            AAD_PREFIX + "\u0000" + scope.serverId +
+                "\u0000" + scope.deviceId + "\u0000" + purpose
+            )
+            .toByteArray(Charsets.UTF_8)
+
+    private fun legacyAad(purpose: String): ByteArray =
         (
             AAD_PREFIX + "\u0000" + scope.serverId + "\u0000" + scope.userId +
                 "\u0000" + scope.deviceId + "\u0000" + purpose
@@ -262,12 +319,24 @@ internal fun SecretBlobStore.deleteCurrentAndLegacyRef(ref: SecretRef) {
 internal fun deviceIdentityAlias(base: String, scope: DeviceIdentity.Scope): String =
     base + "." + deviceIdentityScopeDigest(scope)
 
+internal fun deviceIdentityLegacyAlias(base: String, scope: DeviceIdentity.Scope): String =
+    base + "." + deviceIdentityLegacyScopeDigest(scope)
+
+/**
+ * Link v2 enrollment mints the device key before the account userId is known,
+ * so the alias is `serverId + deviceId`. A previous digest that also mixed in
+ * userId is still tried as a read fallback so a still-bound pre device can
+ * keep proving until the next rebind.
+ */
 private fun deviceIdentityScopeDigest(scope: DeviceIdentity.Scope): String =
+    digest16(scope.serverId + "\u0000" + scope.deviceId)
+
+private fun deviceIdentityLegacyScopeDigest(scope: DeviceIdentity.Scope): String =
+    digest16(scope.serverId + "\u0000" + scope.userId + "\u0000" + scope.deviceId)
+
+private fun digest16(material: String): String =
     MessageDigest.getInstance("SHA-256")
-        .digest(
-            (scope.serverId + "\u0000" + scope.userId + "\u0000" + scope.deviceId)
-                .toByteArray(Charsets.UTF_8),
-        )
+        .digest(material.toByteArray(Charsets.UTF_8))
         .take(16)
         .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
 

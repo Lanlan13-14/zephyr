@@ -701,6 +701,7 @@ class MobileV1Api {
                  * probe an endpoint that is deliberately not implemented. */
                 bidirectionalSync: true,
                 sharedResources: true,
+                linkEnrollment: true,
                 /* False, and deliberately not aspirational: the lease
                  * endpoint exists but refuses, because the device-hosted
                  * ZFT2 provider it would attach to is not implemented.

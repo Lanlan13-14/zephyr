@@ -2,7 +2,7 @@
   "generator": "mobile/tools/generate.mjs",
   "files": {
     "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/EntityRegistry.kt": "6696abd0ddeee4ac56a1a3bb0a1db9546cd9c0aa12ef2ac440721828fd049910",
-    "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/ErrorRegistry.kt": "adeb5a0e4e20fc9224652e9184ecd71007feb68360bdad135d4b641165505c7e",
+    "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/ErrorRegistry.kt": "4f9b9b43086c25b36a8d270e51ee2af2640324407e0f1e54b0f115c8e3734428",
     "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/MobileApiPaths.kt": "6d3bc3afdd087145a8b2da59d819bed1e16f7ab6da974619528fe71c036163d9",
     "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/SecretEnvelopeContract.kt": "6932158d97140f73d11815c0de174662354a7c4cde04a101f4fcfb917392e0db",
     "android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/SyncContract.kt": "d3233910376f2ee17903807a6eb708f146f91c7dd0d2839cf3e1ccb401d1b54a",
@@ -11,7 +11,7 @@
     "contracts/generated/sync-cases.json": "dcb0e789c64dd2a80a814074ce321c4395ca36cf418b26af7ec194ef00209b49",
     "contracts/generated/zft2-frames.json": "b3196a913adcf28e950b7e563c47e58c879fd316f7d509768de326f9f4839820",
     "ios/Sources/ZephyrContracts/Generated/EntityRegistry.swift": "d6a8ae5e97c7b97cc1503b37c58a287cc35f3b2c1b087890ba20a71419912cde",
-    "ios/Sources/ZephyrContracts/Generated/ErrorRegistry.swift": "126281ba33ea2e1615b9dcf416a4ea69134131f1c50bd76b5d42d76ae49b18f5",
+    "ios/Sources/ZephyrContracts/Generated/ErrorRegistry.swift": "4867e184d5dc4964d7cda4d1b6a040e400a66c39069a44b3f3a273b7f52d06da",
     "ios/Sources/ZephyrContracts/Generated/MobileApiPaths.swift": "e885b97b4533c4ee4eae8d8fab38596bfe53b2d15be4b1a793ab7fb1d3655741",
     "ios/Sources/ZephyrContracts/Generated/SecretEnvelopeContract.swift": "49baaa3f51cd8f9c974f4ef160f4c3a407b2d37086b08144c38b7b51eb1b33d0",
     "ios/Sources/ZephyrContracts/Generated/SyncContract.swift": "77391a0a333f3c8a5485eb24bb929d3f744dae69846fd14b10ce49b7946799e3",

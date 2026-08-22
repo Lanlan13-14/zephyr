@@ -213,6 +213,17 @@ private class FakeBindingMobileApi : BindingMobileApi {
         return bindResult
     }
 
+    override suspend fun createEnrollment(
+        request: one.zephyr.mobile.network.dto.LinkEnrollmentCreateRequestDto,
+    ) = failure()
+
+    override suspend fun enrollmentStatus(bindId: String, userCode: String) = failure()
+
+    override suspend fun consumeEnrollment(
+        bindId: String,
+        request: one.zephyr.mobile.network.dto.LinkEnrollmentConsumeRequestDto,
+    ) = failure()
+
     private companion object {
         fun failure(): ApiResult.Failure = ApiResult.Failure(MobileError.local("test_unconfigured", "unconfigured"))
     }

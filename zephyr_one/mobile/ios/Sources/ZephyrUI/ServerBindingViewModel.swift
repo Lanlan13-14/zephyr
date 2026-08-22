@@ -331,19 +331,11 @@ public final class ServerBindingViewModel: ObservableObject, LockSensitiveSink {
             stage = .credentials
             return
         }
-        guard let token = availableTokens.first(where: { $0.id == draft.selectedTokenId }) else {
-            issues = [
-                BindingFormIssue(field: "tokenId", message: ServerBindingDraft.msgTokenRequired),
-            ]
-            stage = .tokenChoice
-            return
-        }
-
         let registration: MobileBindingRegistration
         do {
             registration = try MobileBindingRegistration(
-                tokenID: token.id,
-                tokenName: token.name,
+                tokenID: "link-v2-enrollment",
+                tokenName: "Zephyr Link",
                 deviceName: draft.deviceName,
                 syncIntervalSeconds: draft.clampedIntervalSec
             )
@@ -443,27 +435,9 @@ public final class ServerBindingViewModel: ObservableObject, LockSensitiveSink {
         case .ready(let accountID, _):
             authenticatedAccountID = accountID
             if clearTotp { requestTotpClear() }
-            stage = .loadingTokens
-            do {
-                let tokens = try await driver.listTokens()
-                guard isCurrent(serial) else { return }
-                availableTokens = tokens
-                    .filter { $0.enabled && $0.ownerAccountID == accountID }
-                    .map {
-                        ClientToken(id: $0.id, ownerUserId: $0.ownerAccountID, name: $0.name)
-                    }
-                    .sorted {
-                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                    }
-                if let selected = draft.selectedTokenId,
-                   !availableTokens.contains(where: { $0.id == selected }) {
-                    draft.selectedTokenId = nil
-                }
-                _ = finishOperation(serial)
-                stage = .tokenChoice
-            } catch {
-                finishWithError(error, operation: .loadTokens, serial: serial)
-            }
+            availableTokens = []
+            _ = finishOperation(serial)
+            stage = .device
         }
     }
 

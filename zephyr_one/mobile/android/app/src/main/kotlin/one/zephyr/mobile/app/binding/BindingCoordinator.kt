@@ -94,6 +94,8 @@ data class DeviceBindingReply(
     val registryHash: String,
     val boundAt: Long,
     val instanceEpoch: Long,
+    val userId: String? = null,
+    val username: String? = null,
 ) {
     override fun toString(): String =
         "DeviceBindingReply(deviceId=$deviceId, deviceName=$deviceName, tokenId=$tokenId, " +
@@ -104,12 +106,15 @@ data class DeviceBindingReply(
 
 data class CompleteBindingRequest(
     val deviceName: String,
-    val tokenId: String,
-    val tokenName: String,
+    val tokenId: String = LINK_ENROLLMENT_TOKEN_ID,
+    val tokenName: String = LINK_ENROLLMENT_TOKEN_NAME,
     val automaticEnabled: Boolean,
     val intervalSec: Int,
     val networkPolicy: NetworkPolicy,
 )
+
+const val LINK_ENROLLMENT_TOKEN_ID = "link-v2-enrollment"
+const val LINK_ENROLLMENT_TOKEN_NAME = "Zephyr Link"
 
 /** Correct S02 seam. TOTP carries the login challenge's temp token and bind carries a header grant. */
 interface BindingGateway {
@@ -122,6 +127,26 @@ interface BindingGateway {
         targetIds: List<String>,
     ): ApiResult<SensitiveBindingGrant>
     suspend fun bind(command: DeviceBindingCommand, sensitiveGrant: CharArray): ApiResult<DeviceBindingReply>
+
+    suspend fun createEnrollment(
+        command: DeviceBindingCommand,
+    ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentCreateResponseDto> =
+        ApiResult.Failure(MobileError.local("unsupported_protocol_version", "this server does not advertise Link enrollment"))
+
+    suspend fun enrollmentStatus(
+        bindId: String,
+        userCode: String,
+    ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentStatusDto> =
+        ApiResult.Failure(MobileError.local("unsupported_protocol_version", "this server does not advertise Link enrollment"))
+
+    suspend fun consumeEnrollment(
+        bindId: String,
+        userCode: String,
+        enrollmentSecret: CharArray,
+        proof: String,
+        command: DeviceBindingCommand,
+    ): ApiResult<DeviceBindingReply> =
+        ApiResult.Failure(MobileError.local("unsupported_protocol_version", "this server does not advertise Link enrollment"))
 
     /** Clears the memory/SecretStore SID and any outstanding TOTP challenge. */
     fun clearAuthentication()
@@ -186,6 +211,7 @@ internal fun interface BindingGraphFactory {
 
 internal interface PendingDeviceIdentity {
     fun ensureKeys(): DeviceIdentity.PublicKeys
+    fun signPayload(payload: ByteArray): String = error("device signing is unavailable")
     fun wipe()
 }
 
@@ -487,6 +513,185 @@ class BindingCoordinator internal constructor(
         }
     }
 
+    internal data class PreparedEnrollment(
+        val profile: ServerProfile,
+        val gateway: BindingGateway,
+        val identity: PendingDeviceIdentity,
+        val command: DeviceBindingCommand,
+        val created: one.zephyr.mobile.network.dto.LinkEnrollmentCreateResponseDto,
+    )
+
+    internal suspend fun startEnrollment(
+        profile: ServerProfile,
+        deviceName: String,
+        intervalSec: Int,
+        networkPolicy: NetworkPolicy,
+    ): ApiResult<PreparedEnrollment> {
+        val gateway = try {
+            gatewayFactory.create(profile)
+        } catch (_: Exception) {
+            return ApiResult.Failure(
+                MobileError.local("server_unavailable", "binding client could not be created", retryable = true),
+            )
+        }
+        return mutex.withLock {
+            if (bindingIsBlockedByLocalCleanupLocked()) {
+                return@withLock ApiResult.Failure(localCleanupError())
+            }
+            storage.saveProfile(profile)
+            when (val capabilities = gateway.capabilities()) {
+                is ApiResult.Failure -> capabilities
+                is ApiResult.Success -> {
+                    if (!capabilities.value.feature("linkEnrollment")
+                        && !capabilities.value.features.containsKey("linkEnrollment")
+                    ) {
+                        // Older servers omit the flag; still try the endpoint and let 404 surface.
+                    }
+                    val deviceId = deviceIdFactory()
+                    val identity = identityFactory.create(profile.id, "pending", deviceId)
+                    val publicKeys = try {
+                        identity.ensureKeys()
+                    } catch (failure: Exception) {
+                        identity.wipe()
+                        return@withLock ApiResult.Failure(
+                            MobileError.local(
+                                "device_key_unavailable",
+                                failure.message ?: "device key generation failed",
+                            ),
+                        )
+                    }
+                    val command = DeviceBindingCommand(
+                        deviceId = deviceId,
+                        deviceName = deviceName,
+                        tokenId = LINK_ENROLLMENT_TOKEN_ID,
+                        publicKeys = publicKeys,
+                        syncIntervalSec = intervalSec,
+                    )
+                    when (val created = gateway.createEnrollment(command)) {
+                        is ApiResult.Failure -> {
+                            identity.wipe()
+                            created
+                        }
+                        is ApiResult.Success -> ApiResult.Success(
+                            PreparedEnrollment(profile, gateway, identity, command, created.value),
+                            created.requestId,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    internal suspend fun pollEnrollment(
+        prepared: PreparedEnrollment,
+    ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentStatusDto> =
+        prepared.gateway.enrollmentStatus(prepared.created.bindId, prepared.created.userCode)
+
+    internal suspend fun consumePreparedEnrollment(
+        prepared: PreparedEnrollment,
+        intervalSec: Int,
+        automaticEnabled: Boolean,
+        networkPolicy: NetworkPolicy,
+    ): BindingCompletionResult {
+        val secret = prepared.created.enrollmentSecret.toCharArray()
+        return try {
+            val payload = linkEnrollmentProofPayload(prepared)
+            val proof = try {
+                prepared.identity.signPayload(payload)
+            } catch (failure: Exception) {
+                prepared.identity.wipe()
+                return BindingCompletionResult.Failed(
+                    MobileError.local("device_key_unavailable", failure.message ?: "device proof failed"),
+                )
+            }
+            val reply = when (
+                val result = prepared.gateway.consumeEnrollment(
+                    bindId = prepared.created.bindId,
+                    userCode = prepared.created.userCode,
+                    enrollmentSecret = secret,
+                    proof = proof,
+                    command = prepared.command.copy(syncIntervalSec = intervalSec),
+                )
+            ) {
+                is ApiResult.Failure -> {
+                    if (result.error.code == "enrollment_not_approved") {
+                        return BindingCompletionResult.Failed(result.error)
+                    }
+                    prepared.identity.wipe()
+                    return BindingCompletionResult.Failed(result.error)
+                }
+                is ApiResult.Success -> result.value
+            }
+            if (reply.username.isNullOrBlank() || reply.userId.isNullOrBlank()) {
+                prepared.identity.wipe()
+                return BindingCompletionResult.Failed(
+                    MobileError.local("binding_identity_mismatch", "enrollment consume did not return the account"),
+                )
+            }
+            completeConsumedBinding(
+                profile = prepared.profile,
+                account = AuthenticatedBindingAccount(reply.userId!!, reply.username!!),
+                request = CompleteBindingRequest(
+                    deviceName = prepared.command.deviceName,
+                    automaticEnabled = automaticEnabled,
+                    intervalSec = intervalSec,
+                    networkPolicy = networkPolicy,
+                ),
+                identity = prepared.identity,
+                reply = reply,
+            )
+        } finally {
+            secret.fill('\u0000')
+        }
+    }
+
+    private fun linkEnrollmentProofPayload(prepared: PreparedEnrollment): ByteArray {
+        val created = prepared.created
+        val secretHash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(created.enrollmentSecret.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+        val userCode = created.userCode.uppercase().replace(Regex("[^A-Z0-9]"), "")
+        return listOf(
+            "zephyr-link-enrollment-v2",
+            created.bindId,
+            prepared.command.deviceId,
+            userCode,
+            created.sas,
+            secretHash,
+            created.serverId,
+        ).joinToString("\u0000").toByteArray(Charsets.UTF_8)
+    }
+
+    /**
+     * Persists a Link v2 enrollment that the device already consumed.
+     * No SID, password or Client Token is required on this path.
+     */
+    internal suspend fun completeConsumedBinding(
+        profile: ServerProfile,
+        account: AuthenticatedBindingAccount,
+        request: CompleteBindingRequest,
+        identity: PendingDeviceIdentity,
+        reply: DeviceBindingReply,
+    ): BindingCompletionResult {
+        val prepared = mutex.withLock {
+            persistConsumedBindingLocked(profile, account, request, identity, reply)
+        }
+        return if (prepared is CompletionPreparation.Finished) {
+            prepared.result
+        } else {
+            prepared as CompletionPreparation.Ready
+            val bootstrap = prepared.graph.bootstrapAfterBind()
+            val bootstrapSucceeded = bootstrap.lastOrNull()?.takeIf { it.complete }?.let { round ->
+                markBootstrapReadyIfCurrent(prepared.graph, prepared.binding, round.endState)
+            } ?: false
+            if (host.currentGraph() === prepared.graph) workersMayRun = true
+            BindingCompletionResult.Completed(
+                binding = prepared.binding,
+                bootstrapSucceeded = bootstrapSucceeded,
+            )
+        }
+    }
+
     private suspend fun prepareBindingLocked(
         request: CompleteBindingRequest,
         verificationSecret: CharArray,
@@ -571,10 +776,42 @@ class BindingCoordinator internal constructor(
             )
         }
 
+        return persistReplyLocked(pending.profile, pending.account, request, identity, reply)
+    }
+
+    private suspend fun persistConsumedBindingLocked(
+        profile: ServerProfile,
+        account: AuthenticatedBindingAccount,
+        request: CompleteBindingRequest,
+        identity: PendingDeviceIdentity,
+        reply: DeviceBindingReply,
+    ): CompletionPreparation {
+        if (bindingIsBlockedByLocalCleanupLocked()) {
+            identity.wipe()
+            return CompletionPreparation.Finished(BindingCompletionResult.Failed(localCleanupError()))
+        }
+        if (reply.deviceId.isBlank() || account.userId.isBlank() || account.username.isBlank()) {
+            identity.wipe()
+            return CompletionPreparation.Finished(
+                BindingCompletionResult.Failed(
+                    MobileError.local("binding_identity_mismatch", "enrollment consume returned an incomplete account"),
+                ),
+            )
+        }
+        return persistReplyLocked(profile, account, request, identity, reply)
+    }
+
+    private suspend fun persistReplyLocked(
+        profile: ServerProfile,
+        account: AuthenticatedBindingAccount,
+        request: CompleteBindingRequest,
+        identity: PendingDeviceIdentity,
+        reply: DeviceBindingReply,
+    ): CompletionPreparation {
         val binding = AccountBinding(
-            serverProfileId = pending.profile.id,
-            userId = pending.account.userId,
-            username = pending.account.username,
+            serverProfileId = profile.id,
+            userId = account.userId,
+            username = account.username,
             deviceId = reply.deviceId,
             deviceName = reply.deviceName,
             tokenId = reply.tokenId,
@@ -591,7 +828,8 @@ class BindingCoordinator internal constructor(
             networkPolicy = request.networkPolicy,
         )
 
-        val next = StoredBinding(binding, pending.profile, settings)
+        val next = StoredBinding(binding, profile, settings)
+        storage.saveProfile(profile)
         val previousBinding = host.currentGraph()
             ?.takeUnless { it.isDeviceLocal }
             ?.binding
@@ -1106,6 +1344,8 @@ class BindingCoordinator internal constructor(
         const val LOCAL_CLEANUP_PENDING_ERROR_CODE = "local_cleanup_pending"
         const val NUL = '\u0000'
         const val DEVICE_BIND_ACTION = "device.bind"
+        const val LINK_ENROLLMENT_TOKEN_ID = "link-v2-enrollment"
+        const val LINK_ENROLLMENT_TOKEN_NAME = "Zephyr Link"
     }
 }
 

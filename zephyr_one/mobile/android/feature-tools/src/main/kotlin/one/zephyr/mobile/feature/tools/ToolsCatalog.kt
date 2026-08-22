@@ -182,7 +182,7 @@ object ToolsCatalog {
         ToolSection.REMOTE_OPS -> listOf(ToolEntry.BATCH_EXEC)
         ToolSection.RESOURCES -> listOf(ToolEntry.PROXY, ToolEntry.SSH_KEY)
         ToolSection.AI -> listOf(ToolEntry.AI_WORKSPACE)
-        ToolSection.FILE_SYNC -> listOf(ToolEntry.FILE_SYNC, ToolEntry.CLIENT_TOKEN)
+        ToolSection.FILE_SYNC -> listOf(ToolEntry.FILE_SYNC)
         ToolSection.SERVER -> listOf(ToolEntry.SERVER_SETTINGS)
         ToolSection.ONE -> listOf(
             ToolEntry.APPEARANCE,
