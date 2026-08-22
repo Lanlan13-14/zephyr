@@ -21,7 +21,7 @@ class SshTerminalHostTest {
     @Test
     fun missingCredentialsNeverReachTheEngine() = runBlocking {
         val engine = RecordingEngine()
-        val host = SshTerminalHost(engine) { null }
+        val host = SshTerminalHost(engine, findConnection = { null })
         val outcome = host.open(
             TerminalOpenRequest(
                 sessionId = "s1",
@@ -39,7 +39,7 @@ class SshTerminalHostTest {
     @Test
     fun trustHostKeyForwardsTheRememberedAddress() = runBlocking {
         val engine = RecordingEngine()
-        val host = SshTerminalHost(engine) { null }
+        val host = SshTerminalHost(engine, findConnection = { null })
         val outcome = host.open(
             TerminalOpenRequest(
                 sessionId = "s1",
@@ -61,7 +61,7 @@ class SshTerminalHostTest {
     @Test
     fun trustHostKeyStillReachesTheEngineAfterTheRequestIsDropped() = runBlocking {
         val engine = RecordingEngine()
-        val host = SshTerminalHost(engine) { null }
+        val host = SshTerminalHost(engine, findConnection = { null })
         host.open(
             TerminalOpenRequest(
                 sessionId = "s1",
@@ -81,9 +81,61 @@ class SshTerminalHostTest {
     }
 
     @Test
+    fun aJumpRouteIsPassedToTheEngineWithPerHopCredentials() = runBlocking {
+        val engine = RecordingEngine()
+        val jump = one.zephyr.mobile.model.Connection(
+            id = "jump-1",
+            ownerUserId = "u1",
+            protocol = Protocol.SSH,
+            name = "bastion",
+            host = "bastion.internal",
+            port = 22,
+            username = "jump",
+        )
+        val target = jump.copy(id = "target-1", name = "prod", host = "10.0.0.5", username = "root")
+        val route = one.zephyr.mobile.protocol.ssh.SshRoute(
+            listOf(
+                one.zephyr.mobile.protocol.ssh.RouteHop.SshJump(
+                    host = jump.host,
+                    port = jump.port,
+                    username = jump.username,
+                    connectionId = jump.id,
+                ),
+                one.zephyr.mobile.protocol.ssh.RouteHop.Target(target.host, target.port),
+            ),
+        )
+        val hopAuth = one.zephyr.mobile.protocol.ssh.HopAuth(
+            username = "jump",
+            credential = one.zephyr.mobile.protocol.ssh.SshCredential.Password("hop-secret".toCharArray()),
+        )
+        val host = SshTerminalHost(
+            engine = engine,
+            findConnection = { id -> if (id == target.id) target else null },
+            routePlanner = { route },
+            hopAuthProvider = { mapOf(jump.id to hopAuth) },
+        )
+        host.open(
+            TerminalOpenRequest(
+                sessionId = "s1",
+                protocol = Protocol.SSH,
+                host = target.host,
+                port = target.port,
+                username = target.username,
+                connectionId = target.id,
+                password = "target-secret".toCharArray(),
+            ),
+        )
+        val seen = engine.lastRequest
+        requireNotNull(seen)
+        assertEquals(route, seen.route)
+        assertEquals(setOf(jump.id), seen.hopCredentials.keys)
+        assertEquals("root", seen.username)
+    }
+
+    @Test
     fun telnetStaysOnTheUnavailablePath() = runBlocking {
         val engine = RecordingEngine()
-        val host = SshTerminalHost(engine) { null }
+        val host = SshTerminalHost(engine, findConnection = { null })
         val outcome = host.open(
             TerminalOpenRequest(
                 sessionId = "s1",
@@ -105,9 +157,11 @@ class SshTerminalHostTest {
         var acceptedSession: String? = null
         var acceptedHost: String? = null
         var acceptedPort: Int? = null
+        var lastRequest: SshConnectRequest? = null
         override val isAvailable: Boolean = true
         override suspend fun connect(request: SshConnectRequest): SshConnectOutcome {
             connects += 1
+            lastRequest = request
             return SshConnectOutcome.Failed(one.zephyr.mobile.model.MobileError.local("unused", "unused"))
         }
         override fun output(sessionId: String): Flow<ByteArray> = emptyFlow()
