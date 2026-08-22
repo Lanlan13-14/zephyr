@@ -423,6 +423,12 @@ private fun BoundRoot(
             credentialsProvider = account::terminalCredentials,
         )
     }
+    val terminalHost = remember(account, sshEngine) {
+        SshTerminalHost(
+            engine = sshEngine,
+            findConnection = { id -> account.connections.find(id) },
+        )
+    }
     val managedHostKeyPrompt by managedSsh.prompt.collectAsState()
     val managedSftp = remember(managedSsh, sshEngine, account.sessions) {
         SshjSftpPort(managedSsh, sshEngine, account.sessions)
@@ -775,10 +781,7 @@ private fun BoundRoot(
                             connectionId = current.connectionId,
                             registry = account.sessions,
                             connections = account.connections,
-                            host = SshTerminalHost(
-                                engine = sshEngine,
-                                findConnection = { id -> account.connections.find(id) },
-                            ),
+                            host = terminalHost,
                             emulator = productionTerminalEmulator(
                                 onCopy = { text ->
                                     if (text.isNotEmpty()) {

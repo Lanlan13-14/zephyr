@@ -92,4 +92,39 @@ class AlertDialogLayoutTest {
         assertEquals(0xFF, (AlertDialogLayout.DARK_SHEET_ARGB ushr 24) and 0xFF)
         assertEquals(0xFF, (AlertDialogLayout.LIGHT_SHEET_ARGB ushr 24) and 0xFF)
     }
+
+    @Test
+    fun wrapContentDialogWindowIsForcedToTheScreen() {
+        assertEquals(780f, AlertDialogLayout.dialogWindowHeightDp(780f, 220f), 0.001f)
+        assertEquals(780f, AlertDialogLayout.dialogWindowHeightDp(780f, 780f), 0.001f)
+        assertEquals(800f, AlertDialogLayout.dialogWindowHeightDp(780f, 800f), 0.001f)
+        assertEquals(360f, AlertDialogLayout.forcedWindowWidthDp(360f), 0.001f)
+        assertEquals(780f, AlertDialogLayout.forcedWindowHeightDp(780f), 0.001f)
+        assertEquals(1f, AlertDialogLayout.forcedWindowHeightDp(0f), 0.001f)
+    }
+
+    @Test
+    fun cancelGroupStaysAboveTheNavigationBarOnAPhone() {
+        val body = 180f
+        val nav = 48f
+        // Screenshot: wrap-content window ≈ sheet height, cancel sits in the nav bar.
+        assertFalse(
+            AlertDialogLayout.cancelGroupOnScreen(
+                screenHeightDp = 780f,
+                measuredWindowHeightDp = 220f,
+                bodyHeightDp = body,
+                hasDismiss = true,
+                navigationBarDp = nav,
+            ),
+        )
+        assertTrue(
+            AlertDialogLayout.cancelGroupOnScreen(
+                screenHeightDp = 780f,
+                measuredWindowHeightDp = 780f,
+                bodyHeightDp = body,
+                hasDismiss = true,
+                navigationBarDp = nav,
+            ),
+        )
+    }
 }

@@ -19,14 +19,16 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -43,7 +45,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import kotlinx.coroutines.delay
 import one.zephyr.mobile.ui.theme.ProvideContentColor
@@ -238,9 +243,11 @@ class ZephyrToastHostState {
  * Confirmation that looks like the demo action sheet, not a Material dialog.
  * Kept as `AlertDialog` so existing call sites only change the import.
  *
- * The platform Dialog is WRAP_CONTENT. Stretching it to MATCH_PARENT and
- * measuring against the *window* (not the wrap height) is what keeps the
- * cancel group on screen for SSH / RDP / VNC host-key prompts.
+ * Compose Dialog reverts [Window.setLayout] to WRAP_CONTENT after every
+ * measure. A one-shot SideEffect therefore still leaves the cancel group
+ * sitting in the system navigation bar. The window is pinned MATCH_PARENT
+ * on every pre-draw, and the content is [requiredWidth]/[requiredHeight]
+ * to the configuration screen so even a wrap window is screen-sized.
  */
 @Composable
 fun AlertDialog(
@@ -262,22 +269,15 @@ fun AlertDialog(
     ) {
         val composeView = LocalView.current
         val configuration = LocalConfiguration.current
+        val screenWidthDp = configuration.screenWidthDp.toFloat()
         val screenHeightDp = configuration.screenHeightDp.toFloat()
-        SideEffect {
-            var parent = composeView.parent
-            while (parent != null) {
-                if (parent is DialogWindowProvider) {
-                    val window = parent.window
-                    window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    window.setBackgroundDrawableResource(android.R.color.transparent)
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                    break
-                }
-                parent = parent.parent
-            }
-        }
+        MatchParentDialogWindow(composeView)
+        // requiredWidth/requiredHeight pin the wrap-content Dialog to the
+        // configuration screen so the cancel group is measured against it.
         BoxWithConstraints(
             modifier = modifier
+                .requiredWidth(AlertDialogLayout.forcedWindowWidthDp(screenWidthDp).dp)
+                .requiredHeight(AlertDialogLayout.forcedWindowHeightDp(screenHeightDp).dp)
                 .fillMaxSize()
                 .background(palette.surfaces.scrim)
                 .imePadding()
@@ -288,14 +288,14 @@ fun AlertDialog(
                 ),
             contentAlignment = Alignment.BottomCenter,
         ) {
-            val windowHeightDp = maxOf(screenHeightDp, maxHeight.value)
+            val windowHeightDp = AlertDialogLayout.dialogWindowHeightDp(screenHeightDp, maxHeight.value)
             val availableHeight = AlertDialogLayout.availableHeightDp(windowHeightDp).dp
             Column(
                 Modifier
                     .fillMaxWidth()
                     .heightIn(max = availableHeight)
-                    .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
                     .navigationBarsPadding()
+                    .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
                     .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
             ) {
                 Column(
@@ -349,6 +349,73 @@ fun AlertDialog(
                         ProvideContentColor(palette.onBackground, dismissButton)
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Compose's DialogLayout writes WRAP_CONTENT back onto the window after
+ * measure. Re-apply MATCH_PARENT on every pre-draw so the cancel group is
+ * laid out against the real screen, not the wrap height of the sheet.
+ */
+@Composable
+private fun MatchParentDialogWindow(composeView: View) {
+    DisposableEffect(composeView) {
+        fun apply() {
+            var parent = composeView.parent
+            while (parent != null) {
+                if (parent is DialogWindowProvider) {
+                    val window = parent.window
+                    val metrics = composeView.resources.displayMetrics
+                    val screenW = metrics.widthPixels
+                    val screenH = metrics.heightPixels
+                    val params = window.attributes
+                    val tooSmall =
+                        params.width == ViewGroup.LayoutParams.WRAP_CONTENT ||
+                            params.height == ViewGroup.LayoutParams.WRAP_CONTENT ||
+                            (params.width > 0 && params.width < screenW) ||
+                            (params.height > 0 && params.height < screenH) ||
+                            params.x != 0 ||
+                            params.y != 0
+                    if (tooSmall) {
+                        params.width = screenW
+                        params.height = screenH
+                        params.gravity = Gravity.TOP or Gravity.START
+                        params.x = 0
+                        params.y = 0
+                        params.horizontalMargin = 0f
+                        params.verticalMargin = 0f
+                        window.attributes = params
+                        window.setLayout(screenW, screenH)
+                    }
+                    window.decorView.setPadding(0, 0, 0, 0)
+                    window.setBackgroundDrawableResource(android.R.color.transparent)
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                    break
+                }
+                parent = parent.parent
+            }
+        }
+        apply()
+        val observer = composeView.viewTreeObserver
+        val layoutListener = ViewTreeObserver.OnGlobalLayoutListener { apply() }
+        val preDrawListener = ViewTreeObserver.OnPreDrawListener {
+            apply()
+            true
+        }
+        val attachListener = object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = apply()
+            override fun onViewDetachedFromWindow(v: View) = Unit
+        }
+        observer.addOnGlobalLayoutListener(layoutListener)
+        observer.addOnPreDrawListener(preDrawListener)
+        composeView.addOnAttachStateChangeListener(attachListener)
+        onDispose {
+            composeView.removeOnAttachStateChangeListener(attachListener)
+            if (observer.isAlive) {
+                observer.removeOnGlobalLayoutListener(layoutListener)
+                observer.removeOnPreDrawListener(preDrawListener)
             }
         }
     }

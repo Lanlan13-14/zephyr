@@ -36,6 +36,38 @@ object AlertDialogLayout {
         minOf(windowHeightDp - EDGE_GUTTER_DP * 2f, MAX_SHEET_DP).coerceAtLeast(120f)
 
     /**
+     * Compose Dialog's wrap-content window reports a short [measuredHeightDp].
+     * The sheet must still be measured against the physical screen, otherwise
+     * the cancel group is laid out below the wrap window and clipped.
+     */
+    fun dialogWindowHeightDp(screenHeightDp: Float, measuredHeightDp: Float): Float =
+        maxOf(screenHeightDp, measuredHeightDp)
+
+    /** Forces wrap-content Dialog windows to occupy the real screen. */
+    fun forcedWindowWidthDp(screenWidthDp: Float): Float = screenWidthDp.coerceAtLeast(1f)
+
+    fun forcedWindowHeightDp(screenHeightDp: Float): Float = screenHeightDp.coerceAtLeast(1f)
+
+    /**
+     * True when the cancel group sits above the system navigation bar.
+     * Evaluates the *measured* Dialog window, not the forced screen height:
+     * a wrap-content window shorter than the screen is the screenshot, and
+     * must fail even if the sheet would fit a full-screen window.
+     */
+    fun cancelGroupOnScreen(
+        screenHeightDp: Float,
+        measuredWindowHeightDp: Float,
+        bodyHeightDp: Float,
+        hasDismiss: Boolean,
+        navigationBarDp: Float,
+    ): Boolean {
+        if (measuredWindowHeightDp + 0.01f < screenHeightDp) return false
+        val stacked = stackedHeightDp(bodyHeightDp, hasDismiss)
+        val bottomReserve = EDGE_GUTTER_DP + navigationBarDp
+        return stacked + bottomReserve <= measuredWindowHeightDp + 0.01f
+    }
+
+    /**
      * The sheet is fully visible only when it is shorter than the window and still has room
      * for the cancel group after the body has taken its share.
      */

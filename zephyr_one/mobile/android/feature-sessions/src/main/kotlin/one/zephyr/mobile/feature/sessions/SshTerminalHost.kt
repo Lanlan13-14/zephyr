@@ -24,7 +24,7 @@ class SshTerminalHost(
     private val findConnection: suspend (String) -> Connection?,
 ) : TerminalHost {
 
-    private val lastRequest = LinkedHashMap<String, TerminalOpenRequest>()
+    private val lastTarget = LinkedHashMap<String, RememberedTarget>()
     @Suppress("unused")
     private val connectionLookup = findConnection
 
@@ -35,7 +35,7 @@ class SshTerminalHost(
             request.wipe()
             return TerminalOpenOutcome.Failed(UnavailableTerminalHost.TELNET_NO_SOCKET)
         }
-        lastRequest[request.sessionId] = copyRequest(request)
+        lastTarget[request.sessionId] = RememberedTarget(request.host, request.port)
         val route = SshRoute(listOf(RouteHop.Target(request.host, request.port)))
         val credential = credentialOf(request) ?: run {
             request.wipe()
@@ -79,7 +79,7 @@ class SshTerminalHost(
     }
 
     override suspend fun close(sessionId: String) {
-        lastRequest.remove(sessionId)
+        lastTarget.remove(sessionId)
         engine.disconnect(sessionId)
     }
 
@@ -92,8 +92,8 @@ class SshTerminalHost(
     override fun execStream(sessionId: String, command: String) = engine.execStream(sessionId, command)
 
     override suspend fun trustHostKey(sessionId: String) {
-        val remembered = lastRequest[sessionId] ?: return
-        engine.acceptHostKey(sessionId, remembered.host, remembered.port)
+        val remembered = lastTarget[sessionId]
+        engine.acceptHostKey(sessionId, remembered?.host.orEmpty(), remembered?.port ?: 0)
     }
 
     private fun credentialOf(request: TerminalOpenRequest): SshCredential? {
@@ -114,9 +114,5 @@ class SshTerminalHost(
         return copyOf()
     }
 
-    private fun copyRequest(request: TerminalOpenRequest): TerminalOpenRequest = request.copy(
-        password = request.password?.copyOf(),
-        privateKey = request.privateKey?.copyOf(),
-        passphrase = request.passphrase?.copyOf(),
-    )
+    private data class RememberedTarget(val host: String, val port: Int)
 }
