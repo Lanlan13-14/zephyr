@@ -1,8 +1,8 @@
 package one.zephyr.mobile.protocol.ssh
 
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
-import java.util.Properties
 
 interface SshKnownHostsBook {
     fun find(host: String, port: Int): HostKey?
@@ -32,6 +32,12 @@ class MemorySshKnownHostsBook : SshKnownHostsBook {
     }
 }
 
+/**
+ * Line-oriented known_hosts file.
+ *
+ * An unescaped Properties line `host:port=...` splits on `:`. Line format
+ * avoids that: each record is `host:port algorithm base64`.
+ */
 class FileSshKnownHostsBook(private val file: File) : SshKnownHostsBook {
     private val lock = Any()
 
@@ -57,27 +63,30 @@ class FileSshKnownHostsBook(private val file: File) : SshKnownHostsBook {
     private fun load(): LinkedHashMap<String, HostKey> {
         val values = LinkedHashMap<String, HostKey>()
         if (!file.isFile) return values
-        val properties = Properties()
-        file.inputStream().use { properties.load(it) }
-        for ((rawKey, rawValue) in properties) {
-            val key = (rawKey as? String)?.trim().orEmpty()
-            val raw = (rawValue as? String)?.trim().orEmpty()
-            if (key.isNotEmpty() && raw.isNotEmpty()) {
-                val parsed = parseHostKey(raw)
-                if (parsed != null) values[key] = parsed
-            }
+        file.readLines().forEach { line ->
+            val parsed = parseLine(line) ?: return@forEach
+            values[parsed.first] = parsed.second
         }
         return values
     }
 
     private fun save(values: Map<String, HostKey>) {
         file.parentFile?.mkdirs()
-        val properties = Properties()
-        for ((key, value) in values) {
-            properties[key] = serializeHostKey(value)
+        val body = buildString {
+            append("# zephyr-one ssh known hosts\n")
+            for ((key, value) in values) {
+                append(key)
+                append(' ')
+                append(serializeHostKey(value))
+                append('\n')
+            }
         }
         val staging = File(file.parentFile, file.name + ".tmp")
-        staging.outputStream().use { properties.store(it, "Zephyr One SSH known hosts") }
+        FileOutputStream(staging).use { stream ->
+            stream.write(body.toByteArray(Charsets.UTF_8))
+            stream.flush()
+            stream.fd.sync()
+        }
         if (!staging.renameTo(file)) {
             staging.copyTo(file, overwrite = true)
             staging.delete()
@@ -97,6 +106,17 @@ class FileSshKnownHostsBook(private val file: File) : SshKnownHostsBook {
             val blob = decodeBase64(b64) ?: return null
             if (algo.isEmpty() || blob.isEmpty()) return null
             return HostKey(algorithm = algo, blob = blob)
+        }
+
+        fun parseLine(raw: String): Pair<String, HostKey>? {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) return null
+            val space = trimmed.indexOf(' ')
+            if (space <= 0 || space >= trimmed.length - 1) return null
+            val address = trimmed.substring(0, space).trim().lowercase(Locale.ROOT)
+            val key = parseHostKey(trimmed.substring(space + 1)) ?: return null
+            if (!address.contains(':')) return null
+            return address to key
         }
 
         private const val ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -140,8 +160,8 @@ class FileSshKnownHostsBook(private val file: File) : SshKnownHostsBook {
             val out = ArrayList<Byte>(s.length * 3 / 4)
             var index = 0
             while (index < s.length) {
-                val rem = s.length - index
-                if (rem >= 4) {
+                val remaining = s.length - index
+                if (remaining >= 4) {
                     val c0 = alphabet.indexOf(s[index]); if (c0 < 0) return null
                     val c1 = alphabet.indexOf(s[index + 1]); if (c1 < 0) return null
                     val c2 = alphabet.indexOf(s[index + 2]); if (c2 < 0) return null
@@ -151,7 +171,7 @@ class FileSshKnownHostsBook(private val file: File) : SshKnownHostsBook {
                     out.add(((chunk shr 8) and 0xFF).toByte())
                     out.add((chunk and 0xFF).toByte())
                     index += 4
-                } else if (rem == 3) {
+                } else if (remaining == 3) {
                     val c0 = alphabet.indexOf(s[index]); if (c0 < 0) return null
                     val c1 = alphabet.indexOf(s[index + 1]); if (c1 < 0) return null
                     val c2 = alphabet.indexOf(s[index + 2]); if (c2 < 0) return null
@@ -159,7 +179,7 @@ class FileSshKnownHostsBook(private val file: File) : SshKnownHostsBook {
                     out.add(((chunk shr 16) and 0xFF).toByte())
                     out.add(((chunk shr 8) and 0xFF).toByte())
                     index += 3
-                } else if (rem == 2) {
+                } else if (remaining == 2) {
                     val c0 = alphabet.indexOf(s[index]); if (c0 < 0) return null
                     val c1 = alphabet.indexOf(s[index + 1]); if (c1 < 0) return null
                     val chunk = (c0 shl 18) or (c1 shl 12)

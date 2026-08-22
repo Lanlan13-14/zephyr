@@ -99,7 +99,7 @@ class ManagedSshSessionPool(
                     if (promptState.value === prompt) promptState.value = null
                 }
                 if (!accepted) error("已取消主机指纹确认")
-                engine.acceptHostKey(sessionId, connection.host, connection.port)
+                engine.acceptHostKey(sessionId, connection.host, connection.port, outcome.presented)
                 outcome = engine.connect(request)
             }
             require(outcome is SshConnectOutcome.Connected) {

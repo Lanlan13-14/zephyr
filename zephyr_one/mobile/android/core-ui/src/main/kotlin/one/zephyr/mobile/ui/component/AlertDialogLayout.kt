@@ -17,6 +17,8 @@ object AlertDialogLayout {
     const val BODY_VERTICAL_PAD_DP = 8f
     const val FINGERPRINT_GROUP = 4
     const val FINGERPRINT_GROUPS_PER_LINE = 6
+    /** Above terminal chrome so the cancel group is never under Extra Keys. */
+    const val OVERLAY_Z = 40f
 
     /** Dark-scheme floating sheet, forced opaque so Extra Keys cannot bleed through. */
     val DARK_SHEET_ARGB: Int = 0xFF1A1E25.toInt()

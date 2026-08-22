@@ -117,6 +117,14 @@ class SshTerminalHostTest {
         override suspend fun resize(sessionId: String, cols: Int, rows: Int, widthPx: Int, heightPx: Int) = Unit
         override suspend fun disconnect(sessionId: String) = Unit
         override fun acceptHostKey(sessionId: String, host: String, port: Int) {
+            acceptHostKey(sessionId, host, port, null)
+        }
+        override fun acceptHostKey(
+            sessionId: String,
+            host: String,
+            port: Int,
+            key: one.zephyr.mobile.protocol.ssh.HostKey?,
+        ) {
             accepts += 1
             acceptedSession = sessionId
             acceptedHost = host

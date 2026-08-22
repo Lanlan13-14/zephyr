@@ -18,24 +18,22 @@ const alertStart = overlays.indexOf('fun AlertDialog(');
 const alert = overlays.slice(alertStart);
 
 test('alert dialog is bounded by the actual available window', () => {
-  assert.match(alert, /decorFitsSystemWindows = false/);
   assert.match(alert, /BoxWithConstraints/);
   assert.match(alert, /\.imePadding\(\)/);
-  assert.match(alert, /AlertDialogLayout\.availableHeightDp\(windowHeightDp\)/);
+  assert.match(alert, /AlertDialogLayout\.availableHeightDp\(maxHeight\.value\)/);
   assert.match(alert, /\.heightIn\(max = availableHeight\)/);
   assert.match(alert, /\.navigationBarsPadding\(\)/);
-  assert.match(alert, /window\.setLayout\(screenW, screenH\)/);
   assert.match(alert, /\.fillMaxSize\(\)/);
-  assert.match(alert, /DialogWindowProvider/);
-  assert.match(alert, /OnPreDrawListener/);
-  assert.match(alert, /OnGlobalLayoutListener/);
-  assert.match(alert, /\.requiredWidth\(AlertDialogLayout\.forcedWindowWidthDp\(screenWidthDp\)\.dp\)/);
-  assert.match(alert, /\.requiredHeight\(AlertDialogLayout\.forcedWindowHeightDp\(screenHeightDp\)\.dp\)/);
-  assert.match(alert, /AlertDialogLayout\.dialogWindowHeightDp\(screenHeightDp, maxHeight\.value\)/);
+  assert.match(alert, /BackHandler\(onBack = onDismissRequest\)/);
+  assert.match(alert, /\.zIndex\(AlertDialogLayout\.OVERLAY_Z\)/);
   assert.match(alert, /\.navigationBarsPadding\(\)[\s\S]*\.padding\(start = 10\.dp, end = 10\.dp, bottom = 10\.dp\)/);
   assert.match(layout, /fun availableHeightDp\(windowHeightDp: Float\)/);
-  assert.match(layout, /fun dialogWindowHeightDp/);
   assert.match(layout, /fun cancelGroupOnScreen/);
+  assert.match(layout, /OVERLAY_Z/);
+  assert.doesNotMatch(alert, /DialogProperties/);
+  assert.doesNotMatch(alert, /androidx\.compose\.ui\.window\.Dialog/);
+  assert.doesNotMatch(alert, /DialogWindowProvider/);
+  assert.doesNotMatch(alert, /Popup\(/);
   assert.doesNotMatch(alert, /val availableHeight = min\(maxHeight\.value - 20f, 640f\)/);
 });
 

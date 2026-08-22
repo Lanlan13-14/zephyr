@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -59,11 +60,11 @@ class SshjEngineHostKeyTest {
         val engine = SshjEngine(Dispatchers.Unconfined, FileSshKnownHostsBook(file))
         engine.rememberPendingForTest("s1", "192.168.1.10", 22, KEY_A)
 
-        engine.acceptHostKey("s1", "ignored.example", 2222)
+        engine.acceptHostKey("s1", "192.168.1.10", 22)
 
         val reloaded = FileSshKnownHostsBook(file)
         assertEquals(KEY_A, reloaded.find("192.168.1.10", 22))
-        assertNull(reloaded.find("ignored.example", 2222))
+        assertTrue(file.readText().contains("192.168.1.10:22 "))
     }
 
     @Test
@@ -76,5 +77,15 @@ class SshjEngineHostKeyTest {
         engine.acceptHostKey("s1", "host-1", 22)
 
         assertEquals(KEY_B, FileSshKnownHostsBook(file).find("host-1", 22))
+    }
+
+    @Test
+    fun acceptHostKeyWritesTheExplicitKeyWhenPendingIsGone() {
+        val book = MemorySshKnownHostsBook()
+        val engine = SshjEngine(Dispatchers.Unconfined, book)
+
+        engine.acceptHostKey("s1", "103.240.198.233", 22, KEY_ED25519)
+
+        assertEquals(KEY_ED25519, book.find("103.240.198.233", 22))
     }
 }

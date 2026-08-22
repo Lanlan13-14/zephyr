@@ -94,6 +94,11 @@ class AlertDialogLayoutTest {
     }
 
     @Test
+    fun overlaySitsAboveTerminalChrome() {
+        assertTrue(AlertDialogLayout.OVERLAY_Z > 1f)
+    }
+
+    @Test
     fun wrapContentDialogWindowIsForcedToTheScreen() {
         assertEquals(780f, AlertDialogLayout.dialogWindowHeightDp(780f, 220f), 0.001f)
         assertEquals(780f, AlertDialogLayout.dialogWindowHeightDp(780f, 780f), 0.001f)

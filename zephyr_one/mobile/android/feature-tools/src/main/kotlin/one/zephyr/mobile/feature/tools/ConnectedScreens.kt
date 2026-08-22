@@ -191,6 +191,7 @@ fun ClientTokenLiveRoute(
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "Client Token", onBack = onBack) {
             HeaderAddButton("新增 Token") {
@@ -203,8 +204,7 @@ fun ClientTokenLiveRoute(
                 modifier = Modifier.padding(ZephyrSpacing.lg),
                 color = ZephyrTheme.palette.onFloatingMuted,
             )
-            return
-        }
+        } else {
         val liveRows = rows.filter { it.deletedAt == null }
         LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 140.dp)) {
             item("tokens") {
@@ -262,6 +262,7 @@ fun ClientTokenLiveRoute(
                     modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 8.dp),
                 )
             }
+        }
         }
     }
 
@@ -327,6 +328,7 @@ fun ClientTokenLiveRoute(
             },
             dismissButton = { TextButton(onClick = viewModel::dismissReveal) { Text("关闭") } },
         )
+    }
     }
 }
 

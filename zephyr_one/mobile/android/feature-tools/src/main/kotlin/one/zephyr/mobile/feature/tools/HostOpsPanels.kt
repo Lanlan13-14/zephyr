@@ -138,7 +138,8 @@ fun HostMonitorPanel(
         }
     }
 
-    Column(modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -188,6 +189,7 @@ fun HostMonitorPanel(
             },
             dismissButton = { TextButton(onClick = { pendingKill = null }) { Text("取消") } },
         )
+    }
     }
 }
 
@@ -283,7 +285,8 @@ fun HostDockerPanel(
         }
     }
 
-    Column(modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -450,6 +453,7 @@ fun HostDockerPanel(
             },
             dismissButton = { TextButton(onClick = { confirmRestart = false }) { Text("取消") } },
         )
+    }
     }
 }
 

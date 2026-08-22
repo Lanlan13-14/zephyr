@@ -84,6 +84,7 @@ fun SessionListScreen(
     var confirmingBulkClose by remember { mutableStateOf(false) }
 
     PageStateScaffold(state = state, modifier = modifier) { content ->
+        Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             ListHeader(
                 selectionCount = selection.size,
@@ -154,6 +155,7 @@ fun SessionListScreen(
                     }
                 },
             )
+        }
         }
     }
 }

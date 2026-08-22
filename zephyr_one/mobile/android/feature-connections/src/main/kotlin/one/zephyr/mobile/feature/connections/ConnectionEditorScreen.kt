@@ -93,8 +93,9 @@ fun ConnectionEditorScreen(
 ) {
     var confirmDiscard by remember { mutableStateOf(false) }
 
+    Box(modifier.fillMaxSize()) {
     Column(
-        modifier
+        Modifier
             .fillMaxSize()
             .background(ZephyrTheme.palette.surfaces.background),
     ) {
@@ -167,6 +168,7 @@ fun ConnectionEditorScreen(
                 }
             },
         )
+    }
     }
 }
 
