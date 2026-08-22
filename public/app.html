@@ -338,6 +338,7 @@
                         <button class="settings-tab" data-settings="snippets" data-i18n="代码片段">代码片段</button>
                         <button class="settings-tab" data-settings="ai" data-i18n="AI 助理">AI 助理</button>
                         <button class="settings-tab" data-settings="agent" data-i18n="Zephyr Client">Zephyr Client</button>
+                        <button class="settings-tab force-hidden" id="linkSettingsTab" data-settings="link" data-i18n="文件同步">文件同步</button>
                         <button class="settings-tab" data-settings="data" data-i18n="数据管理">数据管理</button>
                         <button class="settings-tab" data-settings="appearance" data-i18n="个性化设置">个性化设置</button>
                         <button class="settings-tab" data-settings="mail" data-i18n="邮件通知">邮件通知</button>
@@ -749,6 +750,60 @@
                             <h2 data-i18n="下载客户端">下载客户端</h2>
                             <p class="muted" id="agentReleaseHint"><span data-i18n="镜像构建时自动解析最新">镜像构建时自动解析最新</span> <code>agent-v*</code> / <code>one-v*</code> Release。</p>
                             <p id="agentReleaseLine"><a class="muted-link" id="agentReleaseLink" href="https://github.com/Lanlan13-14/zephyr-ssh/releases" target="_blank" rel="noopener noreferrer" data-i18n="查看 Zephyr Client 发布页">查看 Zephyr Client 发布页</a></p>
+                        </div>
+                        <div class="settings-panel" id="settings-link">
+                            <h2 data-i18n="文件同步">文件同步</h2>
+                            <p class="muted" data-i18n="Zephyr Link 同步连接、笔记、密钥元数据等到本机。绑定后按间隔自动同步。">Zephyr Link 同步连接、笔记、密钥元数据等到本机。绑定后按间隔自动同步。</p>
+
+                            <div class="link-bind-status" id="linkBindStatus">
+                                <p class="empty-state" data-i18n="未绑定">未绑定</p>
+                            </div>
+
+                            <div class="link-sync-settings" id="linkSyncSettings" style="display:none">
+                                <h3 data-i18n="同步设置">同步设置</h3>
+                                <label class="z-check">
+                                    <input type="checkbox" id="linkAutoSyncToggle" />
+                                    <span data-i18n="自动同步">自动同步</span>
+                                </label>
+                                <div class="form-group">
+                                    <label data-i18n="同步间隔">同步间隔</label>
+                                    <select id="linkIntervalSelect">
+                                        <option value="300">5 分钟</option>
+                                        <option value="900">15 分钟</option>
+                                        <option value="1800">30 分钟</option>
+                                        <option value="3600">1 小时</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label data-i18n="网络策略">网络策略</label>
+                                    <select id="linkNetworkPolicySelect">
+                                        <option value="any" data-i18n="任何网络">任何网络</option>
+                                        <option value="wifiOnly" data-i18n="仅 Wi-Fi">仅 Wi-Fi</option>
+                                    </select>
+                                </div>
+                                <button type="button" class="z-btn z-btn-primary" id="linkSyncNowBtn" data-i18n="立即同步">立即同步</button>
+                                <p class="field-hint" id="linkSyncStatus" role="status" aria-live="polite"></p>
+                            </div>
+
+                            <div class="link-devices" id="linkDevices" style="display:none">
+                                <h3 data-i18n="设备">设备</h3>
+                                <div class="link-device-list" id="linkDeviceList"></div>
+                            </div>
+
+                            <div class="link-shares" id="linkShares" style="display:none">
+                                <h3 data-i18n="共享">共享</h3>
+                                <div class="link-share-list" id="linkShareList"></div>
+                            </div>
+
+                            <div class="link-conflicts" id="linkConflicts" style="display:none">
+                                <h3 data-i18n="冲突">冲突</h3>
+                                <div class="link-conflict-list" id="linkConflictList"></div>
+                            </div>
+
+                            <div class="link-diagnostics" id="linkDiagnostics" style="display:none">
+                                <h3 data-i18n="诊断">诊断</h3>
+                                <p class="field-hint" id="linkDiagnosticsText"></p>
+                            </div>
                         </div>
                         <div class="settings-panel" id="settings-data">
                             <div class="data-settings-stack">

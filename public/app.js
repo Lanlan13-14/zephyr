@@ -13960,6 +13960,9 @@ function initSettingsVisibility() {
     document.getElementById('platformSecuritySettings')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearLoginEventsBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearActivityBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
+    const isOneMode = typeof window !== 'undefined' && !!window.__zephyrOneUnlock;
+    document.getElementById('linkSettingsTab')?.classList.toggle('force-hidden', !isOneMode);
+    document.getElementById('settings-link')?.classList.toggle('force-hidden', !isOneMode);
     const title = document.getElementById('loginEventsTitle');
     if (title) title.textContent = isSuperAdmin ? t('全部登录事件') : t('我的登录记录');
     const activeSettingsTab = document.querySelector('.settings-tab.active');
@@ -13984,6 +13987,69 @@ async function loadAdminUsers() {
         const data = await api('/api/admin/users');
         renderAdminUsers(data.users || []);
     } catch (err) {
+        console.error('loadAdminUsers failed', err);
+    }
+}
+
+async function initLinkPanel() {
+    const panel = document.getElementById('settings-link');
+    if (!panel) return;
+    const isOneMode = typeof window !== 'undefined' && !!window.__zephyrOneUnlock;
+    if (!isOneMode) return;
+
+    const bindStatus = document.getElementById('linkBindStatus');
+    const syncSettings = document.getElementById('linkSyncSettings');
+    const devices = document.getElementById('linkDevices');
+    const shares = document.getElementById('linkShares');
+    const conflicts = document.getElementById('linkConflicts');
+    const diagnostics = document.getElementById('linkDiagnostics');
+
+    async function refreshLinkState() {
+        try {
+            const state = await api('/api/link/v2/state');
+            if (state.bound) {
+                bindStatus.innerHTML = `<p class="field-hint">${t('已绑定 {user}', { user: state.username || state.userId || '' })}</p>`;
+                syncSettings.style.display = '';
+                devices.style.display = '';
+                shares.style.display = '';
+                conflicts.style.display = '';
+                diagnostics.style.display = '';
+            } else {
+                bindStatus.innerHTML = `<p class="empty-state">${t('未绑定')}</p><button type="button" class="z-btn z-btn-primary" id="linkBindBtn">${t('绑定主端')}</button>`;
+                syncSettings.style.display = 'none';
+                devices.style.display = 'none';
+                shares.style.display = 'none';
+                conflicts.style.display = 'none';
+                diagnostics.style.display = 'none';
+                document.getElementById('linkBindBtn')?.addEventListener('click', startBind);
+            }
+        } catch (err) {
+            bindStatus.innerHTML = `<p class="gate-error">${t('加载失败：{message}', { message: err?.message || String(err) })}</p>`;
+        }
+    }
+
+    async function startBind() {
+        try {
+            const result = await api('/api/link/v2/enrollments', { method: 'POST' });
+            if (result.verificationPath) {
+                window.open(result.verificationPath, '_blank');
+            }
+        } catch (err) {
+            toast(t('绑定失败：{message}', { message: err?.message || String(err) }));
+        }
+    }
+
+    document.getElementById('linkSyncNowBtn')?.addEventListener('click', async () => {
+        try {
+            await api('/api/link/v2/sync', { method: 'POST' });
+            toast(t('同步已触发'));
+        } catch (err) {
+            toast(t('同步失败：{message}', { message: err?.message || String(err) }));
+        }
+    });
+
+    await refreshLinkState();
+}
         panel.classList.add('force-hidden');
     }
 }
@@ -14441,6 +14507,7 @@ async function init() {
         bindEvents();
         bindDeepLinkChannel();
         initSettingsVisibility();
+        initLinkPanel().catch((err) => console.warn('[link] init failed', err));
         document.documentElement.dataset.appBindEvents = 'done';
         const backgroundLoads = Promise.allSettled([
             loadNetwork(),
