@@ -36,7 +36,12 @@ class ManagedSshSessionPool(
     private val engine: SshEngine,
     private val connectionProvider: suspend (String) -> Connection?,
     private val credentialsProvider: suspend (Connection) -> TerminalCredentials,
+    private val routePlanner: RoutePlanner = RoutePlanner { null },
 ) {
+    fun interface RoutePlanner {
+        suspend fun plan(connection: Connection): SshRoute?
+    }
+
     private data class Live(val sessionId: String, var references: Int)
 
     private val locks = ConcurrentHashMap<String, Mutex>()
@@ -73,9 +78,15 @@ class ManagedSshSessionPool(
                     SshCredential.Password(password.copyOf())
                 else -> error("连接没有可用的 SSH 凭据")
             }
+            /* Route resolution is a configuration check, not a dial: a proxy or
+             * jump chain that does not resolve is a fixable setup error, and the
+             * planner names which field to fix. Only after it succeeds does a
+             * socket open. */
+            val route = routePlanner.plan(connection)
+                ?: SshRoute(listOf(RouteHop.Target(connection.host, connection.port)))
             val request = SshConnectRequest(
                 sessionId = sessionId,
-                route = SshRoute(listOf(RouteHop.Target(connection.host, connection.port))),
+                route = route,
                 username = connection.username,
                 credential = credential,
                 hostKeyPolicy = HostKeyPolicy.PROMPT_UNKNOWN_BLOCK_CHANGED,

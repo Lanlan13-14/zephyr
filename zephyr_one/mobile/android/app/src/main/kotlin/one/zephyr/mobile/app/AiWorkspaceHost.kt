@@ -44,6 +44,7 @@ internal fun BoundAiWorkspace(
             engine = account.appContainer().sshEngine,
             connectionProvider = account.connections::find,
             credentialsProvider = account::terminalCredentials,
+            routePlanner = accountRoutePlanner(account),
         )
         val exec = LiveSshExecPort(account.appContainer().sshEngine, account.sessions, managed)
         val host = AndroidAiPlatformHost(account, exec, account.localAiWorkspace)

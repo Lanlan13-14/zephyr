@@ -235,6 +235,38 @@ class SshRoutePlannerTest {
     }
 
     @Test
+    fun `a bare connection id resolves as a jump hop like the main end`() {
+        /* Main-end resolveRoutePlan: jumpHostIds entries that name no jumpHost
+         * resource are treated as connection ids directly. Mobile used to reject
+         * every such entry as dependency_missing, which is why a route saved on
+         * the server read as "not configured" on the phone. */
+        val via = connection(id = "bastion", host = "bastion.corp", port = 2222, username = "ops")
+        val route = (plan(
+            connection(mode = ConnectionMode.JUMP, jumpHostIds = listOf("bastion")),
+            connections = mapOf("bastion" to via),
+        ) as RoutePlanResult.Planned).route
+
+        assertEquals(
+            listOf(
+                RouteHop.SshJump("bastion.corp", 2222, "ops", "bastion"),
+                RouteHop.Target("10.0.0.5", 22),
+            ),
+            route.hops,
+        )
+    }
+
+    @Test
+    fun `a non-SSH connection cannot be a jump hop`() {
+        val via = connection(id = "desktop", host = "rdp.corp").copy(protocol = one.zephyr.mobile.model.Protocol.RDP)
+        val rejected = plan(
+            connection(mode = ConnectionMode.JUMP, jumpHostIds = listOf("desktop")),
+            connections = mapOf("desktop" to via),
+        ) as RoutePlanResult.Rejected
+
+        assertEquals("jump_protocol_unsupported", rejected.code)
+    }
+
+    @Test
     fun `the target is always the final hop`() {
         val (ids, jumps, vias) = jumpChain(3)
         val jumped = (

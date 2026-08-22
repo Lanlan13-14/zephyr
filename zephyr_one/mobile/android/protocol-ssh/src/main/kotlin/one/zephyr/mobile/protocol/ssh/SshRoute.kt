@@ -3,6 +3,7 @@ package one.zephyr.mobile.protocol.ssh
 import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.ConnectionMode
 import one.zephyr.mobile.model.JumpHost
+import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.Proxy
 import one.zephyr.mobile.model.ProxyType
 
@@ -93,15 +94,25 @@ object SshRoutePlanner {
                 // socket budget is gone, so the whole chain is checked for repeats up front.
                 val seen = mutableSetOf(connection.id)
                 for (jumpId in connection.jumpHostIds) {
+                    /* Main-end resolveRoutePlan semantics: a stored jump id names a jumpHost
+                     * resource whose connectionId is the hop; when no such resource exists the
+                     * id *is* the connection id. Rejecting a bare connection id here is what made
+                     * every jump route configured on the server read as "not configured" on
+                     * mobile. */
                     val jump = jumpHosts[jumpId]
-                        ?: return RoutePlanResult.Rejected("dependency_missing", "Jump host " + jumpId + " is unavailable")
-                    val via = connections[jump.connectionId]
+                    val via = connections[jump?.connectionId ?: jumpId]
                         ?: return RoutePlanResult.Rejected(
                             "dependency_missing",
                             "Jump host " + jumpId + " points at a missing connection",
                         )
                     if (!seen.add(via.id)) {
                         return RoutePlanResult.Rejected("jump_cycle", "Jump chain revisits " + via.id)
+                    }
+                    if (via.protocol != Protocol.SSH) {
+                        return RoutePlanResult.Rejected(
+                            "jump_protocol_unsupported",
+                            "Jump host " + (via.name.ifBlank { via.host }) + " is not SSH",
+                        )
                     }
                     if (via.host.isBlank()) {
                         return RoutePlanResult.Rejected("invalid_host", "Jump host " + jumpId + " has no host")

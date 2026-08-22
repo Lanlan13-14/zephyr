@@ -122,6 +122,8 @@ import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SyncStatus
 import one.zephyr.mobile.model.SyncState
 import one.zephyr.mobile.model.Snippet
+import one.zephyr.mobile.protocol.ssh.RoutePlanResult
+import one.zephyr.mobile.protocol.ssh.SshRoutePlanner
 import one.zephyr.mobile.security.AuthResult
 import one.zephyr.mobile.security.UnlockPresentation
 import one.zephyr.mobile.data.session.SessionExecution
@@ -421,6 +423,7 @@ private fun BoundRoot(
             engine = sshEngine,
             connectionProvider = account.connections::find,
             credentialsProvider = account::terminalCredentials,
+            routePlanner = accountRoutePlanner(account),
         )
     }
     val terminalHost = remember(account, sshEngine) {
@@ -560,7 +563,10 @@ private fun BoundRoot(
                         initialProtocol = current.protocol,
                         newIdFactory = { UUID.randomUUID().toString() },
                         tester = ProtocolConnectionTester(
-                            ssh = DirectSshConnectionTester(appContainer.sshEngine),
+                            ssh = DirectSshConnectionTester(
+                                engine = appContainer.sshEngine,
+                                routePlanner = { connection -> accountRoutePlanner(account).plan(connection) },
+                            ),
                             fallback = TcpReachabilityTester(),
                         ),
                         testCredentials = { connection, draft -> account.connectionTestCredentials(connection, draft) },
@@ -1651,6 +1657,42 @@ private fun BatchExecutionViewModel.dispatch(intent: BatchIntent) {
  * Prefers the ref the mirror recorded and falls back to the conventional field ref, because a row
  * written before the ref was persisted still has its secret under the derived name.
  */
+/**
+ * Resolves the stored proxy/jump settings of a connection into the route the
+ * dialer will actually take.
+ *
+ * Mirrors the main end's resolveRoutePlan: a jumpHostIds entry that names a
+ * jumpHost resource follows its connectionId, and one that names no resource
+ * is itself a connection id. Rejections are configuration errors the user can
+ * fix, never a connect timeout.
+ */
+internal fun accountRoutePlanner(account: AccountContainer): ManagedSshSessionPool.RoutePlanner =
+    ManagedSshSessionPool.RoutePlanner { connection ->
+        when (val result = SshRoutePlanner.plan(
+            connection = connection,
+            proxies = buildMap {
+                connection.proxyId?.let { id ->
+                    account.resources.findProxy(id)?.let { put(id, it) }
+                }
+            },
+            jumpHosts = buildMap {
+                connection.jumpHostIds.forEach { id ->
+                    account.resources.findJumpHost(id)?.let { put(id, it) }
+                }
+            },
+            connections = buildMap {
+                connection.jumpHostIds.forEach { id ->
+                    val resource = account.resources.findJumpHost(id)
+                    val viaId = resource?.connectionId ?: id
+                    account.connections.find(viaId)?.let { put(viaId, it) }
+                }
+            },
+        )) {
+            is RoutePlanResult.Planned -> result.route
+            is RoutePlanResult.Rejected -> error(result.code + ": " + result.detail)
+        }
+    }
+
 internal fun AccountContainer.passwordChars(connection: Connection): CharArray? {
     val ref = secretRefForPresence(
         presence = connection.password,
