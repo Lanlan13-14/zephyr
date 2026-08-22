@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import one.zephyr.mobile.ui.component.ActionSheet
+import one.zephyr.mobile.ui.component.ActionSheetGroup
+import one.zephyr.mobile.ui.component.ActionSheetItem
 import one.zephyr.mobile.ui.component.AlertDialog
 import one.zephyr.mobile.ui.component.AssistChip
 import one.zephyr.mobile.ui.component.Button
@@ -111,6 +114,7 @@ fun ConnectionEditorScreen(
         )
 
         PageStateScaffold(state = state, modifier = Modifier.fillMaxSize()) { ui ->
+            var pickingJump by remember { mutableStateOf(false) }
             Box(Modifier.fillMaxSize()) {
                 Column(
                     modifier = Modifier
@@ -124,7 +128,7 @@ fun ConnectionEditorScreen(
                             when (section) {
                                 EditorSection.BASIC -> BasicSection(ui, onIntent)
                                 EditorSection.AUTH -> AuthSection(ui, onIntent)
-                                EditorSection.ROUTE -> RouteSection(ui, onIntent)
+                                EditorSection.ROUTE -> RouteSection(ui, onIntent, onPickJump = { pickingJump = true })
                                 EditorSection.RDP_CHANNELS -> RdpChannelSection(ui, onIntent)
                                 EditorSection.RDP_DISPLAY -> RdpDisplaySection(ui, onIntent)
                                 EditorSection.FILE_SYNC -> FileSyncSection(ui, onIntent)
@@ -145,6 +149,15 @@ fun ConnectionEditorScreen(
                 ) {
                     FixedActions(ui = ui, onIntent = onIntent)
                 }
+                JumpHostPickerSheet(
+                    visible = pickingJump,
+                    ui = ui,
+                    onDismiss = { pickingJump = false },
+                    onPick = { id ->
+                        pickingJump = false
+                        onIntent(EditorIntent.JumpAdded(id))
+                    },
+                )
             }
         }
     }
@@ -345,16 +358,16 @@ private fun AuthSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) ->
 }
 
 @Composable
-private fun RouteSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -> Unit) {
+private fun RouteSection(
+    ui: ConnectionEditorUiState,
+    onIntent: (EditorIntent) -> Unit,
+    onPickJump: () -> Unit,
+) {
     val draft = ui.draft
     val mode = draft.current.connectionMode
     SettingsRow(
         title = "方式",
-        value = when (mode) {
-            ConnectionMode.DIRECT -> modeLabel(mode)
-            ConnectionMode.PROXY -> modeLabel(mode)
-            ConnectionMode.JUMP -> "JumpHost · ${draft.current.jumpHostIds.size} 级"
-        },
+        value = modeLabel(mode),
         showChevron = true,
         showDivider = mode != ConnectionMode.DIRECT,
         onClick = {
@@ -377,94 +390,134 @@ private fun RouteSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
             )
         }
 
-        ConnectionMode.JUMP -> JumpChainEditor(ui, onIntent)
+        ConnectionMode.JUMP -> JumpChainEditor(ui, onIntent, onPickJump)
     }
 }
 
 /**
- * Ordered jump chain.
+ * Ordered jump chain, rendered entirely inside the GroupCard.
  *
- * Reordering uses explicit up/down buttons rather than a drag handle: the chain is at most 8 rows,
- * order is semantically load-bearing, and buttons carry accessibility labels a drag gesture cannot
- * (SCREEN_CATALOG.md 26).
+ * The caption used to sit outside the card and was clipped by GroupCard's
+ * rounded clip. The add control used a DropdownMenu inside that same clipped
+ * scrolling card, so it either never appeared or could not be tapped. Both
+ * rows are SettingsRow now; picking a hop opens a full-screen ActionSheet
+ * above the card.
  */
 @Composable
-private fun JumpChainEditor(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -> Unit) {
+private fun JumpChainEditor(
+    ui: ConnectionEditorUiState,
+    onIntent: (EditorIntent) -> Unit,
+    onPickJump: () -> Unit,
+) {
     val chain = ui.draft.current.jumpHostIds
-    /* Labels prefer the JumpHost resource name when the stored id is a resource
-     * id, otherwise the SSH connection's own name — the same two sources the
-     * main end's jumpConnectionOptions / jumpHostConfig?.name path uses. */
-    val names = buildMap {
-        for (connection in ui.jumpConnections) {
-            put(connection.id, connection.name.ifBlank { connection.host } + " · " + connection.host + ":" + connection.port)
-        }
-        for (host in ui.jumpHosts) {
-            put(host.id, host.name)
-        }
-    }
-
-    Text(
-        text = stringResource(R.string.editor_jump_chain, Connection.MAX_JUMP_DEPTH),
-        style = ZephyrTheme.typography.caption,
-    )
+    val names = jumpHopLabels(ui)
+    val addable = jumpAddable(ui)
     ui.issueFor("jumpHostIds")?.let { IssueText(it) }
 
     chain.forEachIndexed { index, id ->
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = (index + 1).toString() + ". " + (names[id] ?: id),
-                style = ZephyrTheme.typography.mono,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(
-                onClick = { onIntent(EditorIntent.JumpMoved(index, index - 1)) },
-                enabled = index > 0,
-            ) {
-                Icon(ZephyrIcons.ArrowUp, contentDescription = stringResource(R.string.editor_jump_up))
-            }
-            IconButton(
-                onClick = { onIntent(EditorIntent.JumpMoved(index, index + 1)) },
-                enabled = index < chain.size - 1,
-            ) {
-                Icon(ZephyrIcons.ArrowDown, contentDescription = stringResource(R.string.editor_jump_down))
-            }
-            IconButton(onClick = { onIntent(EditorIntent.JumpRemoved(id)) }) {
-                Icon(ZephyrIcons.Close, contentDescription = stringResource(R.string.editor_jump_remove))
-            }
-        }
+        SettingsRow(
+            title = (index + 1).toString() + ". " + (names[id] ?: id),
+            showDivider = true,
+            trailing = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { onIntent(EditorIntent.JumpMoved(index, index - 1)) },
+                        enabled = index > 0,
+                    ) {
+                        Icon(ZephyrIcons.ArrowUp, contentDescription = stringResource(R.string.editor_jump_up))
+                    }
+                    IconButton(
+                        onClick = { onIntent(EditorIntent.JumpMoved(index, index + 1)) },
+                        enabled = index < chain.size - 1,
+                    ) {
+                        Icon(ZephyrIcons.ArrowDown, contentDescription = stringResource(R.string.editor_jump_down))
+                    }
+                    IconButton(onClick = { onIntent(EditorIntent.JumpRemoved(id)) }) {
+                        Icon(ZephyrIcons.Close, contentDescription = stringResource(R.string.editor_jump_remove))
+                    }
+                }
+            },
+        )
     }
 
-    /* Main-end jumpConnectionOptions: every usable SSH connection except the
-     * one being edited. JumpHost resources are extra named aliases for those
-     * same connections. */
-    val addable = buildList {
+    val canAdd = chain.size < Connection.MAX_JUMP_DEPTH
+    SettingsRow(
+        title = stringResource(R.string.editor_jump_add),
+        subtitle = when {
+            !canAdd -> stringResource(R.string.editor_jump_full)
+            addable.isEmpty() -> stringResource(R.string.editor_jump_none)
+            chain.isEmpty() -> stringResource(R.string.editor_jump_empty)
+            else -> stringResource(R.string.editor_jump_chain, Connection.MAX_JUMP_DEPTH)
+        },
+        showChevron = canAdd && addable.isNotEmpty(),
+        showDivider = false,
+        onClick = if (canAdd && addable.isNotEmpty()) onPickJump else null,
+    )
+}
+
+@Composable
+private fun JumpHostPickerSheet(
+    visible: Boolean,
+    ui: ConnectionEditorUiState,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit,
+) {
+    val addable = jumpAddable(ui)
+    ActionSheet(
+        visible = visible,
+        onDismiss = onDismiss,
+        groups = listOf(
+            ActionSheetGroup(
+                title = stringResource(R.string.editor_jump_add),
+                items = addable.map { (id, label) ->
+                    ActionSheetItem(label = label, onClick = { onPick(id) })
+                },
+            ),
+            ActionSheetGroup(
+                items = listOf(
+                    ActionSheetItem(
+                        label = stringResource(R.string.dialog_cancel),
+                        cancel = true,
+                        onClick = onDismiss,
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/**
+ * Main-end jumpConnectionOptions: every usable SSH connection except the one
+ * being edited. JumpHost resources are extra named aliases for those same
+ * connections.
+ */
+private fun jumpAddable(ui: ConnectionEditorUiState): List<Pair<String, String>> {
+    val chain = ui.draft.current.jumpHostIds
+    val labels = jumpHopLabels(ui)
+    val seen = mutableSetOf<String>()
+    return buildList {
         for (connection in ui.jumpConnections) {
-            if (connection.id !in chain && connection.id in ui.inventory.usableJumpHostIds) {
-                add(connection.id to (connection.name.ifBlank { connection.host } + " · " + connection.host + ":" + connection.port))
+            if (connection.id !in chain && connection.id in ui.inventory.usableJumpHostIds && seen.add(connection.id)) {
+                add(connection.id to (labels[connection.id] ?: connection.host))
             }
         }
         for (host in ui.jumpHosts) {
-            if (host.id !in chain && host.id in ui.inventory.usableJumpHostIds && host.connectionId !in chain) {
-                add(host.id to host.name)
+            if (host.id !in chain && host.id in ui.inventory.usableJumpHostIds && host.connectionId !in chain && seen.add(host.id)) {
+                add(host.id to (labels[host.id] ?: host.name))
             }
         }
     }
-    if (addable.isNotEmpty() && chain.size < Connection.MAX_JUMP_DEPTH) {
-        var expanded by remember { mutableStateOf(false) }
-        OutlinedButton(onClick = { expanded = true }) {
-            Text(stringResource(R.string.editor_jump_add))
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            for ((id, label) in addable) {
-                DropdownMenuItem(
-                    text = { Text(label) },
-                    onClick = {
-                        expanded = false
-                        onIntent(EditorIntent.JumpAdded(id))
-                    },
-                )
-            }
-        }
+}
+
+private fun jumpHopLabels(ui: ConnectionEditorUiState): Map<String, String> = buildMap {
+    for (connection in ui.jumpConnections) {
+        put(
+            connection.id,
+            connection.name.ifBlank { connection.host } + " · " + connection.host + ":" + connection.port,
+        )
+    }
+    for (host in ui.jumpHosts) {
+        put(host.id, host.name)
     }
 }
 

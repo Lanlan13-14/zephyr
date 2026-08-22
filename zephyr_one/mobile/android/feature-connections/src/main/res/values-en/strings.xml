@@ -78,6 +78,9 @@
     <string name="editor_none">None</string>
     <string name="editor_jump_chain">Jump chain (ordered, max %1$d hops)</string>
     <string name="editor_jump_add">Add hop</string>
+    <string name="editor_jump_empty">Pick an existing SSH connection as a hop</string>
+    <string name="editor_jump_none">No usable SSH connection to jump through. Save an SSH host first.</string>
+    <string name="editor_jump_full">Already at the 8-hop limit</string>
     <string name="editor_jump_remove">Remove hop</string>
     <string name="editor_jump_up">Move up</string>
     <string name="editor_jump_down">Move down</string>
