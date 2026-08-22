@@ -98,6 +98,15 @@ class ConnectionEditorViewModel(
     val message: SharedFlow<String> = messages
     private var revealExpiryJob: kotlinx.coroutines.Job? = null
 
+    /**
+     * Last inventory emission, kept even while [page] is still InitialLoading.
+     *
+     * `mutate` no-ops until the form is Content, and Room's first snapshot often arrives during
+     * `connections.find()`. Dropping it left the hop picker empty forever: the mirror does not
+     * re-emit until something actually changes.
+     */
+    private var latestInventory: JumpInventory? = null
+
     init {
         registerSensitiveSink(this)
         viewModelScope.launch { load() }
@@ -108,7 +117,7 @@ class ConnectionEditorViewModel(
             resources.observeSshKeys(ownerUserId),
             resources.observeJumpHosts(ownerUserId),
             connections.observeAll(ownerUserId),
-        ) { proxies, keys, jumps, rows -> InventorySnapshot(proxies, keys, jumps, rows) }
+        ) { proxies, keys, jumps, rows -> JumpInventory(proxies, keys, jumps, rows) }
             .onEach(::applyInventory)
             .launchIn(viewModelScope)
     }
@@ -116,13 +125,13 @@ class ConnectionEditorViewModel(
     private suspend fun load() {
         if (duplicateSourceId != null) {
             val source = connections.find(duplicateSourceId)
-            page.value = if (
+            if (
                 source == null || source.isDeleted ||
                 source.residency != one.zephyr.mobile.model.Residency.OWNED
             ) {
-                PageState.NotFoundOrRevoked
+                page.value = PageState.NotFoundOrRevoked
             } else {
-                PageState.Content(
+                show(
                     ConnectionEditorUiState(
                         ConnectionDraft.duplicate(source, ownerUserId, newIdFactory()),
                     ),
@@ -131,7 +140,7 @@ class ConnectionEditorViewModel(
             return
         }
         if (connectionId == null) {
-            page.value = PageState.Content(
+            show(
                 ConnectionEditorUiState(
                     ConnectionDraft.create(ownerUserId, newIdFactory(), protocol = initialProtocol),
                 ),
@@ -139,12 +148,12 @@ class ConnectionEditorViewModel(
             return
         }
         val existing = connections.find(connectionId)
-        page.value = when {
-            existing == null || existing.isDeleted -> PageState.NotFoundOrRevoked
+        when {
+            existing == null || existing.isDeleted -> page.value = PageState.NotFoundOrRevoked
             // A row the user may see but not edit opens read-only rather than pretending to save.
             !existing.capabilities.canEdit ->
-                PageState.PermissionDenied(Capability.EDIT, REASON_NO_EDIT)
-            else -> PageState.Content(
+                page.value = PageState.PermissionDenied(Capability.EDIT, REASON_NO_EDIT)
+            else -> show(
                 ConnectionEditorUiState(
                     draft = ConnectionDraft.edit(existing),
                     passwordRevealAllowed = ConnectionPasswordRevealPolicy.allowed(
@@ -157,43 +166,17 @@ class ConnectionEditorViewModel(
         }
     }
 
-    /** Only rows carrying USE may be referenced by a route (ZEPHYR_PARITY.md 5.3). */
-    private fun applyInventory(snapshot: InventorySnapshot) {
-        val jumpConnections = snapshot.rows.filter { row ->
-            row.protocol == Protocol.SSH &&
-                !row.isDeleted &&
-                row.capabilities.canUse &&
-                row.id != connectionId
-        }
-        val usableJumpIds = buildSet {
-            addAll(snapshot.jumps.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id })
-            /* Main-end jumpConnectionOptions stores a connection id directly.
-             * Treating only JumpHost resource ids as usable is what made a
-             * route saved on the server read as "路由需要修复" on the phone. */
-            addAll(jumpConnections.map { it.id })
-        }
-        val usable = RouteInventory(
-            usableProxyIds = snapshot.proxies.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id }.toSet(),
-            usableSshKeyIds = snapshot.keys.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id }.toSet(),
-            usableJumpHostIds = usableJumpIds,
-        )
-        mutate {
-            it.copy(
-                inventory = usable,
-                proxies = snapshot.proxies,
-                sshKeys = snapshot.keys,
-                jumpHosts = snapshot.jumps,
-                jumpConnections = jumpConnections,
-            )
-        }
+    /** Opens the form and stamps any inventory that arrived while it was still loading. */
+    private fun show(ui: ConnectionEditorUiState) {
+        page.value = PageState.Content(ui)
+        latestInventory?.let(::applyInventory)
     }
 
-    private data class InventorySnapshot(
-        val proxies: List<Proxy>,
-        val keys: List<SshKey>,
-        val jumps: List<JumpHost>,
-        val rows: List<Connection>,
-    )
+    /** Only rows carrying USE may be referenced by a route (ZEPHYR_PARITY.md 5.3). */
+    private fun applyInventory(snapshot: JumpInventory) {
+        latestInventory = snapshot
+        mutate { it.withJumpInventory(snapshot, connectionId) }
+    }
 
     private inline fun mutate(block: (ConnectionEditorUiState) -> ConnectionEditorUiState) {
         val current = page.value

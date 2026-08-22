@@ -410,7 +410,7 @@ private fun JumpChainEditor(
     onPickJump: () -> Unit,
 ) {
     val chain = ui.draft.current.jumpHostIds
-    val names = jumpHopLabels(ui)
+    val names = JumpPicker.labels(ui.jumpConnections, ui.jumpHosts)
     val addable = jumpAddable(ui)
     ui.issueFor("jumpHostIds")?.let { IssueText(it) }
 
@@ -491,35 +491,13 @@ private fun JumpHostPickerSheet(
  * being edited. JumpHost resources are extra named aliases for those same
  * connections.
  */
-private fun jumpAddable(ui: ConnectionEditorUiState): List<Pair<String, String>> {
-    val chain = ui.draft.current.jumpHostIds
-    val labels = jumpHopLabels(ui)
-    val seen = mutableSetOf<String>()
-    return buildList {
-        for (connection in ui.jumpConnections) {
-            if (connection.id !in chain && connection.id in ui.inventory.usableJumpHostIds && seen.add(connection.id)) {
-                add(connection.id to (labels[connection.id] ?: connection.host))
-            }
-        }
-        for (host in ui.jumpHosts) {
-            if (host.id !in chain && host.id in ui.inventory.usableJumpHostIds && host.connectionId !in chain && seen.add(host.id)) {
-                add(host.id to (labels[host.id] ?: host.name))
-            }
-        }
-    }
-}
-
-private fun jumpHopLabels(ui: ConnectionEditorUiState): Map<String, String> = buildMap {
-    for (connection in ui.jumpConnections) {
-        put(
-            connection.id,
-            connection.name.ifBlank { connection.host } + " · " + connection.host + ":" + connection.port,
-        )
-    }
-    for (host in ui.jumpHosts) {
-        put(host.id, host.name)
-    }
-}
+private fun jumpAddable(ui: ConnectionEditorUiState): List<Pair<String, String>> =
+    JumpPicker.addable(
+        connections = ui.jumpConnections,
+        jumps = ui.jumpHosts,
+        chain = ui.draft.current.jumpHostIds,
+        usableIds = ui.inventory.usableJumpHostIds,
+    )
 
 @Composable
 private fun RdpChannelSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -> Unit) {
