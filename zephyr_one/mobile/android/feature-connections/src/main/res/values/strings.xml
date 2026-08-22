@@ -92,6 +92,9 @@
     <string name="editor_none">不使用</string>
     <string name="editor_jump_chain">跳板链（有序，最多 %1$d 级）</string>
     <string name="editor_jump_add">添加跳板</string>
+    <string name="editor_jump_empty">从已有 SSH 连接里选一台作为跳板</string>
+    <string name="editor_jump_none">没有可用的 SSH 连接可作跳板，先保存一台 SSH 主机</string>
+    <string name="editor_jump_full">已到 8 级上限</string>
     <string name="editor_jump_remove">移除此级</string>
     <string name="editor_jump_up">上移</string>
     <string name="editor_jump_down">下移</string>

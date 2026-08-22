@@ -85,10 +85,23 @@ test('the editor jump picker lists SSH connections like the main end', () => {
   /* JumpChainEditor existed but RouteSection never composed it: tapping the
    * JUMP row silently added the first JumpHost resource, and SSH connections
    * (what the main end actually stores in jumpHostIds) were not even listed. */
-  assert.match(screen, /ConnectionMode\.JUMP -> JumpChainEditor\(ui, onIntent\)/);
+  assert.match(screen, /ConnectionMode\.JUMP -> JumpChainEditor\(ui, onIntent, onPickJump\)/);
   assert.match(screen, /for \(connection in ui\.jumpConnections\)/);
   assert.match(vm, /val jumpConnections: List<Connection>/);
   assert.match(vm, /row\.protocol == Protocol\.SSH/);
+});
+
+test('the jump chain is selectable inside the card via a full-screen sheet', () => {
+  const screen = read('android/feature-connections/src/main/kotlin/one/zephyr/mobile/feature/connections/ConnectionEditorScreen.kt');
+  /* The caption sat outside GroupCard and was clipped. The add button was a
+   * DropdownMenu inside that clipped scrolling card, so an empty chain showed
+   * "JumpHost · 0 级" and nothing tappable. The add row is always composed;
+   * picking opens ActionSheet above the card. */
+  assert.match(screen, /JumpHostPickerSheet\(/);
+  assert.match(screen, /title = stringResource\(R\.string\.editor_jump_add\)/);
+  assert.match(screen, /onClick = if \(canAdd && addable\.isNotEmpty\(\)\) onPickJump else null/);
+  assert.doesNotMatch(screen, /DropdownMenu\(expanded = expanded[\s\S]*JumpAdded/);
+  assert.doesNotMatch(screen, /跳板链（有序/);
 });
 
 test('main-end jump resolution semantics are pinned in one place', () => {
