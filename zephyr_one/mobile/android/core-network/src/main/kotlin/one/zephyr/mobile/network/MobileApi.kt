@@ -86,6 +86,40 @@ class MobileApi(private val client: MobileApiClient) {
             sensitiveGrant = sensitiveGrant,
         )
 
+    suspend fun createEnrollment(
+        request: one.zephyr.mobile.network.dto.LinkEnrollmentCreateRequestDto,
+    ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentCreateResponseDto> =
+        client.post(
+            path = one.zephyr.mobile.contracts.LinkApiPaths.POST_ENROLLMENTS,
+            body = request,
+            bodySerializer = one.zephyr.mobile.network.dto.LinkEnrollmentCreateRequestDto.serializer(),
+            responseSerializer = one.zephyr.mobile.network.dto.LinkEnrollmentCreateResponseDto.serializer(),
+            authenticated = false,
+        )
+
+    suspend fun enrollmentStatus(
+        bindId: String,
+        userCode: String,
+    ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentStatusDto> =
+        client.get(
+            path = one.zephyr.mobile.contracts.LinkApiPaths.enrollment(bindId),
+            responseSerializer = one.zephyr.mobile.network.dto.LinkEnrollmentStatusDto.serializer(),
+            query = mapOf("userCode" to userCode),
+            authenticated = false,
+        )
+
+    suspend fun consumeEnrollment(
+        bindId: String,
+        request: one.zephyr.mobile.network.dto.LinkEnrollmentConsumeRequestDto,
+    ): ApiResult<BindResponseDto> =
+        client.post(
+            path = one.zephyr.mobile.contracts.LinkApiPaths.consume(bindId),
+            body = request,
+            bodySerializer = one.zephyr.mobile.network.dto.LinkEnrollmentConsumeRequestDto.serializer(),
+            responseSerializer = BindResponseDto.serializer(),
+            authenticated = false,
+        )
+
     /**
      * Rotates access and refresh together.
      *

@@ -19,7 +19,6 @@ class ToolsRootCatalogTest {
                 ToolEntry.SSH_KEY,
                 ToolEntry.AI_WORKSPACE,
                 ToolEntry.FILE_SYNC,
-                ToolEntry.CLIENT_TOKEN,
                 ToolEntry.SERVER_SETTINGS,
                 ToolEntry.APPEARANCE,
                 ToolEntry.LANGUAGE,
@@ -28,7 +27,7 @@ class ToolsRootCatalogTest {
             ),
             rows,
         )
-        assertTrue(ToolEntry.CLIENT_TOKEN in ToolsCatalog.rows(ToolSection.FILE_SYNC))
+        assertTrue(ToolEntry.FILE_SYNC in ToolsCatalog.rows(ToolSection.FILE_SYNC))
         assertTrue(ToolEntry.SERVER_SETTINGS in ToolsCatalog.rows(ToolSection.SERVER))
     }
 

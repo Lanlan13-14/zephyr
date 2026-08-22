@@ -28,6 +28,17 @@ let defaultUsername = 'admin';
 let publicSettings = {};
 let captchaConfig = { enabled: false, provider: 'turnstile', siteKey: '' };
 let captchaState = { widgetId: null, token: '', loadedProvider: '', loadingPromise: null };
+function safeReturnTo() {
+    try {
+        const next = new URLSearchParams(location.search).get('returnTo') || '';
+        if (!next.startsWith('/link/approve')) return '';
+        if (next.startsWith('//') || next.includes('://') || next.includes('\\')) return '';
+        return next;
+    } catch {
+        return '';
+    }
+}
+
 const CAPTCHA_SCRIPT_URLS = {
     turnstile: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',
     hcaptcha: 'https://js.hcaptcha.com/1/api.js?render=explicit',
@@ -545,7 +556,7 @@ loginForm.addEventListener('submit', async (e) => {
         const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password, remember: !!$('#rememberMe')?.checked, captchaToken }) });
         if (data.requireTotp) return showTotp(data.tempToken);
         if (data.mustChangePassword) showChangePassword();
-        else window.location.href = '/app.html';
+        else window.location.href = safeReturnTo() || '/app.html';
     } catch (err) {
         resetCaptcha();
         showError(errorBanner, err.message);
@@ -554,7 +565,7 @@ loginForm.addEventListener('submit', async (e) => {
 
 totpForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { const data = await api('/api/auth/totp/verify', { method: 'POST', body: JSON.stringify({ tempToken: tempTotpToken, code: $('#totpCode').value }) }); if (data.mustChangePassword) showChangePassword(); else location.href = '/app.html'; }
+    try { const data = await api('/api/auth/totp/verify', { method: 'POST', body: JSON.stringify({ tempToken: tempTotpToken, code: $('#totpCode').value }) }); if (data.mustChangePassword) showChangePassword(); else location.href = safeReturnTo() || '/app.html'; }
     catch (err) { showError(totpErrorBanner, err.message); }
 });
 
@@ -584,7 +595,7 @@ $('#passkeyLoginBtn').addEventListener('click', async () => {
         const cred = await navigator.credentials.get({ publicKey: options });
         const payload = { id: cred.id, rawId: bufferToBase64url(cred.rawId), type: cred.type, response: { authenticatorData: bufferToBase64url(cred.response.authenticatorData), clientDataJSON: bufferToBase64url(cred.response.clientDataJSON), signature: bufferToBase64url(cred.response.signature), userHandle: cred.response.userHandle ? bufferToBase64url(cred.response.userHandle) : null } };
         const data = await api('/api/passkeys/login/verify', { method: 'POST', body: JSON.stringify(payload) });
-        if (data.mustChangePassword) showChangePassword(); else location.href = '/app.html';
+        if (data.mustChangePassword) showChangePassword(); else location.href = safeReturnTo() || '/app.html';
     } catch (err) { showError(errorBanner, err.message); }
 });
 

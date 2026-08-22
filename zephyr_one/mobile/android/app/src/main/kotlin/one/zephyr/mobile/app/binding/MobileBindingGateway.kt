@@ -31,6 +31,17 @@ internal interface BindingMobileApi {
     ): ApiResult<SensitiveGrant>
 
     suspend fun bind(request: BindRequestDto, sensitiveGrant: String): ApiResult<BindResponseDto>
+    suspend fun createEnrollment(
+        request: one.zephyr.mobile.network.dto.LinkEnrollmentCreateRequestDto,
+    ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentCreateResponseDto>
+    suspend fun enrollmentStatus(
+        bindId: String,
+        userCode: String,
+    ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentStatusDto>
+    suspend fun consumeEnrollment(
+        bindId: String,
+        request: one.zephyr.mobile.network.dto.LinkEnrollmentConsumeRequestDto,
+    ): ApiResult<BindResponseDto>
 }
 
 /** Dedicated SID store for an authentication attempt that has not produced an account graph yet. */
@@ -105,43 +116,86 @@ internal class MobileBindingGateway(
             platform = PLATFORM_ANDROID,
             appVersion = appVersion,
             tokenId = command.tokenId,
-            keys = DeviceKeysDto(
-                encryption = DeviceEncryptionKeyDto(
-                    alg = command.publicKeys.encryptionAlg,
-                    publicKey = command.publicKeys.encryptionPublicKeyBase64,
-                ),
-                signing = DeviceSigningKeyDto(
-                    alg = command.publicKeys.signingAlg,
-                    jwk = JsonObject(command.publicKeys.signingJwk.mapValues { JsonPrimitive(it.value) }),
-                ),
-            ),
+            keys = deviceKeys(command),
             syncIntervalSec = command.syncIntervalSec,
         )
         return when (val result = api.bind(request, String(sensitiveGrant))) {
             is ApiResult.Failure -> result
-            is ApiResult.Success -> {
-                val response = result.value
-                ApiResult.Success(
-                    DeviceBindingReply(
-                        deviceId = response.device.deviceId,
-                        deviceName = response.device.deviceName,
-                        tokenId = response.device.tokenId,
-                        accessCredential = response.accessCredential,
-                        accessExpiresAt = response.accessExpiresAt,
-                        refreshCredential = response.refreshCredential,
-                        registryHash = response.registryHash,
-                        boundAt = response.device.createdAt,
-                        // The current bind response has no server instance epoch. A fresh bind starts
-                        // at epoch zero; boundAt still makes its WorkManager generation unique.
-                        instanceEpoch = 0L,
-                    ),
-                    result.requestId,
-                )
-            }
+            is ApiResult.Success -> mapBindReply(result.value, result.requestId)
+        }
+    }
+
+    override suspend fun createEnrollment(
+        command: DeviceBindingCommand,
+    ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentCreateResponseDto> =
+        api.createEnrollment(enrollmentCreateRequest(command))
+
+    override suspend fun enrollmentStatus(
+        bindId: String,
+        userCode: String,
+    ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentStatusDto> =
+        api.enrollmentStatus(bindId, userCode)
+
+    override suspend fun consumeEnrollment(
+        bindId: String,
+        userCode: String,
+        enrollmentSecret: CharArray,
+        proof: String,
+        command: DeviceBindingCommand,
+    ): ApiResult<DeviceBindingReply> {
+        val request = one.zephyr.mobile.network.dto.LinkEnrollmentConsumeRequestDto(
+            userCode = userCode,
+            enrollmentSecret = String(enrollmentSecret),
+            proof = proof,
+            keys = deviceKeys(command),
+            syncIntervalSec = command.syncIntervalSec,
+        )
+        return when (val result = api.consumeEnrollment(bindId, request)) {
+            is ApiResult.Failure -> result
+            is ApiResult.Success -> mapBindReply(result.value, result.requestId)
         }
     }
 
     override fun clearAuthentication() = session.clear()
+
+    private fun enrollmentCreateRequest(
+        command: DeviceBindingCommand,
+    ) = one.zephyr.mobile.network.dto.LinkEnrollmentCreateRequestDto(
+        deviceId = command.deviceId,
+        deviceName = command.deviceName,
+        platform = PLATFORM_ANDROID,
+        appVersion = appVersion,
+        keys = deviceKeys(command),
+    )
+
+    private fun deviceKeys(command: DeviceBindingCommand) = DeviceKeysDto(
+        encryption = DeviceEncryptionKeyDto(
+            alg = command.publicKeys.encryptionAlg,
+            publicKey = command.publicKeys.encryptionPublicKeyBase64,
+        ),
+        signing = DeviceSigningKeyDto(
+            alg = command.publicKeys.signingAlg,
+            jwk = JsonObject(command.publicKeys.signingJwk.mapValues { JsonPrimitive(it.value) }),
+        ),
+    )
+
+    private fun mapBindReply(response: BindResponseDto, requestId: String?): ApiResult<DeviceBindingReply> =
+        ApiResult.Success(
+            DeviceBindingReply(
+                deviceId = response.device.deviceId,
+                deviceName = response.device.deviceName,
+                tokenId = response.device.tokenId,
+                accessCredential = response.accessCredential,
+                accessExpiresAt = response.accessExpiresAt,
+                refreshCredential = response.refreshCredential,
+                registryHash = response.registryHash,
+                boundAt = response.device.createdAt,
+                instanceEpoch = 0L,
+                userId = response.userId ?: response.device.ownerUserId,
+                username = response.username,
+            ),
+            requestId,
+        )
 
     private fun mapLogin(
         response: LoginResponseDto,
@@ -238,6 +292,18 @@ private class RealBindingMobileApi(private val api: MobileApi) : BindingMobileAp
 
     override suspend fun bind(request: BindRequestDto, sensitiveGrant: String): ApiResult<BindResponseDto> =
         api.bind(request, sensitiveGrant)
+
+    override suspend fun createEnrollment(
+        request: one.zephyr.mobile.network.dto.LinkEnrollmentCreateRequestDto,
+    ) = api.createEnrollment(request)
+
+    override suspend fun enrollmentStatus(bindId: String, userCode: String) =
+        api.enrollmentStatus(bindId, userCode)
+
+    override suspend fun consumeEnrollment(
+        bindId: String,
+        request: one.zephyr.mobile.network.dto.LinkEnrollmentConsumeRequestDto,
+    ) = api.consumeEnrollment(bindId, request)
 }
 
 private class CredentialPendingBindingSession(

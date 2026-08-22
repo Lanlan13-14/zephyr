@@ -268,6 +268,7 @@ class MobileAuthContractTest {
         assertFieldNames(
             FeatureCapabilitiesDto.serializer(),
             "bidirectionalSync", "sharedResources", "fileBridge", "blobTransfer", "nearRealtimeWake",
+            "linkEnrollment",
         )
         assertFieldNames(
             WakeCapabilitiesDto.serializer(),

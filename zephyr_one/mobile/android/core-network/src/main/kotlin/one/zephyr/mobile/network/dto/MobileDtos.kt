@@ -121,6 +121,72 @@ data class DeviceKeysDto(
 )
 
 @Serializable
+data class LinkEnrollmentCreateRequestDto(
+    val deviceId: String,
+    val deviceName: String,
+    val platform: String,
+    val appVersion: String,
+    val keys: DeviceKeysDto,
+)
+
+@Serializable
+data class LinkEnrollmentCreateResponseDto(
+    val ok: Boolean,
+    val bindId: String,
+    val userCode: String,
+    val enrollmentSecret: String,
+    val verificationUri: String,
+    val sas: String,
+    val fingerprint: String,
+    val expiresAt: Long,
+    val serverId: String,
+    val pollMinIntervalMs: Long = 800,
+    val qrDataUrl: String? = null,
+    val deviceId: String,
+    val deviceName: String,
+    val platform: String,
+) {
+    init {
+        require(ok) { "enrollment create response ok must be true" }
+        require(bindId.isNotBlank()) { "enrollment create is missing bindId" }
+        require(enrollmentSecret.isNotBlank()) { "enrollment create is missing its secret" }
+        require(verificationUri.startsWith("https://")) { "enrollment verification URI must be https" }
+    }
+
+    override fun toString(): String =
+        "LinkEnrollmentCreateResponseDto(ok=$ok, bindId=$bindId, userCode=$userCode, " +
+            "enrollmentSecret=[redacted], verificationUri=$verificationUri, sas=$sas, " +
+            "fingerprint=$fingerprint, expiresAt=$expiresAt, serverId=$serverId)"
+}
+
+@Serializable
+data class LinkEnrollmentStatusDto(
+    val ok: Boolean = false,
+    val bindId: String,
+    val status: String,
+    val userCode: String? = null,
+    val sas: String? = null,
+    val fingerprint: String? = null,
+    val deviceName: String? = null,
+    val platform: String? = null,
+    val expiresAt: Long? = null,
+    val serverId: String? = null,
+)
+
+@Serializable
+data class LinkEnrollmentConsumeRequestDto(
+    val userCode: String,
+    val enrollmentSecret: String,
+    val proof: String,
+    val keys: DeviceKeysDto,
+    val syncIntervalSec: Int,
+) {
+    override fun toString(): String =
+        "LinkEnrollmentConsumeRequestDto(userCode=$userCode, enrollmentSecret=[redacted], " +
+            "proof=[redacted], syncIntervalSec=$syncIntervalSec)"
+}
+
+@Serializable
 data class BindRequestDto(
     val deviceId: String,
     val deviceName: String,
@@ -157,6 +223,8 @@ data class BindResponseDto(
     val refreshCredential: String,
     val registryHash: String,
     val bootstrapRequired: Boolean,
+    val username: String? = null,
+    val userId: String? = null,
 ) {
     init {
         require(ok) { "bind response ok must be true" }
@@ -401,6 +469,7 @@ data class FeatureCapabilitiesDto(
     val fileBridge: Boolean,
     val blobTransfer: Boolean,
     val nearRealtimeWake: Boolean,
+    val linkEnrollment: Boolean = false,
 )
 
 @Serializable

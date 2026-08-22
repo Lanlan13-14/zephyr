@@ -23,7 +23,7 @@ object DestinationRoutes {
         ToolEntry.JUMP_HOST -> "resource:" + ResourceKind.JUMP_HOST.name
         ToolEntry.AI_WORKSPACE -> "ai"
         ToolEntry.FILE_SYNC -> "file-sync"
-        ToolEntry.CLIENT_TOKEN -> "client-token"
+        ToolEntry.CLIENT_TOKEN -> "file-sync"
         ToolEntry.SERVER_SETTINGS -> "server-settings"
         ToolEntry.BACKUP_RESTORE -> "backup"
         ToolEntry.RUNTIME_STATUS -> "runtime"
@@ -53,7 +53,7 @@ object DestinationRoutes {
         "files", "notes", "snippets",
         "resource:" + ResourceKind.PROXY.name,
         "resource:" + ResourceKind.SSH_KEY.name,
-        "client-token", "server-settings", "runtime",
+        "server-settings", "runtime",
         "conflicts", "devices", "shares", "binding",
     )
 }

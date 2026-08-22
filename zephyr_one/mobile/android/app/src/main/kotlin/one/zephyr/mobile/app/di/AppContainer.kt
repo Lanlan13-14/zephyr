@@ -256,6 +256,7 @@ class AppContainer(private val context: Context) {
                 )
                 object : PendingDeviceIdentity {
                     override fun ensureKeys(): DeviceIdentity.PublicKeys = identity.ensureKeys()
+                    override fun signPayload(payload: ByteArray): String = identity.signPayload(payload)
                     override fun wipe() = identity.wipe()
                 }
             },

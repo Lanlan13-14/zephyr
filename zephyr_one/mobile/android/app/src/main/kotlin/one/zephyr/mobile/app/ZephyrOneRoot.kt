@@ -700,6 +700,7 @@ private fun BoundRoot(
                 onOpenShares = { route = RootRoute.LocalShares },
                 onOpenDiagnostics = { route = RootRoute.Diagnostics },
                 onUnbind = if (account.isLocalMode) null else ({ route = RootRoute.ServerBinding }),
+                onBind = if (account.isLocalMode) ({ route = RootRoute.ServerBinding }) else null,
                 onSyncNow = { if (!account.isLocalMode) scope.launch { account.syncEngine.syncNow() } },
             )
             RootRoute.ClientToken -> ClientTokenLiveDestination(

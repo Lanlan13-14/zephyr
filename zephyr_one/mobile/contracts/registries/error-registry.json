@@ -129,6 +129,41 @@
       "source": "mobile v1"
     },
     {
+      "code": "enrollment_consumed",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "restart_enrollment",
+      "source": "link-v2-enrollment.js"
+    },
+    {
+      "code": "enrollment_denied",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "restart_enrollment",
+      "source": "link-v2-enrollment.js"
+    },
+    {
+      "code": "enrollment_expired",
+      "httpStatus": 410,
+      "retryable": false,
+      "clientAction": "restart_enrollment",
+      "source": "link-v2-enrollment.js"
+    },
+    {
+      "code": "enrollment_not_approved",
+      "httpStatus": 403,
+      "retryable": true,
+      "clientAction": "wait_then_retry",
+      "source": "link-v2-enrollment.js"
+    },
+    {
+      "code": "enrollment_secret_invalid",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "restart_enrollment",
+      "source": "link-v2-enrollment.js"
+    },
+    {
       "code": "duplicate_operation",
       "httpStatus": 200,
       "retryable": false,

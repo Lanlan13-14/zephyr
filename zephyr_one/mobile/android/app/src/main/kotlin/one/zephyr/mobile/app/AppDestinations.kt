@@ -384,6 +384,7 @@ internal fun FileSyncDestination(
     onOpenShares: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onUnbind: (() -> Unit)?,
+    onBind: (() -> Unit)? = null,
     onSyncNow: () -> Unit,
 ) {
     val status by account.syncEngine.status.collectAsState(initial = one.zephyr.mobile.model.SyncStatus.unbound())
@@ -402,6 +403,7 @@ internal fun FileSyncDestination(
         onOpenShares = onOpenShares,
         onOpenDiagnostics = onOpenDiagnostics,
         onUnbind = onUnbind,
+        onBind = onBind,
         onBack = onBack,
     )
 }

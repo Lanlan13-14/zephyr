@@ -163,6 +163,7 @@ const {
 } = require('./file-agent-manager');
 const { OneClientManager } = require('./one-client-manager');
 const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
+const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-enrollment');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 const { MobileV1OutboxDispatcher } = require('./mobile-v1-outbox-dispatcher');
 const { AppChangeWakeHub, registerAppChangeWakeRoute } = require('./app-change-wake-hub');
@@ -197,6 +198,7 @@ const { negotiateRdpTls } = require('./server/rdp-cert-probe');
 
 let mobileV1OutboxDispatcher = null;
 let mobileV1Api = null;
+let linkV2EnrollmentApi = null;
 let webDavProduction = null;
 let webDavSensitiveRateLimiter = null;
 let backupImportSensitiveRateLimiter = null;
@@ -8964,6 +8966,25 @@ try {
     });
     trackMobileBlobOperations(mobileV1Api.blobs);
     mobileV1Api.mountRoutes(app);
+    try {
+        const enrollments = new LinkV2EnrollmentStore({
+            db: storage.rawDb(),
+            log: (...args) => console.log('[link-v2]', ...args),
+        });
+        linkV2EnrollmentApi = createLinkV2EnrollmentApi({
+            enrollments,
+            store: mobileV1Api.store,
+            resolveSession: (req) => currentSession(req),
+            publicOrigin,
+            qrcode: QRCode,
+            log: (...args) => console.log('[link-v2]', ...args),
+        });
+        app.use('/link/approve', express.urlencoded({ extended: false, limit: '8kb' }));
+        linkV2EnrollmentApi.mount(app);
+        console.log('[link-v2] enrollment mounted');
+    } catch (linkErr) {
+        console.error('[link-v2] enrollment failed to mount', linkErr && linkErr.message);
+    }
     mobileV1OutboxDispatcher = new MobileV1OutboxDispatcher({
         changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
         wake: mobileV1Api.wake,

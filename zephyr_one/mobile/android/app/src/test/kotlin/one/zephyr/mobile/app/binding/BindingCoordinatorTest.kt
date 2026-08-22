@@ -80,6 +80,55 @@ class BindingCoordinatorTest {
         assertEquals("device.bind", gateway.sensitiveAction)
         assertEquals(listOf("token-1", "device-1"), gateway.sensitiveTargets)
         assertEquals("sensitive-grant-1", gateway.grantUsedForBind)
+    }
+
+    @Test
+    fun `consumed enrollment binds without a Client Token or password`() = runTest {
+        val events = mutableListOf<String>()
+        val storage = FakeStorage(events)
+        val host = FakeHost(events)
+        val graphs = mutableListOf<FakeGraph>()
+        val coordinator = coordinator(storage, host, graphs, events)
+        val gateway = FakeGateway()
+        val prepared = BindingCoordinator.PreparedEnrollment(
+            profile = profile(),
+            gateway = gateway,
+            identity = FakeIdentity(),
+            command = DeviceBindingCommand(
+                deviceId = "device-1",
+                deviceName = "Phone",
+                tokenId = LINK_ENROLLMENT_TOKEN_ID,
+                publicKeys = FakeIdentity().ensureKeys(),
+                syncIntervalSec = 300,
+            ),
+            created = one.zephyr.mobile.network.dto.LinkEnrollmentCreateResponseDto(
+                ok = true,
+                bindId = "bind-1",
+                userCode = "ABCD-EFGH",
+                enrollmentSecret = "enrollment-secret-1",
+                verificationUri = "https://zephyr.example/link/approve?bindId=bind-1",
+                sas = "AAAA-BBBB-CCCC-DDDD",
+                fingerprint = "a".repeat(64),
+                expiresAt = 9_000L,
+                serverId = "srv-1",
+                deviceId = "device-1",
+                deviceName = "Phone",
+                platform = "android",
+            ),
+        )
+
+        val result = coordinator.consumePreparedEnrollment(
+            prepared = prepared,
+            intervalSec = 300,
+            automaticEnabled = true,
+            networkPolicy = NetworkPolicy.ANY,
+        )
+
+        result as BindingCompletionResult.Completed
+        assertTrue(result.bootstrapSucceeded)
+        assertEquals(LINK_ENROLLMENT_TOKEN_ID, result.binding.tokenId)
+        assertEquals("alice", result.binding.username)
+        assertEquals("access-1", graphs.single().storedAccess)
         assertEquals(
             listOf(
                 "storage.save",
@@ -1825,6 +1874,8 @@ private class FakeIdentity : PendingDeviceIdentity {
         signingJwk = mapOf("kty" to "EC", "crv" to "P-256"),
     )
 
+    override fun signPayload(payload: ByteArray) = "c2lnbmF0dXJl"
+
     override fun wipe() {
         wiped = true
     }
@@ -1896,6 +1947,59 @@ private class FakeGateway(
     override fun clearAuthentication() {
         authenticationCleared = true
     }
+
+    override suspend fun createEnrollment(
+        command: DeviceBindingCommand,
+    ) = ApiResult.Success(
+        one.zephyr.mobile.network.dto.LinkEnrollmentCreateResponseDto(
+            ok = true,
+            bindId = "bind-1",
+            userCode = "ABCD-EFGH",
+            enrollmentSecret = "enrollment-secret-1",
+            verificationUri = "https://zephyr.example/link/approve?bindId=bind-1",
+            sas = "AAAA-BBBB-CCCC-DDDD",
+            fingerprint = "a".repeat(64),
+            expiresAt = 9_000L,
+            serverId = "srv-1",
+            deviceId = command.deviceId,
+            deviceName = command.deviceName,
+            platform = "android",
+        ),
+        requestId = null,
+    )
+
+    override suspend fun enrollmentStatus(bindId: String, userCode: String) = ApiResult.Success(
+        one.zephyr.mobile.network.dto.LinkEnrollmentStatusDto(
+            ok = true,
+            bindId = bindId,
+            status = "approved",
+            userCode = userCode,
+        ),
+        requestId = null,
+    )
+
+    override suspend fun consumeEnrollment(
+        bindId: String,
+        userCode: String,
+        enrollmentSecret: CharArray,
+        proof: String,
+        command: DeviceBindingCommand,
+    ) = ApiResult.Success(
+        DeviceBindingReply(
+            deviceId = command.deviceId,
+            deviceName = command.deviceName,
+            tokenId = LINK_ENROLLMENT_TOKEN_ID,
+            accessCredential = "access-1",
+            accessExpiresAt = 5_000L,
+            refreshCredential = "refresh-1",
+            registryHash = "registry-1",
+            boundAt = 100L,
+            instanceEpoch = 0L,
+            userId = "user-1",
+            username = "alice",
+        ),
+        requestId = null,
+    )
 }
 
 private fun successfulRound(trigger: SyncTrigger) = SyncRoundResult(
