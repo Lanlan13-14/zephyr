@@ -93,6 +93,29 @@ test('a dead session handle does not block the retry', () => {
   assert.match(start, /Error::SessionExists/);
 });
 
+test('the GFX channel is wired into the GDI pipeline through the common fallback', () => {
+  const shim = read('native/freerdp-core/zephyr_rdp.c');
+
+  /* The regression this locks: the shim claimed cliprdr and disp and dropped
+   * every other channel on the floor. With RDPGFX negotiated (the default
+   * gfx=true policy), that meant the server sent frames as GFX PDUs that
+   * nothing decoded into the GDI primary buffer — connect succeeded and the
+   * host then timed out waiting for a first frame that could never exist.
+   * Every shipped FreeRDP client ends its handler with the common fallback,
+   * which is where gdi_graphics_pipeline_init lives. */
+  const connected = shim.slice(
+    shim.indexOf('static void on_channel_connected'),
+    shim.indexOf('static void on_channel_disconnected'),
+  );
+  assert.match(connected, /freerdp_client_OnChannelConnectedEventHandler\(context, e\)/);
+
+  const disconnected = shim.slice(
+    shim.indexOf('static void on_channel_disconnected'),
+    shim.indexOf('/* ── instance callbacks'),
+  );
+  assert.match(disconnected, /freerdp_client_OnChannelDisconnectedEventHandler\(context, e\)/);
+});
+
 test('broker denial is logged with enough detail to distinguish ACL from transport', () => {
   const broker = fs.readFileSync(path.join(ROOT, '..', 'zephyr-one-rdp-native-broker.js'), 'utf8');
   assert.match(broker, /authorization denied/);

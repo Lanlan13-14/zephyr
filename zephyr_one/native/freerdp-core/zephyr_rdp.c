@@ -713,6 +713,16 @@ static void on_channel_connected(void* context, Z_EVENT_CONST ChannelConnectedEv
         bind_cliprdr(s, (CliprdrClientContext*)e->pInterface);
     } else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
         s->disp = (DispClientContext*)e->pInterface;
+    } else {
+        /* The common client's fallback is what wires RDPGFX into the GDI
+         * pipeline (gdi_graphics_pipeline_init on rdpgfx). Without it the
+         * channel negotiates up, the server sends every frame as GFX PDUs,
+         * and the GDI primary buffer never receives a single pixel: connect
+         * succeeds, EndPaint sees ninvalid == 0 forever, and the host times
+         * out waiting for the first frame. Every official client (SDL, X11,
+         * iOS) ends its handler with this exact fallback for the channels it
+         * does not claim itself. */
+        freerdp_client_OnChannelConnectedEventHandler(context, e);
     }
     /* rdpdr/drive needs no client-side context: the drive addin services IRPs
      * against the mapped path on its own thread once the channel is up. */
@@ -728,6 +738,11 @@ static void on_channel_disconnected(void* context, Z_EVENT_CONST ChannelDisconne
         s->cliprdr_ready = FALSE;
     } else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
         s->disp = NULL;
+    } else {
+        /* Symmetric with the connect path: the common fallback uninitializes
+         * the GFX pipeline (gdi_graphics_pipeline_uninit) so a reconnect does
+         * not double-register the surface-update callbacks. */
+        freerdp_client_OnChannelDisconnectedEventHandler(context, e);
     }
 }
 
