@@ -22,7 +22,12 @@ test('tools home keeps a single 文件同步 row', () => {
   assert.doesNotMatch(tools, /Client Token/);
 
   const routes = read('zephyr_one/mobile/android/app/src/main/kotlin/one/zephyr/mobile/app/DestinationRoutes.kt');
-  assert.match(routes, /ToolEntry\.CLIENT_TOKEN -> "file-sync"/);
+  assert.doesNotMatch(routes, /ToolEntry\.CLIENT_TOKEN/);
+  const root = read('zephyr_one/mobile/android/app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneRoot.kt');
+  assert.doesNotMatch(root, /onOpenTokens/);
+  const ios = read('zephyr_one/mobile/ios/Sources/ZephyrUI/Views/RootSurfaces.swift');
+  assert.match(ios, /toolSection\("文件同步", destinations: \[\.fileSync\]\)/);
+  assert.doesNotMatch(ios, /toolSection\("文件同步", destinations: \[\.fileSync, \.clientToken\]\)/);
 });
 
 test('binding screen is browser enrollment, not password plus Client Token', () => {
