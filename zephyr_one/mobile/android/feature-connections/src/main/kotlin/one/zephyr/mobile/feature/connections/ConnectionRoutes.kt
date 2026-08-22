@@ -96,6 +96,9 @@ fun ConnectionEditorRoute(
     onDismiss: () -> Unit,
     onConnect: (Connection, Boolean) -> Unit,
     onMessage: suspend (String) -> Unit,
+    onPickDriveDirectory: () -> Unit = {},
+    onRequestAllFilesAccess: () -> Unit = {},
+    onClearDriveDirectory: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsState()
@@ -131,7 +134,7 @@ fun ConnectionEditorRoute(
     ConnectionEditorScreen(
         state = state,
         isCreate = (state as? PageState.Content)?.value?.draft?.isCreate ?: false,
-        onIntent = { intent -> dispatch(viewModel, intent) },
+        onIntent = { intent -> dispatch(viewModel, intent, onPickDriveDirectory, onRequestAllFilesAccess, onClearDriveDirectory) },
         onBack = viewModel::dismiss,
         modifier = modifier,
     )
@@ -143,7 +146,13 @@ fun ConnectionEditorRoute(
  * One exhaustive `when` rather than a lambda per field: adding a field to the editor then fails to
  * compile here until it is wired, which is the property a bag of 24 lambdas does not have.
  */
-private fun dispatch(viewModel: ConnectionEditorViewModel, intent: EditorIntent) {
+private fun dispatch(
+    viewModel: ConnectionEditorViewModel,
+    intent: EditorIntent,
+    onPickDriveDirectory: () -> Unit = {},
+    onRequestAllFilesAccess: () -> Unit = {},
+    onClearDriveDirectory: () -> Unit = {},
+) {
     when (intent) {
         is EditorIntent.Name -> viewModel.setName(intent.value)
         is EditorIntent.Host -> viewModel.setHost(intent.value)
@@ -168,6 +177,12 @@ private fun dispatch(viewModel: ConnectionEditorViewModel, intent: EditorIntent)
         // rather than through a field of its own.
         is EditorIntent.Rdp -> viewModel.setRdp(intent.value)
         is EditorIntent.FileSync -> viewModel.setFileSyncIntent(intent.value)
+        EditorIntent.PickDriveDirectory -> onPickDriveDirectory()
+        EditorIntent.ClearDriveDirectory -> {
+            onClearDriveDirectory()
+            viewModel.clearDriveMapping()
+        }
+        EditorIntent.RequestAllFilesAccess -> onRequestAllFilesAccess()
         is EditorIntent.Visibility -> viewModel.setVisibility(intent.value)
         is EditorIntent.RepairRoute -> viewModel.repairRoute(intent.field)
         EditorIntent.Test -> viewModel.test()

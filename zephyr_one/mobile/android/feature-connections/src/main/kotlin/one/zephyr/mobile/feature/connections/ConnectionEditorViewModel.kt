@@ -43,6 +43,9 @@ data class ConnectionEditorUiState(
     val saving: Boolean = false,
     val testing: Boolean = false,
     val testResult: ConnectionTestResult? = null,
+    val driveShareName: String? = null,
+    val driveGrantValid: Boolean = false,
+    val allFilesAccess: Boolean = false,
 ) {
     val sections: List<EditorSection> get() = draft.sections()
 
@@ -86,6 +89,9 @@ class ConnectionEditorViewModel(
     private val clock: () -> Long = System::currentTimeMillis,
     private val registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
     private val unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
+    private val driveMapping: () -> DriveMappingSnapshot = { DriveMappingSnapshot() },
+    private val onDriveChosen: (String) -> Unit = {},
+    private val onDriveCleared: () -> Unit = {},
 ) : ViewModel(), LockSensitiveSink {
 
     private val page = MutableStateFlow<PageState<ConnectionEditorUiState>>(PageState.InitialLoading)
@@ -168,7 +174,14 @@ class ConnectionEditorViewModel(
 
     /** Opens the form and stamps any inventory that arrived while it was still loading. */
     private fun show(ui: ConnectionEditorUiState) {
-        page.value = PageState.Content(ui)
+        val snapshot = driveMapping()
+        page.value = PageState.Content(
+            ui.copy(
+                driveShareName = snapshot.shareName,
+                driveGrantValid = snapshot.grantValid,
+                allFilesAccess = snapshot.allFilesAccess,
+            ),
+        )
         latestInventory?.let(::applyInventory)
     }
 
@@ -206,6 +219,29 @@ class ConnectionEditorViewModel(
     fun setSshKey(value: String?) = edit { it.withSshKey(value) }
     fun setFileSyncIntent(value: one.zephyr.mobile.model.FileSyncDirectoryIntent) =
         edit { it.withFileSyncIntent(value) }
+
+    fun refreshDriveMapping() {
+        val snapshot = driveMapping()
+        mutate {
+            it.copy(
+                driveShareName = snapshot.shareName,
+                driveGrantValid = snapshot.grantValid,
+                allFilesAccess = snapshot.allFilesAccess,
+            )
+        }
+    }
+
+    fun applyDriveGrant(shareName: String, grantValid: Boolean) {
+        edit { it.withFileSyncIntent(one.zephyr.mobile.model.FileSyncDirectoryIntent.LOCAL_SHARE) }
+        mutate { it.copy(driveShareName = shareName, driveGrantValid = grantValid) }
+        onDriveChosen(shareName)
+    }
+
+    fun clearDriveMapping() {
+        edit { it.withFileSyncIntent(one.zephyr.mobile.model.FileSyncDirectoryIntent.OFF) }
+        mutate { it.copy(driveShareName = null, driveGrantValid = false) }
+        onDriveCleared()
+    }
     fun setPassword(value: one.zephyr.mobile.model.SecretState) = edit { it.withPassword(value) }
     fun setPrivateKey(value: one.zephyr.mobile.model.SecretState) = edit { it.withPrivateKey(value) }
     fun setRdp(settings: one.zephyr.mobile.model.RdpSettings) =
@@ -433,6 +469,9 @@ class ConnectionEditorViewModel(
             passwordRevealer: suspend (Connection) -> String? = { null },
             registerSensitiveSink: (LockSensitiveSink) -> Unit = {},
             unregisterSensitiveSink: (LockSensitiveSink) -> Unit = {},
+            driveMapping: () -> DriveMappingSnapshot = { DriveMappingSnapshot() },
+            onDriveChosen: (String) -> Unit = {},
+            onDriveCleared: () -> Unit = {},
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ConnectionEditorViewModel(
@@ -449,7 +488,16 @@ class ConnectionEditorViewModel(
                 passwordRevealer = passwordRevealer,
                 registerSensitiveSink = registerSensitiveSink,
                 unregisterSensitiveSink = unregisterSensitiveSink,
+                driveMapping = driveMapping,
+                onDriveChosen = onDriveChosen,
+                onDriveCleared = onDriveCleared,
             ) as T
         }
     }
 }
+
+data class DriveMappingSnapshot(
+    val shareName: String? = null,
+    val grantValid: Boolean = false,
+    val allFilesAccess: Boolean = false,
+)

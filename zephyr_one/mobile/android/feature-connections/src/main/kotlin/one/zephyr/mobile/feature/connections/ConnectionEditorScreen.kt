@@ -205,6 +205,9 @@ sealed interface EditorIntent {
     data class PrivateKey(val value: SecretState) : EditorIntent
     data class Rdp(val value: RdpSettings) : EditorIntent
     data class FileSync(val value: FileSyncDirectoryIntent) : EditorIntent
+    data object PickDriveDirectory : EditorIntent
+    data object ClearDriveDirectory : EditorIntent
+    data object RequestAllFilesAccess : EditorIntent
     data class Visibility(val value: String) : EditorIntent
     data class RepairRoute(val field: String) : EditorIntent
     data object Test : EditorIntent
@@ -524,30 +527,36 @@ private fun RdpChannelSection(ui: ConnectionEditorUiState, onIntent: (EditorInte
     ToggleRow(stringResource(R.string.editor_rdp_camera), rdp.camera) {
         onIntent(EditorIntent.Rdp(rdp.copy(camera = it)))
     }
-    ToggleRow("存储（文件 drive）", rdp.storage, "只读在 provider 层执行", showDivider = !rdp.storage) {
+    ToggleRow("文件夹映射", rdp.storage, "把本机目录挂到远程会话", showDivider = !rdp.storage) {
         onIntent(EditorIntent.Rdp(rdp.copy(storage = it)))
+        if (it && ui.driveShareName.isNullOrBlank()) onIntent(EditorIntent.PickDriveDirectory)
+        if (!it) onIntent(EditorIntent.ClearDriveDirectory)
     }
     if (rdp.storage) {
         SettingsRow(
             title = "映射目录",
-            subtitle = "本机共享目录授权",
-            value = when (ui.draft.current.fileSyncIntent) {
-                FileSyncDirectoryIntent.OFF -> "未映射"
-                FileSyncDirectoryIntent.ASK -> "会话时选择"
-                FileSyncDirectoryIntent.LOCAL_SHARE -> "下载/ZephyrDrive"
-                FileSyncDirectoryIntent.SERVER_BRIDGE -> "主端桥接"
+            subtitle = when {
+                ui.driveShareName.isNullOrBlank() -> "点这里选本机目录，系统会要文件访问权限"
+                ui.driveGrantValid -> "已授权，仅这条连接使用"
+                else -> "授权已失效，点这里重新选择"
             },
+            value = ui.driveShareName ?: "未选择",
             showChevron = true,
-            onClick = {
-                val values = FileSyncDirectoryIntent.entries
-                val current = values.indexOf(ui.draft.current.fileSyncIntent)
-                onIntent(EditorIntent.FileSync(values[(current + 1) % values.size]))
-            },
+            onClick = { onIntent(EditorIntent.PickDriveDirectory) },
         )
+        if (!ui.allFilesAccess) {
+            SettingsRow(
+                title = "授予所有文件访问权限",
+                subtitle = "映射整个共享存储时需要，与 Zephyr Agent 相同",
+                showChevron = true,
+                onClick = { onIntent(EditorIntent.RequestAllFilesAccess) },
+            )
+        }
         SettingsRow(
-            title = "只读",
+            title = "清除映射",
+            subtitle = "只取消这条连接的目录，不影响其他连接",
             showDivider = false,
-            trailing = { Switch(checked = true, onCheckedChange = null, enabled = false) },
+            onClick = { onIntent(EditorIntent.ClearDriveDirectory) },
         )
     }
 }

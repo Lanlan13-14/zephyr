@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -70,6 +71,7 @@ import one.zephyr.mobile.data.session.SessionRow
 import one.zephyr.mobile.data.session.SessionTransport
 import one.zephyr.mobile.feature.connections.ConnectionEditorRoute
 import one.zephyr.mobile.feature.connections.ConnectionEditorViewModel
+import one.zephyr.mobile.feature.connections.DriveMappingSnapshot
 import one.zephyr.mobile.feature.connections.ConnectionDraft
 import one.zephyr.mobile.feature.connections.ConnectionTestCredentials
 import one.zephyr.mobile.feature.connections.ConnectionListRoute
@@ -559,8 +561,10 @@ private fun BoundRoot(
                 rdpEngine = rdpEngine,
             )
 
-            is RootRoute.ConnectionEditor -> ConnectionEditorRoute(
-                viewModel = viewModel(
+            is RootRoute.ConnectionEditor -> {
+                val editorConnectionId = current.connectionId
+                val editorContext = LocalContext.current
+                val editorViewModel: ConnectionEditorViewModel = viewModel(
                     key = "editor:" + (current.connectionId ?: ("new:" + current.protocol.name)),
                     factory = ConnectionEditorViewModel.factory(
                         connections = account.connections,
@@ -574,10 +578,6 @@ private fun BoundRoot(
                             ssh = DirectSshConnectionTester(
                                 engine = appContainer.sshEngine,
                                 routePlanner = { connection ->
-                                    /* A null plan means no routing rule applies
-                                     * to this connection: fall back to direct
-                                     * so reachability matches what the real
-                                     * dialer would do. */
                                     accountRoutePlanner(account).plan(connection)
                                         ?: SshRoute(listOf(RouteHop.Target(connection.host, connection.port)))
                                 },
@@ -592,18 +592,66 @@ private fun BoundRoot(
                         },
                         registerSensitiveSink = account::registerSensitiveSink,
                         unregisterSensitiveSink = account::unregisterSensitiveSink,
+                        driveMapping = {
+                            val profileId = editorConnectionId?.let(account.connectionShares::profileFor)
+                            val grant = profileId?.let(account.shareGrants::grant)
+                            DriveMappingSnapshot(
+                                shareName = grant?.shareName,
+                                grantValid = grant?.grantValid == true,
+                                allFilesAccess = android.os.Environment.isExternalStorageManager(),
+                            )
+                        },
+                        onDriveChosen = {},
+                        onDriveCleared = {
+                            editorConnectionId?.let(account.connectionShares::forget)
+                        },
                     ),
-                ),
-                onDismiss = { route = RootRoute.Root(IslandDestination.HOME) },
-                onConnect = { connection, _ ->
-                    route = routeForProtocol(
-                        sessionId = UUID.randomUUID().toString(),
-                        connectionId = connection.id,
-                        protocol = connection.protocol,
-                    )
-                },
-                onMessage = { messages.emit(it) },
-            )
+                )
+                val pickDriveDirectory = rememberDirectoryAuthorizer(
+                    grants = account.shareGrants,
+                    requestWrite = editorViewModel.draft?.current?.capabilities?.canWriteFiles != false,
+                    profileIdFactory = { UUID.randomUUID().toString() },
+                    shareNameFactory = { editorViewModel.draft?.current?.name ?: "PHONE" },
+                    onResult = { result ->
+                        when (result) {
+                            is DirectoryAuthorizationResult.Authorized -> {
+                                val id = editorViewModel.draft?.current?.id ?: editorConnectionId
+                                if (id != null) account.connectionShares.choose(id, result.grant.profileId)
+                                editorViewModel.applyDriveGrant(result.grant.shareName, result.grant.grantValid)
+                            }
+                            DirectoryAuthorizationResult.Cancelled -> Unit
+                            DirectoryAuthorizationResult.Refused -> notice("系统未能保留该目录授权")
+                        }
+                    },
+                )
+                ConnectionEditorRoute(
+                    viewModel = editorViewModel,
+                    onDismiss = { route = RootRoute.Root(IslandDestination.HOME) },
+                    onConnect = { connection, _ ->
+                        route = routeForProtocol(
+                            sessionId = UUID.randomUUID().toString(),
+                            connectionId = connection.id,
+                            protocol = connection.protocol,
+                        )
+                    },
+                    onMessage = { messages.emit(it) },
+                    onPickDriveDirectory = pickDriveDirectory,
+                    onRequestAllFilesAccess = {
+                        val intent = android.content.Intent(
+                            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            android.net.Uri.parse("package:" + editorContext.packageName),
+                        )
+                        runCatching { editorContext.startActivity(intent) }
+                            .onFailure {
+                                editorContext.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                            }
+                    },
+                    onClearDriveDirectory = {
+                        val id = editorViewModel.draft?.current?.id ?: editorConnectionId
+                        id?.let(account.connectionShares::forget)
+                    },
+                )
+            }
 
             RootRoute.ProtocolPicker -> ProtocolPickerScreen(
                 onSelect = { protocol -> route = RootRoute.ConnectionEditor(null, protocol = protocol) },

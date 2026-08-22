@@ -44,7 +44,7 @@ class JumpPickerMutationTest {
         )
         val show = vm.substringAfter("private fun show(").substringBefore("private fun applyInventory")
         val applyIndex = show.indexOf("latestInventory?.let(::applyInventory)")
-        val contentIndex = show.indexOf("page.value = PageState.Content(ui)")
+        val contentIndex = show.indexOf("page.value = PageState.Content(")
         assertTrue("show() must become Content before replaying", contentIndex in 0 until applyIndex)
     }
 
