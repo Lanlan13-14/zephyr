@@ -31,7 +31,7 @@ const RDP_FFI = read('zephyr_one/src-tauri/src/rdp/ffi.rs');
 const RDP_SESSION = read('zephyr_one/src-tauri/src/rdp/session.rs');
 const HEADER = read('zephyr_one/native/freerdp-core/zephyr_rdp.h');
 const WORKFLOW = read('.github/workflows/zephyr-one.yml');
-const ADR = read('FREEZE/zephyr one for mobile/NATIVE_ENGINE_DECISIONS.md');
+const ADR = read('FREEZE/zephyr one/ZEPHYR_ONE.md');
 
 test('the C shim is compiled by the build and consumed by Rust', () => {
     /* Both halves, asserted together on purpose. b0e5a9c reverted a build that

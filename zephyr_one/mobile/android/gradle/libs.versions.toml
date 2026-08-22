@@ -1,5 +1,5 @@
 # Pinned versions. Protocol engines stay unpinned until the M0 ADR spikes in
-# FREEZE/zephyr one for mobile/NATIVE_ENGINE_DECISIONS.md sign off on a build manifest.
+# FREEZE/zephyr one/ZEPHYR_ONE.md signs off on the native dependency build manifest.
 [versions]
 agp = "8.7.3"
 kotlin = "2.0.21"

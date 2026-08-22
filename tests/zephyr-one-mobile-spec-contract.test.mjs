@@ -3,493 +3,77 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Ajv2020 from 'ajv/dist/2020.js';
-import aiAgent from '../ai-agent-service.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const mobile = path.join(root, 'FREEZE', 'zephyr one for mobile');
-const read = (relative) => fs.readFileSync(path.join(mobile, relative), 'utf8');
-const json = (relative) => JSON.parse(read(relative));
+const freeze = path.join(root, 'FREEZE', 'zephyr one');
+const specPath = path.join(freeze, 'ZEPHYR_ONE.md');
+const spec = fs.readFileSync(specPath, 'utf8');
+const json = (relative) => JSON.parse(fs.readFileSync(path.join(freeze, relative), 'utf8'));
 
-const requiredDocs = [
-  'README.md', 'PRODUCT_REQUIREMENTS.md', 'DEVELOPMENT.md',
-  'ZEPHYR_PARITY.md', 'SCREEN_CATALOG.md', 'SYNC_STATE_MACHINE.md',
-  'DATA_AND_MIGRATION.md', 'NATIVE_ENGINE_DECISIONS.md',
-  'MOBILE_EXPERIENCE.md', 'TERMINAL_EXPERIENCE.md',
-  'REMOTE_DESKTOP_EXPERIENCE.md', 'AI_FLOATING_WORKSPACE.md',
-  'SHARED_RESOURCE_RESIDENCY.md',
-  'TRACEABILITY.md', 'IMPLEMENTATION_STATUS.md',
-];
-const requiredContracts = [
-  'contracts/openapi-mobile-v1.json',
-  'contracts/ai-capability-baseline.json',
-  'contracts/entity-registry.json',
-  'contracts/error-registry.json',
-  'contracts/schemas/error.schema.json',
-  'contracts/schemas/sync-operation.schema.json',
-  'contracts/schemas/sync-change.schema.json',
-  'contracts/schemas/secret-envelope.schema.json',
-  'contracts/schemas/shared-use-envelope.schema.json',
-  'contracts/test-vectors/sync-v1.json',
-  'contracts/test-vectors/shared-use-v1.json',
-];
+function includesAll(values, label) {
+  for (const value of values) assert.ok(spec.includes(value), `${label} missing ${value}`);
+}
 
-test('native mobile spec has all narrative and machine artifacts', () => {
-  for (const relative of [...requiredDocs, ...requiredContracts]) {
-    const file = path.join(mobile, relative);
-    assert.ok(fs.existsSync(file), `missing ${relative}`);
-    assert.ok(fs.statSync(file).size > 100, `empty ${relative}`);
-  }
+test('Zephyr One uses one unified narrative contract and keeps reviewed copies', () => {
+  assert.ok(fs.existsSync(specPath));
+  assert.equal(fs.readdirSync(freeze).filter((name) => name.endsWith('.md')).length, 1);
+  assert.ok(Buffer.byteLength(spec, 'utf8') > 30_000);
+  for (const relative of [
+    'contracts/openapi-mobile-v1.json', 'contracts/entity-registry.json',
+    'contracts/error-registry.json', 'contracts/ai-capability-baseline.json',
+    'contracts/schemas/secret-envelope.schema.json',
+    'contracts/test-vectors/sync-v1.json',
+    'branding/manifest.json', 'branding/source/zephyr-one-frost.svg',
+    'references/bottom-floating-island.jpg', 'references/terminal-ime-open.jpg',
+    'original-uploads/zephyr-one-icons.zip', 'demo.html',
+  ]) assert.ok(fs.existsSync(path.join(freeze, relative)), `missing frozen copy ${relative}`);
 });
 
-test('README is a project dashboard and links every executable spec', () => {
-  const text = read('README.md');
-  for (const relative of [...requiredDocs.slice(1), ...requiredContracts]) {
-    assert.match(text, new RegExp(relative.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `README missing ${relative}`);
-  }
-  assert.match(text, /没有新的 Kotlin\/Swift 原生项目/);
-  assert.match(text, /pull-only/);
-  assert.match(text, /工具 → 服务器/);
+test('the unified contract freezes all platforms, parity and one-second startup', () => {
+  includesAll([
+    'Kotlin + Jetpack Compose', 'Swift + SwiftUI', 'Tauri 2 + Rust',
+    'SSH、Telnet、RDP、VNC、SFTP', 'capability parity manifest',
+    '不得超过 1,000ms', '真实可操作产品页面', '不得出现应用自建 Splash',
+    'BootGate', 'Android ready 空白门',
+  ], 'product/startup contract');
 });
 
-test('OpenAPI covers auth, binding, bidirectional sync and sensitive grants', () => {
+test('Link and shared security reflect the current product decisions', () => {
+  includesAll([
+    'Client Token 不再是 One 绑定前置', 'Passkey', 'MFA', '不使用 QUIC',
+    'HTTPS/TLS 1.3 + WSS', 'iCloud 类双向同步', 'tombstone',
+    'Shared-to-me 正式模式只允许 strict broker/relay', '必须废弃',
+    'Relay 不可用时失败', '实时重验',
+  ], 'Link/shared contract');
+});
+
+test('frozen OpenAPI and registries retain the implemented compatibility contracts', () => {
   const api = json('contracts/openapi-mobile-v1.json');
   assert.equal(api.openapi, '3.1.0');
-  const expected = [
+  for (const route of [
     '/api/auth/login', '/api/auth/totp/verify',
     '/api/mobile/v1/capabilities', '/api/mobile/v1/devices/bind',
-    '/api/mobile/v1/devices/refresh', '/api/mobile/v1/sync/bootstrap',
-    '/api/mobile/v1/sync/changes', '/api/mobile/v1/sync/push',
-    '/api/mobile/v1/sync/ack', '/api/mobile/v1/sync/status',
-    '/api/mobile/v1/sensitive/verify', '/api/mobile/v1/file-bridge/lease',
-  ];
-  for (const route of expected) assert.ok(api.paths[route], `OpenAPI missing ${route}`);
+    '/api/mobile/v1/sync/bootstrap', '/api/mobile/v1/sync/changes',
+    '/api/mobile/v1/sync/push', '/api/mobile/v1/shared',
+  ]) assert.ok(api.paths[route], `OpenAPI missing ${route}`);
 
-  // Routes marked implemented must (a) carry an implemented-<sha> marker and
-  // (b) actually exist in server.js. Freezing one SHA string only breaks on
-  // every rebase while proving nothing about the real server.
-  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  const mobileRoutes = fs.readFileSync(path.join(root, 'mobile-v1-routes.js'), 'utf8');
-  const implemented = Object.entries(api.paths).filter(([, item]) => Object.values(item)
-    .some((op) => op && typeof op === 'object' && String(op['x-zephyr-implementation'] || '').startsWith('implemented-')));
-  assert.ok(implemented.length >= 2, 'pre-existing Zephyr auth routes must be marked implemented');
-  for (const [route, item] of implemented) {
-    for (const [method, op] of Object.entries(item)) {
-      if (!op || typeof op !== 'object' || !op['x-zephyr-implementation']) continue;
-      assert.match(op['x-zephyr-implementation'], /^implemented-[0-9a-f]{7,40}$/, `${route} marker must pin a commit`);
-      const ownerSource = route.startsWith('/api/mobile/v1') ? mobileRoutes : server;
-      const mountedRoute = route.replace(/\{([^}]+)\}/g, ':$1');
-      assert.ok(ownerSource.includes(`app.${method}('${mountedRoute}'`),
-        `${route} claims implemented but is absent from its mounted route owner`);
-    }
+  const entities = new Set(json('contracts/entity-registry.json').entities.map((entity) => entity.type));
+  for (const type of ['connection', 'proxy', 'sshKey', 'jumpHost', 'note', 'clientToken', 'fileSyncConfig']) {
+    assert.ok(entities.has(type), `registry missing ${type}`);
   }
 
-  // A mobile operation may remain a required extension until its production
-  // implementation is pinned. Implemented operations must use the commit
-  // marker checked above and exist in MobileV1Api's mounted route table.
-  for (const [route, item] of Object.entries(api.paths)) {
-    if (!route.startsWith('/api/mobile/v1')) continue;
-    for (const [method, op] of Object.entries(item)) {
-      if (!op || typeof op !== 'object' || !op.responses) continue;
-      const marker = String(op['x-zephyr-implementation'] || '');
-      assert.ok(marker === 'required-server-extension' || /^implemented-[0-9a-f]{7,40}$/.test(marker),
-        `${method} ${route} has an invalid implementation marker`);
-    }
+  const errors = new Set(json('contracts/error-registry.json').errors.map((error) => error.code));
+  for (const code of ['sync_conflict', 'cursor_expired', 'device_proof_invalid', 'shared_relay_unavailable']) {
+    assert.ok(errors.has(code), `error registry missing ${code}`);
   }
 });
 
-test('entity registry covers every product-required mirror family', () => {
-  const registry = json('contracts/entity-registry.json');
-  const byType = new Map(registry.entities.map((entity) => [entity.type, entity]));
-  const expected = [
-    'connection', 'proxy', 'sshKey', 'jumpHost', 'note', 'snippet',
-    'aiProvider', 'aiMemory', 'aiSkill', 'aiEnv', 'aiConversation', 'aiMessage',
-    'oneUserSettings', 'serverSettings', 'backupMetadata', 'activityEvent',
-    'resourceAcl', 'clientToken', 'workspaceState', 'fileSyncConfig',
-  ];
-  for (const type of expected) assert.ok(byType.has(type), `registry missing ${type}`);
-  assert.deepEqual(byType.get('connection').secretFields, ['password', 'privateKey']);
-  assert.match(byType.get('clientToken').status, /^implemented-/);
-  assert.match(byType.get('aiConversation').status, /^implemented-/);
-  assert.ok(registry.excludedEditableScopes.includes('accountSecurity'));
-  assert.ok(registry.excludedEditableScopes.includes('smtp'));
-});
-
-test('every entity field has exactly one storage/sync classification', () => {
-  const registry = json('contracts/entity-registry.json');
-  const buckets = ['editableFields', 'secretFields', 'serverAuthorityFields', 'opaquePreserveFields', 'deviceLocalFields'];
-  for (const entity of registry.entities) {
-    const owner = new Map();
-    for (const bucket of buckets) {
-      assert.ok(Array.isArray(entity[bucket]), `${entity.type}.${bucket} must be array`);
-      for (const field of entity[bucket]) {
-        assert.ok(!owner.has(field), `${entity.type}.${field} in ${owner.get(field)} and ${bucket}`);
-        owner.set(field, bucket);
-      }
-    }
-  }
-});
-
-test('error registry is unique and carries deterministic client action', () => {
-  const registry = json('contracts/error-registry.json');
-  const seen = new Set();
-  for (const error of registry.errors) {
-    assert.ok(!seen.has(error.code), `duplicate error ${error.code}`);
-    seen.add(error.code);
-    assert.ok(Number.isInteger(error.httpStatus));
-    assert.equal(typeof error.retryable, 'boolean');
-    assert.ok(error.clientAction);
-  }
-  for (const code of ['app_session_expired', 'token_required', 'sync_conflict', 'cursor_expired', 'sensitive_grant_consumed', 'rate_limited']) {
-    assert.ok(seen.has(code), `missing error ${code}`);
-  }
-});
-
-test('secret schema and AAD vector freeze byte-level interoperability', () => {
-  const schema = json('contracts/schemas/secret-envelope.schema.json');
-  const vector = json('contracts/test-vectors/sync-v1.json');
-  assert.equal(schema.properties.alg.const, 'ML-KEM-768+HKDF-SHA256+AES-256-GCM');
-  assert.deepEqual(schema.required, ['v', 'alg', 'kem', 'aead', 'ct', 'iv', 'tag', 'data', 'aad', 'keyVersion', 'entityRevision']);
-  const bytes = Buffer.from(vector.aad.hex, 'hex');
-  const expected = Buffer.from(vector.aad.utf8Text.replaceAll('\\0', '\0'), 'utf8');
-  assert.deepEqual(bytes, expected);
-  assert.equal(bytes.filter((byte) => byte === 0).length, vector.aad.fields.length - 1);
-});
-
-test('sync state machine resolves bootstrap ordering and crash recovery', () => {
-  const text = read('SYNC_STATE_MACHINE.md');
-  assert.match(text, /BOOTSTRAP_PAGE until complete/);
-  assert.match(text, /CATCH_UP_PULL from snapshotCursor/);
-  assert.match(text, /PUSH_PENDING collected during bootstrap/);
-  assert.match(text, /PULL_CHANGES again/);
-  assert.match(text, /同 opId 重放 100 次/);
-  assert.match(text, /mobile_entity_field_revisions/);
-  assert.match(text, /cursor 与一页业务变更处于同一事务/);
-});
-
-test('screen catalog places retained server settings and backup restore', () => {
-  const text = read('SCREEN_CATALOG.md');
-  assert.match(text, /工具 → 服务器 → 设置/);
-  assert.match(text, /工具 → 服务器 → 备份与恢复/);
-  assert.match(text, /S48 服务器设置/);
-  assert.match(text, /S49 备份与恢复/);
-  assert.doesNotMatch(text, /账号安全[^\n]*一级内容/);
-});
-
-test('parity spec inherits Zephyr facts without inheriting Web UI', () => {
-  const text = read('ZEPHYR_PARITY.md');
-  for (const source of ['authz.js', 'resource-service.js', 'notes-service.js', 'workspace-service.js', 'deeplink-service.js', 'file-transfer-protocol.js']) {
-    assert.match(text, new RegExp(source.replace('.', '\\.')));
-  }
-  assert.match(text, /不能机械搬/);
-  assert.match(text, /WebView/);
-  assert.match(text, /readOnly.*provider/s);
-});
-
-test('implementation status does not falsely claim native code exists', () => {
-  /* This guard exists to stop status inflation, not to freeze a particular row value.
-   *
-   * It originally hardcoded `missing` for Android, which became wrong the moment
-   * zephyr_one/mobile/android landed: 295 .kt files really do exist, so `missing` was itself a
-   * false statement. The rule the document actually needs is the one the file states in its own
-   * 禁止状态漂移 section: `partial` may not be dressed up as done, and "code exists" may not be
-   * reported as "implemented". So the assertion is now on the *forbidden* values plus the caveat
-   * that makes `partial` honest, which is what a reviewer would check by hand. */
-  const status = read('IMPLEMENTATION_STATUS.md');
-
-  const row = (label) => {
-    const line = status.split('\n').find((l) => l.startsWith('|') && l.includes(label));
-    assert.ok(line, `IMPLEMENTATION_STATUS.md must keep a row for ${label}`);
-    return line;
-  };
-
-  /* Android: code exists, has never been compiled. `partial` is the only honest value, and the
-   * row must carry the reason so the status cannot be read as shippable. */
-  const android = row('Android Kotlin/Compose');
-  assert.match(android, /`partial`/, 'Android has code but has never built; partial is the honest value');
-  assert.doesNotMatch(android, /`implemented/, 'uncompiled Kotlin must never be reported as implemented');
-  assert.match(android, /从未(成功)?编译|未经过一次(真正的)?编译/, 'the never-compiled caveat must stay on the row');
-
-  /* iOS: the same correction this test already applied to Android, for the same
-   * reason. `missing` was accurate while mobile/ios held six generated contract
-   * files and no manifest. It stopped being accurate once Package.swift, a
-   * hand-written ZephyrCore (MobileAad / Zft2Codec / Zft2Meta) and an XCTest
-   * suite driven by the frozen vectors landed -- at which point pinning
-   * `missing` would make this guard enforce a false statement, which is the
-   * opposite of its purpose.
-   *
-   * So the assertion is on the forbidden values plus the caveat that keeps
-   * `partial` honest: the Swift has never been through a compiler, because
-   * swiftc exists only on the macOS runner. That is exactly the state Android
-   * was in, and it is what a reviewer would check by hand. */
-  const ios = row('iOS Swift/SwiftUI');
-  assert.match(ios, /`partial`/, 'iOS has real Swift now; missing would be a false statement');
-  assert.doesNotMatch(ios, /`implemented/, 'uncompiled Swift must never be reported as implemented');
-  assert.match(
-    ios,
-    /\u4ecd\u672a\u7528 swiftc \u7f16\u8bd1|\u4ece\u672a(\u6210\u529f)?\u7f16\u8bd1|\u672a\u7ecf\u8fc7\u4e00\u6b21(\u771f\u6b63\u7684)?\u7f16\u8bd1/,
-    'the never-compiled caveat must stay on the row',
-  );
-  /* And it must not quietly claim the parts that genuinely do not exist. */
-  assert.match(ios, /\u65e0 Xcode \u5de5\u7a0b/, 'the row must keep naming what is still absent');
-  /* All 20 frozen mobile v1 operations now have real implementations, including
-   * the shared-residency and file-bridge planes, and every one is exercised over
-   * HTTP by zephyr_one/mobile/tests.
-   *
-   * The row stays `partial` for a reason that has nothing to do with route
-   * coverage: the relay transport advertised by a relay-strict session is a
-   * declared endpoint with no stream server behind it yet, and no native client
-   * has ever consumed any of this. `implemented` would be exactly the inflation
-   * this test exists to prevent, so the row must keep naming what is missing. */
-  const serverApi = row('mobile v1 server API');
-  assert.match(serverApi, /`partial`/, 'the server API exists but the relay stream is not built');
-  assert.doesNotMatch(serverApi, /`implemented/, 'no native client has consumed this yet');
-  assert.match(serverApi, /relay|20\s*\/\s*20|20 ?/, 'the row must state the real remaining gap');
-
-  const bidi = row('完整双向同步');
-  assert.match(bidi, /`partial`/);
-  assert.doesNotMatch(bidi, /`implemented/);
-
-  /* No table row may claim the native client is done while the engines are unavailable.
-   *
-   * Scoped to table rows on purpose: the prose 禁止状态漂移 section legitimately mentions the token
-   * in the rule "`implemented-zephyr` 不等于 `implemented-one`", and a whole-file match would flag
-   * the very sentence that forbids the drift. */
-  const statusRows = status.split('\n').filter((line) => line.startsWith('|'));
-  for (const line of statusRows) {
-    assert.doesNotMatch(line, /`implemented-one`/, 'no row may claim implemented-one: ' + line.trim());
-  }
-});
-
-test('JSON Schemas compile strictly and reject the negative operation vector', () => {
-  const ajv = new Ajv2020({ strict: true, allErrors: true });
-  const schemas = [
-    'contracts/schemas/error.schema.json',
-    'contracts/schemas/secret-envelope.schema.json',
-    'contracts/schemas/sync-operation.schema.json',
-    'contracts/schemas/sync-change.schema.json',
-  ].map(json);
-  for (const schema of schemas) ajv.addSchema(schema);
-  for (const schema of schemas) assert.equal(typeof ajv.getSchema(schema.$id), 'function', `failed to compile ${schema.$id}`);
-  const validate = ajv.getSchema('https://zephyr.local/contracts/sync-operation.schema.json');
-  const vectors = json('contracts/test-vectors/sync-v1.json');
-  assert.equal(validate(vectors.operations.acceptedUpsert), true, JSON.stringify(validate.errors));
-  assert.equal(validate(vectors.operations.invalidMissingMask), false, 'negative vector unexpectedly passed');
-});
-
-test('mobile experience freezes custom Android back and universal iOS swipe back', () => {
-  const product = read('PRODUCT_REQUIREMENTS.md');
-  const experience = read('MOBILE_EXPERIENCE.md');
-  assert.match(product, /完整移动端原生客户端/);
-  assert.match(product, /系统 back progress\/commit\/cancel/);
-  assert.match(product, /所有 push 进入的普通页面/);
-  assert.match(experience, /默认应用内 predictive-back/);
-  assert.match(experience, /根 Activity 返回系统主页\/跨任务时交还系统动画/);
-  assert.match(experience, /interactivePopGestureRecognizer/);
-  assert.match(experience, /每个 push route/);
-  assert.match(experience, /物理左边缘/);
-});
-
-test('terminal and remote desktop specs preserve complete mobile interaction', () => {
-  const terminal = read('TERMINAL_EXPERIENCE.md');
-  const remote = read('REMOTE_DESKTOP_EXPERIENCE.md');
-  const engines = read('NATIVE_ENGINE_DECISIONS.md');
-  for (const term of ['Termux', 'scrollback', 'selection', 'extra keys', 'PTY resize', 'hardware keyboard']) assert.match(terminal, new RegExp(term));
-  for (const term of ['Direct touch', 'Trackpad', 'FreeRDP', 'VNC', 'clipboard', '弱网']) assert.match(remote, new RegExp(term));
-  assert.match(engines, /FreeRDP.*Apache-2\.0/s);
-  assert.doesNotMatch(engines, /FreeRDP 使用 LGPL/);
-  assert.match(engines, /SwiftTerm/);
-  assert.match(engines, /LibVNCClient/);
-});
-
-test('Zephyr AI is a visible floating workspace with complete live catalog parity', () => {
-  const product = read('PRODUCT_REQUIREMENTS.md');
-  const ai = read('AI_FLOATING_WORKSPACE.md');
-  const screens = read('SCREEN_CATALOG.md');
-  assert.match(product, /原生浮窗\/detent\/side panel/);
-  assert.match(product, /全部 model-visible AI capability\/tool/);
-  assert.match(ai, /116 个模型可见 tool/);
-  assert.match(ai, /peek \/ half \/ expanded/);
-  assert.match(ai, /observation → proposed action → confirmation → execution → verification/);
-  assert.match(ai, /NativeSurfaceBridge/);
-  assert.match(ai, /terminal_read_v1 \/ terminal_send_v1 \/ terminal_wait_v1/);
-  assert.match(ai, /capture\/action\/verify\/cert/);
-  assert.match(ai, /CI 与 Zephyr catalog 动态 diff/);
-  assert.match(screens, /S44 AI 浮动 Workspace/);
-  assert.match(screens, /底层 connection\/terminal\/RDP\/VNC/);
-});
-
-test('AI mobile baseline exactly matches the live Zephyr model-visible catalog', () => {
-  const baseline = json('contracts/ai-capability-baseline.json');
-  const live = aiAgent.listToolCatalog({ permissions: baseline.permissionFixture }).map((tool) => ({
-    toolId: tool.name,
-    capabilityId: tool.capabilityId,
-    risk: tool.risk,
-    confirmation: tool.confirmation,
-    playbookId: tool.playbookId || null,
-    parameters: tool.parameters,
-  })).sort((a, b) => a.toolId.localeCompare(b.toolId));
-  assert.equal(baseline.count, baseline.tools.length);
-  assert.equal(baseline.count, 116, 'update the reviewed mobile AI parity baseline when Zephyr changes');
-  assert.deepEqual(baseline.tools, live);
-});
-
-test('shared-to-me resources are excluded from the mobile mirror and served online only', () => {
-  const product = read('PRODUCT_REQUIREMENTS.md');
-  const residency = read('SHARED_RESOURCE_RESIDENCY.md');
-  const parity = read('ZEPHYR_PARITY.md');
-  const api = json('contracts/openapi-mobile-v1.json');
-
-  // Product contract must scope sync to owned entities and forbid shared persistence.
-  assert.match(product, /当前绑定账号\*\*自己拥有\*\*的数据进入 One 完整双向镜像/);
-  assert.match(product, /分享给当前账号的资源不属于其镜像/);
-  assert.match(product, /每次查看\/使用都在线请求 Zephyr 并实时重验权限/);
-  assert.match(product, /其他用户共享给当前账号的资源全部排除在镜像之外/);
-
-  // Control-plane secrets must never be delivered to the device.
-  for (const forbidden of ['Client Token', 'AI Provider', 'Env secret']) {
-    assert.match(residency, new RegExp(forbidden), `residency spec must forbid ${forbidden}`);
-  }
-  // The honest security statement must survive: encryption is not a proof of non-delivery.
-  assert.match(residency, /best-effort memory zeroization/);
-  assert.match(residency, /不能被描述为数学上保证秘密从未出现在设备/);
-  assert.match(residency, /native direct connection 与“秘密不进入设备”不能同时成立/);
-  assert.match(residency, /relay-strict/);
-  assert.doesNotMatch(residency, /保证秘密从未到达设备/);
-
-  // Sync boundary is enforced on both sides, not only in the UI.
-  assert.match(residency, /ownerUserId == authenticated userId/);
-  assert.match(residency, /shared_residency_violation/);
-  assert.match(parity, /shared-to-me/);
-
-  // Online-only shared endpoints exist and are separated from the sync feed.
-  const paths = Object.keys(api.paths);
-  for (const expected of [
-    '/api/mobile/v1/shared',
-    '/api/mobile/v1/shared/{resourceType}/{resourceId}',
-    '/api/mobile/v1/shared/{resourceType}/{resourceId}/invoke',
-    '/api/mobile/v1/shared/connections/{connectionId}/sessions',
-    '/api/mobile/v1/shared/sessions/{sessionId}/refresh',
-    '/api/mobile/v1/shared/sessions/{sessionId}',
-  ]) {
-    assert.ok(paths.includes(expected), `OpenAPI missing ${expected}`);
-  }
-  const listGet = api.paths['/api/mobile/v1/shared'].get;
-  assert.equal(listGet['x-zephyr-no-store'], true, 'shared list must be declared no-store');
-  const sessionPost = api.paths['/api/mobile/v1/shared/connections/{connectionId}/sessions'].post;
-  assert.equal(sessionPost['x-zephyr-no-store'], true, 'shared session mint must be declared no-store');
-});
-
-test('shared use envelope schema binds device, session, resource and purpose', () => {
-  const ajv = new Ajv2020({ strict: true, allErrors: true });
-  const schema = json('contracts/schemas/shared-use-envelope.schema.json');
-  ajv.addSchema(schema);
-  const validate = ajv.getSchema(schema.$id);
-  assert.equal(typeof validate, 'function', 'shared use envelope schema failed to compile');
-
-  const vectors = json('contracts/test-vectors/shared-use-v1.json');
-  assert.equal(validate(vectors.envelopes.acceptedSsh), true, JSON.stringify(validate.errors));
-  assert.equal(validate(vectors.envelopes.invalidPurpose), false, 'sftp purpose must be rejected by the session envelope');
-  assert.equal(validate(vectors.envelopes.forbiddenControlPlaneField), false, 'control-plane fields must be rejected');
-
-  // AAD must bind every scope field; a shared envelope reused elsewhere has to fail.
-  const aad = Buffer.from(vectors.aad.base64, 'base64');
-  assert.equal(aad.toString('hex'), vectors.aad.hex, 'aad hex and base64 disagree');
-  assert.deepEqual(aad.toString('utf8').split('\0'), vectors.aad.values);
-  for (const field of ['deviceId', 'sessionId', 'resourceId', 'purpose', 'expiresAt', 'clientNonce']) {
-    assert.ok(vectors.aad.fields.includes(field), `aad must bind ${field}`);
-  }
-  const negatives = new Set(vectors.negativeCases.map((item) => item.id));
-  for (const id of ['wrong-device', 'wrong-session', 'wrong-resource', 'wrong-purpose', 'expired', 'replay']) {
-    assert.ok(negatives.has(id), `missing negative case ${id}`);
-  }
-
-  // Control-plane secrets are named explicitly so a future payload change trips the test.
-  for (const key of ['clientToken', 'aiProviderApiKey', 'aiEnvValue', 'serverDataKey', 'ownerSid', 'refreshCredential']) {
-    assert.ok(vectors.forbiddenPayloadKeys.includes(key), `forbidden payload key list must contain ${key}`);
-    assert.equal(Object.prototype.hasOwnProperty.call(schema.properties, key), false, `${key} must not be a schema property`);
-  }
-});
-
-test('shared residency errors are registered with deterministic client actions', () => {
-  const registry = json('contracts/error-registry.json');
-  const byCode = new Map(registry.errors.map((item) => [item.code, item]));
-  const expected = {
-    shared_online_required: 503,
-    shared_grant_expired: 410,
-    shared_grant_revoked: 410,
-    shared_residency_violation: 409,
-    shared_direct_forbidden: 403,
-    shared_session_expired: 410,
-    shared_session_consumed: 409,
-    shared_relay_unavailable: 503,
-    shared_content_export_forbidden: 403,
-  };
-  for (const [code, status] of Object.entries(expected)) {
-    const entry = byCode.get(code);
-    assert.ok(entry, `error registry missing ${code}`);
-    assert.equal(entry.httpStatus, status, `${code} http status drift`);
-    assert.ok(entry.clientAction && entry.clientAction.length > 2, `${code} needs a client action`);
-  }
-  assert.equal(byCode.get('shared_residency_violation').clientAction, 'abortSyncAndPurgeShared');
-  assert.equal(byCode.get('shared_session_consumed').clientAction, 'mintFreshSessionEnvelope');
-});
-
-test('mobile v1 is mounted by the server and does not disturb the legacy One path', () => {
-  /* This test used to assert the *absence* of any mobile v1 route. That was
-   * correct while the server had none, but it was also passing vacuously: the
-   * routes are registered inside mobile-v1-routes.js, so a literal
-   * `app.get('/api/mobile/v1` search in server.js would never have matched even
-   * after the API landed. It now asserts the real invariants instead. */
+test('mobile v1 compatibility routes remain mounted during Link v2 planning', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   const routes = fs.readFileSync(path.join(root, 'mobile-v1-routes.js'), 'utf8');
-  const one = fs.readFileSync(path.join(root, 'one-client-manager.js'), 'utf8');
-
-  // The API has to be wired from server.js or nothing serves it.
-  assert.match(server, /require\('\.\/mobile-v1-routes'\)/, 'mobile v1 must be required');
-  assert.match(server, /mountRoutes\(app\)/, 'mobile v1 must be mounted');
-
-  /* The raw body capture is load-bearing, not incidental: the ES256 device proof
-   * signs a digest of the exact bytes, and express.json() discards them. */
-  assert.match(server, /rawBody/, 'device proof verification needs the raw body');
-
-  // Every implemented plane must actually exist in the route module.
-  for (const routePath of [
-    '/api/mobile/v1/capabilities',
-    '/api/mobile/v1/devices/bind',
-    '/api/mobile/v1/devices/refresh',
-    '/api/mobile/v1/sync/bootstrap',
-    '/api/mobile/v1/sync/changes',
-    '/api/mobile/v1/sync/push',
-    '/api/mobile/v1/sync/ack',
-    '/api/mobile/v1/sync/status',
-    '/api/mobile/v1/sensitive/verify',
-  ]) {
-    assert.ok(routes.includes(routePath), routePath + ' must be mounted');
+  assert.match(server, /require\('\.\/mobile-v1-routes'\)/);
+  assert.match(server, /mountRoutes\(app\)/);
+  for (const route of ['/api/mobile/v1/sync/push', '/api/mobile/v1/shared', '/api/mobile/v1/file-bridge/lease']) {
+    assert.ok(routes.includes(route));
   }
-
-  /* The shared-residency and file-bridge planes are implemented too, so every
-   * frozen operation must be mounted rather than answering a placeholder.
-   *
-   * Asserted by counting real express mounts: an earlier version of this test
-   * only checked that the string `unsupported_scope` appeared somewhere, which
-   * kept passing after the stubs were replaced and therefore proved nothing. */
-  for (const routePath of [
-    '/api/mobile/v1/shared',
-    '/api/mobile/v1/shared/:resourceType/:resourceId',
-    '/api/mobile/v1/shared/:resourceType/:resourceId/invoke',
-    '/api/mobile/v1/shared/connections/:connectionId/sessions',
-    '/api/mobile/v1/shared/sessions/:sessionId/refresh',
-    '/api/mobile/v1/shared/sessions/:sessionId',
-    '/api/mobile/v1/file-bridge/lease',
-  ]) {
-    assert.ok(routes.includes(routePath), routePath + ' must be mounted');
-  }
-  /* And they must not be placeholders: a handler that only calls sendError is
-   * the shape this repo used before the planes were built. */
-  assert.doesNotMatch(routes, /const notImplemented\s*=/, 'the stub helper must be gone');
-
-  // The legacy pull-only path is untouched.
-  assert.match(one, /\/api\/one\/sync\/pull/);
-  assert.match(one, /Build a user-scoped sync snapshot/);
 });

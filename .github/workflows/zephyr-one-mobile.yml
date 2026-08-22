@@ -439,8 +439,8 @@ jobs:
             - Unsigned iOS 17+ IPA (requires signing before device installation)
             - Contracts suite + Android compile/test + iOS compile/test all green
 
-            See the [mobile product contract](../../tree/main/FREEZE/zephyr%20one%20for%20mobile/README.md)
-            for scope, and IMPLEMENTATION_STATUS.md for the honest per-feature status.
+            See the [Zephyr One unified contract](../../tree/main/FREEZE/zephyr%20one/ZEPHYR_ONE.md)
+            for desktop, Android, iOS, startup, Link, shared-security and delivery scope.
           files: dist-mobile/*
           draft: false
           prerelease: true

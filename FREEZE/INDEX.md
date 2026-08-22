@@ -44,16 +44,15 @@
 - **代码**：`ai-capability-registry.js`、`ai-capabilities.js`、`ai-tool-executor.js`、`ai-connection-tools.js`、`ai-proxy-tools.js`、`ai-ssh-key-tools.js`、`ai-playbooks.js`
 - **约束**：接口完整 + 接口标准 + AI 通过 Playbook + capability_search 真会用；批量小、每批独立验证
 
-### 3. Zephyr One Android / iOS 原生 App
-- **状态**：用户产品要求修订版、完整架构/同步/文件桥接/浮岛/终端 IME/四色图标规范已写，未开始实施
-- **资料目录**：[`zephyr one for mobile/`](./zephyr%20one%20for%20mobile/)
-- **产品范围合同**：[`PRODUCT_REQUIREMENTS.md`](./zephyr%20one%20for%20mobile/PRODUCT_REQUIREMENTS.md)
-- **技术方案文档**：[`DEVELOPMENT.md`](./zephyr%20one%20for%20mobile/DEVELOPMENT.md)
-- **核心范围**：完整实现当前账号有直接移动用途的能力并保留服务器设置/备份恢复；不提供账号安全、SMTP、CAPTCHA/IP策略、备案、自定义CSS/JS管理、多用户或独立Agent页
-- **命名**：One设置统一为“文件同步”，主端统一为“Zephyr Client”并保留旧Agent兼容
-- **同步要求**：主端先建Token，One账号密码+TOTP（如启用）绑定；像iCloud一样完整双向镜像One有用途的数据/凭据/Client Token，支持自定义自动间隔、立即同步和密码/TOTP敏感删除/重置
-- **原生与视觉**：Kotlin + Jetpack Compose、Swift + SwiftUI、四入口底部浮岛、终端快捷键矩阵与 IME 几何、四色应用图标
-- **设计附件**：用户提交的三张 UI 参考图、四套 SVG、预览 HTML 与原始 ZIP 均保存在该目录
+### 3. Zephyr One Desktop / Android / iOS
+- **状态**：三端均已有大量实现；真实完成度以编译、真机/桌面运行与 capability parity 证据判定，不再沿用“未开始实施”的陈旧结论。
+- **唯一叙事合同**：[`zephyr one/ZEPHYR_ONE.md`](./zephyr%20one/ZEPHYR_ONE.md)
+- **产品定位**：Zephyr 面向桌面与移动的第一方客户端；与同版本 Zephyr 当前账号能力对齐，同时可脱离主端独立运行。
+- **技术栈**：Android = Kotlin + Jetpack Compose；iOS = Swift + SwiftUI；Desktop = Tauri 2 + Rust + 本地 Zephyr core。
+- **启动硬门**：点击应用到真实可操作页面不超过 1 秒；禁止应用自建 Splash、BootGate、Loading 页面和空白等待。
+- **同步与绑定**：Zephyr Link 是可选的 iCloud 类双向同步纽带；One 设备身份不依赖 Client Token，绑定兼容 Password/TOTP/Passkey/CAPTCHA/MFA；不使用 QUIC。
+- **共享安全**：Shared-to-me 使用 strict broker，凭据不下发客户端，零持久化、实时鉴权和即时撤销。
+- **冻结副本**：机器合同、品牌源、UI 参考图、预览 HTML 和原始上传均保存在 `zephyr one/` 子目录，并由 parity/hash 检查防止漂移。
 
 ---
 
