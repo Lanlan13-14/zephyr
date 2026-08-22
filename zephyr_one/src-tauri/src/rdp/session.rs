@@ -888,15 +888,15 @@ mod tests {
     #[test]
     fn a_live_session_id_is_not_replaced_by_a_retry() {
         let registry = SessionRegistry::new();
-        let sink: Arc<dyn FrameSink> = Arc::new(RecordingSink::new());
-        registry.start("retry", sample_config(), sink).unwrap_err(); // engine absent here
+        let sink: Arc<dyn FrameSink> = Arc::new(RecordingSink::default());
+        registry.start("retry", sample_config(), sink).err().expect("engine absent here");
     }
 
     #[test]
     #[cfg(zephyr_native_rdp)]
     fn registry_refuses_a_second_live_handle_for_the_same_id() {
         let registry = SessionRegistry::new();
-        let sink: Arc<dyn FrameSink> = Arc::new(RecordingSink::new());
+        let sink: Arc<dyn FrameSink> = Arc::new(RecordingSink::default());
         registry.start("same", sample_config(), sink.clone()).unwrap();
         let collision = registry.start("same", sample_config(), sink);
         assert!(matches!(collision, Err(Error::SessionExists)));
