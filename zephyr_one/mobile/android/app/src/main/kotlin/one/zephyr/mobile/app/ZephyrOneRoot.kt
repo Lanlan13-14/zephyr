@@ -427,12 +427,18 @@ private fun BoundRoot(
             connectionProvider = account.connections::find,
             credentialsProvider = account::terminalCredentials,
             routePlanner = accountRoutePlanner(account),
+            hopAuthProvider = { route -> account.hopAuthFor(route) },
         )
     }
     val terminalHost = remember(account, sshEngine) {
         SshTerminalHost(
             engine = sshEngine,
             findConnection = { id -> account.connections.find(id) },
+            routePlanner = { connection ->
+                accountRoutePlanner(account).plan(connection)
+                    ?: SshRoute(listOf(RouteHop.Target(connection.host, connection.port)))
+            },
+            hopAuthProvider = { route -> account.hopAuthFor(route) },
         )
     }
     val managedHostKeyPrompt by managedSsh.prompt.collectAsState()
@@ -576,6 +582,7 @@ private fun BoundRoot(
                                     accountRoutePlanner(account).plan(connection)
                                         ?: SshRoute(listOf(RouteHop.Target(connection.host, connection.port)))
                                 },
+                                hopAuthProvider = { route -> account.hopAuthFor(route) },
                             ),
                             fallback = TcpReachabilityTester(),
                         ),
@@ -1686,6 +1693,42 @@ private fun BatchExecutionViewModel.dispatch(intent: BatchIntent) {
  * is itself a connection id. Rejections are configuration errors the user can
  * fix, never a connect timeout.
  */
+/**
+ * Resolves each jump hop to that hop's own stored secrets.
+ *
+ * Main-end `createRoutedSSHConnection` authenticates hop N with
+ * `connectSSHClient(hop)`, never with the target's password. Reusing the
+ * target's credential here is what made a working jump fail on the phone.
+ */
+internal suspend fun AccountContainer.hopAuthFor(route: SshRoute): Map<String, one.zephyr.mobile.protocol.ssh.HopAuth> {
+    val hops = route.hops.filterIsInstance<RouteHop.SshJump>()
+    if (hops.isEmpty()) return emptyMap()
+    return buildMap {
+        for (hop in hops) {
+            val connection = connections.find(hop.connectionId)
+                ?: error("jump_auth_missing: 跳板 ${hop.host}:${hop.port} 的连接不存在")
+            val credentials = terminalCredentials(connection)
+            val credential = when {
+                credentials.privateKey != null && credentials.privateKey.isNotEmpty() ->
+                    one.zephyr.mobile.protocol.ssh.SshCredential.PrivateKey(
+                        credentials.privateKey.copyOf(),
+                        credentials.passphrase?.copyOf(),
+                    )
+                credentials.password != null && credentials.password.isNotEmpty() ->
+                    one.zephyr.mobile.protocol.ssh.SshCredential.Password(credentials.password.copyOf())
+                else -> error("jump_auth_missing: 跳板 ${connection.name.ifBlank { hop.host }} 没有可用的 SSH 凭据")
+            }
+            put(
+                hop.connectionId,
+                one.zephyr.mobile.protocol.ssh.HopAuth(
+                    username = connection.username.ifBlank { hop.username },
+                    credential = credential,
+                ),
+            )
+        }
+    }
+}
+
 internal fun accountRoutePlanner(account: AccountContainer): ManagedSshSessionPool.RoutePlanner =
     ManagedSshSessionPool.RoutePlanner { connection ->
         when (val result = SshRoutePlanner.plan(

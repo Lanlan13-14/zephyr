@@ -129,6 +129,8 @@ data class TerminalOpenRequest(
     val host: String,
     val port: Int,
     val username: String,
+    /** Needed so the host can look the connection up and resolve its stored route. */
+    val connectionId: String = "",
     val password: CharArray? = null,
     val privateKey: CharArray? = null,
     val passphrase: CharArray? = null,

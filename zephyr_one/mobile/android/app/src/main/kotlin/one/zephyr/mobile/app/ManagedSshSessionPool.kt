@@ -37,6 +37,7 @@ class ManagedSshSessionPool(
     private val connectionProvider: suspend (String) -> Connection?,
     private val credentialsProvider: suspend (Connection) -> TerminalCredentials,
     private val routePlanner: RoutePlanner = RoutePlanner { null },
+    private val hopAuthProvider: suspend (SshRoute) -> Map<String, one.zephyr.mobile.protocol.ssh.HopAuth> = { emptyMap() },
 ) {
     fun interface RoutePlanner {
         suspend fun plan(connection: Connection): SshRoute?
@@ -89,6 +90,7 @@ class ManagedSshSessionPool(
                 route = route,
                 username = connection.username,
                 credential = credential,
+                hopCredentials = hopAuthProvider(route),
                 hostKeyPolicy = HostKeyPolicy.PROMPT_UNKNOWN_BLOCK_CHANGED,
                 cols = 80,
                 rows = 24,

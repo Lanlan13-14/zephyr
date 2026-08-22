@@ -15,13 +15,21 @@ sealed interface RouteHop {
     data class Socks5(override val host: String, override val port: Int, val username: String) : RouteHop
     data class HttpConnect(override val host: String, override val port: Int, val username: String) : RouteHop
 
-    /** An intermediate SSH server the next hop is tunnelled through. */
+    /**
+     * An intermediate SSH server the next hop is tunnelled through.
+     *
+     * [username] and [connectionId] identify the hop's own SSH connection, not
+     * the target's: the main end authenticates each hop with `connectSSHClient(hop)`
+     * using that hop's stored secrets. Reusing the target's credential here is
+     * what made a working jump on the server fail on the phone.
+     */
     data class SshJump(
         override val host: String,
         override val port: Int,
         val username: String,
         val connectionId: String,
     ) : RouteHop
+
 
     data class Target(override val host: String, override val port: Int) : RouteHop
 }

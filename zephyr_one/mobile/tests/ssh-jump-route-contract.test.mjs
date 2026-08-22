@@ -51,14 +51,44 @@ test('dialers resolve the stored route rather than always dialling direct', () =
   const root = read('android/app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneRoot.kt');
   const pool = read('android/app/src/main/kotlin/one/zephyr/mobile/app/ManagedSshSessionPool.kt');
   const tester = read('android/app/src/main/kotlin/one/zephyr/mobile/app/SshConnectionTester.kt');
+  const host = read('android/feature-sessions/src/main/kotlin/one/zephyr/mobile/feature/sessions/SshTerminalHost.kt');
 
   /* The regression: every dialer hard-coded SshRoute([Target]) and the planner
    * was dead code, so a configured jump/proxy chain was silently ignored and
-   * the unreachable direct target read as "not configured / unusable". */
+   * the unreachable direct target read as "not configured / unusable". The
+   * terminal host was the last remaining bypass after PR #45. */
   assert.match(root, /accountRoutePlanner\(account\)/);
   assert.match(pool, /routePlanner\.plan\(connection\)/);
   assert.doesNotMatch(pool, /route = SshRoute\(listOf\(RouteHop\.Target\(connection\.host, connection\.port\)\)\)/);
   assert.match(tester, /routePlanner\(connection\)/);
+  assert.match(host, /routePlanner\(connection\)/);
+  assert.doesNotMatch(host, /val route = SshRoute\(listOf\(RouteHop\.Target\(request\.host, request\.port\)\)\)/);
+});
+
+test('every hop authenticates with its own stored secrets not the target\'s', () => {
+  const engine = read('android/protocol-ssh/src/main/kotlin/one/zephyr/mobile/protocol/ssh/SshjEngine.kt');
+  const request = read('android/protocol-ssh/src/main/kotlin/one/zephyr/mobile/protocol/ssh/SshEngine.kt');
+  const root = read('android/app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneRoot.kt');
+  /* Main-end createRoutedSSHConnection calls connectSSHClient(hop) per hop.
+   * Reusing request.credential (the target's password) on a jump is the
+   * failure that made a working jump on the server fail on the phone. */
+  assert.match(request, /val hopCredentials: Map<String, HopAuth>/);
+  assert.match(engine, /authenticateHop\(hopClient, jump, request\)/);
+  assert.match(engine, /request\.hopCredentials\[jump\.connectionId\]/);
+  assert.match(root, /fun AccountContainer\.hopAuthFor/);
+  assert.match(root, /hopAuthProvider = \{ route -> account\.hopAuthFor\(route\) \}/);
+});
+
+test('the editor jump picker lists SSH connections like the main end', () => {
+  const screen = read('android/feature-connections/src/main/kotlin/one/zephyr/mobile/feature/connections/ConnectionEditorScreen.kt');
+  const vm = read('android/feature-connections/src/main/kotlin/one/zephyr/mobile/feature/connections/ConnectionEditorViewModel.kt');
+  /* JumpChainEditor existed but RouteSection never composed it: tapping the
+   * JUMP row silently added the first JumpHost resource, and SSH connections
+   * (what the main end actually stores in jumpHostIds) were not even listed. */
+  assert.match(screen, /ConnectionMode\.JUMP -> JumpChainEditor\(ui, onIntent\)/);
+  assert.match(screen, /for \(connection in ui\.jumpConnections\)/);
+  assert.match(vm, /val jumpConnections: List<Connection>/);
+  assert.match(vm, /row\.protocol == Protocol\.SSH/);
 });
 
 test('main-end jump resolution semantics are pinned in one place', () => {

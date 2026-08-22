@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.Protocol
+import one.zephyr.mobile.protocol.ssh.HopAuth
 import one.zephyr.mobile.protocol.ssh.HostKeyPolicy
 import one.zephyr.mobile.protocol.ssh.RouteHop
 import one.zephyr.mobile.protocol.ssh.SshConnectOutcome
@@ -16,12 +17,18 @@ import one.zephyr.mobile.protocol.ssh.SshRoute
 /**
  * SSH [TerminalHost] over [SshEngine].
  *
- * Telnet stays on the unavailable host until its socket is injected. Direct SSH is the only live
- * path here; proxy / jump are rejected by the engine with a structured error.
+ * The stored route is dialled, not just the target's TCP port: a jump or proxy
+ * chain is part of the connection. Hard-coding a direct Target here is what
+ * made a working jump on the server fail on the phone after PR #45 wired the
+ * engine and the planner but never this host.
  */
 class SshTerminalHost(
     private val engine: SshEngine,
     private val findConnection: suspend (String) -> Connection?,
+    private val routePlanner: suspend (Connection) -> SshRoute = { connection ->
+        SshRoute(listOf(RouteHop.Target(connection.host, connection.port)))
+    },
+    private val hopAuthProvider: suspend (SshRoute) -> Map<String, HopAuth> = { emptyMap() },
 ) : TerminalHost {
 
     private val lastTarget = LinkedHashMap<String, RememberedTarget>()
@@ -36,11 +43,36 @@ class SshTerminalHost(
             return TerminalOpenOutcome.Failed(UnavailableTerminalHost.TELNET_NO_SOCKET)
         }
         lastTarget[request.sessionId] = RememberedTarget(request.host, request.port, presented = null)
-        val route = SshRoute(listOf(RouteHop.Target(request.host, request.port)))
         val credential = credentialOf(request) ?: run {
             request.wipe()
             return TerminalOpenOutcome.Failed(
                 MobileError.local(code = "auth_missing", message = "请先填写密码或选择 SSH Key", retryable = false),
+            )
+        }
+        val connection = findConnection(request.connectionId)
+        val route = try {
+            if (connection != null) routePlanner(connection)
+            else SshRoute(listOf(RouteHop.Target(request.host, request.port)))
+        } catch (error: Exception) {
+            request.wipe()
+            return TerminalOpenOutcome.Failed(
+                MobileError.local(
+                    code = "route_invalid",
+                    message = error.message ?: "路由配置无效",
+                    retryable = false,
+                ),
+            )
+        }
+        val hopCredentials = try {
+            hopAuthProvider(route)
+        } catch (error: Exception) {
+            request.wipe()
+            return TerminalOpenOutcome.Failed(
+                MobileError.local(
+                    code = "jump_auth_missing",
+                    message = error.message ?: "跳板机没有可用的 SSH 凭据",
+                    retryable = false,
+                ),
             )
         }
         val outcome = engine.connect(
@@ -49,6 +81,7 @@ class SshTerminalHost(
                 route = route,
                 username = request.username,
                 credential = credential,
+                hopCredentials = hopCredentials,
                 hostKeyPolicy = HostKeyPolicy.PROMPT_UNKNOWN_BLOCK_CHANGED,
                 cols = request.columns,
                 rows = request.rows,
