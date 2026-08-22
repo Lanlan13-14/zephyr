@@ -121,7 +121,7 @@ class SshjEngine internal constructor(
                     throw error
                 }
                 stage = ConnectStage.AUTHENTICATION
-                authenticate(hopClient, request)
+                authenticateHop(hopClient, jump, request)
                 stage = ConnectStage.TRANSPORT
                 upstream = hopClient
             }
@@ -587,11 +587,26 @@ class SshjEngine internal constructor(
     }
 
     private fun authenticate(client: SSHClient, request: SshConnectRequest) {
-        when (val credential = request.credential) {
-            is SshCredential.Password -> client.authPassword(request.username, String(credential.value))
+        applyAuth(client, request.username, request.credential)
+    }
+
+    /**
+     * Main-end `connectSSHClient(hop)`: the hop authenticates as itself. Falling
+     * back to the target's username/password is the failure that made a jump
+     * that works on the server fail on the phone.
+     */
+    private fun authenticateHop(client: SSHClient, jump: RouteHop.SshJump, request: SshConnectRequest) {
+        val hop = request.hopCredentials[jump.connectionId]
+            ?: error("jump_auth_missing: 跳板 ${jump.host}:${jump.port} 没有可用的 SSH 凭据")
+        applyAuth(client, hop.username, hop.credential)
+    }
+
+    private fun applyAuth(client: SSHClient, username: String, credential: SshCredential) {
+        when (credential) {
+            is SshCredential.Password -> client.authPassword(username, String(credential.value))
             is SshCredential.PrivateKey -> {
                 val provider = SshPrivateKeyLoader.load(String(credential.pem), credential.passphrase)
-                client.authPublickey(request.username, provider)
+                client.authPublickey(username, provider)
             }
             SshCredential.Interactive -> error("keyboard-interactive 尚未接入")
         }

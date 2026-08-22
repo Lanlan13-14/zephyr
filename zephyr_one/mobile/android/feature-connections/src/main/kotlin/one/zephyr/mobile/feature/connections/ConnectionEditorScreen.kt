@@ -377,20 +377,7 @@ private fun RouteSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
             )
         }
 
-        ConnectionMode.JUMP -> {
-            val names = ui.jumpHosts.associate { it.id to it.name }
-            SettingsRow(
-                title = draft.current.jumpHostIds.joinToString(" → ") { names[it] ?: it }.ifBlank { "未选择 JumpHost" },
-                subtitle = "服务器列表中的 SSH 连接都可作为跳板机 · 依赖均有 use 能力",
-                showChevron = true,
-                showDivider = false,
-                onClick = {
-                    ui.jumpHosts.firstOrNull {
-                        it.id !in draft.current.jumpHostIds && it.id in ui.inventory.usableJumpHostIds
-                    }?.let { onIntent(EditorIntent.JumpAdded(it.id)) }
-                },
-            )
-        }
+        ConnectionMode.JUMP -> JumpChainEditor(ui, onIntent)
     }
 }
 
@@ -404,7 +391,17 @@ private fun RouteSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
 @Composable
 private fun JumpChainEditor(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -> Unit) {
     val chain = ui.draft.current.jumpHostIds
-    val names = ui.jumpHosts.associate { it.id to it.name }
+    /* Labels prefer the JumpHost resource name when the stored id is a resource
+     * id, otherwise the SSH connection's own name — the same two sources the
+     * main end's jumpConnectionOptions / jumpHostConfig?.name path uses. */
+    val names = buildMap {
+        for (connection in ui.jumpConnections) {
+            put(connection.id, connection.name.ifBlank { connection.host } + " · " + connection.host + ":" + connection.port)
+        }
+        for (host in ui.jumpHosts) {
+            put(host.id, host.name)
+        }
+    }
 
     Text(
         text = stringResource(R.string.editor_jump_chain, Connection.MAX_JUMP_DEPTH),
@@ -437,19 +434,33 @@ private fun JumpChainEditor(ui: ConnectionEditorUiState, onIntent: (EditorIntent
         }
     }
 
-    val addable = ui.jumpHosts.filter { it.id !in chain && it.id in ui.inventory.usableJumpHostIds }
+    /* Main-end jumpConnectionOptions: every usable SSH connection except the
+     * one being edited. JumpHost resources are extra named aliases for those
+     * same connections. */
+    val addable = buildList {
+        for (connection in ui.jumpConnections) {
+            if (connection.id !in chain && connection.id in ui.inventory.usableJumpHostIds) {
+                add(connection.id to (connection.name.ifBlank { connection.host } + " · " + connection.host + ":" + connection.port))
+            }
+        }
+        for (host in ui.jumpHosts) {
+            if (host.id !in chain && host.id in ui.inventory.usableJumpHostIds && host.connectionId !in chain) {
+                add(host.id to host.name)
+            }
+        }
+    }
     if (addable.isNotEmpty() && chain.size < Connection.MAX_JUMP_DEPTH) {
         var expanded by remember { mutableStateOf(false) }
         OutlinedButton(onClick = { expanded = true }) {
             Text(stringResource(R.string.editor_jump_add))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            for (host in addable) {
+            for ((id, label) in addable) {
                 DropdownMenuItem(
-                    text = { Text(host.name) },
+                    text = { Text(label) },
                     onClick = {
                         expanded = false
-                        onIntent(EditorIntent.JumpAdded(host.id))
+                        onIntent(EditorIntent.JumpAdded(id))
                     },
                 )
             }

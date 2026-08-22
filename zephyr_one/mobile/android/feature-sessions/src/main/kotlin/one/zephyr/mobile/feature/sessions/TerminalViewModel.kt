@@ -348,6 +348,7 @@ class TerminalViewModel(
                 host = connection.host,
                 port = connection.port,
                 username = connection.username,
+                connectionId = connection.id,
                 password = credentials.password,
                 privateKey = credentials.privateKey,
                 passphrase = credentials.passphrase,

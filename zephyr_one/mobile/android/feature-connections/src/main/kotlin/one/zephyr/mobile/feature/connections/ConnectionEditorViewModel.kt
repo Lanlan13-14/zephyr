@@ -33,6 +33,11 @@ data class ConnectionEditorUiState(
     val proxies: List<Proxy> = emptyList(),
     val sshKeys: List<SshKey> = emptyList(),
     val jumpHosts: List<JumpHost> = emptyList(),
+    /**
+     * SSH connections the user may pick as a hop, matching the main end's
+     * `jumpConnectionOptions`: any SSH row except the one being edited.
+     */
+    val jumpConnections: List<Connection> = emptyList(),
     /** Populated only after a save attempt, so a pristine form is not covered in red. */
     val issues: List<DraftIssue> = emptyList(),
     val saving: Boolean = false,
@@ -102,8 +107,9 @@ class ConnectionEditorViewModel(
             resources.observeProxies(ownerUserId),
             resources.observeSshKeys(ownerUserId),
             resources.observeJumpHosts(ownerUserId),
-        ) { proxies, keys, jumps -> Triple(proxies, keys, jumps) }
-            .onEach { (proxies, keys, jumps) -> applyInventory(proxies, keys, jumps) }
+            connections.observeAll(ownerUserId),
+        ) { proxies, keys, jumps, rows -> InventorySnapshot(proxies, keys, jumps, rows) }
+            .onEach(::applyInventory)
             .launchIn(viewModelScope)
     }
 
@@ -152,14 +158,42 @@ class ConnectionEditorViewModel(
     }
 
     /** Only rows carrying USE may be referenced by a route (ZEPHYR_PARITY.md 5.3). */
-    private fun applyInventory(proxies: List<Proxy>, keys: List<SshKey>, jumps: List<JumpHost>) {
+    private fun applyInventory(snapshot: InventorySnapshot) {
+        val jumpConnections = snapshot.rows.filter { row ->
+            row.protocol == Protocol.SSH &&
+                !row.isDeleted &&
+                row.capabilities.canUse &&
+                row.id != connectionId
+        }
+        val usableJumpIds = buildSet {
+            addAll(snapshot.jumps.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id })
+            /* Main-end jumpConnectionOptions stores a connection id directly.
+             * Treating only JumpHost resource ids as usable is what made a
+             * route saved on the server read as "路由需要修复" on the phone. */
+            addAll(jumpConnections.map { it.id })
+        }
         val usable = RouteInventory(
-            usableProxyIds = proxies.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id }.toSet(),
-            usableSshKeyIds = keys.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id }.toSet(),
-            usableJumpHostIds = jumps.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id }.toSet(),
+            usableProxyIds = snapshot.proxies.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id }.toSet(),
+            usableSshKeyIds = snapshot.keys.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id }.toSet(),
+            usableJumpHostIds = usableJumpIds,
         )
-        mutate { it.copy(inventory = usable, proxies = proxies, sshKeys = keys, jumpHosts = jumps) }
+        mutate {
+            it.copy(
+                inventory = usable,
+                proxies = snapshot.proxies,
+                sshKeys = snapshot.keys,
+                jumpHosts = snapshot.jumps,
+                jumpConnections = jumpConnections,
+            )
+        }
     }
+
+    private data class InventorySnapshot(
+        val proxies: List<Proxy>,
+        val keys: List<SshKey>,
+        val jumps: List<JumpHost>,
+        val rows: List<Connection>,
+    )
 
     private inline fun mutate(block: (ConnectionEditorUiState) -> ConnectionEditorUiState) {
         val current = page.value

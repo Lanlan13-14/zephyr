@@ -137,16 +137,31 @@ data class SshConnectRequest(
     val route: SshRoute,
     val username: String,
     /**
-     * Resolved credential material.
+     * Resolved credential material for the *target*.
      *
      * Held as a value only for the duration of the call. DEVELOPMENT.md 12 keeps connection secrets
      * in the native SessionSecretArena, never in a Kotlin field that outlives the dial.
      */
     val credential: SshCredential,
+    /**
+     * Per-hop credentials keyed by the hop's [RouteHop.SshJump.connectionId].
+     *
+     * The main end's `createRoutedSSHConnection` authenticates every hop with
+     * that hop's own connection (`connectSSHClient(hop)`), not the target's.
+     * Missing an entry here is a configuration error at that hop, not a
+     * fallback onto the target's password.
+     */
+    val hopCredentials: Map<String, HopAuth> = emptyMap(),
     val hostKeyPolicy: HostKeyPolicy,
     val cols: Int = 80,
     val rows: Int = 24,
     val encoding: String = "UTF-8",
+)
+
+/** Username + secret for one hop in a jump chain. */
+data class HopAuth(
+    val username: String,
+    val credential: SshCredential,
 )
 
 sealed interface SshCredential {

@@ -25,6 +25,7 @@ internal class DirectSshConnectionTester(
     private val routePlanner: suspend (Connection) -> SshRoute = {
         SshRoute(listOf(RouteHop.Target(it.host, it.port)))
     },
+    private val hopAuthProvider: suspend (SshRoute) -> Map<String, one.zephyr.mobile.protocol.ssh.HopAuth> = { emptyMap() },
 ) : ConnectionTester {
     override suspend fun test(
         connection: Connection,
@@ -69,6 +70,7 @@ internal class DirectSshConnectionTester(
                     route = route,
                     username = connection.username,
                     credential = credential,
+                    hopCredentials = hopAuthProvider(route),
                     hostKeyPolicy = HostKeyPolicy.PROMPT_UNKNOWN_BLOCK_CHANGED,
                     cols = 80,
                     rows = 24,
