@@ -829,6 +829,7 @@ class BindingCoordinator internal constructor(
         )
 
         val next = StoredBinding(binding, profile, settings)
+        storage.saveProfile(profile)
         val previousBinding = host.currentGraph()
             ?.takeUnless { it.isDeviceLocal }
             ?.binding
