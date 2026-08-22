@@ -170,7 +170,7 @@ private fun DemoTerminalSurface(
     // height, producing the blank band reported on device.
     val imeOpen = imeHeightPx > 8f
     val surface = content.surface
-    val ws = workspace ?: TerminalWorkspaceState(paneA = content.connection.id)
+    val ws = workspace ?: TerminalWorkspaceState(activeSessionId = content.connection.id)
     val liveSessions = sessions.filter { it.protocol.isTerminal && it.transport != SessionTransport.CLOSED }
     val focusedRow = liveSessions.firstOrNull { it.sessionId == ws.focusedSessionId }
         ?: liveSessions.firstOrNull { it.sessionId == content.connection.id }
@@ -188,11 +188,6 @@ private fun DemoTerminalSurface(
     var containerW by remember { mutableStateOf(0) }
     var containerH by remember { mutableStateOf(0) }
 
-    val splitOffMsg = stringResource(R.string.terminal_split_off)
-    val splitTermMsg = stringResource(R.string.terminal_split_term)
-    val splitLeftMsg = stringResource(R.string.terminal_split_left)
-    val splitRightMsg = stringResource(R.string.terminal_split_right)
-    val needSecondMsg = stringResource(R.string.terminal_need_second_session)
     val insertToastMsg = stringResource(R.string.terminal_insert_toast)
     val openConnectionIds = liveSessions.mapTo(mutableSetOf()) { it.connectionId }.apply {
         add(content.connection.id)
@@ -250,23 +245,16 @@ private fun DemoTerminalSurface(
                     latency = latencyLabel(focusedRow),
                     transport = focusedRow?.transport ?: content.transport,
                     colors = colors,
-                    splitOn = ws.split != TerminalSplitMode.OFF,
-                    onSplit = {
-                        val next = TerminalWorkspace.nextSplit(ws.split)
-                        if (next == TerminalSplitMode.TERM && liveSessions.size < 2) {
-                            onMessage(needSecondMsg)
+                    padSwapSide = if (pad) {
+                        {
+                            onWorkspace(
+                                ws.copy(
+                                    padTermSide = if (ws.padTermSide == PadTermSide.LEFT) PadTermSide.RIGHT else PadTermSide.LEFT,
+                                ),
+                            )
                         }
-                        onWorkspace(
-                            TerminalWorkspace.applySplit(ws, next, liveSessions.map { it.sessionId }),
-                        )
-                        onMessage(
-                            when (next) {
-                                TerminalSplitMode.OFF -> splitOffMsg
-                                TerminalSplitMode.TERM -> splitTermMsg
-                                TerminalSplitMode.LEFT -> splitLeftMsg
-                                TerminalSplitMode.RIGHT -> splitRightMsg
-                            },
-                        )
+                    } else {
+                        null
                     },
                 )
                 DemoSessRail(
@@ -286,7 +274,7 @@ private fun DemoTerminalSurface(
                         )
                     },
                     focusedId = ws.focusedSessionId,
-                    otherId = if (ws.split == TerminalSplitMode.TERM) ws.paneB else null,
+                    otherId = null,
                     colors = colors,
                     onSelect = onSelectSession,
                     onClose = onCloseSession,
@@ -318,7 +306,6 @@ private fun DemoTerminalSurface(
                             onWorkspace(TerminalWorkspace.openTool(ws, TerminalToolKind.DOCKER, phone = !pad))
                         },
                         onMessage = onMessage,
-                        onFocusPane = { pane -> onWorkspace(ws.withFocus(pane)) },
                     )
                 }
                 // Row 1 is permanent and hugs the system IME. Row 2 is the context dock and is
@@ -475,132 +462,106 @@ private fun TerminalSplitArea(
     onOpenNote: (String) -> Unit,
     onOpenDocker: () -> Unit,
     onMessage: (String) -> Unit,
-    onFocusPane: (Char) -> Unit,
 ) {
-    val density = LocalDensity.current
-    val split = workspace.split
+    /* Single terminal pane. On a pad in landscape the pane sits on
+     * [TerminalWorkspaceState.padTermSide] and the opposite side hosts either
+     * the open tool panel or a quiet placeholder; a gutter between them drags
+     * the terminal from [TerminalWorkspace.PAD_MIN_TERM_FRACTION] up to full
+     * width. On a phone the pane is always full-width and tools live in the
+     * bottom sheet. */
+    val vmA = paneViewModels[workspace.activeSessionId] ?: focusedVm
     Row(Modifier.fillMaxSize()) {
-        val toolFirst = split == TerminalSplitMode.LEFT
-        if (toolFirst && split.docksTools) {
-            SideToolDock(
-                workspace = workspace,
-                colors = colors,
-                hostName = content.connection.name,
-                notes = notes,
-                snippets = snippets,
-                onWorkspace = onWorkspace,
-                onInsert = onInsert,
-                onOpenNote = onOpenNote,
-                onOpenDocker = onOpenDocker,
-                onMessage = onMessage,
-                viewModel = focusedVm,
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(workspace.dockWidthFraction),
-            )
-            SplitGutter(colors, workspace, onWorkspace)
-        }
-        val termWeight = if (split == TerminalSplitMode.OFF) 1f
-        else if (split == TerminalSplitMode.TERM) 1f - workspace.dockWidthFraction
-        else 1f - workspace.dockWidthFraction
-        Box(Modifier.weight(if (split == TerminalSplitMode.OFF) 1f else (1f - workspace.dockWidthFraction).coerceAtLeast(0.2f)).fillMaxHeight()) {
-            val vmA = paneViewModels[workspace.paneA] ?: focusedVm
-            if (vmA != null) {
-                TermuxTerminalPane(
-                    viewModel = vmA,
-                    keyboardVisible = keyboardVisible && workspace.focusPane == 'a',
-                    colors = colors,
-                    focused = workspace.focusPane == 'a',
-                    onTap = {
-                        onFocusPane('a')
-                        onIntent(TerminalIntent.Dock(TerminalDockItem.KEYBOARD))
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            if (split == TerminalSplitMode.TERM && workspace.focusPane == 'a') {
-                Box(Modifier.fillMaxWidth().height(2.dp).background(colors.accent))
-            }
-            if (!content.transport.isLive) {
-                ConnectPrompt(transport = content.transport, onIntent = onIntent)
-            }
-        }
-        if (split == TerminalSplitMode.TERM) {
-            SplitGutter(colors, workspace, onWorkspace)
-            Box(Modifier.fillMaxHeight().fillMaxWidth(workspace.dockWidthFraction)) {
-                val vmB = paneViewModels[workspace.paneB ?: ""]
-                if (vmB != null) {
+        val terminalFirst = workspace.padTermSide == PadTermSide.LEFT
+        val panelVisible = workspace.padPanelTool != null &&
+            workspace.padTermFraction < TerminalWorkspace.PAD_MAX_TERM_FRACTION
+
+        val terminal: @Composable () -> Unit = {
+            Box(Modifier.fillMaxSize()) {
+                if (vmA != null) {
                     TermuxTerminalPane(
-                        viewModel = vmB,
-                        keyboardVisible = keyboardVisible && workspace.focusPane == 'b',
+                        viewModel = vmA,
+                        keyboardVisible = keyboardVisible,
                         colors = colors,
-                        focused = workspace.focusPane == 'b',
-                        onTap = {
-                            onFocusPane('b')
-                            onIntent(TerminalIntent.Dock(TerminalDockItem.KEYBOARD))
-                        },
+                        focused = true,
+                        onTap = { onIntent(TerminalIntent.Dock(TerminalDockItem.KEYBOARD)) },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-                if (workspace.focusPane == 'b') {
-                    Box(Modifier.fillMaxWidth().height(2.dp).background(colors.accent))
+                if (!content.transport.isLive) {
+                    ConnectPrompt(transport = content.transport, onIntent = onIntent)
                 }
             }
         }
-        if (!toolFirst && split.docksTools) {
-            SplitGutter(colors, workspace, onWorkspace)
-            SideToolDock(
-                workspace = workspace,
-                colors = colors,
-                hostName = content.connection.name,
-                notes = notes,
-                snippets = snippets,
-                onWorkspace = onWorkspace,
-                onInsert = onInsert,
-                onOpenNote = onOpenNote,
-                onOpenDocker = onOpenDocker,
-                onMessage = onMessage,
-                viewModel = focusedVm,
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(workspace.dockWidthFraction),
-            )
+        val panel: @Composable () -> Unit = {
+            if (workspace.padPanelTool != null) {
+                SideToolDock(
+                    workspace = workspace,
+                    colors = colors,
+                    hostName = content.connection.name,
+                    notes = notes,
+                    snippets = snippets,
+                    onWorkspace = onWorkspace,
+                    onInsert = onInsert,
+                    onOpenNote = onOpenNote,
+                    onOpenDocker = onOpenDocker,
+                    onMessage = onMessage,
+                    viewModel = focusedVm,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
-        @Suppress("UNUSED_VARIABLE")
-        val unused = Triple(density, termWeight, onIntent)
+
+        /* Full-width terminal: nothing else to lay out. */
+        if (!panelVisible) {
+            Box(Modifier.weight(1f).fillMaxHeight()) { terminal() }
+            return@Row
+        }
+
+        val panelFraction = (1f - workspace.padTermFraction).coerceAtLeast(0.05f)
+        if (!terminalFirst) {
+            Box(Modifier.weight(1f - panelFraction).fillMaxHeight()) { terminal() }
+            PadGutter(colors, workspace, onWorkspace)
+            Box(Modifier.weight(panelFraction).fillMaxHeight()) { panel() }
+        } else {
+            Box(Modifier.weight(panelFraction).fillMaxHeight()) { panel() }
+            PadGutter(colors, workspace, onWorkspace)
+            Box(Modifier.weight(1f - panelFraction).fillMaxHeight()) { terminal() }
+        }
     }
 }
 
 @Composable
-private fun SplitGutter(
+private fun PadGutter(
     colors: TerminalChromeColors,
     workspace: TerminalWorkspaceState,
     onWorkspace: (TerminalWorkspaceState) -> Unit,
 ) {
     var dragging by remember { mutableStateOf(false) }
-    var start by remember { mutableStateOf(workspace.dockWidthFraction) }
+    var start by remember { mutableStateOf(workspace.padTermFraction) }
+    var rowWidthPx by remember { mutableStateOf(0f) }
     Box(
         modifier = Modifier
             .width(TerminalWorkspace.GUTTER_WIDTH_DP.dp)
             .fillMaxHeight()
-            .pointerInput(workspace.split) {
+            .onSizeChanged { rowWidthPx = it.width.toFloat() * 40f }
+            .pointerInput(workspace.padTermSide) {
                 detectDragGestures(
                     onDragStart = {
                         dragging = true
-                        start = workspace.dockWidthFraction
+                        start = workspace.padTermFraction
                     },
                     onDragEnd = { dragging = false },
                     onDragCancel = { dragging = false },
                     onDrag = { change, drag ->
                         change.consume()
-                        val next = TerminalWorkspace.dragWidth(
+                        val next = TerminalWorkspace.dragPadTermFraction(
                             startFraction = start,
                             dxPx = drag.x,
-                            splitWidthPx = size.width.toFloat() * 40f,
-                            split = workspace.split,
+                            rowWidthPx = rowWidthPx,
+                            side = workspace.padTermSide,
                         )
                         start = next
-                        onWorkspace(workspace.copy(dockWidthFraction = next))
+                        onWorkspace(workspace.copy(padTermFraction = next))
                     },
                 )
             },

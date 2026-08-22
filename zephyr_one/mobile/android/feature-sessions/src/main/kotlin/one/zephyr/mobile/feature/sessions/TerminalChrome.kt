@@ -149,8 +149,7 @@ internal fun DemoTermHead(
     latency: String,
     transport: SessionTransport,
     colors: TerminalChromeColors,
-    splitOn: Boolean,
-    onSplit: () -> Unit,
+    padSwapSide: (() -> Unit)? = null,
 ) {
     val onBack = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     Row(
@@ -212,22 +211,23 @@ internal fun DemoTermHead(
                 .padding(end = 6.dp)
                 .semantics { liveRegion = LiveRegionMode.Polite },
         )
-        val splitLabel = stringResource(R.string.terminal_split)
-        TermPressable(
-            onClick = onSplit,
-            modifier = Modifier
-                .size(TerminalWorkspace.SPLIT_BTN_SIZE_DP.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (splitOn) colors.accent.copy(alpha = 0.16f) else Color.Transparent)
-                .semantics { contentDescription = splitLabel },
-            scale = 0.9f,
-        ) {
-            Icon(
-                imageVector = ZephyrIcons.Fit,
-                contentDescription = null,
-                tint = if (splitOn) colors.accent else colors.dim,
-                modifier = Modifier.size(15.dp),
-            )
+        if (padSwapSide != null) {
+            val swapLabel = stringResource(R.string.terminal_pad_swap_side)
+            TermPressable(
+                onClick = padSwapSide,
+                modifier = Modifier
+                    .size(TerminalWorkspace.SPLIT_BTN_SIZE_DP.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .semantics { contentDescription = swapLabel },
+                scale = 0.9f,
+            ) {
+                Icon(
+                    imageVector = ZephyrIcons.Fit,
+                    contentDescription = null,
+                    tint = colors.dim,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
         }
     }
 }

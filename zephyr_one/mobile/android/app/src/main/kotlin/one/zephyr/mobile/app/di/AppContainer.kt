@@ -189,6 +189,18 @@ class AppContainer(private val context: Context) {
     @Volatile
     private var accountGraph: ManagedBindingGraph? = null
 
+    /**
+     * Which half of a landscape pad the terminal occupies. A device preference,
+     * not per-connection: the user's hand and desk setup do not change per host.
+     */
+    var padTermSideLeft: Boolean
+        get() = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_PAD_TERM_SIDE, false)
+        set(value) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_PAD_TERM_SIDE, value).apply()
+        }
+
     private val accountState = MutableStateFlow<AccountContainer?>(null)
 
     val accounts: StateFlow<AccountContainer?> = accountState.asStateFlow()
@@ -505,6 +517,7 @@ class AppContainer(private val context: Context) {
     private companion object {
         const val PREFS = "zephyr-one-device"
         const val KEY_INSTALL_ID = "install-id"
+        const val KEY_PAD_TERM_SIDE = "pad-term-side"
         const val NO_ACCOUNT_TEARDOWN_OWNER = "no-account-teardown"
 
         /** Reserved scope segment: never a real server or user id, which are opaque server strings. */

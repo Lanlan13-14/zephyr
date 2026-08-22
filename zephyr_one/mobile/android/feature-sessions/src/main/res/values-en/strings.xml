@@ -57,12 +57,11 @@
     <string name="copy_text">Copy</string>
     <string name="paste_text">Paste</string>
     <string name="text_selection_more">More</string>
-    <string name="terminal_split">Split</string>
     <string name="terminal_add_session">New session</string>
+    <string name="terminal_pad_swap_side">Swap terminal and panel sides</string>
     <string name="terminal_close_session">Close session</string>
     <string name="terminal_pad_rail">Hosts</string>
     <string name="terminal_dock_empty">Tap Files / Snippets / Notes / Monitor / Look\nto dock them here, off the terminal</string>
-    <string name="terminal_need_second_session">Open another session to split terminals</string>
     <string name="terminal_copied">Copied · %1$s</string>
     <string name="terminal_pasted">Pasted into %1$s</string>
     <string name="terminal_disconnect_title">Disconnect %1$s? The session cannot be restored</string>
@@ -84,10 +83,6 @@
     <string name="terminal_theme_override">Color override (every scheme)</string>
     <string name="terminal_custom_bg_color">Custom terminal background</string>
     <string name="terminal_custom_sel_color">Custom selection colors</string>
-    <string name="terminal_split_off">Split closed</string>
-    <string name="terminal_split_term">Dual terminal · tap a pane, the dock talks to that one</string>
-    <string name="terminal_split_left">Tools docked on the left</string>
-    <string name="terminal_split_right">Tools docked on the right</string>
     <string name="terminal_session_closed">Session closed · commands were not replayed</string>
     <string name="terminal_all_closed">Every session is closed</string>
     <string name="terminal_docked">Docked · %1$s</string>
