@@ -15,6 +15,8 @@ public struct ConnectionEditorUiState: Equatable, Sendable {
     public var saving: Bool
     public var testing: Bool
     public var testResult: ConnectionTestResult?
+    public var driveShareName: String?
+    public var driveGrantValid: Bool
 
     public init(
         draft: ConnectionDraft,
@@ -25,7 +27,9 @@ public struct ConnectionEditorUiState: Equatable, Sendable {
         issues: [DraftIssue] = [],
         saving: Bool = false,
         testing: Bool = false,
-        testResult: ConnectionTestResult? = nil
+        testResult: ConnectionTestResult? = nil,
+        driveShareName: String? = nil,
+        driveGrantValid: Bool = false
     ) {
         self.draft = draft
         self.inventory = inventory
@@ -36,6 +40,8 @@ public struct ConnectionEditorUiState: Equatable, Sendable {
         self.saving = saving
         self.testing = testing
         self.testResult = testResult
+        self.driveShareName = driveShareName
+        self.driveGrantValid = driveGrantValid
     }
 
     public var sections: [EditorSection] { draft.sections() }
@@ -57,6 +63,7 @@ public enum ConnectionEditorEvent: Equatable, Sendable {
     ///   exists only for this session and must never be written to the mirror
     ///   (ZEPHYR_PARITY.md 5.1 ephemeral).
     case connect(connection: Connection, persisted: Bool)
+    case pickDriveDirectory
 }
 
 /// S11 连接编辑器.
@@ -206,6 +213,30 @@ public final class ConnectionEditorViewModel: ObservableObject, LockSensitiveSin
     public func setProxy(_ value: String?) { edit { $0.withProxy(value) } }
     public func setSshKey(_ value: String?) { edit { $0.withSshKey(value) } }
     public func setFileSyncIntent(_ value: FileSyncDirectoryIntent) { edit { $0.withFileSyncIntent(value) } }
+
+    public func pickDriveDirectory() {
+        event = .pickDriveDirectory
+    }
+
+    public func applyDriveGrant(shareName: String, grantValid: Bool) {
+        edit { $0.withFileSyncIntent(.localShare) }
+        mutate { state in
+            var next = state
+            next.driveShareName = shareName
+            next.driveGrantValid = grantValid
+            return next
+        }
+    }
+
+    public func clearDriveMapping() {
+        edit { $0.withFileSyncIntent(.off) }
+        mutate { state in
+            var next = state
+            next.driveShareName = nil
+            next.driveGrantValid = false
+            return next
+        }
+    }
     public func setPassword(_ value: SecretState) { edit { $0.withPassword(value) } }
     public func setPrivateKey(_ value: SecretState) { edit { $0.withPrivateKey(value) } }
     public func setRdp(_ value: RdpSettings) { edit { $0.withRdp(value) } }

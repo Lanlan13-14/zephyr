@@ -29,9 +29,9 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
-    <!-- Deliberately absent: MANAGE_EXTERNAL_STORAGE. PRODUCT_REQUIREMENTS.md scopes device file
-         sharing to directories the user hands over through SAF, so a whole-volume grant would be
-         both broader than the product allows and a Play policy violation. -->
+    <!-- Same surface as Zephyr Agent: the connection editor can open the system all-files page
+         when the user maps the whole shared storage. SAF remains the default path. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

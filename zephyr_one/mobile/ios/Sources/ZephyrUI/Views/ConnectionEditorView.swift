@@ -92,6 +92,7 @@ public struct ConnectionEditorView: View {
     @State private var showDiscardConfirmation = false
     @State private var sensitiveText = ConnectionEditorSensitiveTextBuffers()
     @State private var jumpHostToAdd = ""
+    @State private var pickingDriveDirectory = false
     @FocusState private var focusedSensitiveField: ConnectionEditorSensitiveField?
 
     public init(
@@ -151,6 +152,23 @@ public struct ConnectionEditorView: View {
                     clearSensitiveCopies()
                     viewModel.consumeEvent()
                     onConnect(connection, persisted)
+                case .pickDriveDirectory:
+                    viewModel.consumeEvent()
+                    pickingDriveDirectory = true
+                }
+            }
+            .fileImporter(
+                isPresented: $pickingDriveDirectory,
+                allowedContentTypes: [.folder],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    let name = url.lastPathComponent
+                    viewModel.applyDriveGrant(shareName: name, grantValid: true)
+                case .failure:
+                    break
                 }
             }
             .onChange(of: viewModel.sensitiveClearGeneration) { _ in
@@ -417,7 +435,18 @@ public struct ConnectionEditorView: View {
                 Toggle("剪贴板", isOn: rdpBinding(ui, \.clipboard))
                 Toggle("麦克风", isOn: rdpBinding(ui, \.microphone))
                 Toggle("摄像头", isOn: rdpBinding(ui, \.camera))
-                Toggle("存储", isOn: rdpBinding(ui, \.storage))
+                Toggle("文件夹映射", isOn: rdpBinding(ui, \.storage))
+                if ui.draft.current.rdp.storage {
+                    Button("选择本机目录") { viewModel.pickDriveDirectory() }
+                    if let name = ui.driveShareName, !name.isEmpty {
+                        Text(ui.driveGrantValid ? "已映射 \(name)" : "授权已失效：\(name)")
+                            .font(.footnote)
+                        Button("清除映射") { viewModel.clearDriveMapping() }
+                    } else {
+                        Text("点这里选本机目录，系统会要文件访问权限")
+                            .font(.footnote)
+                    }
+                }
                 Toggle("位置", isOn: rdpBinding(ui, \.location))
             }
         case .rdpDisplay:
@@ -448,19 +477,7 @@ public struct ConnectionEditorView: View {
                 )
             }
         case .fileSync:
-            Section(header: Text("文件同步目录意图")) {
-                Picker(
-                    "意图",
-                    selection: Binding(
-                        get: { ui.draft.current.fileSyncIntent },
-                        set: { viewModel.setFileSyncIntent($0) }
-                    )
-                ) {
-                    ForEach(FileSyncDirectoryIntent.allCases, id: \.self) { value in
-                        Text(value.wireName).tag(value)
-                    }
-                }
-            }
+            EmptyView()
         case .metadata:
             Section(header: Text("Metadata")) {
                 TextField(
