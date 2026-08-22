@@ -122,7 +122,9 @@ import one.zephyr.mobile.model.SecretPresence
 import one.zephyr.mobile.model.SyncStatus
 import one.zephyr.mobile.model.SyncState
 import one.zephyr.mobile.model.Snippet
+import one.zephyr.mobile.protocol.ssh.RouteHop
 import one.zephyr.mobile.protocol.ssh.RoutePlanResult
+import one.zephyr.mobile.protocol.ssh.SshRoute
 import one.zephyr.mobile.protocol.ssh.SshRoutePlanner
 import one.zephyr.mobile.security.AuthResult
 import one.zephyr.mobile.security.UnlockPresentation
@@ -565,7 +567,14 @@ private fun BoundRoot(
                         tester = ProtocolConnectionTester(
                             ssh = DirectSshConnectionTester(
                                 engine = appContainer.sshEngine,
-                                routePlanner = { connection -> accountRoutePlanner(account).plan(connection) },
+                                routePlanner = { connection ->
+                                    /* A null plan means no routing rule applies
+                                     * to this connection: fall back to direct
+                                     * so reachability matches what the real
+                                     * dialer would do. */
+                                    accountRoutePlanner(account).plan(connection)
+                                        ?: SshRoute(listOf(RouteHop.Target(connection.host, connection.port)))
+                                },
                             ),
                             fallback = TcpReachabilityTester(),
                         ),
