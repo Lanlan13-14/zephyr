@@ -724,6 +724,16 @@ impl SessionRegistry {
         self.start_impl(id, config, sink)
     }
 
+    /* A retry after a failed open must be able to replace the dead handle left
+     * behind, not collide with it. Anything that is still live is still owned. */
+    fn retire_dead(&self, id: &str) {
+        let mut sessions = self.sessions.lock().expect("registry poisoned");
+        let dead = sessions.get(id).is_some_and(|handle| !handle.is_live());
+        if dead {
+            sessions.remove(id);
+        }
+    }
+
     /// No engine in this build, so there is nothing to start.
     ///
     /// A separate function rather than a `cfg` block inside `start` because a
@@ -802,10 +812,16 @@ impl SessionRegistry {
                 .spawn(move || run_ownership.execute())
                 .map_err(|_| Error::SessionCreate)?;
 
-            self.sessions
-                .lock()
-                .expect("registry poisoned")
-                .insert(id.to_string(), handle.clone());
+            self.retire_dead(id);
+            {
+                let mut sessions = self.sessions.lock().expect("registry poisoned");
+                /* A live handle means the previous session is still connected:
+                 * refuse rather than silently take over its surface. */
+                if sessions.contains_key(id) {
+                    return Err(Error::SessionExists);
+                }
+                sessions.insert(id.to_string(), handle.clone());
+            }
 
             Ok(handle)
         }
@@ -867,6 +883,27 @@ mod tests {
         config.security = Security::Nla;
         config.audio = AudioMode::Off;
         config
+    }
+
+    #[test]
+    fn a_live_session_id_is_not_replaced_by_a_retry() {
+        let registry = SessionRegistry::new();
+        let sink: Arc<dyn FrameSink> = Arc::new(RecordingSink::default());
+        /* Engine present or not, the registry must answer rather than panic. */
+        let _ = registry.start("retry", sample_config(), sink);
+        let _ = registry.start("retry", sample_config(), Arc::new(RecordingSink::default()));
+        let _ = registry.close("retry");
+    }
+
+    #[test]
+    #[cfg(zephyr_native_rdp)]
+    fn registry_refuses_a_second_live_handle_for_the_same_id() {
+        let registry = SessionRegistry::new();
+        let sink: Arc<dyn FrameSink> = Arc::new(RecordingSink::default());
+        registry.start("same", sample_config(), sink.clone()).unwrap();
+        let collision = registry.start("same", sample_config(), sink);
+        assert!(matches!(collision, Err(Error::SessionExists)));
+        assert!(registry.close("same"));
     }
 
     #[test]
