@@ -504,12 +504,11 @@ class MobileV1BlobManager {
         let total = 0;
         try {
             const chunkHashes = JSON.parse(row.chunk_hashes_json);
+            const sizes = this.store.parseBlobChunkSizes(row);
             for (let index = 0; index < chunkHashes.length; index += 1) {
                 const part = path.join(this.store.uploadChunkDir(row.upload_id), index + '.part');
                 const stat = await fsp.lstat(part);
-                const expected = index === chunkHashes.length - 1
-                    ? Number(row.size) - Number(row.chunk_bytes) * (chunkHashes.length - 1)
-                    : Number(row.chunk_bytes);
+                const expected = Number(sizes[index]);
                 if (!stat.isFile() || stat.size !== expected) {
                     throw new MobileStoreError('blob_missing_chunk', 'blob chunk is missing', 409, { retryable: true });
                 }
@@ -819,9 +818,7 @@ class MobileV1BlobManager {
             const part = path.join(this.store.uploadChunkDir(row.upload_id), index + '.part');
             try {
                 const stat = await fsp.lstat(part);
-                const expected = index === hashes.length - 1
-                    ? Number(row.size) - Number(row.chunk_bytes) * (hashes.length - 1)
-                    : Number(row.chunk_bytes);
+                const expected = Number(this.store.parseBlobChunkSizes(row)[index]);
                 if (stat.isFile() && stat.size === expected) valid.push(index);
             } catch { /* a missing part is made resumable below */ }
         }

@@ -714,41 +714,36 @@ class SharedResourceApi {
             outcome: 'success',
             /* Mode, device and channels are the security-relevant facts. Host
              * credentials are deliberately absent from the audit record. */
-            metadata: { mode: effectiveMode, deviceId: deviceRow.device_id, channels: grantedChannels },
+            metadata: { mode: 'relay-strict', deviceId: deviceRow.device_id, channels: grantedChannels },
         });
 
         const response = {
             sessionId,
-            mode: effectiveMode,
+            mode: 'relay-strict',
             expiresAt: sessionExpiresAt,
             capabilities: [...caps].sort(),
         };
 
         /* Relay-unavailable must be explicit; it can never fall back to a
          * secret-bearing direct response. */
-        if (effectiveMode === 'relay-strict') {
-            if (!this.relayMount) {
-                this.sessions.drop(sessionId, 'relay-unavailable');
-                throw new MobileStoreError(
-                    'shared_relay_unavailable',
-                    '\u670d\u52a1\u7aef relay \u901a\u9053\u5c1a\u672a\u5b9e\u73b0\uff0c\u65e0\u6cd5\u4ee3\u6267\u884c\u6b64\u5171\u4eab\u8fde\u63a5',
-                    503,
-                    { retryable: true, details: { mode: 'relay-strict' } },
-                );
-            }
-            /* No connect material of any kind crosses this boundary. The
-             * credential is a signed statement about *who may attach to this
-             * session*, and SHARED_RESOURCE_RESIDENCY.md 3.3 is explicit that
-             * it is not a Client Token and cannot reach another resource. */
-            response.relay = {
-                websocketUrl: this.relayMount + '?sessionId=' + encodeURIComponent(sessionId),
-                protocol: purpose,
-                credential: this.mintRelayCredential(this.sessions.get(sessionId)),
-            };
-            return response;
+        if (!this.relayMount) {
+            this.sessions.drop(sessionId, 'relay-unavailable');
+            throw new MobileStoreError(
+                'shared_relay_unavailable',
+                '\u670d\u52a1\u7aef relay \u901a\u9053\u5c1a\u672a\u5b9e\u73b0\uff0c\u65e0\u6cd5\u4ee3\u6267\u884c\u6b64\u5171\u4eab\u8fde\u63a5',
+                503,
+                { retryable: true, details: { mode: 'relay-strict' } },
+            );
         }
-
-        /* relay-strict only: no use envelope is ever sealed. */
+        /* No connect material of any kind crosses this boundary. The
+         * credential is a signed statement about *who may attach to this
+         * session*, and SHARED_RESOURCE_RESIDENCY.md 3.3 is explicit that
+         * it is not a Client Token and cannot reach another resource. */
+        response.relay = {
+            websocketUrl: this.relayMount + '?sessionId=' + encodeURIComponent(sessionId),
+            protocol: purpose,
+            credential: this.mintRelayCredential(this.sessions.get(sessionId)),
+        };
         return response;
     }
 

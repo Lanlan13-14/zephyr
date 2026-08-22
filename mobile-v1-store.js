@@ -395,7 +395,26 @@ class MobileV1Store {
         ensure('mobile_blob_uploads', 'failed_at', 'INTEGER');
         ensure('mobile_blob_uploads', 'failure_code', 'TEXT');
         ensure('mobile_blobs', 'created_by_device_id', 'TEXT');
+        ensure('mobile_blob_uploads', 'chunk_sizes_json', "TEXT NOT NULL DEFAULT '[]'");
+        ensure('mobile_blob_uploads', 'keyed_ids_json', "TEXT NOT NULL DEFAULT '[]'");
+        ensure('mobile_blob_uploads', 'chunk_algorithm', "TEXT NOT NULL DEFAULT 'fixed'");
+        ensure('mobile_blobs', 'chunk_sizes_json', "TEXT NOT NULL DEFAULT '[]'");
+        ensure('mobile_blobs', 'keyed_ids_json', "TEXT NOT NULL DEFAULT '[]'");
+        ensure('mobile_blobs', 'chunk_algorithm', "TEXT NOT NULL DEFAULT 'fixed'");
+        ensure('mobile_blobs', 'merkle', 'TEXT');
         ensure('mobile_user_cleanup_jobs', 'legacy_files_json', "TEXT NOT NULL DEFAULT '[]'");
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS mobile_blob_chunks (
+                owner_user_id TEXT NOT NULL,
+                keyed_id TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY(owner_user_id, keyed_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mobile_blob_chunks_owner
+                ON mobile_blob_chunks(owner_user_id, sha256);
+        `);
         this.db.exec(`
             CREATE INDEX IF NOT EXISTS idx_mobile_blob_uploads_active_owner
                 ON mobile_blob_uploads(owner_user_id, state, failed_at, updated_at);
@@ -1601,6 +1620,44 @@ class MobileV1Store {
         ) || null;
     }
 
+    parseBlobChunkSizes(row) {
+        try {
+            const sizes = JSON.parse(row.chunk_sizes_json || '[]');
+            if (Array.isArray(sizes) && sizes.length) return sizes.map(Number);
+        } catch { /* fall through to fixed-size reconstruction */ }
+        const hashes = JSON.parse(row.chunk_hashes_json);
+        const chunkBytes = Number(row.chunk_bytes);
+        return hashes.map((_, index) => (
+            index === hashes.length - 1
+                ? Number(row.size) - chunkBytes * (hashes.length - 1)
+                : chunkBytes
+        ));
+    }
+
+    knownKeyedChunkIds(ownerUserId, keyedIds) {
+        const ids = [...new Set((keyedIds || []).map(String).filter(Boolean))];
+        if (!ids.length) return new Set();
+        const found = new Set();
+        const stmt = this.db.prepare(
+            'SELECT keyed_id FROM mobile_blob_chunks WHERE owner_user_id = ? AND keyed_id = ?',
+        );
+        for (const id of ids) {
+            const row = stmt.get(String(ownerUserId), id);
+            if (row) found.add(id);
+        }
+        return found;
+    }
+
+    rememberKeyedChunks(ownerUserId, chunks) {
+        const now = nowMs();
+        const stmt = this.db.prepare(`INSERT OR IGNORE INTO mobile_blob_chunks
+            (owner_user_id, keyed_id, sha256, size, created_at) VALUES (?, ?, ?, ?, ?)`);
+        for (const chunk of chunks || []) {
+            if (!chunk?.keyedId || !chunk?.sha256) continue;
+            stmt.run(String(ownerUserId), String(chunk.keyedId), String(chunk.sha256), Number(chunk.size) || 0, now);
+        }
+    }
+
     /** The status shape every blob endpoint speaks: received/missing indices. */
     blobUploadStatus(row) {
         const chunkHashes = JSON.parse(row.chunk_hashes_json);
@@ -1681,19 +1738,39 @@ class MobileV1Store {
      * different manifest under a digest already in flight is a hash error, not
      * a new upload: continuing would assemble a corrupt blob.
      */
-    createBlobUpload({ ownerUserId, deviceId, sha256: digest, size, mime, chunkBytes, chunkHashes, encrypted }, limits = this.blobLimits) {
+    createBlobUpload({ ownerUserId, deviceId, sha256: digest, size, mime, chunkBytes, chunkHashes, encrypted, chunkSizes, keyedIds, chunkAlgorithm, merkle }, limits = this.blobLimits) {
         const owner = String(ownerUserId);
         const device = String(deviceId);
         const blobDigest = String(digest || '').toLowerCase();
+        const algorithm = String(chunkAlgorithm || 'fixed');
+        const sizes = Array.isArray(chunkSizes) ? chunkSizes.map(Number) : [];
+        const keys = Array.isArray(keyedIds) ? keyedIds.map(String) : [];
         if (!/^[0-9a-f]{64}$/.test(blobDigest)
             || !Number.isSafeInteger(Number(size)) || Number(size) < 0
-            || !Number.isSafeInteger(Number(chunkBytes)) || Number(chunkBytes) <= 0
             || !Array.isArray(chunkHashes)) {
             throw new MobileStoreError('invalid_request', 'invalid blob manifest', 400);
         }
-        const expectedChunks = Number(size) === 0 ? 0 : Math.ceil(Number(size) / Number(chunkBytes));
-        if (chunkHashes.length !== expectedChunks
-            || chunkHashes.some((hash) => !/^[0-9a-f]{64}$/.test(String(hash)))) {
+        if (algorithm === 'fastcdc-gear-v1') {
+            if (!sizes.length || sizes.length !== chunkHashes.length || sizes.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
+                throw new MobileStoreError('invalid_request', 'invalid CDC chunk sizes', 400);
+            }
+            if (sizes.reduce((sum, value) => sum + value, 0) !== Number(size)) {
+                throw new MobileStoreError('invalid_request', 'CDC chunk sizes do not sum to blob size', 400);
+            }
+            if (keys.length && keys.length !== chunkHashes.length) {
+                throw new MobileStoreError('invalid_request', 'keyed chunk id count does not match manifest', 400);
+            }
+            if (Number(chunkBytes) <= 0) chunkBytes = Math.max(...sizes);
+        } else {
+            if (!Number.isSafeInteger(Number(chunkBytes)) || Number(chunkBytes) <= 0) {
+                throw new MobileStoreError('invalid_request', 'invalid blob manifest', 400);
+            }
+            const expectedChunks = Number(size) === 0 ? 0 : Math.ceil(Number(size) / Number(chunkBytes));
+            if (chunkHashes.length !== expectedChunks) {
+                throw new MobileStoreError('invalid_request', 'invalid blob chunk manifest', 400);
+            }
+        }
+        if (chunkHashes.some((hash) => !/^[0-9a-f]{64}$/.test(String(hash)))) {
             throw new MobileStoreError('invalid_request', 'invalid blob chunk manifest', 400);
         }
         const contentType = String(mime || 'application/octet-stream');
@@ -1761,12 +1838,14 @@ class MobileV1Store {
             this.db.prepare(`INSERT INTO mobile_blob_uploads
                 (upload_id, owner_user_id, device_id, sha256, size, mime, chunk_bytes,
                  chunk_hashes_json, encrypted, received_json, state, received_bytes,
-                 finalizing_at, finalize_attempts, failed_at, failure_code, created_at, updated_at)
+                 finalizing_at, finalize_attempts, failed_at, failure_code, created_at, updated_at,
+                 chunk_sizes_json, keyed_ids_json, chunk_algorithm)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 'receiving', 0,
-                        NULL, 0, NULL, NULL, ?, ?)`)
+                        NULL, 0, NULL, NULL, ?, ?, ?, ?, ?)`)
                 .run(uploadId, owner, device, blobDigest,
                     Number(size), String(mime), Number(chunkBytes), JSON.stringify(chunkHashes),
-                    encrypted ? 1 : 0, now, now);
+                    encrypted ? 1 : 0, now, now,
+                    JSON.stringify(sizes), JSON.stringify(keys), algorithm);
         });
         transaction();
         return this.blobUploadStatus(this.getBlobUpload(uploadId));
@@ -1791,10 +1870,8 @@ class MobileV1Store {
         if (!Number.isInteger(index) || index < 0 || index >= count) {
             throw new MobileStoreError('invalid_request', 'chunk index \u8d8a\u754c', 400, { details: { index, chunkCount: count } });
         }
-        const chunkBytes = Number(row.chunk_bytes);
-        const expectedBytes = index === count - 1
-            ? Number(row.size) - chunkBytes * (count - 1)
-            : chunkBytes;
+        const sizes = this.parseBlobChunkSizes(row);
+        const expectedBytes = Number(sizes[index]);
         if (!Buffer.isBuffer(bytes) || bytes.length !== expectedBytes) {
             throw new MobileStoreError('invalid_request', 'chunk \u957f\u5ea6\u4e0e manifest \u4e0d\u7b26', 400, {
                 details: { index, expectedBytes, actualBytes: Buffer.isBuffer(bytes) ? bytes.length : 0 },
@@ -1818,13 +1895,12 @@ class MobileV1Store {
                 throw new MobileStoreError('invalid_request', 'upload is not receiving chunks', 409);
             }
             const hashes = JSON.parse(row.chunk_hashes_json);
+            const sizes = this.parseBlobChunkSizes(row);
             const received = new Set(JSON.parse(row.received_json).map(Number));
             if (!received.has(Number(index))) received.add(Number(index));
             let receivedBytes = 0;
             for (const receivedIndex of received) {
-                receivedBytes += receivedIndex === hashes.length - 1
-                    ? Number(row.size) - Number(row.chunk_bytes) * (hashes.length - 1)
-                    : Number(row.chunk_bytes);
+                receivedBytes += Number(sizes[receivedIndex]) || 0;
             }
             if (received.has(Number(index)) && Number(byteLength) <= 0 && Number(row.size) > 0) {
                 throw new MobileStoreError('invalid_request', 'empty blob chunk', 400);
@@ -1867,11 +1943,10 @@ class MobileV1Store {
         const received = [...new Set((validIndices || []).map(Number))]
             .filter((index) => Number.isInteger(index) && index >= 0 && index < hashes.length)
             .sort((a, b) => a - b);
+        const sizes = this.parseBlobChunkSizes(row);
         let bytes = 0;
         for (const index of received) {
-            bytes += index === hashes.length - 1
-                ? Number(row.size) - Number(row.chunk_bytes) * (hashes.length - 1)
-                : Number(row.chunk_bytes);
+            bytes += Number(sizes[index]) || 0;
         }
         this.db.prepare(`UPDATE mobile_blob_uploads SET received_json = ?, received_bytes = ?,
             finalizing_at = CASE WHEN ? = ? THEN finalizing_at ELSE NULL END,
@@ -1887,13 +1962,26 @@ class MobileV1Store {
         const transaction = this.db.transaction(() => {
             this.db.prepare(`INSERT INTO mobile_blobs
                 (owner_user_id, sha256, size, mime, chunk_bytes, chunk_count,
-                 encrypted, created_by_device_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 encrypted, created_by_device_id, created_at, chunk_sizes_json, keyed_ids_json, chunk_algorithm)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner_user_id, sha256) DO NOTHING`).run(
                 row.owner_user_id, row.sha256, Number(row.size), row.mime,
                 Number(row.chunk_bytes), count, Number(row.encrypted) ? 1 : 0,
                 row.device_id, timestamp,
+                row.chunk_sizes_json || '[]',
+                row.keyed_ids_json || '[]',
+                row.chunk_algorithm || 'fixed',
             );
+            try {
+                const hashes = JSON.parse(row.chunk_hashes_json);
+                const sizes = this.parseBlobChunkSizes(row);
+                const keyed = JSON.parse(row.keyed_ids_json || '[]');
+                this.rememberKeyedChunks(row.owner_user_id, hashes.map((sha256, index) => ({
+                    keyedId: keyed[index],
+                    sha256,
+                    size: sizes[index],
+                })));
+            } catch { /* keyed index is advisory; the blob row is canonical */ }
             this.db.prepare(`UPDATE mobile_blob_uploads SET state = 'complete',
                 received_bytes = size, finalizing_at = NULL, failed_at = NULL,
                 failure_code = NULL, updated_at = ? WHERE upload_id = ?`).run(timestamp, row.upload_id);
