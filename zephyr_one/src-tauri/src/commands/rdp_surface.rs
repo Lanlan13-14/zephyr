@@ -185,11 +185,10 @@ impl NativeRdpSurfaceState {
             let entry = surfaces.get_mut(session_id).ok_or_else(|| {
                 format!("{SURFACE_MISSING}: create a native surface before connecting session {session_id}")
             })?;
-            validate_connect_preconditions(
-                true,
-                self.sessions.get(session_id).is_some(),
-                session_id,
-            )?;
+            /* A dead handle left by a failed previous open must not block the
+             * retry; a live one still owns its surface. */
+            let live_session = self.sessions.get(session_id).is_some_and(|handle| handle.is_live());
+            validate_connect_preconditions(true, live_session, session_id)?;
 
             entry.unbind_session();
             let telemetry = Arc::new(SessionTelemetry::default());

@@ -249,6 +249,9 @@ pub enum Error {
     ClipboardTooLarge,
     /// `zephyr_rdp_new` returned NULL (allocation or settings assembly failed).
     SessionCreate,
+    /// A live session with the same id is still connected; the caller must
+    /// close it first instead of silently replacing its surface.
+    SessionExists,
     /// The folder mapping is unusable.
     Drive(DriveProblem),
     /// The RDP loop exited non-zero; carries FreeRDP's own code where it has one.
@@ -275,6 +278,7 @@ impl fmt::Display for Error {
             Error::InteriorNul(field) => write!(f, "field {field} contains an interior NUL byte"),
             Error::ClipboardTooLarge => write!(f, "clipboard text exceeds the native RDP limit"),
             Error::SessionCreate => write!(f, "FreeRDP session could not be created"),
+            Error::SessionExists => write!(f, "a live RDP session with this id already exists"),
             Error::Drive(problem) => write!(f, "folder mapping unusable: {}", problem.code()),
             Error::Run(code) => write!(f, "RDP session ended with code {code}"),
             Error::NoSuchSession => write!(f, "no such RDP session"),
@@ -299,6 +303,7 @@ impl Error {
             Error::InteriorNul(_) => "invalid_field",
             Error::ClipboardTooLarge => "rdp_clipboard_too_large",
             Error::SessionCreate => "rdp_session_create_failed",
+            Error::SessionExists => "rdp_session_exists",
             Error::Drive(problem) => problem.code(),
             Error::Run(_) => "rdp_session_failed",
             Error::NoSuchSession => "rdp_session_not_found",

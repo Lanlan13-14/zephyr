@@ -67,6 +67,31 @@ test('Ctrl+Alt+Del is sent as the secure-attention scancode chord', () => {
   assert.match(body, /RELEASE/);
 });
 
+test('a dead session handle does not block the retry', () => {
+  const surface = read('src-tauri/src/commands/rdp_surface.rs');
+  const broker = read('src-tauri/src/rdp/broker.rs');
+  const session = read('src-tauri/src/rdp/session.rs');
+
+  /* The retry must see liveness, not just presence: presence alone is what
+   * produced rdp_session_exists for a session that had already died. */
+  const startSession = surface.slice(surface.indexOf('pub fn start_session'), surface.indexOf('pub fn disconnect_session'));
+  assert.match(startSession, /is_some_and\(\|handle\| handle\.is_live\(\)\)/);
+  assert.doesNotMatch(startSession, /self\.sessions\.get\(session_id\)\.is_some\(\)[\s,]/);
+
+  /* The broker must hand the reservation back when resolve/approve/open fails,
+   * and a retry with the same owner must be able to re-claim a stuck one. */
+  const authorize = broker.slice(broker.indexOf('pub(crate) fn authorize_and_open'), broker.indexOf('pub fn with_active'));
+  assert.match(authorize, /leases\.remove\(&intent\.session_id\)/);
+  const claim = broker.slice(broker.indexOf('pub fn claim_surface'), broker.indexOf('pub fn release_reserved'));
+  assert.match(claim, /SurfaceReserved[\s\S]*owner_label == owner_label/);
+
+  /* The registry must not let a retry silently replace a live handle, and must
+   * not let a dead one block it either. */
+  const start = session.slice(session.indexOf('pub fn start('), session.indexOf('pub fn get('));
+  assert.match(start, /retire_dead/);
+  assert.match(start, /Error::SessionExists/);
+});
+
 test('broker denial is logged with enough detail to distinguish ACL from transport', () => {
   const broker = fs.readFileSync(path.join(ROOT, '..', 'zephyr-one-rdp-native-broker.js'), 'utf8');
   assert.match(broker, /authorization denied/);

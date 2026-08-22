@@ -85,10 +85,18 @@ impl NativeRdpBroker {
     pub fn claim_surface(&self, owner_label: &str, session_id: &str) -> Result<(), String> {
         validate_owner_and_session(owner_label, session_id)?;
         let mut leases = self.leases.lock();
-        if leases.contains_key(session_id) {
-            return Err(format!(
-                "{SESSION_EXISTS}: native RDP session {session_id} is already owned"
-            ));
+        /* A lease stuck in SurfaceReserved means the previous open died before
+         * the connect could consume it. Re-claiming the same surface for the
+         * same owner is the retry, not an attack: only another owner's claim
+         * is refused. */
+        if let Some(existing) = leases.get(session_id) {
+            let stuck_reserved = matches!(existing.phase, LeasePhase::SurfaceReserved)
+                && existing.owner_label == owner_label;
+            if !stuck_reserved {
+                return Err(format!(
+                    "{SESSION_EXISTS}: native RDP session {session_id} is already owned"
+                ));
+            }
         }
         leases.insert(
             session_id.to_owned(),
@@ -170,14 +178,37 @@ impl NativeRdpBroker {
             ));
         }
 
-        let mut authorization = resolve()?;
-        validate_authorization(owner_label, intent, &authorization)?;
-        authorization.config.width = intent.width;
-        authorization.config.height = intent.height;
-        let binding = binding_from(&authorization);
+        /* Resolve/approve/open run while the lock is held so no other caller can
+         * consume the reserved surface. On any failure the lease is released: a
+         * retry after an auth cancel or a connect error must be able to start
+         * over instead of finding the id permanently owned. */
+        let opened = (|| {
+            let mut authorization = resolve()?;
+            validate_authorization(owner_label, intent, &authorization)?;
+            authorization.config.width = intent.width;
+            authorization.config.height = intent.height;
+            let binding = binding_from(&authorization);
 
-        approve(&binding)?;
-        open(authorization.config)?;
+            approve(&binding)?;
+            open(authorization.config)?;
+            Ok::<SessionBinding, String>(binding)
+        })();
+
+        let opened = match opened {
+            Ok(binding) => binding,
+            Err(error) => {
+                let still_reserved = leases
+                    .get(&intent.session_id)
+                    .is_some_and(|lease| {
+                        lease.owner_label == owner_label
+                            && matches!(lease.phase, LeasePhase::SurfaceReserved)
+                    });
+                if still_reserved {
+                    leases.remove(&intent.session_id);
+                }
+                return Err(error);
+            }
+        };
 
         let lease = require_owner_mut(&mut leases, owner_label, &intent.session_id)?;
         if !matches!(lease.phase, LeasePhase::SurfaceReserved) {
@@ -185,8 +216,8 @@ impl NativeRdpBroker {
                 "{SESSION_EXISTS}: native RDP authorization was already consumed"
             ));
         }
-        lease.phase = LeasePhase::Active(binding.clone());
-        Ok(binding)
+        lease.phase = LeasePhase::Active(opened.clone());
+        Ok(opened)
     }
 
     /// Run an owner-scoped operation under the same lease lock used by close.
@@ -471,6 +502,66 @@ mod tests {
             .unwrap_err()
             .starts_with(OWNER_MISMATCH));
         assert!(broker.with_active("owner-a", "session-1", || ()).is_ok());
+    }
+
+    #[test]
+    fn a_failed_open_releases_the_reservation_for_retry() {
+        let broker = NativeRdpBroker::new();
+        let intent = intent();
+        broker.claim_surface("main", &intent.session_id).unwrap();
+
+        /* Auth cancel: the approve step fails. The reservation must not leak,
+         * or the next connect is told the id is already owned forever. */
+        let denied = broker
+            .authorize_and_open(
+                "main",
+                &intent,
+                || Ok(authorization("main", "connection-1", "session-1")),
+                |_| Err("rdp_native_user_authorization_required: cancelled".to_owned()),
+                |_| Ok(()),
+            )
+            .unwrap_err();
+        assert!(denied.starts_with("rdp_native_user_authorization_required"));
+
+        let retried = broker
+            .authorize_and_open(
+                "main",
+                &intent,
+                || Ok(authorization("main", "connection-1", "session-1")),
+                |_| Ok(()),
+                |_| Ok(()),
+            );
+        assert!(retried.is_ok(), "retry after a failed open must succeed: {retried:?}");
+    }
+
+    #[test]
+    fn a_failed_connect_releases_the_reservation_for_retry() {
+        let broker = NativeRdpBroker::new();
+        let intent = intent();
+        broker.claim_surface("main", &intent.session_id).unwrap();
+
+        /* Native engine refused the settings. The lease is still only reserved,
+         * so the retry must be able to claim it again. */
+        let failed = broker
+            .authorize_and_open(
+                "main",
+                &intent,
+                || Ok(authorization("main", "connection-1", "session-1")),
+                |_| Ok(()),
+                |_| Err("rdp_session_create_failed: engine refused".to_owned()),
+            )
+            .unwrap_err();
+        assert!(failed.starts_with("rdp_session_create_failed"));
+
+        assert!(broker
+            .authorize_and_open(
+                "main",
+                &intent,
+                || Ok(authorization("main", "connection-1", "session-1")),
+                |_| Ok(()),
+                |_| Ok(()),
+            )
+            .is_ok());
     }
 
     #[test]
