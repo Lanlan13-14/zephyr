@@ -102,15 +102,16 @@ class SshKnownHostsBookTest {
     }
 
     @Test
-    fun `java properties splits host port on colon so it cannot store trust`() {
+    fun `java properties splits an unescaped host port line on colon`() {
         val file = File(tempDir.newFolder(), "legacy.properties")
-        val properties = java.util.Properties()
-        properties["103.240.198.233:22"] = FileSshKnownHostsBook.serializeHostKey(KEY_ED25519)
-        file.outputStream().use { properties.store(it, "legacy") }
+        file.writeText("103.240.198.233:22=" + FileSshKnownHostsBook.serializeHostKey(KEY_ED25519) + "\n")
         val loaded = java.util.Properties()
         file.inputStream().use { loaded.load(it) }
         assertNull(loaded.getProperty("103.240.198.233:22"))
-        assertTrue(loaded.stringPropertyNames().none { it.endsWith(":22") && it.contains("103.240.198.233") })
+        assertTrue(loaded.stringPropertyNames().none { it.contains(":22") })
+        assertTrue(
+            loaded.stringPropertyNames().any { it == "103.240.198.233" || it.startsWith("103.240.198.233") },
+        )
     }
 
     @Test

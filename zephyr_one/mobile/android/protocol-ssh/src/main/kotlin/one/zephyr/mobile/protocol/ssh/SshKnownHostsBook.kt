@@ -35,9 +35,8 @@ class MemorySshKnownHostsBook : SshKnownHostsBook {
 /**
  * Line-oriented known_hosts file.
  *
- * Java [java.util.Properties] treats `:` as a key/value separator, so a
- * record keyed `103.240.198.233:22` is stored as host-only and never found
- * again after process death. Each line is `host:port algorithm base64`.
+ * An unescaped Properties line `host:port=...` splits on `:`. Line format
+ * avoids that: each record is `host:port algorithm base64`.
  */
 class FileSshKnownHostsBook(private val file: File) : SshKnownHostsBook {
     private val lock = Any()
