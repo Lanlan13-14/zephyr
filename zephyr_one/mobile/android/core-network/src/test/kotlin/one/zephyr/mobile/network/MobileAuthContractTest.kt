@@ -246,7 +246,7 @@ class MobileAuthContractTest {
         assertFieldNames(
             BindResponseDto.serializer(),
             "ok", "device", "accessCredential", "accessExpiresAt", "refreshCredential", "registryHash",
-            "bootstrapRequired",
+            "bootstrapRequired", "username", "userId",
         )
         assertFieldNames(RefreshRequestDto.serializer(), "deviceId", "refreshCredential")
         assertFieldNames(
