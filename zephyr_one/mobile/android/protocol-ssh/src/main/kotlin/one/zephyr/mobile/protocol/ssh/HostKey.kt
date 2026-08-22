@@ -18,9 +18,9 @@ data class HostKey(
     }
 
     override fun equals(other: Any?): Boolean =
-        other is HostKey && algorithm == other.algorithm && blob.contentEquals(other.blob)
+        other is HostKey && blob.contentEquals(other.blob)
 
-    override fun hashCode(): Int = 31 * algorithm.hashCode() + blob.contentHashCode()
+    override fun hashCode(): Int = blob.contentHashCode()
 
     /** Never dumps the key material. */
     override fun toString(): String = algorithm + " " + sha256Fingerprint

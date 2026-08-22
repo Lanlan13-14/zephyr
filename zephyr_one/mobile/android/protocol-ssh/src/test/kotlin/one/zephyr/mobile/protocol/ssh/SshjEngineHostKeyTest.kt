@@ -77,4 +77,14 @@ class SshjEngineHostKeyTest {
 
         assertEquals(KEY_B, FileSshKnownHostsBook(file).find("host-1", 22))
     }
+
+    @Test
+    fun acceptHostKeyWritesTheExplicitKeyWhenPendingIsGone() {
+        val book = MemorySshKnownHostsBook()
+        val engine = SshjEngine(Dispatchers.Unconfined, book)
+
+        engine.acceptHostKey("s1", "103.240.198.233", 22, KEY_ED25519)
+
+        assertEquals(KEY_ED25519, book.find("103.240.198.233", 22))
+    }
 }

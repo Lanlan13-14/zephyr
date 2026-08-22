@@ -35,7 +35,7 @@ class SshTerminalHost(
             request.wipe()
             return TerminalOpenOutcome.Failed(UnavailableTerminalHost.TELNET_NO_SOCKET)
         }
-        lastTarget[request.sessionId] = RememberedTarget(request.host, request.port)
+        lastTarget[request.sessionId] = RememberedTarget(request.host, request.port, presented = null)
         val route = SshRoute(listOf(RouteHop.Target(request.host, request.port)))
         val credential = credentialOf(request) ?: run {
             request.wipe()
@@ -57,10 +57,17 @@ class SshTerminalHost(
         request.wipe()
         return when (outcome) {
             is SshConnectOutcome.Connected -> TerminalOpenOutcome.Opened(outcome.sessionId, outcome.serverBanner)
-            is SshConnectOutcome.HostKeyDecisionRequired -> TerminalOpenOutcome.HostKeyDecision(
-                fingerprint = outcome.presented.sha256Fingerprint,
-                changed = outcome.known != null,
-            )
+            is SshConnectOutcome.HostKeyDecisionRequired -> {
+                lastTarget[request.sessionId] = RememberedTarget(
+                    host = request.host,
+                    port = request.port,
+                    presented = outcome.presented,
+                )
+                TerminalOpenOutcome.HostKeyDecision(
+                    fingerprint = outcome.presented.sha256Fingerprint,
+                    changed = outcome.known != null,
+                )
+            }
             is SshConnectOutcome.Failed -> TerminalOpenOutcome.Failed(outcome.error)
         }
     }
@@ -93,7 +100,12 @@ class SshTerminalHost(
 
     override suspend fun trustHostKey(sessionId: String) {
         val remembered = lastTarget[sessionId]
-        engine.acceptHostKey(sessionId, remembered?.host.orEmpty(), remembered?.port ?: 0)
+        engine.acceptHostKey(
+            sessionId,
+            remembered?.host.orEmpty(),
+            remembered?.port ?: 0,
+            remembered?.presented,
+        )
     }
 
     private fun credentialOf(request: TerminalOpenRequest): SshCredential? {
@@ -114,5 +126,9 @@ class SshTerminalHost(
         return copyOf()
     }
 
-    private data class RememberedTarget(val host: String, val port: Int)
+    private data class RememberedTarget(
+        val host: String,
+        val port: Int,
+        val presented: one.zephyr.mobile.protocol.ssh.HostKey?,
+    )
 }

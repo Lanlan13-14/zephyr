@@ -98,7 +98,8 @@ fun ConnectionListScreen(
 ) {
     var pendingDelete by remember { mutableStateOf<Connection?>(null) }
 
-    Column(modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         DashboardHeader(
             query = filter.query,
             syncStatus = syncStatus,
@@ -166,6 +167,7 @@ fun ConnectionListScreen(
                 }
             },
         )
+    }
     }
 }
 

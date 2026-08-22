@@ -39,15 +39,23 @@ test('app wires SSHJ instead of the unavailable stub', () => {
   assert.match(read(CONTAINER), /SshjEngine\(context\.filesDir\)/);
   assert.match(read(HOST), /class SshTerminalHost/);
   assert.match(read(ENGINE), /class SshjEngine/);
-  assert.match(read(ENGINE), /TRUST_FILE_NAME = "ssh_known_hosts\.properties"/);
+  assert.match(read(ENGINE), /TRUST_FILE_NAME = "ssh_known_hosts"/);
+  assert.doesNotMatch(read(ENGINE), /ssh_known_hosts\.properties/);
   assert.match(read(ENGINE), /FileSshKnownHostsBook/);
+  const book = read(path.join(ANDROID, 'protocol-ssh/src/main/kotlin/one/zephyr/mobile/protocol/ssh/SshKnownHostsBook.kt'));
+  assert.match(book, /fd\.sync\(\)/);
+  assert.match(book, /fun parseLine/);
+  assert.doesNotMatch(book, /import java.util.Properties/);
+  assert.doesNotMatch(book, /Properties\(\)/);
   assert.match(read(ENGINE), /PendingHostKey/);
-  assert.match(read(ENGINE), /presented\.host\.ifBlank \{ host \}/);
+  assert.match(read(ENGINE), /host\.ifBlank \{ pendingKey\?\.host\.orEmpty\(\) \}/);
   const disconnect = read(ENGINE).match(/override suspend fun disconnect[\s\S]*?override suspend fun measureLatency/)?.[0] ?? '';
   assert.match(disconnect, /Pending trust is a user decision/);
   assert.doesNotMatch(disconnect, /pending\.remove\(sessionId\)/);
   assert.match(read(HOST), /RememberedTarget/);
-  assert.match(read(HOST), /engine\.acceptHostKey\(sessionId, remembered\?\.host\.orEmpty\(\), remembered\?\.port \?: 0\)/);
+  assert.match(read(HOST), /remembered\?\.presented/);
+  assert.match(read(ENGINE), /fun hostKeyOf/);
+  assert.match(read(ENGINE), /findExistingAlgorithms/);
   assert.doesNotMatch(read(HOST), /lastRequest\[request\.sessionId\] = copyRequest/);
 });
 

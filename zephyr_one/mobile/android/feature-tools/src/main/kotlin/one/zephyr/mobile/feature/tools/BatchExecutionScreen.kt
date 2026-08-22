@@ -81,6 +81,7 @@ fun BatchExecutionScreen(
     modifier: Modifier = Modifier,
 ) {
     PageStateScaffold(state = state, onRetry = onRetry, modifier = modifier.fillMaxSize()) { content ->
+        var confirmCancel by remember { mutableStateOf(false) }
         Box(Modifier.fillMaxSize()) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -189,7 +190,9 @@ fun BatchExecutionScreen(
             }
             PushedPageActionBar(Modifier.align(Alignment.BottomCenter)) {
                 PrimaryButton(
-                    onClick = { onIntent(if (content.isRunning) BatchIntent.CancelRun else BatchIntent.ClearSelection) },
+                    onClick = {
+                        if (content.isRunning) confirmCancel = true else onIntent(BatchIntent.ClearSelection)
+                    },
                     modifier = Modifier.weight(1f),
                     ghost = true,
                 ) { Text("取消") }
@@ -198,6 +201,24 @@ fun BatchExecutionScreen(
                     modifier = Modifier.weight(1.4f),
                     enabled = content.canRun,
                 ) { Text("执行") }
+            }
+            if (confirmCancel) {
+                AlertDialog(
+                    onDismissRequest = { confirmCancel = false },
+                    title = { Text(stringResource(R.string.tools_batch_cancel_title)) },
+                    text = { Text(stringResource(R.string.tools_batch_cancel_message)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmCancel = false
+                            onIntent(BatchIntent.CancelRun)
+                        }) { Text(stringResource(R.string.tools_batch_cancel_confirm)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmCancel = false }) {
+                            Text(stringResource(R.string.tools_dialog_cancel))
+                        }
+                    },
+                )
             }
         }
     }
@@ -381,7 +402,6 @@ private fun TargetPickerRow(
 
 @Composable
 private fun RunActions(content: BatchContent, onIntent: (BatchIntent) -> Unit) {
-    var confirmCancel by remember { mutableStateOf(false) }
     FlowRow(
         modifier = Modifier.fillMaxWidth().padding(vertical = ZephyrSpacing.sm),
         horizontalArrangement = Arrangement.spacedBy(ZephyrSpacing.sm),
@@ -392,13 +412,6 @@ private fun RunActions(content: BatchContent, onIntent: (BatchIntent) -> Unit) {
             modifier = Modifier.sizeIn(minHeight = 48.dp),
         ) { Text(stringResource(R.string.tools_batch_run)) }
 
-        if (content.isRunning) {
-            OutlinedButton(
-                onClick = { confirmCancel = true },
-                modifier = Modifier.sizeIn(minHeight = 48.dp),
-            ) { Text(stringResource(R.string.tools_batch_cancel_run)) }
-        }
-
         if (content.run?.isComplete == true) {
             OutlinedButton(
                 onClick = { onIntent(BatchIntent.Export) },
@@ -406,31 +419,11 @@ private fun RunActions(content: BatchContent, onIntent: (BatchIntent) -> Unit) {
             ) { Text(stringResource(R.string.tools_batch_export)) }
         }
     }
-    // The disabled reason is shown rather than implied, so a greyed-out 执行 is never unexplained.
     (content.runGate as? ActionGate.Disabled)?.let { disabled ->
         Text(
             text = disabled.reason,
             style = ZephyrTheme.typography.caption,
             color = ZephyrTheme.palette.onFloatingMuted,
-        )
-    }
-
-    if (confirmCancel) {
-        AlertDialog(
-            onDismissRequest = { confirmCancel = false },
-            title = { Text(stringResource(R.string.tools_batch_cancel_title)) },
-            text = { Text(stringResource(R.string.tools_batch_cancel_message)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmCancel = false
-                    onIntent(BatchIntent.CancelRun)
-                }) { Text(stringResource(R.string.tools_batch_cancel_confirm)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmCancel = false }) {
-                    Text(stringResource(R.string.tools_dialog_cancel))
-                }
-            },
         )
     }
 }

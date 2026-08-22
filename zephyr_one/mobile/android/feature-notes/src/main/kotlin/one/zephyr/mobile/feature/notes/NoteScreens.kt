@@ -223,6 +223,7 @@ fun NoteListRoute(
     val filter by viewModel.filter.collectAsState()
     var pendingTrash by remember { mutableStateOf<Note?>(null) }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = stringResource(R.string.notes_title), onBack = onBack) {
             HeaderAddButton(stringResource(R.string.notes_create), onCreate)
@@ -312,6 +313,7 @@ fun NoteListRoute(
             },
             dismissButton = { TextButton(onClick = { pendingTrash = null }) { Text(stringResource(R.string.notes_cancel)) } },
         )
+    }
     }
 }
 

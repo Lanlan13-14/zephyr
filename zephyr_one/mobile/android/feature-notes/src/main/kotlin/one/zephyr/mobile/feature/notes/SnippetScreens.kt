@@ -197,6 +197,7 @@ fun SnippetListRoute(
     val rows by viewModel.snippets.collectAsState()
     var pending by remember { mutableStateOf<Snippet?>(null) }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = stringResource(R.string.snippets_title), onBack = onBack) {
             HeaderAddButton(stringResource(R.string.snippets_create), onCreate)
@@ -266,6 +267,7 @@ fun SnippetListRoute(
             },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("取消") } },
         )
+    }
     }
 }
 

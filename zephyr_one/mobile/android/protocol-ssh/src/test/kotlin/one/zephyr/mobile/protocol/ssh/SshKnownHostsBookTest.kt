@@ -31,7 +31,7 @@ class SshKnownHostsBookTest {
 
     @Test
     fun `file book persists across distinct instances`() {
-        val file = File(tempDir.newFolder(), "ssh_known_hosts.properties")
+        val file = File(tempDir.newFolder(), "ssh_known_hosts")
         val book1 = FileSshKnownHostsBook(file)
         assertNull(book1.find("192.168.1.10", 22))
 
@@ -53,7 +53,7 @@ class SshKnownHostsBookTest {
 
     @Test
     fun `replacing a key updates the stored key value`() {
-        val file = File(tempDir.newFolder(), "ssh_known_hosts.properties")
+        val file = File(tempDir.newFolder(), "ssh_known_hosts")
         val book = FileSshKnownHostsBook(file)
 
         book.put("host-1", 22, KEY_A)
@@ -88,5 +88,39 @@ class SshKnownHostsBookTest {
         val valid = FileSshKnownHostsBook.serializeHostKey(KEY_A)
         val parsed = FileSshKnownHostsBook.parseHostKey(valid)
         assertEquals(KEY_A, parsed)
+    }
+
+    @Test
+    fun `file book keeps host port together instead of splitting on colon`() {
+        val file = File(tempDir.newFolder(), "ssh_known_hosts")
+        FileSshKnownHostsBook(file).put("103.240.198.233", 22, KEY_ED25519)
+        val text = file.readText()
+        assertTrue(text.contains("103.240.198.233:22 "))
+        assertTrue(text.contains("ssh-ed25519 "))
+        assertEquals(KEY_ED25519, FileSshKnownHostsBook(file).find("103.240.198.233", 22))
+        assertNull(FileSshKnownHostsBook(file).find("103.240.198.233", 0))
+    }
+
+    @Test
+    fun `java properties splits host port on colon so it cannot store trust`() {
+        val file = File(tempDir.newFolder(), "legacy.properties")
+        val properties = java.util.Properties()
+        properties["103.240.198.233:22"] = FileSshKnownHostsBook.serializeHostKey(KEY_ED25519)
+        file.outputStream().use { properties.store(it, "legacy") }
+        val loaded = java.util.Properties()
+        file.inputStream().use { loaded.load(it) }
+        assertNull(loaded.getProperty("103.240.198.233:22"))
+        assertTrue(loaded.stringPropertyNames().none { it.endsWith(":22") && it.contains("103.240.198.233") })
+    }
+
+    @Test
+    fun `properties colon split would lose the port and is rejected`() {
+        val parsed = FileSshKnownHostsBook.parseLine("103.240.198.233=ssh-ed25519 AAAA")
+        assertNull(parsed)
+        val ok = FileSshKnownHostsBook.parseLine(
+            "103.240.198.233:22 " + FileSshKnownHostsBook.serializeHostKey(KEY_A),
+        )
+        assertEquals("103.240.198.233:22", ok?.first)
+        assertEquals(KEY_A, ok?.second)
     }
 }

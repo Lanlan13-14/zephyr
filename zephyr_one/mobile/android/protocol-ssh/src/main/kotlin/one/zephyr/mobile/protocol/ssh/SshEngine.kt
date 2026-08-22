@@ -41,6 +41,9 @@ interface SshEngine {
 
     fun acceptHostKey(sessionId: String, host: String, port: Int) = Unit
 
+    fun acceptHostKey(sessionId: String, host: String, port: Int, key: HostKey?) =
+        acceptHostKey(sessionId, host, port)
+
     /** Measures one SSH request/reply round trip on an authenticated transport. */
     suspend fun measureLatency(sessionId: String): Long?
 

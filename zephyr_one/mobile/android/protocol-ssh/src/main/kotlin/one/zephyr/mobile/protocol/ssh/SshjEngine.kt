@@ -22,6 +22,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.common.Buffer
+import net.schmizz.sshj.common.KeyType
 import net.schmizz.sshj.connection.channel.direct.PTYMode
 import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.sftp.FileMode
@@ -502,11 +504,20 @@ class SshjEngine internal constructor(
     }
 
     override fun acceptHostKey(sessionId: String, host: String, port: Int) {
-        val presented = pending.remove(sessionId) ?: return
-        val storedHost = presented.host.ifBlank { host }
-        val storedPort = if (presented.port > 0) presented.port else port
+        acceptPresented(sessionId, host, port, key = null)
+    }
+
+    override fun acceptHostKey(sessionId: String, host: String, port: Int, key: HostKey?) {
+        acceptPresented(sessionId, host, port, key)
+    }
+
+    private fun acceptPresented(sessionId: String, host: String, port: Int, key: HostKey?) {
+        val pendingKey = pending.remove(sessionId)
+        val presented = key ?: pendingKey?.key ?: return
+        val storedHost = host.ifBlank { pendingKey?.host.orEmpty() }
+        val storedPort = if (port > 0) port else pendingKey?.port ?: 0
         if (storedHost.isBlank() || storedPort <= 0) return
-        knownHosts.put(storedHost, storedPort, presented.key)
+        knownHosts.put(storedHost, storedPort, presented)
     }
 
     /** Test seam: the first handshake stores the presented key before the user accepts it. */
@@ -531,13 +542,17 @@ class SshjEngine internal constructor(
         @Volatile var storedKey: HostKey? = null
 
         override fun verify(hostname: String, port: Int, key: PublicKey): Boolean {
-            val seen = HostKey(key.algorithm, key.encoded)
+            val seen = hostKeyOf(key) ?: return false
             presented = seen
             val known = knownHosts.find(this.host, this.port) ?: knownHosts.find(hostname, port)
             storedKey = known
-            return (known != null && known == seen).also { accepted = it }
+            return (known != null && known.blob.contentEquals(seen.blob)).also { accepted = it }
         }
-        override fun findExistingAlgorithms(hostname: String, port: Int): List<String> = emptyList()
+        override fun findExistingAlgorithms(hostname: String, port: Int): List<String> {
+            val known = knownHosts.find(this.host, this.port) ?: knownHosts.find(hostname, port)
+            val algorithm = known?.algorithm?.takeIf { it.isNotBlank() } ?: return emptyList()
+            return listOf(algorithm)
+        }
     }
 
     private data class LiveSession(
@@ -595,11 +610,24 @@ class SshjEngine internal constructor(
     )
 
     companion object {
-        const val TRUST_FILE_NAME = "ssh_known_hosts.properties"
+        const val TRUST_FILE_NAME = "ssh_known_hosts"
         private const val LATENCY_PROBE_TIMEOUT_MS = 4_000
 
         private fun hostPort(host: String, port: Int): String = SshKnownHostsBook.key(host, port)
         private fun closeQuietly(client: SSHClient) { runCatching { client.disconnect() } }
+
+        fun hostKeyOf(key: PublicKey): HostKey? {
+            val wire = runCatching {
+                val type = KeyType.fromKey(key)
+                val buffer = Buffer.PlainBuffer()
+                type.putPubKeyIntoBuffer(key, buffer)
+                HostKey(type.toString(), buffer.compactData)
+            }.getOrNull()
+            if (wire != null && wire.blob.isNotEmpty()) return wire
+            val encoded = key.encoded ?: return null
+            if (encoded.isEmpty()) return null
+            return HostKey(key.algorithm, encoded)
+        }
         private fun mapError(error: Exception, stage: ConnectStage): MobileError {
             val root = generateSequence(error as Throwable?) { it.cause }.lastOrNull() ?: error
             val cause = root.message?.takeIf(String::isNotBlank) ?: root.javaClass.simpleName

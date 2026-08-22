@@ -148,8 +148,8 @@ class HostKeyVerifierTest {
         assertEquals(KEY_A, HostKey("ssh-rsa", KEY_A.blob.copyOf()))
         assertEquals(KEY_A.hashCode(), HostKey("ssh-rsa", KEY_A.blob.copyOf()).hashCode())
         assertNotEquals(KEY_A, KEY_B)
-        // Same bytes under a different algorithm name is a different key.
-        assertNotEquals(KEY_A, HostKey("ssh-dss", KEY_A.blob.copyOf()))
+        // SSHJ may label the same blob ssh-rsa / RSA. Trust is the material.
+        assertEquals(KEY_A, HostKey("ssh-dss", KEY_A.blob.copyOf()))
 
         val printed = KEY_A.toString()
         assertEquals("ssh-rsa SHA256:iDWpTXEhiqEJqkOpGjNCweV7ECfbgHSa4OLMIzPUBMc", printed)
