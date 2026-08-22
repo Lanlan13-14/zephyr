@@ -82,13 +82,25 @@ test('every hop authenticates with its own stored secrets not the target\'s', ()
 test('the editor jump picker lists SSH connections like the main end', () => {
   const screen = read('android/feature-connections/src/main/kotlin/one/zephyr/mobile/feature/connections/ConnectionEditorScreen.kt');
   const vm = read('android/feature-connections/src/main/kotlin/one/zephyr/mobile/feature/connections/ConnectionEditorViewModel.kt');
+  const picker = read('android/feature-connections/src/main/kotlin/one/zephyr/mobile/feature/connections/JumpPicker.kt');
   /* JumpChainEditor existed but RouteSection never composed it: tapping the
    * JUMP row silently added the first JumpHost resource, and SSH connections
    * (what the main end actually stores in jumpHostIds) were not even listed. */
   assert.match(screen, /ConnectionMode\.JUMP -> JumpChainEditor\(ui, onIntent, onPickJump\)/);
-  assert.match(screen, /for \(connection in ui\.jumpConnections\)/);
+  assert.match(screen, /JumpPicker\.addable\(/);
   assert.match(vm, /val jumpConnections: List<Connection>/);
-  assert.match(vm, /row\.protocol == Protocol\.SSH/);
+  assert.match(picker, /row\.protocol == Protocol\.SSH/);
+});
+
+test('inventory that arrives while the editor is still loading is replayed onto the form', () => {
+  const vm = read('android/feature-connections/src/main/kotlin/one/zephyr/mobile/feature/connections/ConnectionEditorViewModel.kt');
+  /* mutate() no-ops on InitialLoading. Room's first snapshot often lands during
+   * connections.find(), and the mirror does not re-emit, so dropping that
+   * snapshot left "没有可用的 SSH 连接可作跳板" on a device full of SSH hosts. */
+  assert.match(vm, /private var latestInventory: JumpInventory\? = null/);
+  assert.match(vm, /latestInventory\?\.let\(::applyInventory\)/);
+  assert.match(vm, /private fun show\(/);
+  assert.match(vm, /it\.withJumpInventory\(snapshot, connectionId\)/);
 });
 
 test('the jump chain is selectable inside the card via a full-screen sheet', () => {
