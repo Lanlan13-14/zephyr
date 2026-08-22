@@ -30,6 +30,32 @@ def sheet_fits(window_height_dp: float, body_height_dp: float, has_dismiss: bool
     return stacked <= available + 0.01 and stacked <= window_height_dp - EDGE_GUTTER_DP
 
 
+def dialog_window_height_dp(screen_height_dp: float, measured_height_dp: float) -> float:
+    return max(screen_height_dp, measured_height_dp)
+
+
+def forced_window_width_dp(screen_width_dp: float) -> float:
+    return max(screen_width_dp, 1.0)
+
+
+def forced_window_height_dp(screen_height_dp: float) -> float:
+    return max(screen_height_dp, 1.0)
+
+
+def cancel_group_on_screen(
+    screen_height_dp: float,
+    measured_window_height_dp: float,
+    body_height_dp: float,
+    has_dismiss: bool,
+    navigation_bar_dp: float,
+) -> bool:
+    if measured_window_height_dp + 0.01 < screen_height_dp:
+        return False
+    stacked = stacked_height_dp(body_height_dp, has_dismiss)
+    bottom_reserve = EDGE_GUTTER_DP + navigation_bar_dp
+    return stacked + bottom_reserve <= measured_window_height_dp + 0.01
+
+
 def _is_hex_digit(ch: str) -> bool:
     return ("0" <= ch <= "9") or ("A" <= ch <= "F") or ("a" <= ch <= "f")
 
@@ -63,6 +89,10 @@ def main() -> int:
     assert sheet_fits(780.0, body, True)
     assert not sheet_fits(220.0, body, True)
     assert stacked_height_dp(body, True) == body + 8.0 + 50.0 + 10.0
+    assert dialog_window_height_dp(780.0, 220.0) == 780.0
+    assert forced_window_height_dp(780.0) == 780.0
+    assert not cancel_group_on_screen(780.0, 220.0, body, True, 48.0)
+    assert cancel_group_on_screen(780.0, 780.0, body, True, 48.0)
 
     raw = "SHA256:QytVAAei+gY5ISAlZF3D6WfcZGOaTGY+ygTPRiDSbl0"
     wrapped = wrap_fingerprint(raw)

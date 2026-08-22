@@ -24,10 +24,18 @@ test('alert dialog is bounded by the actual available window', () => {
   assert.match(alert, /AlertDialogLayout\.availableHeightDp\(windowHeightDp\)/);
   assert.match(alert, /\.heightIn\(max = availableHeight\)/);
   assert.match(alert, /\.navigationBarsPadding\(\)/);
-  assert.match(alert, /setLayout\(ViewGroup\.LayoutParams\.MATCH_PARENT, ViewGroup\.LayoutParams\.MATCH_PARENT\)/);
+  assert.match(alert, /window\.setLayout\(screenW, screenH\)/);
   assert.match(alert, /\.fillMaxSize\(\)/);
   assert.match(alert, /DialogWindowProvider/);
+  assert.match(alert, /OnPreDrawListener/);
+  assert.match(alert, /OnGlobalLayoutListener/);
+  assert.match(alert, /\.requiredWidth\(AlertDialogLayout\.forcedWindowWidthDp\(screenWidthDp\)\.dp\)/);
+  assert.match(alert, /\.requiredHeight\(AlertDialogLayout\.forcedWindowHeightDp\(screenHeightDp\)\.dp\)/);
+  assert.match(alert, /AlertDialogLayout\.dialogWindowHeightDp\(screenHeightDp, maxHeight\.value\)/);
+  assert.match(alert, /\.navigationBarsPadding\(\)[\s\S]*\.padding\(start = 10\.dp, end = 10\.dp, bottom = 10\.dp\)/);
   assert.match(layout, /fun availableHeightDp\(windowHeightDp: Float\)/);
+  assert.match(layout, /fun dialogWindowHeightDp/);
+  assert.match(layout, /fun cancelGroupOnScreen/);
   assert.doesNotMatch(alert, /val availableHeight = min\(maxHeight\.value - 20f, 640f\)/);
 });
 
@@ -100,6 +108,10 @@ test('window-height math keeps the cancel group on a phone', () => {
   assert.ok(stacked < availableHeightDp(780));
   const wrapContentDialog = 220;
   assert.ok(stacked > wrapContentDialog, 'old WRAP_CONTENT Dialog would clip cancel');
+  assert.equal(Math.max(780, 220), 780);
+  const nav = 48;
+  assert.ok(stacked + 10 + nav < 780);
+  assert.ok(!(stacked + 10 + nav < wrapContentDialog));
 });
 
 test('python replica of AlertDialogLayout stays in lockstep', async () => {

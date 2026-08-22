@@ -65,7 +65,7 @@ class SshjEngine internal constructor(
 
     private val sessions = ConcurrentHashMap<String, LiveSession>()
     private val closeEvents = ConcurrentHashMap<String, MutableSharedFlow<Throwable>>()
-    private val pending = ConcurrentHashMap<String, HostKey>()
+    private val pending = ConcurrentHashMap<String, PendingHostKey>()
     private val scope = CoroutineScope(SupervisorJob() + io)
 
     override val isAvailable: Boolean = true
@@ -97,9 +97,9 @@ class SshjEngine internal constructor(
             SshConnectOutcome.Connected(request.sessionId, "")
         } catch (error: Exception) {
             closeQuietly(client)
-            val presented = verifier.presented ?: pending[request.sessionId]
+            val presented = verifier.presented ?: pending[request.sessionId]?.key
             if (presented != null && !verifier.accepted) {
-                pending[request.sessionId] = presented
+                pending[request.sessionId] = PendingHostKey(target.host, target.port, presented)
                 return@withContext SshConnectOutcome.HostKeyDecisionRequired(presented, known = verifier.storedKey)
             }
             SshConnectOutcome.Failed(mapError(error, stage))
@@ -157,7 +157,8 @@ class SshjEngine internal constructor(
     override suspend fun disconnect(sessionId: String): Unit = withContext(io) {
         sessions.remove(sessionId)?.close()
         closeEvents.remove(sessionId)
-        pending.remove(sessionId)
+        // Pending trust is a user decision, not a live socket. Clearing it here is
+        // why "信任并继续" after a reconnect / host recreation wrote nothing.
         Unit
     }
 
@@ -501,8 +502,16 @@ class SshjEngine internal constructor(
     }
 
     override fun acceptHostKey(sessionId: String, host: String, port: Int) {
-        val key = pending.remove(sessionId) ?: return
-        knownHosts.put(host, port, key)
+        val presented = pending.remove(sessionId) ?: return
+        val storedHost = presented.host.ifBlank { host }
+        val storedPort = if (presented.port > 0) presented.port else port
+        if (storedHost.isBlank() || storedPort <= 0) return
+        knownHosts.put(storedHost, storedPort, presented.key)
+    }
+
+    /** Test seam: the first handshake stores the presented key before the user accepts it. */
+    internal fun rememberPendingForTest(sessionId: String, host: String, port: Int, key: HostKey) {
+        pending[sessionId] = PendingHostKey(host, port, key)
     }
 
     private fun authenticate(client: SSHClient, request: SshConnectRequest) {
@@ -578,6 +587,12 @@ class SshjEngine internal constructor(
         PTY("ssh_pty_failed", "SSH PTY 创建失败", true),
         SHELL("ssh_shell_failed", "SSH Shell 启动失败", true),
     }
+
+    private data class PendingHostKey(
+        val host: String,
+        val port: Int,
+        val key: HostKey,
+    )
 
     companion object {
         const val TRUST_FILE_NAME = "ssh_known_hosts.properties"

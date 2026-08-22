@@ -30,6 +30,8 @@ test('new connections start with a visible password field', () => {
 test('app wires SSHJ instead of the unavailable stub', () => {
   const root = read(ROOT_KT);
   assert.match(root, /SshTerminalHost\(/);
+  assert.match(root, /val terminalHost = remember\(account, sshEngine\)/);
+  assert.match(root, /host = terminalHost/);
   assert.match(root, /productionTerminalEmulator\(/);
   assert.doesNotMatch(root, /emulator = SimpleVtEmulator\(/);
   assert.match(root, /autoConnect = true/);
@@ -39,6 +41,14 @@ test('app wires SSHJ instead of the unavailable stub', () => {
   assert.match(read(ENGINE), /class SshjEngine/);
   assert.match(read(ENGINE), /TRUST_FILE_NAME = "ssh_known_hosts\.properties"/);
   assert.match(read(ENGINE), /FileSshKnownHostsBook/);
+  assert.match(read(ENGINE), /PendingHostKey/);
+  assert.match(read(ENGINE), /presented\.host\.ifBlank \{ host \}/);
+  const disconnect = read(ENGINE).match(/override suspend fun disconnect[\s\S]*?override suspend fun measureLatency/)?.[0] ?? '';
+  assert.match(disconnect, /Pending trust is a user decision/);
+  assert.doesNotMatch(disconnect, /pending\.remove\(sessionId\)/);
+  assert.match(read(HOST), /RememberedTarget/);
+  assert.match(read(HOST), /engine\.acceptHostKey\(sessionId, remembered\?\.host\.orEmpty\(\), remembered\?\.port \?: 0\)/);
+  assert.doesNotMatch(read(HOST), /lastRequest\[request\.sessionId\] = copyRequest/);
 });
 
 test('terminal uses the system IME by default', () => {

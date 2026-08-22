@@ -37,6 +37,50 @@ class SshTerminalHostTest {
     }
 
     @Test
+    fun trustHostKeyForwardsTheRememberedAddress() = runBlocking {
+        val engine = RecordingEngine()
+        val host = SshTerminalHost(engine) { null }
+        val outcome = host.open(
+            TerminalOpenRequest(
+                sessionId = "s1",
+                protocol = Protocol.SSH,
+                host = "103.240.198.233",
+                port = 22,
+                username = "root",
+                password = "secret".toCharArray(),
+            ),
+        )
+        assertTrue(outcome is TerminalOpenOutcome.Failed)
+        host.trustHostKey("s1")
+        assertEquals(1, engine.accepts)
+        assertEquals("s1", engine.acceptedSession)
+        assertEquals("103.240.198.233", engine.acceptedHost)
+        assertEquals(22, engine.acceptedPort)
+    }
+
+    @Test
+    fun trustHostKeyStillReachesTheEngineAfterTheRequestIsDropped() = runBlocking {
+        val engine = RecordingEngine()
+        val host = SshTerminalHost(engine) { null }
+        host.open(
+            TerminalOpenRequest(
+                sessionId = "s1",
+                protocol = Protocol.SSH,
+                host = "10.0.0.1",
+                port = 22,
+                username = "root",
+                password = "secret".toCharArray(),
+            ),
+        )
+        host.close("s1")
+        host.trustHostKey("s1")
+        assertEquals(1, engine.accepts)
+        assertEquals("s1", engine.acceptedSession)
+        assertEquals("", engine.acceptedHost)
+        assertEquals(0, engine.acceptedPort)
+    }
+
+    @Test
     fun telnetStaysOnTheUnavailablePath() = runBlocking {
         val engine = RecordingEngine()
         val host = SshTerminalHost(engine) { null }
@@ -57,6 +101,10 @@ class SshTerminalHostTest {
 
     private class RecordingEngine : SshEngine {
         var connects = 0
+        var accepts = 0
+        var acceptedSession: String? = null
+        var acceptedHost: String? = null
+        var acceptedPort: Int? = null
         override val isAvailable: Boolean = true
         override suspend fun connect(request: SshConnectRequest): SshConnectOutcome {
             connects += 1
@@ -68,7 +116,12 @@ class SshTerminalHostTest {
         override suspend fun send(sessionId: String, bytes: ByteArray) = Unit
         override suspend fun resize(sessionId: String, cols: Int, rows: Int, widthPx: Int, heightPx: Int) = Unit
         override suspend fun disconnect(sessionId: String) = Unit
-        override fun acceptHostKey(sessionId: String, host: String, port: Int) = Unit
+        override fun acceptHostKey(sessionId: String, host: String, port: Int) {
+            accepts += 1
+            acceptedSession = sessionId
+            acceptedHost = host
+            acceptedPort = port
+        }
         override suspend fun measureLatency(sessionId: String): Long? = null
         override suspend fun listDirectory(sessionId: String, path: String): Result<SftpDirectory> =
             Result.failure(IllegalStateException("unused"))
