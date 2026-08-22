@@ -83,7 +83,6 @@ enum class ToolEntry(
     AI_WORKSPACE(ToolSection.AI, ToolRoutes.AI),
 
     FILE_SYNC(ToolSection.FILE_SYNC, ToolRoutes.FILE_SYNC),
-    CLIENT_TOKEN(ToolSection.FILE_SYNC, ToolRoutes.CLIENT_TOKEN),
 
     SERVER_SETTINGS(ToolSection.SERVER, ToolRoutes.SERVER_SETTINGS),
     BACKUP_RESTORE(ToolSection.SERVER, ToolRoutes.BACKUP),
@@ -154,7 +153,7 @@ object ToolsCatalog {
         // models and skills live on this phone. The main end is optional sync only.
         ToolEntry.AI_WORKSPACE -> ActionGate.Allowed
 
-        ToolEntry.FILE_SYNC, ToolEntry.CLIENT_TOKEN -> ActionGate.Allowed
+        ToolEntry.FILE_SYNC -> ActionGate.Allowed
 
         // Readable offline: the effective settings come from the mirror, and the screen labels them
         // as a mirror with its age rather than refusing to open.

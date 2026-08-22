@@ -15,7 +15,6 @@ class ToolsCatalogIndependenceTest {
         assertEquals(ActionGate.Allowed, ToolsCatalog.gate(ToolEntry.APPEARANCE, inventory))
         assertEquals(ActionGate.Allowed, ToolsCatalog.gate(ToolEntry.LANGUAGE, inventory))
         assertEquals(ActionGate.Allowed, ToolsCatalog.gate(ToolEntry.FILE_SYNC, inventory))
-        assertEquals(ActionGate.Allowed, ToolsCatalog.gate(ToolEntry.CLIENT_TOKEN, inventory))
     }
 
     @Test

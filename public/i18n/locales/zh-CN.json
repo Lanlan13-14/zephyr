@@ -2350,5 +2350,21 @@
   "webDav.status.backupComplete": "WebDAV 备份已完成。",
   "webDav.remote.latestBackupSucceeded": "最近备份成功",
   "webDav.status.cancellationRequested": "已请求取消 WebDAV 操作。",
-  "webDav.remote.resultPendingConfirmation": "操作结果待确认"
+  "webDav.remote.resultPendingConfirmation": "操作结果待确认",
+  "Zephyr Link 同步连接、笔记、密钥元数据等到本机。绑定后按间隔自动同步。": "Zephyr Link 同步连接、笔记、密钥元数据等到本机。绑定后按间隔自动同步。",
+  "已绑定 {user}": "已绑定 {user}",
+  "绑定主端": "绑定主端",
+  "同步设置": "同步设置",
+  "自动同步": "自动同步",
+  "同步间隔": "同步间隔",
+  "网络策略": "网络策略",
+  "任何网络": "任何网络",
+  "仅 Wi-Fi": "仅 Wi-Fi",
+  "立即同步": "立即同步",
+  "同步已触发": "同步已触发",
+  "同步失败：{message}": "同步失败：{message}",
+  "加载失败：{message}": "加载失败：{message}",
+  "设备": "设备",
+  "冲突": "冲突",
+  "诊断": "诊断"
 }

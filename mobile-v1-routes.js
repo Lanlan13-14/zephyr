@@ -1277,16 +1277,41 @@ class MobileV1Api {
             throw new MobileStoreError('invalid_request', 'chunks must be an array of per-chunk SHA-256 digests', 400);
         }
         const chunkHashes = body.chunks.map((h) => String(h).toLowerCase());
-        const expected = size === 0 ? 0 : Math.ceil(size / BLOB_CHUNK_BYTES);
-        if (chunkHashes.length !== expected || chunkHashes.length > MAX_BLOB_CHUNKS) {
-            throw new MobileStoreError('invalid_request', 'chunk count does not match size', 400, { details: { expectedChunks: expected, actualChunks: chunkHashes.length } });
+        const algorithm = String(body.chunkAlgorithm || body.algorithm || 'fixed');
+        const chunkSizes = Array.isArray(body.chunkSizes) ? body.chunkSizes.map(Number) : [];
+        const keyedIds = Array.isArray(body.keyedIds) ? body.keyedIds.map(String) : [];
+        if (algorithm === 'fastcdc-gear-v1') {
+            if (chunkHashes.length !== chunkSizes.length || chunkHashes.length > MAX_BLOB_CHUNKS * 64) {
+                throw new MobileStoreError('invalid_request', 'CDC chunk count does not match sizes', 400);
+            }
+            if (chunkSizes.reduce((sum, value) => sum + value, 0) !== size) {
+                throw new MobileStoreError('invalid_request', 'CDC chunk sizes do not sum to blob size', 400);
+            }
+            if (chunkSizes.some((value) => !Number.isSafeInteger(value) || value <= 0 || value > BLOB_CHUNK_BYTES)) {
+                throw new MobileStoreError('invalid_request', 'CDC chunk size exceeds server limit', 400);
+            }
+        } else {
+            const expected = size === 0 ? 0 : Math.ceil(size / BLOB_CHUNK_BYTES);
+            if (chunkHashes.length !== expected || chunkHashes.length > MAX_BLOB_CHUNKS) {
+                throw new MobileStoreError('invalid_request', 'chunk count does not match size', 400, { details: { expectedChunks: expected, actualChunks: chunkHashes.length } });
+            }
         }
         for (const h of chunkHashes) {
             if (!/^[0-9a-f]{64}$/.test(h)) {
                 throw new MobileStoreError('invalid_request', 'chunk digests must be 64-char hex', 400);
             }
         }
-        return { sha256: digest, size, mime, chunkHashes, encrypted: !!body.encrypted };
+        return {
+            sha256: digest,
+            size,
+            mime,
+            chunkHashes,
+            encrypted: !!body.encrypted,
+            chunkSizes,
+            keyedIds,
+            chunkAlgorithm: algorithm,
+            merkle: body.merkle ? String(body.merkle) : null,
+        };
     }
 
     async handleBlobUploadCreate(req, res) {
@@ -1298,11 +1323,14 @@ class MobileV1Api {
                 ownerUserId: auth.user.userId,
                 deviceId: auth.device.device_id,
                 ...manifest,
-                /* Server-pinned, never client-chosen: capabilities advertise this
-                 * exact value and the state machine lets the server lower it,
-                 * not the client raise it. */
-                chunkBytes: BLOB_CHUNK_BYTES,
+                chunkBytes: manifest.chunkAlgorithm === 'fastcdc-gear-v1'
+                    ? Math.max(1, ...(manifest.chunkSizes.length ? manifest.chunkSizes : [BLOB_CHUNK_BYTES]))
+                    : BLOB_CHUNK_BYTES,
             });
+            if (manifest.keyedIds.length) {
+                const known = this.store.knownKeyedChunkIds(auth.user.userId, manifest.keyedIds);
+                status.knownKeyedIds = [...known];
+            }
             return res.json({ ok: true, upload: status });
         } catch (err) {
             return sendThrown(res, err, req.mobileRequestId);

@@ -9,7 +9,7 @@ const {
   RELAY_NAMESPACE,
 } = require('../mobile-v1-shared.js');
 
-function makeHarness({ capabilities, directUseAuthorizer = null, ownerDirectPolicy = null } = {}) {
+function makeHarness({ capabilities } = {}) {
   let caps = new Set(capabilities || ['discover', 'view', 'use', 'control', 'execute']);
   let userStatus = 'active';
   let ownerStatus = 'active';
@@ -130,13 +130,9 @@ function makeHarness({ capabilities, directUseAuthorizer = null, ownerDirectPoli
     store,
     serverEncryptionKey: () => Buffer.alloc(32, 1),
     relayMount: '/api/mobile/v1/shared/relay',
-    directUseAuthorizer,
-    ownerDirectPolicy,
   });
-  api.sealUseEnvelope = ({ session }) => ({ sessionId: session.sessionId, encrypted: true });
 
-  const open = (mode = 'relay-strict') => api.openConnectionSession(borrower, device, connection.id, {
-    mode,
+  const open = () => api.openConnectionSession(borrower, device, connection.id, {
     clientSessionNonce: 'nonce-long-enough-for-shared-session',
     requestedChannels: ['terminal'],
     deviceKeyVersion: 1,
@@ -153,33 +149,21 @@ function makeHarness({ capabilities, directUseAuthorizer = null, ownerDirectPoli
   };
 }
 
-test('shared direct permission matrix never treats control or execute as secret disclosure', () => {
+test('shared sessions stay relay-strict even when revealSecret is granted', () => {
   const control = makeHarness({ capabilities: ['view', 'use', 'control', 'execute'] });
-  const denied = control.open('direct-ephemeral');
+  const denied = control.open();
   assert.equal(denied.mode, 'relay-strict');
   assert.equal(denied.useEnvelope, undefined);
   assert.ok(!JSON.stringify(denied).includes('owner-plaintext-secret'));
 
-  const revealWithoutApproval = makeHarness({
+  const reveal = makeHarness({
     capabilities: ['view', 'use', 'control', 'execute', 'revealSecret'],
   });
-  assert.equal(revealWithoutApproval.open('direct-ephemeral').mode, 'relay-strict');
-
-  let approvals = 0;
-  const sensitiveApproved = makeHarness({
-    capabilities: ['view', 'use', 'revealSecret'],
-    directUseAuthorizer() { approvals += 1; return true; },
-  });
-  const direct = sensitiveApproved.open('direct-ephemeral');
-  assert.equal(direct.mode, 'direct-ephemeral');
-  assert.deepEqual(direct.useEnvelope.encrypted, true);
-  assert.equal(approvals, 1);
-
-  const ownerPolicy = makeHarness({
-    capabilities: ['view', 'use', 'revealSecret'],
-    ownerDirectPolicy() { return true; },
-  });
-  assert.equal(ownerPolicy.open('direct-ephemeral').mode, 'direct-ephemeral');
+  const opened = reveal.open();
+  assert.equal(opened.mode, 'relay-strict');
+  assert.equal(opened.useEnvelope, undefined);
+  assert.ok(opened.relay);
+  assert.ok(!JSON.stringify(opened).includes('owner-plaintext-secret'));
 });
 
 test('relay descriptor keeps credentials out of URLs and uses a one-time jti', () => {

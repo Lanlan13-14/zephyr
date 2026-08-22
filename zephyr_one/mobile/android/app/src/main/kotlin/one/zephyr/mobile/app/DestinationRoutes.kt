@@ -23,7 +23,6 @@ object DestinationRoutes {
         ToolEntry.JUMP_HOST -> "resource:" + ResourceKind.JUMP_HOST.name
         ToolEntry.AI_WORKSPACE -> "ai"
         ToolEntry.FILE_SYNC -> "file-sync"
-        ToolEntry.CLIENT_TOKEN -> "file-sync"
         ToolEntry.SERVER_SETTINGS -> "server-settings"
         ToolEntry.BACKUP_RESTORE -> "backup"
         ToolEntry.RUNTIME_STATUS -> "runtime"

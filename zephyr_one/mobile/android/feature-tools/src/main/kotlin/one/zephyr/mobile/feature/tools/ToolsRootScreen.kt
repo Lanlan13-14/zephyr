@@ -53,7 +53,6 @@ data class ToolsRootSummaries(
     val jumpHost: String = "多跳路由依赖",
     val ai: String = "已启用 · Claude Opus · 协作模式",
     val fileSync: String = "已开启 · 每 5 分钟 · 3 项待同步",
-    val clientToken: String = "查看/旋转需敏感验证",
     val serverSettings: String = "设置 · 备份与恢复",
     val backup: String = "加密导出 · 校验 · 恢复",
     val runtimeStatus: String = "版本 · capability · runtime",
@@ -78,7 +77,6 @@ fun ToolsRootRoute(
     onOpenJumpHosts: () -> Unit,
     onOpenAiWorkspace: () -> Unit,
     onOpenFileSync: () -> Unit,
-    onOpenClientToken: () -> Unit,
     onOpenServerSettings: () -> Unit,
     onOpenBackupRestore: () -> Unit,
     onOpenRuntimeStatus: () -> Unit,
@@ -104,7 +102,6 @@ fun ToolsRootRoute(
                 ToolEntry.JUMP_HOST -> onOpenJumpHosts()
                 ToolEntry.AI_WORKSPACE -> onOpenAiWorkspace()
                 ToolEntry.FILE_SYNC -> onOpenFileSync()
-                ToolEntry.CLIENT_TOKEN -> onOpenClientToken()
                 ToolEntry.SERVER_SETTINGS -> onOpenServerSettings()
                 ToolEntry.BACKUP_RESTORE -> onOpenBackupRestore()
                 ToolEntry.RUNTIME_STATUS -> onOpenRuntimeStatus()
@@ -233,7 +230,6 @@ private fun toolTitle(entry: ToolEntry): String = when (entry) {
     ToolEntry.JUMP_HOST -> stringResource(R.string.tools_jump_host)
     ToolEntry.AI_WORKSPACE -> stringResource(R.string.tools_ai)
     ToolEntry.FILE_SYNC -> stringResource(R.string.tools_file_sync)
-    ToolEntry.CLIENT_TOKEN -> stringResource(R.string.tools_client_token)
     ToolEntry.SERVER_SETTINGS -> stringResource(R.string.tools_server)
     ToolEntry.BACKUP_RESTORE -> stringResource(R.string.tools_backup)
     ToolEntry.RUNTIME_STATUS -> stringResource(R.string.tools_runtime_status)
@@ -256,7 +252,6 @@ private fun toolDetail(entry: ToolEntry, summaries: ToolsRootSummaries, inventor
         ToolEntry.JUMP_HOST -> summaries.jumpHost
         ToolEntry.AI_WORKSPACE -> summaries.ai
         ToolEntry.FILE_SYNC -> summaries.fileSync
-        ToolEntry.CLIENT_TOKEN -> summaries.clientToken
         ToolEntry.SERVER_SETTINGS -> summaries.serverSettings
         ToolEntry.BACKUP_RESTORE -> summaries.backup
         ToolEntry.RUNTIME_STATUS -> summaries.runtimeStatus
@@ -286,7 +281,6 @@ private fun toolIcon(entry: ToolEntry): ImageVector = when (entry) {
     ToolEntry.JUMP_HOST -> ZephyrIcons.JumpHost
     ToolEntry.AI_WORKSPACE -> ZephyrIcons.AiSpark
     ToolEntry.FILE_SYNC -> ZephyrIcons.Refresh
-    ToolEntry.CLIENT_TOKEN -> ZephyrIcons.Ticket
     ToolEntry.SERVER_SETTINGS -> ZephyrIcons.Server
     ToolEntry.BACKUP_RESTORE -> ZephyrIcons.Save
     ToolEntry.RUNTIME_STATUS -> ZephyrIcons.Server

@@ -14,11 +14,9 @@
  *   - 404 merges `does not exist` with `you may not see it`, so a device
  *     cannot enumerate another account resources by probing ids.
  *
- * Two session modes exist because the spec refuses to let them collapse:
- * `relay-strict` keeps the credential on the main end and forwards only
- * session traffic, while `direct-ephemeral` seals the minimum connect material
- * into a device-bound single-use envelope. Owner policy may force relay; a
- * client can never downgrade relay to direct.
+ * Only `relay-strict` remains: the credential never leaves the main end and
+ * only session traffic is forwarded. The historical `direct-ephemeral` mode
+ * is retired because it violated the zero-residency rule.
  */
 'use strict';
 
@@ -32,8 +30,6 @@ const SHARED_TYPES = ['connection', 'proxy', 'sshKey', 'jumpHost', 'note', 'file
 
 /** Purposes a shared use envelope may carry (SharedUseEnvelope.purpose enum). */
 const SHARED_PURPOSES = ['ssh', 'telnet', 'rdp', 'vnc'];
-
-const SESSION_MODES = ['direct-ephemeral', 'relay-strict'];
 
 const CHANNELS = ['terminal', 'clipboard', 'audio', 'drive', 'microphone', 'camera', 'location'];
 
@@ -49,10 +45,7 @@ const FORBIDDEN_PAYLOAD_KEYS = [
     'serverDataKey', 'ownerSid', 'refreshCredential',
 ];
 
-/** 30 seconds, per SHARED_RESOURCE_RESIDENCY.md 3.2: long enough for one handshake. */
-const USE_ENVELOPE_TTL_MS = 30 * 1000;
-
-/** A session grant outlives one envelope so a retry can re-seal with a fresh nonce. */
+/** A session grant outlives one relay attach so a dropped socket can be re-established. */
 const SESSION_TTL_MS = 10 * 60 * 1000;
 
 /* Zft2Contract.MAX_INFLIGHT_DEFAULT / a chunk the gateway already accepts. */
@@ -332,16 +325,6 @@ class SharedResourceApi {
          * not mounted, and that is reported honestly instead of downgrading a
          * relay-strict request to direct. */
         this.relayMount = opts.relayMount || null;
-        /* Secret export has a separate policy gate from the ACL. An explicit
-         * revealSecret grant is necessary but never sufficient. Hosts may
-         * inject a sensitive-grant consumer or an independent owner policy;
-         * absent that callback, direct use is fail-closed. */
-        this.directUseAuthorizer = typeof opts.directUseAuthorizer === 'function'
-            ? opts.directUseAuthorizer
-            : null;
-        this.ownerDirectPolicy = typeof opts.ownerDirectPolicy === 'function'
-            ? opts.ownerDirectPolicy
-            : null;
         this.maxRelayAttachesPerSession = Math.max(
             1,
             Math.min(8, Number(opts.maxRelayAttachesPerSession) || MAX_RELAY_ATTACHES_PER_SESSION),
@@ -599,12 +582,7 @@ class SharedResourceApi {
             detail.host = String(raw.host || '');
             detail.port = Number(raw.port) || 0;
             detail.username = String(raw.username || '');
-            /* This is only the durable owner-policy half of the decision. A
-             * per-request sensitive authorizer is intentionally not evaluated
-             * by a metadata GET. */
-            detail.directUseAllowed = caps.has('revealSecret')
-                && !!this.ownerDirectPolicy
-                && this.ownerPolicyAllowsDirect({ user, connection: raw, capabilities: caps });
+            /* Direct use is retired: only relay-strict remains. */
         }
         if (resourceType === 'note' && this.notesService) {
             /* Body is fetched through invoke(read), never inlined into the
@@ -627,24 +605,6 @@ class SharedResourceApi {
 
 
     // ----------------------------------------------------------- sessions ---
-
-    ownerPolicyAllowsDirect(context) {
-        if (!this.ownerDirectPolicy) return false;
-        try { return this.ownerDirectPolicy(context) === true; } catch { return false; }
-    }
-
-    directUseAllowed({ user, deviceRow, connection, capabilities, request }) {
-        if (!capabilities.has('revealSecret')) return false;
-        if (this.ownerPolicyAllowsDirect({ user, deviceRow, connection, capabilities, request })) return true;
-        if (!this.directUseAuthorizer) return false;
-        try {
-            return this.directUseAuthorizer({ user, deviceRow, connection, capabilities, request }) === true;
-        } catch {
-            /* A missing/expired/consumed sensitive approval forces relay. It
-             * must never turn into an accidental secret-bearing error path. */
-            return false;
-        }
-    }
 
     connectionDependencyRefs(connection) {
         const refs = [];
@@ -679,10 +639,6 @@ class SharedResourceApi {
      * without both gates receives relay and no secret.
      */
     openConnectionSession(user, deviceRow, connectionId, request) {
-        const mode = String(request.mode || '');
-        if (!SESSION_MODES.includes(mode)) {
-            throw new MobileStoreError('invalid_request', 'mode \u5fc5\u987b\u662f direct-ephemeral \u6216 relay-strict', 400);
-        }
         const clientNonce = String(request.clientSessionNonce || '');
         if (clientNonce.length < 22 || clientNonce.length > 120) {
             throw new MobileStoreError('invalid_request', 'clientSessionNonce \u957f\u5ea6\u65e0\u6548', 400);
@@ -731,18 +687,6 @@ class SharedResourceApi {
         const sessionExpiresAt = nowMs() + SESSION_TTL_MS;
         const revision = Math.max(1, Number(conn.revision) || 1);
 
-        /* control/execute authorise actions, never disclosure. Direct export
-         * requires explicit revealSecret plus a separate sensitive approval or
-         * independent owner policy. Missing either gate forces relay. */
-        const directAllowed = this.directUseAllowed({
-            user,
-            deviceRow,
-            connection: conn,
-            capabilities: caps,
-            request,
-        });
-        const effectiveMode = mode === 'direct-ephemeral' && directAllowed ? 'direct-ephemeral' : 'relay-strict';
-
         const sessionId = this.sessions.create({
             userId: user.userId,
             deviceId: deviceRow.device_id,
@@ -755,8 +699,7 @@ class SharedResourceApi {
             dependencyRefs: this.connectionDependencyRefs(conn),
             revision,
             purpose,
-            mode: effectiveMode,
-            directAuthorized: directAllowed,
+            mode: 'relay-strict',
             capabilities: [...caps].sort(),
             channels: grantedChannels,
             sessionExpiresAt,
@@ -771,51 +714,36 @@ class SharedResourceApi {
             outcome: 'success',
             /* Mode, device and channels are the security-relevant facts. Host
              * credentials are deliberately absent from the audit record. */
-            metadata: { mode: effectiveMode, deviceId: deviceRow.device_id, channels: grantedChannels },
+            metadata: { mode: 'relay-strict', deviceId: deviceRow.device_id, channels: grantedChannels },
         });
 
         const response = {
             sessionId,
-            mode: effectiveMode,
+            mode: 'relay-strict',
             expiresAt: sessionExpiresAt,
             capabilities: [...caps].sort(),
         };
 
         /* Relay-unavailable must be explicit; it can never fall back to a
          * secret-bearing direct response. */
-        if (effectiveMode === 'relay-strict') {
-            if (!this.relayMount) {
-                this.sessions.drop(sessionId, 'relay-unavailable');
-                throw new MobileStoreError(
-                    'shared_relay_unavailable',
-                    '\u670d\u52a1\u7aef relay \u901a\u9053\u5c1a\u672a\u5b9e\u73b0\uff0c\u65e0\u6cd5\u4ee3\u6267\u884c\u6b64\u5171\u4eab\u8fde\u63a5',
-                    503,
-                    { retryable: true, details: { mode: 'relay-strict' } },
-                );
-            }
-            /* No connect material of any kind crosses this boundary. The
-             * credential is a signed statement about *who may attach to this
-             * session*, and SHARED_RESOURCE_RESIDENCY.md 3.3 is explicit that
-             * it is not a Client Token and cannot reach another resource. */
-            response.relay = {
-                websocketUrl: this.relayMount + '?sessionId=' + encodeURIComponent(sessionId),
-                protocol: purpose,
-                credential: this.mintRelayCredential(this.sessions.get(sessionId)),
-            };
-            return response;
+        if (!this.relayMount) {
+            this.sessions.drop(sessionId, 'relay-unavailable');
+            throw new MobileStoreError(
+                'shared_relay_unavailable',
+                '\u670d\u52a1\u7aef relay \u901a\u9053\u5c1a\u672a\u5b9e\u73b0\uff0c\u65e0\u6cd5\u4ee3\u6267\u884c\u6b64\u5171\u4eab\u8fde\u63a5',
+                503,
+                { retryable: true, details: { mode: 'relay-strict' } },
+            );
         }
-
-        /* Only direct-ephemeral can reach this point: relay-strict threw above.
-         * Written as an unconditional seal rather than an if/else so a dead
-         * relay branch cannot sit here advertising a transport that is not
-         * mounted. */
-        response.useEnvelope = this.sealUseEnvelope({
-            session: this.sessions.get(sessionId),
-            deviceRow,
-            resolved,
-            clientNonce,
-            keyVersion: Number(request.deviceKeyVersion) || 1,
-        });
+        /* No connect material of any kind crosses this boundary. The
+         * credential is a signed statement about *who may attach to this
+         * session*, and SHARED_RESOURCE_RESIDENCY.md 3.3 is explicit that
+         * it is not a Client Token and cannot reach another resource. */
+        response.relay = {
+            websocketUrl: this.relayMount + '?sessionId=' + encodeURIComponent(sessionId),
+            protocol: purpose,
+            credential: this.mintRelayCredential(this.sessions.get(sessionId)),
+        };
         return response;
     }
 
@@ -855,112 +783,6 @@ class SharedResourceApi {
     /**
      * Seals the minimum connect material for exactly one handshake.
      *
-     * The payload is an allow-list, not the resolved row minus a few fields: a
-     * new column on `connections` must not silently start travelling to
-     * devices.
-     */
-    sealUseEnvelope({ session, deviceRow, resolved, clientNonce, keyVersion }) {
-        /* One nonce, one ciphertext.
-         *
-         * shared-use-v1.json freezes the `replay` case as
-         * `none_second_consume -> shared_session_consumed`. Sealing again under
-         * a nonce that has already been spent would hand back a byte-identical
-         * envelope, so a captured response would stay redeemable for the whole
-         * grant window. The legitimate retry path in
-         * SHARED_RESOURCE_RESIDENCY.md 3.2 is preserved because a *fresh* nonce
-         * still seals normally.
-         *
-         * Placed here rather than in the two callers so open() and refresh()
-         * cannot drift apart on the one property that makes the envelope
-         * single-use. */
-        if (!this.sessions.consumeNonce(session.sessionId, clientNonce)) {
-            throw new MobileStoreError(
-                'shared_session_consumed',
-                '\u8be5 clientSessionNonce \u5df2\u88ab\u4f7f\u7528\uff0c\u8bf7\u7528\u65b0 nonce \u91cd\u65b0\u7b7e\u53d1',
-                409,
-            );
-        }
-
-        const serverKey = this.serverEncryptionKey();
-        if (!serverKey) {
-            throw new MobileStoreError(
-                'shared_relay_unavailable',
-                '\u670d\u52a1\u7aef\u52a0\u5bc6\u5bc6\u94a5\u4e0d\u53ef\u7528\uff0c\u65e0\u6cd5\u7b7e\u53d1\u76f4\u8fde\u6750\u6599',
-                503,
-                { retryable: true },
-            );
-        }
-        const devicePublicKey = deviceRow.encryption_public_key;
-        if (!devicePublicKey) {
-            throw new MobileStoreError('client_not_found', '\u8bbe\u5907\u672a\u767b\u8bb0\u52a0\u5bc6\u516c\u94a5', 409);
-        }
-
-        const expiresAt = nowMs() + USE_ENVELOPE_TTL_MS;
-        const payload = {
-            endpoint: {
-                host: String(resolved.host || ''),
-                port: Number(resolved.port) || 0,
-                protocol: String(resolved.protocol || ''),
-            },
-            username: String(resolved.username || ''),
-            password: resolved.password ? String(resolved.password) : null,
-            privateKey: resolved.privateKey ? String(resolved.privateKey) : null,
-            domain: resolved.rdpDomain ? String(resolved.rdpDomain) : null,
-            connectionMode: String(resolved.connectionMode || 'direct'),
-            encoding: String(resolved.encoding || 'utf-8'),
-        };
-        /* Belt and braces: the allow-list above cannot contain a forbidden key,
-         * but the assertion makes that a test-enforced property rather than a
-         * reviewer promise. */
-        this.assertNoForbiddenKeys(payload);
-
-        const aad = mobileCrypto.sharedUseAadBytes({
-            serverId: this.store.serverId(),
-            userId: session.userId,
-            deviceId: session.deviceId,
-            sessionId: session.sessionId,
-            resourceId: session.resourceId,
-            resourceRevision: session.revision,
-            purpose: session.purpose,
-            expiresAt,
-            clientNonce,
-        });
-
-        const plaintext = Buffer.from(JSON.stringify(payload), 'utf8');
-        try {
-            const sealed = mobileCrypto.sealEnvelope({
-                plaintext,
-                publicKey: Buffer.isBuffer(devicePublicKey) ? devicePublicKey : Buffer.from(devicePublicKey),
-                aad,
-                keyVersion,
-                entityRevision: session.revision,
-            });
-            /* SharedUseEnvelope carries the binding fields in the clear as well
-             * as inside the AAD, so the client can check what it is about to
-             * open before touching any key material. */
-            return {
-                v: sealed.v,
-                alg: sealed.alg,
-                kem: sealed.kem,
-                aead: sealed.aead,
-                ct: sealed.ct,
-                iv: sealed.iv,
-                tag: sealed.tag,
-                data: sealed.data,
-                aad: sealed.aad,
-                keyVersion,
-                resourceRevision: session.revision,
-                sessionId: session.sessionId,
-                resourceId: session.resourceId,
-                purpose: session.purpose,
-                expiresAt,
-                clientNonce,
-            };
-        } finally {
-            plaintext.fill(0);
-        }
-    }
-
     /**
      * Re-seals for a retried handshake.
      *
@@ -997,27 +819,13 @@ class SharedResourceApi {
             this.sessions.drop(sessionId, 'acl-revoked');
             throw new MobileStoreError('shared_grant_revoked', '\u5171\u4eab\u6388\u6743\u5df2\u88ab\u6536\u56de', 410);
         }
-        if (session.mode === 'direct-ephemeral' && (!session.directAuthorized || !caps.has('revealSecret'))) {
-            this.sessions.drop(sessionId, 'secret-disclosure-revoked');
-            throw new MobileStoreError('shared_grant_revoked', '\u5171\u4eab\u5bc6\u94a5\u6388\u6743\u5df2\u88ab\u6536\u56de', 410);
-        }
-
         const response = {
             sessionId: session.sessionId,
             mode: session.mode,
             expiresAt: session.sessionExpiresAt,
             capabilities: [...caps].sort(),
         };
-        if (session.mode === 'direct-ephemeral') {
-            const resolved = this.resourceService.resolveForConnect(user, conn.id);
-            response.useEnvelope = this.sealUseEnvelope({
-                session,
-                deviceRow,
-                resolved,
-                clientNonce: nonce,
-                keyVersion: 1,
-            });
-        } else if (this.relayMount) {
+        if (this.relayMount) {
             /* A refresh re-mints the short-lived attach credential without
              * touching the grant, which is what lets a dropped socket be
              * re-established inside the same authorised session. */
@@ -1455,10 +1263,8 @@ module.exports = {
     SharedSessionRegistry,
     SHARED_TYPES,
     SHARED_PURPOSES,
-    SESSION_MODES,
     CHANNELS,
     FORBIDDEN_PAYLOAD_KEYS,
-    USE_ENVELOPE_TTL_MS,
     SESSION_TTL_MS,
     FILE_LEASE_TTL_SEC,
     RELAY_CREDENTIAL_TTL_MS,
