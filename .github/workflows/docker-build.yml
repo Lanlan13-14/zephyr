@@ -80,7 +80,7 @@ jobs:
 
       - name: Generate changelog
         run: |
-          git fetch --tags
+          git fetch --tags --force
 
           CURRENT_TAG=${{ env.VERSION_TAG }}
 
