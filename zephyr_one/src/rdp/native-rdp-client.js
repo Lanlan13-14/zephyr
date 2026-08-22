@@ -211,13 +211,21 @@ export function createNativeRdpShellController({
 
   async function input(payload) {
     const sessionId = requireOwned(payload);
+    const control = optionalString(payload?.control, 40).toLowerCase().replace(/-/g, '_');
+    /* Secure-attention sequence: it never depends on where the last AI capture
+     * landed, so it is the one control that does not need a capture ticket. */
+    if (control === 'ctrl_alt_del') {
+      await invoke('rdp_bridge', {
+        request: { action: 'input', payload: { sessionId, control: 'ctrl_alt_del', captureId: '' } },
+      });
+      return { ok: true, control };
+    }
     const captureId = optionalString(payload?.captureId, 256);
     const capture = lastCaptures.get(sessionId);
     if (!captureId || !capture || capture.captureId !== captureId) {
       throw new Error('rdp_ui_stale_capture: native capture is stale or was already used');
     }
     lastCaptures.delete(sessionId);
-    const control = optionalString(payload?.control, 40).toLowerCase().replace(/-/g, '_');
     if (control === 'text' || control === 'clipboard_send') {
       const text = optionalString(payload?.text, 32768);
       if (!text) throw new Error('rdp_ui_invalid_input: text is empty');

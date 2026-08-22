@@ -141,6 +141,15 @@ function mountRoutes(app, {
         } catch (error) {
             const status = Number(error?.status) || 403;
             const code = String(error?.code || 'rdp_native_authorization_denied');
+            /* A deny and a dead core both surface as "cannot connect"; only the
+             * deny is retryable through the ACL path, so it must be logged apart
+             * from transport failures. */
+            logger.warn?.('[rdp-native-broker] authorization denied', {
+                connectionId: binding.connectionId,
+                sessionId: binding.sessionId,
+                code,
+                status,
+            });
             return fail(res, status, code, 'native RDP authorization denied');
         }
     });
