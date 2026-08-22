@@ -513,7 +513,7 @@ class BindingCoordinator internal constructor(
         }
     }
 
-    data class PreparedEnrollment(
+    internal data class PreparedEnrollment(
         val profile: ServerProfile,
         val gateway: BindingGateway,
         val identity: PendingDeviceIdentity,
@@ -521,7 +521,7 @@ class BindingCoordinator internal constructor(
         val created: one.zephyr.mobile.network.dto.LinkEnrollmentCreateResponseDto,
     )
 
-    suspend fun startEnrollment(
+    internal suspend fun startEnrollment(
         profile: ServerProfile,
         deviceName: String,
         intervalSec: Int,
@@ -582,12 +582,12 @@ class BindingCoordinator internal constructor(
         }
     }
 
-    suspend fun pollEnrollment(
+    internal suspend fun pollEnrollment(
         prepared: PreparedEnrollment,
     ): ApiResult<one.zephyr.mobile.network.dto.LinkEnrollmentStatusDto> =
         prepared.gateway.enrollmentStatus(prepared.created.bindId, prepared.created.userCode)
 
-    suspend fun consumePreparedEnrollment(
+    internal suspend fun consumePreparedEnrollment(
         prepared: PreparedEnrollment,
         intervalSec: Int,
         automaticEnabled: Boolean,
@@ -666,7 +666,7 @@ class BindingCoordinator internal constructor(
      * Persists a Link v2 enrollment that the device already consumed.
      * No SID, password or Client Token is required on this path.
      */
-    suspend fun completeConsumedBinding(
+    internal suspend fun completeConsumedBinding(
         profile: ServerProfile,
         account: AuthenticatedBindingAccount,
         request: CompleteBindingRequest,
