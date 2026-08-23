@@ -27,7 +27,38 @@ func NewNode() *Node {
 	n := &Node{mux: http.NewServeMux(), sessions: make(map[string]*Endpoint)}
 	n.mux.HandleFunc("/link/handshake", n.handleHandshake)
 	n.mux.HandleFunc("/link/frame", n.handleFrame)
+	// Embedded hosts (Android/desktop) drive outbound dials through this local
+	// endpoint, so the device side also runs the shared Go core.
+	n.mux.HandleFunc("/link/dial", n.handleDial)
 	return n
+}
+
+// handleDial lets an embedded host establish an outbound ZSL/2 channel to a
+// remote Link server without implementing the handshake itself.
+func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ServerURL string `json:"serverUrl"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.ServerURL == "" {
+		http.Error(w, "serverUrl required", http.StatusBadRequest)
+		return
+	}
+	ep, sessionID, err := n.Dial(req.ServerURL)
+	if err != nil {
+		http.Error(w, "dial failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	n.mu.Lock()
+	n.sessions[sessionID] = ep
+	n.mu.Unlock()
+	writeJSON(w, map[string]any{
+		"ok": true, "sessionId": sessionID,
+		"exporter": base64.StdEncoding.EncodeToString(ep.Exporter()),
+	})
 }
 
 // Handler exposes the node's HTTP routes.

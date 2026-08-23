@@ -95,6 +95,16 @@ class AppContainer(private val context: Context) {
         one.zephyr.mobile.app.EmbeddedAiRuntimeProcess(context)
     }
 
+    /** Packaged Go Link core; the device shares the exact ZSL/2 + codec + CDC the server runs. */
+    internal val embeddedLinkProcess: one.zephyr.mobile.app.EmbeddedLinkProcess by lazy {
+        one.zephyr.mobile.app.EmbeddedLinkProcess(context)
+    }
+
+    /** Loopback client that drives the embedded Link core. */
+    internal val embeddedLink: one.zephyr.mobile.app.EmbeddedLinkApi by lazy {
+        one.zephyr.mobile.app.EmbeddedLinkApi(embeddedLinkProcess)
+    }
+
     /** Process lifetime scope used only to tear down a graph after that graph reports revocation. */
     private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

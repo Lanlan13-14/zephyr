@@ -25,6 +25,7 @@ on:
     paths:
       - 'zephyr_one/mobile/**'
       - 'zephyr-ai/**'
+      - 'zephyr-link/**'
       - '.github/workflows/zephyr-one-mobile.yml'
       - '.github/scripts/**'
   pull_request:
@@ -32,6 +33,7 @@ on:
     paths:
       - 'zephyr_one/mobile/**'
       - 'zephyr-ai/**'
+      - 'zephyr-link/**'
       - '.github/workflows/zephyr-one-mobile.yml'
       - '.github/scripts/**'
   workflow_dispatch:
@@ -170,35 +172,42 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.23.9'
-      - name: Rebuild embedded AI runtime and verify it is current
+      - name: Rebuild embedded Go runtimes and verify they are current
         shell: bash
         working-directory: .
         run: |
           set -euo pipefail
-          so="zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_ai_runtime.so"
-          test -f "$so"
-          tmp="$(mktemp -u).so"
-          (cd zephyr-ai && CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
-            go build -trimpath -ldflags='-s -w' -o "$tmp" ./cmd/zephyr-ai-android)
-          test -s "$tmp"
-          rm -f "$tmp"
-          # The committed binary records the revision it was built from. It is current iff the
-          # zephyr-ai source tree at that revision is identical to the tree at this HEAD — i.e.
-          # rebuilding from HEAD would be driven by the same sources. Compare tree hashes, which
-          # needs no rebuild reproducibility assumption and no full history.
-          committed_rev="$(go version -m "$so" | sed -n 's/.*vcs.revision=\([0-9a-f]*\).*/\1/p')"
-          committed_mod="$(go version -m "$so" | sed -n 's/.*vcs.modified=\([a-z]*\).*/\1/p')"
-          echo "committed .so: revision=$committed_rev modified=$committed_mod"
-          test -n "$committed_rev" || { echo "::error::committed .so carries no vcs.revision"; exit 1; }
-          test "$committed_mod" = "false" || { echo "::error::committed .so was built from a dirty tree (vcs.modified=$committed_mod)"; exit 1; }
-          git cat-file -e "$committed_rev^{commit}" 2>/dev/null || git fetch -q --depth 1 origin "$committed_rev"
-          head_tree="$(git rev-parse HEAD:zephyr-ai)"
-          so_tree="$(git rev-parse "$committed_rev:zephyr-ai")"
-          test "$head_tree" = "$so_tree" || {
-            echo "::error::committed AI runtime built from zephyr-ai@$committed_rev (tree $so_tree) != HEAD tree $head_tree"
-            echo "Rebuild with: (cd zephyr-ai && CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o ../$so ./cmd/zephyr-ai-android) and commit the result."
-            exit 1
+          # Each embedded Go runtime is a real binary committed under jniLibs. They were once a
+          # stale build CI never rebuilt, so every later fix silently shipped nothing. For each
+          # module: rebuild from the pinned source, then verify the committed binary's embedded
+          # vcs.revision resolves to the same source tree as HEAD (tree-hash compare, so no
+          # cross-environment reproducibility assumption). Drift fails the build.
+          check_runtime() {
+            local module="$1" entry="$2" soname="$3"
+            local so="zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/${soname}"
+            test -f "$so" || { echo "::error::missing ${so}"; exit 1; }
+            local tmp; tmp="$(mktemp -u).so"
+            (cd "$module" && CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
+              go build -trimpath -ldflags='-s -w' -o "$tmp" "$entry")
+            test -s "$tmp"; rm -f "$tmp"
+            local committed_rev committed_mod
+            committed_rev="$(go version -m "$so" | sed -n 's/.*vcs.revision=\([0-9a-f]*\).*/\1/p')"
+            committed_mod="$(go version -m "$so" | sed -n 's/.*vcs.modified=\([a-z]*\).*/\1/p')"
+            echo "${soname}: revision=$committed_rev modified=$committed_mod"
+            test -n "$committed_rev" || { echo "::error::${soname} carries no vcs.revision"; exit 1; }
+            test "$committed_mod" = "false" || { echo "::error::${soname} built from a dirty tree"; exit 1; }
+            git cat-file -e "$committed_rev^{commit}" 2>/dev/null || git fetch -q --depth 1 origin "$committed_rev"
+            local head_tree so_tree
+            head_tree="$(git rev-parse "HEAD:${module}")"
+            so_tree="$(git rev-parse "${committed_rev}:${module}")"
+            test "$head_tree" = "$so_tree" || {
+              echo "::error::${soname} built from ${module}@$committed_rev (tree $so_tree) != HEAD tree $head_tree"
+              echo "Rebuild: (cd ${module} && CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o ../${so} ${entry}) and commit."
+              exit 1
+            }
           }
+          check_runtime zephyr-ai ./cmd/zephyr-ai-android libzephyr_ai_runtime.so
+          check_runtime zephyr-link ./cmd/zephyr-link-android libzephyr_link.so
 
       # Keep the Gradle daemon between these two steps (setup-gradle starts it).
       # Do not merge assemble + tests into one invocation: the combined command
@@ -274,6 +283,9 @@ jobs:
           test "$package" = 'one.zephyr.mobile.debug'
           ! $ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | grep -q '^application-debuggable$'
           unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_rdp_android.so'
+          # The embedded Go runtimes must actually ship, or the AI/Link features are dead on device.
+          unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_ai_runtime.so'
+          unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_link.so'
           fragment_version="$(unzip -p "${apks[0]}" META-INF/androidx.fragment_fragment.version)"
           test "$fragment_version" = '1.8.5'
           # Runtime SSH gate, not a source-level promise. pre21 retained the external
