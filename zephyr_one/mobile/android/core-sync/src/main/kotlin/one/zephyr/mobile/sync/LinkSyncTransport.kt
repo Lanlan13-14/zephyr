@@ -12,7 +12,7 @@ import one.zephyr.mobile.model.PushResponse
 import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.ServerCapabilities
 import one.zephyr.mobile.network.ApiResult
-import one.zephyr.mobile.network.MobileApiPaths
+import one.zephyr.mobile.contracts.MobileApiPaths
 import one.zephyr.mobile.network.MobileJson
 import one.zephyr.mobile.network.ValidatedAck
 import one.zephyr.mobile.network.dto.AckRequestDto
@@ -143,7 +143,7 @@ class LinkSyncTransport(
         if (!channel.isEstablished) {
             ApiResult.Failure(linkError("Link 会话未建立"))
         } else {
-            ApiResult.Success(block())
+            ApiResult.Success(block(), requestId = null)
         }
     } catch (e: LinkChannelException) {
         ApiResult.Failure(linkError(e.message ?: "Link 通道失败"))
