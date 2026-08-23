@@ -89,7 +89,9 @@ function projectMessage(row) {
 }
 
 function expectedRevision(req) {
-    const raw = req.body?.expectedRevision ?? req.headers?.['if-match'];
+    const raw = req.body?.expectedRevision
+        ?? req.headers?.['if-match']
+        ?? req.query?.expectedRevision;
     const parsed = Number(String(raw ?? '').replace(/^W\//, '').replaceAll('"', ''));
     return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }

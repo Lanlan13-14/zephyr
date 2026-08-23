@@ -24,12 +24,31 @@ test('Android ships and drives the embedded Go Link core instead of re-implement
   const api = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedLinkApi.kt');
   assert.match(api, /\/link\/dial/);
   // The Kotlin side must not contain any ZSL/KEM primitive — that lives in Go only.
-  assert.doesNotMatch(api, /mlkem|MLKEM|x25519|X25519|hkdf|Hkdf/i);
+  // It may name the loopback /link/mlkem/* routes, but never the crypto primitives.
+  assert.doesNotMatch(api, /x25519|X25519|hkdf|Hkdf|mlkem\.Encapsulate|mlkem\.Decapsulate|mlkem\.GenerateKey/i);
 
   // The container exposes the embedded Link core and client.
   const container = read('android/app/src/main/kotlin/one/zephyr/mobile/app/di/AppContainer.kt');
   assert.match(container, /EmbeddedLinkProcess/);
   assert.match(container, /EmbeddedLinkApi/);
+});
+
+test('Kotlin drives device-identity ML-KEM through the Go core loopback routes', () => {
+  const api = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedLinkApi.kt');
+  assert.match(api, /mlkemGenerate/);
+  assert.match(api, /mlkemEncapsulate/);
+  assert.match(api, /mlkemDecapsulate/);
+  assert.match(api, /\/link\/mlkem\/generate/);
+  assert.match(api, /\/link\/mlkem\/encapsulate/);
+  assert.match(api, /\/link\/mlkem\/decapsulate/);
+
+  const node = readRepo('zephyr-link/internal/link/node.go');
+  assert.match(node, /\/link\/mlkem\/generate/);
+  assert.match(node, /\/link\/mlkem\/encapsulate/);
+  assert.match(node, /\/link\/mlkem\/decapsulate/);
+  assert.match(node, /GenerateMLKEM768/);
+  assert.match(node, /EncapsulateMLKEM768/);
+  assert.match(node, /DecapsulateMLKEM768/);
 });
 
 test('Go Link core exposes the embedded dial route the Kotlin client calls', () => {

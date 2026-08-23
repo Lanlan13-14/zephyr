@@ -444,7 +444,24 @@ function apiErrorFromResponse(res, data = {}) {
     return err;
 }
 function api(path, options = {}) {
-    return fetch(path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options })
+    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    /* DELETE bodies are dropped by some browsers/proxies. If the mutation carries a
+     * CAS expectedRevision, also put it on If-Match and the query so the server
+     * still sees it. expectedRevision() already reads those two first. */
+    if (options.body && !headers['If-Match'] && !headers['if-match']) {
+        try {
+            const parsed = JSON.parse(options.body);
+            const rev = Number(parsed && parsed.expectedRevision);
+            if (Number.isFinite(rev) && rev > 0) {
+                headers['If-Match'] = String(rev);
+                if (!/[?&]expectedRevision=/.test(path)) {
+                    path += (path.includes('?') ? '&' : '?') + 'expectedRevision=' + encodeURIComponent(String(rev));
+                }
+            }
+        } catch (_) { /* body is not JSON */ }
+    }
+    const { headers: _ignored, ...rest } = options;
+    return fetch(path, { credentials: 'same-origin', headers, ...rest })
         .then(async (res) => { const data = await res.json().catch(() => ({})); if (!res.ok) throw apiErrorFromResponse(res, data); return data; });
 }
 
