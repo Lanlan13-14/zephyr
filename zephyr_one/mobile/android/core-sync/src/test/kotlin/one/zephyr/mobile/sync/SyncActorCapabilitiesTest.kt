@@ -1,15 +1,15 @@
 package one.zephyr.mobile.sync
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import one.zephyr.mobile.contracts.BindingState
 import one.zephyr.mobile.contracts.SyncContract
-import one.zephyr.mobile.model.ApiResult
+import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.model.ServerCapabilities
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
 import one.zephyr.mobile.model.ServerEncryptionCapabilities
 import one.zephyr.mobile.model.SyncTrigger
 
@@ -64,8 +64,8 @@ class SyncActorCapabilitiesTest {
         subject.request(SyncTrigger.MANUAL)
 
         val caps = seen
-        assertNotNull(caps, "onCapabilities must be invoked with the validated payload")
-        assertEquals(published, caps.serverEncryption)
+        assertNotNull("onCapabilities must be invoked with the validated payload", caps)
+        assertEquals(published, caps!!.serverEncryption)
         assertEquals(7, caps.serverEncryption?.keyVersion)
     }
 
