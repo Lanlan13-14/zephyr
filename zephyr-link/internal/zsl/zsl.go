@@ -63,6 +63,36 @@ type Initiator struct {
 	mlkemPrivate  *mlkem.DecapsulationKey768
 }
 
+// GenerateMLKEM768 returns a raw ML-KEM-768 public key and the 64-byte seed
+// that reconstructs the matching decapsulation key. The seed is what a device
+// persists; the public key is what the server seals secret envelopes to.
+func GenerateMLKEM768() (publicKey, seed []byte, err error) {
+	dk, err := mlkem.GenerateKey768()
+	if err != nil {
+		return nil, nil, err
+	}
+	return dk.EncapsulationKey().Bytes(), dk.Bytes(), nil
+}
+
+// EncapsulateMLKEM768 seals a shared secret to a raw 1184-byte public key.
+func EncapsulateMLKEM768(publicKey []byte) (shared, ciphertext []byte, err error) {
+	ek, err := mlkem.NewEncapsulationKey768(publicKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	shared, ciphertext = ek.Encapsulate()
+	return shared, ciphertext, nil
+}
+
+// DecapsulateMLKEM768 opens a ciphertext with a 64-byte seed.
+func DecapsulateMLKEM768(seed, ciphertext []byte) ([]byte, error) {
+	dk, err := mlkem.NewDecapsulationKey768(seed)
+	if err != nil {
+		return nil, err
+	}
+	return dk.Decapsulate(ciphertext)
+}
+
 // HandshakeInitiator generates the device-side hello.
 func HandshakeInitiator() (*Initiator, error) {
 	x, err := ecdh.X25519().GenerateKey(rand.Reader)
