@@ -69,6 +69,12 @@ import one.zephyr.mobile.sync.ApiSharedResourceFetcher
 import one.zephyr.mobile.sync.BlobTransferPort
 import one.zephyr.mobile.sync.DeviceEnvelopeOpener
 import one.zephyr.mobile.sync.DeviceSecretSealer
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import one.zephyr.mobile.sync.LinkChannel
+import one.zephyr.mobile.sync.LinkKinds
+import one.zephyr.mobile.sync.LinkChannelException
+import one.zephyr.mobile.sync.LinkSyncTransport
 import one.zephyr.mobile.sync.MobileApiTransport
 import one.zephyr.mobile.sync.RoomSyncLocalStore
 import one.zephyr.mobile.sync.ServerEncryptionKey
@@ -436,7 +442,41 @@ class AccountContainer(
         secretJournal = journal,
     )
 
-    val transport: MobileApiTransport = MobileApiTransport(api, binding.deviceId)
+    private val httpTransport: MobileApiTransport = MobileApiTransport(api, binding.deviceId)
+
+    /**
+     * The owned-sync channel over Zephyr Link (ZSL/2). Data sync rides the encrypted channel end to
+     * end instead of plaintext HTTPS: a verb is sealed by the embedded Go core and answered by the
+     * server's single sync core, so mobile, desktop and browser all share one implementation. The
+     * session dials lazily on first use and redials if the channel dropped.
+     */
+    private val linkChannel = object : LinkChannel {
+        private val sessionMutex = Mutex()
+        private var session: one.zephyr.mobile.app.EmbeddedLinkApi.LinkSession? = null
+
+        override val isEstablished: Boolean get() = session != null
+
+        override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
+            val sess = sessionMutex.withLock {
+                session ?: appContainer.embeddedLink.dial(binding.baseUrl).also { session = it }
+            }
+            return try {
+                appContainer.embeddedLink.push(binding.baseUrl, sess, kind = LinkKinds.SYNC_OP, body = body).ack
+            } catch (e: Exception) {
+                /* The session may have died server-side; drop it so the next verb redials. */
+                sessionMutex.withLock { session = null }
+                throw LinkChannelException(e.message ?: "Link 推送失败")
+            }
+        }
+    }
+
+    /**
+     * Data sync transport. Local-only accounts have no server, so they keep the plain HTTP
+     * transport (which is never actually exercised without a binding). Bound accounts run sync over
+     * the Link channel, falling back to the HTTP transport for capabilities and bootstrap only.
+     */
+    val transport: one.zephyr.mobile.sync.SyncTransport =
+        if (localMode) httpTransport else LinkSyncTransport(linkChannel, binding.deviceId, httpTransport)
 
     /**
      * Blob transfer has no implementation yet, and this reports that honestly.

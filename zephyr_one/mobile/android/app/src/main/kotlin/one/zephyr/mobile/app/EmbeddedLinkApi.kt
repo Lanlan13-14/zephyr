@@ -3,10 +3,13 @@ package one.zephyr.mobile.app
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import one.zephyr.mobile.network.MobileJson
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -36,6 +39,37 @@ internal class EmbeddedLinkApi(
         LinkSession(
             sessionId = response.getValue("sessionId").jsonPrimitive.content,
             exporter = response.getValue("exporter").jsonPrimitive.content,
+        )
+    }
+
+    /** The unsealed business ack from a pushed frame. */
+    data class LinkPushResult(val ackKind: Int, val ack: JsonObject)
+
+    /**
+     * Push a business frame on an established session. The embedded Go core seals it, POSTs to the
+     * peer's /link/frame and unseals the reply, so the host only names the session and the body and
+     * never touches key material or the wire codec.
+     */
+    suspend fun push(
+        serverUrl: String,
+        session: LinkSession,
+        kind: Int,
+        body: JsonElement,
+        secret: Boolean = false,
+    ): LinkPushResult = withContext(Dispatchers.IO) {
+        val base = process.ensureStarted().baseUrl
+        val payload = buildJsonObject {
+            put("sessionId", session.sessionId)
+            put("peerUrl", serverUrl)
+            put("kind", kind)
+            put("body", body)
+            put("secret", secret)
+        }
+        val response = post("$base/link/push", payload)
+        val ack = response["ack"]?.jsonObject ?: JsonObject(emptyMap())
+        LinkPushResult(
+            ackKind = response["ackKind"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+            ack = ack,
         )
     }
 
