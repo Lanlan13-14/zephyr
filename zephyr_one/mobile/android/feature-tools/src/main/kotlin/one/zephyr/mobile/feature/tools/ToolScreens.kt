@@ -29,6 +29,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import one.zephyr.mobile.ui.component.AlertDialog
 import one.zephyr.mobile.ui.component.Button
+import one.zephyr.mobile.ui.component.DropdownMenu
+import one.zephyr.mobile.ui.component.DropdownMenuItem
 import one.zephyr.mobile.ui.component.FilterChip
 import one.zephyr.mobile.ui.component.GroupCard
 import one.zephyr.mobile.ui.component.Icon
@@ -63,11 +65,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 import one.zephyr.mobile.data.repository.ConnectionRepository
 import one.zephyr.mobile.data.repository.ResourceRepository
+import one.zephyr.mobile.model.ActionGate
 import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.NetworkPolicy
 import one.zephyr.mobile.model.Protocol
@@ -780,24 +785,35 @@ class ResourceListViewModel(
 
     init {
         viewModelScope.launch {
-            when (kind) {
-                ResourceKind.PROXY -> resources.observeProxies(ownerUserId).collect { list ->
-                    rowsState.value = list.filter { it.deletedAt == null }.map { ResourceRows.of(it) }
-                }
-                ResourceKind.SSH_KEY -> resources.observeSshKeys(ownerUserId).collect { list ->
-                    rowsState.value = list.filter { it.deletedAt == null }.map { ResourceRows.of(it) }
-                }
-                ResourceKind.JUMP_HOST -> resources.observeJumpHosts(ownerUserId).collect { list ->
-                    rowsState.value = list.filter { it.deletedAt == null }.map { host ->
-                        ResourceRows.of(host, connectionName = "")
-                    }
-                }
+            connections.observeAll(ownerUserId).collect { list ->
+                usable.value = list
+                    .filter { it.protocol == Protocol.SSH && it.capabilities.canUse }
+                    .map { it.id }
+                    .toSet()
             }
         }
         viewModelScope.launch {
-            connections.observeAll(ownerUserId).collect { list ->
-                usable.value = list.filter { it.protocol == Protocol.SSH && it.capabilities.canUse }.map { it.id }.toSet()
-            }
+            // Reference protection is derived from the live connection list, so a row that just
+            // became a route dependency stops offering delete instead of failing on the server.
+            combine(
+                when (kind) {
+                    ResourceKind.PROXY -> resources.observeProxies(ownerUserId).map { list ->
+                        list.filter { it.deletedAt == null }.map { it.id to ResourceRows.of(it) }
+                    }
+                    ResourceKind.SSH_KEY -> resources.observeSshKeys(ownerUserId).map { list ->
+                        list.filter { it.deletedAt == null }.map { it.id to ResourceRows.of(it) }
+                    }
+                    ResourceKind.JUMP_HOST -> resources.observeJumpHosts(ownerUserId).map { list ->
+                        list.filter { it.deletedAt == null }.map { it.id to ResourceRows.of(it, connectionName = "") }
+                    }
+                },
+                connections.observeAll(ownerUserId),
+            ) { rows, connectionList ->
+                rows.map { (id, row) ->
+                    val dependents = connectionList.filter { it.dependencyIds.contains(id) }.map { it.name }
+                    row.copy(referencedBy = dependents)
+                }.sortedWith(ResourceRows.ordering())
+            }.collect { rowsState.value = it }
         }
     }
 
@@ -827,11 +843,13 @@ fun ResourceListRoute(
     onOpen: (String) -> Unit,
 ) {
     val rows by viewModel.rows.collectAsState()
+    var pendingDelete by remember { mutableStateOf<ResourceRow?>(null) }
     val title = when (viewModel.kind) {
         ResourceKind.PROXY -> "代理池"
         ResourceKind.SSH_KEY -> "SSH 密钥库"
         ResourceKind.JUMP_HOST -> "JumpHost"
     }
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = title, onBack = onBack) {
             HeaderAddButton(
@@ -847,11 +865,11 @@ fun ResourceListRoute(
             item("resources") {
                 GroupCard {
                     rows.forEachIndexed { index, row ->
+                        var rowMenu by remember(row.id) { mutableStateOf(false) }
                         SettingsRow(
                             title = row.name,
                             subtitle = row.subtitle,
                             showDivider = index != rows.lastIndex,
-                            showChevron = !row.isReferenced,
                             onClick = { onOpen(row.id) },
                             leading = {
                                 Surface(shape = RoundedCornerShape(8.dp), color = ZephyrTheme.palette.surfaces.elevated) {
@@ -870,17 +888,64 @@ fun ResourceListRoute(
                                 }
                             },
                             trailing = {
-                                if (row.isReferenced) {
-                                    Text(
-                                        "已关联 ${row.referencedBy.size} 个连接",
-                                        color = ZephyrTheme.palette.status.pendingSync,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(ZephyrTheme.palette.status.pendingSync.copy(alpha = 0.14f))
-                                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                                    )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    if (row.isReferenced) {
+                                        Text(
+                                            "已关联 ${row.referencedBy.size} 个连接",
+                                            color = ZephyrTheme.palette.status.pendingSync,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(ZephyrTheme.palette.status.pendingSync.copy(alpha = 0.14f))
+                                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                                        )
+                                    }
+                                    Box {
+                                        Text(
+                                            "⋮",
+                                            color = ZephyrTheme.palette.onFloatingSubtle,
+                                            fontSize = 17.sp,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable { rowMenu = true }
+                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        )
+                                        DropdownMenu(expanded = rowMenu, onDismissRequest = { rowMenu = false }) {
+                                            if (ResourceActions.gate(row, ResourceAction.EDIT).isAllowed) {
+                                                DropdownMenuItem(
+                                                    text = { Text("编辑") },
+                                                    onClick = {
+                                                        rowMenu = false
+                                                        onOpen(row.id)
+                                                    },
+                                                )
+                                            }
+                                            when (val gate = ResourceActions.gate(row, ResourceAction.DELETE)) {
+                                                is ActionGate.Hidden -> Unit
+                                                is ActionGate.Disabled -> DropdownMenuItem(
+                                                    enabled = false,
+                                                    onClick = {},
+                                                    text = {
+                                                        Column {
+                                                            Text("删除", color = ZephyrTheme.palette.onFloatingSubtle)
+                                                            Text(gate.reason, color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
+                                                        }
+                                                    },
+                                                )
+                                                ActionGate.Allowed -> DropdownMenuItem(
+                                                    text = { Text("删除", color = ZephyrTheme.palette.status.error) },
+                                                    onClick = {
+                                                        rowMenu = false
+                                                        pendingDelete = row
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             },
                         )
@@ -900,6 +965,22 @@ fun ResourceListRoute(
                 )
             }
         }
+    }
+
+    pendingDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("删除") },
+            text = { Text("将删除“${target.name}”。删除会同步到其他设备，且先检查没有连接引用它。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.delete(target.id)
+                    pendingDelete = null
+                }) { Text("删除", color = ZephyrTheme.palette.status.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
+        )
+    }
     }
 }
 

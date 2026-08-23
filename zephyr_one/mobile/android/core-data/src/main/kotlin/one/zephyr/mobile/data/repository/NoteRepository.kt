@@ -21,6 +21,13 @@ class NoteRepository(
     fun observeNotes(ownerUserId: String): Flow<List<Note>> =
         db.mirrorDao().observeByType(Note.ENTITY_TYPE, ownerUserId).map { rows -> rows.map(ResourceMappers::note) }
 
+    /**
+     * 回收站. observeByType filters deletedAt, so the trash scope reads its own query instead of
+     * an empty filter over the active list.
+     */
+    fun observeTrashedNotes(ownerUserId: String): Flow<List<Note>> =
+        db.mirrorDao().observeTrashedByType(Note.ENTITY_TYPE, ownerUserId).map { rows -> rows.map(ResourceMappers::note) }
+
     fun observeSnippets(ownerUserId: String): Flow<List<Snippet>> =
         db.mirrorDao().observeByType(Snippet.ENTITY_TYPE, ownerUserId).map { rows -> rows.map(ResourceMappers::snippet) }
 
@@ -97,6 +104,14 @@ class NoteRepository(
         ),
         ownerUserId = ownerUserId,
     )
+
+    /*
+     * No purgeNote on purpose. The gateway's DELETE path is soft-delete-then-tombstone for notes,
+     * so a second DELETE would only re-mark the row; and the mobile v1 sync contract has no purge
+     * action (UPSERT/DELETE/RESTORE only). Zephyr's permanent delete lives in notes-service.purge,
+     * an HTTP API outside the sync channel, and the 30-day retention clears trashed rows
+     * server-side. The trash view therefore offers restore, not a fake purge.
+     */
 
     suspend fun restoreNote(note: Note, ownerUserId: String): LocalEditResult = gateway.apply(
         LocalEdit(

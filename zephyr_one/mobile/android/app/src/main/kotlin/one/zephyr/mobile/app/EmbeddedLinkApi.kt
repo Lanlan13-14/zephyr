@@ -79,6 +79,47 @@ internal class EmbeddedLinkApi(
         )
     }
 
+    /** ML-KEM-768 keypair: public key + 64-byte seed. */
+    data class MlkemKeypair(val publicKey: String, val seed: String)
+
+    /** ML-KEM-768 encapsulation: shared secret + ciphertext to send to the peer. */
+    data class MlkemEncapsulation(val shared: String, val ciphertext: String)
+
+    /**
+     * Device-identity ML-KEM-768 key generation, delegated to the embedded Go core.
+     * Kotlin never implements the primitive; it only shuttles base64 key blobs.
+     */
+    suspend fun mlkemGenerate(): MlkemKeypair = withContext(Dispatchers.IO) {
+        val base = process.ensureStarted().baseUrl
+        val response = post("$base/link/mlkem/generate", JsonObject(emptyMap()))
+        MlkemKeypair(
+            publicKey = response.getValue("publicKey").jsonPrimitive.content,
+            seed = response.getValue("seed").jsonPrimitive.content,
+        )
+    }
+
+    /** Encapsulate a shared secret to a peer public key; returns shared + ciphertext. */
+    suspend fun mlkemEncapsulate(publicKey: String): MlkemEncapsulation = withContext(Dispatchers.IO) {
+        val base = process.ensureStarted().baseUrl
+        val body = JsonObject(mapOf("publicKey" to JsonPrimitive(publicKey)))
+        val response = post("$base/link/mlkem/encapsulate", body)
+        MlkemEncapsulation(
+            shared = response.getValue("shared").jsonPrimitive.content,
+            ciphertext = response.getValue("ciphertext").jsonPrimitive.content,
+        )
+    }
+
+    /** Decapsulate a ciphertext with a seed to recover the shared secret. */
+    suspend fun mlkemDecapsulate(seed: String, ciphertext: String): String = withContext(Dispatchers.IO) {
+        val base = process.ensureStarted().baseUrl
+        val body = JsonObject(mapOf(
+            "seed" to JsonPrimitive(seed),
+            "ciphertext" to JsonPrimitive(ciphertext),
+        ))
+        val response = post("$base/link/mlkem/decapsulate", body)
+        response.getValue("shared").jsonPrimitive.content
+    }
+
     private fun post(url: String, body: JsonObject): JsonObject {
         val request = Request.Builder()
             .url(url)

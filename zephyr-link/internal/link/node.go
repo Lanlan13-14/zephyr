@@ -76,6 +76,12 @@ func NewNode() *Node {
 	n.mux.HandleFunc("/link/stream", n.handleStream)
 	// Session liveness/state probe for a device; sealed so it rides the channel.
 	n.mux.HandleFunc("/link/state", n.handleState)
+	// Embedded hosts use these for device-identity ML-KEM-768. Kotlin never
+	// implements the primitive; it posts raw keys/ciphertexts and the Go core
+	// returns the result. Loopback only — the embedded process binds 127.0.0.1.
+	n.mux.HandleFunc("/link/mlkem/generate", n.handleMlkemGenerate)
+	n.mux.HandleFunc("/link/mlkem/encapsulate", n.handleMlkemEncapsulate)
+	n.mux.HandleFunc("/link/mlkem/decapsulate", n.handleMlkemDecapsulate)
 	n.registerBuiltinHandlers()
 	return n
 }
@@ -203,6 +209,87 @@ func (n *Node) handlePushFrame(w http.ResponseWriter, r *http.Request) {
 		ackKind = ack.Kind
 	}
 	writeJSON(w, map[string]any{"ok": true, "ackKind": ackKind, "ack": ackBody})
+}
+
+// handleMlkemGenerate returns a fresh ML-KEM-768 keypair (public key + seed).
+// Loopback only — the embedded process binds 127.0.0.1.
+func (n *Node) handleMlkemGenerate(w http.ResponseWriter, r *http.Request) {
+	publicKey, seed, err := zsl.GenerateMLKEM768()
+	if err != nil {
+		errJSON(w, http.StatusInternalServerError, "mlkem_generate_failed", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":        true,
+		"publicKey": base64.RawURLEncoding.EncodeToString(publicKey),
+		"seed":      base64.RawURLEncoding.EncodeToString(seed),
+	})
+}
+
+// handleMlkemEncapsulate derives a shared secret against a peer public key and
+// returns the shared secret + the ciphertext that must reach the peer.
+func (n *Node) handleMlkemEncapsulate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PublicKey string `json:"publicKey"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		errJSON(w, http.StatusBadRequest, "bad_request", "bad json")
+		return
+	}
+	publicKey, err := b64d(req.PublicKey)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, "bad_request", "bad publicKey")
+		return
+	}
+	if len(publicKey) != zsl.MLKEM768PublicKeyBytes {
+		errJSON(w, http.StatusBadRequest, "bad_request", "bad key size")
+		return
+	}
+	shared, ciphertext, err := zsl.EncapsulateMLKEM768(publicKey)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, "mlkem_encapsulate_failed", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":         true,
+		"shared":     base64.RawURLEncoding.EncodeToString(shared),
+		"ciphertext": base64.RawURLEncoding.EncodeToString(ciphertext),
+	})
+}
+
+// handleMlkemDecapsulate recovers a shared secret from a ciphertext with a seed.
+func (n *Node) handleMlkemDecapsulate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Seed       string `json:"seed"`
+		Ciphertext string `json:"ciphertext"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		errJSON(w, http.StatusBadRequest, "bad_request", "bad json")
+		return
+	}
+	seed, err := b64d(req.Seed)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, "bad_request", "bad seed")
+		return
+	}
+	ciphertext, err := b64d(req.Ciphertext)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, "bad_request", "bad ciphertext")
+		return
+	}
+	if len(ciphertext) != zsl.MLKEM768CiphertextBytes {
+		errJSON(w, http.StatusBadRequest, "bad_request", "bad ciphertext size")
+		return
+	}
+	shared, err := zsl.DecapsulateMLKEM768(seed, ciphertext)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, "mlkem_decapsulate_failed", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":     true,
+		"shared": base64.RawURLEncoding.EncodeToString(shared),
+	})
 }
 
 // Handler exposes the node's HTTP routes.

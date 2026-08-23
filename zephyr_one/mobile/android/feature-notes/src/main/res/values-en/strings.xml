@@ -34,10 +34,13 @@
     <string name="notes_scope_trash">Trash %1$d</string>
     <string name="notes_trash">Move to trash</string>
     <string name="notes_restore">Restore</string>
+    <string name="notes_restore_title">Restore note</string>
+    <string name="notes_restore_message">Restore “%1$s” from the trash to your notes.</string>
     <string name="notes_trash_title">Move to trash</string>
     <string name="notes_trash_message">Move “%1$s” to trash. You can restore it later.</string>
     <string name="notes_cancel">Cancel</string>
     <string name="notes_missing">This note is gone or already deleted</string>
+    <string name="notes_preview_empty">Nothing to preview</string>
     <string name="notes_field_title">Title</string>
     <string name="notes_field_group">Group</string>
     <string name="notes_field_tags">Tags, comma-separated</string>
