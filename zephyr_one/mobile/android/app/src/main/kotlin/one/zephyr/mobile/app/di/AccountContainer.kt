@@ -463,6 +463,20 @@ class AccountContainer(
             sharedResourceCoordinator.clear()
             sessionSecrets.purgeAll()
         },
+        onCapabilities = { caps ->
+            /* Feed the server's published ML-KEM key into the live key state so the sealer can
+             * seal and the opener recognises the key version. A null/absent key means "defer
+             * secrets", which the sealer already honours, so only an Available key updates state. */
+            val enc = caps.serverEncryption
+            if (enc != null) {
+                val decoded = runCatching {
+                    android.util.Base64.decode(enc.publicKey, android.util.Base64.DEFAULT)
+                }.getOrNull()
+                if (decoded != null && decoded.isNotEmpty()) {
+                    serverKeyState.value = ServerEncryptionKey(publicKey = decoded, keyVersion = enc.keyVersion)
+                }
+            }
+        },
     )
 
     val scheduler: SyncScheduler = SyncScheduler(

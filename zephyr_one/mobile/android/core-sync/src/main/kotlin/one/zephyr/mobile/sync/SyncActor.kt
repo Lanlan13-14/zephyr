@@ -16,6 +16,7 @@ import one.zephyr.mobile.model.PendingOperation
 import one.zephyr.mobile.model.ChangePage
 import one.zephyr.mobile.model.PushResponse
 import one.zephyr.mobile.model.SecretEnvelope
+import one.zephyr.mobile.model.ServerCapabilities
 import one.zephyr.mobile.model.SyncProgress
 import one.zephyr.mobile.model.SyncTrigger
 import one.zephyr.mobile.model.sync.BindingStateMachine
@@ -47,6 +48,13 @@ class SyncActor(
     private val changeLimit: Int? = null,
     /** Invoked when the server reports a residency violation; must drop shared state from memory. */
     private val onSharedPurge: suspend () -> Unit = {},
+    /**
+     * Invoked with every capabilities payload the actor validates, so the host can feed the
+     * server's published encryption key to the sealer/opener. The actor runs in core-sync and
+     * cannot reach the app-layer key state, so it reports rather than stores. Defaults to a no-op
+     * so existing constructions (tests, other hosts) are unaffected.
+     */
+    private val onCapabilities: (ServerCapabilities) -> Unit = {},
 ) {
 
     private val progressState = MutableStateFlow(SyncProgress.idle)
@@ -314,6 +322,11 @@ class SyncActor(
         // one, and the server rejects a stale hash on push with registry_mismatch; failing here on
         // any difference would strand One on a harmless server-side addition.
         store.saveRegistryHash(caps.registryHash)
+        /* Hand the whole payload to the host so the published serverEncryption key reaches the
+         * sealer/opener. This is the single link that was missing: the server has published the
+         * key all along and the device has the full seal/open path, but nothing fed the key into
+         * the app-layer key state, so canSeal() stayed false and every secret op deferred. */
+        onCapabilities(caps)
         return null
     }
 
