@@ -597,8 +597,9 @@ fun AiSettingsLiveRoute(
     localAi: one.zephyr.mobile.data.repository.LocalAiRepository,
     bound: Boolean,
     onBack: () -> Unit,
+    discoverModels: ModelDiscovery? = null,
 ) {
-    FullAiSettingsRoute(localAi, bound, onBack)
+    FullAiSettingsRoute(localAi, bound, onBack, discoverModels)
 }
 
 @Composable

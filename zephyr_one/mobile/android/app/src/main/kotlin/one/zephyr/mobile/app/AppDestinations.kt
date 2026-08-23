@@ -603,11 +603,62 @@ internal fun AiSettingsLiveDestination(
     @Suppress("UNUSED_PARAMETER") ownerUserId: String,
     onBack: () -> Unit,
 ) {
+    val discoverer = remember(account) { AiModelDiscoverer(account) }
     one.zephyr.mobile.feature.tools.AiSettingsLiveRoute(
         localAi = account.localAi,
         bound = !account.isLocalMode,
         onBack = onBack,
+        discoverModels = { provider, draftKey ->
+            when (val outcome = discoverer.fetch(provider, draftKey)) {
+                is AiModelDiscoverer.Result.Ok ->
+                    one.zephyr.mobile.feature.tools.ModelDiscoveryResult(outcome.models.map { it.id to it.label }, null)
+                is AiModelDiscoverer.Result.Failed ->
+                    one.zephyr.mobile.feature.tools.ModelDiscoveryResult(emptyList(), outcome.reason)
+            }
+        },
     )
+}
+
+/**
+ * Lists a provider's live models through the embedded runtime.
+ *
+ * Discovery must work with no main end attached, so the runtime — which already speaks every
+ * vendor wire — owns the /models call. A blank in-form key falls back to the provider's stored
+ * secret; the key is wiped here and never reaches the UI.
+ */
+internal class AiModelDiscoverer(account: AccountContainer) {
+    sealed interface Result {
+        data class Ok(val models: List<one.zephyr.mobile.app.EmbeddedDiscoveredModel>) : Result
+        data class Failed(val reason: String) : Result
+    }
+
+    // Null platform host: discovery is a provider /models call that touches no tool, so the
+    // runtime starts model-only rather than binding an SSH/SFTP host it will never use.
+    private val api = EmbeddedAiRuntimeApi(account.appContainer().embeddedAiRuntime, null)
+    private val localAi = account.localAi
+
+    suspend fun fetch(provider: one.zephyr.mobile.data.repository.LocalAiProvider, draftKey: String): Result {
+        val key = draftKey.ifBlank { null }?.toCharArray() ?: localAi.providerApiKey(provider.id)
+        return try {
+            val headers = runCatching {
+                one.zephyr.mobile.network.MobileJson.instance.decodeFromString<Map<String, String>>(provider.extraHeadersJson)
+            }.getOrDefault(emptyMap())
+            val wire = EmbeddedProvider(
+                id = provider.id, name = provider.name, kind = provider.type, baseUrl = provider.baseUrl,
+                apiKey = key?.concatToString().orEmpty(), defaultModel = provider.defaultModel,
+                models = provider.models.map { it.id }, apiMode = provider.apiMode,
+                organization = provider.organization, extraHeaders = headers,
+            )
+            when (val result = api.providerModels(wire)) {
+                is one.zephyr.mobile.network.ApiResult.Success -> Result.Ok(result.value)
+                is one.zephyr.mobile.network.ApiResult.Failure -> Result.Failed(result.error.message)
+            }
+        } catch (failure: Exception) {
+            Result.Failed(failure.message ?: "获取模型失败")
+        } finally {
+            key?.fill(' ')
+        }
+    }
 }
 
 internal fun diagnosticExport(account: AccountContainer): String =
