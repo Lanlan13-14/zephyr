@@ -26,6 +26,16 @@ sealed interface MarkdownBlock {
     /** @param checked renders a real checkbox state, which a plain bullet cannot convey. */
     data class TaskItem(val depth: Int, val checked: Boolean, val text: MarkdownText) : MarkdownBlock
 
+    /**
+     * GFM table. [alignments] has one entry per column: left / center / right / "" (default).
+     * Cell text keeps inline styling, which is how the main end's markdown.js renders it.
+     */
+    data class Table(
+        val header: List<MarkdownText>,
+        val alignments: List<String>,
+        val rows: List<List<MarkdownText>>,
+    ) : MarkdownBlock
+
     data object Divider : MarkdownBlock
 }
 
@@ -81,6 +91,22 @@ object Markdown {
             if (trimmed.isEmpty()) {
                 flushParagraph()
                 index++
+                continue
+            }
+
+            // GFM table: a header row of pipe cells followed by an alignment separator. Only
+            // recognised when both lines match, so an ordinary "| a | b" sentence stays a paragraph.
+            if (index + 1 < lines.size && isTableSeparator(lines[index + 1]) && isTableRow(trimmed)) {
+                flushParagraph()
+                val header = splitTableRow(trimmed).map { inline(it) }
+                val alignments = tableAlignments(lines[index + 1])
+                val body = ArrayList<List<MarkdownText>>()
+                index += 2
+                while (index < lines.size && isTableRow(lines[index].trim()) && lines[index].isNotBlank()) {
+                    body.add(splitTableRow(lines[index].trim()).map { inline(it) })
+                    index++
+                }
+                blocks.add(MarkdownBlock.Table(header = header, alignments = alignments, rows = body))
                 continue
             }
 
@@ -161,6 +187,41 @@ object Markdown {
 
     private fun isDivider(trimmed: String): Boolean =
         trimmed.length >= 3 && (trimmed.all { it == '-' } || trimmed.all { it == '*' } || trimmed.all { it == '_' })
+
+    /** A table body/header line: at least one pipe, same rule as the main end's splitTableRow. */
+    private fun isTableRow(trimmed: String): Boolean = trimmed.contains('|')
+
+    /** The | --- | :---: | ---: | separator. Requires at least one dash per cell, like GFM. */
+    private fun isTableSeparator(line: String): Boolean {
+        val trimmed = line.trim()
+        if (!trimmed.contains('-') || !isTableRow(trimmed)) return false
+        val cells = splitTableRow(trimmed)
+        if (cells.isEmpty()) return false
+        return cells.all { cell ->
+            val body = cell.removePrefix(":").removeSuffix(":")
+            body.isNotEmpty() && body.all { it == '-' }
+        }
+    }
+
+    private fun splitTableRow(line: String): List<String> {
+        var value = line.trim()
+        if (value.startsWith("|")) value = value.substring(1)
+        if (value.endsWith("|")) value = value.substring(0, value.length - 1)
+        if (value.isEmpty()) return emptyList()
+        return value.split('|').map { it.trim() }
+    }
+
+    private fun tableAlignments(separator: String): List<String> =
+        splitTableRow(separator).map { cell ->
+            val left = cell.startsWith(":")
+            val right = cell.endsWith(":")
+            when {
+                left && right -> "center"
+                right -> "right"
+                left -> "left"
+                else -> ""
+            }
+        }
 
     private fun headingLevel(trimmed: String): Int {
         var level = 0

@@ -24,6 +24,13 @@ interface MirrorDao {
     )
     fun observeByType(entityType: String, ownerUserId: String): Flow<List<MirrorEntityRow>>
 
+    /** 回收站. Soft-deleted rows, newest first: restore is the primary action. */
+    @Query(
+        "SELECT * FROM mirror_entities WHERE entityType = :entityType AND ownerUserId = :ownerUserId " +
+            "AND deletedAt IS NOT NULL ORDER BY deletedAt DESC, entityId",
+    )
+    fun observeTrashedByType(entityType: String, ownerUserId: String): Flow<List<MirrorEntityRow>>
+
     @Query(
         "SELECT * FROM mirror_entities WHERE entityType = :entityType AND ownerUserId = :ownerUserId " +
             "AND deletedAt IS NULL ORDER BY sortKey, entityId",

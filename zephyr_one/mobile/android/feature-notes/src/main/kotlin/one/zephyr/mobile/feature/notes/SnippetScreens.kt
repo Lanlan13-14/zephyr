@@ -24,6 +24,8 @@ import one.zephyr.mobile.ui.component.ActionSheet
 import one.zephyr.mobile.ui.component.ActionSheetGroup
 import one.zephyr.mobile.ui.component.ActionSheetItem
 import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.DropdownMenu
+import one.zephyr.mobile.ui.component.DropdownMenuItem
 import one.zephyr.mobile.ui.component.GroupCard
 import one.zephyr.mobile.ui.component.Icon
 import one.zephyr.mobile.ui.component.OutlinedTextField
@@ -209,6 +211,7 @@ fun SnippetListRoute(
             item("snippets") {
                 GroupCard {
                     rows.forEachIndexed { index, snippet ->
+                        var rowMenu by remember(snippet.id) { mutableStateOf(false) }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -216,7 +219,12 @@ fun SnippetListRoute(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Column(Modifier.weight(1f)) {
+                            Column(
+                                Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onOpen(snippet) },
+                            ) {
                                 Text(
                                     snippet.command.lineSequence().firstOrNull().orEmpty(),
                                     fontFamily = FontFamily.Monospace,
@@ -235,6 +243,40 @@ fun SnippetListRoute(
                             }
                             SnippetMiniButton("插入", active = false) { onInsert(snippet) }
                             SnippetMiniButton("执行", active = true) { onRun(snippet) }
+                            Box {
+                                Text(
+                                    "⋮",
+                                    color = ZephyrTheme.palette.onFloatingSubtle,
+                                    fontSize = 17.sp,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { rowMenu = true }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                                DropdownMenu(expanded = rowMenu, onDismissRequest = { rowMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.snippets_edit)) },
+                                        onClick = {
+                                            rowMenu = false
+                                            onOpen(snippet)
+                                        },
+                                    )
+                                    if (snippet.capabilities.canDelete) {
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    stringResource(R.string.snippets_delete),
+                                                    color = ZephyrTheme.palette.status.error,
+                                                )
+                                            },
+                                            onClick = {
+                                                rowMenu = false
+                                                pending = snippet
+                                            },
+                                        )
+                                    }
+                                }
+                            }
                         }
                         if (index != rows.lastIndex) {
                             Box(Modifier.fillMaxWidth().height(1.dp).background(ZephyrTheme.palette.surfaces.outlineSoft))
