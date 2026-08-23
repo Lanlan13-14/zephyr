@@ -171,7 +171,8 @@ jobs:
       # command documented in zephyr-ai/android-build-contract.go.
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.23.9'
+          # zephyr-link needs the standard-library crypto/mlkem, which landed in Go 1.24.
+          go-version: '1.26.3'
       - name: Rebuild embedded Go runtimes and verify they are current
         shell: bash
         working-directory: .
