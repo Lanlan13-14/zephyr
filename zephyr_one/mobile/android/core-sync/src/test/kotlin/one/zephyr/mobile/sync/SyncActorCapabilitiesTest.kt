@@ -89,7 +89,7 @@ class SyncActorCapabilitiesTest {
 
         subject.request(SyncTrigger.MANUAL)
 
-        assertTrue(fired, "callback fires even when the server has no key (host then defers secrets)")
-        assertFalse(sawKey, "an absent key must read as null, never as a fabricated key")
+        assertTrue("callback fires even when the server has no key (host then defers secrets)", fired)
+        assertFalse("an absent key must read as null, never as a fabricated key", sawKey)
     }
 }
