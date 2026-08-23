@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network security policy for Zephyr One.
+
+  Global default: cleartext is OFF (usesCleartextTraffic stays false in the manifest, and this
+  base-config repeats it so the config file is the single source of truth).
+
+  The only exception is the embedded loopback services: the Go Zephyr Link node and the Go AI
+  runtime are started in-process and bound to 127.0.0.1, and the app talks to them over plain
+  HTTP on an ephemeral port. That traffic never leaves the device, so refusing cleartext there
+  only breaks the embedded runtimes without buying any security. Android does not special-case
+  127.0.0.1 when usesCleartextTraffic=false, so we must whitelist the loopback host explicitly.
+
+  Everything else still requires TLS.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

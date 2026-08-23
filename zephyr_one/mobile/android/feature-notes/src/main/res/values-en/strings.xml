@@ -36,6 +36,9 @@
     <string name="notes_restore">Restore</string>
     <string name="notes_restore_title">Restore note</string>
     <string name="notes_restore_message">Restore “%1$s” from the trash to your notes.</string>
+    <string name="notes_purge">Delete permanently</string>
+    <string name="notes_purge_title">Delete note permanently</string>
+    <string name="notes_purge_message">Permanently delete “%1$s”. This cannot be undone.</string>
     <string name="notes_trash_title">Move to trash</string>
     <string name="notes_trash_message">Move “%1$s” to trash. You can restore it later.</string>
     <string name="notes_cancel">Cancel</string>

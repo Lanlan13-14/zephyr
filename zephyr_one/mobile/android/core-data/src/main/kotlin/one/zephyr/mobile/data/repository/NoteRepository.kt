@@ -1,5 +1,6 @@
 package one.zephyr.mobile.data.repository
 
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonObject
@@ -7,6 +8,8 @@ import one.zephyr.mobile.contracts.SyncAction
 import one.zephyr.mobile.data.LocalEdit
 import one.zephyr.mobile.data.LocalEditResult
 import one.zephyr.mobile.data.LocalWriteGateway
+import one.zephyr.mobile.data.LocalWriteRejected
+import one.zephyr.mobile.data.db.TombstoneRow
 import one.zephyr.mobile.data.db.ZephyrDatabase
 import one.zephyr.mobile.data.mapper.ResourceMappers
 import one.zephyr.mobile.model.Note
@@ -105,13 +108,49 @@ class NoteRepository(
         ownerUserId = ownerUserId,
     )
 
-    /*
-     * No purgeNote on purpose. The gateway's DELETE path is soft-delete-then-tombstone for notes,
-     * so a second DELETE would only re-mark the row; and the mobile v1 sync contract has no purge
-     * action (UPSERT/DELETE/RESTORE only). Zephyr's permanent delete lives in notes-service.purge,
-     * an HTTP API outside the sync channel, and the 30-day retention clears trashed rows
-     * server-side. The trash view therefore offers restore, not a fake purge.
+    /**
+     * Permanent local delete for a row already in the trash.
+     *
+     * The gateway DELETE path is soft-delete-then-tombstone, so a second DELETE would only re-mark
+     * the row. A purge therefore goes around the gateway: hard-delete the mirror row, drop search
+     * and overlay, and write a tombstone so a later inbound UPSERT of a lower or equal revision
+     * cannot resurrect it. Local-only accounts have no server to talk to, so this is the complete
+     * permanent delete. Bound accounts still lose the local copy immediately; the existing queued
+     * DELETE from trashNote is left in pending_operations so the server still sees the delete.
      */
+    suspend fun purgeNote(note: Note, ownerUserId: String): LocalEditResult {
+        if (note.ownerUserId != ownerUserId) {
+            throw LocalWriteRejected("owner_mismatch", "note/" + note.noteId + " is not owned by this account")
+        }
+        if (!note.isTrashed) {
+            throw LocalWriteRejected("not_trashed", "only a trashed note can be purged")
+        }
+        if (!note.capabilities.canDelete) {
+            throw LocalWriteRejected("capability_denied", "no delete capability for note/" + note.noteId)
+        }
+        val now = System.currentTimeMillis()
+        val revision = note.revision
+        db.withTransaction {
+            db.mirrorDao().hardDelete(Note.ENTITY_TYPE, note.noteId)
+            db.mirrorDao().deleteSearch(Note.ENTITY_TYPE, note.noteId)
+            db.overlayDao().deleteForEntity(Note.ENTITY_TYPE, note.noteId)
+            db.tombstoneDao().upsert(
+                TombstoneRow(
+                    entityType = Note.ENTITY_TYPE,
+                    entityId = note.noteId,
+                    revision = revision,
+                    deletedAt = now,
+                    authoritative = false,
+                ),
+            )
+        }
+        return LocalEditResult(
+            opId = null,
+            acceptedMask = emptyList(),
+            rejectedMask = emptyList(),
+            revision = revision,
+        )
+    }
 
     suspend fun restoreNote(note: Note, ownerUserId: String): LocalEditResult = gateway.apply(
         LocalEdit(

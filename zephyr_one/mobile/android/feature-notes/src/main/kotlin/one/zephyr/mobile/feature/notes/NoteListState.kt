@@ -68,7 +68,12 @@ object NoteListStates {
         val anyRow = pool.isNotEmpty()
         return when {
             filter.isActive && anyRow -> PageState.Empty(EmptyReason.NO_MATCHING_FILTER)
-            !bound -> PageState.Empty(EmptyReason.NOT_YET_SYNCED)
+            // NOT_YET_SYNCED means: this account syncs with a server (bound) AND has not completed a
+            // sync yet (lastSyncedAt == null), so the mirror may simply be behind. A local-only
+            // account never syncs, and a bound account that HAS synced and is still empty genuinely
+            // has no notes — both must show "no data", not a "sync now" prompt that either sends the
+            // user to bind a server they do not have, or spins forever on an already-synced account.
+            bound && lastSyncedAt == null && filter.scope != NoteScope.TRASH -> PageState.Empty(EmptyReason.NOT_YET_SYNCED)
             else -> PageState.Empty(EmptyReason.NO_DATA)
         }
     }

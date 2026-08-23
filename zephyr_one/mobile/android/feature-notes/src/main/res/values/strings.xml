@@ -36,6 +36,9 @@
     <string name="notes_restore">恢复</string>
     <string name="notes_restore_title">恢复笔记</string>
     <string name="notes_restore_message">将“%1$s”从回收站恢复到笔记列表。</string>
+    <string name="notes_purge">彻底删除</string>
+    <string name="notes_purge_title">彻底删除笔记</string>
+    <string name="notes_purge_message">将永久删除“%1$s”，无法恢复。</string>
     <string name="notes_trash_title">移入回收站</string>
     <string name="notes_trash_message">将“%1$s”移入回收站，可稍后恢复。</string>
     <string name="notes_cancel">取消</string>

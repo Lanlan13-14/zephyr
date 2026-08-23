@@ -119,7 +119,21 @@ class NoteListViewModel(
     }
 
     fun setQuery(value: String) { filterState.value = filterState.value.copy(query = value) }
-    fun setScope(scope: NoteScope) { filterState.value = filterState.value.copy(scope = scope) }
+    fun setScope(scope: NoteScope) {
+        // Trash is a different pool, not a filter on the current group. Leaving 运维/清单 selected
+        // when the user taps 回收站 hides every trashed note that is not in that group — the list
+        // "disappears" and the empty-filter placeholder replaces it. Clear group/tag facets on
+        // the trash transition so the trash always shows every recoverable row.
+        filterState.value = if (scope == NoteScope.TRASH) {
+            filterState.value.copy(scope = scope, groupPath = "", tags = emptySet())
+        } else {
+            filterState.value.copy(scope = scope)
+        }
+    }
+
+    fun purge(note: Note) {
+        viewModelScope.launch { runCatching { notes.purgeNote(note, ownerUserId) } }
+    }
     fun setGroupPath(groupPath: String) { filterState.value = filterState.value.copy(groupPath = groupPath, tags = emptySet()) }
     fun toggleTag(tag: String) { filterState.value = filterState.value.withTagToggled(tag) }
     fun setGroup(path: String) { filterState.value = filterState.value.copy(groupPath = path) }
@@ -236,45 +250,49 @@ fun NoteListRoute(
     val filter by viewModel.filter.collectAsState()
     var pendingTrash by remember { mutableStateOf<Note?>(null) }
     var pendingRestore by remember { mutableStateOf<Note?>(null) }
+    var pendingPurge by remember { mutableStateOf<Note?>(null) }
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = stringResource(R.string.notes_title), onBack = onBack) {
             HeaderAddButton(stringResource(R.string.notes_create), onCreate)
         }
+        // The scope/filter row lives OUTSIDE PageStateScaffold. When the list is empty the scaffold
+        // renders only the empty placeholder and never calls its content lambda, which used to hide
+        // the 回收站 chip exactly when the user wanted to open the trash. Keep the chips always visible.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(
+                selected = filter.scope == NoteScope.ACTIVE && filter.groupPath.isEmpty(),
+                onClick = {
+                    viewModel.setScope(NoteScope.ACTIVE)
+                    viewModel.setGroupPath("")
+                },
+                label = { Text("全部") },
+            )
+            listOf("运维", "清单").forEach { group ->
+                FilterChip(
+                    selected = filter.scope == NoteScope.ACTIVE && filter.groupPath == group,
+                    onClick = {
+                        viewModel.setScope(NoteScope.ACTIVE)
+                        viewModel.setGroupPath(group)
+                    },
+                    label = { Text(group) },
+                )
+            }
+            FilterChip(
+                selected = filter.scope == NoteScope.TRASH,
+                onClick = { viewModel.setScope(NoteScope.TRASH) },
+                label = { Text("回收站") },
+            )
+        }
         PageStateScaffold(state = state, modifier = Modifier.fillMaxSize()) { content ->
             Column(Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    FilterChip(
-                        selected = filter.scope == NoteScope.ACTIVE && filter.groupPath.isEmpty(),
-                        onClick = {
-                            viewModel.setScope(NoteScope.ACTIVE)
-                            viewModel.setGroupPath("")
-                        },
-                        label = { Text("全部") },
-                    )
-                    listOf("运维", "清单").forEach { group ->
-                        FilterChip(
-                            selected = filter.scope == NoteScope.ACTIVE && filter.groupPath == group,
-                            onClick = {
-                                viewModel.setScope(NoteScope.ACTIVE)
-                                viewModel.setGroupPath(group)
-                            },
-                            label = { Text(group) },
-                        )
-                    }
-                    FilterChip(
-                        selected = filter.scope == NoteScope.TRASH,
-                        onClick = { viewModel.setScope(NoteScope.TRASH) },
-                        label = { Text("回收站") },
-                    )
-                }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 140.dp),
@@ -342,6 +360,20 @@ fun NoteListRoute(
                                                                 pendingRestore = note
                                                             },
                                                         )
+                                                        if (note.capabilities.canDelete) {
+                                                            DropdownMenuItem(
+                                                                text = {
+                                                                    Text(
+                                                                        stringResource(R.string.notes_purge),
+                                                                        color = ZephyrTheme.palette.status.error,
+                                                                    )
+                                                                },
+                                                                onClick = {
+                                                                    rowMenu = false
+                                                                    pendingPurge = note
+                                                                },
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -392,6 +424,21 @@ fun NoteListRoute(
                 }) { Text(stringResource(R.string.notes_restore)) }
             },
             dismissButton = { TextButton(onClick = { pendingRestore = null }) { Text(stringResource(R.string.notes_cancel)) } },
+        )
+    }
+
+    pendingPurge?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingPurge = null },
+            title = { Text(stringResource(R.string.notes_purge_title)) },
+            text = { Text(stringResource(R.string.notes_purge_message, target.title.ifBlank { "无标题笔记" })) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.purge(target)
+                    pendingPurge = null
+                }) { Text(stringResource(R.string.notes_purge)) }
+            },
+            dismissButton = { TextButton(onClick = { pendingPurge = null }) { Text(stringResource(R.string.notes_cancel)) } },
         )
     }
     }

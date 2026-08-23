@@ -77,3 +77,56 @@ test('mobile v1 compatibility routes remain mounted during Link v2 planning', ()
     assert.ok(routes.includes(route));
   }
 });
+
+test('One Android notes trash keeps chips, purge, and loopback cleartext', () => {
+  const notes = fs.readFileSync(
+    path.join(root, 'zephyr_one/mobile/android/feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/NoteScreens.kt'),
+    'utf8',
+  );
+  const derive = fs.readFileSync(
+    path.join(root, 'zephyr_one/mobile/android/feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/NoteListState.kt'),
+    'utf8',
+  );
+  const repo = fs.readFileSync(
+    path.join(root, 'zephyr_one/mobile/android/core-data/src/main/kotlin/one/zephyr/mobile/data/repository/NoteRepository.kt'),
+    'utf8',
+  );
+  const manifest = fs.readFileSync(
+    path.join(root, 'zephyr_one/mobile/android/app/src/main/AndroidManifest.xml'),
+    'utf8',
+  );
+  const nsc = fs.readFileSync(
+    path.join(root, 'zephyr_one/mobile/android/app/src/main/res/xml/network_security_config.xml'),
+    'utf8',
+  );
+  const zh = fs.readFileSync(
+    path.join(root, 'zephyr_one/mobile/android/feature-notes/src/main/res/values/strings.xml'),
+    'utf8',
+  );
+
+  // Filter chips stay outside the empty-state scaffold so 回收站 remains tappable with no notes.
+  const chips = notes.indexOf('label = { Text("回收站") }');
+  const scaffold = notes.indexOf('PageStateScaffold(state = state');
+  assert.ok(chips > 0 && scaffold > chips, '回收站 chip must render before PageStateScaffold');
+
+  // Switching to trash must drop leftover 运维/清单 group filters.
+  assert.match(notes, /scope == NoteScope\.TRASH[\s\S]{0,180}groupPath = ""/);
+  assert.match(notes, /fun purge\(note: Note\)/);
+  assert.match(notes, /pendingPurge/);
+  assert.match(zh, /name="notes_purge"/);
+
+  // Local-only empty lists are "no data", not a sync prompt.
+  assert.match(derive, /bound && lastSyncedAt == null && filter\.scope != NoteScope\.TRASH/);
+  assert.match(derive, /EmptyReason\.NO_DATA/);
+
+  // Permanent local delete exists and refuses active (not-trashed) rows.
+  assert.match(repo, /suspend fun purgeNote/);
+  assert.match(repo, /only a trashed note can be purged/);
+  assert.match(repo, /hardDelete\(Note\.ENTITY_TYPE/);
+
+  // Embedded Go loopback is the only cleartext exception; global cleartext stays off.
+  assert.match(manifest, /android:networkSecurityConfig="@xml\/network_security_config"/);
+  assert.match(nsc, /cleartextTrafficPermitted="false"/);
+  assert.match(nsc, /<domain includeSubdomains="false">127\.0\.0\.1<\/domain>/);
+  assert.match(nsc, /<domain includeSubdomains="false">localhost<\/domain>/);
+});
