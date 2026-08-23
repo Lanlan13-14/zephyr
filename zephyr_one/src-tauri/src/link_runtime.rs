@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
