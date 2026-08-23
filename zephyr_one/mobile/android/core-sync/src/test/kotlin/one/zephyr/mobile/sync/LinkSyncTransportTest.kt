@@ -48,7 +48,7 @@ class LinkSyncTransportTest {
             buildJsonObject {
                 put("ok", true)
                 put("fromCursor", 5)
-                put("nextCursor", 9)
+                put("nextCursor", 5)
                 put("hasMore", false)
                 putJsonArray("changes") {}
             }
@@ -56,7 +56,7 @@ class LinkSyncTransportTest {
         val transport = LinkSyncTransport(channel, "dev-1", NoopFallback)
         val result = transport.changes(sinceCursor = 5, limit = 50)
         assertTrue(result is ApiResult.Success)
-        assertEquals(9L, (result as ApiResult.Success).value.nextCursor)
+        assertEquals(5L, (result as ApiResult.Success).value.nextCursor)
         assertEquals(1, channel.calls.size)
         assertEquals("changes", channel.calls[0].first)
         assertEquals(5L, channel.calls[0].second["sinceCursor"]!!.jsonPrimitive.longOrNull)
