@@ -164,6 +164,7 @@ const {
 const { OneClientManager } = require('./one-client-manager');
 const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
 const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-enrollment');
+const { createLinkV2Transport } = require('./link-v2-transport');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 const { MobileV1OutboxDispatcher } = require('./mobile-v1-outbox-dispatcher');
 const { AppChangeWakeHub, registerAppChangeWakeRoute } = require('./app-change-wake-hub');
@@ -199,6 +200,7 @@ const { negotiateRdpTls } = require('./server/rdp-cert-probe');
 let mobileV1OutboxDispatcher = null;
 let mobileV1Api = null;
 let linkV2EnrollmentApi = null;
+let linkV2Transport = null;
 let webDavProduction = null;
 let webDavSensitiveRateLimiter = null;
 let backupImportSensitiveRateLimiter = null;
@@ -8981,7 +8983,35 @@ try {
         });
         app.use('/link/approve', express.urlencoded({ extended: false, limit: '8kb' }));
         linkV2EnrollmentApi.mount(app);
-        console.log('[link-v2] enrollment mounted');
+        linkV2Transport = createLinkV2Transport({
+            enrollments,
+            store: mobileV1Api.store,
+            log: (...args) => console.log('[link-v2]', ...args),
+        });
+        app.post('/api/link/v2/handshake', express.json({ limit: '64kb' }), (req, res) => linkV2Transport.handshake(req, res));
+        app.get('/api/link/v2/state', (req, res) => {
+            const sessionId = String(req.query.sessionId || '');
+            const record = linkV2Transport.table.get(sessionId);
+            if (!record || !record.established) {
+                return res.status(401).json({ ok: false, error: { code: 'session_unknown', message: 'Link 会话不存在或未完成握手', retryable: true } });
+            }
+            return res.json(linkV2Transport.sealFrame(record, 6 /* WAKE */, {
+                state: 'ready',
+                deviceId: record.deviceId,
+                serverTime: Date.now(),
+            }));
+        });
+        app.post('/api/link/v2/push', express.json({ limit: '6mb' }), (req, res) => {
+            try {
+                const { record, frame } = linkV2Transport.openEnvelope(req.body);
+                // Push carries device→server business frames. Ack it with the same session.
+                return res.json(linkV2Transport.sealFrame(record, 2 /* SYNC_ACK */, { receivedKind: frame.kind, ok: true }));
+            } catch (err) {
+                const code = (err && err.code) || 'invalid_frame';
+                return res.status(400).json({ ok: false, error: { code, message: String(err && err.message || '帧无效'), retryable: true } });
+            }
+        });
+        console.log('[link-v2] transport mounted (handshake/state/push; stream via WSS upgrade)');
     } catch (linkErr) {
         console.error('[link-v2] enrollment failed to mount', linkErr && linkErr.message);
     }
@@ -9107,6 +9137,9 @@ const fileTransferWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 
  * bytes. Sharing the handler would mean one auth path for two very different
  * trust levels. */
 const sharedRelayWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 1024 * 1024 });
+/* Link v2 stream: ZSL/2 sealed CBOR frames. Authenticated at the protocol level
+ * by the handshake session (no browser cookie), like the shared relay. */
+const linkV2Wss = new WebSocketServer({ ...wsServerOptions, maxPayload: 8 * 1024 * 1024 });
 
 function handleHttpUpgrade(req, socket, head) {
     if (!embeddedLoopbackHostAllowed(req)) {
@@ -9147,7 +9180,9 @@ function handleHttpUpgrade(req, socket, head) {
                             ? fileTransferWss
                             : pathname === '/api/mobile/v1/shared/relay'
                                 ? sharedRelayWss
-                                : null;
+                                : pathname === '/api/link/v2/stream'
+                                    ? linkV2Wss
+                                    : null;
     if (!targetWss) {
         console.warn('[WS-DIAG] rejected websocket upgrade for unknown path', { url: req.url || '' });
         rejectSocket(socket, 404, 'Not Found');
@@ -9169,7 +9204,7 @@ function handleHttpUpgrade(req, socket, head) {
      * /agent/files via its hello token, and the shared relay via the signed
      * credential minted by POST /shared/connections/{id}/sessions. Requiring a
      * browser session here would make the mobile relay unreachable. */
-    if (targetWss !== agentFilesWss && targetWss !== sharedRelayWss) {
+    if (targetWss !== agentFilesWss && targetWss !== sharedRelayWss && targetWss !== linkV2Wss) {
         if (ZEPHYR_ONE_EMBEDDED && !sameOriginAllowed(req)) {
             rejectSocket(socket, 403, 'Forbidden');
             return;
@@ -9251,6 +9286,46 @@ fileTransferWss.on('connection', (ws, req) => {
  * browser cookie. Exposing it to a device credential would hand a sharee the
  * whole surface when the contract grants only "observe/control this one PTY".
  */
+linkV2Wss.on('connection', (ws, req) => {
+    if (!linkV2Transport) {
+        closeWebSocketSafe(ws, 1011, 'link-unavailable');
+        return;
+    }
+    let url;
+    try {
+        url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    } catch {
+        closeWebSocketSafe(ws, 1008, 'bad-request');
+        return;
+    }
+    const sessionId = String(url.searchParams.get('sessionId') || '');
+    const record = linkV2Transport.table.get(sessionId);
+    if (!record || !record.established) {
+        closeWebSocketSafe(ws, 1008, 'session-unknown');
+        return;
+    }
+    ws.on('message', (data) => {
+        let envelope;
+        try {
+            envelope = JSON.parse(Buffer.isBuffer(data) ? data.toString('utf8') : String(data));
+        } catch {
+            closeWebSocketSafe(ws, 1003, 'bad-frame');
+            return;
+        }
+        try {
+            const { record: rec, frame } = linkV2Transport.openEnvelope(envelope);
+            // Minimal dispatch: acknowledge each well-formed sealed frame. Business
+            // routing per channel lands on top of this same open/seal pair.
+            const ack = linkV2Transport.sealFrame(rec, 2 /* SYNC_ACK */, { receivedKind: frame.kind, ok: true });
+            ws.send(JSON.stringify(ack));
+        } catch (err) {
+            closeWebSocketSafe(ws, 1008, String((err && err.code) || 'frame-error').slice(0, 120));
+        }
+    });
+    ws.on('close', () => linkV2Transport.destroy(sessionId));
+    ws.on('error', () => linkV2Transport.destroy(sessionId));
+});
+
 sharedRelayWss.on('connection', async (ws, req) => {
     const shared = mobileV1Api ? mobileV1Api.shared : null;
     if (!shared) {

@@ -106,6 +106,11 @@ class LinkV2EnrollmentStore {
              @platform, @appVersion, @encryption, @signingJwk, @fingerprint,
              @sas, @origin, @serverId, 'pending', @expiresAt, @createdAt, @ip)`);
         this._get = this.db.prepare('SELECT * FROM link_enrollments WHERE bind_id = ?');
+        this._getConsumedByDevice = this.db.prepare(
+            `SELECT * FROM link_enrollments
+             WHERE device_id = ? AND status = 'consumed'
+             ORDER BY consumed_at DESC LIMIT 1`,
+        );
         this._countPendingDevice = this.db.prepare(
             `SELECT COUNT(*) AS n FROM link_enrollments
              WHERE device_id = ? AND status IN ('pending','approved') AND expires_at > ?`,
@@ -266,6 +271,26 @@ class LinkV2EnrollmentStore {
     get(bindId) {
         this.purgeExpired();
         return this._get.get(String(bindId || '')) || null;
+    }
+
+    /**
+     * Resolve a device that has completed enrollment (status consumed). A Link v2
+     * transport session is only ever anchored to such a device — a pending row
+     * proves nothing about key possession.
+     */
+    deviceById(deviceId) {
+        this.purgeExpired();
+        const row = this._getConsumedByDevice.get(String(deviceId || ''));
+        if (!row) return null;
+        return {
+            deviceId: row.device_id,
+            deviceName: row.device_name,
+            platform: row.platform,
+            ownerUserId: row.owner_user_id,
+            ownerUsername: row.owner_username,
+            fingerprint: row.device_fingerprint,
+            consumedAt: Number(row.consumed_at || 0),
+        };
     }
 
     publicStatus(row) {
