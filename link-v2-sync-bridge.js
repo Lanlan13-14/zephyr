@@ -72,17 +72,29 @@ function createLinkSyncBridge({ api, storage, adminToken }) {
     }
 
     /* Dispatch one Link owned-sync frame to the matching business operation and
-     * return the exact result payload the HTTP route would have produced. */
+     * return the exact result payload the HTTP route would have produced. The
+     * frame body carries an `op` discriminator because one wire kind (SYNC_OP)
+     * covers every sync verb; each verb runs the SAME transport-independent core
+     * method the HTTP route uses, so semantics never diverge across clients. */
     function dispatch(auth, kind, body) {
-        switch (kind) {
-            case KIND.SYNC_OP: {
-                // A push batch: { operations, baseCursor, batchId, registryHash }.
-                const result = api.executePushForDevice(auth, body || {});
-                return { kind: KIND.SYNC_ACK, body: result };
-            }
+        if (kind !== KIND.SYNC_OP) {
+            const err = new Error('不支持的同步帧类型 ' + kind);
+            err.status = 400; err.code = 'unsupported_kind'; err.retryable = false; err.expose = true;
+            throw err;
+        }
+        const b = body || {};
+        switch (b.op) {
+            case 'push':
+                return { kind: KIND.SYNC_ACK, body: api.executePushForDevice(auth, b) };
+            case 'changes':
+                return { kind: KIND.SYNC_ACK, body: api.executeChangesForDevice(auth, b) };
+            case 'ack':
+                return { kind: KIND.SYNC_ACK, body: api.executeAckForDevice(auth, b.cursor) };
+            case 'status':
+                return { kind: KIND.SYNC_ACK, body: api.executeSyncStatusForDevice(auth) };
             default: {
-                const err = new Error('不支持的同步帧类型 ' + kind);
-                err.status = 400; err.code = 'unsupported_kind'; err.retryable = false;
+                const err = new Error('缺少或不支持的同步操作: ' + String(b.op));
+                err.status = 400; err.code = 'unsupported_op'; err.retryable = false; err.expose = true;
                 throw err;
             }
         }

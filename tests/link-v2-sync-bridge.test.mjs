@@ -20,6 +20,9 @@ function makeBridge({ deviceRow = null, user = null, pushResult = null } = {}) {
     const api = {
         store: { getDeviceRow: (id) => (id === 'dev-1' ? deviceRow : null) },
         executePushForDevice: (auth, body) => { calls.push += 1; return pushResult; },
+        executeChangesForDevice: (auth, q) => ({ ok: true, nextCursor: 9, changes: [] }),
+        executeAckForDevice: (auth, cursor) => ({ ok: true }),
+        executeSyncStatusForDevice: (auth) => ({ ok: true, state: 'IDLE', cursor: 3 }),
     };
     const storage = { getUserBrief: (id) => user };
     const bridge = createLinkSyncBridge({ api, storage, adminToken: 'tok-abcdef0123456789' });
@@ -60,7 +63,7 @@ test('a valid SYNC_OP reaches the single sync core and returns its result', () =
         pushResult,
     });
     const res = mockRes();
-    bridge.handle({ get: () => 'tok-abcdef0123456789', body: { deviceId: 'dev-1', kind: KIND.SYNC_OP, body: { operations: [] } } }, res);
+    bridge.handle({ get: () => 'tok-abcdef0123456789', body: { deviceId: 'dev-1', kind: KIND.SYNC_OP, body: { op: 'push', operations: [] } } }, res);
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.ok, true);
     assert.equal(res.body.kind, KIND.SYNC_ACK);
@@ -77,4 +80,35 @@ test('an unsupported kind is rejected without touching the core', () => {
     bridge.handle({ get: () => 'tok-abcdef0123456789', body: { deviceId: 'dev-1', kind: KIND.WAKE, body: {} } }, res);
     assert.equal(res.statusCode, 400);
     assert.equal(calls.push, 0);
+});
+
+test('changes/ack/status verbs route to the shared core', () => {
+    const mk = () => makeBridge({
+        deviceRow: { device_id: 'dev-1', owner_user_id: 'u1', enabled: 1, revoked_at: null },
+        user: { userId: 'u1' },
+    });
+    const token = 'tok-abcdef0123456789';
+    for (const [op, body, check] of [
+        ['changes', { op: 'changes', sinceCursor: 0, limit: 50 }, (r) => r.body.body.nextCursor === 9],
+        ['ack', { op: 'ack', cursor: 3 }, (r) => r.body.body.ok === true],
+        ['status', { op: 'status' }, (r) => r.body.body.state === 'IDLE'],
+    ]) {
+        const { bridge } = mk();
+        const res = mockRes();
+        bridge.handle({ get: () => token, body: { deviceId: 'dev-1', kind: KIND.SYNC_OP, body } }, res);
+        assert.equal(res.statusCode, 200, op + ' should succeed');
+        assert.equal(res.body.kind, KIND.SYNC_ACK);
+        assert.ok(check(res), op + ' should return the shared core result');
+    }
+});
+
+test('a missing op discriminator is rejected', () => {
+    const { bridge } = makeBridge({
+        deviceRow: { device_id: 'dev-1', owner_user_id: 'u1', enabled: 1, revoked_at: null },
+        user: { userId: 'u1' },
+    });
+    const res = mockRes();
+    bridge.handle({ get: () => 'tok-abcdef0123456789', body: { deviceId: 'dev-1', kind: KIND.SYNC_OP, body: { operations: [] } } }, res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.error.code, 'unsupported_op');
 });
