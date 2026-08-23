@@ -93,7 +93,13 @@ test('delete, clear, edit, and regeneration use canonical CAS deletes', () => {
   const tailDelete = between('async function deleteCanonicalAiTail', 'async function sendAiMessage');
   const send = between('async function sendAiMessage()', 'async function appendAiFiles');
 
-  assert.match(conversationDelete, /method:\s*'DELETE'[\s\S]*expectedRevision:\s*target\.revision/);
+  /* The delete must still be a canonical CAS delete — an expectedRevision is always sent. The
+   * revision now comes from the canonical-ized session (a refetched `revision` local), not the
+   * possibly-stale in-memory `target.revision`, so a 0 or stale revision can no longer silently
+   * skip or 409 the server delete. */
+  assert.match(conversationDelete, /method:\s*'DELETE'[\s\S]*expectedRevision:\s*revision/);
+  assert.match(conversationDelete, /ensureCanonicalAiConversation/);
+  assert.match(conversationDelete, /revision_conflict/);
   assert.match(clear, /method:\s*'DELETE'[\s\S]*expectedRevision:\s*session\.revision/);
   assert.match(tailDelete, /method:\s*'DELETE'[\s\S]*expectedRevision:\s*Number\(message\.revision\)\s*\|\|\s*1/);
   assert.match(send, /await deleteCanonicalAiTail\(session,\s*editingIndex\)/);
