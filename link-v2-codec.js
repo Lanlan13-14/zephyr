@@ -14,6 +14,10 @@ const MIN_COMPRESS_BYTES = 256;
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_DECOMPRESS_RATIO = 256;
 
+// Kind integers are frozen on the wire (they ride inside the sealed CBOR
+// envelope). Adding a kind never changes how existing frames encode, so the Go
+// and Node peers stay byte-identical. This registry must match
+// zephyr-link/internal/codec/codec.go exactly.
 const KIND = Object.freeze({
     SYNC_OP: 1,
     SYNC_ACK: 2,
@@ -22,7 +26,58 @@ const KIND = Object.freeze({
     BLOB_HAVE: 5,
     WAKE: 6,
     RELAY: 7,
+    CONTROL: 8,
+    SECRET: 9,
+    FILE_BRIDGE: 10,
+    SHARED_TERMINAL: 11,
+    SHARED_REMOTE: 12,
+    SHARED_NOTE: 13,
+    SHARED_FILE: 14,
+    AI: 15,
 });
+
+// The §15 isolated capability lanes. Each kind maps onto exactly one channel;
+// per-channel capability, flow control and residency rules key off the channel.
+// Pure function of the wire kind integer, identical on every peer.
+const CHANNEL = Object.freeze({
+    CONTROL: 'control',
+    OWNED_SYNC: 'owned-sync',
+    SECRET: 'secret',
+    BLOB: 'blob',
+    FILE_BRIDGE: 'file-bridge',
+    SHARED_TERMINAL: 'shared-terminal',
+    SHARED_REMOTE: 'shared-remote',
+    SHARED_NOTE: 'shared-note',
+    SHARED_FILE: 'shared-file',
+    AI: 'ai',
+});
+
+// Single source of truth for kind→channel; must match the Go kindChannel map.
+const KIND_CHANNEL = Object.freeze({
+    [KIND.CONTROL]: CHANNEL.CONTROL,
+    [KIND.SYNC_OP]: CHANNEL.OWNED_SYNC,
+    [KIND.SYNC_ACK]: CHANNEL.OWNED_SYNC,
+    [KIND.WAKE]: CHANNEL.CONTROL,
+    [KIND.SECRET]: CHANNEL.SECRET,
+    [KIND.BLOB_MANIFEST]: CHANNEL.BLOB,
+    [KIND.BLOB_CHUNK]: CHANNEL.BLOB,
+    [KIND.BLOB_HAVE]: CHANNEL.BLOB,
+    [KIND.FILE_BRIDGE]: CHANNEL.FILE_BRIDGE,
+    [KIND.RELAY]: CHANNEL.SHARED_TERMINAL,
+    [KIND.SHARED_TERMINAL]: CHANNEL.SHARED_TERMINAL,
+    [KIND.SHARED_REMOTE]: CHANNEL.SHARED_REMOTE,
+    [KIND.SHARED_NOTE]: CHANNEL.SHARED_NOTE,
+    [KIND.SHARED_FILE]: CHANNEL.SHARED_FILE,
+    [KIND.AI]: CHANNEL.AI,
+});
+
+function hasKind(kind) {
+    return Object.prototype.hasOwnProperty.call(KIND_CHANNEL, kind);
+}
+
+function channelOf(kind) {
+    return KIND_CHANNEL[kind];
+}
 
 const FLAG_ZSTD = 0x01;
 const FLAG_SECRET = 0x02;
@@ -90,6 +145,10 @@ function unpack(bytes) {
 
 module.exports = {
     KIND,
+    CHANNEL,
+    KIND_CHANNEL,
+    hasKind,
+    channelOf,
     FLAG_ZSTD,
     FLAG_SECRET,
     MIN_COMPRESS_BYTES,
