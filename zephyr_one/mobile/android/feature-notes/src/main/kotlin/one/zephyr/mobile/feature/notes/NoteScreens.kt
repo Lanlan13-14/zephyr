@@ -430,7 +430,7 @@ fun NoteEditorRoute(
             Column(Modifier.fillMaxSize()) {
                 Column(
                     Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 16.dp)
                         .padding(bottom = 16.dp),

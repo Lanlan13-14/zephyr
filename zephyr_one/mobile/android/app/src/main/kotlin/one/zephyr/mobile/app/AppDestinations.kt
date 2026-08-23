@@ -112,9 +112,14 @@ internal fun NoteEditorDestination(
     onBack: () -> Unit,
     onMessage: suspend (String) -> Unit,
 ) {
+    // Creating a note must always yield a fresh ViewModel. A fixed "new" key
+    // reuses the previous create's ViewModel (and its draft), so the second new
+    // note opens with the first note's content. Generate a one-shot key per
+    // entry into the create flow.
+    val createKey = remember(noteId) { if (noteId == null) java.util.UUID.randomUUID().toString() else null }
     NoteEditorRoute(
         viewModel = viewModel(
-            key = "note-editor:" + (noteId ?: "new"),
+            key = "note-editor:" + (noteId ?: "new-$createKey"),
             factory = NoteEditorViewModel.factory(account.notes, ownerUserId, noteId),
         ),
         onBack = onBack,
