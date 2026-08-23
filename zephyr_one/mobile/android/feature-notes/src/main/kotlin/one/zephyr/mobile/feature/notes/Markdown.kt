@@ -3,7 +3,7 @@ package one.zephyr.mobile.feature.notes
 /** An inline emphasis run inside one text block. */
 data class MarkdownSpan(val start: Int, val end: Int, val style: MarkdownStyle)
 
-enum class MarkdownStyle { BOLD, ITALIC, CODE, STRIKETHROUGH }
+enum class MarkdownStyle { BOLD, ITALIC, CODE, STRIKETHROUGH, LINK }
 
 /** Text with its inline styling resolved, so the composable only positions glyphs. */
 data class MarkdownText(val text: String, val spans: List<MarkdownSpan>)
@@ -269,6 +269,21 @@ object Markdown {
     }
 
     /**
+     * Link target safety, mirroring the main end's safeHref allowlist. A scheme outside the list
+     * (javascript:, data:text/html, …) drops the link and keeps the label, so a crafted note cannot
+     * turn the preview into a navigation.
+     */
+    private fun isSafeHref(url: String): Boolean {
+        val value = url.trim().lowercase()
+        if (value.isEmpty()) return false
+        if (value.startsWith("/") || value.startsWith("#")) return true
+        val scheme = value.substringBefore(':', "")
+        return scheme in SAFE_SCHEMES
+    }
+
+    private val SAFE_SCHEMES = setOf("http", "https", "mailto", "tel", "ssh", "telnet", "jms", "ftp")
+
+    /**
      * Inline emphasis.
      *
      * Code spans are resolved first and their contents are excluded from further matching, because
@@ -298,6 +313,31 @@ object Markdown {
                         out.append(source, index + 1, close)
                         spans.add(MarkdownSpan(start, out.length, MarkdownStyle.CODE))
                         index = close + 1
+                    }
+                }
+
+                // [text](url). An unsafe or malformed target keeps the label as plain text, which
+                // is what the main end does when safeHref rejects the URL.
+                character == '[' -> {
+                    val labelEnd = source.indexOf(']', index + 1)
+                    val urlOpen = if (labelEnd >= 0 && labelEnd + 1 < source.length && source[labelEnd + 1] == '(') labelEnd + 1 else -1
+                    val urlClose = if (urlOpen >= 0) source.indexOf(')', urlOpen + 1) else -1
+                    if (labelEnd < 0 || urlOpen < 0 || urlClose < 0) {
+                        out.append(character)
+                        index++
+                    } else {
+                        val label = source.substring(index + 1, labelEnd)
+                        val url = source.substring(urlOpen + 1, urlClose).trim()
+                        if (isSafeHref(url)) {
+                            val nested = inline(label)
+                            val start = out.length
+                            out.append(nested.text)
+                            spans.add(MarkdownSpan(start, out.length, MarkdownStyle.LINK))
+                            spans.addAll(nested.spans.map { it.copy(start = it.start + start, end = it.end + start) })
+                        } else {
+                            out.append(label)
+                        }
+                        index = urlClose + 1
                     }
                 }
 
