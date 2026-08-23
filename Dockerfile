@@ -73,6 +73,14 @@ COPY zephyr-ai/ ./
 RUN go mod tidy && CGO_ENABLED=0 go build -o /zephyr-ai ./cmd/zephyr-ai
 
 # ============================================================
+# Stage 2c: zephyr-link-builder — Go Link transport (ZSL/2 protocol core)
+# ============================================================
+FROM golang:1.26-alpine AS zephyr-link-builder
+WORKDIR /build
+COPY zephyr-link/ ./
+RUN go mod tidy && CGO_ENABLED=0 go build -o /zephyr-link-server ./cmd/zephyr-link-server
+
+# ============================================================
 # Stage 3: runtime — Zephyr + WASM RDP client (Alpine)
 # ============================================================
 FROM node:20-alpine3.20
@@ -109,8 +117,9 @@ RUN apk add --no-cache \
 
 COPY --from=app-build /app /app
 COPY --from=zephyr-ai-builder /zephyr-ai /usr/local/bin/zephyr-ai
+COPY --from=zephyr-link-builder /zephyr-link-server /usr/local/bin/zephyr-link-server
 COPY scripts/docker-entrypoint-ai.sh /usr/local/bin/docker-entrypoint-ai.sh
-RUN chmod +x /usr/local/bin/zephyr-ai /usr/local/bin/docker-entrypoint-ai.sh
+RUN chmod +x /usr/local/bin/zephyr-ai /usr/local/bin/zephyr-link-server /usr/local/bin/docker-entrypoint-ai.sh
 
 # RDP WASM artifacts → public/vendor/rdp-wasm/
 RUN mkdir -p /app/public/vendor/rdp-wasm

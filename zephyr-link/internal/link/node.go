@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/zsl"
 )
@@ -20,6 +21,29 @@ type Node struct {
 
 	mu       sync.Mutex
 	sessions map[string]*Endpoint // by session id
+	// devices, when non-nil, gates handshakes to enrolled device IDs. nil accepts
+	// any handshake (tests and the embedded node); the server populates it from the
+	// enrollment consume path so a session only anchors to an enrolled device.
+	devices map[string]bool
+}
+
+// RegisterDevice marks a device ID as eligible to handshake.
+func (n *Node) RegisterDevice(deviceID string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.devices == nil {
+		n.devices = make(map[string]bool)
+	}
+	n.devices[deviceID] = true
+}
+
+// RequireEnrollment makes the handshake reject unregistered devices.
+func (n *Node) RequireEnrollment() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.devices == nil {
+		n.devices = make(map[string]bool)
+	}
 }
 
 // NewNode builds a node with the transport routes mounted.
@@ -30,7 +54,31 @@ func NewNode() *Node {
 	// Embedded hosts (Android/desktop) drive outbound dials through this local
 	// endpoint, so the device side also runs the shared Go core.
 	n.mux.HandleFunc("/link/dial", n.handleDial)
+	// Real-time full-duplex channel: the server upgrades to a WebSocket and relays
+	// sealed frames; the proxy shuttles bytes without ever decrypting.
+	n.mux.HandleFunc("/link/stream", n.handleStream)
+	// Session liveness/state probe for a device; sealed so it rides the channel.
+	n.mux.HandleFunc("/link/state", n.handleState)
 	return n
+}
+
+// handleState answers a session liveness probe. The reply is sealed under the
+// session so the proxy only ever shuttles ciphertext.
+func (n *Node) handleState(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.URL.Query().Get("sessionId")
+	n.mu.Lock()
+	ep := n.sessions[sessionID]
+	n.mu.Unlock()
+	if ep == nil {
+		errJSON(w, http.StatusUnauthorized, "session_unknown", "Link 会话不存在")
+		return
+	}
+	env, err := ep.Send(6 /* WAKE */, map[string]any{"state": "ready", "serverTime": time.Now().UnixMilli()}, false)
+	if err != nil {
+		errJSON(w, http.StatusInternalServerError, "seal_failed", "seal failed")
+		return
+	}
+	writeJSON(w, env)
 }
 
 // handleDial lets an embedded host establish an outbound ZSL/2 channel to a
@@ -57,7 +105,7 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 	n.mu.Unlock()
 	writeJSON(w, map[string]any{
 		"ok": true, "sessionId": sessionID,
-		"exporter": base64.StdEncoding.EncodeToString(ep.Exporter()),
+		"exporter": base64.RawURLEncoding.EncodeToString(ep.Exporter()),
 	})
 }
 
@@ -65,6 +113,7 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 func (n *Node) Handler() http.Handler { return n.mux }
 
 type handshakeRequest struct {
+	DeviceID     string `json:"deviceId"`
 	X25519Public string `json:"x25519Public"`
 	MLKEMPublic  string `json:"mlkemPublic"`
 }
@@ -93,37 +142,63 @@ type frameResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
-func b64d(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
+func b64d(s string) ([]byte, error) { return base64.RawURLEncoding.DecodeString(s) }
+
+// errJSON answers in the same {ok:false,error:{code,message}} envelope the Node
+// link-v2-transport used, so clients see one contract regardless of which
+// transport served them.
+func errJSON(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("content-type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":    false,
+		"error": map[string]any{"code": code, "message": message},
+	})
+}
 
 func (n *Node) handleHandshake(w http.ResponseWriter, r *http.Request) {
 	var req handshakeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
+		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad json")
 		return
 	}
 	x25519Public, err := b64d(req.X25519Public)
 	if err != nil {
-		http.Error(w, "bad x25519", http.StatusBadRequest)
+		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad x25519")
 		return
 	}
 	mlkemPublic, err := b64d(req.MLKEMPublic)
 	if err != nil {
-		http.Error(w, "bad mlkem", http.StatusBadRequest)
+		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad mlkem")
+		return
+	}
+	// Fail closed on bad key sizes before any enrollment lookup, so a malformed key
+	// is not an oracle for whether a deviceId is enrolled. Only then, when the
+	// server runs a device table, require the device to be enrolled.
+	if len(mlkemPublic) != zsl.MLKEM768PublicKeyBytes || len(x25519Public) != zsl.X25519Bytes {
+		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad key size")
+		return
+	}
+	n.mu.Lock()
+	enrolled := n.devices == nil || n.devices[req.DeviceID]
+	n.mu.Unlock()
+	if !enrolled {
+		errJSON(w, http.StatusForbidden, "device_not_enrolled", "设备未完成绑定")
 		return
 	}
 	hello, sess, err := zsl.HandshakeResponder(x25519Public, mlkemPublic)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		errJSON(w, http.StatusBadRequest, "invalid_handshake", err.Error())
 		return
 	}
-	sessionID := base64.StdEncoding.EncodeToString(sess.Exporter()[:16])
+	sessionID := base64.RawURLEncoding.EncodeToString(sess.Exporter()[:16])
 	n.mu.Lock()
 	n.sessions[sessionID] = NewEndpoint(sess)
 	n.mu.Unlock()
 	writeJSON(w, handshakeResponse{
 		SessionID:       sessionID,
-		X25519Public:    base64.StdEncoding.EncodeToString(hello.X25519Public),
-		MLKEMCiphertext: base64.StdEncoding.EncodeToString(hello.MLKEMCiphertext),
+		X25519Public:    base64.RawURLEncoding.EncodeToString(hello.X25519Public),
+		MLKEMCiphertext: base64.RawURLEncoding.EncodeToString(hello.MLKEMCiphertext),
 	})
 }
 
@@ -137,7 +212,7 @@ func (n *Node) handleFrame(w http.ResponseWriter, r *http.Request) {
 	ep := n.sessions[req.SessionID]
 	n.mu.Unlock()
 	if ep == nil {
-		writeJSON(w, frameResponse{OK: false, Error: "session_unknown"})
+		errJSON(w, http.StatusBadRequest, "session_unknown", "Link 会话不存在")
 		return
 	}
 	iv, _ := b64d(req.IV)
@@ -145,7 +220,7 @@ func (n *Node) handleFrame(w http.ResponseWriter, r *http.Request) {
 	tag, _ := b64d(req.Tag)
 	fr, err := ep.Receive(&Envelope{Seq: req.Seq, IV: iv, CT: ct, Tag: tag})
 	if err != nil {
-		writeJSON(w, frameResponse{OK: false, Error: err.Error()})
+		errJSON(w, http.StatusBadRequest, "invalid_frame", err.Error())
 		return
 	}
 	// Echo the received kind back as an ack, sealed on the same channel.
@@ -157,9 +232,9 @@ func (n *Node) handleFrame(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, frameResponse{
 		OK:  true,
 		Seq: ack.Seq,
-		IV:  base64.StdEncoding.EncodeToString(ack.IV),
-		CT:  base64.StdEncoding.EncodeToString(ack.CT),
-		Tag: base64.StdEncoding.EncodeToString(ack.Tag),
+		IV:  base64.RawURLEncoding.EncodeToString(ack.IV),
+		CT:  base64.RawURLEncoding.EncodeToString(ack.CT),
+		Tag: base64.RawURLEncoding.EncodeToString(ack.Tag),
 	})
 }
 
@@ -171,8 +246,8 @@ func (n *Node) Dial(baseURL string) (*Endpoint, string, error) {
 		return nil, "", err
 	}
 	reqBody, _ := json.Marshal(handshakeRequest{
-		X25519Public: base64.StdEncoding.EncodeToString(init.X25519Public),
-		MLKEMPublic:  base64.StdEncoding.EncodeToString(init.MLKEMPublic),
+		X25519Public: base64.RawURLEncoding.EncodeToString(init.X25519Public),
+		MLKEMPublic:  base64.RawURLEncoding.EncodeToString(init.MLKEMPublic),
 	})
 	resp, err := http.Post(baseURL+"/link/handshake", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
@@ -212,9 +287,9 @@ func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body
 	reqBody, _ := json.Marshal(frameRequest{
 		SessionID: sessionID,
 		Seq:       env.Seq,
-		IV:        base64.StdEncoding.EncodeToString(env.IV),
-		CT:        base64.StdEncoding.EncodeToString(env.CT),
-		Tag:       base64.StdEncoding.EncodeToString(env.Tag),
+		IV:        base64.RawURLEncoding.EncodeToString(env.IV),
+		CT:        base64.RawURLEncoding.EncodeToString(env.CT),
+		Tag:       base64.RawURLEncoding.EncodeToString(env.Tag),
 	})
 	resp, err := http.Post(baseURL+"/link/frame", "application/json", bytes.NewReader(reqBody))
 	if err != nil {

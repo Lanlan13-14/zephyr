@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const zsl = require(path.join(here, '..', 'link-v2-zsl.js'));
+const { stopLinkV2Go } = require(path.join(here, '..', 'link-v2-go-proxy.js'));
 const { TestServer } = await import('./test-server.mjs');
 
 let server;
@@ -17,6 +18,9 @@ before(async () => {
 });
 
 after(async () => {
+    // Stop the supervised Go Link child too, otherwise it leaks across the run and
+    // keeps the node process alive after the tests finish.
+    try { stopLinkV2Go(); } catch {}
     if (server) await server.stop();
 });
 
