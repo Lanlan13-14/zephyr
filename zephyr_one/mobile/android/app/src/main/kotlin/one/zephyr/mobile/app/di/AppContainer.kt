@@ -105,6 +105,12 @@ class AppContainer(private val context: Context) {
         one.zephyr.mobile.app.EmbeddedLinkApi(embeddedLinkProcess)
     }
 
+    /** Install the Go-loopback ML-KEM provider once the loopback client exists. */
+    internal val mlkemProviderInstalled: Boolean by lazy {
+        one.zephyr.mobile.app.installEmbeddedLinkMlkem(embeddedLink)
+        true
+    }
+
     /** Process lifetime scope used only to tear down a graph after that graph reports revocation. */
     private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -260,6 +266,8 @@ class AppContainer(private val context: Context) {
                 }
             },
             identityFactory = PendingDeviceIdentityFactory { serverId, userId, deviceId ->
+                /* The Go-loopback ML-KEM provider must be installed before any key generation. */
+                mlkemProviderInstalled
                 val identity = DeviceIdentity(
                     blobs = secretBlobs,
                     scope = DeviceIdentity.Scope(serverId = serverId, userId = userId, deviceId = deviceId),
