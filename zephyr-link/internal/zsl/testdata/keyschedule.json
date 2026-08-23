@@ -1,0 +1,16 @@
+[
+  {
+    "master": "3sG7Uz5FReDw3Yd8Ef8qrkCeqmWU1NBS7hwvLOUexik=",
+    "role": "initiator",
+    "sendKey": "bem6vWKXJXn1Y1MfUxUm55C18ot+75L4M5k7F24By1U=",
+    "recvKey": "qF+wFO4Jfr0kBHwi4twtwMbg8ksYrAGf3lyRRJFP/7Q=",
+    "exporter": "cMBe7tKjiinELnlqWd+xxKev617Ae9G3QxMP9vS4dY8="
+  },
+  {
+    "master": "3sG7Uz5FReDw3Yd8Ef8qrkCeqmWU1NBS7hwvLOUexik=",
+    "role": "responder",
+    "sendKey": "qF+wFO4Jfr0kBHwi4twtwMbg8ksYrAGf3lyRRJFP/7Q=",
+    "recvKey": "bem6vWKXJXn1Y1MfUxUm55C18ot+75L4M5k7F24By1U=",
+    "exporter": "cMBe7tKjiinELnlqWd+xxKev617Ae9G3QxMP9vS4dY8="
+  }
+]
