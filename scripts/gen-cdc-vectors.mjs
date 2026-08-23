@@ -12,11 +12,18 @@ const repo = path.resolve(here, '..');
 const cdc = require(path.join(repo, 'link-v2-cdc.js'));
 
 const b64 = (b) => Buffer.from(b).toString('base64');
+// Deterministic bodies/keys so the vectors are reproducible in CI.
+const fill = (label, n) => {
+    const out = [];
+    let i = 0;
+    while (Buffer.concat(out).length < n) { out.push(crypto.createHash('sha256').update(label + ':' + i, 'utf8').digest()); i += 1; }
+    return Buffer.concat(out).subarray(0, n);
+};
 
 const vectors = [];
 for (const size of [0, 4096, 100 * 1024, 300 * 1024]) {
-    const body = crypto.randomBytes(size);
-    const accountKey = crypto.randomBytes(32);
+    const body = fill('cdc-body-' + size, size);
+    const accountKey = fill('cdc-key-' + size, 32);
     const m = cdc.buildManifest(body, { accountKey });
     vectors.push({
         body: b64(body),

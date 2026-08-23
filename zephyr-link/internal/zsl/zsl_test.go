@@ -86,50 +86,39 @@ func TestBadKEMSizeFailsClosed(t *testing.T) {
 	}
 }
 
-// vector mirrors the JSON the Node reference emits for interop testing.
-type vector struct {
-	Master       string `json:"master"`
-	Role         string `json:"role"`
-	Plaintext    string `json:"plaintext"`
-	Seq          uint64 `json:"seq"`
-	IV           string `json:"iv"`
-	CT           string `json:"ct"`
-	Tag          string `json:"tag"`
-	ExpectOpenOK bool   `json:"expectOpenOk"`
+// keyVector mirrors the deterministic key-schedule JSON the Node reference emits.
+type keyVector struct {
+	Master   string `json:"master"`
+	Role     string `json:"role"`
+	SendKey  string `json:"sendKey"`
+	RecvKey  string `json:"recvKey"`
+	Exporter string `json:"exporter"`
 }
 
-// TestInteropVectors replays Node-generated seal vectors through the Go open
-// path. The vector file is produced by scripts/gen-zsl-vectors.mjs; when absent
-// the test is skipped so a pure-Go checkout still builds.
-func TestInteropVectors(t *testing.T) {
-	data, err := os.ReadFile("testdata/interop.json")
+// TestKeyScheduleVectors locks the deterministic half of ZSL/2: given a master,
+// Go must derive the same send/recv/exporter keys as the Node reference. Frame
+// sealing uses a random IV by design and is covered by the live round-trip tests
+// above, not by a reproducibility-asserted file.
+func TestKeyScheduleVectors(t *testing.T) {
+	data, err := os.ReadFile("testdata/keyschedule.json")
 	if err != nil {
-		t.Skip("no interop vectors (run scripts/gen-zsl-vectors.mjs)")
+		t.Skip("no key-schedule vectors (run scripts/gen-zsl-vectors.mjs)")
 	}
-	var vectors []vector
+	var vectors []keyVector
 	if err := json.Unmarshal(data, &vectors); err != nil {
 		t.Fatal(err)
 	}
 	for i, v := range vectors {
 		master, _ := base64.StdEncoding.DecodeString(v.Master)
-		iv, _ := base64.StdEncoding.DecodeString(v.IV)
-		ct, _ := base64.StdEncoding.DecodeString(v.CT)
-		tag, _ := base64.StdEncoding.DecodeString(v.Tag)
-		// Rebuild the peer session directly from the shared master so we test the
-		// wire format + key schedule, not the KEM (which is exercised above).
-		var sess *Session
-		if v.Role == "initiator" {
-			// vector was sealed BY initiator, so we open as responder.
-			sess = openSession(master, "responder")
-		} else {
-			sess = openSession(master, "initiator")
+		sess := openSession(master, v.Role)
+		if got := base64.StdEncoding.EncodeToString(sess.sendKey); got != v.SendKey {
+			t.Fatalf("vector %d (%s): sendKey diverges", i, v.Role)
 		}
-		_, err := sess.Open(&Frame{Seq: v.Seq, IV: iv, CT: ct, Tag: tag})
-		if v.ExpectOpenOK && err != nil {
-			t.Fatalf("vector %d: open failed: %v", i, err)
+		if got := base64.StdEncoding.EncodeToString(sess.recvKey); got != v.RecvKey {
+			t.Fatalf("vector %d (%s): recvKey diverges", i, v.Role)
 		}
-		if !v.ExpectOpenOK && err == nil {
-			t.Fatalf("vector %d: expected open to fail", i)
+		if got := base64.StdEncoding.EncodeToString(sess.Exporter()); got != v.Exporter {
+			t.Fatalf("vector %d (%s): exporter diverges", i, v.Role)
 		}
 	}
 }
