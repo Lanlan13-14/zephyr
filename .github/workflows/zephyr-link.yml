@@ -1,0 +1,70 @@
+name: Zephyr Link (Go)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'zephyr-link/**'
+      - 'link-v2-*.js'
+      - 'scripts/gen-*-vectors.mjs'
+      - '.github/workflows/zephyr-link.yml'
+  pull_request:
+    paths:
+      - 'zephyr-link/**'
+      - 'link-v2-*.js'
+      - 'scripts/gen-*-vectors.mjs'
+      - '.github/workflows/zephyr-link.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      # ZSL/2 needs crypto/mlkem, which landed in the Go standard library in 1.24.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Node deps (interop vectors come from the Node reference)
+        run: npm ci --ignore-scripts
+
+      - name: Vet and unit-test the Go core
+        working-directory: zephyr-link
+        run: |
+          go vet ./...
+          go test ./...
+
+      # The interop vectors are the contract that the Go and Node runtimes share a
+      # wire format. Regenerate them from the Node reference and fail on any drift,
+      # so neither side can silently change a label, table or encoding rule.
+      - name: Verify Go<->Node interop vectors are current
+        run: |
+          node scripts/gen-zsl-vectors.mjs
+          node scripts/gen-codec-vectors.mjs
+          node scripts/gen-cdc-vectors.mjs
+          if ! git diff --quiet -- zephyr-link/internal/*/testdata/; then
+            echo "::error::interop vectors drifted from the Node reference; re-run scripts/gen-*-vectors.mjs and commit"
+            git diff -- zephyr-link/internal/*/testdata/ | head -50
+            exit 1
+          fi
+
+      # Build the Android-embeddable artifact to prove the mobile target compiles.
+      - name: Cross-compile the Link core for Android arm64
+        working-directory: zephyr-link
+        run: |
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build ./...
