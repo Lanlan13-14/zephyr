@@ -17,7 +17,9 @@ const (
 	MaxDecompressRatio = 256
 )
 
-// KIND is the registry of business frame kinds.
+// KIND is the registry of business frame kinds. The integers are frozen on the
+// wire (they ride inside the sealed CBOR envelope); adding a kind never changes
+// how existing frames encode, so peers stay byte-identical.
 const (
 	KindSyncOp       = 1
 	KindSyncAck      = 2
@@ -26,12 +28,86 @@ const (
 	KindBlobHave     = 5
 	KindWake         = 6
 	KindRelay        = 7
+	// KindControl carries control-plane frames (diagnostics, capability
+	// negotiation, epoch/rekey notices) that are not account data.
+	KindControl = 8
+	// KindSecret carries a sealed secret envelope on the dedicated secret
+	// channel. It is always packed with FlagSecret so it never shares a
+	// compression context with ordinary metadata.
+	KindSecret = 9
+	// KindFileBridge carries a file-bridge lease operation scoped to one device,
+	// one shareProfile and one time window.
+	KindFileBridge = 10
+	// KindSharedTerminal carries a shared online-use terminal stream (PTY
+	// semantics only; the credential never leaves the broker).
+	KindSharedTerminal = 11
+	// KindSharedRemote carries a shared remote-desktop (RDP/VNC) control/frame
+	// stream under a strict capability.
+	KindSharedRemote = 12
+	// KindSharedNote carries a shared-note online viewer/editor frame.
+	KindSharedNote = 13
+	// KindSharedFile carries a shared-file online-use stream.
+	KindSharedFile = 14
+	// KindAI carries a shared-AI event/trace/confirmation frame. The provider key
+	// and resolved credential stay on the broker.
+	KindAI = 15
 )
 
 const (
 	FlagZstd   = 0x01
 	FlagSecret = 0x02
 )
+
+// Channel names are the §15 isolated capability lanes. Each business kind maps
+// onto exactly one channel; the channel is what per-channel capability, flow
+// control and residency rules key off. Mapping is a pure function of kind, so
+// it is identical on every peer without any wire change.
+type Channel string
+
+const (
+	ChannelControl        Channel = "control"
+	ChannelOwnedSync      Channel = "owned-sync"
+	ChannelSecret         Channel = "secret"
+	ChannelBlob           Channel = "blob"
+	ChannelFileBridge     Channel = "file-bridge"
+	ChannelSharedTerminal Channel = "shared-terminal"
+	ChannelSharedRemote   Channel = "shared-remote"
+	ChannelSharedNote     Channel = "shared-note"
+	ChannelSharedFile     Channel = "shared-file"
+	ChannelAI             Channel = "ai"
+)
+
+// kindChannel is the single source of truth for kind→channel. A kind absent
+// here is not registered and must be rejected, not defaulted.
+var kindChannel = map[int]Channel{
+	KindControl:        ChannelControl,
+	KindSyncOp:         ChannelOwnedSync,
+	KindSyncAck:        ChannelOwnedSync,
+	KindWake:           ChannelControl,
+	KindSecret:         ChannelSecret,
+	KindBlobManifest:   ChannelBlob,
+	KindBlobChunk:      ChannelBlob,
+	KindBlobHave:       ChannelBlob,
+	KindFileBridge:     ChannelFileBridge,
+	KindRelay:          ChannelSharedTerminal,
+	KindSharedTerminal: ChannelSharedTerminal,
+	KindSharedRemote:   ChannelSharedRemote,
+	KindSharedNote:     ChannelSharedNote,
+	KindSharedFile:     ChannelSharedFile,
+	KindAI:             ChannelAI,
+}
+
+// HasKind reports whether kind is a registered business frame kind.
+func HasKind(kind int) bool {
+	_, ok := kindChannel[kind]
+	return ok
+}
+
+// ChannelOf returns the isolated channel a kind belongs to.
+func ChannelOf(kind int) (Channel, bool) {
+	ch, ok := kindChannel[kind]
+	return ch, ok
+}
 
 // encMode is deterministic (CTAP2/core) CBOR so a frame hashes identically on
 // every peer — required for Merkle/chunk-id equality across Go and Node.

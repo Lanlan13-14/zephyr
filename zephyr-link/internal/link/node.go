@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/zsl"
 )
 
@@ -25,6 +26,9 @@ type Node struct {
 	// any handshake (tests and the embedded node); the server populates it from the
 	// enrollment consume path so a session only anchors to an enrolled device.
 	devices map[string]bool
+	// dispatch routes unsealed business frames to per-kind handlers. It is what
+	// turns the node from a pipe into the Link channel.
+	dispatch *Dispatcher
 }
 
 // RegisterDevice marks a device ID as eligible to handshake.
@@ -48,7 +52,7 @@ func (n *Node) RequireEnrollment() {
 
 // NewNode builds a node with the transport routes mounted.
 func NewNode() *Node {
-	n := &Node{mux: http.NewServeMux(), sessions: make(map[string]*Endpoint)}
+	n := &Node{mux: http.NewServeMux(), sessions: make(map[string]*Endpoint), dispatch: NewDispatcher()}
 	n.mux.HandleFunc("/link/handshake", n.handleHandshake)
 	n.mux.HandleFunc("/link/frame", n.handleFrame)
 	// Embedded hosts (Android/desktop) drive outbound dials through this local
@@ -59,7 +63,22 @@ func NewNode() *Node {
 	n.mux.HandleFunc("/link/stream", n.handleStream)
 	// Session liveness/state probe for a device; sealed so it rides the channel.
 	n.mux.HandleFunc("/link/state", n.handleState)
+	n.registerBuiltinHandlers()
 	return n
+}
+
+// Dispatcher exposes the node's business-frame router so hosts (server, mobile,
+// desktop) register their per-kind handlers.
+func (n *Node) Dispatcher() *Dispatcher { return n.dispatch }
+
+// registerBuiltinHandlers installs the handlers the node serves itself: the
+// control-channel wake/state probe. Business lanes (sync, blob, shared, …) are
+// registered by the embedding host, because they need account data the node
+// does not own.
+func (n *Node) registerBuiltinHandlers() {
+	n.dispatch.Register(codec.KindWake, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
+		return codec.KindWake, map[string]any{"state": "ready", "serverTime": time.Now().UnixMilli()}, false, nil
+	})
 }
 
 // handleState answers a session liveness probe. The reply is sealed under the
@@ -223,8 +242,17 @@ func (n *Node) handleFrame(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "invalid_frame", err.Error())
 		return
 	}
-	// Echo the received kind back as an ack, sealed on the same channel.
-	ack, err := ep.Send(2 /* SYNC_ACK */, map[string]any{"receivedKind": fr.Kind, "ok": true}, false)
+	// Route the business frame to its per-kind handler instead of echoing the
+	// kind. An unhandled or unknown kind is a hard failure, not a silent ack.
+	replyKind, replyBody, replySecret, derr := n.dispatch.Dispatch(&FrameContext{SessionID: req.SessionID}, fr)
+	if derr != nil {
+		errJSON(w, http.StatusBadRequest, "dispatch_failed", derr.Error())
+		return
+	}
+	if replyBody == nil {
+		replyKind, replyBody, replySecret = codec.KindSyncAck, map[string]any{"receivedKind": fr.Kind, "ok": true}, false
+	}
+	ack, err := ep.Send(replyKind, replyBody, replySecret)
 	if err != nil {
 		writeJSON(w, frameResponse{OK: false, Error: err.Error()})
 		return

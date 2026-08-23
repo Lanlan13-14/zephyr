@@ -35,6 +35,16 @@ func TestThreeNodesOverHTTP(t *testing.T) {
 		t.Fatal("sessions collided")
 	}
 
+	// The server node routes business frames through its dispatcher; register the
+	// sync and blob lanes the test exercises (a real host wires these to account
+	// data). A kind with no handler must be rejected, not echoed.
+	server.Dispatcher().Register(codec.KindSyncOp, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
+		return codec.KindSyncAck, map[string]any{"receivedKind": fr.Kind, "ok": true}, false, nil
+	})
+	server.Dispatcher().Register(codec.KindBlobManifest, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
+		return codec.KindSyncAck, map[string]any{"receivedKind": fr.Kind, "ok": true}, false, nil
+	})
+
 	// Mobile pushes a sync op; server acks it.
 	ackKind, err := mobile.SendFrame(srv.URL, mobileSession, mobileEp, codec.KindSyncOp, map[string]any{
 		"op": "upsert", "entity": "note", "id": "n1",
