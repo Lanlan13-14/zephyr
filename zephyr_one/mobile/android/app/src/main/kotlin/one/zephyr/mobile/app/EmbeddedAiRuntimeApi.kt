@@ -29,7 +29,7 @@ import kotlin.coroutines.resumeWithException
 /** Typed loopback client for the embedded Go runtime. */
 internal class EmbeddedAiRuntimeApi(
     private val process: EmbeddedAiRuntimeProcess,
-    private val platformHost: AndroidAiPlatformHost,
+    private val platformHost: AndroidAiPlatformHost?,
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
@@ -59,6 +59,16 @@ internal class EmbeddedAiRuntimeApi(
 
     suspend fun abort(runId: String): ApiResult<AiAbortResponseDto> =
         post("/admin/runs/${encode(runId)}/abort", JsonObject(emptyMap()), JsonObject.serializer(), AiAbortResponseDto.serializer())
+
+    /**
+     * Model discovery against the provider's own /models, served by the embedded runtime so the
+     * feature works with no main end attached. The provider config may be an unsaved form draft.
+     */
+    suspend fun providerModels(provider: EmbeddedProvider): ApiResult<List<EmbeddedDiscoveredModel>> =
+        when (val result = post("/admin/providers/models", EmbeddedProviderModelsRequest(provider), EmbeddedProviderModelsRequest.serializer(), EmbeddedProviderModelsResponse.serializer())) {
+            is ApiResult.Success -> ApiResult.Success(result.value.models, result.requestId)
+            is ApiResult.Failure -> result
+        }
 
     suspend fun decide(runId: String, body: EmbeddedPermissionDecision): ApiResult<EmbeddedPermissionResponse> =
         post("/admin/runs/${encode(runId)}/permission", body, EmbeddedPermissionDecision.serializer(), EmbeddedPermissionResponse.serializer())
@@ -122,8 +132,10 @@ internal class EmbeddedAiRuntimeApi(
     catch (error: IOException) { failure("embedded_ai_unreachable", error.message ?: "本机 AI Runtime 不可达", true) }
 
     private fun endpoint(): EmbeddedAiRuntimeProcess.Endpoint {
-        val host = platformHost.ensureStarted()
-        return process.ensureStarted(host.url, host.token)
+        val host = platformHost?.ensureStarted()
+        // A null platform host starts the runtime model-only (the Go main's empty-URL path): model
+        // discovery and pure chat need no tools, so the settings screen does not bind a tool host.
+        return process.ensureStarted(host?.url.orEmpty(), host?.token.orEmpty())
     }
     private fun authorized(
         request: Request,
@@ -167,6 +179,9 @@ internal class EmbeddedAiRuntimeApi(
 @kotlinx.serialization.Serializable internal data class EmbeddedMessage(val id: Long, val role: String, val content: String = "", val createdAt: Long = 0)
 @kotlinx.serialization.Serializable internal data class EmbeddedMessagesResponse(val ok: Boolean = true, val messages: List<EmbeddedMessage> = emptyList())
 @kotlinx.serialization.Serializable internal data class EmbeddedProvider(val id: String, val name: String, val kind: String, val baseUrl: String, val apiKey: String, val defaultModel: String, val models: List<String>, val apiMode: String = "auto", val organization: String = "", val extraHeaders: Map<String,String> = emptyMap(), val options: JsonObject = JsonObject(emptyMap()))
+@kotlinx.serialization.Serializable internal data class EmbeddedProviderModelsRequest(val provider: EmbeddedProvider)
+@kotlinx.serialization.Serializable internal data class EmbeddedDiscoveredModel(val id: String, val label: String = "")
+@kotlinx.serialization.Serializable internal data class EmbeddedProviderModelsResponse(val ok: Boolean = true, val models: List<EmbeddedDiscoveredModel> = emptyList())
 @kotlinx.serialization.Serializable internal data class EmbeddedPermission(val mode: String = "ask", val deny: List<String> = emptyList(), val ask: List<String> = emptyList(), val allow: List<String> = emptyList())
 @kotlinx.serialization.Serializable internal data class EmbeddedCompose(val assistantName: String = "Zephyr AI", val defaultSystemPrompt: String = "", val customSystemPrompt: String = "", val contextText: String = "", val locale: String = "zh-CN", val skills: List<EmbeddedSkill> = emptyList(), val memories: List<EmbeddedMemory> = emptyList(), val envVars: List<EmbeddedEnv> = emptyList())
 @kotlinx.serialization.Serializable internal data class EmbeddedSkill(val id: String, val name: String, val description: String, val prompt: String, val enabled: Boolean)

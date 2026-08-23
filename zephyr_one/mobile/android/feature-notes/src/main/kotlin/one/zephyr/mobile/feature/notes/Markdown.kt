@@ -3,7 +3,7 @@ package one.zephyr.mobile.feature.notes
 /** An inline emphasis run inside one text block. */
 data class MarkdownSpan(val start: Int, val end: Int, val style: MarkdownStyle)
 
-enum class MarkdownStyle { BOLD, ITALIC, CODE, STRIKETHROUGH }
+enum class MarkdownStyle { BOLD, ITALIC, CODE, STRIKETHROUGH, LINK }
 
 /** Text with its inline styling resolved, so the composable only positions glyphs. */
 data class MarkdownText(val text: String, val spans: List<MarkdownSpan>)
@@ -25,6 +25,16 @@ sealed interface MarkdownBlock {
 
     /** @param checked renders a real checkbox state, which a plain bullet cannot convey. */
     data class TaskItem(val depth: Int, val checked: Boolean, val text: MarkdownText) : MarkdownBlock
+
+    /**
+     * GFM table. [alignments] has one entry per column: left / center / right / "" (default).
+     * Cell text keeps inline styling, which is how the main end's markdown.js renders it.
+     */
+    data class Table(
+        val header: List<MarkdownText>,
+        val alignments: List<String>,
+        val rows: List<List<MarkdownText>>,
+    ) : MarkdownBlock
 
     data object Divider : MarkdownBlock
 }
@@ -81,6 +91,22 @@ object Markdown {
             if (trimmed.isEmpty()) {
                 flushParagraph()
                 index++
+                continue
+            }
+
+            // GFM table: a header row of pipe cells followed by an alignment separator. Only
+            // recognised when both lines match, so an ordinary "| a | b" sentence stays a paragraph.
+            if (index + 1 < lines.size && isTableSeparator(lines[index + 1]) && isTableRow(trimmed)) {
+                flushParagraph()
+                val header = splitTableRow(trimmed).map { inline(it) }
+                val alignments = tableAlignments(lines[index + 1])
+                val body = ArrayList<List<MarkdownText>>()
+                index += 2
+                while (index < lines.size && isTableRow(lines[index].trim()) && lines[index].isNotBlank()) {
+                    body.add(splitTableRow(lines[index].trim()).map { inline(it) })
+                    index++
+                }
+                blocks.add(MarkdownBlock.Table(header = header, alignments = alignments, rows = body))
                 continue
             }
 
@@ -162,6 +188,41 @@ object Markdown {
     private fun isDivider(trimmed: String): Boolean =
         trimmed.length >= 3 && (trimmed.all { it == '-' } || trimmed.all { it == '*' } || trimmed.all { it == '_' })
 
+    /** A table body/header line: at least one pipe, same rule as the main end's splitTableRow. */
+    private fun isTableRow(trimmed: String): Boolean = trimmed.contains('|')
+
+    /** The | --- | :---: | ---: | separator. Requires at least one dash per cell, like GFM. */
+    private fun isTableSeparator(line: String): Boolean {
+        val trimmed = line.trim()
+        if (!trimmed.contains('-') || !isTableRow(trimmed)) return false
+        val cells = splitTableRow(trimmed)
+        if (cells.isEmpty()) return false
+        return cells.all { cell ->
+            val body = cell.removePrefix(":").removeSuffix(":")
+            body.isNotEmpty() && body.all { it == '-' }
+        }
+    }
+
+    private fun splitTableRow(line: String): List<String> {
+        var value = line.trim()
+        if (value.startsWith("|")) value = value.substring(1)
+        if (value.endsWith("|")) value = value.substring(0, value.length - 1)
+        if (value.isEmpty()) return emptyList()
+        return value.split('|').map { it.trim() }
+    }
+
+    private fun tableAlignments(separator: String): List<String> =
+        splitTableRow(separator).map { cell ->
+            val left = cell.startsWith(":")
+            val right = cell.endsWith(":")
+            when {
+                left && right -> "center"
+                right -> "right"
+                left -> "left"
+                else -> ""
+            }
+        }
+
     private fun headingLevel(trimmed: String): Int {
         var level = 0
         while (level < trimmed.length && trimmed[level] == '#') level++
@@ -208,6 +269,21 @@ object Markdown {
     }
 
     /**
+     * Link target safety, mirroring the main end's safeHref allowlist. A scheme outside the list
+     * (javascript:, data:text/html, …) drops the link and keeps the label, so a crafted note cannot
+     * turn the preview into a navigation.
+     */
+    private fun isSafeHref(url: String): Boolean {
+        val value = url.trim().lowercase()
+        if (value.isEmpty()) return false
+        if (value.startsWith("/") || value.startsWith("#")) return true
+        val scheme = value.substringBefore(':', "")
+        return scheme in SAFE_SCHEMES
+    }
+
+    private val SAFE_SCHEMES = setOf("http", "https", "mailto", "tel", "ssh", "telnet", "jms", "ftp")
+
+    /**
      * Inline emphasis.
      *
      * Code spans are resolved first and their contents are excluded from further matching, because
@@ -237,6 +313,31 @@ object Markdown {
                         out.append(source, index + 1, close)
                         spans.add(MarkdownSpan(start, out.length, MarkdownStyle.CODE))
                         index = close + 1
+                    }
+                }
+
+                // [text](url). An unsafe or malformed target keeps the label as plain text, which
+                // is what the main end does when safeHref rejects the URL.
+                character == '[' -> {
+                    val labelEnd = source.indexOf(']', index + 1)
+                    val urlOpen = if (labelEnd >= 0 && labelEnd + 1 < source.length && source[labelEnd + 1] == '(') labelEnd + 1 else -1
+                    val urlClose = if (urlOpen >= 0) source.indexOf(')', urlOpen + 1) else -1
+                    if (labelEnd < 0 || urlOpen < 0 || urlClose < 0) {
+                        out.append(character)
+                        index++
+                    } else {
+                        val label = source.substring(index + 1, labelEnd)
+                        val url = source.substring(urlOpen + 1, urlClose).trim()
+                        if (isSafeHref(url)) {
+                            val nested = inline(label)
+                            val start = out.length
+                            out.append(nested.text)
+                            spans.add(MarkdownSpan(start, out.length, MarkdownStyle.LINK))
+                            spans.addAll(nested.spans.map { it.copy(start = it.start + start, end = it.end + start) })
+                        } else {
+                            out.append(label)
+                        }
+                        index = urlClose + 1
                     }
                 }
 
@@ -312,6 +413,7 @@ object Markdown {
                     is MarkdownBlock.TaskItem -> block.text.text
                     is MarkdownBlock.Quote -> block.text.text
                     is MarkdownBlock.CodeBlock -> block.code.lineSequence().firstOrNull()
+                    is MarkdownBlock.Table -> block.header.joinToString(" ") { it.text }
                     MarkdownBlock.Divider -> null
                 }
             }

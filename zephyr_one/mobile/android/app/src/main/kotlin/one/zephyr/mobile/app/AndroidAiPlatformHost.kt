@@ -255,6 +255,206 @@ internal class AndroidAiPlatformHost(
         ))
     }
 
+    // -- note trash / restore (aiWriteEnabled-gated, mirroring the note_write rule) --------------
+
+    private suspend fun noteDelete(noteId: String): JsonElement {
+        if (noteId.isBlank()) return error("invalid_tool_arguments", "noteId 不能为空")
+        val owner = account.binding.userId
+        val note = account.notes.searchNotes("", owner).firstOrNull { it.noteId == noteId && it.deletedAt == null }
+            ?: return error("not_found", "笔记不存在")
+        if (!note.aiWriteEnabled) return error("permission_denied", "该笔记未对 AI 开放写入")
+        return try {
+            account.notes.trashNote(note, owner)
+            JsonObject(mapOf("noteId" to JsonPrimitive(noteId), "trashed" to JsonPrimitive(true)))
+        } catch (failure: Exception) {
+            error("note_delete_failed", failure.message ?: "删除失败")
+        }
+    }
+
+    private suspend fun noteRestore(noteId: String): JsonElement {
+        if (noteId.isBlank()) return error("invalid_tool_arguments", "noteId 不能为空")
+        val owner = account.binding.userId
+        // Trashed rows are invisible to searchNotes (deletedAt IS NULL), so read the trash query.
+        val note = account.notes.observeTrashedNotes(owner).firstOrNull()?.firstOrNull { it.noteId == noteId }
+            ?: return error("not_found", "回收站里没有这篇笔记")
+        if (!note.aiWriteEnabled) return error("permission_denied", "该笔记未对 AI 开放写入")
+        return try {
+            account.notes.restoreNote(note, owner)
+            JsonObject(mapOf("noteId" to JsonPrimitive(noteId), "restored" to JsonPrimitive(true)))
+        } catch (failure: Exception) {
+            error("note_restore_failed", failure.message ?: "恢复失败")
+        }
+    }
+
+    // -- snippet write / delete -------------------------------------------------------------------
+
+    private suspend fun snippetWrite(args: JsonObject): JsonElement {
+        val name = args.string("name"); val command = args.string("command")
+        if (name.isBlank() || command.isBlank()) return error("invalid_tool_arguments", "name 和 command 不能为空")
+        val owner = account.binding.userId
+        val existingId = args.string("snippetId")
+        val existing = if (existingId.isBlank()) null else visibleSnippets().firstOrNull { it.id == existingId }
+        val next = (existing ?: one.zephyr.mobile.model.Snippet(
+            id = "snippet-" + java.util.UUID.randomUUID().toString(),
+            ownerUserId = owner,
+            name = name,
+            command = command,
+        )).copy(
+            name = name,
+            command = command,
+            group = args.string("group").ifBlank { existing?.group.orEmpty() },
+            autoRun = (args["autoRun"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: (existing?.autoRun ?: false),
+        )
+        val mask = if (existing == null) listOf("name", "command", "group", "autoRun") else listOf("name", "command", "group", "autoRun")
+        return try {
+            account.notes.saveSnippet(next, mask, owner, createdLocally = existing == null)
+            JsonObject(mapOf("snippetId" to JsonPrimitive(next.id), "saved" to JsonPrimitive(true)))
+        } catch (failure: Exception) {
+            error("snippet_write_failed", failure.message ?: "片段保存失败")
+        }
+    }
+
+    private suspend fun snippetDelete(snippetId: String): JsonElement {
+        if (snippetId.isBlank()) return error("invalid_tool_arguments", "snippetId 不能为空")
+        val owner = account.binding.userId
+        val snippet = visibleSnippets().firstOrNull { it.id == snippetId } ?: return error("not_found", "片段不存在")
+        return try {
+            account.notes.deleteSnippet(snippet, owner)
+            JsonObject(mapOf("snippetId" to JsonPrimitive(snippetId), "deleted" to JsonPrimitive(true)))
+        } catch (failure: Exception) {
+            error("snippet_delete_failed", failure.message ?: "删除失败")
+        }
+    }
+
+    // -- proxies / ssh keys / jump hosts ----------------------------------------------------------
+
+    private suspend fun proxyList(): JsonElement = JsonObject(mapOf("proxies" to JsonArray(
+        account.resources.observeProxies(account.binding.userId).firstOrNull().orEmpty()
+            .filter { it.deletedAt == null }
+            .map { p -> JsonObject(mapOf(
+                "proxyId" to JsonPrimitive(p.id), "name" to JsonPrimitive(p.name),
+                "type" to JsonPrimitive(p.type.wireName), "host" to JsonPrimitive(p.host), "port" to JsonPrimitive(p.port),
+            )) },
+    )))
+
+    private suspend fun proxyWrite(args: JsonObject): JsonElement {
+        val name = args.string("name"); val host = args.string("host")
+        val port = args.string("port").toIntOrNull() ?: 1080
+        if (name.isBlank() || host.isBlank()) return error("invalid_tool_arguments", "name 和 host 不能为空")
+        val owner = account.binding.userId
+        val existingId = args.string("proxyId")
+        val existing = if (existingId.isBlank()) null else account.resources.findProxy(existingId)
+        val next = (existing ?: one.zephyr.mobile.model.Proxy(
+            id = "proxy-" + java.util.UUID.randomUUID().toString(), ownerUserId = owner, name = name, host = host, port = port,
+        )).copy(name = name, host = host, port = port, username = args.string("username").ifBlank { existing?.username.orEmpty() })
+        val password = args.string("password")
+        val secret = if (password.isBlank()) one.zephyr.mobile.model.SecretState.Unchanged else one.zephyr.mobile.model.SecretState.Replace(password)
+        return try {
+            account.resources.saveProxy(next, listOf("name", "host", "port", "type", "username"), secret, owner, createdLocally = existing == null)
+            JsonObject(mapOf("proxyId" to JsonPrimitive(next.id), "saved" to JsonPrimitive(true)))
+        } catch (failure: Exception) {
+            error("proxy_write_failed", failure.message ?: "代理保存失败")
+        }
+    }
+
+    private suspend fun resourceDelete(entityType: String, id: String, label: String): JsonElement {
+        if (id.isBlank()) return error("invalid_tool_arguments", "id 不能为空")
+        val owner = account.binding.userId
+        val dependents = account.connections.dependentsOf(id, owner)
+        if (dependents.isNotEmpty()) {
+            return error("forbidden_dependency", label + "仍被 " + dependents.joinToString("、") { it.name } + " 使用，先改这些连接的路由再删除")
+        }
+        return try {
+            account.resources.delete(entityType, id, owner)
+            JsonObject(mapOf("deleted" to JsonPrimitive(true), "id" to JsonPrimitive(id)))
+        } catch (failure: Exception) {
+            error("delete_failed", failure.message ?: "删除失败")
+        }
+    }
+
+    private suspend fun proxyDelete(id: String) = resourceDelete(one.zephyr.mobile.model.Proxy.ENTITY_TYPE, id, "代理")
+
+    private suspend fun sshKeyList(): JsonElement = JsonObject(mapOf("sshKeys" to JsonArray(
+        account.resources.observeSshKeys(account.binding.userId).firstOrNull().orEmpty()
+            .filter { it.deletedAt == null }
+            .map { k -> JsonObject(mapOf(
+                "sshKeyId" to JsonPrimitive(k.id), "name" to JsonPrimitive(k.name), "remark" to JsonPrimitive(k.remark),
+                "hasPrivateKey" to JsonPrimitive(k.privateKey.hasValue), "hasPassphrase" to JsonPrimitive(k.passphrase.hasValue),
+            )) },
+    )))
+
+    private suspend fun sshKeyWrite(args: JsonObject): JsonElement {
+        val name = args.string("name")
+        if (name.isBlank()) return error("invalid_tool_arguments", "name 不能为空")
+        val owner = account.binding.userId
+        val existingId = args.string("sshKeyId")
+        val existing = if (existingId.isBlank()) null else account.resources.findSshKey(existingId)
+        val privateKey = args.string("privateKey")
+        // A create needs material; an update with a blank key keeps the stored one.
+        if (existing == null && privateKey.isBlank()) return error("invalid_tool_arguments", "新建密钥必须提供 privateKey")
+        val next = (existing ?: one.zephyr.mobile.model.SshKey(
+            id = "key-" + java.util.UUID.randomUUID().toString(), ownerUserId = owner, name = name,
+        )).copy(name = name, remark = args.string("remark").ifBlank { existing?.remark.orEmpty() })
+        val keySecret = if (privateKey.isBlank()) one.zephyr.mobile.model.SecretState.Unchanged else one.zephyr.mobile.model.SecretState.Replace(privateKey)
+        val pass = args.string("passphrase")
+        val passSecret = if (pass.isBlank()) one.zephyr.mobile.model.SecretState.Unchanged else one.zephyr.mobile.model.SecretState.Replace(pass)
+        return try {
+            account.resources.saveSshKey(next, listOf("name", "remark"), keySecret, passSecret, owner, createdLocally = existing == null)
+            JsonObject(mapOf("sshKeyId" to JsonPrimitive(next.id), "saved" to JsonPrimitive(true)))
+        } catch (failure: Exception) {
+            error("ssh_key_write_failed", failure.message ?: "密钥保存失败")
+        }
+    }
+
+    private suspend fun sshKeyDelete(id: String) = resourceDelete(one.zephyr.mobile.model.SshKey.ENTITY_TYPE, id, "SSH 密钥")
+
+    private suspend fun jumpHostList(): JsonElement = JsonObject(mapOf("jumpHosts" to JsonArray(
+        account.resources.observeJumpHosts(account.binding.userId).firstOrNull().orEmpty()
+            .filter { it.deletedAt == null }
+            .map { h -> JsonObject(mapOf(
+                "jumpHostId" to JsonPrimitive(h.id), "name" to JsonPrimitive(h.name), "connectionId" to JsonPrimitive(h.connectionId),
+            )) },
+    )))
+
+    private suspend fun jumpHostWrite(args: JsonObject): JsonElement {
+        val name = args.string("name"); val connectionId = args.string("connectionId")
+        if (name.isBlank() || connectionId.isBlank()) return error("invalid_tool_arguments", "name 和 connectionId 不能为空")
+        val owner = account.binding.userId
+        if (account.connections.find(connectionId) == null) return error("invalid_tool_arguments", "目标连接不存在")
+        val existingId = args.string("jumpHostId")
+        val existing = if (existingId.isBlank()) null else account.resources.findJumpHost(existingId)
+        val next = (existing ?: one.zephyr.mobile.model.JumpHost(
+            id = "jump-" + java.util.UUID.randomUUID().toString(), ownerUserId = owner, name = name, connectionId = connectionId,
+        )).copy(name = name, connectionId = connectionId)
+        return try {
+            account.resources.saveJumpHost(next, listOf("name", "connectionId"), owner, createdLocally = existing == null)
+            JsonObject(mapOf("jumpHostId" to JsonPrimitive(next.id), "saved" to JsonPrimitive(true)))
+        } catch (failure: Exception) {
+            error("jump_host_write_failed", failure.message ?: "JumpHost 保存失败")
+        }
+    }
+
+    private suspend fun jumpHostDelete(id: String) = resourceDelete(one.zephyr.mobile.model.JumpHost.ENTITY_TYPE, id, "JumpHost")
+
+    // -- connection read / test -------------------------------------------------------------------
+
+    private suspend fun connectionGet(connectionId: String): JsonElement {
+        if (connectionId.isBlank()) return error("invalid_tool_arguments", "connectionId 不能为空")
+        val c = account.connections.find(connectionId) ?: return error("not_found", "连接不存在")
+        return JsonObject(mapOf(
+            "connectionId" to JsonPrimitive(c.id), "name" to JsonPrimitive(c.name),
+            "protocol" to JsonPrimitive(c.protocol.wireName), "host" to JsonPrimitive(c.host),
+            "port" to JsonPrimitive(c.port), "username" to JsonPrimitive(c.username),
+            "remark" to JsonPrimitive(c.remark), "tags" to JsonArray(c.tags.map(::JsonPrimitive)),
+        ))
+    }
+
+    private suspend fun connectionTest(connectionId: String): JsonElement {
+        if (connectionId.isBlank()) return error("invalid_tool_arguments", "connectionId 不能为空")
+        if (account.connections.find(connectionId) == null) return error("not_found", "连接不存在")
+        return error("not_supported", "连接测试需要交互式会话上下文，请改用 connection_list_v1 核对配置后在终端打开")
+    }
+
     // -- SFTP, via the same session pool as the interactive browser --
 
     private fun requireSftp(): SftpPort? = sftp

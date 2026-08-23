@@ -14,7 +14,7 @@ import one.zephyr.mobile.security.MlKemProvider
  * between [MlKem] and the Go core's `/link/mlkem/{generate,encapsulate,decapsulate}`
  * endpoints.
  */
-class EmbeddedLinkMlkemProvider(
+internal class EmbeddedLinkMlkemProvider(
     private val api: EmbeddedLinkApi,
 ) : MlKemProvider {
 
@@ -51,6 +51,6 @@ class EmbeddedLinkMlkemProvider(
 }
 
 /** Install the loopback-backed ML-KEM provider. Call once at process start. */
-fun installEmbeddedLinkMlkem(api: EmbeddedLinkApi) {
+internal fun installEmbeddedLinkMlkem(api: EmbeddedLinkApi) {
     MlKem.install(EmbeddedLinkMlkemProvider(api))
 }

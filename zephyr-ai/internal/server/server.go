@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/runs/{id}/capture", s.admin(s.handleCapture))
 	mux.HandleFunc("GET /admin/runs/{id}", s.admin(s.handleGetRun))
 	mux.HandleFunc("POST /admin/mcp/connect", s.admin(s.handleMCPConnect))
+	mux.HandleFunc("POST /admin/providers/models", s.admin(s.handleProviderModels))
 	mux.HandleFunc("GET /v1/runs/{id}/events", s.handleSSE) // ticket or admin
 	return mux
 }

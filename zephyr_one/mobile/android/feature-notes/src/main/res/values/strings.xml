@@ -34,10 +34,13 @@
     <string name="notes_scope_trash">回收站 %1$d</string>
     <string name="notes_trash">移入回收站</string>
     <string name="notes_restore">恢复</string>
+    <string name="notes_restore_title">恢复笔记</string>
+    <string name="notes_restore_message">将“%1$s”从回收站恢复到笔记列表。</string>
     <string name="notes_trash_title">移入回收站</string>
     <string name="notes_trash_message">将“%1$s”移入回收站，可稍后恢复。</string>
     <string name="notes_cancel">取消</string>
     <string name="notes_missing">笔记不存在或已被删除</string>
+    <string name="notes_preview_empty">正文为空</string>
     <string name="notes_field_title">标题</string>
     <string name="notes_field_group">分组</string>
     <string name="notes_field_tags">标签，逗号分隔</string>

@@ -38,8 +38,23 @@ import one.zephyr.mobile.ui.theme.ZephyrTheme
 
 private enum class AiSettingsPage { ROOT, PROVIDERS, PROVIDER_EDIT, MODELS, MODEL_EDIT, PERMISSIONS, MCP, ENV, MEMORIES, MEMORY_EDIT, SKILLS, SKILL_EDIT, SANDBOX }
 
+/**
+ * Fetches the live model list for a provider draft. Implemented by the app layer, which owns the
+ * embedded runtime and can read the provider's stored apiKey when the form field is left blank.
+ * The second argument is the in-form key; the implementation falls back to the stored one.
+ * Returns a human-readable error string on failure, null on success.
+ */
+typealias ModelDiscovery = suspend (provider: LocalAiProvider, draftKey: String) -> ModelDiscoveryResult
+
+data class ModelDiscoveryResult(val models: List<Pair<String, String>>, val error: String?)
+
 @Composable
-fun FullAiSettingsRoute(repository: LocalAiRepository, bound: Boolean, onBack: () -> Unit) {
+fun FullAiSettingsRoute(
+    repository: LocalAiRepository,
+    bound: Boolean,
+    onBack: () -> Unit,
+    discoverModels: ModelDiscovery? = null,
+) {
     val catalog by repository.observe().collectAsState(initial = LocalAiCatalog())
     val scope = rememberCoroutineScope()
     var page by remember { mutableStateOf(AiSettingsPage.ROOT) }
@@ -68,7 +83,7 @@ fun FullAiSettingsRoute(repository: LocalAiRepository, bound: Boolean, onBack: (
             AiSettingsPage.ROOT -> AiRoot(catalog,bound,{ scope.launch { repository.save(it) } },{page=it})
             AiSettingsPage.PROVIDERS -> AiProviders(catalog,{providerDraft=it;page=AiSettingsPage.PROVIDER_EDIT},{parentProviderId=it.id;page=AiSettingsPage.MODELS},{scope.launch{repository.deleteProvider(it)}})
             AiSettingsPage.PROVIDER_EDIT -> ProviderEditor(providerDraft,{p,key->scope.launch{repository.upsertProvider(p,key);key?.fill('\u0000');page=AiSettingsPage.PROVIDERS}})
-            AiSettingsPage.MODELS -> ModelList(catalog.providers.firstOrNull{it.id==parentProviderId},{modelDraft=it;page=AiSettingsPage.MODEL_EDIT})
+            AiSettingsPage.MODELS -> ModelList(catalog.providers.firstOrNull{it.id==parentProviderId},{modelDraft=it;page=AiSettingsPage.MODEL_EDIT},discoverModels,{p,discovered->scope.launch{repository.upsertProvider(p.copy(models=discovered),null)}})
             AiSettingsPage.MODEL_EDIT -> ModelEditor(modelDraft){m->scope.launch{val p=catalog.providers.first{it.id==parentProviderId};repository.upsertProvider(p.copy(models=p.models.filterNot{it.id==m.id}+m),null);page=AiSettingsPage.MODELS}}
             AiSettingsPage.PERMISSIONS -> PermissionEditor(catalog){scope.launch{repository.save(it)}}
             AiSettingsPage.MCP -> McpEditor(catalog,repository)
@@ -124,7 +139,33 @@ fun FullAiSettingsRoute(repository: LocalAiRepository, bound: Boolean, onBack: (
 
 @Composable private fun ProviderEditor(initial:LocalAiProvider,save:(LocalAiProvider,CharArray?)->Unit){var d by remember(initial){mutableStateOf(initial)};var key by remember{mutableStateOf("")};AiScroll{Card{Field("名称",d.name){d=d.copy(name=it)};Choice("类型",d.type,listOf("openai-compatible","openai","anthropic","gemini","ollama")){d=d.copy(type=it)};Field("API Base URL",d.baseUrl){d=d.copy(baseUrl=it)};SecretField("API Key",key){key=it};Choice("接口模式",d.apiMode,listOf("auto","chat","responses")){d=d.copy(apiMode=it)};Field("默认模型",d.defaultModel){d=d.copy(defaultModel=it)};Field("Organization / Project",d.organization){d=d.copy(organization=it)};Field("额外请求头 JSON",d.extraHeadersJson,false,3){d=d.copy(extraHeadersJson=it)};Field("逐模型 User-Agent",d.modelUserAgents,false,3){d=d.copy(modelUserAgents=it)};NumberField("max_tokens",d.maxTokens){d=d.copy(maxTokens=it)};Field("供应商原生额外参数 JSON",d.extraJson,false,4){d=d.copy(extraJson=it)};Toggle("新模型默认支持图片",null,d.visionDefault){d=d.copy(visionDefault=it)};Toggle("Responses 使用 previous_response_id",null,d.usePreviousResponse){d=d.copy(usePreviousResponse=it)};Toggle("启用此供应商",null,d.enabled){d=d.copy(enabled=it)}};PrimaryButton({save(d,key.takeIf{it.isNotBlank()}?.toCharArray());key=""},Modifier.fillMaxWidth(),d.name.isNotBlank()){Text("保存供应商")}}}
 
-@Composable private fun ModelList(p:LocalAiProvider?,edit:(LocalAiModel)->Unit){AiScroll{PrimaryButton({edit(LocalAiModel(""))},Modifier.fillMaxWidth()){Text("添加模型")};p?.models?.forEach{m->Card{SettingsRow(m.label,subtitle=m.id,value=buildString{if(m.reasoning)append("推理 ");if(m.inputImage)append("图片 ");if(m.inputPdf)append("PDF")}.trim(),showChevron=true,showDivider=false,onClick={edit(m)})}}}}
+@Composable private fun ModelList(p:LocalAiProvider?,edit:(LocalAiModel)->Unit,discover:ModelDiscovery?,applyDiscovered:(LocalAiProvider,List<LocalAiModel>)->Unit){
+    val scope=rememberCoroutineScope()
+    var fetching by remember{mutableStateOf(false)}
+    var fetchError by remember{mutableStateOf<String?>(null)}
+    AiScroll{
+        PrimaryButton({edit(LocalAiModel(""))},Modifier.fillMaxWidth()){Text("添加模型")}
+        if(p!=null&&discover!=null){
+            PrimaryButton({
+                scope.launch{
+                    fetching=true;fetchError=null
+                    val result=discover(p,"")
+                    fetching=false
+                    if(result.error!=null){fetchError=result.error}else{
+                        // Merge by id: a discovered model keeps the capabilities the user already
+                        // set; only new ids are appended. An empty discovery leaves the list intact,
+                        // which is what a custom Anthropic endpoint returns by design.
+                        val existing=p.models.associateBy{it.id}
+                        val merged=result.models.map{(id,label)->existing[id]?:LocalAiModel(id=id,label=label.ifBlank{id},inputImage=p.visionDefault)}
+                        applyDiscovered(p,merged)
+                    }
+                }
+            },Modifier.fillMaxWidth(),!fetching){Text(if(fetching)"正在获取…" else "获取模型")}
+            fetchError?.let{Text(it,color=ZephyrTheme.palette.status.error,fontSize=12.sp)}
+        }
+        p?.models?.forEach{m->Card{SettingsRow(m.label,subtitle=m.id,value=buildString{if(m.reasoning)append("推理 ");if(m.inputImage)append("图片 ");if(m.inputPdf)append("PDF")}.trim(),showChevron=true,showDivider=false,onClick={edit(m)})}}
+    }
+}
 @Composable private fun ModelEditor(i:LocalAiModel,save:(LocalAiModel)->Unit){var d by remember(i){mutableStateOf(i)};AiScroll{Card{Field("模型 ID",d.id){d=d.copy(id=it)};Field("显示名称",d.label){d=d.copy(label=it)};NumberFieldNullable("上下文窗口",d.contextWindowTokens){d=d.copy(contextWindowTokens=it)};NumberFieldNullable("最大输出 Tokens",d.maxOutputTokens){d=d.copy(maxOutputTokens=it)};Toggle("扩展推理",null,d.reasoning){d=d.copy(reasoning=it)};Toggle("图片输入",null,d.inputImage){d=d.copy(inputImage=it)};Toggle("PDF 输入",null,d.inputPdf){d=d.copy(inputPdf=it)};Toggle("音频输入",null,d.inputAudio){d=d.copy(inputAudio=it)};Toggle("视频输入",null,d.inputVideo){d=d.copy(inputVideo=it)};Toggle("图片输出",null,d.outputImage){d=d.copy(outputImage=it)};Toggle("音频输出",null,d.outputAudio){d=d.copy(outputAudio=it)};Toggle("工具调用",null,d.tools){d=d.copy(tools=it)};Toggle("并行工具调用",null,d.parallelToolCalls){d=d.copy(parallelToolCalls=it)};Toggle("隐藏模型",null,d.hidden){d=d.copy(hidden=it)}};PrimaryButton({save(d.copy(label=d.label.ifBlank{d.id}))},Modifier.fillMaxWidth(),d.id.isNotBlank()){Text("保存模型能力")}}}
 
 @Composable private fun PermissionEditor(c:LocalAiCatalog,save:(LocalAiCatalog)->Unit){var x by remember(c){mutableStateOf(c)};AiScroll{Card{Choice("默认模式",x.permissionRules.mode,listOf("ask","auto","yolo")){x=x.copy(permissionRules=x.permissionRules.copy(mode=it));save(x)};Lines("Deny（永久拒绝）",x.permissionRules.deny){x=x.copy(permissionRules=x.permissionRules.copy(deny=it));save(x)};Lines("Allow（永不询问）",x.permissionRules.allow){x=x.copy(permissionRules=x.permissionRules.copy(allow=it));save(x)};Lines("Ask（强制询问）",x.permissionRules.ask){x=x.copy(permissionRules=x.permissionRules.copy(ask=it));save(x)}};Section("工具目录");Card{Perm("网页搜索",x.permissions.webSearch){x=x.copy(permissions=x.permissions.copy(webSearch=it));save(x)};Perm("网页正文读取",x.permissions.webFetch){x=x.copy(permissions=x.permissions.copy(webFetch=it));save(x)};Perm("浏览器自动化",x.permissions.browser){x=x.copy(permissions=x.permissions.copy(browser=it));save(x)};Perm("远程命令执行",x.permissions.remoteExecute){x=x.copy(permissions=x.permissions.copy(remoteExecute=it));save(x)};Perm("远程文件读取",x.permissions.fileRead){x=x.copy(permissions=x.permissions.copy(fileRead=it));save(x)};Perm("远程文件写入",x.permissions.fileWrite){x=x.copy(permissions=x.permissions.copy(fileWrite=it));save(x)};Perm("代码编辑/补全",x.permissions.codeEdit){x=x.copy(permissions=x.permissions.copy(codeEdit=it));save(x)};Perm("Memory",x.permissions.memory){x=x.copy(permissions=x.permissions.copy(memory=it));save(x)};Perm("读取笔记",x.permissions.notesRead){x=x.copy(permissions=x.permissions.copy(notesRead=it));save(x)};Perm("修改笔记",x.permissions.notesWrite){x=x.copy(permissions=x.permissions.copy(notesWrite=it));save(x)};Perm("环境变量",x.permissions.env){x=x.copy(permissions=x.permissions.copy(env=it));save(x)};Perm("本机沙箱",x.permissions.sandbox){x=x.copy(permissions=x.permissions.copy(sandbox=it));save(x)}};Section("敏感操作");Card{Toggle("敏感操作需要确认",null,x.sensitive.requireConfirmation){x=x.copy(sensitive=x.sensitive.copy(requireConfirmation=it));save(x)};Toggle("自动确认敏感操作","危险：仅在你明确接受风险时启用",x.sensitive.autoConfirm){x=x.copy(sensitive=x.sensitive.copy(autoConfirm=it));save(x)};NumberField("自动确认延迟 ms",x.sensitive.autoConfirmDelayMs){x=x.copy(sensitive=x.sensitive.copy(autoConfirmDelayMs=it.coerceIn(0,60000)));save(x)}}}}

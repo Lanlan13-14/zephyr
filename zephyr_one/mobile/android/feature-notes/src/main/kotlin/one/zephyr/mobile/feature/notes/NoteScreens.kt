@@ -4,6 +4,7 @@ import one.zephyr.mobile.ui.icon.ZephyrIcons
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,9 +21,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.DropdownMenu
+import one.zephyr.mobile.ui.component.DropdownMenuItem
 import one.zephyr.mobile.ui.component.FilterChip
 import one.zephyr.mobile.ui.component.GroupCard
 import one.zephyr.mobile.ui.component.Icon
@@ -47,9 +51,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -91,10 +100,14 @@ class NoteListViewModel(
 
     init {
         viewModelScope.launch {
-            combine(notes.observeNotes(ownerUserId), filterState) { rows, filter ->
+            combine(
+                notes.observeNotes(ownerUserId),
+                notes.observeTrashedNotes(ownerUserId),
+                filterState,
+            ) { active, trashed, filter ->
                 NoteListStates.derive(
-                    notes = rows.filterNot(Note::isTrashed),
-                    trashed = rows.filter(Note::isTrashed),
+                    notes = active,
+                    trashed = trashed,
                     filter = filter,
                     loaded = true,
                     online = online,
@@ -222,6 +235,7 @@ fun NoteListRoute(
     val state by viewModel.state.collectAsState()
     val filter by viewModel.filter.collectAsState()
     var pendingTrash by remember { mutableStateOf<Note?>(null) }
+    var pendingRestore by remember { mutableStateOf<Note?>(null) }
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
@@ -267,7 +281,9 @@ fun NoteListRoute(
                 ) {
                     item("notes") {
                         GroupCard {
+                            val inTrash = filter.scope == NoteScope.TRASH
                             content.notes.forEachIndexed { index, note ->
+                                var rowMenu by remember(note.noteId) { mutableStateOf(false) }
                                 SettingsRow(
                                     title = note.title.ifBlank { stringResource(R.string.library_untitled_note) },
                                     subtitle = buildList {
@@ -280,7 +296,56 @@ fun NoteListRoute(
                                     onClick = { onOpen(note) },
                                     leading = { NoteIcon(note.syncState == SyncState.PENDING_LOCAL) },
                                     trailing = {
-                                        if (note.syncState == SyncState.PENDING_LOCAL) PendingBadge()
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
+                                            if (note.syncState == SyncState.PENDING_LOCAL) PendingBadge()
+                                            Box {
+                                                Text(
+                                                    "⋮",
+                                                    color = ZephyrTheme.palette.onFloatingSubtle,
+                                                    fontSize = 17.sp,
+                                                    modifier = Modifier
+                                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                                                        .clickable { rowMenu = true }
+                                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                )
+                                                DropdownMenu(expanded = rowMenu, onDismissRequest = { rowMenu = false }) {
+                                                    if (!inTrash) {
+                                                        DropdownMenuItem(
+                                                            text = { Text("打开") },
+                                                            onClick = {
+                                                                rowMenu = false
+                                                                onOpen(note)
+                                                            },
+                                                        )
+                                                        if (note.capabilities.canDelete) {
+                                                            DropdownMenuItem(
+                                                                text = {
+                                                                    Text(
+                                                                        stringResource(R.string.notes_trash),
+                                                                        color = ZephyrTheme.palette.status.error,
+                                                                    )
+                                                                },
+                                                                onClick = {
+                                                                    rowMenu = false
+                                                                    pendingTrash = note
+                                                                },
+                                                            )
+                                                        }
+                                                    } else {
+                                                        DropdownMenuItem(
+                                                            text = { Text(stringResource(R.string.notes_restore)) },
+                                                            onClick = {
+                                                                rowMenu = false
+                                                                pendingRestore = note
+                                                            },
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
                                     },
                                 )
                             }
@@ -312,6 +377,21 @@ fun NoteListRoute(
                 }) { Text(stringResource(R.string.notes_trash)) }
             },
             dismissButton = { TextButton(onClick = { pendingTrash = null }) { Text(stringResource(R.string.notes_cancel)) } },
+        )
+    }
+
+    pendingRestore?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingRestore = null },
+            title = { Text(stringResource(R.string.notes_restore_title)) },
+            text = { Text(stringResource(R.string.notes_restore_message, target.title.ifBlank { "无标题笔记" })) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.restore(target)
+                    pendingRestore = null
+                }) { Text(stringResource(R.string.notes_restore)) }
+            },
+            dismissButton = { TextButton(onClick = { pendingRestore = null }) { Text(stringResource(R.string.notes_cancel)) } },
         )
     }
     }
@@ -384,17 +464,24 @@ fun NoteEditorRoute(
                     }
                 }
                 if (preview) {
-                    Text(
-                        current.current.content,
-                        color = ZephyrTheme.palette.onBackground,
-                        fontSize = 15.5.sp,
-                        style = TextStyle(lineHeight = 26.sp),
+                    val previewBlocks = remember(current.current.content) { Markdown.parse(current.current.content) }
+                    Column(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
                             .verticalScroll(rememberScrollState())
                             .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 140.dp),
-                    )
+                    ) {
+                        if (previewBlocks.isEmpty()) {
+                            Text(
+                                stringResource(R.string.notes_preview_empty),
+                                color = ZephyrTheme.palette.onFloatingSubtle,
+                                fontSize = 15.5.sp,
+                            )
+                        } else {
+                            previewBlocks.forEach { block -> MarkdownBlockView(block) }
+                        }
+                    }
                 } else {
                     BasicTextField(
                         value = current.current.content,
@@ -479,6 +566,213 @@ private fun NoteSearch(query: String, onQueryChange: (String) -> Unit) {
                 if (query.isEmpty()) Text(stringResource(R.string.notes_search), color = palette.onFloatingSubtle)
                 inner()
             },
+        )
+    }
+}
+
+
+// ---- Markdown preview --------------------------------------------------------------------------
+
+/**
+ * Inline spans → AnnotatedString.
+ *
+ * CODE wins over emphasis inside a span because the parser resolved backticks first; nesting is
+ * applied in insertion order, which matches how [Markdown.inline] emits spans.
+ */
+private fun markdownAnnotated(text: MarkdownText, linkColor: Color): AnnotatedString {
+    val builder = AnnotatedString.Builder(text.text)
+    for (span in text.spans) {
+        if (span.start < 0 || span.end > text.text.length || span.start >= span.end) continue
+        val style = when (span.style) {
+            MarkdownStyle.BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
+            MarkdownStyle.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
+            MarkdownStyle.CODE -> SpanStyle(fontFamily = FontFamily.Monospace)
+            MarkdownStyle.STRIKETHROUGH -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+            MarkdownStyle.LINK -> SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
+        }
+        builder.addStyle(style, span.start, span.end)
+    }
+    return builder.toAnnotatedString()
+}
+
+/** One block of the preview, laid out the way the main end's notes.js renders the same document. */
+@Composable
+private fun MarkdownBlockView(block: MarkdownBlock) {
+    val palette = ZephyrTheme.palette
+    when (block) {
+        is MarkdownBlock.Heading -> Text(
+            text = markdownAnnotated(block.text, palette.brand.accent),
+            color = palette.onBackground,
+            style = TextStyle(
+                fontWeight = FontWeight.Bold,
+                fontSize = when (block.level) {
+                    1 -> 23.sp
+                    2 -> 20.sp
+                    3 -> 18.sp
+                    4 -> 16.5.sp
+                    5 -> 15.5.sp
+                    else -> 15.sp
+                },
+                lineHeight = 28.sp,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = if (block.level <= 2) 16.dp else 12.dp, bottom = 6.dp),
+        )
+
+        is MarkdownBlock.Paragraph -> Text(
+            text = markdownAnnotated(block.text, palette.brand.accent),
+            color = palette.onBackground,
+            style = TextStyle(fontSize = 15.5.sp, lineHeight = 26.sp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 5.dp),
+        )
+
+        is MarkdownBlock.CodeBlock -> Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(palette.surfaces.elevated)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            if (block.language.isNotBlank()) {
+                Text(
+                    block.language,
+                    color = palette.onFloatingSubtle,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            }
+            Text(
+                block.code,
+                color = palette.onBackground,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                style = TextStyle(lineHeight = 20.sp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+            )
+        }
+
+        is MarkdownBlock.BulletItem -> MarkdownListRow(
+            depth = block.depth,
+            marker = "•",
+            text = block.text,
+        )
+
+        is MarkdownBlock.NumberedItem -> MarkdownListRow(
+            depth = block.depth,
+            marker = block.number.toString() + ".",
+            text = block.text,
+        )
+
+        is MarkdownBlock.TaskItem -> MarkdownListRow(
+            depth = block.depth,
+            marker = if (block.checked) "☑" else "☐",
+            text = block.text,
+        )
+
+        is MarkdownBlock.Quote -> Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 5.dp),
+        ) {
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(22.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(palette.brand.accent.copy(alpha = 0.6f)),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = markdownAnnotated(block.text, palette.brand.accent),
+                color = palette.onFloatingMuted,
+                style = TextStyle(fontSize = 15.sp, lineHeight = 24.sp),
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        is MarkdownBlock.Table -> Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .border(1.dp, palette.surfaces.outlineSoft, RoundedCornerShape(10.dp))
+                .horizontalScroll(rememberScrollState()),
+        ) {
+            MarkdownTableRow(cells = block.header, alignments = block.alignments, header = true, linkColor = palette.brand.accent)
+            block.rows.forEach { row ->
+                Box(Modifier.fillMaxWidth().height(1.dp).background(palette.surfaces.outlineSoft))
+                MarkdownTableRow(cells = row, alignments = block.alignments, header = false, linkColor = palette.brand.accent)
+            }
+        }
+
+        MarkdownBlock.Divider -> Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp)
+                .height(1.dp)
+                .background(palette.surfaces.outlineSoft),
+        )
+    }
+}
+
+@Composable
+private fun MarkdownTableRow(
+    cells: List<MarkdownText>,
+    alignments: List<String>,
+    header: Boolean,
+    linkColor: Color,
+) {
+    val palette = ZephyrTheme.palette
+    Row(
+        modifier = Modifier
+            .background(if (header) palette.surfaces.elevated else Color.Transparent)
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+    ) {
+        cells.forEachIndexed { index, cell ->
+            val align = when (alignments.getOrNull(index)) {
+                "center" -> TextAlign.Center
+                "right" -> TextAlign.End
+                else -> TextAlign.Start
+            }
+            Text(
+                text = markdownAnnotated(cell, linkColor),
+                color = palette.onBackground,
+                style = TextStyle(
+                    fontSize = 14.sp,
+                    lineHeight = 21.sp,
+                    fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,
+                    textAlign = align,
+                ),
+                modifier = Modifier.width(140.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MarkdownListRow(depth: Int, marker: String, text: MarkdownText) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = (depth * 18).dp, top = 3.dp, bottom = 3.dp),
+    ) {
+        Text(
+            marker,
+            color = ZephyrTheme.palette.onFloatingMuted,
+            fontSize = 15.sp,
+            modifier = Modifier.width(24.dp),
+        )
+        Text(
+            text = markdownAnnotated(text, ZephyrTheme.palette.brand.accent),
+            color = ZephyrTheme.palette.onBackground,
+            style = TextStyle(fontSize = 15.5.sp, lineHeight = 25.sp),
+            modifier = Modifier.weight(1f),
         )
     }
 }
