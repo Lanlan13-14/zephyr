@@ -9323,21 +9323,17 @@ async function deleteAiChatConfirmed(id) {
      * revision), refresh from the server so the revision is current, then delete with that. A 404
      * means the server never had it — that is a successful delete, not an error. */
     let target = aiChatSessions.find((session) => session.id === id);
-    if (target && !(target.revision > 0)) {
-        target = await ensureCanonicalAiConversation(target).catch(() => target);
-    }
     if (target) {
-        let revision = Number(target.revision) || 0;
-        if (!(revision > 0)) {
-            await loadAiChats({ force: true }).catch(() => {});
-            target = aiChatSessions.find((session) => session.id === id);
-            revision = Number(target?.revision) || 0;
-        }
+        /* Refresh from the server so the revision is current. A local session that was never
+         * persisted has revision 0; after loadAiChats it either has the server revision or is
+         * gone (404 below is a successful delete). */
+        await loadAiChats({ force: true }).catch(() => {});
+        target = aiChatSessions.find((session) => session.id === id);
+        const revision = Number(target?.revision) || 0;
         if (revision > 0) {
             try {
-                await api(`/api/ai/history/conversations/${encodeURIComponent(id)}`, {
+                await api(`/api/ai/history/conversations/${encodeURIComponent(id)}?expectedRevision=${encodeURIComponent(String(revision))}`, {
                     method: 'DELETE',
-                    body: JSON.stringify({ expectedRevision: revision }),
                 });
             } catch (error) {
                 /* A 409 means our revision was stale — refetch the current one and delete once more
@@ -9347,9 +9343,8 @@ async function deleteAiChatConfirmed(id) {
                     const fresh = aiChatSessions.find((session) => session.id === id);
                     const freshRevision = Number(fresh?.revision) || 0;
                     if (freshRevision > 0) {
-                        await api(`/api/ai/history/conversations/${encodeURIComponent(id)}`, {
+                        await api(`/api/ai/history/conversations/${encodeURIComponent(id)}?expectedRevision=${encodeURIComponent(String(freshRevision))}`, {
                             method: 'DELETE',
-                            body: JSON.stringify({ expectedRevision: freshRevision }),
                         });
                     }
                 } else if (error?.status !== 404) {
@@ -9378,9 +9373,8 @@ async function clearCurrentAiChat() {
     if (!session) return;
     if (aiIsSessionRunning(session.id)) return toast(t('请先停止当前对话的 AI 回复'));
     if (session.revision > 0) {
-        await api(`/api/ai/history/conversations/${encodeURIComponent(session.id)}`, {
+        await api(`/api/ai/history/conversations/${encodeURIComponent(session.id)}?expectedRevision=${encodeURIComponent(String(session.revision))}`, {
             method: 'DELETE',
-            body: JSON.stringify({ expectedRevision: session.revision }),
         });
     }
     closeAiBrowserForSession(session.id);
@@ -10604,9 +10598,8 @@ async function deleteCanonicalAiTail(session, fromIndex) {
     for (const message of tail) {
         if (!message?.id || !['user', 'assistant'].includes(String(message.role || ''))) continue;
         try {
-            await api(`/api/ai/history/messages/${encodeURIComponent(message.id)}`, {
+            await api(`/api/ai/history/messages/${encodeURIComponent(message.id)}?expectedRevision=${encodeURIComponent(String(Number(message.revision) || 1))}`, {
                 method: 'DELETE',
-                body: JSON.stringify({ expectedRevision: Number(message.revision) || 1 }),
             });
         } catch (error) {
             // A local-only cancelled/failed turn never entered canonical
