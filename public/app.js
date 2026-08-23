@@ -9317,12 +9317,46 @@ function deleteAiChat(id) {
     });
 }
 async function deleteAiChatConfirmed(id) {
-    const target = aiChatSessions.find((session) => session.id === id);
-    if (target?.revision > 0) {
-        await api(`/api/ai/history/conversations/${encodeURIComponent(id)}`, {
-            method: 'DELETE',
-            body: JSON.stringify({ expectedRevision: target.revision }),
-        });
+    /* Two real failure modes lived here: a session whose local revision was 0 skipped the server
+     * delete entirely (so it came back on reload), and a stale local revision produced a 409. Make
+     * the session canonical first (which persists a revision-0 local session and returns its real
+     * revision), refresh from the server so the revision is current, then delete with that. A 404
+     * means the server never had it — that is a successful delete, not an error. */
+    let target = aiChatSessions.find((session) => session.id === id);
+    if (target && !(target.revision > 0)) {
+        target = await ensureCanonicalAiConversation(target).catch(() => target);
+    }
+    if (target) {
+        let revision = Number(target.revision) || 0;
+        if (!(revision > 0)) {
+            await loadAiChats({ force: true }).catch(() => {});
+            target = aiChatSessions.find((session) => session.id === id);
+            revision = Number(target?.revision) || 0;
+        }
+        if (revision > 0) {
+            try {
+                await api(`/api/ai/history/conversations/${encodeURIComponent(id)}`, {
+                    method: 'DELETE',
+                    body: JSON.stringify({ expectedRevision: revision }),
+                });
+            } catch (error) {
+                /* A 409 means our revision was stale — refetch the current one and delete once more
+                 * instead of failing the user. A 404 means it was already gone server-side. */
+                if (error?.status === 409 || error?.code === 'revision_conflict') {
+                    await loadAiChats({ force: true }).catch(() => {});
+                    const fresh = aiChatSessions.find((session) => session.id === id);
+                    const freshRevision = Number(fresh?.revision) || 0;
+                    if (freshRevision > 0) {
+                        await api(`/api/ai/history/conversations/${encodeURIComponent(id)}`, {
+                            method: 'DELETE',
+                            body: JSON.stringify({ expectedRevision: freshRevision }),
+                        });
+                    }
+                } else if (error?.status !== 404) {
+                    throw error;
+                }
+            }
+        }
     }
     if (aiEditingSessionId === id) cancelAiMessageEdit({ focus: false });
     const controller = aiRunForSession(id);
