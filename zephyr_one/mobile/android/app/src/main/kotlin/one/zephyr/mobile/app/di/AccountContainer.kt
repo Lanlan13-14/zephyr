@@ -458,10 +458,10 @@ class AccountContainer(
 
         override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
             val sess = sessionMutex.withLock {
-                session ?: appContainer.embeddedLink.dial(binding.baseUrl).also { session = it }
+                session ?: appContainer.embeddedLink.dial(endpoint.baseUrl).also { session = it }
             }
             return try {
-                appContainer.embeddedLink.push(binding.baseUrl, sess, kind = LinkKinds.SYNC_OP, body = body).ack
+                appContainer.embeddedLink.push(endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP, body = body).ack
             } catch (e: Exception) {
                 /* The session may have died server-side; drop it so the next verb redials. */
                 sessionMutex.withLock { session = null }
