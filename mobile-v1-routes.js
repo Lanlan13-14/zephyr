@@ -1866,12 +1866,28 @@ class MobileV1Api {
         if (body.deviceId !== auth.device.device_id) {
             return sendError(res, 400, 'invalid_request', 'deviceId \u4e0e\u51ed\u636e\u4e0d\u4e00\u81f4', { requestId });
         }
-        const operations = body.operations;
         try {
-            this.preflightPushOperations(operations);
+            const result = this.executePushForDevice(auth, body, requestId);
+            return res.json(result);
         } catch (err) {
             return sendThrown(res, err, requestId);
         }
+    }
+
+    /**
+     * The transport-independent core of a push: preflight, run the batch, publish
+     * the wake, finish the run, and return the exact result payload the HTTP route
+     * produced. The HTTP route authenticates off the request then calls this; the
+     * Link owned-sync bridge authenticates off the ZSL/2 session's attested device
+     * and calls the same method, so browser, mobile and desktop clients share ONE
+     * sync implementation and identical semantics.
+     *
+     * Throws MobileStoreError on validation/datastore failure; the caller maps that
+     * onto its transport (HTTP status, or a sealed frame error on the Link channel).
+     */
+    executePushForDevice(auth, body, requestId = crypto.randomUUID()) {
+        const operations = body.operations;
+        this.preflightPushOperations(operations);
 
         const ownerUserId = auth.user.userId;
         const batchId = body.batchId;
@@ -1939,7 +1955,7 @@ class MobileV1Api {
             conflicts,
         });
 
-        return res.json({
+        return {
             ok: true,
             batchId,
             serverCursor,
@@ -1947,7 +1963,7 @@ class MobileV1Api {
             /* True when the feed has moved past what this device acked, which
              * includes the changes this very batch just created. */
             changesAvailable: serverCursor > Number(auth.device.last_acked_cursor || 0),
-        });
+        };
     }
 
     /** Registry-dependent validation is also completed before startRun/BEGIN. */

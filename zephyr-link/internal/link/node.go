@@ -26,6 +26,10 @@ type Node struct {
 	// any handshake (tests and the embedded node); the server populates it from the
 	// enrollment consume path so a session only anchors to an enrolled device.
 	devices map[string]bool
+	// sessionDevice records which enrolled device a session was anchored to at
+	// handshake, so a business handler can attest the caller's device without the
+	// frame carrying a forgeable deviceId.
+	sessionDevice map[string]string
 	// dispatch routes unsealed business frames to per-kind handlers. It is what
 	// turns the node from a pipe into the Link channel.
 	dispatch *Dispatcher
@@ -52,7 +56,7 @@ func (n *Node) RequireEnrollment() {
 
 // NewNode builds a node with the transport routes mounted.
 func NewNode() *Node {
-	n := &Node{mux: http.NewServeMux(), sessions: make(map[string]*Endpoint), dispatch: NewDispatcher()}
+	n := &Node{mux: http.NewServeMux(), sessions: make(map[string]*Endpoint), sessionDevice: make(map[string]string), dispatch: NewDispatcher()}
 	n.mux.HandleFunc("/link/handshake", n.handleHandshake)
 	n.mux.HandleFunc("/link/frame", n.handleFrame)
 	// Embedded hosts (Android/desktop) drive outbound dials through this local
@@ -70,6 +74,19 @@ func NewNode() *Node {
 // Dispatcher exposes the node's business-frame router so hosts (server, mobile,
 // desktop) register their per-kind handlers.
 func (n *Node) Dispatcher() *Dispatcher { return n.dispatch }
+
+// sessionDevice returns the device id a session was anchored to, or "" when the
+// session is unknown (an embedded dial endpoint may not record one).
+func (n *Node) sessionDeviceGet(sessionID string) string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.sessionDevice[sessionID]
+}
+
+// RegisterSyncBridge wires the owned-sync lane to the single Node sync business
+// core over loopback. The server calls this once at startup; the embedded mobile
+// node does not (it is the dial side, not the business side).
+func (n *Node) RegisterSyncBridge(cfg SyncBridgeConfig) { n.registerSyncBridge(cfg) }
 
 // registerBuiltinHandlers installs the handlers the node serves itself: the
 // control-channel wake/state probe. Business lanes (sync, blob, shared, …) are
@@ -213,6 +230,7 @@ func (n *Node) handleHandshake(w http.ResponseWriter, r *http.Request) {
 	sessionID := base64.RawURLEncoding.EncodeToString(sess.Exporter()[:16])
 	n.mu.Lock()
 	n.sessions[sessionID] = NewEndpoint(sess)
+	n.sessionDevice[sessionID] = req.DeviceID
 	n.mu.Unlock()
 	writeJSON(w, handshakeResponse{
 		SessionID:       sessionID,
