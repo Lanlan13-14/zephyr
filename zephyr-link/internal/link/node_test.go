@@ -22,12 +22,12 @@ func TestThreeNodesOverHTTP(t *testing.T) {
 	mobile := NewNode()
 
 	// Desktop dials the server.
-	desktopEp, desktopSession, err := desktop.Dial(srv.URL)
+	desktopEp, desktopSession, err := desktop.Dial(srv.URL, "desktop")
 	if err != nil {
 		t.Fatalf("desktop dial: %v", err)
 	}
 	// Mobile dials the server.
-	mobileEp, mobileSession, err := mobile.Dial(srv.URL)
+	mobileEp, mobileSession, err := mobile.Dial(srv.URL, "mobile")
 	if err != nil {
 		t.Fatalf("mobile dial: %v", err)
 	}
@@ -35,15 +35,25 @@ func TestThreeNodesOverHTTP(t *testing.T) {
 		t.Fatal("sessions collided")
 	}
 
+	// The server node routes business frames through its dispatcher; register the
+	// sync and blob lanes the test exercises (a real host wires these to account
+	// data). A kind with no handler must be rejected, not echoed.
+	server.Dispatcher().Register(codec.KindSyncOp, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
+		return codec.KindSyncAck, map[string]any{"receivedKind": fr.Kind, "ok": true}, false, nil
+	})
+	server.Dispatcher().Register(codec.KindBlobManifest, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
+		return codec.KindSyncAck, map[string]any{"receivedKind": fr.Kind, "ok": true}, false, nil
+	})
+
 	// Mobile pushes a sync op; server acks it.
-	ackKind, err := mobile.SendFrame(srv.URL, mobileSession, mobileEp, codec.KindSyncOp, map[string]any{
+	ack, err := mobile.SendFrame(srv.URL, mobileSession, mobileEp, codec.KindSyncOp, map[string]any{
 		"op": "upsert", "entity": "note", "id": "n1",
 	}, false)
 	if err != nil {
 		t.Fatalf("mobile send: %v", err)
 	}
-	if ackKind != codec.KindSyncAck {
-		t.Fatalf("ack kind=%d", ackKind)
+	if ack.Kind != codec.KindSyncAck {
+		t.Fatalf("ack kind=%d", ack.Kind)
 	}
 
 	// Desktop pushes a blob manifest built with CDC.
@@ -55,14 +65,14 @@ func TestThreeNodesOverHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ackKind, err = desktop.SendFrame(srv.URL, desktopSession, desktopEp, codec.KindBlobManifest, map[string]any{
+	ack, err = desktop.SendFrame(srv.URL, desktopSession, desktopEp, codec.KindBlobManifest, map[string]any{
 		"size": manifest.Size, "merkle": manifest.Merkle, "chunks": len(manifest.Chunks),
 	}, false)
 	if err != nil {
 		t.Fatalf("desktop send manifest: %v", err)
 	}
-	if ackKind != codec.KindSyncAck {
-		t.Fatalf("manifest ack kind=%d", ackKind)
+	if ack.Kind != codec.KindSyncAck {
+		t.Fatalf("manifest ack kind=%d", ack.Kind)
 	}
 
 	// A frame sealed for the desktop session must not be accepted on mobile's.

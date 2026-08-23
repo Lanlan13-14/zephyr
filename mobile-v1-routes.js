@@ -1578,44 +1578,49 @@ class MobileV1Api {
         const requestId = req.mobileRequestId;
         const auth = this.requireDevice(req, res);
         if (!auth) return undefined;
+        try {
+            const result = this.executeChangesForDevice(auth, {
+                sinceCursor: Number(req.query.sinceCursor || 0),
+                limit: req.query.limit,
+            });
+            return res.json(result);
+        } catch (err) {
+            return sendThrown(res, err, requestId);
+        }
+    }
 
-        const sinceCursor = Number(req.query.sinceCursor || 0);
+    /* Transport-independent change-page fetch: the same logic the HTTP route and
+     * the Link owned-sync bridge both run. Throws MobileStoreError on a bad or
+     * expired cursor so each transport maps it onto its own error envelope. */
+    executeChangesForDevice(auth, { sinceCursor, limit } = {}) {
+        sinceCursor = Number(sinceCursor || 0);
         if (!Number.isSafeInteger(sinceCursor) || sinceCursor < 0) {
-            return sendError(res, 400, 'invalid_request', 'sinceCursor \u5fc5\u987b\u662f\u975e\u8d1f\u6574\u6570', { requestId });
+            throw new MobileStoreError('invalid_request', 'sinceCursor 必须是非负整数', 400);
         }
         const latestCursor = this.store.latestCursor(auth.user.userId);
         if (sinceCursor > latestCursor) {
-            return sendError(res, 409, 'cursor_invalid', '\u6e38\u6807\u8d85\u8fc7\u670d\u52a1\u7aef\u6700\u65b0\u4f4d\u7f6e', {
-                requestId,
-                details: { bootstrapRequired: true, latestCursor },
-            });
+            throw new MobileStoreError('cursor_invalid', '游标超过服务端最新位置', 409,
+                { details: { bootstrapRequired: true, latestCursor } });
         }
         /* A cursor whose successor rows have been garbage collected cannot be
          * served: skipping the gap would leave the mirror permanently wrong, so
          * the device is told to bootstrap again instead. */
         if (this.store.isCursorExpired(auth.user.userId, sinceCursor)) {
-            return sendError(res, 410, 'cursor_expired', '\u6e38\u6807\u5df2\u8fc7\u671f\uff0c\u9700\u91cd\u65b0\u5f15\u5bfc', {
-                requestId,
-                details: { bootstrapRequired: true, latestCursor },
-            });
+            throw new MobileStoreError('cursor_expired', '游标已过期，需重新引导', 410,
+                { details: { bootstrapRequired: true, latestCursor } });
         }
-        const page = this.store.changePage(auth.user.userId, sinceCursor, clampPageSize(req.query.limit));
-        let changes;
-        try {
-            changes = page.changes.map((change) => this.hydrateChange(auth.user, change));
-        } catch (err) {
-            /* A foreign row aborts the entire page before nextCursor reaches the
-             * device. Advancing past it would leave shared data resident or the
-             * owned mirror silently incomplete. */
-            return sendThrown(res, err, requestId);
-        }
-        return res.json({
+        const page = this.store.changePage(auth.user.userId, sinceCursor, clampPageSize(limit));
+        /* A foreign row aborts the entire page before nextCursor reaches the
+         * device. Advancing past it would leave shared data resident or the owned
+         * mirror silently incomplete. */
+        const changes = page.changes.map((change) => this.hydrateChange(auth.user, change));
+        return {
             ok: true,
             fromCursor: page.fromCursor,
             nextCursor: page.nextCursor,
             hasMore: page.hasMore,
             changes,
-        });
+        };
     }
 
     /**
@@ -1866,12 +1871,28 @@ class MobileV1Api {
         if (body.deviceId !== auth.device.device_id) {
             return sendError(res, 400, 'invalid_request', 'deviceId \u4e0e\u51ed\u636e\u4e0d\u4e00\u81f4', { requestId });
         }
-        const operations = body.operations;
         try {
-            this.preflightPushOperations(operations);
+            const result = this.executePushForDevice(auth, body, requestId);
+            return res.json(result);
         } catch (err) {
             return sendThrown(res, err, requestId);
         }
+    }
+
+    /**
+     * The transport-independent core of a push: preflight, run the batch, publish
+     * the wake, finish the run, and return the exact result payload the HTTP route
+     * produced. The HTTP route authenticates off the request then calls this; the
+     * Link owned-sync bridge authenticates off the ZSL/2 session's attested device
+     * and calls the same method, so browser, mobile and desktop clients share ONE
+     * sync implementation and identical semantics.
+     *
+     * Throws MobileStoreError on validation/datastore failure; the caller maps that
+     * onto its transport (HTTP status, or a sealed frame error on the Link channel).
+     */
+    executePushForDevice(auth, body, requestId = crypto.randomUUID()) {
+        const operations = body.operations;
+        this.preflightPushOperations(operations);
 
         const ownerUserId = auth.user.userId;
         const batchId = body.batchId;
@@ -1939,7 +1960,7 @@ class MobileV1Api {
             conflicts,
         });
 
-        return res.json({
+        return {
             ok: true,
             batchId,
             serverCursor,
@@ -1947,7 +1968,7 @@ class MobileV1Api {
             /* True when the feed has moved past what this device acked, which
              * includes the changes this very batch just created. */
             changesAvailable: serverCursor > Number(auth.device.last_acked_cursor || 0),
-        });
+        };
     }
 
     /** Registry-dependent validation is also completed before startRun/BEGIN. */
@@ -2356,20 +2377,27 @@ class MobileV1Api {
         const requestId = req.mobileRequestId;
         const auth = this.requireDevice(req, res);
         if (!auth) return undefined;
+        try {
+            const result = this.executeAckForDevice(auth, (req.body || {}).cursor);
+            return res.json(result);
+        } catch (err) {
+            return sendThrown(res, err, requestId);
+        }
+    }
 
-        const body = req.body || {};
-        const cursor = Number(body.cursor || 0);
+    /* Transport-independent ack. Refuses a cursor the server never issued rather
+     * than clamping, so a device can never skip changes forever. */
+    executeAckForDevice(auth, cursor) {
+        cursor = Number(cursor || 0);
         if (!Number.isFinite(cursor) || cursor < 0) {
-            return sendError(res, 400, 'invalid_request', 'cursor \u5fc5\u987b\u662f\u975e\u8d1f\u6574\u6570', { requestId });
+            throw new MobileStoreError('invalid_request', 'cursor 必须是非负整数', 400);
         }
         const latest = this.store.latestCursor(auth.user.userId);
         if (cursor > latest) {
-            /* Acking a cursor the server never issued would let the device skip
-             * changes forever, so this is refused rather than clamped. */
-            return sendError(res, 409, 'cursor_invalid', 'cursor \u8d85\u8fc7\u670d\u52a1\u7aef\u6e38\u6807', { requestId, details: { latest } });
+            throw new MobileStoreError('cursor_invalid', 'cursor 超过服务端游标', 409, { details: { latest } });
         }
         this.store.markSynced(auth.device.device_id, cursor);
-        return res.json({ ok: true });
+        return { ok: true };
     }
 
     handleSyncNow(req, res) {
@@ -2428,24 +2456,27 @@ class MobileV1Api {
         const requestId = req.mobileRequestId;
         const auth = this.requireDevice(req, res);
         if (!auth) return undefined;
-        const row = auth.device;
+        return res.json(this.executeSyncStatusForDevice(auth, requestId));
+    }
 
+    /* Transport-independent sync status. Pending is a client-side notion: the
+     * server cannot see edits that have not been pushed yet, so it reports zero. */
+    executeSyncStatusForDevice(auth, requestId = crypto.randomUUID()) {
+        const row = auth.device;
         const last = this.store.lastRun(row.device_id);
-        return res.json({
+        return {
             ok: true,
             state: row.revoked_at ? 'REVOKED' : (row.enabled ? 'IDLE' : 'UNBOUND'),
             lastAttemptAt: last ? Number(last.started_at) : null,
             lastSuccessAt: row.last_sync_at == null ? null : Number(row.last_sync_at),
             cursor: Number(row.last_acked_cursor || 0),
-            /* Pending is a client-side notion: the server cannot see edits that
-             * have not been pushed yet, so it reports zero rather than guessing. */
             pendingCount: 0,
             conflictCount: last ? Number(last.conflicts || 0) : 0,
             lastError: last && last.error_code ? {
                 ok: false,
                 error: { code: last.error_code, message: '', retryable: false, requestId },
             } : null,
-        });
+        };
     }
 
     mountRoutes(app) {

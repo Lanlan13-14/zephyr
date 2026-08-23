@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
 )
 
 // Minimal RFC 6455 WebSocket server over the standard library, sufficient for the
@@ -95,7 +97,16 @@ func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep
 		if err != nil {
 			return
 		}
-		ack, err := ep.Send(2, map[string]any{"receivedKind": frame.Kind, "ok": true}, false)
+		// Dispatch to the per-kind business handler rather than echoing the kind,
+		// mirroring handleFrame so the stream and request lanes behave identically.
+		replyKind, replyBody, replySecret, derr := n.dispatch.Dispatch(&FrameContext{SessionID: sessionID}, frame)
+		if derr != nil {
+			return
+		}
+		if replyBody == nil {
+			replyKind, replyBody, replySecret = codec.KindSyncAck, map[string]any{"receivedKind": frame.Kind, "ok": true}, false
+		}
+		ack, err := ep.Send(replyKind, replyBody, replySecret)
 		if err != nil {
 			return
 		}

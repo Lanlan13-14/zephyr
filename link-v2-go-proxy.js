@@ -41,11 +41,13 @@ function resolveBin() {
 }
 
 class GoLinkProcess {
-    constructor({ log } = {}) {
+    constructor({ log, syncBridgeUrl = '', syncBridgeToken = '' } = {}) {
         this.log = log || (() => {});
         this.proc = null;
         this.addr = null;
         this.adminToken = process.env.ZEPHYR_LINK_ADMIN_TOKEN || '';
+        this.syncBridgeUrl = syncBridgeUrl;
+        this.syncBridgeToken = syncBridgeToken;
         this.starting = null;
     }
 
@@ -64,6 +66,11 @@ class GoLinkProcess {
                 ...process.env,
                 ZEPHYR_LINK_ADDR: '127.0.0.1:0',
                 ZEPHYR_LINK_ADMIN_TOKEN: this.adminToken,
+                /* The owned-sync lane bridges back to this Node process's single
+                 * sync core over loopback. Empty URL leaves the lane unregistered,
+                 * which makes a SYNC_OP a clean dispatch error rather than a hang. */
+                ZEPHYR_LINK_SYNC_BRIDGE: this.syncBridgeUrl,
+                ZEPHYR_LINK_SYNC_TOKEN: this.syncBridgeToken,
             },
             stdio: ['ignore', 'pipe', 'inherit'],
         });
@@ -98,8 +105,8 @@ class GoLinkProcess {
 
 /* One shared process handle for the whole server. */
 const shared = { proc: null };
-function sharedProcess(log) {
-    if (!shared.proc) shared.proc = new GoLinkProcess({ log });
+function sharedProcess(log, cfg = {}) {
+    if (!shared.proc) shared.proc = new GoLinkProcess({ log, ...cfg });
     return shared.proc;
 }
 
@@ -109,8 +116,8 @@ function stopLinkV2Go() {
     if (shared.proc) { shared.proc.stop(); shared.proc = null; }
 }
 
-function createLinkV2GoProxy({ log, enrollments } = {}) {
-    const proc = sharedProcess(log);
+function createLinkV2GoProxy({ log, enrollments, syncBridgeUrl, syncBridgeToken } = {}) {
+    const proc = sharedProcess(log, { syncBridgeUrl, syncBridgeToken });
     // Devices the Go service is known to hold this process lifetime, so we only
     // re-register once per device per restart instead of on every handshake.
     const registered = new Set();

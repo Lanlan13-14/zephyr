@@ -10,6 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+pub mod link;
 pub mod rdp_surface;
 pub use rdp_surface::NativeRdpSurfaceState;
 

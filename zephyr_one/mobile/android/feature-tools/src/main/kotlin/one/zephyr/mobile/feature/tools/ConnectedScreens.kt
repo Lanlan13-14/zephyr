@@ -535,34 +535,6 @@ fun DeviceListRoute(
 }
 
 @Composable
-fun LocalSharesRoute(
-    grants: List<SafShareGrant>,
-    onPick: () -> Unit,
-    onRevoke: (String) -> Unit,
-    onBack: () -> Unit,
-) {
-    Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = "本机共享目录", onBack = onBack)
-        Column(Modifier.padding(horizontal = ZephyrSpacing.lg), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("RDP 文件 drive 和文件桥接只使用你通过系统选择器交出的目录，不会申请整盘权限。")
-            TextButton(onClick = onPick) { Text("添加目录") }
-            grants.forEach { grant ->
-                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                    Text(grant.shareName, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        (if (grant.grantValid) "授权有效" else "授权已失效，请重新选择") +
-                            if (grant.readOnly) " · 只读" else " · 可写",
-                        color = if (grant.grantValid) ZephyrTheme.palette.onFloatingMuted else ZephyrTheme.palette.status.warning,
-                        fontSize = 12.sp,
-                    )
-                    TextButton(onClick = { onRevoke(grant.profileId) }) { Text("撤销") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun ServerSettingsLiveRoute(
     settings: SettingsRepository,
     ownerUserId: String,

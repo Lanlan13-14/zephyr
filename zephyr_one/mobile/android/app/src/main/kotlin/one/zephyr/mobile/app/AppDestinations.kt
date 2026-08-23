@@ -380,7 +380,6 @@ internal fun FileSyncDestination(
     onBack: () -> Unit,
     onOpenConflicts: () -> Unit,
     onOpenDevices: () -> Unit,
-    onOpenShares: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onUnbind: (() -> Unit)?,
     onBind: (() -> Unit)? = null,
@@ -398,7 +397,6 @@ internal fun FileSyncDestination(
         onSyncNow = onSyncNow,
         onOpenConflicts = onOpenConflicts,
         onOpenDevices = onOpenDevices,
-        onOpenShares = onOpenShares,
         onOpenDiagnostics = onOpenDiagnostics,
         onUnbind = onUnbind,
         onBind = onBind,
@@ -571,41 +569,6 @@ internal fun DeviceListDestination(
         broker = one.zephyr.mobile.feature.tools.SensitiveGrantBroker(account.api, account.isLocalMode),
         onBack = onBack,
         onMessage = onMessage,
-    )
-}
-
-@Composable
-internal fun LocalSharesDestination(
-    account: AccountContainer,
-    onBack: () -> Unit,
-    onMessage: (String) -> Unit,
-) {
-    var grants by remember { mutableStateOf(account.shareGrants.all()) }
-    val authorizer = one.zephyr.mobile.feature.filesync.rememberDirectoryAuthorizer(
-        grants = account.shareGrants,
-        requestWrite = true,
-        profileIdFactory = { java.util.UUID.randomUUID().toString() },
-        shareNameFactory = { "PHONE" },
-        onResult = { result ->
-            grants = account.shareGrants.all()
-            when (result) {
-                is one.zephyr.mobile.feature.filesync.DirectoryAuthorizationResult.Authorized ->
-                    onMessage("已授权 ${result.grant.shareName}")
-                one.zephyr.mobile.feature.filesync.DirectoryAuthorizationResult.Cancelled -> Unit
-                one.zephyr.mobile.feature.filesync.DirectoryAuthorizationResult.Refused ->
-                    onMessage("系统未能保留该目录授权")
-            }
-        },
-    )
-    one.zephyr.mobile.feature.tools.LocalSharesRoute(
-        grants = grants,
-        onPick = authorizer,
-        onRevoke = { id ->
-            account.shareGrants.revoke(id)
-            grants = account.shareGrants.all()
-            onMessage("已撤销")
-        },
-        onBack = onBack,
     )
 }
 

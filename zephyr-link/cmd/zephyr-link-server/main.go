@@ -24,6 +24,8 @@ const envListen = "ZEPHYR_LINK_LISTEN"
 const envAddr = "ZEPHYR_LINK_ADDR" // set by the Node supervisor to an ephemeral port
 const envAdminToken = "ZEPHYR_LINK_ADMIN_TOKEN"
 const envDevices = "ZEPHYR_LINK_DEVICES" // path to a JSON list of enrolled device IDs
+const envSyncBridge = "ZEPHYR_LINK_SYNC_BRIDGE" // loopback Node sync-core bridge URL
+const envSyncToken = "ZEPHYR_LINK_SYNC_TOKEN"   // loopback shared secret for the bridge
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -45,6 +47,14 @@ func main() {
 	var loaded int
 	if path := os.Getenv(envDevices); path != "" {
 		loaded = loadDevices(node, path, log)
+	}
+
+	// The owned-sync lane forwards business frames to the single Node sync core
+	// over loopback, so browser/mobile/desktop share one implementation. Absent
+	// the env, the lane stays unregistered and a SYNC_OP is correctly rejected.
+	if url := os.Getenv(envSyncBridge); url != "" {
+		node.RegisterSyncBridge(link.SyncBridgeConfig{URL: url, AdminToken: os.Getenv(envSyncToken)})
+		log.Info("owned-sync lane bridged to the Node sync core", "url", url)
 	}
 
 	mux := http.NewServeMux()

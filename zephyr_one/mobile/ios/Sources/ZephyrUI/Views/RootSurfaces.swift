@@ -146,7 +146,7 @@ struct ToolsRootView: View {
             toolSection("远程操作", destinations: [.remoteBatch])
             toolSection("资源", destinations: [.proxy, .sshKeys])
             toolSection("AI", destinations: [.aiAssistant])
-            toolSection("文件同步", destinations: [.fileSync])
+            toolSection("Zephyr Link", destinations: [.fileSync])
             toolSection("服务器", destinations: [.server])
             toolSection("One", destinations: [.appearance, .language, .localUnlock, .diagnostics])
         }

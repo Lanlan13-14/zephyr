@@ -61,7 +61,7 @@
     <string name="editor_section_route">路由</string>
     <string name="editor_section_rdp_channels">RDP 通道</string>
     <string name="editor_section_rdp_display">RDP 显示</string>
-    <string name="editor_section_file_sync">文件同步目录意图</string>
+    <string name="editor_section_file_sync">Zephyr Link 目录授权</string>
     <string name="editor_section_metadata">Metadata</string>
 
     <string name="editor_field_name">名称</string>

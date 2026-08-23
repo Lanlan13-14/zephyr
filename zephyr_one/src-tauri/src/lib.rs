@@ -3,6 +3,7 @@ mod auth;
 mod commands;
 mod fs;
 mod icon;
+mod link_runtime;
 mod rdp;
 mod rdp_picker;
 mod rdp_surface;
@@ -101,6 +102,10 @@ pub fn run() {
             commands::rdp_surface::rdp_native_surface_status,
             commands::rdp_surface::rdp_native_surface_capture,
             commands::rdp_surface::rdp_bridge,
+            commands::link::link_info,
+            commands::link::link_dial,
+            commands::link::link_push,
+            commands::link::link_stop,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Zephyr One");

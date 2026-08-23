@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/link"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/zsl"
 )
@@ -25,6 +26,12 @@ func TestServerLinkSurface(t *testing.T) {
 
 	// Enroll the device (runtime registration path the consume hook uses).
 	node.RegisterDevice("device-under-test")
+	// The server routes frames through its dispatcher; register the owned-sync
+	// lane so the SYNC_OP below is dispatched (a real host wires this to the
+	// account store). Without it the frame is correctly rejected.
+	node.Dispatcher().Register(1 /* SYNC_OP */, func(ctx *link.FrameContext, fr *codec.Frame) (int, any, bool, error) {
+		return 2 /* SYNC_ACK */, map[string]any{"receivedKind": fr.Kind, "ok": true}, false, nil
+	})
 
 	// Device side: run the shared core as an embedded node and dial the server.
 	init, err := zsl.HandshakeInitiator()

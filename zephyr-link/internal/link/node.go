@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/zsl"
 )
 
@@ -25,6 +26,13 @@ type Node struct {
 	// any handshake (tests and the embedded node); the server populates it from the
 	// enrollment consume path so a session only anchors to an enrolled device.
 	devices map[string]bool
+	// sessionDevice records which enrolled device a session was anchored to at
+	// handshake, so a business handler can attest the caller's device without the
+	// frame carrying a forgeable deviceId.
+	sessionDevice map[string]string
+	// dispatch routes unsealed business frames to per-kind handlers. It is what
+	// turns the node from a pipe into the Link channel.
+	dispatch *Dispatcher
 }
 
 // RegisterDevice marks a device ID as eligible to handshake.
@@ -48,18 +56,55 @@ func (n *Node) RequireEnrollment() {
 
 // NewNode builds a node with the transport routes mounted.
 func NewNode() *Node {
-	n := &Node{mux: http.NewServeMux(), sessions: make(map[string]*Endpoint)}
+	n := &Node{mux: http.NewServeMux(), sessions: make(map[string]*Endpoint), sessionDevice: make(map[string]string), dispatch: NewDispatcher()}
+	// Serve both the Go-native names (/link/...) and the mounted leaf names
+	// (/handshake, /push) so a dialer can point Dial/SendFrame at either the bare Go
+	// root or the main end's /api/link/v2 root with the same leaf paths.
 	n.mux.HandleFunc("/link/handshake", n.handleHandshake)
+	n.mux.HandleFunc("/handshake", n.handleHandshake)
 	n.mux.HandleFunc("/link/frame", n.handleFrame)
+	n.mux.HandleFunc("/push", n.handleFrame)
 	// Embedded hosts (Android/desktop) drive outbound dials through this local
 	// endpoint, so the device side also runs the shared Go core.
 	n.mux.HandleFunc("/link/dial", n.handleDial)
+	// And they push business frames on an established session through this local
+	// endpoint: seal with the session endpoint, POST to the peer's /link/frame,
+	// unseal the reply. The host never sees key material.
+	n.mux.HandleFunc("/link/push", n.handlePushFrame)
 	// Real-time full-duplex channel: the server upgrades to a WebSocket and relays
 	// sealed frames; the proxy shuttles bytes without ever decrypting.
 	n.mux.HandleFunc("/link/stream", n.handleStream)
 	// Session liveness/state probe for a device; sealed so it rides the channel.
 	n.mux.HandleFunc("/link/state", n.handleState)
+	n.registerBuiltinHandlers()
 	return n
+}
+
+// Dispatcher exposes the node's business-frame router so hosts (server, mobile,
+// desktop) register their per-kind handlers.
+func (n *Node) Dispatcher() *Dispatcher { return n.dispatch }
+
+// sessionDevice returns the device id a session was anchored to, or "" when the
+// session is unknown (an embedded dial endpoint may not record one).
+func (n *Node) sessionDeviceGet(sessionID string) string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.sessionDevice[sessionID]
+}
+
+// RegisterSyncBridge wires the owned-sync lane to the single Node sync business
+// core over loopback. The server calls this once at startup; the embedded mobile
+// node does not (it is the dial side, not the business side).
+func (n *Node) RegisterSyncBridge(cfg SyncBridgeConfig) { n.registerSyncBridge(cfg) }
+
+// registerBuiltinHandlers installs the handlers the node serves itself: the
+// control-channel wake/state probe. Business lanes (sync, blob, shared, …) are
+// registered by the embedding host, because they need account data the node
+// does not own.
+func (n *Node) registerBuiltinHandlers() {
+	n.dispatch.Register(codec.KindWake, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
+		return codec.KindWake, map[string]any{"state": "ready", "serverTime": time.Now().UnixMilli()}, false, nil
+	})
 }
 
 // handleState answers a session liveness probe. The reply is sealed under the
@@ -86,6 +131,7 @@ func (n *Node) handleState(w http.ResponseWriter, r *http.Request) {
 func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ServerURL string `json:"serverUrl"`
+		DeviceID  string `json:"deviceId"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -95,7 +141,7 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "serverUrl required", http.StatusBadRequest)
 		return
 	}
-	ep, sessionID, err := n.Dial(req.ServerURL)
+	ep, sessionID, err := n.Dial(req.ServerURL, req.DeviceID)
 	if err != nil {
 		http.Error(w, "dial failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -107,6 +153,56 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 		"ok": true, "sessionId": sessionID,
 		"exporter": base64.RawURLEncoding.EncodeToString(ep.Exporter()),
 	})
+}
+
+// pushFrameRequest is the embedded host's local push: which established session,
+// what business kind/body, and whether it rides the secret lane. The peer URL is
+// remembered from the dial so the host only names the session.
+type pushFrameRequest struct {
+	SessionID string `json:"sessionId"`
+	PeerURL   string `json:"peerUrl"`
+	Kind      int    `json:"kind"`
+	Body      any    `json:"body"`
+	Secret    bool   `json:"secret"`
+}
+
+// handlePushFrame is the embedded dial-side sender. The Kotlin/desktop host owns
+// WHAT to send; the Go core owns sealing and the wire, so every client speaks
+// byte-identical Link v2.
+func (n *Node) handlePushFrame(w http.ResponseWriter, r *http.Request) {
+	var req pushFrameRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&req); err != nil {
+		errJSON(w, http.StatusBadRequest, "bad_request", "bad json")
+		return
+	}
+	n.mu.Lock()
+	ep := n.sessions[req.SessionID]
+	n.mu.Unlock()
+	if ep == nil {
+		errJSON(w, http.StatusBadRequest, "session_unknown", "Link 会话不存在")
+		return
+	}
+	if req.PeerURL == "" {
+		errJSON(w, http.StatusBadRequest, "bad_request", "peerUrl required")
+		return
+	}
+	ack, err := n.SendFrame(req.PeerURL, req.SessionID, ep, req.Kind, req.Body, req.Secret)
+	if err != nil {
+		errJSON(w, http.StatusBadGateway, "push_failed", err.Error())
+		return
+	}
+	var ackBody any
+	if ack != nil && len(ack.Body) > 0 {
+		if err := codec.Decode(ack.Body, &ackBody); err != nil {
+			errJSON(w, http.StatusBadGateway, "push_failed", "unparsable ack body")
+			return
+		}
+	}
+	ackKind := 0
+	if ack != nil {
+		ackKind = ack.Kind
+	}
+	writeJSON(w, map[string]any{"ok": true, "ackKind": ackKind, "ack": ackBody})
 }
 
 // Handler exposes the node's HTTP routes.
@@ -194,6 +290,7 @@ func (n *Node) handleHandshake(w http.ResponseWriter, r *http.Request) {
 	sessionID := base64.RawURLEncoding.EncodeToString(sess.Exporter()[:16])
 	n.mu.Lock()
 	n.sessions[sessionID] = NewEndpoint(sess)
+	n.sessionDevice[sessionID] = req.DeviceID
 	n.mu.Unlock()
 	writeJSON(w, handshakeResponse{
 		SessionID:       sessionID,
@@ -223,8 +320,17 @@ func (n *Node) handleFrame(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "invalid_frame", err.Error())
 		return
 	}
-	// Echo the received kind back as an ack, sealed on the same channel.
-	ack, err := ep.Send(2 /* SYNC_ACK */, map[string]any{"receivedKind": fr.Kind, "ok": true}, false)
+	// Route the business frame to its per-kind handler instead of echoing the
+	// kind. An unhandled or unknown kind is a hard failure, not a silent ack.
+	replyKind, replyBody, replySecret, derr := n.dispatch.Dispatch(&FrameContext{SessionID: req.SessionID}, fr)
+	if derr != nil {
+		errJSON(w, http.StatusBadRequest, "dispatch_failed", derr.Error())
+		return
+	}
+	if replyBody == nil {
+		replyKind, replyBody, replySecret = codec.KindSyncAck, map[string]any{"receivedKind": fr.Kind, "ok": true}, false
+	}
+	ack, err := ep.Send(replyKind, replyBody, replySecret)
 	if err != nil {
 		writeJSON(w, frameResponse{OK: false, Error: err.Error()})
 		return
@@ -240,16 +346,22 @@ func (n *Node) handleFrame(w http.ResponseWriter, r *http.Request) {
 
 // Dial performs a handshake against a peer node and returns the keyed endpoint
 // plus the session id to address frames to.
-func (n *Node) Dial(baseURL string) (*Endpoint, string, error) {
+// Dial runs the ZSL/2 initiator handshake against a peer. deviceID anchors the
+// session to the enrolled device on the server; the embedded mobile/desktop node
+// passes its bound device id. baseURL is the peer's link root: the production main
+// end mounts the proxy at /api/link/v2, a Go-native peer serves /link directly, so
+// the caller supplies whichever root and Dial appends the leaf.
+func (n *Node) Dial(baseURL, deviceID string) (*Endpoint, string, error) {
 	init, err := zsl.HandshakeInitiator()
 	if err != nil {
 		return nil, "", err
 	}
 	reqBody, _ := json.Marshal(handshakeRequest{
+		DeviceID:     deviceID,
 		X25519Public: base64.RawURLEncoding.EncodeToString(init.X25519Public),
 		MLKEMPublic:  base64.RawURLEncoding.EncodeToString(init.MLKEMPublic),
 	})
-	resp, err := http.Post(baseURL+"/link/handshake", "application/json", bytes.NewReader(reqBody))
+	resp, err := http.Post(baseURL+"/handshake", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, "", err
 	}
@@ -279,10 +391,10 @@ func (n *Node) Dial(baseURL string) (*Endpoint, string, error) {
 
 // SendFrame seals a business frame and posts it to the peer, returning the
 // peer's unsealed ack frame.
-func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body any, secret bool) (int, error) {
+func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body any, secret bool) (*codec.Frame, error) {
 	env, err := ep.Send(kind, body, secret)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	reqBody, _ := json.Marshal(frameRequest{
 		SessionID: sessionID,
@@ -291,26 +403,26 @@ func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body
 		CT:        base64.RawURLEncoding.EncodeToString(env.CT),
 		Tag:       base64.RawURLEncoding.EncodeToString(env.Tag),
 	})
-	resp, err := http.Post(baseURL+"/link/frame", "application/json", bytes.NewReader(reqBody))
+	resp, err := http.Post(baseURL+"/push", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	var fr frameResponse
 	if err := json.NewDecoder(resp.Body).Decode(&fr); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if !fr.OK {
-		return 0, fmt.Errorf("frame rejected: %s", fr.Error)
+		return nil, fmt.Errorf("frame rejected: %s", fr.Error)
 	}
 	iv, _ := b64d(fr.IV)
 	ct, _ := b64d(fr.CT)
 	tag, _ := b64d(fr.Tag)
 	ack, err := ep.Receive(&Envelope{Seq: fr.Seq, IV: iv, CT: ct, Tag: tag})
 	if err != nil {
-		return 0, fmt.Errorf("ack open: %w", err)
+		return nil, fmt.Errorf("ack open: %w", err)
 	}
-	return ack.Kind, nil
+	return ack, nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

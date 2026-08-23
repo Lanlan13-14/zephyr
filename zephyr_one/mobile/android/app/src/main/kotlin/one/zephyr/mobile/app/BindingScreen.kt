@@ -154,7 +154,7 @@ fun BindingScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = "文件同步", onBack = onBack)
+        PushedPageHeader(title = "Zephyr Link", onBack = onBack)
         Column(
             Modifier
                 .fillMaxSize()

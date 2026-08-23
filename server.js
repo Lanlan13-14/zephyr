@@ -165,6 +165,7 @@ const { OneClientManager } = require('./one-client-manager');
 const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
 const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-enrollment');
 const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go } = require('./link-v2-go-proxy');
+const { createLinkSyncBridge } = require('./link-v2-sync-bridge');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 const { MobileV1OutboxDispatcher } = require('./mobile-v1-outbox-dispatcher');
 const { AppChangeWakeHub, registerAppChangeWakeRoute } = require('./app-change-wake-hub');
@@ -8977,8 +8978,24 @@ try {
          * mobile ends share one protocol core. Node reverse-proxies the HTTP routes and
          * the WSS upgrade; it no longer seals/opens frames itself. Newly enrolled
          * devices are registered with the Go service so their first handshake succeeds. */
+        /* The owned-sync bridge lets the Go Link node hand a sync business frame to
+         * the single MobileV1 sync core over loopback. It is bound before the proxy
+         * so the Go service can reach it, and the admin token is shared so only the
+         * supervised Go child can assert an attested device id. */
+        const linkSyncAdminToken = process.env.ZEPHYR_LINK_ADMIN_TOKEN || '';
+        if (linkSyncAdminToken) {
+            const linkSyncBridge = createLinkSyncBridge({
+                api: mobileV1Api,
+                storage,
+                adminToken: linkSyncAdminToken,
+            });
+            app.use('/internal/link', express.json({ limit: '4mb' }));
+            app.post('/internal/link/sync', (req, res) => linkSyncBridge.handle(req, res));
+        }
         const linkGo = createLinkV2GoProxy({
             enrollments,
+            syncBridgeUrl: linkSyncAdminToken ? `http://127.0.0.1:${PORT}/internal/link/sync` : '',
+            syncBridgeToken: linkSyncAdminToken,
             log: (...args) => console.log('[link-v2]', ...args),
         });
         linkV2EnrollmentApi = createLinkV2EnrollmentApi({

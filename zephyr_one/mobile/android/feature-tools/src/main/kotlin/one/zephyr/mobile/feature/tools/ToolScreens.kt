@@ -354,7 +354,6 @@ fun FileSyncScreen(
     onSyncNow: () -> Unit,
     onOpenConflicts: () -> Unit = {},
     onOpenDevices: () -> Unit = {},
-    onOpenShares: () -> Unit = {},
     onOpenDiagnostics: () -> Unit = {},
     onUnbind: (() -> Unit)? = null,
     onBind: (() -> Unit)? = null,
@@ -368,7 +367,7 @@ fun FileSyncScreen(
         else -> "镜像待同步"
     }
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = "文件同步", onBack = onBack)
+        PushedPageHeader(title = "Zephyr Link", onBack = onBack)
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
@@ -447,13 +446,6 @@ fun FileSyncScreen(
                     showChevron = true,
                     onClick = onOpenDevices,
                     leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.Devices) },
-                )
-                one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "本机共享目录",
-                    subtitle = "文件桥接授权，只在本机生效",
-                    showChevron = true,
-                    onClick = onOpenShares,
-                    leading = { ToolRowIcon(one.zephyr.mobile.ui.icon.ZephyrIcons.File) },
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "诊断",

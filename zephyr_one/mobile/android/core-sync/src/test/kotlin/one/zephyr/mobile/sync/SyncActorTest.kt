@@ -40,6 +40,7 @@ class SyncActorTest {
         store: FakeSyncLocalStore,
         sealer: SecretSealer = NoSealer,
         blobs: BlobTransferPort = NoBlobs,
+        onCapabilities: (one.zephyr.mobile.model.ServerCapabilities) -> Unit = {},
     ) = SyncActor(
         transport = transport,
         store = store,
@@ -48,6 +49,7 @@ class SyncActorTest {
         clock = { now },
         batchIdFactory = { "batch-fixed" },
         jitter = { 1.0 },
+        onCapabilities = onCapabilities,
     )
 
     @Test

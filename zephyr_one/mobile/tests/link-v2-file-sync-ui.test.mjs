@@ -8,7 +8,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
 const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 
-test('tools home keeps a single 文件同步 row', () => {
+test('tools home keeps a single Zephyr Link row', () => {
   const catalog = read('zephyr_one/mobile/android/feature-tools/src/main/kotlin/one/zephyr/mobile/feature/tools/ToolsCatalog.kt');
   assert.match(catalog, /ToolSection\.FILE_SYNC -> listOf\(ToolEntry\.FILE_SYNC\)/);
   assert.doesNotMatch(
@@ -26,8 +26,8 @@ test('tools home keeps a single 文件同步 row', () => {
   const root = read('zephyr_one/mobile/android/app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneRoot.kt');
   assert.doesNotMatch(root, /onOpenTokens/);
   const ios = read('zephyr_one/mobile/ios/Sources/ZephyrUI/Views/RootSurfaces.swift');
-  assert.match(ios, /toolSection\("文件同步", destinations: \[\.fileSync\]\)/);
-  assert.doesNotMatch(ios, /toolSection\("文件同步", destinations: \[\.fileSync, \.clientToken\]\)/);
+  assert.match(ios, /toolSection\("Zephyr Link", destinations: \[\.fileSync\]\)/);
+  assert.doesNotMatch(ios, /toolSection\("Zephyr Link", destinations: \[\.fileSync, \.clientToken\]\)/);
 });
 
 test('binding screen is browser enrollment, not password plus Client Token', () => {
