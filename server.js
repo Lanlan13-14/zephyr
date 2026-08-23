@@ -164,7 +164,7 @@ const {
 const { OneClientManager } = require('./one-client-manager');
 const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
 const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-enrollment');
-const { createLinkV2Transport } = require('./link-v2-transport');
+const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go } = require('./link-v2-go-proxy');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 const { MobileV1OutboxDispatcher } = require('./mobile-v1-outbox-dispatcher');
 const { AppChangeWakeHub, registerAppChangeWakeRoute } = require('./app-change-wake-hub');
@@ -200,7 +200,6 @@ const { negotiateRdpTls } = require('./server/rdp-cert-probe');
 let mobileV1OutboxDispatcher = null;
 let mobileV1Api = null;
 let linkV2EnrollmentApi = null;
-let linkV2Transport = null;
 let webDavProduction = null;
 let webDavSensitiveRateLimiter = null;
 let backupImportSensitiveRateLimiter = null;
@@ -649,6 +648,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
         try { mobileV1OutboxDispatcher?.close(); } catch {}
         try { appChangeWakeRuntime?.close(); } catch {}
         try { await webDavProduction?.close(); } catch {}
+        try { stopLinkV2Go(); } catch {}
         flushAllSshSessionHistory();
         process.exit(signal === 'SIGTERM' ? 0 : 130);
     });
@@ -8973,6 +8973,14 @@ try {
             db: storage.rawDb(),
             log: (...args) => console.log('[link-v2]', ...args),
         });
+        /* The ZSL/2 transport runs in the Go Link service so the server, desktop and
+         * mobile ends share one protocol core. Node reverse-proxies the HTTP routes and
+         * the WSS upgrade; it no longer seals/opens frames itself. Newly enrolled
+         * devices are registered with the Go service so their first handshake succeeds. */
+        const linkGo = createLinkV2GoProxy({
+            enrollments,
+            log: (...args) => console.log('[link-v2]', ...args),
+        });
         linkV2EnrollmentApi = createLinkV2EnrollmentApi({
             enrollments,
             store: mobileV1Api.store,
@@ -8980,38 +8988,12 @@ try {
             publicOrigin,
             qrcode: QRCode,
             log: (...args) => console.log('[link-v2]', ...args),
+            onDeviceEnrolled: (deviceId) => linkGo.registerDevice(deviceId),
         });
         app.use('/link/approve', express.urlencoded({ extended: false, limit: '8kb' }));
         linkV2EnrollmentApi.mount(app);
-        linkV2Transport = createLinkV2Transport({
-            enrollments,
-            store: mobileV1Api.store,
-            log: (...args) => console.log('[link-v2]', ...args),
-        });
-        app.post('/api/link/v2/handshake', express.json({ limit: '64kb' }), (req, res) => linkV2Transport.handshake(req, res));
-        app.get('/api/link/v2/state', (req, res) => {
-            const sessionId = String(req.query.sessionId || '');
-            const record = linkV2Transport.table.get(sessionId);
-            if (!record || !record.established) {
-                return res.status(401).json({ ok: false, error: { code: 'session_unknown', message: 'Link 会话不存在或未完成握手', retryable: true } });
-            }
-            return res.json(linkV2Transport.sealFrame(record, 6 /* WAKE */, {
-                state: 'ready',
-                deviceId: record.deviceId,
-                serverTime: Date.now(),
-            }));
-        });
-        app.post('/api/link/v2/push', express.json({ limit: '6mb' }), (req, res) => {
-            try {
-                const { record, frame } = linkV2Transport.openEnvelope(req.body);
-                // Push carries device→server business frames. Ack it with the same session.
-                return res.json(linkV2Transport.sealFrame(record, 2 /* SYNC_ACK */, { receivedKind: frame.kind, ok: true }));
-            } catch (err) {
-                const code = (err && err.code) || 'invalid_frame';
-                return res.status(400).json({ ok: false, error: { code, message: String(err && err.message || '帧无效'), retryable: true } });
-            }
-        });
-        console.log('[link-v2] transport mounted (handshake/state/push; stream via WSS upgrade)');
+        app.use('/api/link/v2', linkGo.router());
+        console.log('[link-v2] transport reverse-proxied to the Go Link service');
     } catch (linkErr) {
         console.error('[link-v2] enrollment failed to mount', linkErr && linkErr.message);
     }
@@ -9286,44 +9268,10 @@ fileTransferWss.on('connection', (ws, req) => {
  * browser cookie. Exposing it to a device credential would hand a sharee the
  * whole surface when the contract grants only "observe/control this one PTY".
  */
+/* The WSS stream is proxied to the Go Link service, which owns the ZSL/2 session
+ * table. Frames are opaque ciphertext to Node; it only shuttles bytes. */
 linkV2Wss.on('connection', (ws, req) => {
-    if (!linkV2Transport) {
-        closeWebSocketSafe(ws, 1011, 'link-unavailable');
-        return;
-    }
-    let url;
-    try {
-        url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-    } catch {
-        closeWebSocketSafe(ws, 1008, 'bad-request');
-        return;
-    }
-    const sessionId = String(url.searchParams.get('sessionId') || '');
-    const record = linkV2Transport.table.get(sessionId);
-    if (!record || !record.established) {
-        closeWebSocketSafe(ws, 1008, 'session-unknown');
-        return;
-    }
-    ws.on('message', (data) => {
-        let envelope;
-        try {
-            envelope = JSON.parse(Buffer.isBuffer(data) ? data.toString('utf8') : String(data));
-        } catch {
-            closeWebSocketSafe(ws, 1003, 'bad-frame');
-            return;
-        }
-        try {
-            const { record: rec, frame } = linkV2Transport.openEnvelope(envelope);
-            // Minimal dispatch: acknowledge each well-formed sealed frame. Business
-            // routing per channel lands on top of this same open/seal pair.
-            const ack = linkV2Transport.sealFrame(rec, 2 /* SYNC_ACK */, { receivedKind: frame.kind, ok: true });
-            ws.send(JSON.stringify(ack));
-        } catch (err) {
-            closeWebSocketSafe(ws, 1008, String((err && err.code) || 'frame-error').slice(0, 120));
-        }
-    });
-    ws.on('close', () => linkV2Transport.destroy(sessionId));
-    ws.on('error', () => linkV2Transport.destroy(sessionId));
+    proxyLinkV2Stream(ws, req);
 });
 
 sharedRelayWss.on('connection', async (ws, req) => {

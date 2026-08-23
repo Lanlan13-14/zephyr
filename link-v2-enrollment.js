@@ -549,6 +549,7 @@ function createLinkV2EnrollmentApi({
     publicOrigin,
     qrcode,
     log,
+    onDeviceEnrolled,
 }) {
     async function qrDataUrl(text) {
         if (!qrcode || typeof qrcode.toDataURL !== 'function') return null;
@@ -683,6 +684,13 @@ function createLinkV2EnrollmentApi({
                     },
                 }))();
                 const bound = result.bound;
+                // Register the freshly enrolled device with the Go Link transport so its
+                // first handshake succeeds. Fire-and-forget: a registration hiccup must not
+                // fail an otherwise-complete enrollment; the device simply retries, and the
+                // admin route is idempotent.
+                if (typeof onDeviceEnrolled === 'function') {
+                    try { onDeviceEnrolled(String(bound.row && bound.row.device_id || '')); } catch (e) { /* never block consume */ }
+                }
                 res.json({
                     ok: true,
                     device: store.devicePublic(bound.row),

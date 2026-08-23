@@ -103,3 +103,6 @@ zephyr_one/vcpkg_installed/
 # Zephyr One Windows smoke-test artifacts and previous-core backups (local only)
 /zephyr_one/dist-windows-smoke/
 /zephyr_one/zephyr-core-previous-*/
+
+# Locally built Go Link server binary (CI builds it; see Dockerfile zephyr-link-builder)
+/bin/
