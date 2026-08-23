@@ -413,6 +413,7 @@ object Markdown {
                     is MarkdownBlock.TaskItem -> block.text.text
                     is MarkdownBlock.Quote -> block.text.text
                     is MarkdownBlock.CodeBlock -> block.code.lineSequence().firstOrNull()
+                    is MarkdownBlock.Table -> block.header.joinToString(" ") { it.text }
                     MarkdownBlock.Divider -> null
                 }
             }

@@ -4,6 +4,7 @@ import one.zephyr.mobile.ui.icon.ZephyrIcons
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -578,7 +579,7 @@ private fun NoteSearch(query: String, onQueryChange: (String) -> Unit) {
  * CODE wins over emphasis inside a span because the parser resolved backticks first; nesting is
  * applied in insertion order, which matches how [Markdown.inline] emits spans.
  */
-private fun markdownAnnotated(text: MarkdownText): AnnotatedString {
+private fun markdownAnnotated(text: MarkdownText, linkColor: Color): AnnotatedString {
     val builder = AnnotatedString.Builder(text.text)
     for (span in text.spans) {
         if (span.start < 0 || span.end > text.text.length || span.start >= span.end) continue
@@ -587,6 +588,7 @@ private fun markdownAnnotated(text: MarkdownText): AnnotatedString {
             MarkdownStyle.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
             MarkdownStyle.CODE -> SpanStyle(fontFamily = FontFamily.Monospace)
             MarkdownStyle.STRIKETHROUGH -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+            MarkdownStyle.LINK -> SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
         }
         builder.addStyle(style, span.start, span.end)
     }
@@ -599,7 +601,7 @@ private fun MarkdownBlockView(block: MarkdownBlock) {
     val palette = ZephyrTheme.palette
     when (block) {
         is MarkdownBlock.Heading -> Text(
-            text = markdownAnnotated(block.text),
+            text = markdownAnnotated(block.text, palette.brand.accent),
             color = palette.onBackground,
             style = TextStyle(
                 fontWeight = FontWeight.Bold,
@@ -619,7 +621,7 @@ private fun MarkdownBlockView(block: MarkdownBlock) {
         )
 
         is MarkdownBlock.Paragraph -> Text(
-            text = markdownAnnotated(block.text),
+            text = markdownAnnotated(block.text, palette.brand.accent),
             color = palette.onBackground,
             style = TextStyle(fontSize = 15.5.sp, lineHeight = 26.sp),
             modifier = Modifier
@@ -687,11 +689,26 @@ private fun MarkdownBlockView(block: MarkdownBlock) {
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                text = markdownAnnotated(block.text),
+                text = markdownAnnotated(block.text, palette.brand.accent),
                 color = palette.onFloatingMuted,
                 style = TextStyle(fontSize = 15.sp, lineHeight = 24.sp),
                 modifier = Modifier.weight(1f),
             )
+        }
+
+        is MarkdownBlock.Table -> Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .border(1.dp, palette.surfaces.outlineSoft, RoundedCornerShape(10.dp))
+                .horizontalScroll(rememberScrollState()),
+        ) {
+            MarkdownTableRow(cells = block.header, alignments = block.alignments, header = true, linkColor = palette.brand.accent)
+            block.rows.forEach { row ->
+                Box(Modifier.fillMaxWidth().height(1.dp).background(palette.surfaces.outlineSoft))
+                MarkdownTableRow(cells = row, alignments = block.alignments, header = false, linkColor = palette.brand.accent)
+            }
         }
 
         MarkdownBlock.Divider -> Box(
@@ -701,6 +718,40 @@ private fun MarkdownBlockView(block: MarkdownBlock) {
                 .height(1.dp)
                 .background(palette.surfaces.outlineSoft),
         )
+    }
+}
+
+@Composable
+private fun MarkdownTableRow(
+    cells: List<MarkdownText>,
+    alignments: List<String>,
+    header: Boolean,
+    linkColor: Color,
+) {
+    val palette = ZephyrTheme.palette
+    Row(
+        modifier = Modifier
+            .background(if (header) palette.surfaces.elevated else Color.Transparent)
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+    ) {
+        cells.forEachIndexed { index, cell ->
+            val align = when (alignments.getOrNull(index)) {
+                "center" -> TextAlign.Center
+                "right" -> TextAlign.End
+                else -> TextAlign.Start
+            }
+            Text(
+                text = markdownAnnotated(cell, linkColor),
+                color = palette.onBackground,
+                style = TextStyle(
+                    fontSize = 14.sp,
+                    lineHeight = 21.sp,
+                    fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,
+                    textAlign = align,
+                ),
+                modifier = Modifier.width(140.dp),
+            )
+        }
     }
 }
 
@@ -718,7 +769,7 @@ private fun MarkdownListRow(depth: Int, marker: String, text: MarkdownText) {
             modifier = Modifier.width(24.dp),
         )
         Text(
-            text = markdownAnnotated(text),
+            text = markdownAnnotated(text, ZephyrTheme.palette.brand.accent),
             color = ZephyrTheme.palette.onBackground,
             style = TextStyle(fontSize = 15.5.sp, lineHeight = 25.sp),
             modifier = Modifier.weight(1f),
