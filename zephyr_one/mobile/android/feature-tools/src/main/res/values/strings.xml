@@ -8,7 +8,7 @@
     <string name="tools_section_remote">远程操作</string>
     <string name="tools_section_resources">资源</string>
     <string name="tools_section_ai">AI</string>
-    <string name="tools_section_file_sync">文件同步</string>
+    <string name="tools_section_file_sync">Zephyr Link</string>
     <string name="tools_section_server">服务器</string>
     <string name="tools_section_one">One</string>
     <string name="tools_batch">远程批量</string>
@@ -19,7 +19,7 @@
     <string name="tools_ssh_key">SSH Key</string>
     <string name="tools_jump_host">JumpHost</string>
     <string name="tools_ai">AI 助理</string>
-    <string name="tools_file_sync">文件同步</string>
+    <string name="tools_file_sync">Zephyr Link</string>
     <string name="tools_client_token">Client Token</string>
     <string name="tools_server_settings">服务器设置</string>
     <string name="tools_server">服务器</string>

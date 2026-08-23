@@ -252,7 +252,6 @@ private sealed interface RootRoute {
     data object ClientToken : RootRoute
     data object Conflicts : RootRoute
     data object Devices : RootRoute
-    data object LocalShares : RootRoute
     data object ServerBinding : RootRoute
     data object ServerHub : RootRoute
     data object ServerSettings : RootRoute
@@ -306,7 +305,6 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
             RootRoute.ClientToken -> listOf(TAG_CLIENT_TOKEN)
             RootRoute.Conflicts -> listOf(TAG_CONFLICTS)
             RootRoute.Devices -> listOf(TAG_DEVICES)
-            RootRoute.LocalShares -> listOf(TAG_SHARES)
             RootRoute.ServerBinding -> listOf(TAG_BINDING)
             RootRoute.ServerHub -> listOf(TAG_SERVER)
             RootRoute.ServerSettings -> listOf(TAG_SERVER_SETTINGS)
@@ -351,7 +349,6 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
             TAG_CLIENT_TOKEN -> RootRoute.ClientToken
             TAG_CONFLICTS -> RootRoute.Conflicts
             TAG_DEVICES -> RootRoute.Devices
-            TAG_SHARES -> RootRoute.LocalShares
             TAG_BINDING -> RootRoute.ServerBinding
             TAG_SERVER -> RootRoute.ServerHub
             TAG_SERVER_SETTINGS -> RootRoute.ServerSettings
@@ -750,7 +747,6 @@ private fun BoundRoot(
                 onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
                 onOpenConflicts = { route = RootRoute.Conflicts },
                 onOpenDevices = { route = RootRoute.Devices },
-                onOpenShares = { route = RootRoute.LocalShares },
                 onOpenDiagnostics = { route = RootRoute.Diagnostics },
                 onUnbind = if (account.isLocalMode) null else ({ route = RootRoute.ServerBinding }),
                 onBind = if (account.isLocalMode) ({ route = RootRoute.ServerBinding }) else null,
@@ -768,11 +764,6 @@ private fun BoundRoot(
                 onMessage = notice,
             )
             RootRoute.Devices -> DeviceListDestination(
-                account = account,
-                onBack = { route = RootRoute.FileSync },
-                onMessage = notice,
-            )
-            RootRoute.LocalShares -> LocalSharesDestination(
                 account = account,
                 onBack = { route = RootRoute.FileSync },
                 onMessage = notice,
@@ -1030,7 +1021,6 @@ private fun routeDepth(route: RootRoute): Int = when (route) {
     RootRoute.ClientToken,
     RootRoute.Conflicts,
     RootRoute.Devices,
-    RootRoute.LocalShares,
     RootRoute.ServerSettings,
     RootRoute.Backup,
     is RootRoute.ResourceEditor -> 2
@@ -1640,7 +1630,7 @@ private fun popRoute(route: RootRoute): RootRoute = when (route) {
     RootRoute.Notes, RootRoute.Snippets, RootRoute.Files, RootRoute.Downloads, RootRoute.LibraryCreate ->
         RootRoute.Root(IslandDestination.LIBRARY)
     is RootRoute.ResourceEditor -> RootRoute.ResourceList(route.kind)
-    RootRoute.ClientToken, RootRoute.Conflicts, RootRoute.Devices, RootRoute.LocalShares -> RootRoute.FileSync
+    RootRoute.ClientToken, RootRoute.Conflicts, RootRoute.Devices -> RootRoute.FileSync
     RootRoute.ServerSettings, RootRoute.Backup -> RootRoute.ServerHub
     RootRoute.ServerBinding -> RootRoute.Root(IslandDestination.HOME)
     else -> RootRoute.Root(IslandDestination.TOOLS)
@@ -1925,7 +1915,6 @@ private const val TAG_FILE_SYNC = "file-sync"
 private const val TAG_CLIENT_TOKEN = "client-token"
 private const val TAG_CONFLICTS = "conflicts"
 private const val TAG_DEVICES = "devices"
-private const val TAG_SHARES = "shares"
 private const val TAG_BINDING = "binding"
 private const val TAG_SERVER = "server"
 private const val TAG_SERVER_SETTINGS = "server-settings"

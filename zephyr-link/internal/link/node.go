@@ -62,6 +62,10 @@ func NewNode() *Node {
 	// Embedded hosts (Android/desktop) drive outbound dials through this local
 	// endpoint, so the device side also runs the shared Go core.
 	n.mux.HandleFunc("/link/dial", n.handleDial)
+	// And they push business frames on an established session through this local
+	// endpoint: seal with the session endpoint, POST to the peer's /link/frame,
+	// unseal the reply. The host never sees key material.
+	n.mux.HandleFunc("/link/push", n.handlePushFrame)
 	// Real-time full-duplex channel: the server upgrades to a WebSocket and relays
 	// sealed frames; the proxy shuttles bytes without ever decrypting.
 	n.mux.HandleFunc("/link/stream", n.handleStream)
@@ -143,6 +147,56 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 		"ok": true, "sessionId": sessionID,
 		"exporter": base64.RawURLEncoding.EncodeToString(ep.Exporter()),
 	})
+}
+
+// pushFrameRequest is the embedded host's local push: which established session,
+// what business kind/body, and whether it rides the secret lane. The peer URL is
+// remembered from the dial so the host only names the session.
+type pushFrameRequest struct {
+	SessionID string `json:"sessionId"`
+	PeerURL   string `json:"peerUrl"`
+	Kind      int    `json:"kind"`
+	Body      any    `json:"body"`
+	Secret    bool   `json:"secret"`
+}
+
+// handlePushFrame is the embedded dial-side sender. The Kotlin/desktop host owns
+// WHAT to send; the Go core owns sealing and the wire, so every client speaks
+// byte-identical Link v2.
+func (n *Node) handlePushFrame(w http.ResponseWriter, r *http.Request) {
+	var req pushFrameRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&req); err != nil {
+		errJSON(w, http.StatusBadRequest, "bad_request", "bad json")
+		return
+	}
+	n.mu.Lock()
+	ep := n.sessions[req.SessionID]
+	n.mu.Unlock()
+	if ep == nil {
+		errJSON(w, http.StatusBadRequest, "session_unknown", "Link 会话不存在")
+		return
+	}
+	if req.PeerURL == "" {
+		errJSON(w, http.StatusBadRequest, "bad_request", "peerUrl required")
+		return
+	}
+	ack, err := n.SendFrame(req.PeerURL, req.SessionID, ep, req.Kind, req.Body, req.Secret)
+	if err != nil {
+		errJSON(w, http.StatusBadGateway, "push_failed", err.Error())
+		return
+	}
+	var ackBody any
+	if ack != nil && len(ack.Body) > 0 {
+		if err := codec.Decode(ack.Body, &ackBody); err != nil {
+			errJSON(w, http.StatusBadGateway, "push_failed", "unparsable ack body")
+			return
+		}
+	}
+	ackKind := 0
+	if ack != nil {
+		ackKind = ack.Kind
+	}
+	writeJSON(w, map[string]any{"ok": true, "ackKind": ackKind, "ack": ackBody})
 }
 
 // Handler exposes the node's HTTP routes.
@@ -325,10 +379,10 @@ func (n *Node) Dial(baseURL string) (*Endpoint, string, error) {
 
 // SendFrame seals a business frame and posts it to the peer, returning the
 // peer's unsealed ack frame.
-func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body any, secret bool) (int, error) {
+func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body any, secret bool) (*codec.Frame, error) {
 	env, err := ep.Send(kind, body, secret)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	reqBody, _ := json.Marshal(frameRequest{
 		SessionID: sessionID,
@@ -339,24 +393,24 @@ func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body
 	})
 	resp, err := http.Post(baseURL+"/link/frame", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	var fr frameResponse
 	if err := json.NewDecoder(resp.Body).Decode(&fr); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if !fr.OK {
-		return 0, fmt.Errorf("frame rejected: %s", fr.Error)
+		return nil, fmt.Errorf("frame rejected: %s", fr.Error)
 	}
 	iv, _ := b64d(fr.IV)
 	ct, _ := b64d(fr.CT)
 	tag, _ := b64d(fr.Tag)
 	ack, err := ep.Receive(&Envelope{Seq: fr.Seq, IV: iv, CT: ct, Tag: tag})
 	if err != nil {
-		return 0, fmt.Errorf("ack open: %w", err)
+		return nil, fmt.Errorf("ack open: %w", err)
 	}
-	return ack.Kind, nil
+	return ack, nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

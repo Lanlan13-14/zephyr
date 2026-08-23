@@ -99,7 +99,7 @@ public enum ToolDestination: String, Sendable, CaseIterable, Identifiable, Hasha
         case .proxy: return "Proxy"
         case .sshKeys: return "SSH Key"
         case .aiAssistant: return "AI 助理"
-        case .fileSync: return "文件同步"
+        case .fileSync: return "Zephyr Link"
         case .clientToken: return "Client Token"
         case .server: return "服务器"
         case .appearance: return "外观"
