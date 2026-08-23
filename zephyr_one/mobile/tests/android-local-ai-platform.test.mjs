@@ -47,6 +47,17 @@ test('local AI runtime has platform tools and a fail-closed L2 sandbox', () => {
   for (const tool of ['connection_list_v1','remote_execute','workspace_list_v1','workspace_read_v1','workspace_write_v1','session_sandbox_status_v1','session_exec_v1']) {
     assert.match(platform, new RegExp(tool));
   }
+  // Parity with the desktop catalog: notes/snippets and SFTP must be reachable or the assistant
+  // has no hands. Each is gated — notes by the per-entity AI flags, SFTP writes by risk.
+  for (const tool of ['note_list_v1','note_get_v1','note_write_v1','snippet_list_v1','snippet_get_v1','sftp_list_v1','sftp_stat_v1','sftp_read_text_v1','sftp_write_text_v1','sftp_mkdir_v1','sftp_rename_v1','sftp_delete_v1']) {
+    assert.match(platform, new RegExp(tool), `missing platform tool ${tool}`);
+  }
+  // Notes respect the per-entity AI exposure flags (server-side re-authorization equivalent).
+  assert.match(platform, /aiReadEnabled/);
+  assert.match(platform, /aiWriteEnabled/);
+  // SFTP runs through the interactive browser's session pool, never a fresh ad-hoc connection.
+  assert.match(platform, /SftpPort/);
+  assert.match(platform, /port\.open\(connectionId\)/);
   assert.match(platform, /isLoopbackAddress/);
   assert.match(platform, /x-ai-host-admin/);
   assert.match(sandbox, /!File\(path\)\.isAbsolute/);
