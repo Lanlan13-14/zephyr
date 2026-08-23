@@ -57,8 +57,13 @@ func (n *Node) RequireEnrollment() {
 // NewNode builds a node with the transport routes mounted.
 func NewNode() *Node {
 	n := &Node{mux: http.NewServeMux(), sessions: make(map[string]*Endpoint), sessionDevice: make(map[string]string), dispatch: NewDispatcher()}
+	// Serve both the Go-native names (/link/...) and the mounted leaf names
+	// (/handshake, /push) so a dialer can point Dial/SendFrame at either the bare Go
+	// root or the main end's /api/link/v2 root with the same leaf paths.
 	n.mux.HandleFunc("/link/handshake", n.handleHandshake)
+	n.mux.HandleFunc("/handshake", n.handleHandshake)
 	n.mux.HandleFunc("/link/frame", n.handleFrame)
+	n.mux.HandleFunc("/push", n.handleFrame)
 	// Embedded hosts (Android/desktop) drive outbound dials through this local
 	// endpoint, so the device side also runs the shared Go core.
 	n.mux.HandleFunc("/link/dial", n.handleDial)
@@ -126,6 +131,7 @@ func (n *Node) handleState(w http.ResponseWriter, r *http.Request) {
 func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ServerURL string `json:"serverUrl"`
+		DeviceID  string `json:"deviceId"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -135,7 +141,7 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "serverUrl required", http.StatusBadRequest)
 		return
 	}
-	ep, sessionID, err := n.Dial(req.ServerURL)
+	ep, sessionID, err := n.Dial(req.ServerURL, req.DeviceID)
 	if err != nil {
 		http.Error(w, "dial failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -340,16 +346,22 @@ func (n *Node) handleFrame(w http.ResponseWriter, r *http.Request) {
 
 // Dial performs a handshake against a peer node and returns the keyed endpoint
 // plus the session id to address frames to.
-func (n *Node) Dial(baseURL string) (*Endpoint, string, error) {
+// Dial runs the ZSL/2 initiator handshake against a peer. deviceID anchors the
+// session to the enrolled device on the server; the embedded mobile/desktop node
+// passes its bound device id. baseURL is the peer's link root: the production main
+// end mounts the proxy at /api/link/v2, a Go-native peer serves /link directly, so
+// the caller supplies whichever root and Dial appends the leaf.
+func (n *Node) Dial(baseURL, deviceID string) (*Endpoint, string, error) {
 	init, err := zsl.HandshakeInitiator()
 	if err != nil {
 		return nil, "", err
 	}
 	reqBody, _ := json.Marshal(handshakeRequest{
+		DeviceID:     deviceID,
 		X25519Public: base64.RawURLEncoding.EncodeToString(init.X25519Public),
 		MLKEMPublic:  base64.RawURLEncoding.EncodeToString(init.MLKEMPublic),
 	})
-	resp, err := http.Post(baseURL+"/link/handshake", "application/json", bytes.NewReader(reqBody))
+	resp, err := http.Post(baseURL+"/handshake", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, "", err
 	}
@@ -391,7 +403,7 @@ func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body
 		CT:        base64.RawURLEncoding.EncodeToString(env.CT),
 		Tag:       base64.RawURLEncoding.EncodeToString(env.Tag),
 	})
-	resp, err := http.Post(baseURL+"/link/frame", "application/json", bytes.NewReader(reqBody))
+	resp, err := http.Post(baseURL+"/push", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
 	}

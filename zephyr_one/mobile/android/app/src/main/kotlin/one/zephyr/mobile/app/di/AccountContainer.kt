@@ -458,7 +458,7 @@ class AccountContainer(
 
         override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
             val sess = sessionMutex.withLock {
-                session ?: appContainer.embeddedLink.dial(endpoint.baseUrl).also { session = it }
+                session ?: appContainer.embeddedLink.dial(endpoint.baseUrl, binding.deviceId).also { session = it }
             }
             return try {
                 appContainer.embeddedLink.push(endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP, body = body).ack

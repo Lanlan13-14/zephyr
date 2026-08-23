@@ -22,12 +22,12 @@ func TestThreeNodesOverHTTP(t *testing.T) {
 	mobile := NewNode()
 
 	// Desktop dials the server.
-	desktopEp, desktopSession, err := desktop.Dial(srv.URL)
+	desktopEp, desktopSession, err := desktop.Dial(srv.URL, "desktop")
 	if err != nil {
 		t.Fatalf("desktop dial: %v", err)
 	}
 	// Mobile dials the server.
-	mobileEp, mobileSession, err := mobile.Dial(srv.URL)
+	mobileEp, mobileSession, err := mobile.Dial(srv.URL, "mobile")
 	if err != nil {
 		t.Fatalf("mobile dial: %v", err)
 	}

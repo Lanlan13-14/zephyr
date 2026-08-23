@@ -32,9 +32,15 @@ internal class EmbeddedLinkApi(
     data class LinkSession(val sessionId: String, val exporter: String)
 
     /** Establish a ZSL/2 channel to a Link server URL through the embedded Go core. */
-    suspend fun dial(serverUrl: String): LinkSession = withContext(Dispatchers.IO) {
+    /** The main end mounts the Link proxy at /api/link/v2; the Go Dial/push append the leaf. */
+    private fun linkRoot(serverUrl: String): String = serverUrl.trimEnd('/') + "/api/link/v2"
+
+    suspend fun dial(serverUrl: String, deviceId: String): LinkSession = withContext(Dispatchers.IO) {
         val base = process.ensureStarted().baseUrl
-        val body = JsonObject(mapOf("serverUrl" to JsonPrimitive(serverUrl)))
+        val body = JsonObject(mapOf(
+            "serverUrl" to JsonPrimitive(linkRoot(serverUrl)),
+            "deviceId" to JsonPrimitive(deviceId),
+        ))
         val response = post("$base/link/dial", body)
         LinkSession(
             sessionId = response.getValue("sessionId").jsonPrimitive.content,
@@ -60,7 +66,7 @@ internal class EmbeddedLinkApi(
         val base = process.ensureStarted().baseUrl
         val payload = buildJsonObject {
             put("sessionId", session.sessionId)
-            put("peerUrl", serverUrl)
+            put("peerUrl", linkRoot(serverUrl))
             put("kind", kind)
             put("body", body)
             put("secret", secret)
