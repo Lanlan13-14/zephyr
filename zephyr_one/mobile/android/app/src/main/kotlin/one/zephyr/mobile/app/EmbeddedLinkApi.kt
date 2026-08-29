@@ -134,7 +134,7 @@ internal class EmbeddedLinkApi(
         // enqueue() + invokeOnCancellation so a withTimeout upstream can actually cancel the
         // loopback call. execute() is a blocking thread call — coroutine cancellation cannot
         // interrupt it, so the bind screen would spin forever even after the timeout fires.
-        val response = suspendCancellableCoroutine<Response> { continuation ->
+        val response: Response = suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
