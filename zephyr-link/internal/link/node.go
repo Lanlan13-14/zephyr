@@ -19,6 +19,11 @@ import (
 // the embedded mobile peer; only the listen address differs.
 type Node struct {
 	mux *http.ServeMux
+	// dialClient is used for outbound handshake/push to the peer. The default
+	// http.DefaultClient has no timeout, so a peer address that accepts TCP but
+	// never answers (or a DNS blackhole) blocks Dial forever and the embedding
+	// app's bind flow hangs at "正在写入设备密钥并拉取镜像". Bound every call.
+	dialClient *http.Client
 
 	mu       sync.Mutex
 	sessions map[string]*Endpoint // by session id
@@ -56,7 +61,14 @@ func (n *Node) RequireEnrollment() {
 
 // NewNode builds a node with the transport routes mounted.
 func NewNode() *Node {
-	n := &Node{mux: http.NewServeMux(), sessions: make(map[string]*Endpoint), sessionDevice: make(map[string]string), dispatch: NewDispatcher()}
+	n := &Node{
+		mux:           http.NewServeMux(),
+		sessions:      make(map[string]*Endpoint),
+		sessionDevice: make(map[string]string),
+		dispatch:      NewDispatcher(),
+		// Generous enough for a slow LAN server, hard enough to never hang the host.
+		dialClient: &http.Client{Timeout: 15 * time.Second},
+	}
 	// Serve both the Go-native names (/link/...) and the mounted leaf names
 	// (/handshake, /push) so a dialer can point Dial/SendFrame at either the bare Go
 	// root or the main end's /api/link/v2 root with the same leaf paths.
@@ -448,7 +460,7 @@ func (n *Node) Dial(baseURL, deviceID string) (*Endpoint, string, error) {
 		X25519Public: base64.RawURLEncoding.EncodeToString(init.X25519Public),
 		MLKEMPublic:  base64.RawURLEncoding.EncodeToString(init.MLKEMPublic),
 	})
-	resp, err := http.Post(baseURL+"/handshake", "application/json", bytes.NewReader(reqBody))
+	resp, err := n.dialClient.Post(baseURL+"/handshake", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, "", err
 	}
@@ -490,7 +502,7 @@ func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body
 		CT:        base64.RawURLEncoding.EncodeToString(env.CT),
 		Tag:       base64.RawURLEncoding.EncodeToString(env.Tag),
 	})
-	resp, err := http.Post(baseURL+"/push", "application/json", bytes.NewReader(reqBody))
+	resp, err := n.dialClient.Post(baseURL+"/push", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
 	}

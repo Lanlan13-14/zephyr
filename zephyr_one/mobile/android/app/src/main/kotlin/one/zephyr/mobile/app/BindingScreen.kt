@@ -7,10 +7,12 @@ import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -19,8 +21,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material3.CircularProgressIndicator
 import one.zephyr.mobile.ui.component.Button
-import one.zephyr.mobile.ui.component.OutlinedTextField
+import one.zephyr.mobile.ui.component.FieldRow
+import one.zephyr.mobile.ui.component.GroupCard
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
@@ -40,9 +44,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import one.zephyr.mobile.app.binding.BindingCompletionResult
 import one.zephyr.mobile.app.binding.BindingCoordinator
 import one.zephyr.mobile.app.di.AppContainer
+import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.NetworkPolicy
 import one.zephyr.mobile.model.ServerProfile
 import one.zephyr.mobile.model.TlsPolicy
@@ -102,14 +108,27 @@ fun BindingScreen(
                     "approved" -> {
                         step = BindStep.WORKING
                         status = "主端已批准，正在完成本机绑定…"
-                        when (
-                            val result = container.bindingCoordinator.consumePreparedEnrollment(
-                                prepared = current,
-                                intervalSec = 300,
-                                automaticEnabled = true,
-                                networkPolicy = NetworkPolicy.ANY,
+                        val result = try {
+                            // Hard ceiling on the whole completion path: credential store, graph
+                            // build and the first bootstrap round. A peer that never answers used
+                            // to leave this screen on 正在写入设备密钥 forever.
+                            withTimeout(90_000) {
+                                container.bindingCoordinator.consumePreparedEnrollment(
+                                    prepared = current,
+                                    intervalSec = 300,
+                                    automaticEnabled = true,
+                                    networkPolicy = NetworkPolicy.ANY,
+                                )
+                            }
+                        } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
+                            BindingCompletionResult.Failed(
+                                MobileError.local(
+                                    "bind_completion_timeout",
+                                    "完成绑定超时（90 秒），请检查服务器可达后重试",
+                                ),
                             )
-                        ) {
+                        }
+                        when (result) {
                             is BindingCompletionResult.Completed -> {
                                 onMessage(
                                     if (result.bootstrapSucceeded) "已绑定并完成首次同步"
@@ -172,27 +191,28 @@ fun BindingScreen(
             }
             when (step) {
                 BindStep.SERVER -> {
-                    OutlinedTextField(
-                        baseUrl,
-                        { baseUrl = it.trim() },
-                        label = { Text("服务器地址（HTTPS）") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        displayName,
-                        { displayName = it },
-                        label = { Text("显示名（可选）") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        deviceName,
-                        { deviceName = it },
-                        label = { Text("设备名") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
+                    GroupCard {
+                        FieldRow(
+                            label = "服务器",
+                            value = baseUrl,
+                            onValueChange = { baseUrl = it },
+                            placeholder = "https://your-zephyr-host",
+                            mono = true,
+                        )
+                        FieldRow(
+                            label = "显示名",
+                            value = displayName,
+                            onValueChange = { displayName = it },
+                            placeholder = "可选",
+                        )
+                        FieldRow(
+                            label = "设备名",
+                            value = deviceName,
+                            onValueChange = { deviceName = it },
+                            placeholder = "Zephyr One",
+                            showDivider = false,
+                        )
+                    }
                     Button(
                         enabled = !busy,
                         onClick = {
@@ -258,7 +278,28 @@ fun BindingScreen(
                         )
                     }
                 }
-                BindStep.WORKING -> Text("正在写入设备密钥并拉取镜像…")
+                BindStep.WORKING -> {
+                    GroupCard {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = ZephyrTheme.palette.brand.accent,
+                            )
+                            Text(
+                                "正在写入设备密钥并拉取镜像…",
+                                color = ZephyrTheme.palette.onBackground,
+                                fontSize = 14.sp,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -275,29 +316,75 @@ private fun EnrollmentWaitingCard(
 ) {
     val palette = ZephyrTheme.palette
     val qrBitmap = remember(qrDataUrl) { decodeQr(qrDataUrl) }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (qrBitmap != null) {
-            Image(
-                bitmap = qrBitmap.asImageBitmap(),
-                contentDescription = "绑定二维码",
-                modifier = Modifier
-                    .size(196.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(palette.surfaces.content)
-                    .padding(10.dp),
-                contentScale = ContentScale.Fit,
-            )
+            GroupCard {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = "绑定二维码",
+                        modifier = Modifier
+                            .size(200.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
+            }
         }
-        Text("短码", color = palette.onFloatingMuted, fontSize = 12.sp)
-        Text(userCode, fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)
-        Text("安全码 SAS", color = palette.onFloatingMuted, fontSize = 12.sp)
-        Text(sas, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
-        Text(
-            "指纹 " + fingerprint.take(16),
-            color = palette.onFloatingSubtle,
-            fontSize = 12.sp,
-            fontFamily = FontFamily.Monospace,
-        )
+        GroupCard {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("短码", color = palette.onFloatingMuted, fontSize = 12.sp)
+                Text(
+                    userCode,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 2.sp,
+                    color = palette.onBackground,
+                )
+            }
+            Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(1.dp).background(palette.surfaces.outlineSoft))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("安全码 SAS", color = palette.onFloatingMuted, fontSize = 12.sp)
+                Text(
+                    sas,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    color = palette.onBackground,
+                )
+            }
+            Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(1.dp).background(palette.surfaces.outlineSoft))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("设备指纹", color = palette.onFloatingMuted, fontSize = 12.sp)
+                Text(
+                    fingerprint.take(24),
+                    fontSize = 13.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = palette.onFloatingSubtle,
+                )
+            }
+        }
         Button(onClick = onOpenBrowser, modifier = Modifier.fillMaxWidth()) {
             Text("在系统浏览器批准")
         }
@@ -306,7 +393,9 @@ private fun EnrollmentWaitingCard(
             color = palette.onFloatingMuted,
             fontSize = 12.5.sp,
         )
-        TextButton(onClick = onCancel) { Text("取消绑定") }
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(onClick = onCancel) { Text("取消绑定") }
+        }
     }
 }
 
