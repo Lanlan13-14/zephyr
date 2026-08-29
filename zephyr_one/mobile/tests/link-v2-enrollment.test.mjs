@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createProofClient } from './mobile-v1-proof-client.mjs';
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -444,6 +445,18 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
     }),
   });
   assert.equal(consume.status, 200, await consume.clone().text());
+  const binding = await consume.json();
+  const proofFetch = createProofClient({
+    base: server.url(''),
+    access: binding.accessCredential,
+    deviceId,
+    privateKey: signing.privateKey,
+  });
+  const bootstrap = await proofFetch('/api/mobile/v1/sync/bootstrap?pageSize=50');
+  assert.equal(bootstrap.status, 200, await bootstrap.clone().text());
+  const snapshot = await bootstrap.json();
+  assert.equal(snapshot.ok, true);
+  assert.ok(Number.isSafeInteger(snapshot.snapshotCursor));
 
   const devices = await server.api(login.cookie, 'GET', '/api/one/clients');
   assert.equal(devices.status, 200);
@@ -465,30 +478,42 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
     x25519Public: Buffer.from(hello.x25519Public, 'base64url'),
     mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url'),
   });
-  const sealed = session.seal(codec.pack({
-    kind: codec.KIND.SYNC_OP,
-    body: { op: 'status' },
-  }));
-  const push = await fetch(server.url('/api/link/v2/push'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      sessionId: hello.sessionId,
-      seq: sealed.seq,
-      iv: Buffer.from(sealed.iv).toString('base64url'),
-      ct: Buffer.from(sealed.ct).toString('base64url'),
-      tag: Buffer.from(sealed.tag).toString('base64url'),
-    }),
-  });
-  assert.equal(push.status, 200, await push.clone().text());
-  const ack = await push.json();
-  const unpacked = codec.unpack(session.open({
-    seq: ack.seq,
-    iv: Buffer.from(ack.iv, 'base64url'),
-    ct: Buffer.from(ack.ct, 'base64url'),
-    tag: Buffer.from(ack.tag, 'base64url'),
-  }));
-  assert.equal(unpacked.kind, codec.KIND.SYNC_ACK);
-  assert.equal(unpacked.body.ok, true);
-  assert.equal(unpacked.body.state, 'IDLE', JSON.stringify(unpacked.body));
+  async function syncOp(body) {
+    const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
+    const push = await fetch(server.url('/api/link/v2/push'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: hello.sessionId,
+        seq: sealed.seq,
+        iv: Buffer.from(sealed.iv).toString('base64url'),
+        ct: Buffer.from(sealed.ct).toString('base64url'),
+        tag: Buffer.from(sealed.tag).toString('base64url'),
+      }),
+    });
+    assert.equal(push.status, 200, await push.clone().text());
+    const ack = await push.json();
+    const unpacked = codec.unpack(session.open({
+      seq: ack.seq,
+      iv: Buffer.from(ack.iv, 'base64url'),
+      ct: Buffer.from(ack.ct, 'base64url'),
+      tag: Buffer.from(ack.tag, 'base64url'),
+    }));
+    assert.equal(unpacked.kind, codec.KIND.SYNC_ACK);
+    return unpacked.body;
+  }
+
+  const changes = await syncOp({ op: 'changes', sinceCursor: snapshot.snapshotCursor, limit: 50 });
+  assert.equal(changes.ok, true);
+  assert.equal(changes.fromCursor, snapshot.snapshotCursor);
+  assert.equal(changes.nextCursor, snapshot.snapshotCursor);
+  assert.deepEqual(changes.changes, []);
+
+  const acknowledged = await syncOp({ op: 'ack', cursor: changes.nextCursor, appliedOpIds: [] });
+  assert.equal(acknowledged.ok, true);
+
+  const status = await syncOp({ op: 'status' });
+  assert.equal(status.ok, true);
+  assert.equal(status.state, 'IDLE', JSON.stringify(status));
+  assert.equal(status.cursor, changes.nextCursor);
 });

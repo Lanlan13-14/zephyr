@@ -49,6 +49,9 @@ const mobileProof = require('./mobile-v1-proof');
 const secretCrypto = require('./secret-crypto');
 const { HttpError } = require('./authz');
 
+/** Link enrollment has no legacy Client Token; this marker is frozen on the bind row. */
+const LINK_ENROLLMENT_TOKEN_ID = 'link-v2-enrollment';
+
 /** Protocol versions this build speaks. A client outside this set is fatal. */
 const PROTOCOL_VERSIONS = [1];
 const MAX_OPS_PER_BATCH = 200;
@@ -781,14 +784,17 @@ class MobileV1Api {
             return null;
         }
 
-        /* The Client Token that authorised the binding must still exist. Its
-         * deletion on the main end is the documented way to cut a device off,
-         * so a stale binding must not keep syncing. */
+        /* Legacy Client-Token bindings remain coupled to that token's lifetime. Link enrollment
+         * deliberately has no Client Token; its sentinel row is revoked through mobile_devices and
+         * must not be looked up in the legacy token registry. Doing so rejects every first
+         * capabilities/bootstrap request with token_missing after an otherwise successful bind. */
         try {
-            const tokens = this.fileAgentManager.listTokens(user.username);
-            if (!tokens.some((t) => t.id === row.token_id)) {
-                sendError(res, 403, 'token_missing', '\u5173\u8054 Token \u5df2\u5220\u9664\uff0c\u8bf7\u91cd\u65b0\u7ed1\u5b9a', { requestId: req.mobileRequestId });
-                return null;
+            if (row.token_id !== LINK_ENROLLMENT_TOKEN_ID) {
+                const tokens = this.fileAgentManager.listTokens(user.username);
+                if (!tokens.some((t) => t.id === row.token_id)) {
+                    sendError(res, 403, 'token_missing', '\u5173\u8054 Token \u5df2\u5220\u9664\uff0c\u8bf7\u91cd\u65b0\u7ed1\u5b9a', { requestId: req.mobileRequestId });
+                    return null;
+                }
             }
         } catch {
             // A token registry read failure must not be reported as "revoked".
