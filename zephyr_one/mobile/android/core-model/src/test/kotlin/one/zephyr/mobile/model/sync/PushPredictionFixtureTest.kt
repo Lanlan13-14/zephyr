@@ -49,4 +49,26 @@ class PushPredictionFixtureTest {
         assertEquals(12L, PushPrediction.advanceCursor(12L, listOf(3L, 7L, 11L)))
         assertEquals(15L, PushPrediction.advanceCursor(12L, listOf(13L, 15L)))
     }
+
+    @Test
+    fun staleUpsertCannotResurrectAfterTombstone() {
+        // Row deleted and tombstoned at revision 9. A replayed/bootstrap-backfilled UPSERT
+        // carrying an OLDER revision (7) must not recreate the row; only an UPSERT newer
+        // than the delete is a legitimate server-side recreation. MirrorWriter passes the
+        // tombstone revision as localRevision when the live row is gone.
+        val tombstoneRevision = 12L
+        assertEquals(
+            false,
+            PushPrediction.shouldApplyChange(tombstoneRevision, SyncAction.UPSERT, changeRevision = 7L),
+        )
+        assertEquals(
+            true,
+            PushPrediction.shouldApplyChange(tombstoneRevision, SyncAction.UPSERT, changeRevision = 13L),
+        )
+        // DELETE always applies, tombstone semantics intact.
+        assertEquals(
+            true,
+            PushPrediction.shouldApplyChange(tombstoneRevision, SyncAction.DELETE, changeRevision = 7L),
+        )
+    }
 }

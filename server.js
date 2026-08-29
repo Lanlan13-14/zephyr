@@ -8980,21 +8980,23 @@ try {
          * devices are registered with the Go service so their first handshake succeeds. */
         /* The owned-sync bridge lets the Go Link node hand a sync business frame to
          * the single MobileV1 sync core over loopback. It is bound before the proxy
-         * so the Go service can reach it, and the admin token is shared so only the
-         * supervised Go child can assert an attested device id. */
-        const linkSyncAdminToken = process.env.ZEPHYR_LINK_ADMIN_TOKEN || '';
-        if (linkSyncAdminToken) {
-            const linkSyncBridge = createLinkSyncBridge({
-                api: mobileV1Api,
-                storage,
-                adminToken: linkSyncAdminToken,
-            });
-            app.use('/internal/link', express.json({ limit: '4mb' }));
-            app.post('/internal/link/sync', (req, res) => linkSyncBridge.handle(req, res));
-        }
+         * so the Go service can reach it. The admin token is generated per process
+         * start and only lives in memory; it is handed to the supervised Go child
+         * through its environment, so no operator-facing variable exists and the
+         * loopback bridge is never left unregistered (an empty token used to skip
+         * mounting it entirely, silently disabling Link sync in deployments). */
+        const linkSyncAdminToken = require('crypto').randomBytes(32).toString('base64url');
+        const linkSyncBridge = createLinkSyncBridge({
+            api: mobileV1Api,
+            storage,
+            adminToken: linkSyncAdminToken,
+        });
+        app.use('/internal/link', express.json({ limit: '4mb' }));
+        app.post('/internal/link/sync', (req, res) => linkSyncBridge.handle(req, res));
         const linkGo = createLinkV2GoProxy({
             enrollments,
-            syncBridgeUrl: linkSyncAdminToken ? `http://127.0.0.1:${PORT}/internal/link/sync` : '',
+            adminToken: linkSyncAdminToken,
+            syncBridgeUrl: `http://127.0.0.1:${PORT}/internal/link/sync`,
             syncBridgeToken: linkSyncAdminToken,
             log: (...args) => console.log('[link-v2]', ...args),
         });

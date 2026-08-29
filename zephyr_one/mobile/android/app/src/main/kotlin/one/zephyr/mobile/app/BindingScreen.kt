@@ -193,7 +193,24 @@ fun BindingScreen(
                 fontSize = 13.sp,
             )
             if (status.isNotBlank()) {
-                Text(status, color = ZephyrTheme.palette.status.warning, fontSize = 13.sp)
+                GroupCard {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        // status.warning is a bare yellow: unreadable on the light palette's
+                        // near-white surfaces. In-progress copy is neutral muted; it is a
+                        // step description, not an alert.
+                        Text(
+                            status,
+                            color = ZephyrTheme.palette.onFloatingMuted,
+                            fontSize = 13.sp,
+                        )
+                    }
+                }
             }
             when (step) {
                 BindStep.SERVER -> {
