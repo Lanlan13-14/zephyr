@@ -140,11 +140,10 @@ class LinkSyncTransport(
     }
 
     private suspend fun <T> runLink(block: suspend () -> T): ApiResult<T> = try {
-        if (!channel.isEstablished) {
-            ApiResult.Failure(linkError("Link 会话未建立"))
-        } else {
-            ApiResult.Success(block(), requestId = null)
-        }
+        // Do NOT gate on channel.isEstablished here. The channel dials lazily inside syncOp —
+        // checking isEstablished before calling it would reject the first-ever sync round
+        // (session starts as null) and the Link transport would never dial at all.
+        ApiResult.Success(block(), requestId = null)
     } catch (e: LinkChannelException) {
         ApiResult.Failure(linkError(e.message ?: "Link 通道失败"))
     } catch (e: IllegalArgumentException) {
