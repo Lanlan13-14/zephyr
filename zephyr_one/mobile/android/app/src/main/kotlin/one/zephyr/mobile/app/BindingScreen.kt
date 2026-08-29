@@ -21,10 +21,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.material3.CircularProgressIndicator
 import one.zephyr.mobile.ui.component.Button
+import one.zephyr.mobile.ui.component.CircularProgressIndicator
 import one.zephyr.mobile.ui.component.FieldRow
 import one.zephyr.mobile.ui.component.GroupCard
+import one.zephyr.mobile.ui.component.HorizontalDivider
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
@@ -289,8 +290,6 @@ fun BindingScreen(
                         ) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                                color = ZephyrTheme.palette.brand.accent,
                             )
                             Text(
                                 "正在写入设备密钥并拉取镜像…",
@@ -353,7 +352,7 @@ private fun EnrollmentWaitingCard(
                     color = palette.onBackground,
                 )
             }
-            Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(1.dp).background(palette.surfaces.outlineSoft))
+            HorizontalDivider(Modifier.padding(horizontal = 14.dp))
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -369,7 +368,7 @@ private fun EnrollmentWaitingCard(
                     color = palette.onBackground,
                 )
             }
-            Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(1.dp).background(palette.surfaces.outlineSoft))
+            HorizontalDivider(Modifier.padding(horizontal = 14.dp))
             Column(
                 Modifier
                     .fillMaxWidth()
