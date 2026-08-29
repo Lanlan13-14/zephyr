@@ -90,7 +90,11 @@ fun BindingScreen(
         }
     }
 
-    LaunchedEffect(prepared, step) {
+    // NOTE: only `prepared` may be a key here. `step` must NOT be: the loop itself sets
+    // step = WORKING on approval, and a key change cancels this coroutine mid-flight —
+    // killing the consume/bootstrap work silently and leaving the screen spinning on
+    // WORKING forever with no error. That was the actual cause of the endless spinner.
+    LaunchedEffect(prepared) {
         val current = prepared ?: return@LaunchedEffect
         if (step != BindStep.WAITING) return@LaunchedEffect
         while (true) {
