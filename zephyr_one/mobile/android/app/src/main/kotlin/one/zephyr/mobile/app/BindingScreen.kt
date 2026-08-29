@@ -25,6 +25,7 @@ import one.zephyr.mobile.ui.component.Button
 import one.zephyr.mobile.ui.component.CircularProgressIndicator
 import one.zephyr.mobile.ui.component.FieldRow
 import one.zephyr.mobile.ui.component.GroupCard
+import one.zephyr.mobile.ui.component.HorizontalDivider
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
