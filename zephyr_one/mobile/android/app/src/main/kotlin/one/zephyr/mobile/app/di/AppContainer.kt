@@ -245,6 +245,17 @@ class AppContainer(private val context: Context) {
                         accountState.value = null
                     }
                 }
+
+                override fun replaceGraph(expected: ManagedBindingGraph, next: ManagedBindingGraph) {
+                    check(accountGraph === expected) { "account graph changed during replacement" }
+                    accountGraph = next
+                    val account = next as? AccountContainer
+                        ?: error("application graph must be an AccountContainer")
+                    // One StateFlow write: the UI never observes a null account between local and
+                    // bound graphs, so its bind coroutine cannot cancel itself during commit.
+                    accountState.value = account
+                    account.onProcessForegroundChanged(processForeground.get())
+                }
             },
             graphFactory = BindingGraphFactory { stored ->
                 val databaseScope = AccountContainer.databaseScopeOf(stored.binding)
@@ -273,9 +284,16 @@ class AppContainer(private val context: Context) {
                     scope = DeviceIdentity.Scope(serverId = serverId, userId = userId, deviceId = deviceId),
                 )
                 object : PendingDeviceIdentity {
+                    private val committed = AtomicBoolean(false)
+
                     override fun ensureKeys(): DeviceIdentity.PublicKeys = identity.ensureKeys()
                     override fun signPayload(payload: ByteArray): String = identity.signPayload(payload)
-                    override fun wipe() = identity.wipe()
+                    override fun commit() {
+                        committed.set(true)
+                    }
+                    override fun wipe() {
+                        if (!committed.get()) identity.wipe()
+                    }
                 }
             },
             gatewayFactory = BindingGatewayFactory { profile ->

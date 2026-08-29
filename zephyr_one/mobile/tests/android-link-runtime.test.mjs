@@ -61,6 +61,29 @@ test('Go Link core exposes the embedded dial route the Kotlin client calls', () 
   assert.match(main, /os\.Stdin\.Read/);
 });
 
+test('Android publishes local-to-bound account replacement atomically', () => {
+  const coordinator = read('android/app/src/main/kotlin/one/zephyr/mobile/app/binding/BindingCoordinator.kt');
+  const container = read('android/app/src/main/kotlin/one/zephyr/mobile/app/di/AppContainer.kt');
+  const screen = read('android/app/src/main/kotlin/one/zephyr/mobile/app/BindingScreen.kt');
+  assert.match(coordinator, /fun replaceGraph\(expected: ManagedBindingGraph, next: ManagedBindingGraph\)/);
+  assert.match(coordinator, /host\.replaceGraph\(previous, next\)/);
+  assert.match(container, /override fun replaceGraph\(expected: ManagedBindingGraph, next: ManagedBindingGraph\)/);
+  assert.match(container, /accountState\.value = account/);
+  assert.match(coordinator, /identity::commit/);
+  assert.match(coordinator, /onOwnershipCommitted\(\)/);
+  assert.match(container, /private val committed = AtomicBoolean\(false\)/);
+  assert.match(container, /if \(!committed\.get\(\)\) identity\.wipe\(\)/);
+  assert.match(screen, /prepared\?\.identity\?\.wipe\(\)/);
+});
+
+test('server never caches a failed Go device registration', () => {
+  const proxy = readRepo('link-v2-go-proxy.js');
+  assert.match(proxy, /throw failure/);
+  assert.match(proxy, /await registerDevice\(deviceId\);\s*registered\.add\(deviceId\)/s);
+  assert.doesNotMatch(proxy, /ensureDevice\(deviceId\)\s*\.catch\(\(\) => \{\}\)\s*\.finally/s);
+  assert.match(proxy, /link_device_registration_failed/);
+});
+
 test('embedded Link runtime has a CI freshness gate like the AI runtime', () => {
   const workflow = readRepo('.github/workflows/zephyr-one-mobile.yml');
   assert.match(workflow, /libzephyr_link\.so/);

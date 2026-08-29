@@ -9007,7 +9007,11 @@ try {
             publicOrigin,
             qrcode: QRCode,
             log: (...args) => console.log('[link-v2]', ...args),
-            onDeviceEnrolled: (deviceId) => linkGo.registerDevice(deviceId),
+            onDeviceEnrolled: (deviceId) => {
+                linkGo.registerDevice(deviceId).catch((error) => {
+                    console.error('[link-v2] post-enrollment device registration failed', error && error.message);
+                });
+            },
         });
         app.use('/link/approve', express.urlencoded({ extended: false, limit: '8kb' }));
         linkV2EnrollmentApi.mount(app);

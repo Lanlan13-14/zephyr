@@ -10,6 +10,7 @@ const liveServerSuites = new Set([
   "mobile-v1-roundtrip.test.mjs",
   "mobile-v1-secrets.test.mjs",
   "mobile-v1-shared.test.mjs",
+  "link-v2-enrollment.test.mjs",
 ]);
 
 const allSuites = readdirSync(testsDir)

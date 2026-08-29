@@ -203,6 +203,18 @@ internal interface BindingGraphHost {
     fun currentGraph(): ManagedBindingGraph?
     fun attachGraph(graph: ManagedBindingGraph)
     fun clearGraph(expected: ManagedBindingGraph)
+
+    /**
+     * Publishes a prepared replacement in one observable state transition.
+     *
+     * Emitting `null` between the old and new graphs tears down the Compose tree that owns the bind
+     * coroutine. The coroutine is then cancelled after the server has consumed the enrollment but
+     * before the UI receives completion. A host must therefore replace the graph atomically.
+     */
+    fun replaceGraph(expected: ManagedBindingGraph, next: ManagedBindingGraph) {
+        clearGraph(expected)
+        attachGraph(next)
+    }
 }
 
 internal fun interface BindingGraphFactory {
@@ -212,6 +224,8 @@ internal fun interface BindingGraphFactory {
 internal interface PendingDeviceIdentity {
     fun ensureKeys(): DeviceIdentity.PublicKeys
     fun signPayload(payload: ByteArray): String = error("device signing is unavailable")
+    /** Transfers cleanup ownership from the binding screen to the durable account graph. */
+    fun commit() = Unit
     fun wipe()
 }
 
@@ -497,12 +511,13 @@ class BindingCoordinator internal constructor(
                 prepared as CompletionPreparation.Ready
 
                 // Do not hold the coordinator mutex across network bootstrap. Unbind/revoke must be able to
-                // acquire it, cancel this graph's SupervisorJob and join the round immediately.
+                // acquire it, cancel this graph's SupervisorJob and join the round immediately. Publication
+                // is already durable, so a cancelled UI caller must not strand persisted background work.
+                if (host.currentGraph() === prepared.graph) workersMayRun = true
                 val bootstrap = prepared.graph.bootstrapAfterBind()
                 val bootstrapSucceeded = bootstrap.lastOrNull()?.takeIf { it.complete }?.let { round ->
                     markBootstrapReadyIfCurrent(prepared.graph, prepared.binding, round.endState)
                 } ?: false
-                if (host.currentGraph() === prepared.graph) workersMayRun = true
                 BindingCompletionResult.Completed(
                     binding = prepared.binding,
                     bootstrapSucceeded = bootstrapSucceeded,
@@ -680,11 +695,13 @@ class BindingCoordinator internal constructor(
             prepared.result
         } else {
             prepared as CompletionPreparation.Ready
+            // Publication is the durable hand-off. The UI tree that called us may be replaced at
+            // this exact point, so make workers eligible before awaiting network bootstrap.
+            if (host.currentGraph() === prepared.graph) workersMayRun = true
             val bootstrap = prepared.graph.bootstrapAfterBind()
             val bootstrapSucceeded = bootstrap.lastOrNull()?.takeIf { it.complete }?.let { round ->
                 markBootstrapReadyIfCurrent(prepared.graph, prepared.binding, round.endState)
             } ?: false
-            if (host.currentGraph() === prepared.graph) workersMayRun = true
             BindingCompletionResult.Completed(
                 binding = prepared.binding,
                 bootstrapSucceeded = bootstrapSucceeded,
@@ -878,7 +895,7 @@ class BindingCoordinator internal constructor(
                     ),
                 )
             }
-            replaceGraphLocked(graph)
+            replaceGraphLocked(graph, identity::commit)
             noAccountCleanupVerified = true
             clearPendingAuthenticationLocked()
             return CompletionPreparation.Ready(binding, graph)
@@ -952,7 +969,7 @@ class BindingCoordinator internal constructor(
         }
         try {
             replacementJournal.advance(replacement, BindingReplacementStage.COMMITTED)
-            replaceGraphWithDurableReplacementLocked(graph, replacement)
+            replaceGraphWithDurableReplacementLocked(graph, replacement, identity::commit)
             noAccountCleanupVerified = true
         } finally {
             clearPendingAuthenticationLocked()
@@ -1030,21 +1047,33 @@ class BindingCoordinator internal constructor(
         cancelAuthentication()
     }
 
-    private suspend fun replaceGraphLocked(next: ManagedBindingGraph) {
+    private suspend fun replaceGraphLocked(
+        next: ManagedBindingGraph,
+        onOwnershipCommitted: () -> Unit = {},
+    ) {
         val previous = host.currentGraph()
         if (previous === next) return
         if (previous != null) {
             previous.stopAndJoin()
-            host.clearGraph(previous)
-            previous.wipeBindingState()
         }
         next.activate()
-        host.attachGraph(next)
+        // The binding row and credentials are already durable. Transfer identity ownership before
+        // publishing the StateFlow update that can dispose the binding screen on another thread.
+        onOwnershipCommitted()
+        if (previous == null) {
+            host.attachGraph(next)
+        } else {
+            // Publish old -> next atomically. A transient null account disposes BindingScreen and
+            // cancels the very coroutine that is committing this replacement.
+            host.replaceGraph(previous, next)
+        }
+        if (previous != null) previous.wipeBindingState()
     }
 
     private suspend fun replaceGraphWithDurableReplacementLocked(
         next: ManagedBindingGraph,
         record: BindingReplacementRecord,
+        onOwnershipCommitted: () -> Unit = {},
     ) {
         workersMayRun = false
         replacementJournal.advance(record, BindingReplacementStage.OLD_FENCED)
@@ -1054,11 +1083,17 @@ class BindingCoordinator internal constructor(
                 "replacement previous graph does not match the durable scope"
             }
             previous.stopAndJoin()
-            host.clearGraph(previous)
         }
         next.activate()
         replacementJournal.advance(record, BindingReplacementStage.NEXT_STARTED)
-        host.attachGraph(next)
+        // Storage already points at the replacement. Commit identity ownership before publication
+        // can dispose the screen that still holds the pending wrapper.
+        onOwnershipCommitted()
+        if (previous == null) {
+            host.attachGraph(next)
+        } else {
+            host.replaceGraph(previous, next)
+        }
         replacementJournal.advance(record, BindingReplacementStage.PUBLISHED)
         // A server should issue a fresh generation for a rebind.  If it did not, the identity is
         // physically shared and treating it as retired would erase the just-published graph.

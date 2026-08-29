@@ -20,16 +20,18 @@ func TestSyncBridgeCarriesBusinessFrames(t *testing.T) {
 	// A fake Node sync bridge: asserts the loopback token + attested device, then
 	// returns a result the way the real sync core would.
 	var gotDevice, gotToken string
+	var gotBody map[string]any
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotToken = r.Header.Get("X-Link-Admin")
 		var req syncBridgeRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		gotDevice = req.DeviceID
+		gotBody, _ = req.Body.(map[string]any)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":   true,
 			"kind": codec.KindSyncAck,
-			"body": map[string]any{"batchId": "b1", "serverCursor": 42},
+			"body": map[string]any{"batchId": "b1", "serverCursor": 42, "lastError": nil},
 		})
 	}))
 	defer bridge.Close()
@@ -106,6 +108,9 @@ func TestSyncBridgeCarriesBusinessFrames(t *testing.T) {
 	if gotToken != "tok-1234567890abcdef" {
 		t.Fatalf("bridge saw wrong admin token")
 	}
+	if gotBody["batchId"] != "b1" {
+		t.Fatalf("bridge lost decoded business body: %#v", gotBody)
+	}
 
 	// The device opens the sealed SYNC_ACK carrying the business result.
 	aiv, _ := base64.RawURLEncoding.DecodeString(ack.IV)
@@ -122,8 +127,7 @@ func TestSyncBridgeCarriesBusinessFrames(t *testing.T) {
 	if err := codec.Decode(ackFrame.Body, &body); err != nil {
 		t.Fatalf("decode ack body: %v", err)
 	}
-	if body["serverCursor"] != float64(42) {
+	if body["serverCursor"] != uint64(42) || body["lastError"] != nil {
 		t.Fatalf("business result not carried back: %+v", body)
 	}
 }
-

@@ -45,6 +45,76 @@ type syncBridgeResponse struct {
 // resolves the device, runs the single sync core, and returns the result, which
 // is sealed back as a SYNC_ACK. Any bridge failure surfaces as a dispatch error,
 // never a silent ack.
+func normalizeCBORForJSON(value any) (any, error) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			normalized, err := normalizeCBORForJSON(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[key] = normalized
+		}
+		return typed, nil
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for rawKey, item := range typed {
+			key, ok := rawKey.(string)
+			if !ok {
+				return nil, fmt.Errorf("link: sync frame contains a non-string object key")
+			}
+			normalized, err := normalizeCBORForJSON(item)
+			if err != nil {
+				return nil, err
+			}
+			out[key] = normalized
+		}
+		return out, nil
+	case []any:
+		for i, item := range typed {
+			normalized, err := normalizeCBORForJSON(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[i] = normalized
+		}
+		return typed, nil
+	default:
+		return value, nil
+	}
+}
+
+func normalizeJSONIntegers(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		integer, err := typed.Int64()
+		if err != nil {
+			return nil, fmt.Errorf("link: sync bridge returned a non-integer number")
+		}
+		return integer, nil
+	case []any:
+		for i, item := range typed {
+			normalized, err := normalizeJSONIntegers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[i] = normalized
+		}
+		return typed, nil
+	case map[string]any:
+		for key, item := range typed {
+			normalized, err := normalizeJSONIntegers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[key] = normalized
+		}
+		return typed, nil
+	default:
+		return value, nil
+	}
+}
+
 func (n *Node) registerSyncBridge(cfg SyncBridgeConfig) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	n.dispatch.Register(codec.KindSyncOp, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
@@ -52,7 +122,21 @@ func (n *Node) registerSyncBridge(cfg SyncBridgeConfig) {
 		if deviceID == "" {
 			return 0, nil, false, fmt.Errorf("link: session %s has no attested device", ctx.SessionID)
 		}
-		payload, _ := json.Marshal(syncBridgeRequest{DeviceID: deviceID, Kind: fr.Kind, Body: fr.Body})
+		// Frame.Body is the decoded frame's raw CBOR payload, not a Go object. Passing
+		// []byte to encoding/json base64-encodes it, so Node receives a string and loses
+		// the op discriminator. Decode CBOR before crossing the JSON loopback seam.
+		var decodedBody any
+		if err := codec.Decode(fr.Body, &decodedBody); err != nil {
+			return 0, nil, false, fmt.Errorf("link: sync frame body unparsable: %w", err)
+		}
+		requestBody, err := normalizeCBORForJSON(decodedBody)
+		if err != nil {
+			return 0, nil, false, err
+		}
+		payload, err := json.Marshal(syncBridgeRequest{DeviceID: deviceID, Kind: fr.Kind, Body: requestBody})
+		if err != nil {
+			return 0, nil, false, fmt.Errorf("link: sync bridge request unparsable: %w", err)
+		}
 		req, err := http.NewRequest(http.MethodPost, cfg.URL, bytes.NewReader(payload))
 		if err != nil {
 			return 0, nil, false, err
@@ -80,8 +164,14 @@ func (n *Node) registerSyncBridge(cfg SyncBridgeConfig) {
 		}
 		var body any
 		if len(br.Body) > 0 {
-			if err := json.Unmarshal(br.Body, &body); err != nil {
+			decoder := json.NewDecoder(bytes.NewReader(br.Body))
+			decoder.UseNumber()
+			if err := decoder.Decode(&body); err != nil {
 				return 0, nil, false, fmt.Errorf("link: sync bridge body unparsable")
+			}
+			body, err = normalizeJSONIntegers(body)
+			if err != nil {
+				return 0, nil, false, err
 			}
 		}
 		replyKind := br.Kind

@@ -90,10 +90,11 @@ class BindingCoordinatorTest {
         val graphs = mutableListOf<FakeGraph>()
         val coordinator = coordinator(storage, host, graphs, events)
         val gateway = FakeGateway()
+        val identity = FakeIdentity()
         val prepared = BindingCoordinator.PreparedEnrollment(
             profile = profile(),
             gateway = gateway,
-            identity = FakeIdentity(),
+            identity = identity,
             command = DeviceBindingCommand(
                 deviceId = "device-1",
                 deviceName = "Phone",
@@ -128,6 +129,9 @@ class BindingCoordinatorTest {
         assertTrue(result.bootstrapSucceeded)
         assertEquals(LINK_ENROLLMENT_TOKEN_ID, result.binding.tokenId)
         assertEquals("alice", result.binding.username)
+        assertTrue(identity.committed)
+        identity.wipe()
+        assertFalse(identity.wiped)
         assertEquals("access-1", graphs.single().storedAccess)
         assertEquals(
             listOf(
@@ -171,6 +175,8 @@ class BindingCoordinatorTest {
         assertTrue("storage.save" in events)
         assertFalse("storage.replace" in events)
         assertTrue("graph.stop" in events)
+        assertTrue("host.replace" in events)
+        assertFalse("host.clear" in events)
     }
 
     @Test
@@ -1771,6 +1777,12 @@ private class FakeHost(private val events: MutableList<String>) : BindingGraphHo
         events += "host.clear"
         graph = null
     }
+
+    override fun replaceGraph(expected: ManagedBindingGraph, next: ManagedBindingGraph) {
+        assertTrue(graph === expected)
+        events += "host.replace"
+        graph = next
+    }
 }
 
 private class FakeGraph(
@@ -1865,6 +1877,7 @@ private class FakeGraph(
 }
 
 private class FakeIdentity : PendingDeviceIdentity {
+    var committed = false
     var wiped = false
 
     override fun ensureKeys() = DeviceIdentity.PublicKeys(
@@ -1876,8 +1889,12 @@ private class FakeIdentity : PendingDeviceIdentity {
 
     override fun signPayload(payload: ByteArray) = "c2lnbmF0dXJl"
 
+    override fun commit() {
+        committed = true
+    }
+
     override fun wipe() {
-        wiped = true
+        if (!committed) wiped = true
     }
 }
 

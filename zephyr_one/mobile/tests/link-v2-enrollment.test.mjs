@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -20,11 +21,26 @@ const {
   SENTINEL_TOKEN_ID,
   sha256,
 } = require(path.join(repoRoot, 'link-v2-enrollment.js'));
+const zsl = require(path.join(repoRoot, 'link-v2-zsl.js'));
+const codec = require(path.join(repoRoot, 'link-v2-codec.js'));
+const { stopLinkV2Go } = require(path.join(repoRoot, 'link-v2-go-proxy.js'));
 
 const registry = JSON.parse(fs.readFileSync(
   path.join(here, '..', 'contracts', 'registries', 'entity-registry.json'),
   'utf8',
 ));
+
+function buildCurrentGoLinkServer(t) {
+  const output = path.join(os.tmpdir(), `zephyr-link-server-${process.pid}-${Date.now()}`);
+  const go = fs.existsSync('/usr/local/go126/bin/go') ? '/usr/local/go126/bin/go' : 'go';
+  const built = spawnSync(go, ['build', '-trimpath', '-o', output, './cmd/zephyr-link-server'], {
+    cwd: path.join(repoRoot, 'zephyr-link'),
+    encoding: 'utf8',
+  });
+  assert.equal(built.status, 0, built.stderr || built.stdout);
+  t.after(() => fs.rmSync(output, { force: true }));
+  return output;
+}
 
 function openStore() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-link-enroll-'));
@@ -367,4 +383,112 @@ test('HTTP enrollment create, browser approval, consume, and logout redirect', a
   });
   assert.equal(replay.status, 409);
   assert.equal((await replay.json()).error.code, 'enrollment_consumed');
+});
+
+test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK loop', async (t) => {
+  process.env.ZEPHYR_ONE_USE_BUILTIN_SQLITE = '1';
+  process.env.ZEPHYR_LINK_GO_BIN = buildCurrentGoLinkServer(t);
+  const { TestServer } = await import(pathToFileURL(path.join(repoRoot, 'tests', 'test-server.mjs')).href);
+  const server = await new TestServer().start();
+  t.after(async () => {
+    try { stopLinkV2Go(); } catch {}
+    await server.cleanup();
+  });
+
+  const signing = generateSigningKey();
+  const keys = deviceKeys(signing.jwk, 31);
+  const deviceId = 'device-android-loop-0001';
+  const create = await fetch(server.url('/api/link/v2/enrollments'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      deviceId,
+      deviceName: 'Pixel Loop',
+      platform: 'android',
+      appVersion: 'pre45',
+      keys,
+    }),
+  });
+  assert.equal(create.status, 201, await create.clone().text());
+  const created = await create.json();
+
+  const login = await server.bootstrapAdmin();
+  const approve = await fetch(server.url('/link/approve'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: login.cookie },
+    body: new URLSearchParams({
+      bindId: created.bindId,
+      userCode: created.userCode,
+      decision: 'approve',
+    }),
+  });
+  assert.equal(approve.status, 200, await approve.clone().text());
+
+  const payload = proofPayload({
+    bindId: created.bindId,
+    deviceId,
+    userCode: created.userCode,
+    sas: created.sas,
+    secretHash: sha256(created.enrollmentSecret),
+    serverId: created.serverId,
+  });
+  const consume = await fetch(server.url(`/api/link/v2/enrollments/${created.bindId}/consume`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      userCode: created.userCode,
+      enrollmentSecret: created.enrollmentSecret,
+      proof: signProof(signing.privateKey, payload),
+      keys,
+      syncIntervalSec: 300,
+    }),
+  });
+  assert.equal(consume.status, 200, await consume.clone().text());
+
+  const devices = await server.api(login.cookie, 'GET', '/api/one/clients');
+  assert.equal(devices.status, 200);
+  assert.ok(devices.body.clients.some((client) => client.clientId === deviceId));
+
+  const init = zsl.handshakeInitiator();
+  const handshake = await fetch(server.url('/api/link/v2/handshake'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      deviceId,
+      x25519Public: Buffer.from(init.x25519Public).toString('base64url'),
+      mlkemPublic: Buffer.from(init.mlkemPublic).toString('base64url'),
+    }),
+  });
+  assert.equal(handshake.status, 200, await handshake.clone().text());
+  const hello = await handshake.json();
+  const session = zsl.handshakeFinish(init, {
+    x25519Public: Buffer.from(hello.x25519Public, 'base64url'),
+    mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url'),
+  });
+  const sealed = session.seal(codec.pack({
+    kind: codec.KIND.SYNC_OP,
+    body: { op: 'status' },
+  }));
+  const push = await fetch(server.url('/api/link/v2/push'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: hello.sessionId,
+      seq: sealed.seq,
+      iv: Buffer.from(sealed.iv).toString('base64url'),
+      ct: Buffer.from(sealed.ct).toString('base64url'),
+      tag: Buffer.from(sealed.tag).toString('base64url'),
+    }),
+  });
+  assert.equal(push.status, 200, await push.clone().text());
+  const ack = await push.json();
+  const unpacked = codec.unpack(session.open({
+    seq: ack.seq,
+    iv: Buffer.from(ack.iv, 'base64url'),
+    ct: Buffer.from(ack.ct, 'base64url'),
+    tag: Buffer.from(ack.tag, 'base64url'),
+  }));
+  assert.equal(unpacked.kind, codec.KIND.SYNC_ACK);
+  assert.equal(unpacked.body.ok, true);
+  assert.equal(unpacked.body.state, 'IDLE', JSON.stringify(unpacked.body));
 });

@@ -125,11 +125,43 @@ class OneClientManager {
     }
 
     listForUser(userId) {
-        return this.stmtListByUser.all(userId).map((r) => this._rowPublic(r));
+        const owner = String(userId || '');
+        const configs = this.fileSyncConfigService.list(owner);
+        const legacyById = new Map(
+            this.stmtListByUser.all(owner).map((row) => [String(row.client_id), row]),
+        );
+        return configs.map((config) => {
+            const legacy = legacyById.get(config.clientId);
+            if (legacy) return this._rowPublic(legacy);
+            const mobile = this.db.prepare(`SELECT * FROM mobile_devices
+                WHERE owner_user_id = ? AND device_id = ? AND revoked_at IS NULL`).get(owner, config.clientId);
+            return {
+                clientId: config.clientId,
+                ownerUserId: config.ownerUserId,
+                ownerUsername: String(mobile?.owner_username_compat || ''),
+                deviceName: config.deviceName,
+                platform: String(mobile?.platform || ''),
+                appVersion: String(mobile?.app_version || ''),
+                tokenId: String(mobile?.token_id || ''),
+                enabled: config.enabled,
+                automaticEnabled: config.automaticEnabled,
+                syncIntervalSec: config.syncIntervalSec,
+                lastSyncAt: mobile?.last_sync_at == null ? null : Number(mobile.last_sync_at),
+                lastSeenAt: mobile?.last_seen_at == null ? null : Number(mobile.last_seen_at),
+                createdAt: Number(mobile?.created_at || 0),
+                revokedAt: mobile?.revoked_at == null ? null : Number(mobile.revoked_at),
+                syncRevision: config.syncRevision,
+            };
+        });
     }
 
-    get(clientId) {
-        return this._rowPublic(this.stmtGet.get(clientId));
+    get(clientId, userId = null) {
+        const legacy = this.stmtGet.get(clientId);
+        if (legacy && (userId == null || legacy.owner_user_id === String(userId))) {
+            return this._rowPublic(legacy);
+        }
+        if (userId == null) return null;
+        return this.listForUser(userId).find((client) => client.clientId === String(clientId)) || null;
     }
 
     /**
@@ -268,52 +300,38 @@ class OneClientManager {
     }
 
     updateInterval(userId, clientId, syncIntervalSec) {
-        const row = this.stmtGet.get(clientId);
-        if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', '客户端不存在', 404);
-        if (row.revoked_at) throw new OneClientError('client_revoked', '客户端已吊销', 403);
         this.fileSyncConfigService.setInterval(userId, clientId, syncIntervalSec);
-        return this.get(clientId);
+        return this.get(clientId, userId);
     }
 
     setEnabled(userId, clientId, enabled) {
-        const row = this.stmtGet.get(clientId);
-        if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', '客户端不存在', 404);
-        if (row.revoked_at) throw new OneClientError('client_revoked', '客户端已吊销', 403);
         this.fileSyncConfigService.setEnabled(userId, clientId, enabled);
-        return this.get(clientId);
+        return this.get(clientId, userId);
     }
 
     setAutomaticEnabled(userId, clientId, automaticEnabled) {
-        const row = this.stmtGet.get(clientId);
-        if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', 'Client does not exist', 404);
-        if (row.revoked_at) throw new OneClientError('client_revoked', 'Client has been revoked', 403);
         this.fileSyncConfigService.setAutomaticEnabled(userId, clientId, automaticEnabled);
-        return this.get(clientId);
+        return this.get(clientId, userId);
     }
 
     setDeviceName(userId, clientId, deviceName) {
-        const row = this.stmtGet.get(clientId);
-        if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', 'Client does not exist', 404);
-        if (row.revoked_at) throw new OneClientError('client_revoked', 'Client has been revoked', 403);
         this.fileSyncConfigService.update(userId, clientId, { deviceName });
-        return this.get(clientId);
+        return this.get(clientId, userId);
     }
 
     patchConfig(userId, clientId, patch, options) {
-        const row = this.stmtGet.get(clientId);
-        if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', 'Client does not exist', 404);
-        if (row.revoked_at) throw new OneClientError('client_revoked', 'Client has been revoked', 403);
         this.fileSyncConfigService.update(userId, clientId, patch, options);
-        return this.get(clientId);
+        return this.get(clientId, userId);
     }
 
     /**
      * Delete / revoke a One client — caller must already pass verifySensitiveAccess.
      */
     revoke(userId, clientId, reason = 'revoked_by_user') {
-        const row = this.stmtGet.get(clientId);
-        if (!row || row.owner_user_id !== userId) throw new OneClientError('client_not_found', '客户端不存在', 404);
-        return this.fileSyncConfigService.revoke(userId, clientId, reason);
+        const owner = String(userId || '');
+        const client = this.fileSyncConfigService.read(owner, clientId, { includeRevoked: true });
+        if (!client) throw new OneClientError('client_not_found', '客户端不存在', 404);
+        return this.fileSyncConfigService.revoke(owner, clientId, reason);
     }
 
     /**
@@ -501,7 +519,7 @@ class OneClientManager {
                     ? this.patchConfig(req.user.userId, req.params.clientId, patch, {
                         expectedRevision: body.expectedRevision ?? body.baseRevision,
                     })
-                    : this.get(req.params.clientId);
+                    : this.get(req.params.clientId, req.user.userId);
                 if (!client || client.ownerUserId !== req.user.userId) {
                     throw new OneClientError('client_not_found', '客户端不存在', 404);
                 }

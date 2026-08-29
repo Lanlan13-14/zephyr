@@ -86,6 +86,8 @@ fun BindingScreen(
 
     DisposableEffect(Unit) {
         onDispose {
+            // PendingDeviceIdentity becomes a no-op after the coordinator commits ownership to the
+            // durable account graph, so screen disposal is safe on both cancellation and success.
             prepared?.identity?.wipe()
         }
     }

@@ -127,19 +127,39 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
 
     async function registerDevice(deviceId) {
         if (!deviceId) return;
-        try {
-            const addr = await proc.ensureStarted();
-            await new Promise((resolve) => {
-                const body = JSON.stringify({ deviceId });
-                const req = http.request({
-                    host: addr.split(':')[0], port: Number(addr.split(':')[1]),
-                    path: '/admin/register-device', method: 'POST',
-                    headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-link-admin': proc.adminToken },
-                }, (res) => { res.resume(); resolve(); });
-                req.on('error', () => resolve());
-                req.write(body); req.end();
-            });
-        } catch (e) { log('[link-v2] register-device failed', e && e.message); }
+        /* Registering the device with the Go transport is a hard precondition for the very
+         * first handshake: RequireEnrollment rejects every frame from an unknown device, so a
+         * silently dropped registration here presents as "bound client cannot sync" on the
+         * phone and as "already-bound device missing" on the server UI. Retry with backoff
+         * instead of swallowing the error; the admin route is idempotent so retries are safe. */
+        for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+                const addr = await proc.ensureStarted();
+                const [host, port] = addr.split(':');
+                const ok = await new Promise((resolve) => {
+                    const body = JSON.stringify({ deviceId });
+                    const req = http.request({
+                        host, port: Number(port),
+                        path: '/admin/register-device', method: 'POST',
+                        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-link-admin': proc.adminToken },
+                    }, (res) => {
+                        res.resume();
+                        resolve(res.statusCode >= 200 && res.statusCode < 300);
+                    });
+                    req.on('error', () => resolve(false));
+                    req.setTimeout(5000, () => { req.destroy(new Error('register-device timeout')); });
+                    req.write(body); req.end();
+                });
+                if (ok) return;
+                log('[link-v2] register-device attempt ' + (attempt + 1) + ' failed, retrying');
+            } catch (e) {
+                log('[link-v2] register-device attempt ' + (attempt + 1) + ' error: ' + (e && e.message));
+            }
+            await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+        }
+        const failure = new Error('link-device-registration-failed');
+        failure.code = 'link_device_registration_failed';
+        throw failure;
     }
 
     function forward(clientReq, clientRes, goPath, parsedBody) {
@@ -198,8 +218,20 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
         r.post('/handshake', express.json({ limit: '64kb' }), (req, res) => {
             const deviceId = String((req.body && req.body.deviceId) || '');
             ensureDevice(deviceId)
-                .catch(() => {})
-                .finally(() => forward(req, res, '/link/handshake', req.body));
+                .then(() => forward(req, res, '/link/handshake', req.body))
+                .catch((error) => {
+                    log('[link-v2] handshake registration failed for ' + deviceId + ': ' + (error && error.message));
+                    if (!res.headersSent) {
+                        res.status(503).json({
+                            ok: false,
+                            error: {
+                                code: (error && error.code) || 'link_device_registration_failed',
+                                message: 'Link 设备注册未就绪，请重试',
+                                retryable: true,
+                            },
+                        });
+                    }
+                });
         });
         r.post('/push', (req, res) => forward(req, res, '/link/frame'));
         r.get('/state', (req, res) => {
