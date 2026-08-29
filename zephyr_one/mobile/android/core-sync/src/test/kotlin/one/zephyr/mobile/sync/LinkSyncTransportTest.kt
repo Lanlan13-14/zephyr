@@ -93,12 +93,15 @@ class LinkSyncTransportTest {
 
     @Test
     fun `an unestablished channel surfaces a retryable failure, not a throw`() = runTest {
+        // runLink no longer gates on isEstablished — the real channel dials lazily inside
+        // syncOp. An unestablished channel that fails to dial throws LinkChannelException,
+        // which runLink catches and converts to a retryable failure.
         val channel = FakeChannel(established = false)
+        channel.throwOnCall = LinkChannelException("Link 会话未建立")
         val transport = LinkSyncTransport(channel, "dev-1", NoopFallback)
         val result = transport.changes(sinceCursor = 0, limit = 50)
         assertTrue(result is ApiResult.Failure)
         assertTrue((result as ApiResult.Failure).error.retryable)
-        assertEquals(0, channel.calls.size)
     }
 
     @Test
