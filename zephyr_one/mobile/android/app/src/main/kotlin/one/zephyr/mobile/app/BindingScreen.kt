@@ -110,10 +110,11 @@ fun BindingScreen(
                         step = BindStep.WORKING
                         status = "主端已批准，正在完成本机绑定…"
                         val result = try {
-                            // Hard ceiling on the whole completion path: credential store, graph
-                            // build and the first bootstrap round. A peer that never answers used
-                            // to leave this screen on 正在写入设备密钥 forever.
-                            withTimeout(90_000) {
+                            // Hard ceiling on the whole completion path. OkHttp's callTimeout is
+                            // 120s and execute() is not cancellable, so this must fire first —
+                            // otherwise the coroutine times out but the HTTP call keeps running
+                            // and the result is never delivered to the UI.
+                            withTimeout(45_000) {
                                 container.bindingCoordinator.consumePreparedEnrollment(
                                     prepared = current,
                                     intervalSec = 300,
@@ -125,7 +126,7 @@ fun BindingScreen(
                             BindingCompletionResult.Failed(
                                 MobileError.local(
                                     "bind_completion_timeout",
-                                    "完成绑定超时（90 秒），请检查服务器可达后重试",
+                                    "完成绑定超时（45 秒），请检查手机能否访问服务器后重试",
                                 ),
                             )
                         }
@@ -292,7 +293,7 @@ fun BindingScreen(
                                 modifier = Modifier.size(20.dp),
                             )
                             Text(
-                                "正在写入设备密钥并拉取镜像…",
+                                "正在写入设备密钥并同步账号数据…",
                                 color = ZephyrTheme.palette.onBackground,
                                 fontSize = 14.sp,
                             )
