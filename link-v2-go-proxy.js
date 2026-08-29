@@ -119,8 +119,8 @@ function stopLinkV2Go() {
     if (shared.proc) { shared.proc.stop(); shared.proc = null; }
 }
 
-function createLinkV2GoProxy({ log, enrollments, syncBridgeUrl, syncBridgeToken } = {}) {
-    const proc = sharedProcess(log, { syncBridgeUrl, syncBridgeToken });
+function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeToken } = {}) {
+    const proc = sharedProcess(log, { adminToken, syncBridgeUrl, syncBridgeToken });
     // Devices the Go service is known to hold this process lifetime, so we only
     // re-register once per device per restart instead of on every handshake.
     const registered = new Set();
