@@ -1,7 +1,9 @@
 package one.zephyr.mobile.data.repository
 
 import androidx.room.withTransaction
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonObject
 import one.zephyr.mobile.contracts.SyncAction
@@ -22,20 +24,30 @@ class NoteRepository(
 ) {
 
     fun observeNotes(ownerUserId: String): Flow<List<Note>> =
-        db.mirrorDao().observeByType(Note.ENTITY_TYPE, ownerUserId).map { rows -> rows.map(ResourceMappers::note) }
+        db.mirrorDao().observeByType(Note.ENTITY_TYPE, ownerUserId)
+            .map { rows -> rows.map(ResourceMappers::note) }
+            // JSON payload decoding runs per row on every DB emission; keep it off Main so
+            // large libraries do not drop frames while the list is animating.
+            .flowOn(Dispatchers.Default)
 
     /**
      * 回收站. observeByType filters deletedAt, so the trash scope reads its own query instead of
      * an empty filter over the active list.
      */
     fun observeTrashedNotes(ownerUserId: String): Flow<List<Note>> =
-        db.mirrorDao().observeTrashedByType(Note.ENTITY_TYPE, ownerUserId).map { rows -> rows.map(ResourceMappers::note) }
+        db.mirrorDao().observeTrashedByType(Note.ENTITY_TYPE, ownerUserId)
+            .map { rows -> rows.map(ResourceMappers::note) }
+            .flowOn(Dispatchers.Default)
 
     fun observeSnippets(ownerUserId: String): Flow<List<Snippet>> =
-        db.mirrorDao().observeByType(Snippet.ENTITY_TYPE, ownerUserId).map { rows -> rows.map(ResourceMappers::snippet) }
+        db.mirrorDao().observeByType(Snippet.ENTITY_TYPE, ownerUserId)
+            .map { rows -> rows.map(ResourceMappers::snippet) }
+            .flowOn(Dispatchers.Default)
 
     fun observeNote(noteId: String): Flow<Note?> =
-        db.mirrorDao().observe(Note.ENTITY_TYPE, noteId).map { row -> row?.let(ResourceMappers::note) }
+        db.mirrorDao().observe(Note.ENTITY_TYPE, noteId)
+            .map { row -> row?.let(ResourceMappers::note) }
+            .flowOn(Dispatchers.Default)
 
     suspend fun searchNotes(query: String, ownerUserId: String): List<Note> =
         db.mirrorDao().search(query, ownerUserId)

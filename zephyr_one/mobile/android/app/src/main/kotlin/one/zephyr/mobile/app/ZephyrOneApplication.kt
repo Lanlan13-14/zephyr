@@ -12,6 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.app.di.AppContainer
 import one.zephyr.mobile.protocol.rdp.RdpAndroidRuntime
@@ -34,6 +35,13 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
 
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    companion object {
+        /** Restore must never wedge the ready gate: bound it well below any user patience. */
+        private const val BINDING_RESTORE_TIMEOUT_MS = 20_000L
+        /** Local workspace open is pure local I/O; 15s means something is truly wrong. */
+        private const val WORKSPACE_OPEN_TIMEOUT_MS = 15_000L
+    }
+
     lateinit var container: AppContainer
         private set
 
@@ -51,12 +59,31 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
             runCatching { container.bindingCoordinator.completePendingTeardown() }
             // A database tombstone can outlive its journal if the process died after the journal clear.
             runCatching { container.sweepErasedAccountDatabases() }
-            runCatching { container.bindingCoordinator.restoreActiveBinding(bootstrap = false) }
+            // White-screen insurance: the ready gate below ONLY flips when this block reaches its
+            // end. A restore that hangs (coordinator mutex held by a stuck sync round, a wedged
+            // keystore, a wedged DB) would otherwise keep the app on a blank frame across restarts,
+            // which is exactly the reported failure mode. Bound every step; on timeout the app opens
+            // unbound and the user can retry/rebind instead of hard-bricking the launch.
+            try {
+                withTimeout(BINDING_RESTORE_TIMEOUT_MS) {
+                    container.bindingCoordinator.restoreActiveBinding(bootstrap = false)
+                }
+            } catch (failure: Throwable) {
+                if (failure !is kotlinx.coroutines.CancellationException) {
+                    android.util.Log.e("ZephyrOneApp", "binding restore failed/timed out", failure)
+                } else {
+                    throw failure
+                }
+            }
             // Local-first: an unbound device still opens a fully usable workspace. Sync is optional
             // on mobile, so the app must never be unusable just because no server binding is present.
-            val workspace = runCatching { container.ensureLocalWorkspace() }
-                .recoverCatching { container.ensureLocalWorkspace() }
-                .getOrNull()
+            val workspace = try {
+                withTimeout(WORKSPACE_OPEN_TIMEOUT_MS) { container.ensureLocalWorkspace() }
+            } catch (failure: Throwable) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                android.util.Log.e("ZephyrOneApp", "workspace open failed/timed out", failure)
+                null
+            }
             if (workspace != null && workspace.isLocalMode) {
                 runCatching { workspace.activate() }
             }
