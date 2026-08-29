@@ -4,9 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 
 const require = createRequire(import.meta.url);
+const here = path.dirname(fileURLToPath(import.meta.url));
 const { OneClientManager, OneClientError } = require('../one-client-manager.js');
+const { MobileV1Store } = require('../mobile-v1-store.js');
 const { FileAgentManager } = require('../file-agent-manager.js');
 const { createDatabase } = require('../sqlite-driver.js');
 
@@ -89,6 +93,59 @@ test('revoke removes client and device token stops working', () => {
   mgr.revoke('u1', 'dev-a', 'test');
   assert.equal(mgr.resolveDeviceToken(bound.deviceToken), null);
   assert.equal(mgr.listForUser('u1').length, 0);
+});
+
+test('Link v2 mobile device is visible and revocable through the Zephyr One settings facade', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'one-client-link-'));
+  const db = makeDb();
+  db.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
+  const registry = JSON.parse(fs.readFileSync(
+    path.join(here, '..', 'zephyr_one', 'mobile', 'contracts', 'registries', 'entity-registry.json'),
+    'utf8',
+  ));
+  const mobileStore = new MobileV1Store({ db, entityRegistry: registry });
+  mobileStore._hmacKey = crypto.randomBytes(32);
+  const fam = makeFileAgent(tmp);
+  const mgr = new OneClientManager({
+    db,
+    fileAgentManager: fam,
+    resourceService: { listConnections: () => [], listOwned: () => [] },
+    notesService: { list: () => ({ notes: [], total: 0 }) },
+    userSettingsService: { effective: () => ({}) },
+    storage: {},
+    log: () => {},
+  });
+  const deviceId = 'device-link-android-0001';
+  const tokenId = 'link-v2-enrollment';
+  const attempt = mobileStore.beginBindAttempt({
+    ownerUserId: 'u1',
+    deviceId,
+    tokenId,
+    requestId: 'req-link',
+  });
+  const keys = {
+    encryption: { alg: 'ML-KEM-768', publicKey: Buffer.alloc(1184, 7).toString('base64') },
+    signing: { alg: 'ES256', jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' } },
+  };
+  const input = {
+    ownerUserId: 'u1', ownerUsername: 'alice', deviceId, deviceName: 'Pixel Link',
+    platform: 'android', appVersion: 'pre45', tokenId, keys, syncIntervalSec: 300, attempt,
+  };
+  const requestFingerprint = MobileV1Store.bindRequestFingerprint({
+    deviceId, deviceName: input.deviceName, platform: input.platform, appVersion: input.appVersion,
+    tokenId, keys, syncIntervalSec: 300,
+  });
+  db.transaction(() => mobileStore.bindDevice({ ...input, requestFingerprint }))();
+
+  const listed = mgr.listForUser('u1');
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].clientId, deviceId);
+  assert.equal(listed[0].deviceName, 'Pixel Link');
+  assert.equal(listed[0].tokenId, tokenId);
+
+  mgr.revoke('u1', deviceId, 'settings-test');
+  assert.equal(mgr.listForUser('u1').length, 0);
+  assert.ok(mobileStore.getDeviceRow(deviceId).revoked_at);
 });
 
 test('interval is clamped', () => {

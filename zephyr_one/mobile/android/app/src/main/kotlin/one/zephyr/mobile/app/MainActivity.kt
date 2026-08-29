@@ -9,11 +9,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -25,6 +27,7 @@ import one.zephyr.mobile.security.AppLockPreferences
 import one.zephyr.mobile.security.AuthResult
 import one.zephyr.mobile.security.LockDelay
 import one.zephyr.mobile.security.LockState
+import one.zephyr.mobile.ui.component.CircularProgressIndicator
 import one.zephyr.mobile.ui.theme.ZephyrPalette
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 import one.zephyr.mobile.ui.theme.ZephyrThemeId
@@ -107,7 +110,10 @@ class MainActivity : FragmentActivity() {
                         Modifier
                             .fillMaxSize()
                             .background(ZephyrPalette.of(themePrefs.themeId, dark).surfaces.background),
-                    )
+                        contentAlignment = androidx.compose.ui.Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
                 } else {
                     ZephyrOneRoot(
                         container = container,

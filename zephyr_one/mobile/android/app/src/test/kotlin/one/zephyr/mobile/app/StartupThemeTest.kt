@@ -1,7 +1,7 @@
 package one.zephyr.mobile.app
 
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -34,9 +34,12 @@ class StartupThemeTest {
             File(androidRoot, "app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneApplication.kt").readText(),
         )
         assertFalse(source.contains("runBlocking"))
-        assert(source.contains("readyState"))
-        assert(source.contains("applicationScope.launch"))
-        assert(source.contains("RdpAndroidRuntime.installHome"))
+        assertTrue(source.contains("readyState"))
+        assertTrue(source.contains("applicationScope.launch"))
+        assertTrue(source.contains("RdpAndroidRuntime.installHome"))
+        assertTrue(source.contains("finally"))
+        assertTrue(source.contains("readyState.value = true"))
+        assertTrue(source.contains("TimeoutCancellationException"))
     }
 
     @Test
@@ -44,8 +47,9 @@ class StartupThemeTest {
         val source = codeOnly(
             File(androidRoot, "app/src/main/kotlin/one/zephyr/mobile/app/MainActivity.kt").readText(),
         )
-        assert(source.contains("enableEdgeToEdge"))
-        assert(source.contains("app.ready"))
+        assertTrue(source.contains("enableEdgeToEdge"))
+        assertTrue(source.contains("app.ready"))
+        assertTrue(source.contains("CircularProgressIndicator"))
         assertFalse(source.contains("runBlocking"))
     }
 }

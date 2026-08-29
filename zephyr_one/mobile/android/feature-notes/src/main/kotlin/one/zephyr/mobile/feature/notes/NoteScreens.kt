@@ -64,12 +64,14 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.data.repository.NoteRepository
 import one.zephyr.mobile.model.Note
@@ -114,7 +116,7 @@ class NoteListViewModel(
                     bound = bound,
                     lastSyncedAt = lastSyncedAt,
                 )
-            }.collect { page.value = it }
+            }.flowOn(Dispatchers.Default).collect { page.value = it }
         }
     }
 
