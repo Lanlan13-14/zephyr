@@ -141,9 +141,13 @@ class MirrorWriter(
                 val localRevision = if (revisions.containsKey(key)) {
                     revisions[key]
                 } else {
-                    db.mirrorDao().revisionOf(change.entityType, change.entityId).also {
-                        revisions[key] = it
-                    }
+                    // A tombstoned row has no mirror row to read a revision from. Reading the
+                    // tombstone keeps the delete durable: an inbound UPSERT older than the tombstone
+                    // revision must not resurrect the row (SYNC_STATE_MACHINE.md 7.4). UPSERTs newer
+                    // than the delete still apply — a later server-side recreation is legitimate.
+                    db.mirrorDao().revisionOf(change.entityType, change.entityId)
+                        ?: db.tombstoneDao().find(change.entityType, change.entityId)?.revision
+                            .also { revisions[key] = it }
                 }
                 if (!PushPrediction.shouldApplyChange(localRevision, change.action, change.revision)) continue
                 applicableIndexes += index

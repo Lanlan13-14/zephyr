@@ -41,11 +41,14 @@ function resolveBin() {
 }
 
 class GoLinkProcess {
-    constructor({ log, syncBridgeUrl = '', syncBridgeToken = '' } = {}) {
+    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeToken = '' } = {}) {
         this.log = log || (() => {});
         this.proc = null;
         this.addr = null;
-        this.adminToken = process.env.ZEPHYR_LINK_ADMIN_TOKEN || '';
+        /* Loopback admin token must be supplied by the supervisor per process start
+         * (generated in memory in server.js). No operator-facing env var exists. */
+        if (!adminToken) throw new Error('link-admin-token-required');
+        this.adminToken = adminToken;
         this.syncBridgeUrl = syncBridgeUrl;
         this.syncBridgeToken = syncBridgeToken;
         this.starting = null;

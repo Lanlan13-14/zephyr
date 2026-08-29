@@ -56,6 +56,12 @@ object PushPrediction {
      * A tombstone always applies, even with a lower revision than the local row: delete beats a
      * concurrent edit (SYNC_STATE_MACHINE.md 7.4). Otherwise the server revision must be strictly
      * newer, which is what makes the echo of our own push a no-op.
+     *
+     * `localRevision` is the revision of the live mirror row, OR — when the row was already
+     * hard-deleted — the revision of its tombstone. Passing the tombstone revision keeps the
+     * delete durable: an inbound UPSERT must be strictly newer than the tombstone to recreate
+     * the row, so a stale replayed UPSERT (out-of-order page, bootstrap backfill) cannot
+     * resurrect something the user deleted.
      */
     fun shouldApplyChange(localRevision: Long?, action: SyncAction, changeRevision: Long): Boolean {
         if (action == SyncAction.DELETE) return true
