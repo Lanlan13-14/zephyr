@@ -1,7 +1,10 @@
 package one.zephyr.mobile.app
 
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -11,10 +14,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import one.zephyr.mobile.network.MobileJson
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 
 /**
  * Loopback client for the embedded Go Link process. The Kotlin side owns device
@@ -120,22 +126,42 @@ internal class EmbeddedLinkApi(
         response.getValue("shared").jsonPrimitive.content
     }
 
-    private fun post(url: String, body: JsonObject): JsonObject {
+    private suspend fun post(url: String, body: JsonObject): JsonObject {
         val request = Request.Builder()
             .url(url)
             .post(MobileJson.instance.encodeToString(JsonObject.serializer(), body)
                 .toRequestBody("application/json".toMediaType()))
             .build()
-        client.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
+        // enqueue() + invokeOnCancellation so a withTimeout upstream can actually cancel the
+        // loopback call. execute() is a blocking thread call — coroutine cancellation cannot
+        // interrupt it, so the bind screen would spin forever even after the timeout fires.
+        val response: Response = suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, error: IOException) {
+                    if (continuation.isActive) continuation.resumeWith(Result.failure(error))
+                }
+
+                override fun onResponse(call: Call, resp: Response) {
+                    if (continuation.isActive) {
+                        continuation.resume(resp)
+                    } else {
+                        resp.close()
+                    }
+                }
+            })
+        }
+        return response.use { resp ->
+            val text = resp.body?.string().orEmpty()
             val parsed = runCatching { MobileJson.instance.parseToJsonElement(text).jsonObject }
                 .getOrElse { throw IllegalStateException("Link runtime 返回了无法解析的响应") }
-            if (!response.isSuccessful || parsed["ok"]?.jsonPrimitive?.content == "false") {
+            if (!resp.isSuccessful || parsed["ok"]?.jsonPrimitive?.content == "false") {
                 val error = parsed["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
-                    ?: "Link 请求失败 (${response.code})"
+                    ?: "Link 请求失败 (${resp.code})"
                 throw IllegalStateException(error)
             }
-            return parsed
+            parsed
         }
     }
 }
