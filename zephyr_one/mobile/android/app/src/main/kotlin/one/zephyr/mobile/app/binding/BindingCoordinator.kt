@@ -1074,7 +1074,7 @@ class BindingCoordinator internal constructor(
             // cancels the very coroutine that is committing this replacement.
             host.replaceGraph(previous, next)
         }
-        if (previous != null) previous.wipeBindingState()
+        if (previous != null && !previous.isDeviceLocal) previous.wipeBindingState()
     }
 
     private suspend fun replaceGraphWithDurableReplacementLocked(

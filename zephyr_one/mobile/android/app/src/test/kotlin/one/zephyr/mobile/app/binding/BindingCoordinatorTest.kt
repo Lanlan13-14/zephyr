@@ -177,6 +177,8 @@ class BindingCoordinatorTest {
         assertTrue("graph.stop" in events)
         assertTrue("host.replace" in events)
         assertFalse("host.clear" in events)
+        assertFalse("graph.wipe" in events, "binding must not erase the device-local fallback workspace")
+        assertFalse(local.wiped)
     }
 
     @Test
