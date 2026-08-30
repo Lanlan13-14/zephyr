@@ -131,6 +131,14 @@ function syncChrome(panel) {
         const edge = handle.dataset.resizeEdge || (handle.classList.contains('left') ? 'left' : 'right');
         handle.style.display = side && edge === side ? 'none' : '';
     });
+    if (!side) {
+        // Demo parity: once released, ⋯ must be an ordinary window-layout button
+        // again. Do not leave the pinned island's faded/hidden chrome behind.
+        panel.querySelectorAll('.panel-traffic-btn, [data-layout-panel], [data-ai-agent-layout]').forEach((button) => {
+            button.classList.remove('active-layout');
+            button.style.removeProperty('opacity');
+        });
+    }
 }
 
 function pin(panel, side) {
@@ -336,6 +344,9 @@ export function attachDesktopPanelPin(page, panel, { dragHandle, layoutButton, o
             pinned.delete(panel);
             delete panel.dataset.pinSide;
             delete panel.dataset.pinMode;
+            // Keep release semantics identical to the demo: a closed/docked panel
+            // always comes back as an ordinary floating window with normal ⋯ chrome.
+            syncChrome(panel);
             owner && applyInsets(owner);
         }
     });

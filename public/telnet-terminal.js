@@ -34,7 +34,7 @@ import {
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
 } from './floating-panel.js?v=20260731-panel-drag-physics4';
-import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin1';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin2';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
