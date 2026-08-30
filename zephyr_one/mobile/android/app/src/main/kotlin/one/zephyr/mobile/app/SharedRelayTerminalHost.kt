@@ -24,7 +24,6 @@ import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.network.SharedResourceClient
-import one.zephyr.mobile.network.SharedSession
 
 /** SSH relay host for shared-to-me connections. Credentials stay on the main end. */
 internal class SharedRelayTerminalHost(
@@ -52,24 +51,14 @@ internal class SharedRelayTerminalHost(
         if (shared == null || request.protocol != Protocol.SSH) return owned.open(request)
         request.wipe()
         val nonce = UUID.randomUUID().toString()
-        val minted = account.sharedResourceClient.openSession(
+        val minted = account.sharedResourceClient.openRelaySession(
             connectionId = shared.resourceId,
             clientSessionNonce = nonce,
             requestedChannels = listOf("terminal", "resize"),
-            // Relay-strict never emits a use envelope; the frozen request still requires a
-            // positive placeholder for forward-compatible direct mode negotiation.
-            deviceKeyVersion = 1,
-            requestDirect = false,
         )
         val session = when (minted) {
             is ApiResult.Success -> minted.value
             is ApiResult.Failure -> return TerminalOpenOutcome.Failed(minted.error)
-        }
-        if (session !is SharedResourceClient.SharedSession.Relay) {
-            runCatching { account.sharedResourceClient.closeSession(session.sessionId) }
-            return TerminalOpenOutcome.Failed(
-                MobileError.local("shared_direct_unsupported", "共享直连尚未接入 SSH 引擎", false),
-            )
         }
         if (session.relayUrl.isBlank() || session.credential.isBlank()) {
             return TerminalOpenOutcome.Failed(
@@ -81,7 +70,7 @@ internal class SharedRelayTerminalHost(
 
     private suspend fun connectRelay(
         localSessionId: String,
-        session: SharedResourceClient.SharedSession.Relay,
+        session: one.zephyr.mobile.network.RelaySession,
     ): TerminalOpenOutcome {
         val output = MutableSharedFlow<ByteArray>(extraBufferCapacity = 128, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         val closure = MutableSharedFlow<Throwable>(extraBufferCapacity = 1)

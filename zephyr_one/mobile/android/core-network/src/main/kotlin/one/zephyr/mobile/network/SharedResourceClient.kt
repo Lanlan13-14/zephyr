@@ -27,6 +27,13 @@ data class SharedResource(
 )
 
 /** How a shared session was opened. The UI must state which one happened. */
+data class RelaySession(
+    val sessionId: String,
+    val expiresAt: Long,
+    val relayUrl: String,
+    val credential: String,
+)
+
 sealed interface SharedSession {
     val sessionId: String
     val expiresAt: Long
@@ -130,6 +137,41 @@ class SharedResourceClient(private val client: MobileApiClient) {
             bodySerializer = SharedSessionRequestDto.serializer(),
             responseSerializer = SharedSessionResponseDto.serializer(),
         ).map { dto -> toSession(dto) }
+
+    /** Strict helper for native shared transports; a direct answer is a fail-closed protocol error. */
+    suspend fun openRelaySession(
+        connectionId: String,
+        clientSessionNonce: String,
+        requestedChannels: List<String>,
+    ): ApiResult<RelaySession> = when (
+        val result = openSession(
+            connectionId = connectionId,
+            clientSessionNonce = clientSessionNonce,
+            requestedChannels = requestedChannels,
+            deviceKeyVersion = 1,
+            requestDirect = false,
+        )
+    ) {
+        is ApiResult.Success -> when (val session = result.value) {
+            is SharedSession.Relay -> ApiResult.Success(
+                RelaySession(
+                    sessionId = session.sessionId,
+                    expiresAt = session.expiresAt,
+                    relayUrl = session.relayUrl,
+                    credential = session.credential,
+                ),
+                result.requestId,
+            )
+            is SharedSession.Direct -> ApiResult.Failure(
+                MobileError.local(
+                    code = "malformed_response",
+                    message = "relay-strict request returned direct material",
+                    retryable = false,
+                ),
+            )
+        }
+        is ApiResult.Failure -> result
+    }
 
     /**
      * Re-mints the attach credential (relay) or re-seals the envelope (direct).
