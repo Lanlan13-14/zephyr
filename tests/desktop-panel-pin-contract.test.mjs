@@ -23,12 +23,13 @@ test('panel pin uses the exact tgl-pin released visual and motion contract', () 
     assert.match(pin, /button\.className = `tgl panel-pin-btn \$\{side\}`/);
 });
 
-test('only the pinned ON state follows the active Zephyr accent', () => {
+test('the pinned ON state is also byte-identical to the demo', () => {
     for (const fragment of [
-        'border-color: color-mix(in srgb, var(--accent) 72%, var(--border))',
-        'background: color-mix(in srgb, var(--accent) 14%, var(--surface))',
-        'background: var(--accent)',
+        'border-color: #9aa2b1',
+        'background: #262932',
+        'box-shadow: 0 0 6px rgba(223, 227, 234, .35)',
     ]) assert.ok(css.includes(fragment), fragment);
+    assert.doesNotMatch(css, /\.panel-pin-btn\.on[^}]*var\(--accent/s);
 });
 
 test('pinned panels remove floating shadow/transform and traffic chrome resets after release', () => {
@@ -88,7 +89,7 @@ test('nested cloned panels are explicitly reset to ordinary floating windows', (
 test('all desktop top-level panel surfaces are wired; demo is not referenced', () => {
     for (const source of [terminal, telnet, rdp, vnc, app]) {
         assert.match(source, /attachDesktopPanelPin/);
-        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin3/);
+        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin4/);
         assert.doesNotMatch(source, /panel-pin-demo/);
     }
     for (const name of ['fileManager', 'infoModal', 'dockerPanel', 'snippetPanel', 'shortcutPanel']) assert.ok(terminal.includes(name));
@@ -97,26 +98,26 @@ test('all desktop top-level panel surfaces are wired; demo is not referenced', (
     assert.doesNotMatch(pin, /panel-pin-demo/);
 });
 
-test('pinning uses complete geometry and surface transitions', () => {
+test('pinning uses complete geometry and surface transitions without a flash animation', () => {
     for (const fragment of [
-        'left .52s var(--ios-open)', 'top .52s var(--ios-open)',
-        'width .52s var(--ios-open)', 'height .52s var(--ios-open)',
-        'animation: panel-pin-settle .52s var(--ios-open)',
+        'left .52s var(--ios-open) !important', 'top .52s var(--ios-open) !important',
+        'width .52s var(--ios-open) !important', 'height .52s var(--ios-open) !important',
         'padding-left .5s var(--ios-open)', 'padding-right .5s var(--ios-open)', 'padding-bottom .5s var(--ios-open)',
     ]) assert.ok(css.includes(fragment), fragment);
+    assert.doesNotMatch(css, /panel-pin-settle/);
 });
 
 test('all shipped pages load pin styling without demo artifact', () => {
     for (const file of ['public/terminal.html', 'public/telnet-terminal.html', 'public/rdp.html', 'public/novnc.html', 'public/app.html']) {
         const html = read(file);
-        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin3/);
+        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin4/);
         assert.doesNotMatch(html, /panel-pin-demo/);
     }
     assert.equal(fs.existsSync(path.join(root, 'public/panel-pin-demo.html')), false);
 });
 
 test('service worker rotates and precaches both panel-pin assets', () => {
-    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin3/);
-    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin3/);
-    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin3/);
+    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin4/);
+    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin4/);
+    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin4/);
 });
