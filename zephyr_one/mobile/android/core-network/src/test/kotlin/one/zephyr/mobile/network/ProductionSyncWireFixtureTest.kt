@@ -14,7 +14,7 @@ class ProductionSyncWireFixtureTest {
 
     @Test
     fun `production generators decode through MobileJson and domain mappers`() {
-        val raw = requireNotNull(javaClass.classLoader.getResourceAsStream(FIXTURE)) {
+        val raw = requireNotNull(javaClass.classLoader?.getResourceAsStream(FIXTURE)) {
             "missing $FIXTURE"
         }.bufferedReader().use { it.readText() }
 

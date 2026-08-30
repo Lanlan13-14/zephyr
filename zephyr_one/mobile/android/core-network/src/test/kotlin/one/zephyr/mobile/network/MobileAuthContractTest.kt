@@ -167,7 +167,7 @@ class MobileAuthContractTest {
         assertTrue(result is ApiResult.Failure)
         val error = (result as ApiResult.Failure).error
         assertEquals("malformed_response", error.code)
-        assertTrue(error.persistedDiagnosticText().startsWith("capabilities map: "))
+        assertTrue(error.persistedDiagnosticText().startsWith("capabilities decode: response did not match DTO"))
     }
 
     @Test
