@@ -87,8 +87,18 @@ test('Android Link channel injects every sync op before sealing', () => {
   assert.match(transport, /channel\.syncOp\("ack", wireBody\("ack", body\)\)/);
   assert.match(transport, /private fun requireSuccessAck/);
   assert.match(transport, /LinkChannelException\(message, code, retryable, details\)/);
+  assert.match(transport, /SerializationException/);
+  assert.match(transport, /CancellationException/);
   assert.match(container, /kind = LinkKinds\.SYNC_OP,[\s\S]*body = body/);
   assert.match(container, /spkiPins = linkSpkiPins/);
+  assert.match(container, /CoroutineExceptionHandler/);
+  const api = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedLinkApi.kt');
+  assert.match(api, /is JsonObject -> ackElement/);
+  const codec = readRepo('zephyr-link/internal/codec/codec.go');
+  assert.match(codec, /DefaultMapType/);
+  const node = readRepo('zephyr-link/internal/link/node.go');
+  assert.match(node, /normalizeCBORForJSON\(ackBody\)/);
+  assert.match(node, /json\.Marshal\(v\)/);
 });
 
 test('Link server strips the transport op before strict canonical push validation', () => {

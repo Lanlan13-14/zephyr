@@ -256,6 +256,12 @@ func (n *Node) handlePushFrame(w http.ResponseWriter, r *http.Request) {
 			errJSON(w, http.StatusBadGateway, "push_failed", "unparsable ack body")
 			return
 		}
+		normalized, err := normalizeCBORForJSON(ackBody)
+		if err != nil {
+			errJSON(w, http.StatusBadGateway, "push_failed", "unencodable ack body")
+			return
+		}
+		ackBody = normalized
 	}
 	ackKind := 0
 	if ack != nil {
@@ -636,6 +642,13 @@ func (n *Node) clientForPeer(baseURL string, spkiPins []string) (*http.Client, e
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"ok":false,"error":{"code":"encode_failed","message":"Link response unencodable"}}`))
+		return
+	}
 	w.Header().Set("content-type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(payload)
 }
