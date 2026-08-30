@@ -713,6 +713,7 @@ class BindingCoordinator internal constructor(
             // Publication is the durable hand-off. The UI tree that called us may be replaced at
             // this exact point, so make workers eligible before awaiting network bootstrap.
             if (host.currentGraph() === prepared.graph) workersMayRun = true
+            prepared.graph.startNetworkProducers()
             val bootstrap = prepared.graph.bootstrapAfterBind()
             val bootstrapSucceeded = bootstrap.lastOrNull()?.takeIf { it.complete }?.let { round ->
                 markBootstrapReadyIfCurrent(prepared.graph, prepared.binding, round.endState)

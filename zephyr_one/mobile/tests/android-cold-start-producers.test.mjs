@@ -35,6 +35,9 @@ test('restore paints before sockets and keep-alive is a disclosed dataSync servi
   assert.match(wake, /foreground \|\| holdAlive/);
 
   const coordinator = read('android/app/src/main/kotlin/one/zephyr/mobile/app/binding/BindingCoordinator.kt');
-  assert.match(coordinator, /prepared\.graph\.startNetworkProducers\(\)/);
-  assert.match(coordinator, /graph\.startNetworkProducers\(\)/);
+  assert.equal(
+    (coordinator.match(/startNetworkProducers\(\)/g) || []).length,
+    5,
+    'activate contract, restore, bind, enrollment consume, and deferred bootstrap must all start producers',
+  );
 });
