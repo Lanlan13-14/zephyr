@@ -206,7 +206,7 @@
 
 ## 15. Zephyr Link 产品模型
 
-- [KNOWN] Zephyr Link 在 UI 中称“文件同步”，但覆盖设备 enrollment、账号数据同步、blob、文件桥接、shared online use、撤销和诊断。
+- [KNOWN] Zephyr Link 在 UI 中称“Zephyr Link”，但覆盖设备 enrollment、账号数据同步、blob、文件桥接、shared online use、撤销和诊断。
 - [KNOWN] Zephyr 与 One 都不依赖 Link 才能运行；Link 关闭或失败只影响同步和明确依赖主端的能力。
 - [INFERRED] 底层能力通道必须隔离：`control`、`owned-sync`、`secret`、`blob`、`file-bridge`、`shared-terminal`、`shared-remote`、`shared-note`、`shared-file`、`ai`。
 - [INFERRED] UI 统一入口不等于权限和凭据合并；每个通道有独立 capability、密钥、流控、大小限制和驻留规则。
