@@ -14,22 +14,27 @@ const vnc = read('public/novnc.js');
 const app = read('public/app.js');
 const sw = read('public/sw.js');
 
-test('panel pin uses the exact tgl-pin released visual and motion contract', () => {
+test('released pin keeps demo geometry but uses a themed gray ring, never a black blob', () => {
     for (const fragment of [
-        '.tgl.panel-pin-btn', '--s: 18px', 'border: 1.5px solid #4a4f5a',
-        'background: #1e2025', 'background: #dfe3ea', 'border-color: #5d6372',
+        '.tgl.panel-pin-btn', '--s: 18px', 'width: 8px;', 'height: 8px;',
+        'border: 1.5px solid color-mix(in srgb, var(--text-secondary) 72%, transparent)',
+        'background: color-mix(in srgb, var(--surface) 92%, var(--bg))',
+        'background: color-mix(in srgb, var(--text-secondary) 84%, transparent)',
         'cubic-bezier(.34, 1.56, .64, 1)', 'transform: scale(.85)',
     ]) assert.ok(css.includes(fragment), fragment);
+    assert.doesNotMatch(css, /border: 1\.5px solid #4a4f5a/);
+    assert.doesNotMatch(css, /background: #1e2025/);
+    assert.doesNotMatch(css, /background: #dfe3ea/);
     assert.match(pin, /button\.className = `tgl panel-pin-btn \$\{side\}`/);
 });
 
-test('the pinned ON state is also byte-identical to the demo', () => {
+test('locked pin follows the previous accent-filled state the user approved', () => {
     for (const fragment of [
-        'border-color: #9aa2b1',
-        'background: #262932',
-        'box-shadow: 0 0 6px rgba(223, 227, 234, .35)',
+        'border-color: color-mix(in srgb, var(--accent) 72%, var(--border))',
+        'background: color-mix(in srgb, var(--accent) 14%, var(--surface))',
+        'background: var(--accent)',
+        'box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent)',
     ]) assert.ok(css.includes(fragment), fragment);
-    assert.doesNotMatch(css, /\.panel-pin-btn\.on[^}]*var\(--accent/s);
 });
 
 test('pinned panels remove floating shadow/transform and traffic chrome resets after release', () => {
@@ -45,10 +50,11 @@ test('panel pins are desktop-only and mobile cannot receive controls', () => {
     assert.match(css, /@media \(hover: none\), \(pointer: coarse\) \{ \.panel-pin-btn \{ display: none !important; \} \}/);
 });
 
-test('side rails stay above bottom dock while bottom dock owns the full lower row', () => {
+test('side rails stay above bottom dock while bottom dock owns and covers the full lower row', () => {
     assert.match(pin, /function halfInset\(page\)/);
     assert.match(pin, /const height = fullHeight - halfInset\(page\)/);
-    assert.match(pin, /left: `\$\{scope\.left\}px`, top: `\$\{scope\.top \+ fullHeight - height\}px`, width: `\$\{scope\.width\}px`, height: `\$\{height\}px`/);
+    assert.match(pin, /left: `\$\{scope\.left - edge\.left\}px`, top: `\$\{scope\.top \+ fullHeight - height\}px`,\n            width: `\$\{scope\.width \+ edge\.left \+ edge\.right\}px`, height: `\$\{height \+ edge\.bottom\}px`/);
+    assert.match(pin, /applyInsets\(page, \{ bottomOverride: next \}\)/);
     assert.match(css, /pin-has-bottom/);
     assert.match(css, /var\(--pin-inset-bottom, 0px\)/);
 });
@@ -68,6 +74,10 @@ test('pinned traffic menu reuses the exact unpinned island host and icon contrac
     }
     assert.match(pin, /menu\.classList\.add\('island-open'\)/);
     assert.match(pin, /menu\.classList\.add\('island-closing', 'island-animating'\)/);
+    assert.match(pin, /menu\.style\.setProperty\('--panel-island-menu-width', `\$\{rect\.width\}px`\)/);
+    assert.match(pin, /menu\.style\.setProperty\('--panel-island-menu-height', `\$\{rect\.height\}px`\)/);
+    assert.match(pin, /menu\.style\.setProperty\('--panel-island-menu-width', `\$\{width\}px`\)/);
+    assert.match(pin, /menu\.style\.setProperty\('--panel-island-menu-height', '50px'\)/);
     assert.match(css, /\.panel-pin-menu \{ grid-template-columns: repeat\(6, minmax\(0, 1fr\)\); \}/);
     assert.doesNotMatch(css, /\.panel-pin-menu button \{[^}]*flex-direction: column/s);
 });
@@ -89,7 +99,7 @@ test('nested cloned panels are explicitly reset to ordinary floating windows', (
 test('all desktop top-level panel surfaces are wired; demo is not referenced', () => {
     for (const source of [terminal, telnet, rdp, vnc, app]) {
         assert.match(source, /attachDesktopPanelPin/);
-        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin4/);
+        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin5/);
         assert.doesNotMatch(source, /panel-pin-demo/);
     }
     for (const name of ['fileManager', 'infoModal', 'dockerPanel', 'snippetPanel', 'shortcutPanel']) assert.ok(terminal.includes(name));
@@ -110,14 +120,14 @@ test('pinning uses complete geometry and surface transitions without a flash ani
 test('all shipped pages load pin styling without demo artifact', () => {
     for (const file of ['public/terminal.html', 'public/telnet-terminal.html', 'public/rdp.html', 'public/novnc.html', 'public/app.html']) {
         const html = read(file);
-        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin4/);
+        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin5/);
         assert.doesNotMatch(html, /panel-pin-demo/);
     }
     assert.equal(fs.existsSync(path.join(root, 'public/panel-pin-demo.html')), false);
 });
 
 test('service worker rotates and precaches both panel-pin assets', () => {
-    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin4/);
-    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin4/);
-    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin4/);
+    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin5/);
+    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin5/);
+    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin5/);
 });
