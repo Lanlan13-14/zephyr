@@ -9489,6 +9489,10 @@ sharedRelayWss.on('connection', async (ws, req) => {
         for (const msg of pending.splice(0)) {
             if (msg.type === 'input' && session.channels.includes('terminal')) {
                 try { stream.write(String(msg.data || '')); } catch {}
+            } else if (msg.type === 'resize') {
+                const rows = Math.max(1, Math.min(500, Number(msg.rows) || 24));
+                const cols = Math.max(1, Math.min(1000, Number(msg.cols) || 80));
+                try { stream.setWindow(rows, cols, 0, 0); } catch {}
             }
         }
     });

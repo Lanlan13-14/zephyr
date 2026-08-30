@@ -463,7 +463,7 @@ private fun BoundRoot(
         )
     }
     val terminalHost = remember(account, sshEngine) {
-        SshTerminalHost(
+        val ownedHost = SshTerminalHost(
             engine = sshEngine,
             findConnection = { id -> account.connections.find(id) },
             routePlanner = { connection ->
@@ -472,6 +472,7 @@ private fun BoundRoot(
             },
             hopAuthProvider = { route -> account.hopAuthFor(route) },
         )
+        SharedRelayTerminalHost(account, ownedHost)
     }
     val managedHostKeyPrompt by managedSsh.prompt.collectAsState()
     val managedSftp = remember(managedSsh, sshEngine, account.sessions) {
@@ -888,7 +889,23 @@ private fun BoundRoot(
                                     }
                                 },
                             ),
-                            secretProvider = { connection -> account.terminalCredentials(connection) },
+                            secretProvider = { connection ->
+                                if (connection.residency == Residency.SHARED_ONLINE_ONLY) {
+                                    TerminalCredentials()
+                                } else {
+                                    account.terminalCredentials(connection)
+                                }
+                            },
+                            findConnection = { id ->
+                                account.connections.find(id)
+                                    ?: account.sharedResources.find(Connection.ENTITY_TYPE, id)
+                                        ?.let { summary ->
+                                            one.zephyr.mobile.feature.connections.SharedConnectionRows.toDisplayRow(
+                                                summary,
+                                                ownerUserId,
+                                            )
+                                        }
+                            },
                         ),
                     ),
                     onDock = { item -> onTerminalDock(item, notice) { route = it } },
@@ -1167,6 +1184,7 @@ private fun RootDestination(
                         ownerUserId = ownerUserId,
                         syncStatus = listSyncStatus,
                         network = account.network,
+                        sharedCoordinator = account.sharedResourceCoordinator,
                         localMode = account.isLocalMode,
                         syncNowAction = if (account.isLocalMode) {
                             { /* Local mode has no server to sync with. */ }

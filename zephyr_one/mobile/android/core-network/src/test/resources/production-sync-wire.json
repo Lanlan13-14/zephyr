@@ -4,7 +4,7 @@
     "protocolVersions": [
       1
     ],
-    "registryHash": "a552a104ecb166d87c566c9825cda354669777229cceab6b6199c3801d047f6e",
+    "registryHash": "520ccddf6f8a626842bb80e57b1d6f6bfd1afd94695a175a1ce9b4275adae28f",
     "minimumAppVersions": {
       "android": "0.1.0",
       "ios": "0.1.0"
@@ -82,7 +82,31 @@
         "actorDeviceId": null,
         "changedAt": 1,
         "fieldMask": [
-          "name"
+          "name",
+          "host",
+          "port",
+          "protocol",
+          "username",
+          "remark",
+          "tags",
+          "connectionMode",
+          "proxyId",
+          "jumpHostId",
+          "jumpHostIds",
+          "sshKeyId",
+          "rdpSoundMode",
+          "rdpClipboard",
+          "rdpMicrophone",
+          "rdpCamera",
+          "rdpStorage",
+          "rdpLocation",
+          "rdpResolution",
+          "rdpQuality",
+          "rdpFps",
+          "rdpTouchMode",
+          "rdpTouchSensitivity",
+          "rdpDomain",
+          "encoding"
         ],
         "payload": {
           "id": "connection-1",
@@ -90,6 +114,24 @@
           "revision": 1,
           "name": "fixture",
           "updatedAt": 1
+        }
+      },
+      {
+        "changeSeq": 0,
+        "entityType": "oneUserSettings",
+        "entityId": "appearance",
+        "action": "upsert",
+        "revision": 1,
+        "actorDeviceId": null,
+        "changedAt": 1,
+        "fieldMask": [],
+        "payload": {
+          "sectionKey": "appearance",
+          "userId": "owner-1",
+          "revision": 1,
+          "updatedAt": 1,
+          "appearance.theme": "dark",
+          "appearance.customCss": ".fixture{}"
         }
       }
     ]

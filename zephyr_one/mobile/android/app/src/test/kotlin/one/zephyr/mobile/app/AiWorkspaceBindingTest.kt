@@ -41,6 +41,13 @@ class AiWorkspaceBindingTest {
         val chrome = AiWorkspaceBinding.chrome(prefs)
         assertFalse(chrome.enabled)
         assertFalse(AiWorkspaceBinding.chrome(emptyMap(), catalogEnabled = false).enabled)
+        assertTrue(
+            AiWorkspaceBinding.chrome(
+                emptyMap(),
+                catalogEnabled = false,
+                localMode = false,
+            ).enabled,
+        )
         assertEquals(
             "已停用 · 导航与工作区不再显示 AI",
             AiWorkspaceBinding.settingsSummary(emptyMap(), catalogEnabled = false),

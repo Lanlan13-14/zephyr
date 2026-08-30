@@ -6,6 +6,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import one.zephyr.mobile.app.di.AccountContainer
@@ -33,32 +34,42 @@ internal fun BoundAiWorkspace(
     val catalog by account.localAi.observe().collectAsState(
         initial = one.zephyr.mobile.data.repository.LocalAiCatalog(enabled = false),
     )
-    val chrome = AiWorkspaceBinding.chrome(prefs, catalog.enabled)
+    val chrome = AiWorkspaceBinding.chrome(
+        prefs = prefs,
+        catalogEnabled = catalog.enabled,
+        localMode = account.isLocalMode,
+    )
     // Disabled means absent, not merely a closed sheet. Returning before controller construction
     // removes the FAB immediately and disposes any live local runtime/loopback host when toggled.
     if (!chrome.enabled) return
     val context = AiWorkspaceBinding.context(destination, session)
     val scope = rememberCoroutineScope()
+    val currentRuntimeContext by rememberUpdatedState(
+        AiWorkspaceBinding.runtimeContext(destination, session),
+    )
+    val currentChrome by rememberUpdatedState(chrome)
     val runtime = remember(account) {
-        val managed = ManagedSshSessionPool(
-            engine = account.appContainer().sshEngine,
-            connectionProvider = account.connections::find,
-            credentialsProvider = account::terminalCredentials,
-            routePlanner = accountRoutePlanner(account),
-        )
-        val exec = LiveSshExecPort(account.appContainer().sshEngine, account.sessions, managed)
-        val sftp = SshjSftpPort(managed, account.appContainer().sshEngine, account.sessions)
-        val host = AndroidAiPlatformHost(account, exec, account.localAiWorkspace, sftp)
-        LocalAndroidAiRuntimeController(
+        AiRuntimeControllerFactory.create(
             account = account,
             scope = scope,
-            context = { AiWorkspaceBinding.runtimeContext(destination, session) },
+            chrome = { currentChrome },
+            context = { currentRuntimeContext },
             persistChrome = { AiWorkspaceBinding.persist(account.settings, it) },
-            platformHost = host,
+            localPlatformHost = {
+                val managed = ManagedSshSessionPool(
+                    engine = account.appContainer().sshEngine,
+                    connectionProvider = account.connections::find,
+                    credentialsProvider = account::terminalCredentials,
+                    routePlanner = accountRoutePlanner(account),
+                )
+                val exec = LiveSshExecPort(account.appContainer().sshEngine, account.sessions, managed)
+                val sftp = SshjSftpPort(managed, account.appContainer().sshEngine, account.sessions)
+                AndroidAiPlatformHost(account, exec, account.localAiWorkspace, sftp)
+            },
         )
     }
     DisposableEffect(runtime) {
-        onDispose { runtime.close() }
+        onDispose { (runtime as? LocalAndroidAiRuntimeController)?.close() }
     }
     AiWorkspaceOverlay(
         enabled = chrome.enabled,
@@ -75,11 +86,11 @@ internal object AiWorkspaceBinding {
     fun chrome(
         prefs: Map<String, JsonObject>,
         catalogEnabled: Boolean = true,
+        localMode: Boolean = true,
     ): AiWorkspaceChrome = AiPreferenceMapping.chrome(
-        // The full local-AI settings page owns the authoritative switch in LocalAiCatalog. The
-        // legacy preference is still honoured for upgraded installs, but it must never turn a
-        // disabled catalog back on or leave the floating button visible.
-        enabled = catalogEnabled && flag(prefs, SettingsRepository.PREF_AI_ENABLED, true),
+        // Local mode obeys the device catalog switch. A bound account uses the server runtime and
+        // must not disappear merely because the unrelated local catalog is disabled.
+        enabled = (!localMode || catalogEnabled) && flag(prefs, SettingsRepository.PREF_AI_ENABLED, true),
         provider = text(prefs, SettingsRepository.PREF_AI_PROVIDER),
         model = text(prefs, SettingsRepository.PREF_AI_MODEL),
         collaboration = text(prefs, SettingsRepository.PREF_AI_COLLAB),

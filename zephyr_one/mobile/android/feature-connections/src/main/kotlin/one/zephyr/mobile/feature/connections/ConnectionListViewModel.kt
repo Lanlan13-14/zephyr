@@ -25,6 +25,7 @@ import one.zephyr.mobile.model.PageState
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.SyncStatus
 import one.zephyr.mobile.network.NetworkState
+import one.zephyr.mobile.sync.SharedResourceCoordinator
 
 /**
  * S10 首页/连接库.
@@ -44,6 +45,7 @@ class ConnectionListViewModel(
     private val ownerUserId: String,
     syncStatus: Flow<SyncStatus>,
     network: Flow<NetworkState>,
+    private val sharedCoordinator: SharedResourceCoordinator?,
     private val localMode: Boolean,
     private val syncNowAction: suspend () -> Unit,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -164,7 +166,10 @@ class ConnectionListViewModel(
     }
 
     fun syncNow() {
-        viewModelScope.launch { runCatching { syncNowAction() } }
+        viewModelScope.launch {
+            runCatching { syncNowAction() }
+            if (!localMode) runCatching { sharedCoordinator?.refresh() }
+        }
     }
 
     companion object {
@@ -181,6 +186,7 @@ class ConnectionListViewModel(
             ownerUserId: String,
             syncStatus: Flow<SyncStatus>,
             network: Flow<NetworkState>,
+            sharedCoordinator: SharedResourceCoordinator? = null,
             localMode: Boolean = false,
             syncNowAction: suspend () -> Unit,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
@@ -192,6 +198,7 @@ class ConnectionListViewModel(
                 ownerUserId = ownerUserId,
                 syncStatus = syncStatus,
                 network = network,
+                sharedCoordinator = sharedCoordinator,
                 localMode = localMode,
                 syncNowAction = syncNowAction,
             ) as T

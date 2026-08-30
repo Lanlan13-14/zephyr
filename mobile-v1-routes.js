@@ -624,6 +624,37 @@ class MobileV1Api {
     }
 
     /**
+     * Normalizes a server-authored mask to the same frozen allow-list clients enforce.
+     *
+     * Adapter masks may describe the broader downlink projection, including opaque-preserve
+     * values. Those values are allowed in payload but never in fieldMask. Emitting them there makes
+     * Android reject the entire page, so every bootstrap/change boundary filters through the
+     * registry rather than trusting an adapter or a historical change row.
+     */
+    serverFieldMask(entityType, requested) {
+        const editable = this.editableFields(entityType);
+        const forbidden = this.forbiddenFields(entityType);
+        const accepted = [];
+        let requiresFullReplacement = false;
+        for (const raw of Array.isArray(requested) ? requested : []) {
+            const field = String(raw || '');
+            const root = field.split(/[.\[]/, 1)[0];
+            if (!field || forbidden.has(field) || forbidden.has(root)
+                || (!editable.has(field) && !editable.has(root)) || accepted.includes(field)) {
+                requiresFullReplacement = true;
+                continue;
+            }
+            accepted.push(field);
+        }
+        /* An empty inbound change mask means "replace with this complete canonical projection" on
+         * both Android and iOS. If even one requested field is opaque/unknown/duplicate, retaining
+         * only the editable subset would silently lose the server-authored portion of a mixed
+         * mutation. Full replacement preserves the entire projected row without naming a forbidden
+         * field in the mask. */
+        return requiresFullReplacement ? [] : accepted;
+    }
+
+    /**
      * The server's ML-KEM-768 public key, for devices to seal secrets to.
      *
      * Reuses the existing at-rest data keypair rather than minting a second
@@ -1558,11 +1589,15 @@ class MobileV1Api {
                             Number(row.finishedAt) || 0,
                             Number(row.startedAt) || 0,
                         ),
-                        /* fieldMask is the full editable set: a bootstrap row is the
-                         * complete entity, not a patch. */
-                        fieldMask: adapter.fieldMaskOf
-                            ? adapter.fieldMaskOf(row)
-                            : (spec.editableFields || []).slice(),
+                        /* Bootstrap carries a complete canonical projection. The normal mask is
+                         * the full editable set; if an adapter also names opaque/unknown fields,
+                         * serverFieldMask returns [] to request a safe full replacement instead. */
+                        fieldMask: this.serverFieldMask(
+                            entityType,
+                            adapter.fieldMaskOf
+                                ? adapter.fieldMaskOf(row)
+                                : (spec.editableFields || []).slice(),
+                        ),
                         payload: projectPayload(spec, row),
                     });
                     afterEntityId = rowId;
@@ -1839,13 +1874,17 @@ class MobileV1Api {
         }
         if (change.action === 'delete') return change;
 
+        const safeChange = {
+            ...change,
+            fieldMask: this.serverFieldMask(change.entityType, change.fieldMask),
+        };
         let row = null;
         try {
             row = adapter.read(user, change.entityId);
         } catch {
             row = null;
         }
-        return { ...change, payload: row ? projectPayload(spec, row) : {} };
+        return { ...safeChange, payload: row ? projectPayload(spec, row) : {} };
     }
 
     /**

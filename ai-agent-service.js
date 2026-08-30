@@ -3809,7 +3809,35 @@ function registerAiRoutes(app, deps) {
 
     app.get('/api/ai/providers', requireUser, (req, res) => {
         if (!deps.aiProviderService) return res.json({ providers: [] });
-        res.json({ providers: deps.aiProviderService.listVisible(req.user) });
+        const providers = deps.aiProviderService.listVisible(req.user);
+        if (!req.mobileDevice) return res.json({ providers });
+        /* Bound One only needs selection metadata. Runtime configuration and every credential-like
+         * extension stay on the main end, where AiRuntimeBridge.resolveForUse consumes them. Merely
+         * deleting apiKey is insufficient: extraHeaders, options.extraJson and per-model `extra`
+         * may also contain bearer values and are intentionally encrypted at rest. */
+        return res.json({
+            providers: providers.map((provider) => ({
+                id: provider.id,
+                name: provider.name,
+                type: provider.type,
+                defaultModel: provider.defaultModel,
+                models: (provider.models || []).map((model) => ({
+                    id: model.id,
+                    label: model.label || model.id,
+                    hidden: !!model.hidden,
+                    reasoning: !!model.reasoning,
+                    input: {
+                        image: model.input?.image !== false,
+                        pdf: !!model.input?.pdf,
+                        audio: !!model.input?.audio,
+                        video: !!model.input?.video,
+                    },
+                })),
+                owner: provider.owner,
+                owned: provider.owned,
+                enabled: provider.enabled !== false,
+            })),
+        });
     });
 
     // S2: session-scoped user attachments (disk + ref; never base64 in chat history).

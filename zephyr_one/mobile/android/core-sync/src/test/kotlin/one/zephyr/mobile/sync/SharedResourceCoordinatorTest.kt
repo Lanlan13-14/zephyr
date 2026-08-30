@@ -105,6 +105,39 @@ class SharedResourceCoordinatorTest {
      * a blank owner and the disclosure line could not say whose resource it was.
      */
     @Test
+    fun `connection list rows are hydrated through online detail before they become visible`() = runTest {
+        val fetcher = FakeSharedResourceFetcher()
+        fetcher.listResults.add(
+            ApiResult.Success(listOf(resource(id = "c-1", type = "connection", protocol = null)), requestId = null),
+        )
+        fetcher.detailResults.add(
+            ApiResult.Success(resource(id = "c-1", type = "connection", protocol = "ssh"), requestId = null),
+        )
+        val (subject, store) = coordinator(fetcher)
+
+        subject.refresh()
+
+        assertEquals("ssh", store.resources.value.single().protocol)
+        assertEquals(listOf("connection" to "c-1"), fetcher.detailRequests)
+    }
+
+    @Test
+    fun `connection with no protocol is never guessed as SSH`() = runTest {
+        val fetcher = FakeSharedResourceFetcher()
+        fetcher.listResults.add(
+            ApiResult.Success(listOf(resource(id = "c-1", type = "connection", protocol = null)), requestId = null),
+        )
+        fetcher.detailResults.add(
+            ApiResult.Success(resource(id = "c-1", type = "connection", protocol = null), requestId = null),
+        )
+        val (subject, store) = coordinator(fetcher)
+
+        subject.refresh()
+
+        assertTrue(store.resources.value.isEmpty())
+    }
+
+    @Test
     fun `the owner display name becomes the owner label`() = runTest {
         val fetcher = FakeSharedResourceFetcher()
         fetcher.listResults.add(ApiResult.Success(listOf(resource(owner = "alice@corp")), requestId = null))

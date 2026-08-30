@@ -120,7 +120,7 @@ class AccountContainer(
     private val context: Context,
     /** The account this graph belongs to. Every scope below is derived from it, never invented. */
     override val binding: AccountBinding,
-    endpoint: ApiEndpoint,
+    val endpoint: ApiEndpoint,
     private val appContainer: AppContainer,
     private val databaseScope: AccountDatabaseScope,
     val database: ZephyrDatabase,
@@ -628,7 +628,10 @@ class AccountContainer(
         wakeCoordinator.start(wakeScope)
         wakeCoordinator.onForegroundChanged(appContainer.isProcessForeground())
         wakeScope.launch {
-            network.collect { state -> wakeCoordinator.onNetworkChanged(state.connected) }
+            network.collect { state ->
+                wakeCoordinator.onNetworkChanged(state.connected)
+                if (state.connected) runCatching { sharedResourceCoordinator.refresh() }
+            }
         }
     }
 
