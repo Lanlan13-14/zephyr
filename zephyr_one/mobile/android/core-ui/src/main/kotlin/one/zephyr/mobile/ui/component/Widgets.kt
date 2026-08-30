@@ -413,8 +413,7 @@ fun GroupCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(ZephyrRadius.md))
-            .background(palette.surfaces.content)
-            .border(1.dp, palette.surfaces.outlineSoft, RoundedCornerShape(ZephyrRadius.md)),
+            .background(palette.surfaces.content),
         content = content,
     )
 }

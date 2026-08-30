@@ -189,6 +189,11 @@ interface ManagedBindingGraph {
     fun storeCredentials(access: String, accessExpiresAt: Long?, refresh: String)
     /** Performs platform reconciliation and starts producers after durable ownership is committed. */
     suspend fun activate()
+    /**
+     * Starts sync/wake collectors. Separate from [activate] so process restore can paint the first
+     * frame before opening sockets. Bind completion still calls this before bootstrap.
+     */
+    fun startNetworkProducers() {}
     /** Discards an unpublished generation without touching application-wide platform grants. */
     fun discardPreparedState()
     suspend fun bootstrapAfterBind(): List<SyncRoundResult>
@@ -357,6 +362,7 @@ class BindingCoordinator internal constructor(
         // Bootstrap can perform network I/O. Keep it outside the coordinator mutex so unbind or a
         // revoke can cancel the graph, join the round, and erase the database immediately.
         preparation.restoredGraph?.takeIf { bootstrap }?.let { graph ->
+            graph.startNetworkProducers()
             if (preparation.requiresBootstrap) {
                 graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
                     markBootstrapReadyIfCurrent(graph, checkNotNull(preparation.binding), round.endState)
@@ -372,6 +378,7 @@ class BindingCoordinator internal constructor(
     /** Retries a restored account's initial sync without blocking process startup. */
     suspend fun bootstrapRestoredBinding() {
         val graph = mutex.withLock { host.currentGraph() ?: return }
+        graph.startNetworkProducers()
         if (graph.accountDatabaseRequiresBootstrap()) {
             graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
                 markBootstrapReadyIfCurrent(graph, graph.binding, round.endState)
@@ -521,6 +528,7 @@ class BindingCoordinator internal constructor(
                 // acquire it, cancel this graph's SupervisorJob and join the round immediately. Publication
                 // is already durable, so a cancelled UI caller must not strand persisted background work.
                 if (host.currentGraph() === prepared.graph) workersMayRun = true
+                prepared.graph.startNetworkProducers()
                 val bootstrap = prepared.graph.bootstrapAfterBind()
                 val bootstrapSucceeded = bootstrap.lastOrNull()?.takeIf { it.complete }?.let { round ->
                     markBootstrapReadyIfCurrent(prepared.graph, prepared.binding, round.endState)

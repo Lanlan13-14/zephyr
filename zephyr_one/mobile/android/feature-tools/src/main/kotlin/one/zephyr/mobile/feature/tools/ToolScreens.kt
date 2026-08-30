@@ -317,6 +317,9 @@ fun NetworkSettingsScreen(
     policy: NetworkPolicy,
     onPolicy: (NetworkPolicy) -> Unit,
     onBack: () -> Unit,
+    keepAlive: Boolean = false,
+    onKeepAlive: ((Boolean) -> Unit)? = null,
+    localMode: Boolean = false,
 ) {
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = "网络", onBack = onBack)
@@ -327,6 +330,24 @@ fun NetworkSettingsScreen(
                 FilterChip(selected = policy == NetworkPolicy.WIFI_ONLY, onClick = { onPolicy(NetworkPolicy.WIFI_ONLY) }, label = { Text("仅 Wi-Fi") })
             }
             Text("大文件和备份走该策略。立即同步在绑定存活时始终可用。", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
+            if (onKeepAlive != null) {
+                SectionLabel("后台")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("后台保持连接")
+                        Text(
+                            if (localMode) {
+                                "绑定主端后可在离开应用时保持同步通道"
+                            } else {
+                                "离开应用后仍保持同步与唤醒通道，会更耗电"
+                            },
+                            color = ZephyrTheme.palette.onFloatingMuted,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Switch(checked = keepAlive, onCheckedChange = onKeepAlive, enabled = !localMode)
+                }
+            }
         }
     }
 }
@@ -356,6 +377,8 @@ fun FileSyncScreen(
     onAutomatic: (Boolean) -> Unit,
     onInterval: (Int) -> Unit,
     onPolicy: (NetworkPolicy) -> Unit,
+    keepAlive: Boolean = false,
+    onKeepAlive: ((Boolean) -> Unit)? = null,
     onSyncNow: () -> Unit,
     onOpenConflicts: () -> Unit = {},
     onOpenDevices: () -> Unit = {},
@@ -484,6 +507,24 @@ fun FileSyncScreen(
                         onPolicy(if (settings.networkPolicy == NetworkPolicy.WIFI_ONLY) NetworkPolicy.ANY else NetworkPolicy.WIFI_ONLY)
                     },
                 )
+                if (onKeepAlive != null) {
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "后台保持连接",
+                        subtitle = if (localMode) {
+                            "绑定主端后可在离开应用时保持同步通道"
+                        } else {
+                            "离开应用后仍保持同步与唤醒通道，会更耗电"
+                        },
+                        showDivider = onBind != null || onUnbind != null,
+                        trailing = {
+                            Switch(
+                                checked = keepAlive,
+                                onCheckedChange = onKeepAlive,
+                                enabled = !localMode,
+                            )
+                        },
+                    )
+                }
                 if (onBind != null) {
                     one.zephyr.mobile.ui.component.SettingsRow(
                         title = "绑定主端",

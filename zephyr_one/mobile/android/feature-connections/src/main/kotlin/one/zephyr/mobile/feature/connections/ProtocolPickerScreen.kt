@@ -2,7 +2,6 @@ package one.zephyr.mobile.feature.connections
 
 import one.zephyr.mobile.ui.icon.ZephyrIcons
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -111,7 +110,6 @@ private fun ProtocolCard(protocol: Protocol, onClick: () -> Unit) {
             ),
         color = palette.surfaces.content,
         shape = RoundedCornerShape(ZephyrRadius.md),
-        border = BorderStroke(1.dp, palette.surfaces.outline.copy(alpha = 0.35f)),
     ) {
         Row(
             Modifier.padding(14.dp),

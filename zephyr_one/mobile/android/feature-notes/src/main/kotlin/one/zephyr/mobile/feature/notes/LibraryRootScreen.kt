@@ -2,7 +2,6 @@ package one.zephyr.mobile.feature.notes
 
 import one.zephyr.mobile.ui.icon.ZephyrIcons
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -292,7 +291,6 @@ private fun LibraryEntryCard(
         modifier = modifier.heightIn(min = 72.dp).clickable(onClick = onClick),
         color = ZephyrTheme.palette.surfaces.content,
         shape = RoundedCornerShape(ZephyrRadius.md),
-        border = BorderStroke(1.dp, ZephyrTheme.palette.surfaces.outline.copy(alpha = .35f)),
     ) {
         Row(Modifier.padding(ZephyrSpacing.md), verticalAlignment = Alignment.CenterVertically) {
             Surface(shape = RoundedCornerShape(10.dp), color = tint.copy(alpha = .15f)) {
@@ -377,7 +375,6 @@ private fun RowGroup(content: @Composable () -> Unit) {
     Surface(
         color = ZephyrTheme.palette.surfaces.content,
         shape = RoundedCornerShape(ZephyrRadius.md),
-        border = BorderStroke(1.dp, ZephyrTheme.palette.surfaces.outline.copy(alpha = .35f)),
     ) { Column { content() } }
 }
 

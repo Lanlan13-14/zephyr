@@ -200,6 +200,63 @@ class WakeCoordinatorTest {
     }
 
     @Test
+    fun `enabling hold alive in foreground does not reconnect`() = runTest {
+        val identity = identity()
+        val transport = ScriptedWakeTransport()
+        val coordinator = coordinator(identity, IdentityHolder(identity), transport) { }
+        coordinator.start(backgroundScope)
+        coordinator.activate()
+        transport.nextOpen()
+
+        coordinator.onHoldAliveChanged(true)
+        runCurrent()
+
+        assertEquals(0, transport.cancellations.get())
+        assertEquals(1, transport.openCount.get())
+        coordinator.stopAndJoin()
+    }
+
+    @Test
+    fun `hold alive keeps the stream across backgrounding`() = runTest {
+        val identity = identity()
+        val transport = ScriptedWakeTransport()
+        val coordinator = coordinator(identity, IdentityHolder(identity), transport) { }
+        coordinator.start(backgroundScope)
+        coordinator.activate()
+        transport.nextOpen()
+
+        coordinator.onHoldAliveChanged(true)
+        coordinator.onForegroundChanged(false)
+        runCurrent()
+
+        assertEquals(0, transport.cancellations.get())
+        assertEquals(1, transport.openCount.get())
+        coordinator.stopAndJoin()
+    }
+
+    @Test
+    fun `turning hold alive off in background cancels the socket`() = runTest {
+        val identity = identity()
+        val transport = ScriptedWakeTransport()
+        val coordinator = coordinator(identity, IdentityHolder(identity), transport) { }
+        coordinator.start(backgroundScope)
+        coordinator.activate()
+        coordinator.onHoldAliveChanged(true)
+        transport.nextOpen()
+
+        coordinator.onForegroundChanged(false)
+        runCurrent()
+        coordinator.onHoldAliveChanged(false)
+        runCurrent()
+
+        assertEquals(1, transport.cancellations.get())
+        coordinator.onHoldAliveChanged(true)
+        val replacement = transport.nextOpen()
+        assertEquals(null, replacement.lastEventId)
+        coordinator.stopAndJoin()
+    }
+
+    @Test
     fun `teardown joins transport and coordinator cannot resurrect`() = runTest {
         val identity = identity()
         val transport = ScriptedWakeTransport()

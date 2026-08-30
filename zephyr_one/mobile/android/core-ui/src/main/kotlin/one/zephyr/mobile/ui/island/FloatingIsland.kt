@@ -151,14 +151,6 @@ fun FloatingIsland(
                         animationSpec = tween(motion.scale(IslandSpec.LABEL_CROSSFADE_MS)),
                         label = "islandLabel",
                     )
-                    val labelHeight by animateDpAsState(
-                        targetValue = if (isSelected) 11.dp else 0.dp,
-                        animationSpec = tween(
-                            motion.scale(ZephyrMotionTokens.MED_MS),
-                            easing = ZephyrMotionTokens.easeOut,
-                        ),
-                        label = "islandLabelH",
-                    )
 
                     Column(
                         modifier = Modifier
@@ -187,16 +179,16 @@ fun FloatingIsland(
                             tint = if (isSelected) palette.brand.accent else palette.onFloatingSubtle,
                             modifier = Modifier.size(iconSize),
                         )
-                        if (labelHeight > 0.dp) {
+                        if (isSelected) {
                             Text(
                                 text = labels[index],
                                 style = ZephyrTextStyles.islandLabel,
                                 color = palette.brand.accent,
                                 maxLines = 1,
-                                overflow = TextOverflow.Clip,
+                                softWrap = false,
+                                overflow = TextOverflow.Visible,
                                 modifier = Modifier
                                     .padding(top = IslandSpec.iconLabelGap)
-                                    .height(labelHeight)
                                     .alpha(labelAlpha),
                             )
                         }

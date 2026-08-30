@@ -1,5 +1,10 @@
 package one.zephyr.mobile.app
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -8,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.R
@@ -362,7 +368,9 @@ internal fun AppLockDestination(account: AccountContainer, container: one.zephyr
 @Composable
 internal fun NetworkDestination(account: AccountContainer, onBack: () -> Unit) {
     val settings by account.syncSettingsState.collectAsState()
+    val keepAlive by account.appContainer().keepAlive.collectAsState()
     val scope = rememberCoroutineScope()
+    val onKeepAlive = rememberKeepAliveToggle(account)
     NetworkSettingsScreen(
         policy = settings.networkPolicy,
         onPolicy = { policy ->
@@ -376,6 +384,9 @@ internal fun NetworkDestination(account: AccountContainer, onBack: () -> Unit) {
             }
         },
         onBack = onBack,
+        keepAlive = keepAlive,
+        onKeepAlive = onKeepAlive,
+        localMode = account.isLocalMode,
     )
 }
 
@@ -392,6 +403,8 @@ internal fun FileSyncDestination(
 ) {
     val status by account.syncEngine.status.collectAsState(initial = one.zephyr.mobile.model.SyncStatus.unbound())
     val settings by account.syncSettingsState.collectAsState()
+    val keepAlive by account.appContainer().keepAlive.collectAsState()
+    val onKeepAlive = rememberKeepAliveToggle(account)
     FileSyncScreen(
         status = status,
         settings = settings,
@@ -399,6 +412,8 @@ internal fun FileSyncDestination(
         onAutomatic = { enabled -> account.updateSyncSettings { it.copy(automaticEnabled = enabled) } },
         onInterval = { seconds -> account.updateSyncSettings { it.copy(intervalSec = seconds) } },
         onPolicy = { policy -> account.updateSyncSettings { it.copy(networkPolicy = policy) } },
+        keepAlive = keepAlive,
+        onKeepAlive = onKeepAlive,
         onSyncNow = onSyncNow,
         onOpenConflicts = onOpenConflicts,
         onOpenDevices = onOpenDevices,
@@ -668,3 +683,33 @@ internal class AiModelDiscoverer(account: AccountContainer) {
 
 internal fun diagnosticExport(account: AccountContainer): String =
     "one=${BuildConfig.VERSION_NAME} mode=${if (account.isLocalMode) "local" else "bound"} state=${account.binding.state.name} device=${account.binding.deviceId.take(8)}"
+
+@Composable
+private fun rememberKeepAliveToggle(account: AccountContainer): (Boolean) -> Unit {
+    val context = LocalContext.current
+    var awaitingPermission by remember { mutableStateOf(false) }
+    val permission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!awaitingPermission) return@rememberLauncherForActivityResult
+        awaitingPermission = false
+        if (!granted) return@rememberLauncherForActivityResult
+        account.appContainer().setKeepAliveEnabled(true)
+    }
+    return { enabled ->
+        if (enabled && Build.VERSION.SDK_INT >= 33) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                awaitingPermission = true
+                permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                account.appContainer().setKeepAliveEnabled(true)
+            }
+        } else {
+            account.appContainer().setKeepAliveEnabled(enabled)
+        }
+    }
+}

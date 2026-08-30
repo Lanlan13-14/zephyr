@@ -75,11 +75,12 @@ struct ZephyrRootIsland: View {
                         : ZephyrRootIslandMetrics.iconSize, weight: .semibold))
                     .frame(height: selected ? 19 : 25)
 
-                Text(destination.title)
-                    .font(.system(size: 10, weight: .semibold))
-                    .lineLimit(1)
-                    .frame(height: selected ? 11 : 0)
-                    .opacity(selected ? 1 : 0)
+                if selected {
+                    Text(destination.title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .foregroundColor(selected ? ZephyrStyle.accent : ZephyrStyle.tertiaryText(colorScheme))

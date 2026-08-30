@@ -62,8 +62,10 @@ object WakeReconnectPolicy {
  *
  * Wake cursors are used only to coalesce hints. They never advance local state; [requestSync]
  * always performs the authenticated change-feed pull and validates the real server response.
- * Android cannot keep an arbitrary socket alive in the background, so the stream is cancelled
- * there and periodic/expedited WorkManager work remains the correctness fallback.
+ * Android cannot keep an arbitrary socket alive in the background by default, so the stream is
+ * cancelled there and periodic/expedited WorkManager work remains the correctness fallback.
+ * When the user opts into 后台保持连接, [onHoldAliveChanged] keeps the stream running across
+ * process backgrounding; a foreground service is the disclosure for that choice.
  */
 class WakeCoordinator(
     val identity: WakeBindingIdentity,
@@ -84,6 +86,7 @@ class WakeCoordinator(
 
     private var managerJob: Job? = null
     private var foreground = false
+    private var holdAlive = false
     private var connected = false
     private var invalidated = false
     private var lifecycleVersion = 0L
@@ -104,9 +107,19 @@ class WakeCoordinator(
     fun onForegroundChanged(isForeground: Boolean) {
         synchronized(lock) {
             if (invalidated || foreground == isForeground) return
-            foreground = isForeground
-            lifecycleVersion += 1
-            if (!isForeground) invalidateAttemptLocked()
+            applyRunFlagLocked { foreground = isForeground }
+        }
+        stateChanges.trySend(Unit)
+    }
+
+    /**
+     * User-opted background hold. When true the live stream survives process backgrounding;
+     * turning it off while backgrounded tears the socket down the same way leaving the app does.
+     */
+    fun onHoldAliveChanged(hold: Boolean) {
+        synchronized(lock) {
+            if (invalidated || holdAlive == hold) return
+            applyRunFlagLocked { holdAlive = hold }
         }
         stateChanges.trySend(Unit)
     }
@@ -127,6 +140,7 @@ class WakeCoordinator(
             if (!invalidated) {
                 invalidated = true
                 foreground = false
+                holdAlive = false
                 connected = false
                 invalidateAttemptLocked()
             }
@@ -264,7 +278,16 @@ class WakeCoordinator(
     private fun shouldRun(): Boolean = synchronized(lock) { shouldRunLocked() }
 
     private fun shouldRunLocked(): Boolean =
-        managerJob != null && !invalidated && foreground && connected
+        managerJob != null && !invalidated && connected && (foreground || holdAlive)
+
+    private inline fun applyRunFlagLocked(update: () -> Unit) {
+        val wasRunning = shouldRunLocked()
+        update()
+        val nowRunning = shouldRunLocked()
+        if (wasRunning == nowRunning) return
+        lifecycleVersion += 1
+        if (!nowRunning) invalidateAttemptLocked()
+    }
 
     private fun invalidateAttemptLocked() {
         currentAttempt = attemptSequence.incrementAndGet()

@@ -121,6 +121,13 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- 后台保持连接 stays online while the user is away. Same dataSync type as the file
+             bridge: both disclose via an ongoing notification with a stop action. -->
+        <service
+            android:name=".app.sync.ConnectionKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- WorkManager's own initialiser is removed because ZephyrApplication supplies a
              Configuration; leaving both would race two WorkManager instances on first launch. -->
         <provider

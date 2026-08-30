@@ -41,8 +41,17 @@ class StartupThemeTest {
         assertTrue(source.contains("readyState.value = true"))
         assertTrue(source.contains("TimeoutCancellationException"))
         val onCreate = source.substringAfter("override fun onCreate()")
-        assertFalse(onCreate.substringBefore("applicationScope.launch").contains("clearPendingBindingAuthentication"))
-        assertTrue(onCreate.substringAfter("applicationScope.launch").contains("clearPendingBindingAuthentication"))
+        val beforeLaunch = onCreate.substringBefore("applicationScope.launch")
+        val afterLaunch = onCreate.substringAfter("applicationScope.launch")
+        val afterReady = afterLaunch.substringAfter("readyState.value = true")
+        assertFalse(beforeLaunch.contains("clearPendingBindingAuthentication"))
+        assertFalse(beforeLaunch.contains("RdpAndroidRuntime.installHome"))
+        assertTrue(afterLaunch.contains("clearPendingBindingAuthentication"))
+        assertTrue(afterLaunch.contains("RdpAndroidRuntime.installHome"))
+        assertTrue(afterReady.contains("startNetworkProducers"))
+        assertTrue(afterReady.contains("bootstrapRestoredBinding"))
+        assertFalse(afterLaunch.substringBefore("readyState.value = true").contains("startNetworkProducers"))
+        assertFalse(afterLaunch.substringBefore("readyState.value = true").contains("bootstrapRestoredBinding"))
     }
 
     @Test

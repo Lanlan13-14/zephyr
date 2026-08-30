@@ -4,7 +4,6 @@ import one.zephyr.mobile.ui.icon.ZephyrIcons
 import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -215,7 +214,6 @@ private fun SessionRowCard(
             .pressScale(0.98f)
             .clip(RoundedCornerShape(ZephyrRadius.md))
             .background(if (selected) palette.surfaces.elevated else palette.surfaces.content)
-            .border(1.dp, palette.surfaces.outlineSoft, RoundedCornerShape(ZephyrRadius.md))
             .clickable(enabled = restoreGate.isAllowed) { onAction(SessionAction.RESTORE) }
             .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
