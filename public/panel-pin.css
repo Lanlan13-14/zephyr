@@ -66,9 +66,9 @@
     max-height: none !important;
     min-width: 0 !important;
     /* A docked window is attached to the page; floating transform/drop shadow
-       read as visual glue. Keep only the ordinary panel border while pinned. */
+       read as visual glue. Keep only the ordinary panel border while pinned.
+       Do NOT force transform here: pin/unpin uses an inline FLIP transform. */
     box-shadow: none !important;
-    transform: none !important;
     filter: none !important;
 }
 .pinned[data-pin-side="left"] { border-left-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }

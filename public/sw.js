@@ -1,4 +1,4 @@
-const CACHE_NAME = 'zephyr-static-20260830-desktop-panel-pin5';
+const CACHE_NAME = 'zephyr-static-20260830-desktop-panel-pin6';
 const PRECACHE = [
     '/app.js?v=20260811-webdav1',
     '/style.css?v=20260811-webdav1',
@@ -16,8 +16,8 @@ const PRECACHE = [
     '/vendor/wterm-fork/index.js?v=20260801-terminal-stability1',
     '/vendor/wterm-fork/core/xterm-headless-register.js?v=20260801-terminal-stability1',
     '/floating-panel.js?v=20260731-panel-drag-physics4',
-    '/panel-pin.js?v=20260830-desktop-panel-pin5',
-    '/panel-pin.css?v=20260830-desktop-panel-pin5',
+    '/panel-pin.js?v=20260830-desktop-panel-pin6',
+    '/panel-pin.css?v=20260830-desktop-panel-pin6',
     '/markdown.js?v=20260720-notes-md1',
 ];
 const MAX_CACHE_ENTRIES = 160;
