@@ -20,6 +20,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.TlsPolicy
+import one.zephyr.mobile.model.withLocalDiagnostic
 import one.zephyr.mobile.contracts.MobileApiPaths
 import kotlin.coroutines.resume
 
@@ -201,10 +202,12 @@ class MobileApiClient(
         responseSerializer: DeserializationStrategy<R>,
         query: Map<String, String> = emptyMap(),
         authenticated: Boolean = true,
+        responseDiagnosticPhase: String? = null,
     ): ApiResult<R> = execute(
         builder = { urlBuilder(path, query).let { Request.Builder().url(it).get() } },
         responseSerializer = responseSerializer,
         authenticated = authenticated,
+        responseDiagnosticPhase = responseDiagnosticPhase,
     )
 
     suspend fun <B, R> post(
@@ -214,6 +217,7 @@ class MobileApiClient(
         responseSerializer: DeserializationStrategy<R>,
         authenticated: Boolean = true,
         sensitiveGrant: String? = null,
+        responseDiagnosticPhase: String? = null,
     ): ApiResult<R> {
         val grant = when (val validated = validateSensitiveGrant(sensitiveGrant)) {
             is SensitiveGrantValidation.Valid -> validated.value
@@ -229,6 +233,7 @@ class MobileApiClient(
             },
             responseSerializer = responseSerializer,
             authenticated = authenticated,
+            responseDiagnosticPhase = responseDiagnosticPhase,
         )
     }
 
@@ -311,6 +316,7 @@ class MobileApiClient(
         responseSerializer: DeserializationStrategy<R>,
         authenticated: Boolean,
         attemptedRefresh: Boolean = false,
+        responseDiagnosticPhase: String? = null,
     ): ApiResult<R> {
         val request = builder()
             .apply { if (!authenticated) header(AuthInterceptor.HEADER_SKIP_AUTH, "1") }
@@ -350,7 +356,13 @@ class MobileApiClient(
             if (it.code == 401 && authenticated && !attemptedRefresh) {
                 val refreshed = refreshOnce()
                 if (refreshed) {
-                    return execute(builder, responseSerializer, authenticated, attemptedRefresh = true)
+                    return execute(
+                        builder,
+                        responseSerializer,
+                        authenticated,
+                        attemptedRefresh = true,
+                        responseDiagnosticPhase = responseDiagnosticPhase,
+                    )
                 }
             }
 
@@ -384,10 +396,13 @@ class MobileApiClient(
                     MobileJson.instance.decodeFromString(responseSerializer, bodyText ?: ""),
                     requestId,
                 )
-            } catch (parse: Exception) {
+            } catch (_: Exception) {
+                val malformed = MobileError.local("malformed_response", "unparseable response")
+                    .copy(httpStatus = it.code, requestId = requestId)
                 ApiResult.Failure(
-                    MobileError.local("malformed_response", parse.message ?: "unparseable response")
-                        .copy(httpStatus = it.code, requestId = requestId),
+                    responseDiagnosticPhase
+                        ?.let { phase -> malformed.withLocalDiagnostic("$phase decode: response did not match DTO") }
+                        ?: malformed,
                 )
             }
         }
@@ -555,7 +570,8 @@ class MobileApiClient(
                             code = "malformed_response",
                             message = "server returned an invalid device proof challenge",
                             retryable = false,
-                        ).copy(requestId = result.requestId),
+                        ).copy(requestId = result.requestId)
+                            .withLocalDiagnostic("device-proof validate: challenge fields do not match request binding"),
                     )
                 } else {
                     ApiResult.Success(challenge, result.requestId)

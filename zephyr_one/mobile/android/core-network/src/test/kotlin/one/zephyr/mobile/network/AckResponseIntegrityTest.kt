@@ -7,6 +7,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import one.zephyr.mobile.model.Base64Codec
 import one.zephyr.mobile.model.TlsPolicy
+import one.zephyr.mobile.model.persistedDiagnosticText
 import one.zephyr.mobile.network.dto.AckRequestDto
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -74,6 +75,9 @@ class AckResponseIntegrityTest {
             val error = (result as ApiResult.Failure).error
             assertEquals("malformed_response", error.code)
             assertTrue("ACK protocol failures must retry", error.retryable)
+            assertTrue(
+                error.persistedDiagnosticText().startsWith("sync.ack decode: response did not match DTO"),
+            )
         }
     }
 

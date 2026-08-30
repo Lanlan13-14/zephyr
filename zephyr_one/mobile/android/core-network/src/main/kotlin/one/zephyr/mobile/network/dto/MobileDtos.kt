@@ -521,9 +521,22 @@ data class CapabilitiesDto(
 ) {
     init {
         require(ok) { "capabilities response ok must be true" }
-        require(protocolVersions.isNotEmpty()) { "capabilities response has no protocol versions" }
+        require(protocolVersions.isNotEmpty() && protocolVersions.all { it > 0 }) {
+            "capabilities response has invalid protocol versions"
+        }
         require(registryHash.isNotBlank()) { "capabilities response is missing its registry hash" }
         require(serverId.isNotBlank()) { "capabilities response is missing its server id" }
+        require(
+            limits.maxOpsPerBatch > 0L &&
+                limits.maxPageSize > 0L &&
+                limits.defaultPageSize in 1L..limits.maxPageSize &&
+                limits.minIntervalSec > 0L &&
+                limits.maxIntervalSec >= limits.minIntervalSec &&
+                limits.blobChunkBytes > 0L &&
+                limits.maxBlobBytes >= limits.blobChunkBytes &&
+                limits.tombstoneRetentionDays > 0L &&
+                limits.appliedOpRetentionDays > 0L,
+        ) { "capabilities response has invalid limits" }
     }
 }
 

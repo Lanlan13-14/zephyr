@@ -12,6 +12,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import one.zephyr.mobile.model.Base64Codec
 import one.zephyr.mobile.model.TlsPolicy
+import one.zephyr.mobile.model.persistedDiagnosticText
 import one.zephyr.mobile.network.dto.AuthCapabilitiesDto
 import one.zephyr.mobile.network.dto.BindRequestDto
 import one.zephyr.mobile.network.dto.BindResponseDto
@@ -142,13 +143,31 @@ class MobileAuthContractTest {
     }
 
     @Test
+    fun `capabilities decode failure reports stage without response content`() = runTest {
+        val canary = "private-response-canary"
+        server.enqueue(jsonResponse("{not-json-$canary"))
+
+        val result = api.capabilities()
+
+        assertTrue(result is ApiResult.Failure)
+        val error = (result as ApiResult.Failure).error
+        assertEquals("malformed_response", error.code)
+        val diagnostic = error.persistedDiagnosticText()
+        assertTrue(diagnostic.startsWith("capabilities decode: response did not match DTO"))
+        assertFalse(diagnostic.contains(canary))
+        assertFalse(error.message.contains(canary))
+    }
+
+    @Test
     fun `missing required-nullable server encryption field is malformed`() = runTest {
         server.enqueue(jsonResponse(capabilitiesFixture(includeServerEncryption = false)))
 
         val result = api.capabilities()
 
         assertTrue(result is ApiResult.Failure)
-        assertEquals("malformed_response", (result as ApiResult.Failure).error.code)
+        val error = (result as ApiResult.Failure).error
+        assertEquals("malformed_response", error.code)
+        assertTrue(error.persistedDiagnosticText().startsWith("capabilities map: "))
     }
 
     @Test

@@ -1,0 +1,124 @@
+{
+  "capabilities": {
+    "ok": true,
+    "protocolVersions": [
+      1
+    ],
+    "registryHash": "a552a104ecb166d87c566c9825cda354669777229cceab6b6199c3801d047f6e",
+    "minimumAppVersions": {
+      "android": "0.1.0",
+      "ios": "0.1.0"
+    },
+    "limits": {
+      "maxOpsPerBatch": 200,
+      "maxPageSize": 500,
+      "defaultPageSize": 200,
+      "minIntervalSec": 30,
+      "maxIntervalSec": 86400,
+      "blobChunkBytes": 4194304,
+      "maxBlobBytes": 536870912,
+      "tombstoneRetentionDays": 180,
+      "appliedOpRetentionDays": 180
+    },
+    "serverId": "server-fixture",
+    "auth": {
+      "sidHeader": "X-Zephyr-Sid",
+      "accessScheme": "Bearer",
+      "proofHeader": "X-Zephyr-Device-Proof",
+      "nonceHeader": "X-Zephyr-Server-Nonce",
+      "timestampHeader": "X-Zephyr-Proof-Timestamp",
+      "challengePath": "/api/mobile/v1/devices/proof-challenge",
+      "proofVersion": "zephyr-one-device-proof-v2",
+      "proofSkewSec": 30,
+      "challengeTtlSec": 30,
+      "challengeMaxActivePerDevice": 16,
+      "challengeMaxIssuesPerMinute": 120,
+      "signatureFormat": "P1363",
+      "encryptionAlg": "ML-KEM-768",
+      "signingAlg": "ES256"
+    },
+    "serverEncryption": null,
+    "features": {
+      "bidirectionalSync": true,
+      "sharedResources": true,
+      "linkEnrollment": true,
+      "fileBridge": false,
+      "blobTransfer": true,
+      "nearRealtimeWake": true
+    },
+    "wake": {
+      "enabled": true,
+      "transport": "sse",
+      "path": "/api/mobile/v1/sync/wake",
+      "event": "wake",
+      "payloadFields": [
+        "cursor",
+        "epoch",
+        "reason"
+      ],
+      "heartbeatSec": 25,
+      "retryMs": 3000,
+      "supportsLastEventId": true,
+      "requiresDeviceAccess": true,
+      "requiresDeviceProof": true,
+      "maxConnections": 100,
+      "maxConnectionsPerOwner": 4,
+      "maxBufferedBytes": 65536
+    }
+  },
+  "bootstrap": {
+    "ok": true,
+    "bootstrapId": "bs-production-fixture",
+    "snapshotCursor": 0,
+    "nextPageToken": null,
+    "complete": true,
+    "entities": [
+      {
+        "changeSeq": 0,
+        "entityType": "connection",
+        "entityId": "connection-1",
+        "action": "upsert",
+        "revision": 1,
+        "actorDeviceId": null,
+        "changedAt": 1,
+        "fieldMask": [
+          "name"
+        ],
+        "payload": {
+          "id": "connection-1",
+          "ownerUserId": "owner-1",
+          "revision": 1,
+          "name": "fixture",
+          "updatedAt": 1
+        }
+      }
+    ]
+  },
+  "changes": {
+    "ok": true,
+    "fromCursor": 0,
+    "nextCursor": 1,
+    "hasMore": false,
+    "changes": [
+      {
+        "changeSeq": 1,
+        "entityType": "connection",
+        "entityId": "connection-1",
+        "action": "upsert",
+        "revision": 1,
+        "actorDeviceId": null,
+        "changedAt": 2,
+        "fieldMask": [
+          "name"
+        ],
+        "payload": {
+          "id": "connection-1",
+          "ownerUserId": "owner-1",
+          "revision": 1,
+          "name": "fixture",
+          "updatedAt": 1
+        }
+      }
+    ]
+  }
+}

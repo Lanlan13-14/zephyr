@@ -19,6 +19,7 @@ import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.ServerCapabilities
 import one.zephyr.mobile.model.SyncProgress
 import one.zephyr.mobile.model.SyncTrigger
+import one.zephyr.mobile.model.withLocalDiagnostic
 import one.zephyr.mobile.model.sync.BindingStateMachine
 import one.zephyr.mobile.model.sync.PushPrediction
 import one.zephyr.mobile.model.sync.SyncEvent
@@ -785,6 +786,7 @@ class SyncActor(
 
     private fun malformedResponse(message: String): MobileError =
         MobileError.local(code = "malformed_response", message = message, retryable = false)
+            .withLocalDiagnostic("sync actor validate: $message")
 
     private suspend fun sealEnvelopes(
         batch: List<PendingOperation>,
