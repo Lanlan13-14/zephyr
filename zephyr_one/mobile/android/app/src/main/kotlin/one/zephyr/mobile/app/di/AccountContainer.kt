@@ -48,6 +48,7 @@ import one.zephyr.mobile.feature.filesync.SharedPreferencesKeyValueStore
 import one.zephyr.mobile.feature.tools.ClientTokenActions
 import one.zephyr.mobile.feature.tools.RepositoryClientTokenSecretCache
 import one.zephyr.mobile.model.AccountBinding
+import one.zephyr.mobile.model.TlsPolicy
 import one.zephyr.mobile.network.ApiEndpoint
 import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.network.ClientTokenManagementApi
@@ -450,6 +451,9 @@ class AccountContainer(
      * server's single sync core, so mobile, desktop and browser all share one implementation. The
      * session dials lazily on first use and redials if the channel dropped.
      */
+    private val linkSpkiPins: List<String> =
+        (endpoint.tlsPolicy as? TlsPolicy.PinnedSpki)?.sha256Pins ?: emptyList()
+
     private val linkChannel = object : LinkChannel {
         private val sessionMutex = Mutex()
         private var session: one.zephyr.mobile.app.EmbeddedLinkApi.LinkSession? = null
@@ -457,23 +461,40 @@ class AccountContainer(
         override val isEstablished: Boolean get() = session != null
 
         override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
-            val sess = sessionMutex.withLock {
-                session ?: appContainer.embeddedLink.dial(endpoint.baseUrl, binding.deviceId).also { session = it }
-            }
-            return try {
-                appContainer.embeddedLink.push(endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP, body = body).ack
-            } catch (e: Exception) {
-                /* The session may have died server-side; drop it so the next verb redials. */
-                sessionMutex.withLock { session = null }
-                throw LinkChannelException(e.message ?: "Link 推送失败")
+            var attemptedRedial = false
+            while (true) {
+                val sess = sessionMutex.withLock {
+                    session ?: appContainer.embeddedLink.dial(
+                        endpoint.baseUrl, binding.deviceId, linkSpkiPins,
+                    ).also { session = it }
+                }
+                try {
+                    return appContainer.embeddedLink.push(
+                        endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP,
+                        body = body, spkiPins = linkSpkiPins,
+                    ).ack
+                } catch (e: one.zephyr.mobile.app.EmbeddedLinkApi.LinkRequestException) {
+                    /* A server restart forgets only the ephemeral session. The operation is safe to
+                     * resend once: opId makes push idempotent; bootstrap/changes/ack are reads or
+                     * monotonic receipts. Business failures keep their exact state-machine code. */
+                    if (e.sessionInvalid && !attemptedRedial) {
+                        sessionMutex.withLock { if (session == sess) session = null }
+                        attemptedRedial = true
+                        continue
+                    }
+                    if (e.sessionInvalid) sessionMutex.withLock { if (session == sess) session = null }
+                    throw LinkChannelException(e.message, e.code, e.retryable, e.details)
+                } catch (e: Exception) {
+                    sessionMutex.withLock { if (session == sess) session = null }
+                    throw LinkChannelException(e.message ?: "Link 推送失败")
+                }
             }
         }
     }
 
     /**
-     * Data sync transport. Local-only accounts have no server, so they keep the plain HTTP
-     * transport (which is never actually exercised without a binding). Bound accounts run sync over
-     * the Link channel, falling back to the HTTP transport for capabilities and bootstrap only.
+     * Data sync transport. Local-only accounts have no server. Bound accounts use HTTPS only for
+     * pre-session capability discovery; bootstrap, changes, push and ack all run inside Link.
      */
     val transport: one.zephyr.mobile.sync.SyncTransport =
         if (localMode) httpTransport else LinkSyncTransport(linkChannel, binding.deviceId, httpTransport)

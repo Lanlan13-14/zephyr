@@ -131,3 +131,96 @@ func TestSyncBridgeCarriesBusinessFrames(t *testing.T) {
 		t.Fatalf("business result not carried back: %+v", body)
 	}
 }
+
+func TestSyncBridgeReturnsStructuredBusinessError(t *testing.T) {
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGone)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": false,
+			"error": map[string]any{
+				"code": "cursor_expired", "message": "bootstrap required",
+				"retryable": false, "details": map[string]any{"bootstrapRequired": true},
+			},
+		})
+	}))
+	defer bridge.Close()
+
+	node := NewNode()
+	node.RegisterDevice("dev-expired")
+	node.RegisterSyncBridge(SyncBridgeConfig{URL: bridge.URL, AdminToken: "tok-1234567890abcdef"})
+	srv := httptest.NewServer(node.Handler())
+	defer srv.Close()
+
+	init, _ := zsl.HandshakeInitiator()
+	hsBody, _ := json.Marshal(map[string]any{
+		"deviceId":     "dev-expired",
+		"x25519Public": base64.RawURLEncoding.EncodeToString(init.X25519Public),
+		"mlkemPublic":  base64.RawURLEncoding.EncodeToString(init.MLKEMPublic),
+	})
+	hsResp, err := http.Post(srv.URL+"/link/handshake", "application/json", bytes.NewReader(hsBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hsResp.Body.Close()
+	var hs struct{ SessionID, X25519Public, MLKEMCiphertext string }
+	if err := json.NewDecoder(hsResp.Body).Decode(&hs); err != nil {
+		t.Fatal(err)
+	}
+	xPub, _ := base64.RawURLEncoding.DecodeString(hs.X25519Public)
+	kemCT, _ := base64.RawURLEncoding.DecodeString(hs.MLKEMCiphertext)
+	sess, err := init.HandshakeFinish(&zsl.ResponderHello{X25519Public: xPub, MLKEMCiphertext: kemCT})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep := NewEndpoint(sess)
+	env, err := ep.Send(codec.KindSyncOp, map[string]any{"op": "changes", "sinceCursor": 0}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frBody, _ := json.Marshal(map[string]any{
+		"sessionId": hs.SessionID, "seq": env.Seq,
+		"iv":  base64.RawURLEncoding.EncodeToString(env.IV),
+		"ct":  base64.RawURLEncoding.EncodeToString(env.CT),
+		"tag": base64.RawURLEncoding.EncodeToString(env.Tag),
+	})
+	resp, err := http.Post(srv.URL+"/link/frame", "application/json", bytes.NewReader(frBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out frameResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK || out.Error != "" || out.CT == "" {
+		t.Fatalf("business rejection must be an encrypted ACK, not plaintext: %+v", out)
+	}
+	iv, _ := base64.RawURLEncoding.DecodeString(out.IV)
+	ct, _ := base64.RawURLEncoding.DecodeString(out.CT)
+	tag, _ := base64.RawURLEncoding.DecodeString(out.Tag)
+	ackFrame, err := ep.Receive(&Envelope{Seq: out.Seq, IV: iv, CT: ct, Tag: tag})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ackFrame.Kind != codec.KindSyncAck {
+		t.Fatalf("expected SYNC_ACK, got %d", ackFrame.Kind)
+	}
+	var ackBody struct {
+		OK    bool `cbor:"ok"`
+		Error struct {
+			Code      string         `cbor:"code"`
+			Retryable bool           `cbor:"retryable"`
+			Details   map[string]any `cbor:"details"`
+		} `cbor:"error"`
+	}
+	if err := codec.Decode(ackFrame.Body, &ackBody); err != nil {
+		t.Fatal(err)
+	}
+	if ackBody.OK || ackBody.Error.Code != "cursor_expired" || ackBody.Error.Retryable {
+		t.Fatalf("business error semantics lost: %+v", ackBody)
+	}
+	if ackBody.Error.Details["bootstrapRequired"] != true {
+		t.Fatalf("details lost: %+v", ackBody.Error.Details)
+	}
+}

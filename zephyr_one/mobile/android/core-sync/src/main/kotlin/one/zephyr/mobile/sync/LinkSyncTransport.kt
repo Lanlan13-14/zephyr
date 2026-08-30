@@ -4,6 +4,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import one.zephyr.mobile.model.BootstrapPage
 import one.zephyr.mobile.model.ChangePage
@@ -17,6 +18,8 @@ import one.zephyr.mobile.contracts.MobileApiPaths
 import one.zephyr.mobile.network.MobileJson
 import one.zephyr.mobile.network.ValidatedAck
 import one.zephyr.mobile.network.dto.AckRequestDto
+import one.zephyr.mobile.network.dto.AckResponseDto
+import one.zephyr.mobile.network.dto.BootstrapPageDto
 import one.zephyr.mobile.network.dto.ChangePageDto
 import one.zephyr.mobile.network.dto.PushRequestDto
 import one.zephyr.mobile.network.dto.PushResponseDto
@@ -55,7 +58,12 @@ interface LinkChannel {
     suspend fun syncOp(op: String, body: JsonObject): JsonObject
 }
 
-class LinkChannelException(message: String) : Exception(message)
+class LinkChannelException(
+    message: String,
+    val code: String = "link_unavailable",
+    val retryable: Boolean = true,
+    val details: Map<String, String> = emptyMap(),
+) : Exception(message)
 
 /**
  * [SyncTransport] over the Zephyr Link channel (ZSL/2). One clients carry data sync on the
@@ -64,9 +72,8 @@ class LinkChannelException(message: String) : Exception(message)
  * unchanged — only the transport differs — and every verb encodes/decodes the SAME DTO wire shape
  * as the HTTP path, so there is exactly one sync implementation and one wire contract.
  *
- * capabilities and bootstrap still delegate to the HTTP transport: capabilities is the
- * unauthenticated discovery call that precedes any session, and bootstrap is the resumable paged
- * backfill whose payloads are already envelope-sealed, so neither carries plaintext secrets.
+ * Capabilities remains HTTPS discovery because it precedes a session. Bootstrap, changes, push
+ * and ack all ride owned-sync so every account payload and every business error stays inside ZSL.
  */
 class LinkSyncTransport(
     private val channel: LinkChannel,
@@ -78,15 +85,21 @@ class LinkSyncTransport(
 
     override suspend fun capabilities(): ApiResult<ServerCapabilities> = httpFallback.capabilities()
 
-    override suspend fun bootstrap(pageToken: String?, pageSize: Int?): ApiResult<BootstrapPage> =
-        httpFallback.bootstrap(pageToken, pageSize)
+    override suspend fun bootstrap(pageToken: String?, pageSize: Int?): ApiResult<BootstrapPage> = runLink {
+        val body = buildJsonObject {
+            pageToken?.let { put("pageToken", it) }
+            pageSize?.let { put("pageSize", it) }
+        }
+        val ack = requireSuccessAck(channel.syncOp("bootstrap", wireBody("bootstrap", body)))
+        json.decodeFromJsonElement(BootstrapPageDto.serializer(), ack).toDomain()
+    }
 
     override suspend fun changes(sinceCursor: Long, limit: Int?): ApiResult<ChangePage> = runLink {
         val body = buildJsonObject {
             put("sinceCursor", sinceCursor)
             if (limit != null) put("limit", limit)
         }
-        val ack = channel.syncOp("changes", wireBody("changes", body))
+        val ack = requireSuccessAck(channel.syncOp("changes", wireBody("changes", body)))
         json.decodeFromJsonElement(ChangePageDto.serializer(), ack).toDomain()
     }
 
@@ -123,7 +136,7 @@ class LinkSyncTransport(
                 json.encodeToJsonElement(PushRequestDto.serializer(), request).jsonObject
                     .forEach { (k, v) -> put(k, v) }
             }
-            val ack = channel.syncOp("push", wireBody("push", body))
+            val ack = requireSuccessAck(channel.syncOp("push", wireBody("push", body)))
             json.decodeFromJsonElement(PushResponseDto.serializer(), ack).toDomain()
         }
     }
@@ -134,8 +147,23 @@ class LinkSyncTransport(
             json.encodeToJsonElement(AckRequestDto.serializer(), request).jsonObject
                 .forEach { (k, v) -> put(k, v) }
         }
-        channel.syncOp("ack", wireBody("ack", body))
+        val ack = requireSuccessAck(channel.syncOp("ack", wireBody("ack", body)))
+        json.decodeFromJsonElement(AckResponseDto.serializer(), ack)
         ValidatedAck
+    }
+
+    private fun requireSuccessAck(ack: JsonObject): JsonObject {
+        if (ack["ok"] != JsonPrimitive(false)) return ack
+        val error = ack["error"] as? JsonObject
+            ?: throw IllegalArgumentException("Link business failure omitted its error envelope")
+        val code = error["code"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("Link business failure omitted its error code")
+        val message = error["message"]?.jsonPrimitive?.content ?: "同步请求失败"
+        val retryable = error["retryable"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+        val details = (error["details"] as? JsonObject)
+            ?.mapValues { (_, value) -> (value as? JsonPrimitive)?.content ?: value.toString() }
+            ?: emptyMap()
+        throw LinkChannelException(message, code, retryable, details)
     }
 
     private fun wireBody(op: String, body: JsonObject): JsonObject = buildJsonObject {
@@ -154,7 +182,10 @@ class LinkSyncTransport(
         // (session starts as null) and the Link transport would never dial at all.
         ApiResult.Success(block(), requestId = null)
     } catch (e: LinkChannelException) {
-        ApiResult.Failure(linkError(e.message ?: "Link 通道失败"))
+        ApiResult.Failure(
+            MobileError.local(e.code, e.message ?: "Link 通道失败", e.retryable)
+                .copy(details = e.details),
+        )
     } catch (e: IllegalArgumentException) {
         ApiResult.Failure(linkError("Link 返回了无法解析的响应", retryable = false))
     }

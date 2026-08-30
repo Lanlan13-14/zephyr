@@ -2,6 +2,8 @@ package link
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -45,5 +47,42 @@ func TestEmbeddedDialRoute(t *testing.T) {
 	}
 	if env == nil || len(env.CT) == 0 {
 		t.Fatal("no sealed envelope produced")
+	}
+}
+
+func TestEmbeddedDialRouteHonoursPinnedSPKI(t *testing.T) {
+	serverNode := NewNode()
+	server := httptest.NewTLSServer(serverNode.Handler())
+	defer server.Close()
+	cert := server.Certificate()
+	digest := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	pin := "sha256/" + base64.StdEncoding.EncodeToString(digest[:])
+
+	device := NewNode()
+	deviceSrv := httptest.NewServer(device.Handler())
+	defer deviceSrv.Close()
+
+	call := func(pins []string) (int, map[string]any) {
+		body, _ := json.Marshal(map[string]any{
+			"serverUrl": server.URL, "deviceId": "device-pinned",
+			"spkiPins": pins,
+		})
+		resp, err := http.Post(deviceSrv.URL+"/link/dial", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+
+	status, out := call([]string{pin})
+	if status != http.StatusOK || out["ok"] != true {
+		t.Fatalf("correct pin failed: %d %#v", status, out)
+	}
+	status, _ = call([]string{"sha256/" + base64.StdEncoding.EncodeToString(make([]byte, 32))})
+	if status != http.StatusBadGateway {
+		t.Fatalf("wrong pin must fail closed, got %d", status)
 	}
 }

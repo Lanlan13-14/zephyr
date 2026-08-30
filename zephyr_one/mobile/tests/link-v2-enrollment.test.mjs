@@ -551,6 +551,7 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
     });
     assert.equal(push.status, 200, await push.clone().text());
     const ack = await push.json();
+    assert.equal(ack.ok, true, JSON.stringify(ack));
     const unpacked = codec.unpack(session.open({
       seq: ack.seq,
       iv: Buffer.from(ack.iv, 'base64url'),
@@ -560,6 +561,52 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
     assert.equal(unpacked.kind, codec.KIND.SYNC_ACK);
     return unpacked.body;
   }
+  async function rejectedSyncOp(body) {
+    const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
+    const push = await fetch(server.url('/api/link/v2/push'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: hello.sessionId,
+        seq: sealed.seq,
+        iv: Buffer.from(sealed.iv).toString('base64url'),
+        ct: Buffer.from(sealed.ct).toString('base64url'),
+        tag: Buffer.from(sealed.tag).toString('base64url'),
+      }),
+    });
+    assert.equal(push.status, 200, await push.clone().text());
+    const reply = await push.json();
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    assert.equal(Object.hasOwn(reply, 'error'), false, 'business errors must not leak outside ZSL');
+    const unpacked = codec.unpack(session.open({
+      seq: reply.seq,
+      iv: Buffer.from(reply.iv, 'base64url'),
+      ct: Buffer.from(reply.ct, 'base64url'),
+      tag: Buffer.from(reply.tag, 'base64url'),
+    }));
+    assert.equal(unpacked.kind, codec.KIND.SYNC_ACK);
+    assert.equal(unpacked.body.ok, false, JSON.stringify(unpacked.body));
+    assert.ok(unpacked.body.error?.code);
+    return unpacked.body.error;
+  }
+
+  pageToken = null;
+  let linkSnapshot = null;
+  const linkBootstrapEntities = [];
+  do {
+    const page = await syncOp({ op: 'bootstrap', pageSize: 50, ...(pageToken ? { pageToken } : {}) });
+    assert.equal(page.ok, true, JSON.stringify(page));
+    if (linkSnapshot === null) linkSnapshot = page;
+    else assert.equal(page.snapshotCursor, linkSnapshot.snapshotCursor);
+    page.entities.forEach(assertAndroidSyncChange);
+    linkBootstrapEntities.push(...page.entities);
+    pageToken = page.complete ? null : page.nextPageToken;
+    assert.ok(page.complete || pageToken);
+  } while (pageToken);
+  assert.equal(linkSnapshot.snapshotCursor, snapshot.snapshotCursor);
+  assert.ok(linkBootstrapEntities.some((change) =>
+    change.entityType === 'note' && change.entityId === serverNoteId && change.payload.title === 'server-to-device'
+  ));
 
   const deviceNoteId = 'note-device-upstream-0001';
   const pushed = await syncOp({
@@ -605,8 +652,112 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
   const acknowledged = await syncOp({ op: 'ack', cursor: changes.nextCursor, appliedOpIds: ['op-device-upstream-1'] });
   assert.equal(acknowledged.ok, true);
 
+  const disable = await server.api(login.cookie, 'PATCH', `/api/one/clients/${deviceId}`, { enabled: false });
+  assert.equal(disable.status, 200, JSON.stringify(disable.body));
+  const revoked = await rejectedSyncOp({ op: 'changes', sinceCursor: changes.nextCursor, limit: 50 });
+  assert.equal(revoked.code, 'client_revoked', JSON.stringify(revoked));
+  assert.equal(revoked.retryable, false);
+  const enable = await server.api(login.cookie, 'PATCH', `/api/one/clients/${deviceId}`, { enabled: true });
+  assert.equal(enable.status, 200, JSON.stringify(enable.body));
+
+  const badRegistry = await rejectedSyncOp({
+    op: 'push', protocolVersion: 1, deviceId, batchId: 'batch-bad-registry',
+    baseCursor: changes.nextCursor, registryHash: '0'.repeat(64), operations: [{
+      opId: 'op-bad-registry-1', entityType: 'note', entityId: 'note-bad-registry-1',
+      action: 'upsert', baseRevision: 0, clientModifiedAt: Date.now(),
+      fieldMask: ['title'], payload: { title: 'must not be written' },
+    }],
+  });
+  assert.equal(badRegistry.code, 'registry_mismatch', JSON.stringify(badRegistry));
+  assert.equal(badRegistry.retryable, false);
+  assert.equal(badRegistry.details.serverRegistryHash, binding.registryHash);
+
+  const badCursor = await rejectedSyncOp({ op: 'changes', sinceCursor: Number.MAX_SAFE_INTEGER, limit: 50 });
+  assert.equal(badCursor.code, 'cursor_invalid');
+  assert.equal(badCursor.retryable, false);
+  assert.equal(badCursor.details.bootstrapRequired, true);
+
   const status = await syncOp({ op: 'status' });
   assert.equal(status.ok, true);
   assert.equal(status.state, 'IDLE', JSON.stringify(status));
   assert.equal(status.cursor, changes.nextCursor);
+});
+
+
+test('real Link two devices converge through canonical change log', async (t) => {
+  process.env.ZEPHYR_ONE_USE_BUILTIN_SQLITE = '1';
+  process.env.ZEPHYR_LINK_GO_BIN = buildCurrentGoLinkServer(t);
+  const { TestServer } = await import(pathToFileURL(path.join(repoRoot, 'tests', 'test-server.mjs')).href);
+  const server = await new TestServer().start();
+  t.after(async () => { try { stopLinkV2Go(); } catch {} await server.cleanup(); });
+  const login = await server.bootstrapAdmin();
+
+  async function enroll(name, suffix) {
+    const signing = generateSigningKey();
+    const keys = deviceKeys(signing.jwk, suffix);
+    const deviceId = `device-link-multi-${suffix.toString().padStart(4, '0')}`;
+    const create = await fetch(server.url('/api/link/v2/enrollments'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId, deviceName: name, platform: 'android', appVersion: 'e2e', keys }),
+    });
+    assert.equal(create.status, 201, await create.clone().text());
+    const created = await create.json();
+    const approve = await fetch(server.url('/link/approve'), {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: login.cookie },
+      body: new URLSearchParams({ bindId: created.bindId, userCode: created.userCode, decision: 'approve' }),
+    });
+    assert.equal(approve.status, 200, await approve.clone().text());
+    const payload = proofPayload({
+      bindId: created.bindId, deviceId, userCode: created.userCode, sas: created.sas,
+      secretHash: sha256(created.enrollmentSecret), serverId: created.serverId,
+    });
+    const consume = await fetch(server.url(`/api/link/v2/enrollments/${created.bindId}/consume`), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userCode: created.userCode, enrollmentSecret: created.enrollmentSecret,
+        proof: signProof(signing.privateKey, payload), keys, syncIntervalSec: 300 }),
+    });
+    assert.equal(consume.status, 200, await consume.clone().text());
+    const binding = await consume.json();
+    const init = zsl.handshakeInitiator();
+    const handshake = await fetch(server.url('/api/link/v2/handshake'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId, x25519Public: Buffer.from(init.x25519Public).toString('base64url'),
+        mlkemPublic: Buffer.from(init.mlkemPublic).toString('base64url') }),
+    });
+    assert.equal(handshake.status, 200, await handshake.clone().text());
+    const hello = await handshake.json();
+    const session = zsl.handshakeFinish(init, { x25519Public: Buffer.from(hello.x25519Public, 'base64url'),
+      mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url') });
+    const syncOp = async (body) => {
+      const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
+      const push = await fetch(server.url('/api/link/v2/push'), { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: hello.sessionId, seq: sealed.seq,
+          iv: Buffer.from(sealed.iv).toString('base64url'), ct: Buffer.from(sealed.ct).toString('base64url'),
+          tag: Buffer.from(sealed.tag).toString('base64url') }) });
+      assert.equal(push.status, 200, await push.clone().text());
+      const reply = await push.json();
+      assert.equal(reply.ok, true, JSON.stringify(reply));
+      return codec.unpack(session.open({ seq: reply.seq, iv: Buffer.from(reply.iv, 'base64url'),
+        ct: Buffer.from(reply.ct, 'base64url'), tag: Buffer.from(reply.tag, 'base64url') })).body;
+    };
+    const bootstrap = await syncOp({ op: 'bootstrap', pageSize: 100 });
+    assert.equal(bootstrap.complete, true, JSON.stringify(bootstrap));
+    return { deviceId, binding, cursor: bootstrap.snapshotCursor, syncOp };
+  }
+
+  const one = await enroll('Pixel One', 41);
+  const two = await enroll('Pixel Two', 42);
+  const noteId = 'note-link-two-device-converge';
+  const pushed = await one.syncOp({ op: 'push', protocolVersion: 1, deviceId: one.deviceId,
+    batchId: 'batch-two-device', baseCursor: one.cursor, registryHash: one.binding.registryHash,
+    operations: [{ opId: 'op-two-device', entityType: 'note', entityId: noteId, action: 'upsert',
+      baseRevision: 0, clientModifiedAt: Date.now(), fieldMask: ['title', 'content'],
+      payload: { title: 'from device one', content: 'device two must converge' } }] });
+  assert.equal(pushed.results[0].status, 'accepted', JSON.stringify(pushed));
+  const pulled = await two.syncOp({ op: 'changes', sinceCursor: two.cursor, limit: 100 });
+  pulled.changes.forEach(assertAndroidSyncChange);
+  assert.ok(pulled.changes.some((change) => change.entityType === 'note' && change.entityId === noteId &&
+    change.payload.title === 'from device one'));
+  const ack = await two.syncOp({ op: 'ack', cursor: pulled.nextCursor, appliedOpIds: [] });
+  assert.equal(ack.ok, true);
 });

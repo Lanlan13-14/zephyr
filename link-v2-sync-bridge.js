@@ -26,6 +26,7 @@
  */
 
 const { KIND } = require('./link-v2-codec');
+const { MobileStoreError } = require('./mobile-v1-store');
 
 /**
  * @param {object} opts
@@ -58,15 +59,15 @@ function createLinkSyncBridge({ api, storage, adminToken }) {
     function resolveAuth(deviceId) {
         const device = store.getDeviceRow(deviceId);
         if (!device || device.revoked_at || !device.enabled) {
-            const err = new Error('设备不存在或已撤销');
-            err.status = 401; err.code = 'unauthenticated'; err.retryable = false; err.expose = true;
-            throw err;
+            throw new MobileStoreError('client_revoked', '设备不存在、已停用或已撤销', 403, {
+                retryable: false,
+            });
         }
         const user = storage.getUserBrief(device.owner_user_id);
-        if (!user || user.status === 'deleted') {
-            const err = new Error('账号不存在或已注销');
-            err.status = 401; err.code = 'unauthenticated'; err.retryable = false; err.expose = true;
-            throw err;
+        if (!user || user.status === 'deleted' || user.status === 'disabled') {
+            throw new MobileStoreError('account_unavailable', '账号不可用', 403, {
+                retryable: false,
+            });
         }
         return { user, device };
     }
@@ -84,8 +85,12 @@ function createLinkSyncBridge({ api, storage, adminToken }) {
         }
         const b = body || {};
         switch (b.op) {
-            case 'push':
-                return { kind: KIND.SYNC_ACK, body: api.executePushForDevice(auth, b) };
+            case 'bootstrap':
+                return { kind: KIND.SYNC_ACK, body: api.executeBootstrapForDevice(auth, b) };
+            case 'push': {
+                const { op: _op, ...request } = b;
+                return { kind: KIND.SYNC_ACK, body: api.executePushForDevice(auth, request) };
+            }
             case 'changes':
                 return { kind: KIND.SYNC_ACK, body: api.executeChangesForDevice(auth, b) };
             case 'ack':
@@ -116,10 +121,16 @@ function createLinkSyncBridge({ api, storage, adminToken }) {
             const out = dispatch(auth, Number(kind), body);
             res.json({ ok: true, ...out });
         } catch (err) {
-            const status = err.status || 500;
+            const typed = err instanceof MobileStoreError;
+            const status = typed ? (Number(err.status) || 400) : 500;
             res.status(status).json({
                 ok: false,
-                error: { code: err.code || 'sync_failed', message: err.expose ? err.message : '同步处理失败' },
+                error: {
+                    code: typed ? String(err.code || 'internal_error') : 'internal_error',
+                    message: typed ? String(err.message || '请求失败') : '服务器内部错误',
+                    retryable: typed ? err.retryable === true : true,
+                    details: typed ? (err.details || null) : null,
+                },
             });
         }
     }

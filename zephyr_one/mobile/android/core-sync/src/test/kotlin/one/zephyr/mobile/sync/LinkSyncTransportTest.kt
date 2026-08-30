@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import one.zephyr.mobile.model.BootstrapPage
 import one.zephyr.mobile.model.ChangePage
 import one.zephyr.mobile.model.PendingOperation
@@ -39,6 +40,49 @@ class LinkSyncTransportTest {
             calls += op to body
             return ackResponder(op, body)
         }
+    }
+
+
+    @Test
+    fun `bootstrap rides Link and never calls HTTP fallback`() = runTest {
+        val channel = FakeChannel(established = false)
+        channel.ackResponder = { _, _ ->
+            buildJsonObject {
+                put("ok", true)
+                put("bootstrapId", "bs-link")
+                put("snapshotCursor", 0)
+                put("complete", true)
+                putJsonArray("entities") {}
+            }
+        }
+        val transport = LinkSyncTransport(channel, "dev-1", NoopFallback)
+        val result = transport.bootstrap(pageToken = null, pageSize = 25)
+        assertTrue(result is ApiResult.Success)
+        val (op, body) = channel.calls.single()
+        assertEquals("bootstrap", op)
+        assertEquals("bootstrap", body["op"]!!.jsonPrimitive.content)
+        assertEquals(25, body["pageSize"]!!.jsonPrimitive.intOrNull)
+    }
+
+    @Test
+    fun `sealed cursor error keeps its code for bootstrap recovery`() = runTest {
+        val channel = FakeChannel()
+        channel.ackResponder = { _, _ ->
+            buildJsonObject {
+                put("ok", false)
+                putJsonObject("error") {
+                    put("code", "cursor_expired")
+                    put("message", "bootstrap required")
+                    put("retryable", false)
+                    putJsonObject("details") { put("bootstrapRequired", true) }
+                }
+            }
+        }
+        val result = LinkSyncTransport(channel, "dev-1", NoopFallback).changes(4, 50)
+        assertTrue(result is ApiResult.Failure)
+        val error = (result as ApiResult.Failure).error
+        assertEquals("cursor_expired", error.code)
+        assertEquals("true", error.details["bootstrapRequired"])
     }
 
     @Test

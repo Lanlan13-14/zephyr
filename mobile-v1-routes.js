@@ -1476,9 +1476,21 @@ class MobileV1Api {
         const requestId = req.mobileRequestId;
         const auth = this.requireDevice(req, res);
         if (!auth) return undefined;
-
-        const pageSize = clampPageSize(req.query.pageSize);
         try {
+            return res.json(this.executeBootstrapForDevice(auth, {
+                pageToken: req.query.pageToken,
+                pageSize: req.query.pageSize,
+            }));
+        } catch (err) {
+            return sendThrown(res, err, requestId);
+        }
+    }
+
+    /* Transport-independent bootstrap page. Link and HTTP must share this exact
+     * snapshot/token implementation or a device can observe two incompatible
+     * generations depending on the transport used for a page. */
+    executeBootstrapForDevice(auth, { pageToken = null, pageSize = null } = {}) {
+        pageSize = clampPageSize(pageSize);
             const binding = {
                 ownerUserId: auth.user.userId,
                 deviceId: auth.device.device_id,
@@ -1525,8 +1537,8 @@ class MobileV1Api {
             };
 
             let cursorState;
-            if (req.query.pageToken) {
-                cursorState = this.store.openBootstrapToken(String(req.query.pageToken), binding);
+            if (pageToken) {
+                cursorState = this.store.openBootstrapToken(String(pageToken), binding);
             } else {
                 const snapshotCursor = this.store.latestCursor(auth.user.userId);
                 const upperBounds = this.bootstrapTypes.map((_, typeIndex) => {
@@ -1610,7 +1622,7 @@ class MobileV1Api {
             }
 
             const complete = typeIndex >= this.bootstrapTypes.length;
-            return res.json({
+            return {
                 ok: true,
                 bootstrapId: cursorState.bootstrapId,
                 snapshotCursor: cursorState.snapshotCursor,
@@ -1621,10 +1633,7 @@ class MobileV1Api {
                 }),
                 complete,
                 entities,
-            });
-        } catch (err) {
-            return sendThrown(res, err, requestId);
-        }
+            };
     }
 
     handleChanges(req, res) {
@@ -1924,10 +1933,6 @@ class MobileV1Api {
         } catch (err) {
             return sendThrown(res, err, requestId);
         }
-        if (!this.assertRegistry(res, body.registryHash, requestId)) return undefined;
-        if (body.deviceId !== auth.device.device_id) {
-            return sendError(res, 400, 'invalid_request', 'deviceId \u4e0e\u51ed\u636e\u4e0d\u4e00\u81f4', { requestId });
-        }
         try {
             const result = this.executePushForDevice(auth, body, requestId);
             return res.json(result);
@@ -1948,6 +1953,19 @@ class MobileV1Api {
      * onto its transport (HTTP status, or a sealed frame error on the Link channel).
      */
     executePushForDevice(auth, body, requestId = crypto.randomUUID()) {
+        assertOwnJsonData(body, 'push request');
+        if (!body || typeof body !== 'object' || Array.isArray(body) || body.protocolVersion !== 1) {
+            throw new MobileStoreError('unsupported_protocol_version', '不支持的协议版本', 400);
+        }
+        validatePushRequest(body);
+        if (this.store.registryHash && body.registryHash && body.registryHash !== this.store.registryHash) {
+            throw new MobileStoreError('registry_mismatch', '实体注册表版本不一致，请升级客户端', 409, {
+                details: { serverRegistryHash: this.store.registryHash },
+            });
+        }
+        if (body.deviceId !== auth.device.device_id) {
+            throw new MobileStoreError('invalid_request', 'deviceId 与凭据不一致', 400);
+        }
         const operations = body.operations;
         this.preflightPushOperations(operations);
 
