@@ -87,7 +87,7 @@ test('Android Link channel injects every sync op before sealing', () => {
   assert.match(transport, /channel\.syncOp\("ack", wireBody\("ack", body\)\)/);
   assert.match(transport, /private fun requireSuccessAck/);
   assert.match(transport, /LinkChannelException\(message, code, retryable, details\)/);
-  assert.match(container, /kind = LinkKinds\.SYNC_OP, body = body/);
+  assert.match(container, /kind = LinkKinds\.SYNC_OP,[\s\S]*body = body/);
   assert.match(container, /spkiPins = linkSpkiPins/);
 });
 

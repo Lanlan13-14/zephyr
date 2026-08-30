@@ -19,6 +19,30 @@ import (
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/zsl"
 )
 
+type RemoteLinkError struct {
+	Status    int
+	Code      string
+	Message   string
+	Retryable bool
+}
+
+func (e *RemoteLinkError) Error() string { return "link peer rejected request: " + e.Code }
+
+func decodeRemoteLinkError(status int, body []byte, fallback string) error {
+	var envelope struct {
+		Error struct {
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) == nil && envelope.Error.Code != "" {
+		return &RemoteLinkError{Status: status, Code: envelope.Error.Code,
+			Message: envelope.Error.Message, Retryable: envelope.Error.Retryable}
+	}
+	return &RemoteLinkError{Status: status, Code: fallback, Message: "Link peer rejected request"}
+}
+
 // Node is a Link v2 participant that can both host and dial encrypted sessions
 // over plain HTTP. The same Node runs as the server peer, the desktop peer and
 // the embedded mobile peer; only the listen address differs.
@@ -167,7 +191,12 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 	}
 	ep, sessionID, err := n.dial(req.ServerURL, req.DeviceID, req.SPKIPins)
 	if err != nil {
-		http.Error(w, "dial failed: "+err.Error(), http.StatusBadGateway)
+		var remote *RemoteLinkError
+		if errors.As(err, &remote) {
+			errJSONRetryable(w, http.StatusBadGateway, remote.Code, remote.Message, remote.Retryable)
+		} else {
+			errJSONRetryable(w, http.StatusBadGateway, "link_unavailable", "Link handshake failed", true)
+		}
 		return
 	}
 	n.mu.Lock()
@@ -213,7 +242,12 @@ func (n *Node) handlePushFrame(w http.ResponseWriter, r *http.Request) {
 	}
 	ack, err := n.sendFrame(req.PeerURL, req.SessionID, ep, req.Kind, req.Body, req.Secret, req.SPKIPins)
 	if err != nil {
-		errJSON(w, http.StatusBadGateway, "push_failed", err.Error())
+		var remote *RemoteLinkError
+		if errors.As(err, &remote) {
+			errJSONRetryable(w, http.StatusBadGateway, remote.Code, remote.Message, remote.Retryable)
+		} else {
+			errJSONRetryable(w, http.StatusBadGateway, "link_unavailable", "Link push failed", true)
+		}
 		return
 	}
 	var ackBody any
@@ -358,6 +392,16 @@ func errJSON(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
+func errJSONRetryable(w http.ResponseWriter, status int, code, message string, retryable bool) {
+	w.Header().Set("content-type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok": false, "error": map[string]any{
+			"code": code, "message": message, "retryable": retryable,
+		},
+	})
+}
+
 func (n *Node) handleHandshake(w http.ResponseWriter, r *http.Request) {
 	var req handshakeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -481,8 +525,8 @@ func (n *Node) dial(baseURL, deviceID string, spkiPins []string) (*Endpoint, str
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("handshake: %s: %s", resp.Status, msg)
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return nil, "", decodeRemoteLinkError(resp.StatusCode, msg, "handshake_failed")
 	}
 	var hr handshakeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&hr); err != nil {
@@ -530,6 +574,10 @@ func (n *Node) sendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return nil, decodeRemoteLinkError(resp.StatusCode, msg, "push_failed")
+	}
 	var fr frameResponse
 	if err := json.NewDecoder(resp.Body).Decode(&fr); err != nil {
 		return nil, err
