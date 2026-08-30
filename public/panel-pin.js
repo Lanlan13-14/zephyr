@@ -5,6 +5,7 @@
  */
 const pinned = new Set();
 let zSeed = 10100;
+let activePinMenu = null;
 
 export function isDesktopPanelPinEnvironment() {
     return window.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches === true
@@ -121,27 +122,29 @@ function edgeInset(page) {
     };
 }
 
-function place(panel, mode = panel.dataset.pinMode || 'side') {
+function place(panel, mode = panel.dataset.pinMode || 'side', { animate = false } = {}) {
     const page = panel._pinPage;
     const scope = scopeFor(page);
     const side = panel.dataset.pinSide || 'left';
     const fullHeight = scope.height;
     rememberNormalGeometry(panel);
+    // Read the painted frame *before* changing layout. Rapid pin/unpin/mode
+    // changes therefore retarget from the current visual state, not from the
+    // last committed rectangle.
+    const fromRect = animate ? panel.getBoundingClientRect() : null;
     startGeometryMotion(panel);
 
     // The page can be a terminal page, an RDP/VNC page, or the web app shell.
     // Fixed coordinates make the same geometry reliable even when the panel's
     // normal containing block is a nested display stage.
-    const fixed = { position: 'fixed', right: 'auto', bottom: 'auto', transform: 'none' };
+    const fixed = { position: 'fixed', right: 'auto', bottom: 'auto' };
     if (mode === 'full') {
         // ⋯ → full: retain the header (the user's red-line requirement).
         Object.assign(panel.style, fixed, {
             left: `${scope.left}px`, top: `${scope.top + scope.topbarHeight}px`, width: `${scope.width}px`,
             height: `${Math.max(1, fullHeight - scope.topbarHeight)}px`,
         });
-        return;
-    }
-    if (mode === 'half') {
+    } else if (mode === 'half') {
         // Bottom dock is genuinely a bottom band: the bottom row owns the full
         // width, while side rails remain only in the row above it. Extend one
         // border-width past the page edge so the page's own 1px frame can never
@@ -153,17 +156,36 @@ function place(panel, mode = panel.dataset.pinMode || 'side') {
             left: `${scope.left - edge.left}px`, top: `${scope.top + fullHeight - height}px`,
             width: `${scope.width + edge.left + edge.right}px`, height: `${height + edge.bottom}px`,
         });
-        return;
+    } else {
+        const explicit = Number.parseFloat(panel.style.width);
+        const width = Math.min(Number.isFinite(explicit) ? explicit : quarterWidth(scope), scope.width);
+        // Side rails stop above any bottom-docked panel; the bottom band is the
+        // only owner of the lower row, so the two modes never overlap.
+        const height = fullHeight - halfInset(page);
+        Object.assign(panel.style, fixed, {
+            left: `${scope.left + (side === 'left' ? 0 : scope.width - width)}px`, top: `${scope.top}px`,
+            width: `${width}px`, height: `${Math.max(1, height)}px`,
+        });
     }
 
-    const explicit = Number.parseFloat(panel.style.width);
-    const width = Math.min(Number.isFinite(explicit) ? explicit : quarterWidth(scope), scope.width);
-    // Side rails stop above any bottom-docked panel; the bottom band is the
-    // only owner of the lower row, so the two modes never overlap.
-    const height = fullHeight - halfInset(page);
-    Object.assign(panel.style, fixed, {
-        left: `${scope.left + (side === 'left' ? 0 : scope.width - width)}px`, top: `${scope.top}px`,
-        width: `${width}px`, height: `${Math.max(1, height)}px`,
+    if (!animate || !fromRect || fromRect.width < 2 || fromRect.height < 2) return;
+    const toRect = panel.getBoundingClientRect();
+    const sx = Math.max(.001, fromRect.width / Math.max(1, toRect.width));
+    const sy = Math.max(.001, fromRect.height / Math.max(1, toRect.height));
+    window.clearTimeout(panel._pinFlipTimer);
+    panel.style.transition = 'none';
+    panel.style.transformOrigin = '0 0';
+    panel.style.transform = `translate3d(${fromRect.left - toRect.left}px, ${fromRect.top - toRect.top}px, 0) scale(${sx}, ${sy})`;
+    panel.style.pointerEvents = 'none';
+    void panel.offsetWidth;
+    requestAnimationFrame(() => {
+        panel.style.transition = `transform .52s var(--ios-open)`;
+        panel.style.transform = 'translate3d(0px, 0px, 0) scale(1, 1)';
+        panel._pinFlipTimer = window.setTimeout(() => {
+            panel.style.transform = '';
+            panel.style.transition = '';
+            panel.style.pointerEvents = '';
+        }, 560);
     });
 }
 
@@ -186,7 +208,7 @@ function syncChrome(panel) {
     if (!side) {
         // Demo parity: once released, ⋯ must be an ordinary window-layout button
         // again. Do not leave the pinned island's faded/hidden chrome behind.
-        panel.querySelectorAll('.panel-traffic-btn, [data-layout-panel], [data-ai-agent-layout]').forEach((button) => {
+        panel.querySelectorAll('.panel-traffic-btn:not(.panel-pin-btn), [data-layout-panel], [data-ai-agent-layout]').forEach((button) => {
             button.classList.remove('active-layout');
             button.style.removeProperty('opacity');
         });
@@ -201,7 +223,7 @@ function pin(panel, side) {
     panel.dataset.pinMode = 'side';
     panel.style.width = `${width}px`;
     pinned.add(panel);
-    place(panel, 'side');
+    place(panel, 'side', { animate: true });
     syncChrome(panel);
     bringToFront(panel);
     applyInsets(page);
@@ -214,6 +236,7 @@ function unpin(panel) {
     const width = panel.offsetWidth || 420;
     const height = Math.min(panel.offsetHeight || 460, Math.max(240, scope.height - scope.topbarHeight - 16));
     const restore = panel._pinRestore;
+    const fromRect = panel.getBoundingClientRect();
     delete panel.dataset.pinSide;
     delete panel.dataset.pinMode;
     delete panel._pinHalfHeight;
@@ -229,6 +252,26 @@ function unpin(panel) {
             width: `${width}px`, height: `${height}px`, right: 'auto', bottom: 'auto', transform: 'none',
         });
     }
+    if (fromRect.width >= 2 && fromRect.height >= 2) {
+        const toRect = panel.getBoundingClientRect();
+        const sx = Math.max(.001, fromRect.width / Math.max(1, toRect.width));
+        const sy = Math.max(.001, fromRect.height / Math.max(1, toRect.height));
+        window.clearTimeout(panel._pinFlipTimer);
+        panel.style.transition = 'none';
+        panel.style.transformOrigin = '0 0';
+        panel.style.transform = `translate3d(${fromRect.left - toRect.left}px, ${fromRect.top - toRect.top}px, 0) scale(${sx}, ${sy})`;
+        panel.style.pointerEvents = 'none';
+        void panel.offsetWidth;
+        requestAnimationFrame(() => {
+            panel.style.transition = `transform .52s var(--ios-open)`;
+            panel.style.transform = 'translate3d(0px, 0px, 0) scale(1, 1)';
+            panel._pinFlipTimer = window.setTimeout(() => {
+                panel.style.transform = '';
+                panel.style.transition = '';
+                panel.style.pointerEvents = '';
+            }, 560);
+        });
+    }
     syncChrome(panel);
     panelGroup(page).forEach((other) => other !== panel && place(other));
     applyInsets(page);
@@ -237,14 +280,16 @@ function unpin(panel) {
 
 function closePinMenu(anchor = null, panel = null, { instant = false } = {}) {
     const menu = panel?._pinMenu || document.querySelector('.panel-pin-menu');
-    const traffic = anchor || panel?.querySelector?.('.panel-traffic-btn, [data-layout-panel], [data-ai-agent-layout]');
+    const ownerPanel = panel || menu?._pinPanel || null;
+    const traffic = anchor || menu?._pinAnchor || ownerPanel?.querySelector?.('.panel-traffic-btn:not(.panel-pin-btn), [data-layout-panel], [data-ai-agent-layout]');
     if (!menu) return;
     window.clearTimeout(menu._closeTimer);
     if (instant || !traffic?.isConnected) {
         traffic?.classList.remove('active-layout');
         traffic?.style.removeProperty('opacity');
         menu.remove();
-        if (panel?._pinMenu === menu) delete panel._pinMenu;
+        if (ownerPanel?._pinMenu === menu) delete ownerPanel._pinMenu;
+        if (activePinMenu === menu) activePinMenu = null;
         return;
     }
     const rect = traffic.getBoundingClientRect();
@@ -270,12 +315,16 @@ function closePinMenu(anchor = null, panel = null, { instant = false } = {}) {
         traffic.style.opacity = '1';
         requestAnimationFrame(() => traffic.style.removeProperty('opacity'));
         menu.remove();
-        if (panel?._pinMenu === menu) delete panel._pinMenu;
+        if (ownerPanel?._pinMenu === menu) delete ownerPanel._pinMenu;
+        if (activePinMenu === menu) activePinMenu = null;
     }, 460);
 }
 
 function openPinMenu(anchor, panel, onClose) {
-    closePinMenu();
+    // There can be multiple pinned panels. QuerySelector alone can close the
+    // wrong stale menu and leave its ⋯ opacity at 0, which is the reported
+    // probabilistic disappearing-three-dots bug.
+    if (activePinMenu) closePinMenu(activePinMenu._pinAnchor, activePinMenu._pinPanel, { instant: true });
     const page = panel._pinPage;
     const side = panel.dataset.pinSide || 'left';
     const menu = document.createElement('div');
@@ -294,7 +343,10 @@ function openPinMenu(anchor, panel, onClose) {
     menu.style.transition = 'none';
     menu.style.zIndex = String(Math.max(10000, (Number(panel.style.zIndex) || zSeed) + 20));
     document.body.appendChild(menu);
+    menu._pinAnchor = anchor;
+    menu._pinPanel = panel;
     panel._pinMenu = menu;
+    activePinMenu = menu;
     anchor._pinMenuOpen = true;
     const rect = anchor.getBoundingClientRect();
     // Match the ordinary floating-panel island exactly: 284px cap / 50px tall.
@@ -342,7 +394,7 @@ function openPinMenu(anchor, panel, onClose) {
             panel.dataset.pinSide = action === 'switch-left' ? 'left' : 'right';
             panel.dataset.pinMode = 'side';
             panel.style.width = `${quarterWidth(scopeFor(page))}px`;
-            place(panel, 'side');
+            place(panel, 'side', { animate: true });
             syncChrome(panel);
             bringToFront(panel);
             panelGroup(page).forEach((other) => other !== panel && place(other));
@@ -351,7 +403,7 @@ function openPinMenu(anchor, panel, onClose) {
         }
         panel.dataset.pinMode = action;
         if (action === 'half') panel.style.height = `${panel._pinHalfHeight || Math.round(scopeFor(page).height / 2)}px`;
-        place(panel, action);
+        place(panel, action, { animate: true });
         syncChrome(panel);
         bringToFront(panel);
         panelGroup(page).forEach((other) => other !== panel && place(other));
@@ -479,7 +531,7 @@ export function attachDesktopPanelPin(page, panel, { dragHandle, layoutButton, o
         else pin(panel, button.dataset.pinSide);
     });
 
-    const traffic = layoutButton || panel.querySelector('.panel-traffic-btn, [data-layout-panel]');
+    const traffic = layoutButton || panel.querySelector('.panel-traffic-btn:not(.panel-pin-btn), [data-layout-panel]');
     if (traffic) {
         // Capture phase preserves ordinary original three-dot behavior exactly
         // while unpinned; only pinned state swaps its layout meanings.

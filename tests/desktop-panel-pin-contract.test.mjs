@@ -37,8 +37,10 @@ test('locked pin follows the previous accent-filled state the user approved', ()
     ]) assert.ok(css.includes(fragment), fragment);
 });
 
-test('pinned panels remove floating shadow/transform and traffic chrome resets after release', () => {
-    for (const fragment of ['box-shadow: none !important;', 'transform: none !important;', 'filter: none !important;']) assert.ok(css.includes(fragment), fragment);
+test('pinned panels remove floating shadow/filter and traffic chrome resets after release', () => {
+    for (const fragment of ['box-shadow: none !important;', 'filter: none !important;']) assert.ok(css.includes(fragment), fragment);
+    assert.doesNotMatch(css, /transform: none !important;/);
+    assert.match(css, /Do NOT force transform here: pin\/unpin uses an inline FLIP transform/);
     assert.match(pin, /button\.classList\.remove\('active-layout'\)/);
     assert.match(pin, /button\.style\.removeProperty\('opacity'\)/);
     assert.match(pin, /syncChrome\(panel\);\n            panelGroup\(owner\)\.forEach/);
@@ -82,6 +84,23 @@ test('pinned traffic menu reuses the exact unpinned island host and icon contrac
     assert.doesNotMatch(css, /\.panel-pin-menu button \{[^}]*flex-direction: column/s);
 });
 
+test('pin and unpin use FLIP geometry instead of jumping', () => {
+    assert.match(pin, /function place\(panel, mode = panel\.dataset\.pinMode \|\| 'side', \{ animate = false \} = \{\}\)/);
+    assert.match(pin, /place\(panel, 'side', \{ animate: true \}\)/);
+    assert.match(pin, /place\(panel, action, \{ animate: true \}\)/);
+    assert.match(pin, /translate3d\(\$\{fromRect\.left - toRect\.left\}px, \$\{fromRect\.top - toRect\.top\}px, 0\) scale\(\$\{sx\}, \$\{sy\}\)/);
+    assert.match(pin, /panel\.style\.transition = `transform \.52s var\(--ios-open\)`/);
+});
+
+test('opening another pinned menu closes the exact previous owner before it can hide the button', () => {
+    assert.match(pin, /let activePinMenu = null;/);
+    assert.match(pin, /menu\._pinAnchor = anchor;/);
+    assert.match(pin, /menu\._pinPanel = panel;/);
+    assert.match(pin, /activePinMenu = menu;/);
+    assert.match(pin, /if \(activePinMenu\) closePinMenu\(activePinMenu\._pinAnchor, activePinMenu\._pinPanel, \{ instant: true \}\)/);
+    assert.match(pin, /panel-traffic-btn:not\(\.panel-pin-btn\)/);
+});
+
 test('unpinned traffic click preserves original panel menu behavior', () => {
     assert.match(pin, /if \(!panel\.dataset\.pinSide\) return;/);
     assert.match(pin, /Capture phase preserves ordinary original three-dot behavior exactly/);
@@ -99,7 +118,7 @@ test('nested cloned panels are explicitly reset to ordinary floating windows', (
 test('all desktop top-level panel surfaces are wired; demo is not referenced', () => {
     for (const source of [terminal, telnet, rdp, vnc, app]) {
         assert.match(source, /attachDesktopPanelPin/);
-        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin5/);
+        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin6/);
         assert.doesNotMatch(source, /panel-pin-demo/);
     }
     for (const name of ['fileManager', 'infoModal', 'dockerPanel', 'snippetPanel', 'shortcutPanel']) assert.ok(terminal.includes(name));
@@ -120,14 +139,14 @@ test('pinning uses complete geometry and surface transitions without a flash ani
 test('all shipped pages load pin styling without demo artifact', () => {
     for (const file of ['public/terminal.html', 'public/telnet-terminal.html', 'public/rdp.html', 'public/novnc.html', 'public/app.html']) {
         const html = read(file);
-        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin5/);
+        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin6/);
         assert.doesNotMatch(html, /panel-pin-demo/);
     }
     assert.equal(fs.existsSync(path.join(root, 'public/panel-pin-demo.html')), false);
 });
 
 test('service worker rotates and precaches both panel-pin assets', () => {
-    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin5/);
-    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin5/);
-    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin5/);
+    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin6/);
+    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin6/);
+    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin6/);
 });

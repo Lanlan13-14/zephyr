@@ -27,7 +27,7 @@ import {
     applyPanelLayout,
     closePanelLayoutMenu,
 } from './floating-panel.js?v=20260731-panel-drag-physics4';
-import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin5';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin6';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
