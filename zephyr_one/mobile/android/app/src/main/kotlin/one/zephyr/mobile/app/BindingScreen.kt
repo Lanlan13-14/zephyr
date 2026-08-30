@@ -256,7 +256,7 @@ fun BindingScreen(
                                     fontSize = 12.sp,
                                 )
                             }
-                            Switch(checked = allowInsecureTls, onCheck = { allowInsecureTls = it })
+                            Switch(checked = allowInsecureTls, onCheckedChange = { allowInsecureTls = it })
                         }
                     }
                     Button(
