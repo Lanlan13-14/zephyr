@@ -142,6 +142,16 @@ class MobileAuthContractTest {
     }
 
     @Test
+    fun `explicit null server encryption remains a successful capability`() = runTest {
+        server.enqueue(jsonResponse(capabilitiesFixture().replace(SERVER_ENCRYPTION_FIELD, "\"serverEncryption\":null,")))
+
+        val result = api.capabilities()
+
+        assertTrue(result is ApiResult.Success)
+        assertNull((result as ApiResult.Success).value.serverEncryption)
+    }
+
+    @Test
     fun `missing required-nullable server encryption field is malformed`() = runTest {
         server.enqueue(jsonResponse(capabilitiesFixture(includeServerEncryption = false)))
 
