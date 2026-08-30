@@ -118,7 +118,7 @@ test('nested cloned panels are explicitly reset to ordinary floating windows', (
 test('all desktop top-level panel surfaces are wired; demo is not referenced', () => {
     for (const source of [terminal, telnet, rdp, vnc, app]) {
         assert.match(source, /attachDesktopPanelPin/);
-        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin6/);
+        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin7/);
         assert.doesNotMatch(source, /panel-pin-demo/);
     }
     for (const name of ['fileManager', 'infoModal', 'dockerPanel', 'snippetPanel', 'shortcutPanel']) assert.ok(terminal.includes(name));
@@ -139,14 +139,14 @@ test('pinning uses complete geometry and surface transitions without a flash ani
 test('all shipped pages load pin styling without demo artifact', () => {
     for (const file of ['public/terminal.html', 'public/telnet-terminal.html', 'public/rdp.html', 'public/novnc.html', 'public/app.html']) {
         const html = read(file);
-        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin6/);
+        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin7/);
         assert.doesNotMatch(html, /panel-pin-demo/);
     }
     assert.equal(fs.existsSync(path.join(root, 'public/panel-pin-demo.html')), false);
 });
 
 test('service worker rotates and precaches both panel-pin assets', () => {
-    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin6/);
-    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin6/);
-    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin6/);
+    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin7/);
+    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin7/);
+    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin7/);
 });
