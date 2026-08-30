@@ -1,8 +1,12 @@
 package one.zephyr.mobile.network
 
+import java.io.ByteArrayOutputStream
+import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.util.Base64
 import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import okhttp3.CertificatePinner
@@ -10,27 +14,22 @@ import okhttp3.OkHttpClient
 import one.zephyr.mobile.model.TlsPolicy
 
 /**
- * TLS trust configuration.
+ * TLS trust configuration for OkHttp (bind / mobile-v1) and the PEM bundle the
+ * embedded Go Link process loads via SSL_CERT_FILE.
  *
- * There is deliberately no "ignore certificate errors" branch anywhere in this file. DEVELOPMENT.md
- * 840 makes TLS the floor, and a self-signed deployment is supported by pinning an explicit SPKI
- * hash instead of disabling validation. A trust-all manager would also silently defeat the device
- * envelope, because an attacker who can terminate TLS can serve their own bind response.
+ * Default remains system CA trust. [TlsPolicy.InsecureTrust] is an explicit
+ * bind-time switch for this host only; hostname still has to match.
  */
 object TlsConfigurator {
 
     fun apply(builder: OkHttpClient.Builder, policy: TlsPolicy, host: String): OkHttpClient.Builder =
         when (policy) {
-            // System trust store, hostname verification on, no pinning: the correct default for a
-            // publicly-issued certificate.
             TlsPolicy.SystemTrust -> builder
-
+            TlsPolicy.InsecureTrust -> applyInsecure(builder, host)
             is TlsPolicy.PinnedSpki -> {
                 val pinner = CertificatePinner.Builder()
                     .apply {
                         for (pin in policy.sha256Pins) {
-                            // OkHttp expects the "sha256/BASE64" form; accept either spelling from
-                            // the pairing screen so a pasted fingerprint works.
                             add(host, if (pin.startsWith("sha256/")) pin else "sha256/" + pin)
                         }
                     }
@@ -38,6 +37,22 @@ object TlsConfigurator {
                 builder.certificatePinner(pinner)
             }
         }
+
+    private fun applyInsecure(builder: OkHttpClient.Builder, host: String): OkHttpClient.Builder {
+        val expected = host.lowercase()
+        val trustAll = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+                if (chain.isEmpty()) throw CertificateException("empty certificate chain")
+            }
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }
+        val ssl = SSLContext.getInstance("TLS")
+        ssl.init(null, arrayOf<TrustManager>(trustAll), SecureRandom())
+        return builder
+            .sslSocketFactory(ssl.socketFactory, trustAll)
+            .hostnameVerifier { hostname, _ -> hostname.equals(expected, ignoreCase = true) }
+    }
 
     /**
      * Strict system trust manager, used to keep hostname and chain validation while pinning.
@@ -71,5 +86,34 @@ object TlsConfigurator {
         if (chain.none { pins.contains(spkiPin(it)) }) {
             throw CertificateException("no certificate in the chain matches the pinned SPKI set")
         }
+    }
+
+    /** PEM bundle of the Android system + user CA store, for Go's SSL_CERT_FILE. */
+    fun systemCaBundlePem(): ByteArray {
+        val certs = linkedMapOf<String, X509Certificate>()
+        runCatching {
+            val store = java.security.KeyStore.getInstance("AndroidCAStore")
+            store.load(null)
+            val aliases = store.aliases()
+            while (aliases.hasMoreElements()) {
+                val cert = store.getCertificate(aliases.nextElement()) as? X509Certificate ?: continue
+                certs[spkiPin(cert)] = cert
+            }
+        }
+        if (certs.isEmpty()) {
+            for (cert in systemTrustManager().acceptedIssuers) {
+                certs[spkiPin(cert)] = cert
+            }
+        }
+        check(certs.isNotEmpty()) { "Android system CA store is empty" }
+        val encoder = Base64.getMimeEncoder(64, byteArrayOf('\n'.code.toByte()))
+        val out = ByteArrayOutputStream()
+        for (cert in certs.values) {
+            out.write("-----BEGIN CERTIFICATE-----\n".toByteArray())
+            out.write(encoder.encode(cert.encoded))
+            out.write('\n'.code)
+            out.write("-----END CERTIFICATE-----\n".toByteArray())
+        }
+        return out.toByteArray()
     }
 }

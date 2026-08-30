@@ -45,6 +45,7 @@ class BindingRepository(
                 tlsPolicy = when (profile.tlsPolicy) {
                     is TlsPolicy.SystemTrust -> "system"
                     is TlsPolicy.PinnedSpki -> "pinned"
+                    is TlsPolicy.InsecureTrust -> "insecure"
                 },
                 pinnedSpkiJson = one.zephyr.mobile.data.db.Converters.stringListToText(
                     (profile.tlsPolicy as? TlsPolicy.PinnedSpki)?.sha256Pins ?: emptyList(),
@@ -122,10 +123,10 @@ class BindingRepository(
         id = row.id,
         baseUrl = row.baseUrl,
         displayName = row.displayName,
-        tlsPolicy = if (row.tlsPolicy == "pinned") {
-            TlsPolicy.PinnedSpki(one.zephyr.mobile.data.db.Converters.textToStringList(row.pinnedSpkiJson))
-        } else {
-            TlsPolicy.SystemTrust
+        tlsPolicy = when (row.tlsPolicy) {
+            "pinned" -> TlsPolicy.PinnedSpki(one.zephyr.mobile.data.db.Converters.textToStringList(row.pinnedSpkiJson))
+            "insecure" -> TlsPolicy.InsecureTrust
+            else -> TlsPolicy.SystemTrust
         },
         createdAt = row.createdAt,
         lastUsedAt = row.lastUsedAt,

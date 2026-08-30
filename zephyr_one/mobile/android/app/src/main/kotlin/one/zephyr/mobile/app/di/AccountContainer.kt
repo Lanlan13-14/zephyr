@@ -459,6 +459,7 @@ class AccountContainer(
      */
     private val linkSpkiPins: List<String> =
         (endpoint.tlsPolicy as? TlsPolicy.PinnedSpki)?.sha256Pins ?: emptyList()
+    private val linkInsecure: Boolean = endpoint.tlsPolicy is TlsPolicy.InsecureTrust
 
     private val linkChannel = object : LinkChannel {
         private val sessionMutex = Mutex()
@@ -471,13 +472,13 @@ class AccountContainer(
             while (true) {
                 val sess = sessionMutex.withLock {
                     session ?: appContainer.embeddedLink.dial(
-                        endpoint.baseUrl, binding.deviceId, linkSpkiPins,
+                        endpoint.baseUrl, binding.deviceId, linkSpkiPins, linkInsecure,
                     ).also { session = it }
                 }
                 try {
                     return appContainer.embeddedLink.push(
                         endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP,
-                        body = body, spkiPins = linkSpkiPins,
+                        body = body, spkiPins = linkSpkiPins, insecure = linkInsecure,
                     ).ack
                 } catch (e: one.zephyr.mobile.app.EmbeddedLinkApi.LinkRequestException) {
                     /* A server restart forgets only the ephemeral session. The operation is safe to

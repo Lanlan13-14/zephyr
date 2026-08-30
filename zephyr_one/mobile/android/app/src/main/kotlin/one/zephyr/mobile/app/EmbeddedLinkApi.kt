@@ -42,12 +42,18 @@ internal class EmbeddedLinkApi(
     /** The main end mounts the Link proxy at /api/link/v2; the Go Dial/push append the leaf. */
     private fun linkRoot(serverUrl: String): String = serverUrl.trimEnd('/') + "/api/link/v2"
 
-    suspend fun dial(serverUrl: String, deviceId: String, spkiPins: List<String>): LinkSession = withContext(Dispatchers.IO) {
+    suspend fun dial(
+        serverUrl: String,
+        deviceId: String,
+        spkiPins: List<String>,
+        insecure: Boolean = false,
+    ): LinkSession = withContext(Dispatchers.IO) {
         val base = process.ensureStarted().baseUrl
         val body = JsonObject(mapOf(
             "serverUrl" to JsonPrimitive(linkRoot(serverUrl)),
             "deviceId" to JsonPrimitive(deviceId),
             "spkiPins" to kotlinx.serialization.json.JsonArray(spkiPins.map(::JsonPrimitive)),
+            "insecure" to JsonPrimitive(insecure),
         ))
         val response = post("$base/link/dial", body)
         LinkSession(
@@ -79,6 +85,7 @@ internal class EmbeddedLinkApi(
         body: JsonElement,
         secret: Boolean = false,
         spkiPins: List<String> = emptyList(),
+        insecure: Boolean = false,
     ): LinkPushResult = withContext(Dispatchers.IO) {
         val base = process.ensureStarted().baseUrl
         val payload = buildJsonObject {
@@ -88,6 +95,7 @@ internal class EmbeddedLinkApi(
             put("body", body)
             put("secret", secret)
             put("spkiPins", kotlinx.serialization.json.JsonArray(spkiPins.map(::JsonPrimitive)))
+            put("insecure", insecure)
         }
         val response = post("$base/link/push", payload)
         val ackElement = response["ack"]
