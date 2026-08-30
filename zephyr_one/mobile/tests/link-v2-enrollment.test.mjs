@@ -31,6 +31,42 @@ const registry = JSON.parse(fs.readFileSync(
   'utf8',
 ));
 
+function assertAndroidSyncChange(change) {
+  const spec = registry.entities.find((entry) => entry.type === change.entityType);
+  assert.ok(spec, `unknown entity type ${change.entityType}`);
+  assert.ok(Number.isSafeInteger(change.changeSeq) && change.changeSeq >= 0,
+    `${change.entityType} has invalid changeSeq ${change.changeSeq}`);
+  assert.ok(typeof change.entityId === 'string' && change.entityId.length > 0,
+    `${change.entityType} has a blank entityId`);
+  assert.ok(change.action === 'upsert' || change.action === 'delete',
+    `${change.entityType} has invalid action ${change.action}`);
+  assert.ok(Number.isSafeInteger(change.revision) && change.revision > 0,
+    `${change.entityType} has invalid revision ${change.revision}`);
+  assert.ok(Number.isSafeInteger(change.changedAt) && change.changedAt > 0,
+    `${change.entityType} has invalid changedAt ${change.changedAt}`);
+  const editable = new Set(spec.editableFields || []);
+  const forbidden = new Set([
+    ...(spec.secretFields || []), ...(spec.serverAuthorityFields || []),
+    ...(spec.opaquePreserveFields || []), ...(spec.deviceLocalFields || []),
+  ]);
+  const accepted = new Set();
+  for (const field of change.fieldMask || []) {
+    const root = String(field).split(/[.[]/, 1)[0];
+    assert.ok(!forbidden.has(root) && !forbidden.has(field),
+      `${change.entityType} fieldMask contains forbidden ${field}`);
+    assert.ok(editable.has(root) || editable.has(field),
+      `${change.entityType} fieldMask contains unknown ${field}`);
+    assert.ok(!accepted.has(field), `${change.entityType} fieldMask duplicates ${field}`);
+    accepted.add(field);
+  }
+  const payload = change.payload || {};
+  for (const secret of spec.secretFields || []) {
+    assert.ok(!Object.prototype.hasOwnProperty.call(payload, secret),
+      `${change.entityType} payload exposes secret ${secret}`);
+  }
+  if (change.action === 'delete') assert.deepEqual(payload, {});
+}
+
 function buildCurrentGoLinkServer(t) {
   const output = path.join(os.tmpdir(), `zephyr-link-server-${process.pid}-${Date.now()}`);
   const go = fs.existsSync('/usr/local/go126/bin/go') ? '/usr/local/go126/bin/go' : 'go';
@@ -475,6 +511,7 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
     assert.ok(page.complete || pageToken);
   } while (pageToken);
   assert.ok(Number.isSafeInteger(snapshot.snapshotCursor));
+  bootstrapEntities.forEach(assertAndroidSyncChange);
   assert.ok(bootstrapEntities.some((change) =>
     change.entityType === 'note' && change.entityId === serverNoteId && change.payload.title === 'server-to-device'
   ));
@@ -560,6 +597,7 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
   assert.equal(changes.ok, true);
   assert.equal(changes.fromCursor, snapshot.snapshotCursor);
   assert.ok(changes.nextCursor > snapshot.snapshotCursor);
+  changes.changes.forEach(assertAndroidSyncChange);
   assert.ok(changes.changes.some((change) =>
     change.entityType === 'note' && change.entityId === changedNoteId && change.payload.title === 'server-after-bootstrap'
   ));
