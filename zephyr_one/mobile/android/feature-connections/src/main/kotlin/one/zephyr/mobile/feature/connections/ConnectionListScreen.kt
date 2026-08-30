@@ -2,7 +2,6 @@ package one.zephyr.mobile.feature.connections
 
 import one.zephyr.mobile.ui.icon.ZephyrIcons
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -407,7 +406,6 @@ private fun ConnectionCard(
             ) { onAction(ConnectionAction.USE) },
         shape = RoundedCornerShape(14.dp),
         color = palette.surfaces.content,
-        border = BorderStroke(1.dp, palette.surfaces.outline.copy(alpha = 0.55f)),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -672,7 +670,6 @@ private fun StatCard(value: String, label: String, modifier: Modifier, valueColo
     Surface(
         modifier = modifier,
         color = ZephyrTheme.palette.surfaces.content,
-        border = BorderStroke(1.dp, ZephyrTheme.palette.surfaces.outline.copy(alpha = 0.55f)),
         shape = RoundedCornerShape(14.dp),
     ) {
         Column(Modifier.padding(14.dp)) {

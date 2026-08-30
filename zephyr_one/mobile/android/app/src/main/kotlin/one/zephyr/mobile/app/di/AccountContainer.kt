@@ -167,8 +167,10 @@ class AccountContainer(
     private val wakeJob = SupervisorJob(accountJob)
     private val wakeScope = CoroutineScope(wakeJob + Dispatchers.Default)
     private val started = AtomicBoolean(false)
+    private val producersStarted = AtomicBoolean(false)
     private val preparedDiscarded = AtomicBoolean(false)
     private val networkEnabled = AtomicBoolean(false)
+    private val holdAlive = AtomicBoolean(false)
 
     /**
      * Scoped to the bound triple, not to the install.
@@ -638,6 +640,22 @@ class AccountContainer(
         if (localMode) return
         syncState.ensure(bindingKey)
         networkEnabled.set(true)
+    }
+
+    /**
+     * Opens the sync collectors and the wake stream.
+     *
+     * Kept off the restore critical path so the first frame can paint before sockets and the
+     * embedded Link process come up. Bind completion still calls this before bootstrap so the
+     * first owned-sync round has producers.
+     */
+    override fun startNetworkProducers() {
+        if (localMode || !started.get() || !networkEnabled.get()) return
+        if (!producersStarted.compareAndSet(false, true)) {
+            wakeCoordinator.onHoldAliveChanged(holdAlive.get())
+            wakeCoordinator.onForegroundChanged(appContainer.isProcessForeground())
+            return
+        }
         syncEngine.start(syncScope)
         syncScope.launch {
             syncEngine.lastRoundResult.collect { round ->
@@ -647,6 +665,7 @@ class AccountContainer(
             }
         }
         wakeCoordinator.start(wakeScope)
+        wakeCoordinator.onHoldAliveChanged(holdAlive.get())
         wakeCoordinator.onForegroundChanged(appContainer.isProcessForeground())
         wakeScope.launch {
             network.collect { state ->
@@ -654,6 +673,11 @@ class AccountContainer(
                 if (state.connected) runCatching { sharedResourceCoordinator.refresh() }
             }
         }
+    }
+
+    internal fun setHoldAlive(hold: Boolean) {
+        holdAlive.set(hold)
+        if (producersStarted.get()) wakeCoordinator.onHoldAliveChanged(hold)
     }
 
     /** Runs the first bootstrap inside this account's cancellable lifetime. */
@@ -702,6 +726,7 @@ class AccountContainer(
      */
     override suspend fun stopAndJoin() {
         networkEnabled.set(false)
+        holdAlive.set(false)
         wakeCoordinator.stopAndJoin()
         wakeJob.cancelAndJoin()
         syncJob.cancelAndJoin()

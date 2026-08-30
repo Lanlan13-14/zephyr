@@ -7,6 +7,11 @@
     <string name="file_bridge_notification_title">File bridge is online</string>
     <string name="file_bridge_notification_text">%1$s · transferred %2$s</string>
     <string name="file_bridge_stop">Stop</string>
+    <string name="keep_alive_channel_name">Background connection</string>
+    <string name="keep_alive_channel_description">Shown while the sync and wake channel is kept online. Stop it any time.</string>
+    <string name="keep_alive_notification_title">Keeping connection alive</string>
+    <string name="keep_alive_notification_text">The sync and wake channel stays online. This uses more battery.</string>
+    <string name="keep_alive_stop">Stop</string>
     <string name="unlock_title">Unlock Zephyr One</string>
     <string name="unlock_subtitle">Continue with the device credential</string>
     <string name="unlock_locked_message">Locked</string>

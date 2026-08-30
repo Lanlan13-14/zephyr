@@ -73,6 +73,7 @@ class BindingCoordinatorTest {
         assertTrue(result.bootstrapSucceeded)
         assertEquals(BindingState.IDLE, storage.active?.binding?.state)
         assertEquals(1, graphs.single().bootstrapCalls)
+        assertEquals(1, graphs.single().producerCalls)
         assertEquals("access-1", graphs.single().storedAccess)
         assertEquals("refresh-1", graphs.single().storedRefresh)
         assertTrue(gateway.authenticationCleared)
@@ -138,11 +139,12 @@ class BindingCoordinatorTest {
                 "storage.save",
                 "graph.activate",
                 "host.attach",
+                "graph.producers",
                 "graph.bootstrap",
                 "graph.database.ready",
                 "storage.ready",
             ),
-            events.takeLast(6),
+            events.takeLast(7),
         )
     }
 
@@ -342,10 +344,12 @@ class BindingCoordinatorTest {
         val graph = graphs.single()
         assertEquals(0, graph.bootstrapCalls)
         assertEquals(0, graph.foregroundCalls)
+        assertEquals(0, graph.producerCalls)
 
         coordinator.bootstrapRestoredBinding()
         assertEquals(0, graph.bootstrapCalls)
         assertEquals(1, graph.foregroundCalls)
+        assertEquals(1, graph.producerCalls)
     }
 
     @Test
@@ -365,6 +369,7 @@ class BindingCoordinatorTest {
         coordinator.bootstrapRestoredBinding()
         assertEquals(1, graphs.single().bootstrapCalls)
         assertEquals(0, graphs.single().foregroundCalls)
+        assertEquals(1, graphs.single().producerCalls)
     }
 
     @Test
@@ -390,11 +395,12 @@ class BindingCoordinatorTest {
             listOf(
                 "graph.activate",
                 "host.attach",
+                "graph.producers",
                 "graph.bootstrap",
                 "graph.database.ready",
                 "storage.ready",
             ),
-            events.takeLast(5),
+            events.takeLast(6),
         )
     }
 
@@ -437,8 +443,8 @@ class BindingCoordinatorTest {
         assertEquals(1, graphs.single().bootstrapCalls)
         assertEquals(1, graphs.single().databaseReadyCalls)
         assertEquals(
-            listOf("graph.bootstrap", "graph.database.ready", "storage.ready"),
-            events.takeLast(3),
+            listOf("graph.producers", "graph.bootstrap", "graph.database.ready", "storage.ready"),
+            events.takeLast(4),
         )
     }
 
@@ -1855,6 +1861,7 @@ private class FakeGraph(
     var wiped = false
     var preparedDiscarded = false
     var activationCalls = 0
+    var producerCalls = 0
     var stopFailures = 0
     var wipeFailures = 0
     var startFailures = 0
@@ -1874,6 +1881,11 @@ private class FakeGraph(
             startFailures -= 1
             error("simulated startup recovery failure")
         }
+    }
+
+    override fun startNetworkProducers() {
+        events += "graph.producers"
+        producerCalls += 1
     }
 
     override fun discardPreparedState() {

@@ -100,8 +100,12 @@ object ZephyrTextStyles {
     val islandLabel: TextStyle = TextStyle(
         fontSize = 10.sp,
         fontWeight = FontWeight.SemiBold,
+        lineHeight = 13.sp,
         platformStyle = noPad,
-        lineHeightStyle = line,
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Center,
+            trim = LineHeightStyle.Trim.Both,
+        ),
     )
 
     val stat: TextStyle = TextStyle(

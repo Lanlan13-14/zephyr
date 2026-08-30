@@ -52,11 +52,13 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        RdpAndroidRuntime.installHome(filesDir)
         container = AppContainer(this)
         WorkManager.initialize(this, workManagerConfiguration)
         ProcessLifecycleOwner.get().lifecycle.addObserver(LockLifecycleObserver())
         applicationScope.launch {
+            // RDP home is a process env write. It is not needed to paint the dashboard, so it
+            // stays off the first-frame path and only has to land before an RDP session opens.
+            runCatching { RdpAndroidRuntime.installHome(filesDir) }
             try {
                 // Pending password/TOTP state is process-local and cannot resume after death. Clear
                 // its durable crumbs off Main together with the rest of startup recovery.
@@ -96,14 +98,18 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
                 if (workspace != null && workspace.isLocalMode) {
                     runCatching { workspace.activate() }
                 }
-                if (!container.isLocalMode) {
-                    launch {
-                        runCatching { container.bindingCoordinator.bootstrapRestoredBinding() }
-                    }
-                }
             } finally {
                 // No recovery failure may leave MainActivity on its same-colour placeholder forever.
                 readyState.value = true
+            }
+            // Sockets, wake, Link and the first sync round stay off the ready gate. The dashboard
+            // can paint from the restored mirror; producers catch up after the first frame.
+            if (container.shouldHoldAlive()) {
+                one.zephyr.mobile.app.sync.ConnectionKeepAliveService.start(this@ZephyrOneApplication)
+            }
+            if (!container.isLocalMode) {
+                runCatching { container.account?.startNetworkProducers() }
+                runCatching { container.bindingCoordinator.bootstrapRestoredBinding() }
             }
         }
     }

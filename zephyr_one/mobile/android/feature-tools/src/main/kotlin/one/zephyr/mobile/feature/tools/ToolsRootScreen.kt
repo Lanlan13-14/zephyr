@@ -2,7 +2,6 @@ package one.zephyr.mobile.feature.tools
 
 import one.zephyr.mobile.ui.icon.ZephyrIcons
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -178,7 +177,6 @@ private fun ToolsGroup(content: @Composable () -> Unit) {
     Surface(
         color = ZephyrTheme.palette.surfaces.content,
         shape = RoundedCornerShape(ZephyrRadius.md),
-        border = BorderStroke(1.dp, ZephyrTheme.palette.surfaces.outline.copy(alpha = .35f)),
     ) { Column { content() } }
 }
 

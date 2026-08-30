@@ -9,6 +9,12 @@
     <string name="file_bridge_notification_text">%1$s · 已传输 %2$s</string>
     <string name="file_bridge_stop">停止</string>
 
+    <string name="keep_alive_channel_name">后台连接</string>
+    <string name="keep_alive_channel_description">保持同步与唤醒通道在线时显示，可随时停止。</string>
+    <string name="keep_alive_notification_title">后台保持连接中</string>
+    <string name="keep_alive_notification_text">同步与唤醒通道保持在线，会更耗电。</string>
+    <string name="keep_alive_stop">停止</string>
+
     <string name="unlock_title">解锁 Zephyr One</string>
     <string name="unlock_subtitle">使用设备凭据继续</string>
     <string name="unlock_locked_message">已锁定</string>

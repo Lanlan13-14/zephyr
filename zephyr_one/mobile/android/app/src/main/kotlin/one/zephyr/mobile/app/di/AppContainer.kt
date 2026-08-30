@@ -39,6 +39,7 @@ import one.zephyr.mobile.protocol.vnc.SocketVncEngine
 import one.zephyr.mobile.protocol.vnc.VncEngine
 import one.zephyr.mobile.app.session.WorkspaceStatePersistence
 import one.zephyr.mobile.app.security.BiometricDeviceAuthenticator
+import one.zephyr.mobile.app.sync.ConnectionKeepAliveService
 import one.zephyr.mobile.data.db.DatabaseFactory
 import one.zephyr.mobile.data.db.AccountDatabaseManager
 import one.zephyr.mobile.data.db.AccountDatabaseScope
@@ -218,8 +219,10 @@ class AppContainer(private val context: Context) {
         }
 
     private val accountState = MutableStateFlow<AccountContainer?>(null)
+    private val keepAliveState = MutableStateFlow(isKeepAliveEnabled())
 
     val accounts: StateFlow<AccountContainer?> = accountState.asStateFlow()
+    val keepAlive: StateFlow<Boolean> = keepAliveState.asStateFlow()
 
     val account: AccountContainer?
         get() = accountGraph as? AccountContainer
@@ -235,6 +238,7 @@ class AppContainer(private val context: Context) {
                     accountGraph = graph
                     (graph as? AccountContainer)?.let { account ->
                         accountState.value = account
+                        applyKeepAliveToCurrentAccount()
                         account.onProcessForegroundChanged(processForeground.get())
                     }
                 }
@@ -243,6 +247,7 @@ class AppContainer(private val context: Context) {
                     if (accountGraph === expected) {
                         accountGraph = null
                         accountState.value = null
+                        ConnectionKeepAliveService.stop(context)
                     }
                 }
 
@@ -254,6 +259,7 @@ class AppContainer(private val context: Context) {
                     // One StateFlow write: the UI never observes a null account between local and
                     // bound graphs, so its bind coroutine cannot cancel itself during commit.
                     accountState.value = account
+                    applyKeepAliveToCurrentAccount()
                     account.onProcessForegroundChanged(processForeground.get())
                 }
             },
@@ -357,6 +363,7 @@ class AppContainer(private val context: Context) {
         }
         accountGraph = container
         accountState.value = container
+        applyKeepAliveToCurrentAccount()
         container.onProcessForegroundChanged(processForeground.get())
         return container
     }
@@ -568,11 +575,42 @@ class AppContainer(private val context: Context) {
     fun onProcessForeground() {
         processForeground.set(true)
         account?.onProcessForegroundChanged(true)
+        if (shouldHoldAlive()) ConnectionKeepAliveService.start(context)
     }
 
     fun onProcessBackground() {
         processForeground.set(false)
         account?.onProcessForegroundChanged(false)
+    }
+
+    fun isKeepAliveEnabled(): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_KEEP_ALIVE, false)
+
+    fun shouldHoldAlive(): Boolean {
+        val current = account
+        return current != null && !current.isLocalMode && isKeepAliveEnabled()
+    }
+
+    fun setKeepAliveEnabled(enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_KEEP_ALIVE, enabled)
+            .apply()
+        keepAliveState.value = enabled
+        applyKeepAliveToCurrentAccount()
+    }
+
+    fun applyKeepAliveToCurrentAccount() {
+        applyKeepAliveTo(account)
+        if (shouldHoldAlive()) {
+            ConnectionKeepAliveService.start(context)
+        } else {
+            ConnectionKeepAliveService.stop(context)
+        }
+    }
+
+    private fun applyKeepAliveTo(account: AccountContainer?) {
+        account?.setHoldAlive(!account.isLocalMode && isKeepAliveEnabled())
     }
 
     /** Entry point for an optional payload-free push receiver. Cursor values are never trusted. */
@@ -585,6 +623,7 @@ class AppContainer(private val context: Context) {
         const val KEY_INSTALL_ID = "install-id"
         const val KEY_LOCAL_WORKSPACE_GENERATION = "local-workspace-generation"
         const val KEY_PAD_TERM_SIDE = "pad-term-side"
+        const val KEY_KEEP_ALIVE = "keep-alive"
         const val NO_ACCOUNT_TEARDOWN_OWNER = "no-account-teardown"
 
         /** Reserved scope segment: never a real server or user id, which are opaque server strings. */
