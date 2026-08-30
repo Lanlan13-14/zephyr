@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -432,10 +433,13 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
     await server.cleanup();
   });
 
+  assert.match(server.log, /owned-sync bridge listening at http:\/\/127\.0\.0\.1:\d+\/internal\/link\/sync/);
+  assert.doesNotMatch(server.log, new RegExp(`owned-sync bridge listening at http://127\\.0\\.0\\.1:${server.port}/`));
+
   const signing = generateSigningKey();
   const keys = deviceKeys(signing.jwk, 31);
   const deviceId = 'device-android-loop-0001';
-  const create = await fetch(server.url('/api/link/v2/enrollments'), {
+  const create = await server.fetch('/api/link/v2/enrollments', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -450,7 +454,7 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
   const created = await create.json();
 
   const login = await server.bootstrapAdmin();
-  const approve = await fetch(server.url('/link/approve'), {
+  const approve = await server.fetch('/link/approve', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: login.cookie },
     body: new URLSearchParams({
@@ -469,7 +473,7 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
     secretHash: sha256(created.enrollmentSecret),
     serverId: created.serverId,
   });
-  const consume = await fetch(server.url(`/api/link/v2/enrollments/${created.bindId}/consume`), {
+  const consume = await server.fetch(`/api/link/v2/enrollments/${created.bindId}/consume`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -493,6 +497,10 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
     access: binding.accessCredential,
     deviceId,
     privateKey: signing.privateKey,
+    request: (url, init) => {
+      const parsed = new URL(url);
+      return server.fetch(parsed.pathname + parsed.search, init);
+    },
   });
   let pageToken = null;
   let snapshot = null;
@@ -521,7 +529,7 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
   assert.ok(devices.body.clients.some((client) => client.clientId === deviceId));
 
   const init = zsl.handshakeInitiator();
-  const handshake = await fetch(server.url('/api/link/v2/handshake'), {
+  const handshake = await server.fetch('/api/link/v2/handshake', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -538,7 +546,7 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
   });
   async function syncOp(body) {
     const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
-    const push = await fetch(server.url('/api/link/v2/push'), {
+    const push = await server.fetch('/api/link/v2/push', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -563,7 +571,7 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
   }
   async function rejectedSyncOp(body) {
     const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
-    const push = await fetch(server.url('/api/link/v2/push'), {
+    const push = await server.fetch('/api/link/v2/push', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -696,13 +704,13 @@ test('real Link two devices converge through canonical change log', async (t) =>
     const signing = generateSigningKey();
     const keys = deviceKeys(signing.jwk, suffix);
     const deviceId = `device-link-multi-${suffix.toString().padStart(4, '0')}`;
-    const create = await fetch(server.url('/api/link/v2/enrollments'), {
+    const create = await server.fetch('/api/link/v2/enrollments', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ deviceId, deviceName: name, platform: 'android', appVersion: 'e2e', keys }),
     });
     assert.equal(create.status, 201, await create.clone().text());
     const created = await create.json();
-    const approve = await fetch(server.url('/link/approve'), {
+    const approve = await server.fetch('/link/approve', {
       method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: login.cookie },
       body: new URLSearchParams({ bindId: created.bindId, userCode: created.userCode, decision: 'approve' }),
     });
@@ -711,7 +719,7 @@ test('real Link two devices converge through canonical change log', async (t) =>
       bindId: created.bindId, deviceId, userCode: created.userCode, sas: created.sas,
       secretHash: sha256(created.enrollmentSecret), serverId: created.serverId,
     });
-    const consume = await fetch(server.url(`/api/link/v2/enrollments/${created.bindId}/consume`), {
+    const consume = await server.fetch(`/api/link/v2/enrollments/${created.bindId}/consume`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ userCode: created.userCode, enrollmentSecret: created.enrollmentSecret,
         proof: signProof(signing.privateKey, payload), keys, syncIntervalSec: 300 }),
@@ -719,7 +727,7 @@ test('real Link two devices converge through canonical change log', async (t) =>
     assert.equal(consume.status, 200, await consume.clone().text());
     const binding = await consume.json();
     const init = zsl.handshakeInitiator();
-    const handshake = await fetch(server.url('/api/link/v2/handshake'), {
+    const handshake = await server.fetch('/api/link/v2/handshake', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ deviceId, x25519Public: Buffer.from(init.x25519Public).toString('base64url'),
         mlkemPublic: Buffer.from(init.mlkemPublic).toString('base64url') }),
@@ -730,7 +738,7 @@ test('real Link two devices converge through canonical change log', async (t) =>
       mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url') });
     const syncOp = async (body) => {
       const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
-      const push = await fetch(server.url('/api/link/v2/push'), { method: 'POST', headers: { 'content-type': 'application/json' },
+      const push = await server.fetch('/api/link/v2/push', { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ sessionId: hello.sessionId, seq: sealed.seq,
           iv: Buffer.from(sealed.iv).toString('base64url'), ct: Buffer.from(sealed.ct).toString('base64url'),
           tag: Buffer.from(sealed.tag).toString('base64url') }) });
@@ -760,4 +768,128 @@ test('real Link two devices converge through canonical change log', async (t) =>
     change.payload.title === 'from device one'));
   const ack = await two.syncOp({ op: 'ack', cursor: pulled.nextCursor, appliedOpIds: [] });
   assert.equal(ack.ok, true);
+});
+
+async function reservePort() {
+  const reservation = net.createServer();
+  await new Promise((resolve, reject) => {
+    reservation.once('error', reject);
+    reservation.listen({ host: '127.0.0.1', port: 0, exclusive: true }, resolve);
+  });
+  const port = reservation.address().port;
+  await new Promise((resolve) => reservation.close(resolve));
+  return port;
+}
+
+async function enrollLinkDevice(server, login, { deviceId, deviceName, fill }) {
+  const signing = generateSigningKey();
+  const keys = deviceKeys(signing.jwk, fill);
+  const create = await server.fetch('/api/link/v2/enrollments', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceId, deviceName, platform: 'android', appVersion: 'e2e', keys }),
+  });
+  assert.equal(create.status, 201, await create.clone().text());
+  const created = await create.json();
+  const approve = await server.fetch('/link/approve', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: login.cookie },
+    body: new URLSearchParams({ bindId: created.bindId, userCode: created.userCode, decision: 'approve' }),
+  });
+  assert.equal(approve.status, 200, await approve.clone().text());
+  const payload = proofPayload({
+    bindId: created.bindId, deviceId, userCode: created.userCode, sas: created.sas,
+    secretHash: sha256(created.enrollmentSecret), serverId: created.serverId,
+  });
+  const consume = await server.fetch(`/api/link/v2/enrollments/${created.bindId}/consume`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      userCode: created.userCode,
+      enrollmentSecret: created.enrollmentSecret,
+      proof: signProof(signing.privateKey, payload),
+      keys,
+      syncIntervalSec: 300,
+    }),
+  });
+  assert.equal(consume.status, 200, await consume.clone().text());
+  const binding = await consume.json();
+  const init = zsl.handshakeInitiator();
+  const handshake = await server.fetch('/api/link/v2/handshake', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      deviceId,
+      x25519Public: Buffer.from(init.x25519Public).toString('base64url'),
+      mlkemPublic: Buffer.from(init.mlkemPublic).toString('base64url'),
+    }),
+  });
+  assert.equal(handshake.status, 200, await handshake.clone().text());
+  const hello = await handshake.json();
+  assert.ok(hello.mlkemCiphertext, 'ZSL/2 responder must return an ML-KEM-768 ciphertext');
+  const session = zsl.handshakeFinish(init, {
+    x25519Public: Buffer.from(hello.x25519Public, 'base64url'),
+    mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url'),
+  });
+  const syncOp = async (body) => {
+    const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
+    const push = await server.fetch('/api/link/v2/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: hello.sessionId,
+        seq: sealed.seq,
+        iv: Buffer.from(sealed.iv).toString('base64url'),
+        ct: Buffer.from(sealed.ct).toString('base64url'),
+        tag: Buffer.from(sealed.tag).toString('base64url'),
+      }),
+    });
+    assert.equal(push.status, 200, await push.clone().text());
+    const reply = await push.json();
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    const unpacked = codec.unpack(session.open({
+      seq: reply.seq,
+      iv: Buffer.from(reply.iv, 'base64url'),
+      ct: Buffer.from(reply.ct, 'base64url'),
+      tag: Buffer.from(reply.tag, 'base64url'),
+    }));
+    assert.equal(unpacked.kind, codec.KIND.SYNC_ACK);
+    return unpacked.body;
+  };
+  return { deviceId, binding, syncOp };
+}
+
+test('HTTPS-only deploy with a custom public port still delivers Link bootstrap', async (t) => {
+  process.env.ZEPHYR_ONE_USE_BUILTIN_SQLITE = '1';
+  process.env.ZEPHYR_LINK_GO_BIN = buildCurrentGoLinkServer(t);
+  const { TestServer } = await import(pathToFileURL(path.join(repoRoot, 'tests', 'test-server.mjs')).href);
+  const internalPort = await reservePort();
+  const server = await new TestServer({ httpsOnly: true, linkInternalPort: internalPort }).start();
+  t.after(async () => { try { stopLinkV2Go(); } catch {} await server.cleanup(); });
+  assert.match(server.url('/healthz'), /^https:\/\//);
+  assert.notEqual(Number(server.port), Number(server.httpsPort));
+  assert.notEqual(internalPort, Number(server.port));
+  assert.notEqual(internalPort, Number(server.httpsPort));
+  assert.match(server.log, new RegExp(`owned-sync bridge listening at http://127\\.0\\.0\\.1:${internalPort}/internal/link/sync`));
+  assert.doesNotMatch(server.log, new RegExp(`owned-sync bridge listening at http://127\\.0\\.0\\.1:${server.port}/`));
+
+  const login = await server.bootstrapAdmin();
+  const note = await server.api(login.cookie, 'POST', '/api/notes', {
+    title: 'https-only-bootstrap',
+    content: 'must arrive without public HTTP',
+  });
+  assert.equal(note.status, 200, JSON.stringify(note.body));
+  const noteId = note.body.note.noteId;
+  const { syncOp } = await enrollLinkDevice(server, login, {
+    deviceId: 'device-https-only-0001',
+    deviceName: 'Pixel HTTPS',
+    fill: 51,
+  });
+  const bootstrap = await syncOp({ op: 'bootstrap', pageSize: 100 });
+  assert.equal(bootstrap.ok, true, JSON.stringify(bootstrap));
+  assert.equal(bootstrap.complete, true, JSON.stringify(bootstrap));
+  bootstrap.entities.forEach(assertAndroidSyncChange);
+  assert.ok(bootstrap.entities.some((change) =>
+    change.entityType === 'note' && change.entityId === noteId && change.payload.title === 'https-only-bootstrap'
+  ), JSON.stringify(bootstrap.entities.map((change) => ({ type: change.entityType, id: change.entityId, title: change.payload?.title }))));
 });

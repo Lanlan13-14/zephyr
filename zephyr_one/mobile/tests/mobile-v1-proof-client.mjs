@@ -15,7 +15,7 @@ async function bodyBytes(body) {
  * Test-only HTTP client for the two-request proof protocol. Values are getters
  * because bind/refresh rotates credentials after the helper is constructed.
  */
-export function createProofClient({ base, access, deviceId, privateKey }) {
+export function createProofClient({ base, access, deviceId, privateKey, request = fetch } = {}) {
   return async function proofFetch(pathname, init = {}) {
     const origin = typeof base === 'function' ? base() : base;
     const credential = typeof access === 'function' ? access() : access;
@@ -24,7 +24,7 @@ export function createProofClient({ base, access, deviceId, privateKey }) {
     const method = String(init.method || 'GET').toUpperCase();
     const bytes = await bodyBytes(init.body);
     const digest = crypto.createHash('sha256').update(bytes).digest('base64');
-    const challengeResponse = await fetch(origin + '/api/mobile/v1/devices/proof-challenge', {
+    const challengeResponse = await request(origin + '/api/mobile/v1/devices/proof-challenge', {
       method: 'POST',
       headers: { authorization: 'Bearer ' + credential, 'content-type': 'application/json' },
       body: JSON.stringify({ method, path: pathname, bodySha256: digest }),
@@ -53,6 +53,6 @@ export function createProofClient({ base, access, deviceId, privateKey }) {
     headers.set('x-zephyr-device-proof', signature);
     headers.set('x-zephyr-proof-timestamp', String(challenge.timestamp));
     headers.set('x-zephyr-server-nonce', challenge.nonce);
-    return fetch(origin + pathname, { ...init, headers });
+    return request(origin + pathname, { ...init, headers });
   };
 }

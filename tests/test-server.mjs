@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import https from 'node:https';
 import net from 'node:net';
 import path from 'node:path';
 import { createSecureTestDataDir, removeSecureTestDataDir } from './helpers/secure-data-dir.mjs';
@@ -45,21 +46,71 @@ function isRetryableBindFailure(error) {
     return /listen E(?:ADDRINUSE|ACCES)\b/.test(String(error?.message || ''));
 }
 
+function httpsFetch(url, init = {}) {
+    const parsed = new URL(url);
+    const headers = { ...(init.headers || {}) };
+    const body = init.body == null ? null : (
+        typeof init.body === 'string' || Buffer.isBuffer(init.body)
+            ? init.body
+            : Buffer.from(String(init.body))
+    );
+    if (body && !headers['content-length'] && !headers['Content-Length']) {
+        headers['content-length'] = String(Buffer.byteLength(body));
+    }
+    return new Promise((resolve, reject) => {
+        const req = https.request({
+            hostname: parsed.hostname,
+            port: parsed.port,
+            path: parsed.pathname + parsed.search,
+            method: String(init.method || 'GET').toUpperCase(),
+            headers,
+            rejectUnauthorized: false,
+        }, (res) => {
+            const chunks = [];
+            res.on('data', (chunk) => chunks.push(chunk));
+            res.on('end', () => {
+                const buf = Buffer.concat(chunks);
+                const headerBag = new Headers();
+                for (const [name, value] of Object.entries(res.headers)) {
+                    if (value == null) continue;
+                    if (Array.isArray(value)) value.forEach((item) => headerBag.append(name, item));
+                    else headerBag.set(name, String(value));
+                }
+                resolve(new Response(buf, { status: res.statusCode, headers: headerBag }));
+            });
+        });
+        req.on('error', reject);
+        if (body) req.write(body);
+        req.end();
+    });
+}
+
 export class TestServer {
-    constructor() {
+    constructor({ httpsOnly = false, linkInternalPort = null } = {}) {
         this.dataFixture = createSecureTestDataDir('zephyr-test-');
         this.dir = this.dataFixture.dataDir;
         this.port = null;
+        this.httpsPort = null;
+        this.linkInternalPort = linkInternalPort;
         this.aiHostPort = null;
         this.proc = null;
         this.instanceId = null;
+        this.httpsOnly = httpsOnly;
+        this.log = '';
+        this.agent = null;
     }
 
     async start() {
         let lastBindError = null;
         for (let attempt = 1; attempt <= MAX_BIND_ATTEMPTS; attempt += 1) {
-            const reservation = await reserveLoopbackPorts(2);
-            [this.port, this.aiHostPort] = reservation.ports;
+            /* HTTPS-only still reserves a PORT so the env looks like Docker:
+             * HTTP_ENABLED=false, PORT assigned, nothing listening there. */
+            const reservation = await reserveLoopbackPorts(this.httpsOnly ? 3 : 2);
+            if (this.httpsOnly) {
+                [this.port, this.httpsPort, this.aiHostPort] = reservation.ports;
+            } else {
+                [this.port, this.aiHostPort] = reservation.ports;
+            }
             await reservation.release();
             try {
                 return await this.startOnce();
@@ -75,9 +126,10 @@ export class TestServer {
     async startOnce() {
         const env = {
             ...process.env,
-            HTTP_ENABLED: 'true',
-            HTTPS_ENABLED: 'false',
+            HTTP_ENABLED: this.httpsOnly ? 'false' : 'true',
+            HTTPS_ENABLED: this.httpsOnly ? 'true' : 'false',
             PORT: String(this.port),
+            HTTPS_PORT: String(this.httpsPort || 3443),
             ZEPHYR_BIND_HOST: '127.0.0.1',
             ZEPHYR_AI_HOST_LISTEN: `127.0.0.1:${this.aiHostPort}`,
             ZEPHYR_AI_PLATFORM_HOST_URL: `http://127.0.0.1:${this.aiHostPort}`,
@@ -86,10 +138,10 @@ export class TestServer {
             ENCRYPTION_KEY: 'integration-test-key',
             NODE_ENV: 'production',
         };
+        if (this.linkInternalPort != null) {
+            env.ZEPHYR_LINK_INTERNAL_PORT = String(this.linkInternalPort);
+        }
         this.proc = spawn(process.execPath, ['server.js'], { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
-        // Safety net: if the test runner is killed (SIGKILL, timeout, Ctrl-C)
-        // before `after` runs, the spawned server.js must not become an orphan
-        // holding the port. Register on the process and on common fatal signals.
         const procRef = this.proc;
         const killHard = () => { try { procRef.kill('SIGKILL'); } catch {} };
         const fatalSignals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
@@ -100,27 +152,23 @@ export class TestServer {
         process.once('exit', killHard);
         for (const sig of fatalSignals) process.once(sig, killHard);
         procRef.once('exit', removeParentHooks);
-        let log = '';
-        this.proc.stdout.on('data', (d) => { log += d; });
+        this.proc.stdout.on('data', (d) => { this.log += d; });
         this.proc.stderr.on('data', (d) => {
-            log += d;
-            // Forward server stderr to the test process so crashes are visible
-            // in test output instead of being swallowed.
+            this.log += d;
             process.stderr.write(`[server:${this.port}] ${d}`);
         });
-        // If the server dies unexpectedly, surface why.
         this.proc.on('exit', (code, signal) => {
             if (code !== null && code !== 0) {
-                process.stderr.write(`[server:${this.port}] exited code=${code}\n${log.slice(-1500)}\n`);
+                process.stderr.write(`[server:${this.port}] exited code=${code}\n${this.log.slice(-1500)}\n`);
             }
         });
         const deadline = Date.now() + 45000;
         while (true) {
             if (this.proc.exitCode !== null || this.proc.signalCode !== null) {
-                throw new Error(`server exited (${this.proc.exitCode ?? this.proc.signalCode}):\n${log.slice(-2000)}`);
+                throw new Error(`server exited (${this.proc.exitCode ?? this.proc.signalCode}):\n${this.log.slice(-2000)}`);
             }
             try {
-                const r = await fetch(this.url('/healthz'));
+                const r = await this.fetch('/healthz');
                 if (r.ok) {
                     this.instanceId = (await r.json()).instanceId;
                     return this;
@@ -128,13 +176,22 @@ export class TestServer {
             } catch {}
             if (Date.now() > deadline) {
                 await this.stop();
-                throw new Error(`server did not become healthy:\n${log.slice(-3000)}`);
+                throw new Error(`server did not become healthy:\n${this.log.slice(-3000)}`);
             }
             await new Promise((r) => setTimeout(r, 250));
         }
     }
 
-    url(p) { return `http://127.0.0.1:${this.port}${p}`; }
+    url(p) {
+        if (this.httpsOnly) return `https://127.0.0.1:${this.httpsPort}${p}`;
+        return `http://127.0.0.1:${this.port}${p}`;
+    }
+
+    fetch(p, init = {}) {
+        const url = this.url(p);
+        if (!this.httpsOnly) return fetch(url, init);
+        return httpsFetch(url, init);
+    }
 
     async stop() {
         const proc = this.proc;
@@ -151,9 +208,8 @@ export class TestServer {
         removeSecureTestDataDir(this.dataFixture);
     }
 
-    /* login helper: returns a cookie header value */
     async login(username, password) {
-        const res = await fetch(this.url('/api/auth/login'), {
+        const res = await this.fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ username, password }),
@@ -166,10 +222,9 @@ export class TestServer {
         return { cookie: `zephyr_sid=${m[1]}`, body };
     }
 
-    /* first-boot convenience: login admin/admin and set a real password */
     async bootstrapAdmin(newPassword = 'admin-test-pass-1') {
         const { cookie } = await this.login('admin', 'admin');
-        const res = await fetch(this.url('/api/auth/change-password'), {
+        const res = await this.fetch('/api/auth/change-password', {
             method: 'POST',
             headers: { 'content-type': 'application/json', cookie },
             body: JSON.stringify({ currentPassword: 'admin', newPassword }),
@@ -179,7 +234,7 @@ export class TestServer {
     }
 
     async api(cookie, method, p, body) {
-        const res = await fetch(this.url(p), {
+        const res = await this.fetch(p, {
             method,
             headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
             body: body === undefined ? undefined : JSON.stringify(body),

@@ -141,6 +141,20 @@ test('server never caches a failed Go device registration', () => {
   assert.match(proxy, /link_device_registration_failed/);
 });
 
+test('owned-sync bridge is a private loopback listener, not the public HTTP port', () => {
+  const server = readRepo('server.js');
+  const proxy = readRepo('link-v2-go-proxy.js');
+  assert.match(server, /ZEPHYR_LINK_INTERNAL_PORT/);
+  assert.match(server, /owned-sync bridge listening at/);
+  assert.match(server, /must not collide with the public HTTP\/HTTPS port/);
+  assert.match(server, /linkInternalServer\.listen\(linkInternalPort, '127\.0\.0\.1'/);
+  assert.doesNotMatch(server, /syncBridgeUrl: `http:\/\/127\.0\.0\.1:\$\{PORT\}\/internal\/link\/sync`/);
+  assert.match(proxy, /syncBridgeUrlReady/);
+  const enrollment = read('tests/link-v2-enrollment.test.mjs');
+  assert.match(enrollment, /HTTPS-only deploy with a custom public port still delivers Link bootstrap/);
+  assert.match(enrollment, /httpsOnly: true, linkInternalPort: internalPort/);
+});
+
 test('embedded Link runtime has a CI freshness gate like the AI runtime', () => {
   const workflow = readRepo('.github/workflows/zephyr-one-mobile.yml');
   assert.match(workflow, /libzephyr_link\.so/);
