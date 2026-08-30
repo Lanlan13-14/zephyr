@@ -81,10 +81,24 @@ test('Android Link channel injects every sync op before sealing', () => {
   const transport = read('android/core-sync/src/main/kotlin/one/zephyr/mobile/sync/LinkSyncTransport.kt');
   assert.match(transport, /private fun wireBody\(op: String, body: JsonObject\)/);
   assert.match(transport, /put\("op", JsonPrimitive\(op\)\)/);
+  assert.match(transport, /channel\.syncOp\("bootstrap", wireBody\("bootstrap", body\)\)/);
   assert.match(transport, /channel\.syncOp\("changes", wireBody\("changes", body\)\)/);
   assert.match(transport, /channel\.syncOp\("push", wireBody\("push", body\)\)/);
   assert.match(transport, /channel\.syncOp\("ack", wireBody\("ack", body\)\)/);
+  assert.match(transport, /private fun requireSuccessAck/);
+  assert.match(transport, /LinkChannelException\(message, code, retryable, details\)/);
   assert.match(container, /kind = LinkKinds\.SYNC_OP, body = body/);
+  assert.match(container, /spkiPins = linkSpkiPins/);
+});
+
+test('Link server strips the transport op before strict canonical push validation', () => {
+  const bridge = readRepo('link-v2-sync-bridge.js');
+  const routes = readRepo('mobile-v1-routes.js');
+  assert.match(bridge, /const \{ op: _op, \.\.\.request \} = b/);
+  assert.match(bridge, /executePushForDevice\(auth, request\)/);
+  assert.match(routes, /executeBootstrapForDevice/);
+  assert.match(routes, /executePushForDevice[\s\S]*validatePushRequest\(body\)/);
+  assert.match(routes, /registry_mismatch/);
 });
 
 test('root recovers an absent account instead of drawing a permanent blank frame', () => {

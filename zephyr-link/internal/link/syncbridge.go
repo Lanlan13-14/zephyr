@@ -35,10 +35,25 @@ type syncBridgeResponse struct {
 	Kind  int             `json:"kind"`
 	Body  json.RawMessage `json:"body"`
 	Error *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code      string          `json:"code"`
+		Message   string          `json:"message"`
+		Retryable bool            `json:"retryable"`
+		Details   json.RawMessage `json:"details"`
 	} `json:"error"`
 }
+
+// SyncBusinessError is safe structured business rejection returned by the
+// canonical Node sync core. Transport code seals this object back to the
+// device; it must never collapse cursor/revocation semantics into a generic
+// Link outage or expose an untyped internal error string.
+type SyncBusinessError struct {
+	Code      string
+	Message   string
+	Retryable bool
+	Details   json.RawMessage
+}
+
+func (e *SyncBusinessError) Error() string { return "link: sync rejected (" + e.Code + ")" }
 
 // registerSyncBridge installs the owned-sync lane handler. A SYNC_OP frame is
 // forwarded to the Node bridge with the session's attested device id; the bridge
@@ -157,10 +172,29 @@ func (n *Node) registerSyncBridge(cfg SyncBridgeConfig) {
 			return 0, nil, false, fmt.Errorf("link: sync bridge returned an unparsable reply")
 		}
 		if !br.OK {
-			if br.Error != nil {
-				return 0, nil, false, fmt.Errorf("link: sync rejected (%s): %s", br.Error.Code, br.Error.Message)
+			if br.Error != nil && br.Error.Code != "" {
+				errorBody := map[string]any{
+					"code": br.Error.Code, "message": br.Error.Message,
+					"retryable": br.Error.Retryable,
+				}
+				if len(br.Error.Details) > 0 && string(br.Error.Details) != "null" {
+					var details any
+					decoder := json.NewDecoder(bytes.NewReader(br.Error.Details))
+					decoder.UseNumber()
+					if err := decoder.Decode(&details); err != nil {
+						return 0, nil, false, fmt.Errorf("link: sync bridge error details unparsable")
+					}
+					details, err = normalizeJSONIntegers(details)
+					if err != nil {
+						return 0, nil, false, err
+					}
+					errorBody["details"] = details
+				}
+				return codec.KindSyncAck, map[string]any{
+					"ok": false, "error": errorBody,
+				}, false, nil
 			}
-			return 0, nil, false, fmt.Errorf("link: sync rejected (status %d)", resp.StatusCode)
+			return 0, nil, false, fmt.Errorf("link: sync bridge rejected request with status %d", resp.StatusCode)
 		}
 		var body any
 		if len(br.Body) > 0 {

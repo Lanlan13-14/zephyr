@@ -41,11 +41,12 @@ internal class EmbeddedLinkApi(
     /** The main end mounts the Link proxy at /api/link/v2; the Go Dial/push append the leaf. */
     private fun linkRoot(serverUrl: String): String = serverUrl.trimEnd('/') + "/api/link/v2"
 
-    suspend fun dial(serverUrl: String, deviceId: String): LinkSession = withContext(Dispatchers.IO) {
+    suspend fun dial(serverUrl: String, deviceId: String, spkiPins: List<String>): LinkSession = withContext(Dispatchers.IO) {
         val base = process.ensureStarted().baseUrl
         val body = JsonObject(mapOf(
             "serverUrl" to JsonPrimitive(linkRoot(serverUrl)),
             "deviceId" to JsonPrimitive(deviceId),
+            "spkiPins" to kotlinx.serialization.json.JsonArray(spkiPins.map(::JsonPrimitive)),
         ))
         val response = post("$base/link/dial", body)
         LinkSession(
@@ -56,6 +57,14 @@ internal class EmbeddedLinkApi(
 
     /** The unsealed business ack from a pushed frame. */
     data class LinkPushResult(val ackKind: Int, val ack: JsonObject)
+
+    internal class LinkRequestException(
+        val code: String,
+        override val message: String,
+        val retryable: Boolean,
+        val details: Map<String, String> = emptyMap(),
+        val sessionInvalid: Boolean = false,
+    ) : IllegalStateException(message)
 
     /**
      * Push a business frame on an established session. The embedded Go core seals it, POSTs to the
@@ -68,6 +77,7 @@ internal class EmbeddedLinkApi(
         kind: Int,
         body: JsonElement,
         secret: Boolean = false,
+        spkiPins: List<String> = emptyList(),
     ): LinkPushResult = withContext(Dispatchers.IO) {
         val base = process.ensureStarted().baseUrl
         val payload = buildJsonObject {
@@ -76,6 +86,7 @@ internal class EmbeddedLinkApi(
             put("kind", kind)
             put("body", body)
             put("secret", secret)
+            put("spkiPins", kotlinx.serialization.json.JsonArray(spkiPins.map(::JsonPrimitive)))
         }
         val response = post("$base/link/push", payload)
         val ack = response["ack"]?.jsonObject ?: JsonObject(emptyMap())
@@ -157,9 +168,22 @@ internal class EmbeddedLinkApi(
             val parsed = runCatching { MobileJson.instance.parseToJsonElement(text).jsonObject }
                 .getOrElse { throw IllegalStateException("Link runtime 返回了无法解析的响应") }
             if (!resp.isSuccessful || parsed["ok"]?.jsonPrimitive?.content == "false") {
-                val error = parsed["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+                val errorObject = parsed["error"] as? JsonObject
+                val code = errorObject?.get("code")?.jsonPrimitive?.content ?: "link_unavailable"
+                val message = errorObject?.get("message")?.jsonPrimitive?.content
                     ?: "Link 请求失败 (${resp.code})"
-                throw IllegalStateException(error)
+                val retryable = errorObject?.get("retryable")?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                    ?: (resp.code >= 500)
+                val details = (errorObject?.get("details") as? JsonObject)
+                    ?.mapValues { (_, value) -> (value as? JsonPrimitive)?.content ?: value.toString() }
+                    ?: emptyMap()
+                throw LinkRequestException(
+                    code = code,
+                    message = message,
+                    retryable = retryable,
+                    details = details,
+                    sessionInvalid = code == "session_unknown" || code == "invalid_frame",
+                )
             }
             parsed
         }
