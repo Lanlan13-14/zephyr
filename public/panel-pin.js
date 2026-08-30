@@ -17,8 +17,11 @@ function pageFor(panel, page) {
 
 function scopeFor(page) {
     const rect = page.getBoundingClientRect();
-    const width = page.clientWidth || rect.width || window.innerWidth;
-    const height = page.clientHeight || rect.height || window.innerHeight;
+    const style = getComputedStyle(page);
+    const borderX = (Number.parseFloat(style.borderLeftWidth) || 0) + (Number.parseFloat(style.borderRightWidth) || 0);
+    const borderY = (Number.parseFloat(style.borderTopWidth) || 0) + (Number.parseFloat(style.borderBottomWidth) || 0);
+    const width = (page.clientWidth || rect.width || window.innerWidth) + borderX;
+    const height = (page.clientHeight || rect.height || window.innerHeight) + borderY;
     // `.main-nav` is a direct child of .app-shell, but a `.terminal-page` can be
     // embedded inside another shell. Use local chrome only and never climb out
     // into an ancestor nav; that only creates a bogus white band above docks.
@@ -65,10 +68,18 @@ function halfInset(page) {
     }, 0);
 }
 
-function applyInsets(page) {
+function pageSafeInset(page, side) {
+    const value = Number.parseFloat(getComputedStyle(page)[`padding${side}`] || '0') || 0;
+    return Math.max(0, Math.round(value));
+}
+
+function applyInsets(page, { bottomOverride = null } = {}) {
     const left = sideInset(page, 'left');
     const right = sideInset(page, 'right');
-    const bottom = halfInset(page);
+    // A bottom dock covers the page's own bottom safe padding, so content must
+    // reserve dock height + that padding back to keep the terminal above it.
+    const dock = bottomOverride ?? halfInset(page);
+    const bottom = dock > 0 ? dock + pageSafeInset(page, 'Bottom') : 0;
     page.style.setProperty('--pin-inset-left', `${left}px`);
     page.style.setProperty('--pin-inset-right', `${right}px`);
     page.style.setProperty('--pin-inset-bottom', `${bottom}px`);
@@ -100,6 +111,16 @@ function clampHalfHeight(height, scope) {
     return Math.max(160, Math.min(scope.height - scope.topbarHeight - 80, Math.round(height)));
 }
 
+function edgeInset(page) {
+    const style = getComputedStyle(page);
+    return {
+        left: Number.parseFloat(style.borderLeftWidth) || 0,
+        right: Number.parseFloat(style.borderRightWidth) || 0,
+        top: Number.parseFloat(style.borderTopWidth) || 0,
+        bottom: Number.parseFloat(style.borderBottomWidth) || 0,
+    };
+}
+
 function place(panel, mode = panel.dataset.pinMode || 'side') {
     const page = panel._pinPage;
     const scope = scopeFor(page);
@@ -122,11 +143,15 @@ function place(panel, mode = panel.dataset.pinMode || 'side') {
     }
     if (mode === 'half') {
         // Bottom dock is genuinely a bottom band: the bottom row owns the full
-        // width, while side rails remain only in the row above it.
+        // width, while side rails remain only in the row above it. Extend one
+        // border-width past the page edge so the page's own 1px frame can never
+        // leave a white seam at the right/bottom edge.
+        const edge = edgeInset(page);
         const height = clampHalfHeight(Number.parseFloat(panel.style.height) || Math.round(fullHeight / 2), scope);
         panel._pinHalfHeight = height;
         Object.assign(panel.style, fixed, {
-            left: `${scope.left}px`, top: `${scope.top + fullHeight - height}px`, width: `${scope.width}px`, height: `${height}px`,
+            left: `${scope.left - edge.left}px`, top: `${scope.top + fullHeight - height}px`,
+            width: `${scope.width + edge.left + edge.right}px`, height: `${height + edge.bottom}px`,
         });
         return;
     }
@@ -275,10 +300,13 @@ function openPinMenu(anchor, panel, onClose) {
     // Match the ordinary floating-panel island exactly: 284px cap / 50px tall.
     const width = Math.min(284, Math.max(160, window.innerWidth - 16));
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + rect.width / 2 - width / 2));
-    menu.style.left = `${left}px`;
+    // Start collapsed exactly on the ⋯ pill, then let the inherited
+    // `.panel-layout-menu.island-open` transition expand it to the normal
+    // 284×50 island. Starting pre-expanded was the visual mismatch.
+    menu.style.left = `${rect.left}px`;
     menu.style.top = `${rect.top}px`;
-    menu.style.setProperty('--panel-island-menu-width', `${width}px`);
-    menu.style.setProperty('--panel-island-menu-height', '50px');
+    menu.style.setProperty('--panel-island-menu-width', `${rect.width}px`);
+    menu.style.setProperty('--panel-island-menu-height', `${rect.height}px`);
     menu.style.setProperty('--panel-island-radius', `${Math.round(rect.height / 2)}px`);
     menu.style.opacity = '1';
     menu.classList.add('island-animating');
@@ -287,6 +315,10 @@ function openPinMenu(anchor, panel, onClose) {
         menu.style.removeProperty('transition');
         anchor.classList.add('active-layout');
         menu.classList.add('island-open');
+        menu.style.left = `${left}px`;
+        menu.style.top = `${rect.top}px`;
+        menu.style.setProperty('--panel-island-menu-width', `${width}px`);
+        menu.style.setProperty('--panel-island-menu-height', '50px');
         menu.style.setProperty('--panel-island-radius', '18px');
         window.setTimeout(() => menu.classList.remove('island-animating'), 540);
     });
@@ -374,10 +406,14 @@ function bindPinnedVerticalDrag(panel, handle) {
         panel.classList.add('resizing');
         const move = (ev) => {
             ev.preventDefault();
+            const edge = edgeInset(page);
             const next = clampHalfHeight(startHeight + (startY - ev.clientY), scope);
             panel._pinHalfHeight = next;
-            panel.style.height = `${next}px`;
+            panel.style.height = `${next + edge.bottom}px`;
             panel.style.top = `${scope.top + scope.height - next}px`;
+            // Content must move with the drag, not wait for pointerup; otherwise
+            // a live white band opens above the dock exactly like the screenshot.
+            applyInsets(page, { bottomOverride: next });
         };
         const up = () => {
             panel.classList.remove('resizing');
