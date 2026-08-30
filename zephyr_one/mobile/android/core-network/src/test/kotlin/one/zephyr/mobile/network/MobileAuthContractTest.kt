@@ -143,7 +143,11 @@ class MobileAuthContractTest {
 
     @Test
     fun `explicit null server encryption remains a successful capability`() = runTest {
-        server.enqueue(jsonResponse(capabilitiesFixture().replace(SERVER_ENCRYPTION_FIELD, "\"serverEncryption\":null,")))
+        val explicitNull = CAPABILITIES_TEMPLATE.replace(
+            SERVER_ENCRYPTION_FIELD,
+            "\"serverEncryption\":null,",
+        )
+        server.enqueue(jsonResponse(explicitNull))
 
         val result = api.capabilities()
 

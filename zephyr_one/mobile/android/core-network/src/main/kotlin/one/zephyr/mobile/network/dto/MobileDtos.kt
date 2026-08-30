@@ -11,8 +11,11 @@ import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 import one.zephyr.mobile.model.Base64Codec
 import one.zephyr.mobile.model.SecretEnvelope
 
@@ -421,6 +424,44 @@ data class ServerEncryptionDto(
     }
 }
 
+/**
+ * A non-null wrapper keeps an omitted key distinct from the server's explicit `null` value even
+ * though the shared JSON configuration uses explicitNulls=false for additive compatibility.
+ */
+@Serializable(with = ServerEncryptionCapabilityDto.Serializer::class)
+sealed interface ServerEncryptionCapabilityDto {
+    data object Unavailable : ServerEncryptionCapabilityDto
+
+    data class Available(val value: ServerEncryptionDto) : ServerEncryptionCapabilityDto
+
+    object Serializer : KSerializer<ServerEncryptionCapabilityDto> {
+        override val descriptor: SerialDescriptor =
+            buildClassSerialDescriptor("ServerEncryptionCapability")
+
+        override fun deserialize(decoder: Decoder): ServerEncryptionCapabilityDto {
+            val jsonDecoder = decoder as? JsonDecoder
+                ?: throw SerializationException("server encryption capability requires JSON")
+            return when (val element = jsonDecoder.decodeJsonElement()) {
+                JsonNull -> Unavailable
+                is JsonObject -> Available(
+                    jsonDecoder.json.decodeFromJsonElement(ServerEncryptionDto.serializer(), element),
+                )
+                else -> throw SerializationException("server encryption capability must be an object or null")
+            }
+        }
+
+        override fun serialize(encoder: Encoder, value: ServerEncryptionCapabilityDto) {
+            val jsonEncoder = encoder as? JsonEncoder
+                ?: throw SerializationException("server encryption capability requires JSON")
+            val element = when (value) {
+                Unavailable -> JsonNull
+                is Available -> jsonEncoder.json.encodeToJsonElement(ServerEncryptionDto.serializer(), value.value)
+            }
+            jsonEncoder.encodeJsonElement(element)
+        }
+    }
+}
+
 @Serializable
 data class FeatureCapabilitiesDto(
     val bidirectionalSync: Boolean,
@@ -474,8 +515,7 @@ data class CapabilitiesDto(
     val serverId: String,
     val auth: AuthCapabilitiesDto,
     /** Required on the wire, but explicitly null when the server cannot publish its key. */
-    /** Required on the wire; explicit null means the main end cannot currently accept secrets. */
-    val serverEncryption: ServerEncryptionDto?,
+    val serverEncryption: ServerEncryptionCapabilityDto,
     val features: FeatureCapabilitiesDto,
     val wake: WakeCapabilitiesDto,
 ) {
