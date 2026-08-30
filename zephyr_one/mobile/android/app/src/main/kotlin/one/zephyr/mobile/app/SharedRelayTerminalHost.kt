@@ -24,6 +24,7 @@ import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.network.SharedResourceClient
+import one.zephyr.mobile.network.SharedSession
 
 /** SSH relay host for shared-to-me connections. Credentials stay on the main end. */
 internal class SharedRelayTerminalHost(
