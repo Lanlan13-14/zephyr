@@ -19,7 +19,11 @@ function scopeFor(page) {
     const rect = page.getBoundingClientRect();
     const width = page.clientWidth || rect.width || window.innerWidth;
     const height = page.clientHeight || rect.height || window.innerHeight;
-    const topbar = page.querySelector(':scope > .terminal-topbar, :scope > .rdp-topbar, :scope > .main-nav');
+    // `.main-nav` is a direct child of .app-shell, but a `.terminal-page` can be
+    // embedded inside another shell. Use local chrome only and never climb out
+    // into an ancestor nav; that only creates a bogus white band above docks.
+    const topbar = page.querySelector(':scope > .terminal-topbar, :scope > .rdp-topbar, :scope > .main-nav')
+        || page.querySelector(':scope > * > .terminal-topbar, :scope > * > .rdp-topbar, :scope > * > .main-nav');
     const topbarHeight = topbar?.offsetHeight || 0;
     // Pinned windows use position:fixed so RDP/VNC windows (whose normal parent
     // is the display stage) can still cover the page chrome exactly like SSH.
@@ -220,7 +224,7 @@ function closePinMenu(anchor = null, panel = null, { instant = false } = {}) {
     }
     const rect = traffic.getBoundingClientRect();
     menu.style.transition = 'none';
-    menu.style.setProperty('--panel-island-menu-width', `${Math.max(188, Number.parseFloat(menu.style.getPropertyValue('--panel-island-menu-width')) || 336)}px`);
+    menu.style.setProperty('--panel-island-menu-width', `${Math.min(284, Math.max(160, window.innerWidth - 16))}px`);
     menu.style.setProperty('--panel-island-menu-height', '50px');
     menu.style.setProperty('--panel-island-radius', '18px');
     void menu.offsetWidth;
@@ -268,7 +272,8 @@ function openPinMenu(anchor, panel, onClose) {
     panel._pinMenu = menu;
     anchor._pinMenuOpen = true;
     const rect = anchor.getBoundingClientRect();
-    const width = Math.min(336, Math.max(188, window.innerWidth - 16));
+    // Match the ordinary floating-panel island exactly: 284px cap / 50px tall.
+    const width = Math.min(284, Math.max(160, window.innerWidth - 16));
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + rect.width / 2 - width / 2));
     menu.style.left = `${left}px`;
     menu.style.top = `${rect.top}px`;

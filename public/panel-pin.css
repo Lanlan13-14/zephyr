@@ -38,33 +38,29 @@
 }
 .panel-pin-btn:hover { border-color: #5d6372; }
 .panel-pin-btn:active { transform: scale(.85); }
+/* LOCKED state must stay byte-identical to the demo: bright ring + silver core.
+   No product accent substitution here; the animation carries the state. */
 .panel-pin-btn.on {
-    border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
-    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+    border-color: #9aa2b1;
+    background: #262932;
 }
 .panel-pin-btn.on::after {
-    background: var(--accent);
     transform: scale(1);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent);
+    box-shadow: 0 0 6px rgba(223, 227, 234, .35);
 }
 
 /* Every top-level secondary panel may be pinned. */
+/* Resting panels intentionally have `transition: none !important` so Motion.drag
+   can bake geometry without a jump. Pinning is a discrete layout morph, not a
+   drag; pin-animating must explicitly win over that resting ban. */
 .file-manager.pin-animating, .info-modal.pin-animating, .docker-panel.pin-animating,
 .snippet-panel.pin-animating, .shortcut-panel.pin-animating, .rdp-floating-panel.pin-animating,
 .ai-agent-panel.pin-animating {
     transition:
-        left .52s var(--ios-open), top .52s var(--ios-open),
-        width .52s var(--ios-open), height .52s var(--ios-open),
-        border-radius .36s ease, box-shadow .36s ease, border-color .28s ease !important;
+        left .52s var(--ios-open) !important, top .52s var(--ios-open) !important,
+        width .52s var(--ios-open) !important, height .52s var(--ios-open) !important,
+        border-radius .36s ease !important, box-shadow .36s ease !important, border-color .28s ease !important;
     will-change: left, top, width, height;
-}
-.file-manager.pin-animating.pinned, .info-modal.pin-animating.pinned, .docker-panel.pin-animating.pinned,
-.snippet-panel.pin-animating.pinned, .shortcut-panel.pin-animating.pinned, .rdp-floating-panel.pin-animating.pinned,
-.ai-agent-panel.pin-animating.pinned { animation: panel-pin-settle .52s var(--ios-open); }
-@keyframes panel-pin-settle {
-    0% { filter: brightness(.94); box-shadow: 0 8px 24px rgba(0,0,0,.24); }
-    58% { filter: brightness(1.025); }
-    100% { filter: brightness(1); }
 }
 .file-manager.pinned, .info-modal.pinned, .docker-panel.pinned, .snippet-panel.pinned,
 .shortcut-panel.pinned, .rdp-floating-panel.pinned, .ai-agent-panel.pinned {

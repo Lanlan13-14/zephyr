@@ -4,7 +4,7 @@ import { createNotesController } from './notes.js?v=20260811-webdav1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
 import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260811-webdav1';
 import { localizeActivityMessage } from './activity-i18n.js?v=20260811-webdav1';
-import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin3';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin4';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
