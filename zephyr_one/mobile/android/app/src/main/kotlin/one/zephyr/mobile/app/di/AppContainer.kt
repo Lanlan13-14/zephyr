@@ -329,9 +329,16 @@ class AppContainer(private val context: Context) {
     fun ensureLocalWorkspace(): AccountContainer {
         (accountGraph as? AccountContainer)?.let { return it }
 
-        val binding = localBinding()
-        val databaseScope = AccountContainer.databaseScopeOf(binding)
-        val databaseHandle = accountDatabases.open(databaseScope)
+        var binding = localBinding()
+        var databaseScope = AccountContainer.databaseScopeOf(binding)
+        val databaseHandle = try {
+            accountDatabases.open(databaseScope)
+        } catch (erased: IllegalStateException) {
+            if (erased.message != "account database generation has been erased") throw erased
+            binding = rotateLocalWorkspaceGeneration()
+            databaseScope = AccountContainer.databaseScopeOf(binding)
+            accountDatabases.open(databaseScope)
+        }
         val container = try {
             AccountContainer(
                 context = context,
@@ -368,10 +375,32 @@ class AppContainer(private val context: Context) {
         tokenName = "local",
         state = BindingState.IDLE,
         registryHash = "",
-        boundAt = 0L,
+        boundAt = localWorkspaceGeneration(),
         lastSyncAt = null,
         instanceEpoch = 0L,
     )
+
+    private fun localWorkspaceGeneration(): Long {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return preferences.getLong(KEY_LOCAL_WORKSPACE_GENERATION, 0L).takeIf { it > 0L }
+            ?: System.currentTimeMillis().coerceAtLeast(1L).also { generation ->
+                check(
+                    preferences.edit()
+                        .putLong(KEY_LOCAL_WORKSPACE_GENERATION, generation)
+                        .commit(),
+                ) { "local workspace generation could not be persisted" }
+            }
+    }
+
+    private fun rotateLocalWorkspaceGeneration(): AccountBinding {
+        val next = System.currentTimeMillis().coerceAtLeast(localWorkspaceGeneration() + 1L)
+        val persisted = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_LOCAL_WORKSPACE_GENERATION, next)
+            .commit()
+        check(persisted) { "local workspace generation could not be rotated" }
+        return localBinding()
+    }
 
     /**
      * Idempotently erases a persisted account scope without opening its SQLCipher database.
@@ -554,6 +583,7 @@ class AppContainer(private val context: Context) {
     private companion object {
         const val PREFS = "zephyr-one-device"
         const val KEY_INSTALL_ID = "install-id"
+        const val KEY_LOCAL_WORKSPACE_GENERATION = "local-workspace-generation"
         const val KEY_PAD_TERM_SIDE = "pad-term-side"
         const val NO_ACCOUNT_TEARDOWN_OWNER = "no-account-teardown"
 
