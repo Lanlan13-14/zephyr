@@ -26,7 +26,7 @@ test('home connection list refreshes shared-to-me resources without persisting t
   assert.match(root, /SharedRelayTerminalHost\(account, ownedHost\)/);
   assert.match(root, /connection\.residency == Residency\.SHARED_ONLINE_ONLY[\s\S]*TerminalCredentials\(\)/);
   assert.match(terminal, /findConnection: suspend \(String\) -> Connection\?/);
-  assert.match(relay, /sharedResourceClient\.openSession/);
+  assert.match(relay, /sharedResourceClient\.openRelaySession/);
   assert.match(relay, /requestedChannels = listOf\("terminal", "resize"\)/);
   assert.match(relay, /\.header\("Sec-WebSocket-Protocol", "zephyr-shared-relay-v1, \$\{session\.credential\}"\)/);
   assert.match(relay, /\\\"type\\\":\\\"input\\\"/);
