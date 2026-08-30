@@ -185,7 +185,6 @@ fun FloatingIsland(
                                 style = ZephyrTextStyles.islandLabel,
                                 color = palette.brand.accent,
                                 maxLines = 1,
-                                softWrap = false,
                                 overflow = TextOverflow.Visible,
                                 modifier = Modifier
                                     .padding(top = IslandSpec.iconLabelGap)

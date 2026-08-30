@@ -23,7 +23,7 @@ class FloatingIslandLabelTest {
         assertFalse(source.contains("11.dp"))
         assertTrue(source.contains("if (isSelected)"))
         assertTrue(source.contains("overflow = TextOverflow.Visible"))
-        assertTrue(source.contains("softWrap = false"))
+        assertFalse(source.contains("softWrap"))
     }
 
     @Test
