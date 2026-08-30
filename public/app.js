@@ -4,6 +4,7 @@ import { createNotesController } from './notes.js?v=20260811-webdav1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
 import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260811-webdav1';
 import { localizeActivityMessage } from './activity-i18n.js?v=20260811-webdav1';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -11625,6 +11626,18 @@ function setupAiPanelChrome() {
         if (aiPanelLayoutMenu && !e.target.closest?.('.panel-layout-menu') && !e.target.closest?.('[data-ai-agent-layout]')) closeAiPanelLayoutMenu();
     });
     window.addEventListener('resize', () => closeAiPanelLayoutMenu({ instant: true }));
+    // AI is a top-level secondary panel. Its child provider/detail windows are
+    // deliberately not attached, so they always open as ordinary floaters.
+    if (panel) {
+        // aiAgentPanel is a sibling of .app-shell, but pin geometry is fixed
+        // to its scope; using app-shell makes the underlying active surface
+        // reflow while the pinned AI panel remains above it.
+        attachDesktopPanelPin(document.querySelector('.app-shell'), panel, {
+            dragHandle,
+            layoutButton: layoutBtn,
+            onClose: () => closeAiAssistantPanel(),
+        });
+    }
 }
 function updateAiProviderModalHints() {
     const type = $('#aiProviderType')?.value || 'openai-compatible';

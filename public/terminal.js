@@ -33,6 +33,7 @@ import {
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
 } from './floating-panel.js?v=20260731-panel-drag-physics4';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -4700,6 +4701,13 @@ function createFileManagerWindow({ path = currentPath } = {}) {
     // cloneNode copies dataset bind flags but not listeners — force rebind.
     delete panel.dataset.panelPhysicsWired;
     delete panel.dataset.panelPhysicsPointerBound;
+    // A window spawned from a pinned file manager is always a normal third-level
+    // floating window until the user explicitly pins it.
+    delete panel.dataset.desktopPinWired;
+    delete panel.dataset.pinSide;
+    delete panel.dataset.pinMode;
+    panel.classList.remove('pinned', 'pin-animating');
+    panel.querySelectorAll('.panel-pin-btn').forEach((button) => button.remove());
     panel.querySelectorAll('[data-panel-layout-click-bound], [data-layout-panel]').forEach((el) => {
         delete el.dataset.panelLayoutClickBound;
         delete el.dataset.panelBound;
@@ -11811,6 +11819,14 @@ setupFloatingPanel(shortcutPanel, getDefaultPanelOptions(shortcutPanel));
 setupPanelLayoutMenu();
 setupPanelDrag();
 setupPanelResize();
+// Desktop only: top-level secondary panels gain left/right `.tgl` pin controls.
+// The existing ⋯ layout behavior remains untouched until a panel is actually pinned.
+const desktopPinPage = document.querySelector('.terminal-page');
+[fileManager, infoModal, dockerPanel, snippetPanel, shortcutPanel].forEach((panel) => {
+    attachDesktopPanelPin(desktopPinPage, panel, {
+        onClose: hidePanelByElement,
+    });
+});
 setupTerminalInputActivityHooks();
 setupTerminalInputPanelMetrics();
 setupMobileKeyboardAvoidance();

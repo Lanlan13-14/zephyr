@@ -27,6 +27,7 @@ import {
     applyPanelLayout,
     closePanelLayoutMenu,
 } from './floating-panel.js?v=20260731-panel-drag-physics4';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin1';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -2652,18 +2653,24 @@ function initToolbar() {
 
     // Shared SSH-parity interactions: titlebar drag, traffic-light drag/menu,
     // edge resize, front-most z-index, island layout menu.
+    const closeRdpPanel = (panel) => {
+        const map = [
+            [clipboardPanel, clipboardBtn],
+            [filesPanel, rdpFilesBtn],
+            [shortcutsPanel, shortcutsBtn],
+            [joystickPanel, joystickBtn],
+        ];
+        const hit = map.find(([p]) => p === panel);
+        closeFloatingPanel(panel, hit?.[1] || null);
+    };
     setupPanelInteractions(document, {
         panelSelector: '.rdp-floating-panel',
-        onClosePanel: (panel) => {
-            const map = [
-                [clipboardPanel, clipboardBtn],
-                [filesPanel, rdpFilesBtn],
-                [shortcutsPanel, shortcutsBtn],
-                [joystickPanel, joystickBtn],
-            ];
-            const hit = map.find(([p]) => p === panel);
-            closeFloatingPanel(panel, hit?.[1] || null);
-        },
+        onClosePanel: closeRdpPanel,
+    });
+    // RDP's second-level panels use the same desktop-only `.tgl` side pins.
+    const desktopPinPage = document.querySelector('.rdp-page');
+    [clipboardPanel, filesPanel, shortcutsPanel, joystickPanel].filter(Boolean).forEach((panel) => {
+        attachDesktopPanelPin(desktopPinPage, panel, { onClose: closeRdpPanel });
     });
 
     /* Joystick knob — controls viewport pan in fill mode */

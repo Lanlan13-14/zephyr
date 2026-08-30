@@ -149,12 +149,15 @@ test('image/media preview use shared physics, not header hard drag', () => {
   assert.doesNotMatch(media, /startPanelDrag/);
 });
 
-test('cache revision pins style + terminal + floating-panel physics4', () => {
+test('cache revision pins style + terminal + floating-panel physics4 + desktop pin assets', () => {
   const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
   const styleVersion = singleAssetVersion(appHtml, 'style.css', 'app shell style.css');
   const terminalVersion = singleAssetVersion(terminalHtml, 'terminal.js', 'terminal page script');
-  assert.equal(cacheNameVersion(sw), appVersion);
+  const pinVersion = singleAssetVersion(appHtml, 'panel-pin.css', 'app shell panel pin css');
+  assert.equal(cacheNameVersion(sw), pinVersion);
   assertAssetVersion(sw, 'style.css', styleVersion, 'service worker style.css');
   assertAssetVersion(sw, 'terminal.js', terminalVersion, 'service worker terminal.js');
   assertAssetVersion(sw, 'floating-panel.js', CACHE, 'service worker floating-panel.js');
+  assertAssetVersion(sw, 'panel-pin.js', pinVersion, 'service worker panel pin js');
+  assertAssetVersion(sw, 'panel-pin.css', pinVersion, 'service worker panel pin css');
 });
