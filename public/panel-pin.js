@@ -360,7 +360,6 @@ function openPinMenu(anchor, panel, onClose) {
     menu.style.setProperty('--panel-island-menu-width', `${rect.width}px`);
     menu.style.setProperty('--panel-island-menu-height', `${rect.height}px`);
     menu.style.setProperty('--panel-island-radius', `${Math.round(rect.height / 2)}px`);
-    menu.style.opacity = '1';
     menu.classList.add('island-animating');
     void menu.offsetWidth;
     requestAnimationFrame(() => {
