@@ -3,6 +3,7 @@ package one.zephyr.mobile.network
 import kotlinx.serialization.json.JsonObject
 import one.zephyr.mobile.contracts.MobileApiPaths
 import one.zephyr.mobile.model.CapabilitySet
+import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.SharedUseEnvelope
 import one.zephyr.mobile.model.SharedUsePolicy
 import one.zephyr.mobile.network.dto.SharedInvokeRequestDto
