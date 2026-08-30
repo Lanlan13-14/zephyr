@@ -7,6 +7,7 @@ import {
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
 } from './floating-panel.js?v=20260731-panel-drag-physics4';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin1';
 
 const $ = (sel) => document.querySelector(sel);
 const NOVNC_CLIENT_VERSION = '2026-06-14-theme-palettes';
@@ -739,6 +740,11 @@ function setupFloatingPanels() {
     setupPanelLayoutMenu();
     setupPanelDrag();
     setupPanelResize();
+    // Desktop-only side pinning; unpinned panels retain the original ⋯ behavior.
+    const desktopPinPage = document.querySelector('.rdp-page');
+    floatingPanels().forEach((panel) => {
+        attachDesktopPanelPin(desktopPinPage, panel, { onClose: (target) => togglePanel(target, false) });
+    });
 }
 
 function sendKey(keysym, code = '', down = undefined) {

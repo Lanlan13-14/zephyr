@@ -34,6 +34,7 @@ import {
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
 } from './floating-panel.js?v=20260731-panel-drag-physics4';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -4700,6 +4701,12 @@ function createFileManagerWindow({ path = currentPath } = {}) {
     // cloneNode copies dataset bind flags but not listeners — force rebind.
     delete panel.dataset.panelPhysicsWired;
     delete panel.dataset.panelPhysicsPointerBound;
+    // A spawned third-level window never inherits its parent's side pin.
+    delete panel.dataset.desktopPinWired;
+    delete panel.dataset.pinSide;
+    delete panel.dataset.pinMode;
+    panel.classList.remove('pinned', 'pin-animating');
+    panel.querySelectorAll('.panel-pin-btn').forEach((button) => button.remove());
     panel.querySelectorAll('[data-panel-layout-click-bound], [data-layout-panel]').forEach((el) => {
         delete el.dataset.panelLayoutClickBound;
         delete el.dataset.panelBound;
@@ -11813,6 +11820,11 @@ setupFloatingPanel(shortcutPanel, getDefaultPanelOptions(shortcutPanel));
 setupPanelLayoutMenu();
 setupPanelDrag();
 setupPanelResize();
+// Desktop only: secondary Telnet panels receive the shared `.tgl` side pins.
+const desktopPinPage = document.querySelector('.terminal-page');
+[fileManager, infoModal, dockerPanel, snippetPanel, shortcutPanel].forEach((panel) => {
+    attachDesktopPanelPin(desktopPinPage, panel, { onClose: hidePanelByElement });
+});
 setupTerminalInputActivityHooks();
 setupTerminalInputPanelMetrics();
 setupMobileKeyboardAvoidance();

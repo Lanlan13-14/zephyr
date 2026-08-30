@@ -1,0 +1,121 @@
+/* Desktop secondary-panel side pinning.
+ * `.tgl.panel-pin-btn` is intentionally the exact component from tgl-pin.html;
+ * only absolute left/right positioning is added here. */
+.tgl.panel-pin-btn {
+    --s: 18px;
+    position: absolute;
+    top: 50%;
+    translate: 0 -50%;
+    width: var(--s);
+    height: var(--s);
+    padding: 0;
+    border-radius: 50%;
+    border: 1.5px solid #4a4f5a;
+    background: #1e2025;
+    cursor: pointer;
+    outline: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 7;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    transition: border-color .2s ease, background .2s ease, transform .12s ease-out;
+}
+.panel-pin-btn.left { left: 7px; }
+.panel-pin-btn.right { right: 7px; }
+.panel-pin-btn::after {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #dfe3ea;
+    transform: scale(0);
+    transition: transform .28s cubic-bezier(.34, 1.56, .64, 1), box-shadow .2s ease;
+}
+.panel-pin-btn:hover { border-color: #5d6372; }
+.panel-pin-btn:active { transform: scale(.85); }
+.panel-pin-btn.on { border-color: #9aa2b1; background: #262932; }
+.panel-pin-btn.on::after { transform: scale(1); box-shadow: 0 0 6px rgba(223, 227, 234, .35); }
+
+/* Every top-level secondary panel may be pinned. */
+.file-manager.pin-animating, .info-modal.pin-animating, .docker-panel.pin-animating,
+.snippet-panel.pin-animating, .shortcut-panel.pin-animating, .rdp-floating-panel.pin-animating,
+.ai-agent-panel.pin-animating {
+    transition:
+        left .52s var(--ios-open), top .52s var(--ios-open),
+        width .52s var(--ios-open), height .52s var(--ios-open),
+        border-radius .36s ease, box-shadow .36s ease, border-color .28s ease !important;
+    will-change: left, top, width, height;
+}
+.file-manager.pin-animating.pinned, .info-modal.pin-animating.pinned, .docker-panel.pin-animating.pinned,
+.snippet-panel.pin-animating.pinned, .shortcut-panel.pin-animating.pinned, .rdp-floating-panel.pin-animating.pinned,
+.ai-agent-panel.pin-animating.pinned { animation: panel-pin-settle .52s var(--ios-open); }
+@keyframes panel-pin-settle {
+    0% { filter: brightness(.94); box-shadow: 0 8px 24px rgba(0,0,0,.24); }
+    58% { filter: brightness(1.025); }
+    100% { filter: brightness(1); }
+}
+.file-manager.pinned, .info-modal.pinned, .docker-panel.pinned, .snippet-panel.pinned,
+.shortcut-panel.pinned, .rdp-floating-panel.pinned, .ai-agent-panel.pinned {
+    max-height: none !important;
+    min-width: 0 !important;
+    box-shadow: 0 18px 60px rgba(0,0,0,.45);
+}
+.pinned[data-pin-side="left"] { border-left-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.pinned[data-pin-side="right"] { border-right-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+
+.panel-pin-menu {
+    position: fixed;
+    min-width: 196px;
+    display: flex;
+    flex-direction: column;
+    padding: 5px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow: 0 16px 46px rgba(0,0,0,.42);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    opacity: 0;
+    transform: scale(.92) translateY(-4px);
+    transform-origin: top center;
+    transition: opacity .16s ease, transform .2s var(--ios-open);
+}
+.panel-pin-menu.open { opacity: 1; transform: scale(1) translateY(0); }
+.panel-pin-menu button {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    padding: 7px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+    transition: background .14s ease;
+}
+.panel-pin-menu button span { color: var(--text-secondary); font-size: 10.5px; }
+.panel-pin-menu button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.panel-pin-menu button.danger { color: #f47067; }
+
+/* Side rail geometry reflows the actual active surface with a synchronized transition. */
+@media (hover: hover) and (pointer: fine) {
+    .terminal-page, .rdp-page, .app-shell {
+        transition: padding-left .5s var(--ios-open), padding-right .5s var(--ios-open), background-color .24s ease, border-color .24s ease;
+    }
+    .terminal-page.pin-has-left, .rdp-page.pin-has-left, .app-shell.pin-has-left, body.pin-has-left { padding-left: var(--pin-inset-left, 0px); }
+    .terminal-page.pin-has-right, .rdp-page.pin-has-right, .app-shell.pin-has-right, body.pin-has-right { padding-right: var(--pin-inset-right, 0px); }
+}
+
+/* JS never injects on touch/mobile; this is a second hard guarantee. */
+@media (hover: none), (pointer: coarse) { .panel-pin-btn { display: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+    .pin-animating, .panel-pin-menu, .terminal-page, .rdp-page, .app-shell { animation: none !important; transition-duration: .01ms !important; }
+}
