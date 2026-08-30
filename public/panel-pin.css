@@ -1,6 +1,7 @@
 /* Desktop secondary-panel side pinning.
- * `.tgl.panel-pin-btn` is intentionally the exact component from tgl-pin.html;
- * only absolute left/right positioning is added here. */
+ * `.tgl.panel-pin-btn` intentionally starts from the exact 18px component in
+ * tgl-pin.html, then adapts only its palette to Zephyr's active theme. The
+ * demo geometry and spring remain byte-identical. */
 .tgl.panel-pin-btn {
     --s: 18px;
     position: absolute;
@@ -10,8 +11,8 @@
     height: var(--s);
     padding: 0;
     border-radius: 50%;
-    border: 1.5px solid #4a4f5a;
-    background: #1e2025;
+    border: 1.5px solid color-mix(in srgb, var(--text) 27%, var(--border));
+    background: color-mix(in srgb, var(--surface) 88%, var(--bg));
     cursor: pointer;
     outline: none;
     display: inline-flex;
@@ -31,14 +32,17 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #dfe3ea;
+    background: var(--accent);
     transform: scale(0);
     transition: transform .28s cubic-bezier(.34, 1.56, .64, 1), box-shadow .2s ease;
 }
-.panel-pin-btn:hover { border-color: #5d6372; }
+.panel-pin-btn:hover { border-color: color-mix(in srgb, var(--text) 39%, var(--border)); }
 .panel-pin-btn:active { transform: scale(.85); }
-.panel-pin-btn.on { border-color: #9aa2b1; background: #262932; }
-.panel-pin-btn.on::after { transform: scale(1); box-shadow: 0 0 6px rgba(223, 227, 234, .35); }
+.panel-pin-btn.on {
+    border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+.panel-pin-btn.on::after { transform: scale(1); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent); }
 
 /* Every top-level secondary panel may be pinned. */
 .file-manager.pin-animating, .info-modal.pin-animating, .docker-panel.pin-animating,
@@ -62,7 +66,9 @@
 .shortcut-panel.pinned, .rdp-floating-panel.pinned, .ai-agent-panel.pinned {
     max-height: none !important;
     min-width: 0 !important;
-    box-shadow: 0 18px 60px rgba(0,0,0,.45);
+    /* A docked window is attached to the page; a floating drop shadow reads as
+       visual glue. Keep only the ordinary panel border while pinned. */
+    box-shadow: none !important;
 }
 .pinned[data-pin-side="left"] { border-left-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .pinned[data-pin-side="right"] { border-right-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
