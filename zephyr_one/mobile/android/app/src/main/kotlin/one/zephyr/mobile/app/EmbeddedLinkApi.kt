@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -89,7 +90,12 @@ internal class EmbeddedLinkApi(
             put("spkiPins", kotlinx.serialization.json.JsonArray(spkiPins.map(::JsonPrimitive)))
         }
         val response = post("$base/link/push", payload)
-        val ack = response["ack"]?.jsonObject ?: JsonObject(emptyMap())
+        val ackElement = response["ack"]
+        val ack = when (ackElement) {
+            null, JsonNull -> JsonObject(emptyMap())
+            is JsonObject -> ackElement
+            else -> throw IllegalStateException("Link runtime 返回了无法解析的响应")
+        }
         LinkPushResult(
             ackKind = response["ackKind"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
             ack = ack,

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -163,7 +164,10 @@ class AccountContainer(
     private val accountJob = SupervisorJob()
     private val accountScope = CoroutineScope(accountJob + Dispatchers.Default)
     private val syncJob = SupervisorJob(accountJob)
-    private val syncScope = CoroutineScope(syncJob + Dispatchers.Default)
+    private val syncExceptionHandler = CoroutineExceptionHandler { _, failure ->
+        android.util.Log.e("ZephyrSync", "uncaught sync failure", failure)
+    }
+    private val syncScope = CoroutineScope(syncJob + Dispatchers.Default + syncExceptionHandler)
     private val wakeJob = SupervisorJob(accountJob)
     private val wakeScope = CoroutineScope(wakeJob + Dispatchers.Default)
     private val started = AtomicBoolean(false)

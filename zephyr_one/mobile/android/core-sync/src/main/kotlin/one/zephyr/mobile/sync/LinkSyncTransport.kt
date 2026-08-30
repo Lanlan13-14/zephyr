@@ -1,5 +1,7 @@
 package one.zephyr.mobile.sync
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -181,6 +183,8 @@ class LinkSyncTransport(
         // checking isEstablished before calling it would reject the first-ever sync round
         // (session starts as null) and the Link transport would never dial at all.
         ApiResult.Success(block(), requestId = null)
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: LinkChannelException) {
         ApiResult.Failure(
             MobileError.local(e.code, e.message ?: "Link 通道失败", e.retryable)
@@ -188,6 +192,10 @@ class LinkSyncTransport(
         )
     } catch (e: IllegalArgumentException) {
         ApiResult.Failure(linkError("Link 返回了无法解析的响应", retryable = false))
+    } catch (e: SerializationException) {
+        ApiResult.Failure(linkError("Link 返回了无法解析的响应", retryable = false))
+    } catch (e: IllegalStateException) {
+        ApiResult.Failure(linkError(e.message ?: "Link 通道失败", retryable = true))
     }
 
     private fun linkError(message: String, retryable: Boolean = true) = MobileError.local(

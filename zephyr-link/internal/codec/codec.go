@@ -6,6 +6,7 @@ package codec
 import (
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/klauspost/compress/zstd"
@@ -123,7 +124,12 @@ func init() {
 		panic(err)
 	}
 	encMode = m
-	d, err := cbor.DecOptions{}.DecMode()
+	// DefaultMapType must be map[string]any. The Android loopback seam
+	// json-encodes an untyped CBOR decode; map[interface{}]interface{}
+	// cannot be marshaled and the phone gets an empty 200.
+	d, err := cbor.DecOptions{
+		DefaultMapType: reflect.TypeOf(map[string]any(nil)),
+	}.DecMode()
 	if err != nil {
 		panic(err)
 	}

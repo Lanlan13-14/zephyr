@@ -9,6 +9,55 @@ import (
 	"testing"
 )
 
+func TestDecodeAnyIsJSONMarshalable(t *testing.T) {
+	body := map[string]any{
+		"ok":             true,
+		"bootstrapId":    "bs-1",
+		"snapshotCursor": uint64(7),
+		"complete":       true,
+		"entities": []any{
+			map[string]any{
+				"changeSeq":  uint64(1),
+				"entityType": "note",
+				"entityId":   "n1",
+				"payload":    map[string]any{"title": "hi"},
+			},
+		},
+	}
+	packed, err := Pack(KindSyncAck, body, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr, err := Unpack(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded any
+	if err := Decode(fr.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("Android loopback requires a JSON-encodable ack, got %T: %v", decoded, err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(encoded, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["bootstrapId"] != "bs-1" {
+		t.Fatalf("bootstrap id lost: %s", encoded)
+	}
+	entities, _ := out["entities"].([]any)
+	if len(entities) != 1 {
+		t.Fatalf("entities lost: %s", encoded)
+	}
+	entity, _ := entities[0].(map[string]any)
+	payload, _ := entity["payload"].(map[string]any)
+	if payload["title"] != "hi" {
+		t.Fatalf("nested payload lost: %s", encoded)
+	}
+}
+
 func TestRoundTrip(t *testing.T) {
 	body := map[string]any{"op": "upsert", "entity": "note", "rev": uint64(3)}
 	packed, err := Pack(KindSyncOp, body, false)

@@ -1,6 +1,7 @@
 package one.zephyr.mobile.sync
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
@@ -148,6 +149,20 @@ class LinkSyncTransportTest {
         val result = transport.changes(sinceCursor = 0, limit = 50)
         assertTrue(result is ApiResult.Failure)
         assertTrue((result as ApiResult.Failure).error.retryable)
+    }
+
+    @Test
+    fun `a malformed bootstrap ack is a failure, not a throw`() = runTest {
+        val channel = FakeChannel()
+        channel.ackResponder = { _, _ ->
+            buildJsonObject {
+                put("ok", true)
+                put("bootstrapId", JsonNull)
+            }
+        }
+        val result = LinkSyncTransport(channel, "dev-1", NoopFallback).bootstrap(null, 25)
+        assertTrue(result is ApiResult.Failure)
+        assertEquals("link_unavailable", (result as ApiResult.Failure).error.code)
     }
 
     @Test
