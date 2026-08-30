@@ -41,7 +41,7 @@ function resolveBin() {
 }
 
 class GoLinkProcess {
-    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeToken = '' } = {}) {
+    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeUrlReady = null, syncBridgeToken = '' } = {}) {
         this.log = log || (() => {});
         this.proc = null;
         this.addr = null;
@@ -50,6 +50,7 @@ class GoLinkProcess {
         if (!adminToken) throw new Error('link-admin-token-required');
         this.adminToken = adminToken;
         this.syncBridgeUrl = syncBridgeUrl;
+        this.syncBridgeUrlReady = syncBridgeUrlReady;
         this.syncBridgeToken = syncBridgeToken;
         this.starting = null;
     }
@@ -62,6 +63,9 @@ class GoLinkProcess {
     }
 
     async _start() {
+        if (this.syncBridgeUrlReady) {
+            this.syncBridgeUrl = await this.syncBridgeUrlReady;
+        }
         const bin = resolveBin();
         if (!bin) throw Object.assign(new Error('link-go-binary-missing'), { code: 'link_go_missing' });
         const proc = spawn(bin, [], {
@@ -119,8 +123,8 @@ function stopLinkV2Go() {
     if (shared.proc) { shared.proc.stop(); shared.proc = null; }
 }
 
-function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeToken } = {}) {
-    const proc = sharedProcess(log, { adminToken, syncBridgeUrl, syncBridgeToken });
+function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken } = {}) {
+    const proc = sharedProcess(log, { adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken });
     // Devices the Go service is known to hold this process lifetime, so we only
     // re-register once per device per restart instead of on every handshake.
     const registered = new Set();

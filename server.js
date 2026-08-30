@@ -201,6 +201,7 @@ const { negotiateRdpTls } = require('./server/rdp-cert-probe');
 let mobileV1OutboxDispatcher = null;
 let mobileV1Api = null;
 let linkV2EnrollmentApi = null;
+let linkInternalServer = null;
 let webDavProduction = null;
 let webDavSensitiveRateLimiter = null;
 let backupImportSensitiveRateLimiter = null;
@@ -650,6 +651,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
         try { appChangeWakeRuntime?.close(); } catch {}
         try { await webDavProduction?.close(); } catch {}
         try { stopLinkV2Go(); } catch {}
+        try { linkInternalServer?.close(); } catch {}
         flushAllSshSessionHistory();
         process.exit(signal === 'SIGTERM' ? 0 : 130);
     });
@@ -8991,12 +8993,50 @@ try {
             storage,
             adminToken: linkSyncAdminToken,
         });
-        app.use('/internal/link', express.json({ limit: '4mb' }));
-        app.post('/internal/link/sync', (req, res) => linkSyncBridge.handle(req, res));
+        /* Owned-sync is a private loopback listener. It must not reuse the public
+         * HTTP/HTTPS port: Docker sets HTTP_ENABLED=false so PORT (default 3000,
+         * or whatever the operator mapped) never listens, and HTTPS_PORT is TLS.
+         * Pointing Go at that URL used to make every SYNC_OP a dispatch_failed.
+         * ZEPHYR_LINK_INTERNAL_PORT pins the loopback port when the operator
+         * needs a stable one; otherwise we bind an ephemeral port. */
+        const linkInternalApp = express();
+        linkInternalApp.disable('x-powered-by');
+        linkInternalApp.use((req, res, next) => {
+            const ip = req.socket && req.socket.remoteAddress;
+            if (ip !== '127.0.0.1' && ip !== '::1' && ip !== '::ffff:127.0.0.1') {
+                res.status(403).json({ ok: false, error: { code: 'forbidden', message: 'loopback only' } });
+                return;
+            }
+            next();
+        });
+        linkInternalApp.use('/internal/link', express.json({ limit: '4mb' }));
+        linkInternalApp.post('/internal/link/sync', (req, res) => linkSyncBridge.handle(req, res));
+        linkInternalServer = http.createServer(linkInternalApp);
+        const requestedInternalPort = Number(process.env.ZEPHYR_LINK_INTERNAL_PORT);
+        const linkInternalPort = Number.isInteger(requestedInternalPort) && requestedInternalPort >= 0
+            ? requestedInternalPort
+            : 0;
+        if (linkInternalPort > 0 && (
+            (HTTP_ENABLED && Number(PORT) === linkInternalPort) ||
+            (HTTPS_ENABLED && Number(HTTPS_PORT) === linkInternalPort)
+        )) {
+            throw new Error('ZEPHYR_LINK_INTERNAL_PORT must not collide with the public HTTP/HTTPS port');
+        }
+        const linkInternalReady = new Promise((resolve, reject) => {
+            const onError = (err) => reject(err);
+            linkInternalServer.once('error', onError);
+            linkInternalServer.listen(linkInternalPort, '127.0.0.1', () => {
+                linkInternalServer.removeListener('error', onError);
+                const addr = linkInternalServer.address();
+                const url = `http://127.0.0.1:${addr.port}/internal/link/sync`;
+                console.log('[link-v2] owned-sync bridge listening at', url);
+                resolve(url);
+            });
+        });
         const linkGo = createLinkV2GoProxy({
             enrollments,
             adminToken: linkSyncAdminToken,
-            syncBridgeUrl: `http://127.0.0.1:${PORT}/internal/link/sync`,
+            syncBridgeUrlReady: linkInternalReady,
             syncBridgeToken: linkSyncAdminToken,
             log: (...args) => console.log('[link-v2]', ...args),
         });
