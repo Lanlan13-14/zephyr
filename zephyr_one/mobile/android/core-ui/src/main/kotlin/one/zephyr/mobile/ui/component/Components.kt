@@ -109,6 +109,7 @@ fun SecretPresenceField(
 @Composable
 fun SyncStatusPill(status: SyncStatus, modifier: Modifier = Modifier) {
     val palette = ZephyrTheme.palette
+    val lastError = status.lastError
     val (text, color) = when {
         status.conflictCount > 0 -> "冲突 " + status.conflictCount to palette.status.conflict
         status.bindingState == BindingState.REAUTH_REQUIRED -> "需要重新绑定" to palette.status.warning
@@ -116,7 +117,7 @@ fun SyncStatusPill(status: SyncStatus, modifier: Modifier = Modifier) {
         status.bindingState == BindingState.FATAL_INCOMPATIBLE -> "版本不兼容" to palette.status.error
         status.isRunning -> "同步中" to palette.brand.accent
         status.pendingCount > 0 -> "待同步 " + status.pendingCount to palette.status.pendingSync
-        status.lastError != null -> status.lastError.code.take(22) to palette.status.error
+        lastError != null -> lastError.code.take(22) to palette.status.error
         status.lastSuccessAt != null -> "已同步" to palette.status.success
         else -> "未同步" to palette.status.offline
     }
