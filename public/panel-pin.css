@@ -1,7 +1,7 @@
 /* Desktop secondary-panel side pinning.
  * `.tgl.panel-pin-btn` intentionally starts from the exact 18px component in
- * tgl-pin.html, then adapts only its palette to Zephyr's active theme. The
- * demo geometry and spring remain byte-identical. */
+ * tgl-pin.html. RELEASED state is byte-identical to the demo; only ON state
+ * follows Zephyr's active accent so it remains legible in both themes. */
 .tgl.panel-pin-btn {
     --s: 18px;
     position: absolute;
@@ -11,8 +11,8 @@
     height: var(--s);
     padding: 0;
     border-radius: 50%;
-    border: 1.5px solid color-mix(in srgb, var(--text) 27%, var(--border));
-    background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+    border: 1.5px solid #4a4f5a;
+    background: #1e2025;
     cursor: pointer;
     outline: none;
     display: inline-flex;
@@ -32,17 +32,21 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--accent);
+    background: #dfe3ea;
     transform: scale(0);
     transition: transform .28s cubic-bezier(.34, 1.56, .64, 1), box-shadow .2s ease;
 }
-.panel-pin-btn:hover { border-color: color-mix(in srgb, var(--text) 39%, var(--border)); }
+.panel-pin-btn:hover { border-color: #5d6372; }
 .panel-pin-btn:active { transform: scale(.85); }
 .panel-pin-btn.on {
     border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
     background: color-mix(in srgb, var(--accent) 14%, var(--surface));
 }
-.panel-pin-btn.on::after { transform: scale(1); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent); }
+.panel-pin-btn.on::after {
+    background: var(--accent);
+    transform: scale(1);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent);
+}
 
 /* Every top-level secondary panel may be pinned. */
 .file-manager.pin-animating, .info-modal.pin-animating, .docker-panel.pin-animating,
@@ -66,58 +70,49 @@
 .shortcut-panel.pinned, .rdp-floating-panel.pinned, .ai-agent-panel.pinned {
     max-height: none !important;
     min-width: 0 !important;
-    /* A docked window is attached to the page; a floating drop shadow reads as
-       visual glue. Keep only the ordinary panel border while pinned. */
+    /* A docked window is attached to the page; floating transform/drop shadow
+       read as visual glue. Keep only the ordinary panel border while pinned. */
     box-shadow: none !important;
+    transform: none !important;
+    filter: none !important;
 }
 .pinned[data-pin-side="left"] { border-left-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .pinned[data-pin-side="right"] { border-right-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 
-.panel-pin-menu {
-    position: fixed;
-    min-width: 196px;
-    display: flex;
-    flex-direction: column;
-    padding: 5px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-    box-shadow: 0 16px 46px rgba(0,0,0,.42);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    opacity: 0;
-    transform: scale(.92) translateY(-4px);
-    transform-origin: top center;
-    transition: opacity .16s ease, transform .2s var(--ios-open);
-}
-.panel-pin-menu.open { opacity: 1; transform: scale(1) translateY(0); }
-.panel-pin-menu button {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1px;
-    padding: 7px 10px;
-    border: 0;
-    border-radius: 8px;
-    background: none;
-    color: var(--text-primary);
-    font: inherit;
-    font-size: 12.5px;
-    text-align: left;
-    cursor: pointer;
-    transition: background .14s ease;
-}
-.panel-pin-menu button span { color: var(--text-secondary); font-size: 10.5px; }
-.panel-pin-menu button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.panel-pin-menu button.danger { color: #f47067; }
+/* Pinned ⋯ uses the exact unpinned Dynamic Island visual system. Only the
+   grid column count/contents differ; button size, icons, stagger, timing,
+   background, border and blur are inherited from .panel-layout-menu in style.css. */
+.panel-pin-menu { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.panel-pin-menu button:nth-child(1) { --item-index: 0; }
+.panel-pin-menu button:nth-child(2) { --item-index: 1; }
+.panel-pin-menu button:nth-child(3) { --item-index: 2; }
+.panel-pin-menu button:nth-child(4) { --item-index: 3; }
+.panel-pin-menu button:nth-child(5) { --item-index: 4; }
+.panel-pin-menu button:nth-child(6) { --item-index: 5; }
 
-/* Side rail geometry reflows the actual active surface with a synchronized transition. */
+.panel-layout-icon.unpin { border-style: dashed; }
+.panel-layout-icon.unpin::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 14px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--text-secondary);
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+/* Dock geometry reflows the actual active surface with a synchronized transition. */
 @media (hover: hover) and (pointer: fine) {
     .terminal-page, .rdp-page, .app-shell {
-        transition: padding-left .5s var(--ios-open), padding-right .5s var(--ios-open), background-color .24s ease, border-color .24s ease;
+        transition:
+            padding-left .5s var(--ios-open), padding-right .5s var(--ios-open),
+            padding-bottom .5s var(--ios-open), background-color .24s ease, border-color .24s ease;
     }
     .terminal-page.pin-has-left, .rdp-page.pin-has-left, .app-shell.pin-has-left, body.pin-has-left { padding-left: var(--pin-inset-left, 0px); }
     .terminal-page.pin-has-right, .rdp-page.pin-has-right, .app-shell.pin-has-right, body.pin-has-right { padding-right: var(--pin-inset-right, 0px); }
+    .terminal-page.pin-has-bottom, .rdp-page.pin-has-bottom, .app-shell.pin-has-bottom, body.pin-has-bottom { padding-bottom: calc(max(4px, env(safe-area-inset-bottom)) + var(--pin-inset-bottom, 0px)); }
 }
 
 /* JS never injects on touch/mobile; this is a second hard guarantee. */
