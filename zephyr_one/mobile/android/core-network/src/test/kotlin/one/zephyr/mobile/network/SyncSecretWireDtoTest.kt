@@ -68,7 +68,7 @@ class SyncSecretWireDtoTest {
                 .toDto(emptyMap())
         }
         assertMalformedInboundChange(
-            extraFields = ",\"secretEnvelopes\":{\"notASecret\":${envelopeJson()}",
+            extraFields = ",\"secretEnvelopes\":{\"notASecret\":${envelopeJson()}}",
         )
         assertMalformedInboundChange(payloadJson = "{\"password\":\"plaintext\"}")
     }
