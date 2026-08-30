@@ -239,12 +239,11 @@ object DtoMappers {
             encryptionAlg = dto.auth.encryptionAlg,
             signingAlg = dto.auth.signingAlg,
         ),
-        serverEncryption = when (val encryption = dto.serverEncryption) {
-            ServerEncryptionCapabilityDto.Unavailable -> null
-            is ServerEncryptionCapabilityDto.Available -> ServerEncryptionCapabilities(
-                alg = encryption.value.alg,
-                keyVersion = encryption.value.keyVersion,
-                publicKey = encryption.value.publicKey,
+        serverEncryption = dto.serverEncryption?.let { encryption ->
+            ServerEncryptionCapabilities(
+                alg = encryption.alg,
+                keyVersion = encryption.keyVersion,
+                publicKey = encryption.publicKey,
             )
         },
         features = mapOf(
