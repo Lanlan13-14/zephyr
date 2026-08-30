@@ -1958,7 +1958,7 @@ class MobileV1Api {
             throw new MobileStoreError('unsupported_protocol_version', '不支持的协议版本', 400);
         }
         validatePushRequest(body);
-        if (body.registryHash && body.registryHash !== this.store.registryHash) {
+        if (this.store.registryHash && body.registryHash && body.registryHash !== this.store.registryHash) {
             throw new MobileStoreError('registry_mismatch', '实体注册表版本不一致，请升级客户端', 409, {
                 details: { serverRegistryHash: this.store.registryHash },
             });
