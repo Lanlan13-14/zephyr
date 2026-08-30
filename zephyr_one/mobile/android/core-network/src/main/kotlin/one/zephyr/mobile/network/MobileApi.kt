@@ -9,6 +9,7 @@ import one.zephyr.mobile.model.PushResponse
 import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.SensitiveGrant
 import one.zephyr.mobile.model.ServerCapabilities
+import one.zephyr.mobile.model.withLocalDiagnostic
 import one.zephyr.mobile.network.dto.AckRequestDto
 import one.zephyr.mobile.network.dto.AckResponseDto
 import one.zephyr.mobile.network.dto.BindRequestDto
@@ -75,7 +76,8 @@ class MobileApi(private val client: MobileApiClient) {
             path = MobileApiPaths.GET_MOBILE_V1_CAPABILITIES,
             responseSerializer = CapabilitiesDto.serializer(),
             authenticated = false,
-        ).map { it.toDomain() }
+            responseDiagnosticPhase = "capabilities",
+        ).mapWire("capabilities") { it.toDomain() }
 
     suspend fun bind(request: BindRequestDto, sensitiveGrant: String): ApiResult<BindResponseDto> =
         client.post(
@@ -187,7 +189,8 @@ class MobileApi(private val client: MobileApiClient) {
                 pageToken?.let { put("pageToken", it) }
                 pageSize?.let { put("pageSize", it.toString()) }
             },
-        ).mapSyncWire { it.toDomain() }
+            responseDiagnosticPhase = "sync.bootstrap",
+        ).mapWire("sync.bootstrap") { it.toDomain() }
 
     suspend fun changes(sinceCursor: Long, limit: Int?): ApiResult<ChangePage> =
         client.get(
@@ -197,7 +200,8 @@ class MobileApi(private val client: MobileApiClient) {
                 put("sinceCursor", sinceCursor.toString())
                 limit?.let { put("limit", it.toString()) }
             },
-        ).mapSyncWire { it.toDomain() }
+            responseDiagnosticPhase = "sync.changes",
+        ).mapWire("sync.changes") { it.toDomain() }
 
     suspend fun push(
         deviceId: String,
@@ -230,19 +234,30 @@ class MobileApi(private val client: MobileApiClient) {
             ),
             bodySerializer = PushRequestDto.serializer(),
             responseSerializer = PushResponseDto.serializer(),
-        ).mapSyncWire { it.toDomain() }
+            responseDiagnosticPhase = "sync.push",
+        ).mapWire("sync.push") { it.toDomain() }
     }
 
-    private inline fun <T, R> ApiResult<T>.mapSyncWire(transform: (T) -> R): ApiResult<R> = when (this) {
+    private inline fun <T, R> ApiResult<T>.mapWire(
+        phase: String,
+        transform: (T) -> R,
+    ): ApiResult<R> = when (this) {
         is ApiResult.Success -> try {
             ApiResult.Success(transform(value), requestId)
-        } catch (_: IllegalArgumentException) {
+        } catch (invalid: IllegalArgumentException) {
+            val reason = invalid.message
+                ?.lineSequence()
+                ?.firstOrNull()
+                ?.take(140)
+                ?.takeIf { it.isNotBlank() }
+                ?: "invalid sync wire payload"
             ApiResult.Failure(
                 MobileError.local(
                     code = "malformed_response",
                     message = "server returned an invalid sync wire payload",
                     retryable = false,
-                ).copy(requestId = requestId),
+                ).copy(requestId = requestId)
+                    .withLocalDiagnostic("$phase map: $reason"),
             )
         }
 
@@ -261,6 +276,7 @@ class MobileApi(private val client: MobileApiClient) {
             body = AckRequestDto(deviceId = deviceId, cursor = cursor, appliedOpIds = appliedOpIds),
             bodySerializer = AckRequestDto.serializer(),
             responseSerializer = AckResponseDto.serializer(),
+            responseDiagnosticPhase = "sync.ack",
         ).toValidatedAck()
 
     suspend fun syncStatus(): ApiResult<SyncStatusDto> =

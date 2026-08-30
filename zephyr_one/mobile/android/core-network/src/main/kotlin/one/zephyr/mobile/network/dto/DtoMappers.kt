@@ -52,6 +52,10 @@ object DtoMappers {
             ?: throw IllegalArgumentException("sync change has an unsupported action")
         val spec = EntityRegistry.byType[dto.entityType]
             ?: throw IllegalArgumentException("sync change has an unknown entity type")
+        require(dto.changeSeq >= 0L) { "sync change has an invalid sequence" }
+        require(dto.entityId.isNotBlank()) { "sync change has a blank entity id" }
+        require(dto.revision > 0L) { "sync change has an invalid revision" }
+        require(dto.changedAt > 0L) { "sync change has an invalid changedAt" }
         if (FieldMask.sanitize(dto.entityType, dto.fieldMask).hasRejections) {
             throw IllegalArgumentException("sync change has an invalid field mask")
         }
@@ -106,13 +110,24 @@ object DtoMappers {
         )
     }
 
-    fun bootstrapPage(dto: BootstrapPageDto): BootstrapPage = BootstrapPage(
-        bootstrapId = dto.bootstrapId,
-        snapshotCursor = dto.snapshotCursor,
-        nextPageToken = dto.nextPageToken,
-        complete = dto.complete,
-        entities = dto.entities.map(::change),
-    )
+    fun bootstrapPage(dto: BootstrapPageDto): BootstrapPage {
+        require(dto.ok) { "bootstrap response ok must be true" }
+        require(dto.bootstrapId.isNotBlank()) { "bootstrap response is missing its id" }
+        require(dto.snapshotCursor >= 0L) { "bootstrap response has an invalid snapshot cursor" }
+        require(dto.nextPageToken == null || dto.nextPageToken.isNotBlank()) {
+            "bootstrap response has a blank continuation token"
+        }
+        require(dto.complete == (dto.nextPageToken == null)) {
+            "bootstrap completion does not match its continuation token"
+        }
+        return BootstrapPage(
+            bootstrapId = dto.bootstrapId,
+            snapshotCursor = dto.snapshotCursor,
+            nextPageToken = dto.nextPageToken,
+            complete = dto.complete,
+            entities = dto.entities.map(::change),
+        )
+    }
 
     /**
      * The conflict object carries the server's view so the conflict card can be built without a

@@ -16,6 +16,7 @@ import one.zephyr.mobile.data.repository.SyncStateRepository
 import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.PendingOperation
 import one.zephyr.mobile.model.SyncChange
+import one.zephyr.mobile.model.persistedDiagnosticText
 
 /**
  * Room-backed [SyncLocalStore].
@@ -95,9 +96,9 @@ class RoomSyncLocalStore(
             row.copy(
                 lastAttemptAt = finishedAt,
                 lastErrorCode = error.code,
-                // The registry message is display text; the requestId is what makes a report useful,
-                // and MobileError.diagnosticText() is already redacted.
-                lastErrorMessage = error.diagnosticText(),
+                // Remote messages and parser exception text stay redacted. Only validators that
+                // explicitly attach a bounded client-local diagnostic may add detail here.
+                lastErrorMessage = error.persistedDiagnosticText(),
                 consecutiveFailures = row.consecutiveFailures + 1,
                 nextEligibleAt = nextEligibleAt,
             ),

@@ -9,6 +9,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import one.zephyr.mobile.model.Base64Codec
 import one.zephyr.mobile.model.TlsPolicy
+import one.zephyr.mobile.model.persistedDiagnosticText
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -222,7 +223,11 @@ class MobileApiClientDeviceProofTest {
         val result = client.get(SYNC_STATUS_PATH, TestReply.serializer())
 
         assertTrue(result is ApiResult.Failure)
-        assertEquals("malformed_response", (result as ApiResult.Failure).error.code)
+        val error = (result as ApiResult.Failure).error
+        assertEquals("malformed_response", error.code)
+        assertTrue(
+            error.persistedDiagnosticText().startsWith("device-proof validate: challenge fields do not match request binding"),
+        )
         assertEquals(1, server.requestCount)
     }
 

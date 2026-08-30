@@ -11,6 +11,7 @@ import one.zephyr.mobile.model.Base64Codec
 import one.zephyr.mobile.model.PendingOperation
 import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.TlsPolicy
+import one.zephyr.mobile.model.persistedDiagnosticText
 import one.zephyr.mobile.network.dto.toDto
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -67,7 +68,7 @@ class SyncSecretWireDtoTest {
                 .toDto(emptyMap())
         }
         assertMalformedInboundChange(
-            extraFields = ",\"secretEnvelopes\":{\"notASecret\":${envelopeJson()}",
+            extraFields = ",\"secretEnvelopes\":{\"notASecret\":${envelopeJson()}}",
         )
         assertMalformedInboundChange(payloadJson = "{\"password\":\"plaintext\"}")
     }
@@ -129,7 +130,11 @@ class SyncSecretWireDtoTest {
         val result = api().changes(sinceCursor = 0, limit = null)
 
         assertTrue(result is ApiResult.Failure)
-        assertEquals("malformed_response", (result as ApiResult.Failure).error.code)
+        val error = (result as ApiResult.Failure).error
+        assertEquals("malformed_response", error.code)
+        assertTrue(
+            error.persistedDiagnosticText().startsWith("sync.changes map: sync change "),
+        )
     }
 
     private fun api(): MobileApi {
