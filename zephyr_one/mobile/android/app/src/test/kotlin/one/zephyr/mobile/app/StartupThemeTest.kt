@@ -40,6 +40,9 @@ class StartupThemeTest {
         assertTrue(source.contains("finally"))
         assertTrue(source.contains("readyState.value = true"))
         assertTrue(source.contains("TimeoutCancellationException"))
+        val onCreate = source.substringAfter("override fun onCreate()")
+        assertFalse(onCreate.substringBefore("applicationScope.launch").contains("clearPendingBindingAuthentication"))
+        assertTrue(onCreate.substringAfter("applicationScope.launch").contains("clearPendingBindingAuthentication"))
     }
 
     @Test

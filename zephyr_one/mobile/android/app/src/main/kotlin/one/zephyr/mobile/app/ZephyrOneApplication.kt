@@ -54,11 +54,13 @@ class ZephyrOneApplication : Application(), Configuration.Provider {
         super.onCreate()
         RdpAndroidRuntime.installHome(filesDir)
         container = AppContainer(this)
-        container.clearPendingBindingAuthentication()
         WorkManager.initialize(this, workManagerConfiguration)
         ProcessLifecycleOwner.get().lifecycle.addObserver(LockLifecycleObserver())
         applicationScope.launch {
             try {
+                // Pending password/TOTP state is process-local and cannot resume after death. Clear
+                // its durable crumbs off Main together with the rest of startup recovery.
+                container.clearPendingBindingAuthentication()
                 runCatching { container.bindingCoordinator.completePendingTeardown() }
                 // A database tombstone can outlive its journal if the process died after the journal clear.
                 runCatching { container.sweepErasedAccountDatabases() }

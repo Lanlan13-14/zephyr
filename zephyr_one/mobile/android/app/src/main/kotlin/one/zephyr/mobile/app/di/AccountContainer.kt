@@ -634,7 +634,21 @@ class AccountContainer(
 
     /** Runs the first bootstrap inside this account's cancellable lifetime. */
     override suspend fun bootstrapAfterBind(): List<SyncRoundResult> =
-        if (!localMode && networkEnabled.get()) syncScope.async { syncEngine.onBindComplete() }.await() else emptyList()
+        if (!localMode && networkEnabled.get()) syncScope.async {
+            // A failed pre-fix first round may have persisted REAUTH_REQUIRED even though no snapshot
+            // was ever committed. The encrypted readiness marker is the authority for whether this
+            // generation has usable data; missing marker forces a fresh bootstrap after credentials
+            // become valid again. Invalid credentials still fail validation and restore reauth.
+            if (accountDatabaseRequiresBootstrap()) {
+                syncState.ensure(bindingKey)
+                syncState.updateState(bindingKey, one.zephyr.mobile.contracts.BindingState.BOUND_NEEDS_BOOTSTRAP)
+            }
+            syncEngine.onBindComplete()
+        }.await() else emptyList()
+
+    /** Runs once after a restored, already-bootstrapped graph is published. */
+    override suspend fun runForegroundRound(): List<SyncRoundResult> =
+        if (!localMode && networkEnabled.get()) syncScope.async { syncEngine.onForegroundStart() }.await() else emptyList()
 
     /** Runs only when the worker's persisted identity has already matched this graph. */
     override suspend fun runScheduledRound(): List<SyncRoundResult> =

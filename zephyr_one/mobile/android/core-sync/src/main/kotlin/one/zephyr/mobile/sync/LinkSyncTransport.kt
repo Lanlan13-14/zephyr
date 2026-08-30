@@ -1,6 +1,7 @@
 package one.zephyr.mobile.sync
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
@@ -85,7 +86,7 @@ class LinkSyncTransport(
             put("sinceCursor", sinceCursor)
             if (limit != null) put("limit", limit)
         }
-        val ack = channel.syncOp("changes", body)
+        val ack = channel.syncOp("changes", wireBody("changes", body))
         json.decodeFromJsonElement(ChangePageDto.serializer(), ack).toDomain()
     }
 
@@ -116,14 +117,13 @@ class LinkSyncTransport(
                 registryHash = registryHash,
                 operations = operationDtos,
             )
-            /* The op discriminator rides alongside the standard push fields; the server bridge reads
-             * `op` and the rest of the body is the exact PushRequestDto the HTTP route would get. */
+            /* wireBody injects the op discriminator for every verb. The remaining body is the
+             * exact PushRequestDto the HTTP route would get. */
             val body = buildJsonObject {
-                put("op", "push")
                 json.encodeToJsonElement(PushRequestDto.serializer(), request).jsonObject
                     .forEach { (k, v) -> put(k, v) }
             }
-            val ack = channel.syncOp("push", body)
+            val ack = channel.syncOp("push", wireBody("push", body))
             json.decodeFromJsonElement(PushResponseDto.serializer(), ack).toDomain()
         }
     }
@@ -131,12 +131,21 @@ class LinkSyncTransport(
     override suspend fun ack(cursor: Long, appliedOpIds: List<String>): ApiResult<ValidatedAck> = runLink {
         val request = AckRequestDto(deviceId = deviceId, cursor = cursor, appliedOpIds = appliedOpIds)
         val body = buildJsonObject {
-            put("op", "ack")
             json.encodeToJsonElement(AckRequestDto.serializer(), request).jsonObject
                 .forEach { (k, v) -> put(k, v) }
         }
-        channel.syncOp("ack", body)
+        channel.syncOp("ack", wireBody("ack", body))
         ValidatedAck
+    }
+
+    private fun wireBody(op: String, body: JsonObject): JsonObject = buildJsonObject {
+        put("op", JsonPrimitive(op))
+        body.forEach { (key, value) ->
+            require(key != "op" || value == JsonPrimitive(op)) {
+                "Link sync body op does not match the requested operation"
+            }
+            put(key, value)
+        }
     }
 
     private suspend fun <T> runLink(block: suspend () -> T): ApiResult<T> = try {

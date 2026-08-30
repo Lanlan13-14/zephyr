@@ -365,8 +365,10 @@ fun FileSyncScreen(
     onBack: () -> Unit,
 ) {
     val palette = ZephyrTheme.palette
+    val lastError = status.lastError
     val phase = when {
         status.isRunning -> "正在同步"
+        lastError != null -> "同步失败 · ${lastError.code}"
         status.conflictCount > 0 -> "需要处理冲突"
         status.lastSuccessAt != null -> "镜像已同步"
         else -> "镜像待同步"
@@ -398,6 +400,7 @@ fun FileSyncScreen(
                             Text(
                                 when {
                                     localMode -> "未绑定主端 · 本机工作区可离线使用"
+                                    lastError != null -> lastError.message.take(96)
                                     status.lastSuccessAt != null -> "上次成功 · 下次自动 ${intervalLabel(settings.intervalSec)}"
                                     else -> "等待首次同步 · 下次自动 ${intervalLabel(settings.intervalSec)}"
                                 },
@@ -416,7 +419,7 @@ fun FileSyncScreen(
                         Text(
                             buildString {
                                 append("待推送 ${status.pendingCount}")
-                                if (status.lastError != null) append(" · 上次失败")
+                                lastError?.let { append(" · ${it.code}") }
                             },
                             color = palette.onFloatingSubtle,
                             fontSize = 12.5.sp,
