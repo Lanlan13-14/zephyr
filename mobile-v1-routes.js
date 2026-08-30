@@ -1545,7 +1545,19 @@ class MobileV1Api {
                         action: 'upsert',
                         revision: adapter.revisionOf(row),
                         actorDeviceId: null,
-                        changedAt: Number(row.updatedAt || row.createdAt || 0),
+                        /* Every SyncChange requires a positive timestamp. Canonical services use
+                         * different event names, and old/config rows may predate updatedAt. Pick the
+                         * best durable source at the wire boundary; 1 is the explicit legacy epoch,
+                         * never wall-clock "now", so repeated bootstrap pages remain deterministic. */
+                        changedAt: Math.max(
+                            1,
+                            Number(row.updatedAt) || 0,
+                            Number(row.createdAt) || 0,
+                            Number(row.time) || 0,
+                            Number(row.occurredAt) || 0,
+                            Number(row.finishedAt) || 0,
+                            Number(row.startedAt) || 0,
+                        ),
                         /* fieldMask is the full editable set: a bootstrap row is the
                          * complete entity, not a patch. */
                         fieldMask: adapter.fieldMaskOf
