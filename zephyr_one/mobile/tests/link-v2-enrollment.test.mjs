@@ -446,17 +446,38 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
   });
   assert.equal(consume.status, 200, await consume.clone().text());
   const binding = await consume.json();
+  const serverNote = await server.api(login.cookie, 'POST', '/api/notes', {
+    title: 'server-to-device',
+    content: 'must arrive in bootstrap',
+  });
+  assert.equal(serverNote.status, 200);
+  const serverNoteId = serverNote.body.note.noteId;
   const proofFetch = createProofClient({
     base: server.url(''),
     access: binding.accessCredential,
     deviceId,
     privateKey: signing.privateKey,
   });
-  const bootstrap = await proofFetch('/api/mobile/v1/sync/bootstrap?pageSize=50');
-  assert.equal(bootstrap.status, 200, await bootstrap.clone().text());
-  const snapshot = await bootstrap.json();
-  assert.equal(snapshot.ok, true);
+  let pageToken = null;
+  let snapshot = null;
+  const bootstrapEntities = [];
+  do {
+    const pathname = '/api/mobile/v1/sync/bootstrap?pageSize=50' +
+      (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
+    const bootstrap = await proofFetch(pathname);
+    assert.equal(bootstrap.status, 200, await bootstrap.clone().text());
+    const page = await bootstrap.json();
+    assert.equal(page.ok, true);
+    if (snapshot === null) snapshot = page;
+    else assert.equal(page.snapshotCursor, snapshot.snapshotCursor);
+    bootstrapEntities.push(...page.entities);
+    pageToken = page.complete ? null : page.nextPageToken;
+    assert.ok(page.complete || pageToken);
+  } while (pageToken);
   assert.ok(Number.isSafeInteger(snapshot.snapshotCursor));
+  assert.ok(bootstrapEntities.some((change) =>
+    change.entityType === 'note' && change.entityId === serverNoteId && change.payload.title === 'server-to-device'
+  ));
 
   const devices = await server.api(login.cookie, 'GET', '/api/one/clients');
   assert.equal(devices.status, 200);
@@ -503,13 +524,47 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
     return unpacked.body;
   }
 
+  const deviceNoteId = 'note-device-upstream-0001';
+  const pushed = await syncOp({
+    op: 'push',
+    protocolVersion: 1,
+    deviceId,
+    batchId: 'batch-device-upstream-1',
+    baseCursor: snapshot.snapshotCursor,
+    registryHash: binding.registryHash,
+    operations: [{
+      opId: 'op-device-upstream-1',
+      entityType: 'note',
+      entityId: deviceNoteId,
+      action: 'upsert',
+      baseRevision: 0,
+      clientModifiedAt: Date.now(),
+      fieldMask: ['title', 'content'],
+      payload: { title: 'device-to-server', content: 'must arrive on main end' },
+    }],
+  });
+  assert.equal(pushed.ok, true);
+  assert.equal(pushed.results[0].status, 'accepted', JSON.stringify(pushed));
+  const upstream = await server.api(login.cookie, 'GET', `/api/notes/${deviceNoteId}`);
+  assert.equal(upstream.status, 200);
+  assert.equal(upstream.body.note.title, 'device-to-server');
+
+  const mainAfterSnapshot = await server.api(login.cookie, 'POST', '/api/notes', {
+    title: 'server-after-bootstrap',
+    content: 'must arrive through changes',
+  });
+  assert.equal(mainAfterSnapshot.status, 200);
+  const changedNoteId = mainAfterSnapshot.body.note.noteId;
+
   const changes = await syncOp({ op: 'changes', sinceCursor: snapshot.snapshotCursor, limit: 50 });
   assert.equal(changes.ok, true);
   assert.equal(changes.fromCursor, snapshot.snapshotCursor);
-  assert.equal(changes.nextCursor, snapshot.snapshotCursor);
-  assert.deepEqual(changes.changes, []);
+  assert.ok(changes.nextCursor > snapshot.snapshotCursor);
+  assert.ok(changes.changes.some((change) =>
+    change.entityType === 'note' && change.entityId === changedNoteId && change.payload.title === 'server-after-bootstrap'
+  ));
 
-  const acknowledged = await syncOp({ op: 'ack', cursor: changes.nextCursor, appliedOpIds: [] });
+  const acknowledged = await syncOp({ op: 'ack', cursor: changes.nextCursor, appliedOpIds: ['op-device-upstream-1'] });
   assert.equal(acknowledged.ok, true);
 
   const status = await syncOp({ op: 'status' });

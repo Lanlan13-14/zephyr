@@ -192,6 +192,7 @@ interface ManagedBindingGraph {
     /** Discards an unpublished generation without touching application-wide platform grants. */
     fun discardPreparedState()
     suspend fun bootstrapAfterBind(): List<SyncRoundResult>
+    suspend fun runForegroundRound(): List<SyncRoundResult> = emptyList()
     suspend fun runScheduledRound(): List<SyncRoundResult>
     suspend fun accountDatabaseRequiresBootstrap(): Boolean = false
     suspend fun markAccountDatabaseReady() = Unit
@@ -293,7 +294,8 @@ class BindingCoordinator internal constructor(
 
     private data class RestorePreparation(
         val result: BindingRestoreResult,
-        val bootstrapGraph: ManagedBindingGraph? = null,
+        val restoredGraph: ManagedBindingGraph? = null,
+        val requiresBootstrap: Boolean = false,
         val binding: AccountBinding? = null,
     )
 
@@ -347,15 +349,20 @@ class BindingCoordinator internal constructor(
             if (host.currentGraph() !== graph) replaceGraphLocked(graph)
             RestorePreparation(
                 result = BindingRestoreResult.Restored(stored.binding),
-                bootstrapGraph = graph.takeIf { requiresBootstrap },
+                restoredGraph = graph,
+                requiresBootstrap = requiresBootstrap,
                 binding = stored.binding,
             )
         }
         // Bootstrap can perform network I/O. Keep it outside the coordinator mutex so unbind or a
         // revoke can cancel the graph, join the round, and erase the database immediately.
-        preparation.bootstrapGraph?.takeIf { bootstrap }?.let { graph ->
-            graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
-                markBootstrapReadyIfCurrent(graph, checkNotNull(preparation.binding), round.endState)
+        preparation.restoredGraph?.takeIf { bootstrap }?.let { graph ->
+            if (preparation.requiresBootstrap) {
+                graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
+                    markBootstrapReadyIfCurrent(graph, checkNotNull(preparation.binding), round.endState)
+                }
+            } else {
+                graph.runForegroundRound()
             }
         }
         workersMayRun = preparation.result !is BindingRestoreResult.LocalCleanupRequired
@@ -364,13 +371,13 @@ class BindingCoordinator internal constructor(
 
     /** Retries a restored account's initial sync without blocking process startup. */
     suspend fun bootstrapRestoredBinding() {
-        val graph = mutex.withLock {
-            val current = host.currentGraph() ?: return
-            if (!current.accountDatabaseRequiresBootstrap()) return
-            current
-        }
-        graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
-            markBootstrapReadyIfCurrent(graph, graph.binding, round.endState)
+        val graph = mutex.withLock { host.currentGraph() ?: return }
+        if (graph.accountDatabaseRequiresBootstrap()) {
+            graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
+                markBootstrapReadyIfCurrent(graph, graph.binding, round.endState)
+            }
+        } else {
+            graph.runForegroundRound()
         }
     }
 

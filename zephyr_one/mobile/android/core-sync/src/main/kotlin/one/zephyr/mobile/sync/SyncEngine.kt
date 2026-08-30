@@ -164,8 +164,11 @@ class SyncEngine(
             }
         }
 
-        scope.launch { run(SyncTrigger.FOREGROUND_START, respectPolicy = true) }
     }
+
+    /** One explicit foreground-start round after restore has decided bootstrap is not required. */
+    suspend fun onForegroundStart(): List<SyncRoundResult> =
+        run(SyncTrigger.FOREGROUND_START, respectPolicy = true)
 
     /**
      * @param respectPolicy false for user-initiated rounds, which must work on any link.

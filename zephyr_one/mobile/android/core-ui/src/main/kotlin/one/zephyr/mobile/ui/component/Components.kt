@@ -116,7 +116,7 @@ fun SyncStatusPill(status: SyncStatus, modifier: Modifier = Modifier) {
         status.bindingState == BindingState.FATAL_INCOMPATIBLE -> "版本不兼容" to palette.status.error
         status.isRunning -> "同步中" to palette.brand.accent
         status.pendingCount > 0 -> "待同步 " + status.pendingCount to palette.status.pendingSync
-        status.lastError != null -> "上次失败" to palette.status.error
+        status.lastError != null -> status.lastError.code.take(22) to palette.status.error
         status.lastSuccessAt != null -> "已同步" to palette.status.success
         else -> "未同步" to palette.status.offline
     }

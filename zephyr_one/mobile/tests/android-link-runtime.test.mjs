@@ -76,6 +76,39 @@ test('Android publishes local-to-bound account replacement atomically', () => {
   assert.match(screen, /prepared\?\.identity\?\.wipe\(\)/);
 });
 
+test('Android Link channel injects every sync op before sealing', () => {
+  const container = read('android/app/src/main/kotlin/one/zephyr/mobile/app/di/AccountContainer.kt');
+  const transport = read('android/core-sync/src/main/kotlin/one/zephyr/mobile/sync/LinkSyncTransport.kt');
+  assert.match(transport, /private fun wireBody\(op: String, body: JsonObject\)/);
+  assert.match(transport, /put\("op", JsonPrimitive\(op\)\)/);
+  assert.match(transport, /channel\.syncOp\("changes", wireBody\("changes", body\)\)/);
+  assert.match(transport, /channel\.syncOp\("push", wireBody\("push", body\)\)/);
+  assert.match(transport, /channel\.syncOp\("ack", wireBody\("ack", body\)\)/);
+  assert.match(container, /kind = LinkKinds\.SYNC_OP, body = body/);
+});
+
+test('root recovers an absent account instead of drawing a permanent blank frame', () => {
+  const root = read('android/app/src/main/kotlin/one/zephyr/mobile/app/ZephyrOneRoot.kt');
+  assert.match(root, /if \(account == null\)/);
+  assert.match(root, /withContext\(Dispatchers\.IO\).*container\.ensureLocalWorkspace\(\)\.activate\(\)/s);
+  assert.match(root, /CircularProgressIndicator/);
+  assert.match(root, /工作区恢复失败/);
+  assert.match(root, /recoveryAttempt \+= 1/);
+  assert.doesNotMatch(root, /account == null -> Box\(Modifier\.fillMaxSize\(\)\)/);
+});
+
+test('startup sync recovery resets incomplete generations and avoids duplicate rounds', () => {
+  const account = read('android/app/src/main/kotlin/one/zephyr/mobile/app/di/AccountContainer.kt');
+  const coordinator = read('android/app/src/main/kotlin/one/zephyr/mobile/app/binding/BindingCoordinator.kt');
+  const engine = read('android/core-sync/src/main/kotlin/one/zephyr/mobile/sync/SyncEngine.kt');
+  assert.match(account, /accountDatabaseRequiresBootstrap\(\)/);
+  assert.match(account, /BindingState\.BOUND_NEEDS_BOOTSTRAP/);
+  assert.match(coordinator, /if \(graph\.accountDatabaseRequiresBootstrap\(\)\)/);
+  assert.match(coordinator, /graph\.runForegroundRound\(\)/);
+  assert.doesNotMatch(engine, /scope\.launch \{ run\(SyncTrigger\.FOREGROUND_START/);
+  assert.match(engine, /suspend fun onForegroundStart\(\)/);
+});
+
 test('server never caches a failed Go device registration', () => {
   const proxy = readRepo('link-v2-go-proxy.js');
   assert.match(proxy, /throw failure/);

@@ -301,6 +301,8 @@ class BindingCoordinatorTest {
             restoredGraphsAreRecoverable = true,
         )
         assertTrue(first.restoreActiveBinding() is BindingRestoreResult.Restored)
+        assertEquals(1, firstGraphs.single().foregroundCalls)
+        assertEquals(0, firstGraphs.single().bootstrapCalls)
 
         // A new host/coordinator models process death: no in-memory graph is carried across.
         val recreatedGraphs = mutableListOf<FakeGraph>()
@@ -313,11 +315,54 @@ class BindingCoordinatorTest {
         )
         assertTrue(recreated.restoreActiveBinding() is BindingRestoreResult.Restored)
         val graph = recreatedGraphs.single()
+        assertEquals(1, graph.foregroundCalls)
+        assertEquals(0, graph.bootstrapCalls)
 
         val workerGraph = recreated.graphForWorker(graph.bindingKey, graph.generation)
         assertNotNull(workerGraph)
         workerGraph!!.runScheduledRound()
         assertEquals(1, graph.scheduledCalls)
+    }
+
+    @Test
+    fun `deferred restored binding runs exactly one foreground round when already bootstrapped`() = runTest {
+        val storage = FakeStorage(mutableListOf()).apply { active = storedBinding() }
+        val graphs = mutableListOf<FakeGraph>()
+        val coordinator = coordinator(
+            storage,
+            FakeHost(mutableListOf()),
+            graphs,
+            mutableListOf(),
+            restoredGraphsAreRecoverable = true,
+        )
+
+        assertTrue(coordinator.restoreActiveBinding(bootstrap = false) is BindingRestoreResult.Restored)
+        val graph = graphs.single()
+        assertEquals(0, graph.bootstrapCalls)
+        assertEquals(0, graph.foregroundCalls)
+
+        coordinator.bootstrapRestoredBinding()
+        assertEquals(0, graph.bootstrapCalls)
+        assertEquals(1, graph.foregroundCalls)
+    }
+
+    @Test
+    fun `deferred restored binding runs bootstrap without a duplicate foreground round`() = runTest {
+        val storage = FakeStorage(mutableListOf()).apply { active = storedBinding() }
+        val graphs = mutableListOf<FakeGraph>()
+        val coordinator = coordinator(
+            storage,
+            FakeHost(mutableListOf()),
+            graphs,
+            mutableListOf(),
+            restoredGraphsAreRecoverable = true,
+            restoredDatabaseRequiresBootstrap = true,
+        )
+
+        assertTrue(coordinator.restoreActiveBinding(bootstrap = false) is BindingRestoreResult.Restored)
+        coordinator.bootstrapRestoredBinding()
+        assertEquals(1, graphs.single().bootstrapCalls)
+        assertEquals(0, graphs.single().foregroundCalls)
     }
 
     @Test
@@ -1800,6 +1845,7 @@ private class FakeGraph(
     private val job = SupervisorJob()
     private val scope = CoroutineScope(job + Dispatchers.Default)
     var bootstrapCalls = 0
+    var foregroundCalls = 0
     var scheduledCalls = 0
     var databaseReadyCalls = 0
     var storedAccess: String? = null
@@ -1840,6 +1886,12 @@ private class FakeGraph(
         events += "graph.bootstrap"
         bootstrapCalls += 1
         listOf(successfulRound(SyncTrigger.BIND_COMPLETE))
+    }.await()
+
+    override suspend fun runForegroundRound(): List<SyncRoundResult> = scope.async {
+        events += "graph.foreground"
+        foregroundCalls += 1
+        listOf(successfulRound(SyncTrigger.FOREGROUND_START))
     }.await()
 
     override suspend fun runScheduledRound(): List<SyncRoundResult> = scope.async {

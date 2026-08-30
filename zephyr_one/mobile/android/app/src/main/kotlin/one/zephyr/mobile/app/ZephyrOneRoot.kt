@@ -44,6 +44,8 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
@@ -168,14 +170,45 @@ fun ZephyrOneRoot(
 ) {
     Surface(modifier = modifier.fillMaxSize(), color = ZephyrTheme.palette.surfaces.background) {
         val account by container.accounts.collectAsState()
+        var recoveryAttempt by remember { mutableStateOf(0) }
+        var recoveryError by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(account, recoveryAttempt) {
+            if (account == null) {
+                // Opening Room/SQLCipher and reconciling platform grants are blocking operations.
+                // Keep them off Main; if recovery fails, render a retryable state rather than an
+                // endless blank/loading frame with no diagnostic surface.
+                recoveryError = null
+                runCatching {
+                    withContext(Dispatchers.IO) { container.ensureLocalWorkspace().activate() }
+                }.onFailure { failure ->
+                    recoveryError = failure.message ?: failure::class.java.simpleName
+                }
+            }
+        }
         when {
             /* The lock gate outranks everything, including a bound account: AppLock is the product
              * gate, and drawing a screen behind it would expose content to the recents screenshot. */
             locked -> LockGate(onUnlockRequested = onUnlockRequested)
 
-            /* Startup recovery is still opening the local workspace. The window already matches
-             * the dashboard colour, so this is a same-colour hold rather than a black flash. */
-            account == null -> Box(Modifier.fillMaxSize())
+            /* Recovery is rebuilding the local fallback after an unusable bound graph. Never draw
+             * a visually blank application state; a visible progress affordance also distinguishes
+             * recovery from a crashed composition. */
+            account == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                val error = recoveryError
+                if (error == null) {
+                    one.zephyr.mobile.ui.component.CircularProgressIndicator()
+                } else {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text("工作区恢复失败", style = ZephyrTextStyles.pushedTitle)
+                        Text(error.take(180), color = ZephyrTheme.palette.onFloatingMuted, textAlign = TextAlign.Center)
+                        Button(onClick = { recoveryAttempt += 1 }) { Text("重试") }
+                    }
+                }
+            }
 
             else -> account?.let { activeAccount ->
                 key(activeAccount.generation) {

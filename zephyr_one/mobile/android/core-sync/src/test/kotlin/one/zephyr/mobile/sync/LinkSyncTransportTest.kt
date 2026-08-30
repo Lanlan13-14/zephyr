@@ -59,6 +59,7 @@ class LinkSyncTransportTest {
         assertEquals(5L, (result as ApiResult.Success).value.nextCursor)
         assertEquals(1, channel.calls.size)
         assertEquals("changes", channel.calls[0].first)
+        assertEquals("changes", channel.calls[0].second["op"]!!.jsonPrimitive.content)
         assertEquals(5L, channel.calls[0].second["sinceCursor"]!!.jsonPrimitive.longOrNull)
     }
 
@@ -85,6 +86,7 @@ class LinkSyncTransportTest {
         assertTrue(result is ApiResult.Success)
         val (op, body) = channel.calls.single()
         assertEquals("push", op)
+        assertEquals("push", body["op"]!!.jsonPrimitive.content)
         assertEquals("batch-1", body["batchId"]!!.jsonPrimitive.content)
         assertEquals("hash-1", body["registryHash"]!!.jsonPrimitive.content)
         assertEquals("dev-1", body["deviceId"]!!.jsonPrimitive.content)
@@ -112,6 +114,19 @@ class LinkSyncTransportTest {
         val result = transport.ack(cursor = 3, appliedOpIds = listOf("op-1"))
         assertTrue(result is ApiResult.Failure)
         assertEquals("link_unavailable", (result as ApiResult.Failure).error.code)
+    }
+
+    @Test
+    fun `ack carries its op discriminator and standard fields`() = runTest {
+        val channel = FakeChannel()
+        channel.ackResponder = { _, _ -> buildJsonObject { put("ok", true) } }
+        val transport = LinkSyncTransport(channel, "dev-1", NoopFallback)
+        assertTrue(transport.ack(cursor = 3, appliedOpIds = listOf("op-1")) is ApiResult.Success)
+        val (op, body) = channel.calls.single()
+        assertEquals("ack", op)
+        assertEquals("ack", body["op"]!!.jsonPrimitive.content)
+        assertEquals(3L, body["cursor"]!!.jsonPrimitive.longOrNull)
+        assertEquals("op-1", body["appliedOpIds"]!!.jsonArray.single().jsonPrimitive.content)
     }
 
     /** The HTTP fallback is never exercised by these tests; it exists so bootstrap/caps delegate. */
