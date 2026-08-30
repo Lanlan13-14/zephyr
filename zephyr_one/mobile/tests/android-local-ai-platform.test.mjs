@@ -25,6 +25,7 @@ test('Android packages and launches the exact Go agent loop locally', () => {
   const app = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedAiRuntimeProcess.kt');
   const client = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedAiRuntimeApi.kt');
   const host = read('android/app/src/main/kotlin/one/zephyr/mobile/app/AiWorkspaceHost.kt');
+  const factory = read('android/app/src/main/kotlin/one/zephyr/mobile/app/AiRuntimeControllerFactory.kt');
   const manifest = read('android/app/src/main/AndroidManifest.xml');
   const build = read('android/app/build.gradle.kts');
   const goEntry = fs.readFileSync(path.join(repo, 'zephyr-ai/cmd/zephyr-ai-android/main.go'), 'utf8');
@@ -37,8 +38,10 @@ test('Android packages and launches the exact Go agent loop locally', () => {
   assert.match(goEntry, /server\.New\(cfg, store, log\)/);
   assert.match(client, /\/admin\/runs/);
   assert.match(client, /text\/event-stream/);
-  assert.match(host, /LocalAndroidAiRuntimeController/);
-  assert.doesNotMatch(host, /\bAndroidAiRuntimeController\(/);
+  assert.match(host, /AiRuntimeControllerFactory\.create/);
+  assert.match(factory, /if \(account\.isLocalMode\)/);
+  assert.match(factory, /LocalAndroidAiRuntimeController/);
+  assert.match(factory, /else \{\s*AndroidAiRuntimeController/);
 });
 
 test('local AI runtime has platform tools and a fail-closed L2 sandbox', () => {

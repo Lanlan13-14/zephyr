@@ -88,7 +88,25 @@ class SharedResourceCoordinator(
         return when (result) {
             is ApiResult.Success -> {
                 val now = clock()
-                val rows = result.value.map(::toSummary)
+                val rows = mutableListOf<SharedResourceSummary>()
+                for (resource in result.value) {
+                    if (resource.resourceType != "connection") {
+                        rows += toSummary(resource)
+                        continue
+                    }
+                    /* The frozen list summary deliberately omits protocol/endpoint data. A
+                     * connection cannot be routed safely until its online detail is fetched; never
+                     * default an absent protocol to SSH. Detail remains memory-only and is discarded
+                     * on the next replace/revoke. */
+                    when (val detail = client.detail(resource.resourceType, resource.resourceId)) {
+                        is ApiResult.Success -> if (!detail.value.protocol.isNullOrBlank()) {
+                            rows += toSummary(detail.value)
+                        }
+                        is ApiResult.Failure -> if (detail.error.dismissesSharedResource || detail.error.httpStatus == 404) {
+                            store.remove(resource.resourceType, resource.resourceId)
+                        }
+                    }
+                }
                 store.replace(rows, now)
                 /* Expiry is applied on the same pass. A grant whose window closed while the response
                  * was in flight must not be shown as live, and the server is not obliged to have

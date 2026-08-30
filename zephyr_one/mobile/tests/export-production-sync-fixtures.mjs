@@ -9,22 +9,24 @@ const require = createRequire(import.meta.url);
 const { createDatabase } = require(path.join(repoRoot, 'sqlite-driver.js'));
 const { MobileV1Api } = require(path.join(repoRoot, 'mobile-v1-routes.js'));
 const { MobileV1Store } = require(path.join(repoRoot, 'mobile-v1-store.js'));
+const { createPersonalEntityAdapters } = require(path.join(repoRoot, 'mobile-v1-personal-entities.js'));
 
-const registry = {
-  classification: ['editableSync', 'opaquePreserve', 'serverOnly', 'deviceLocal'],
-  entities: [{
-    type: 'connection',
-    ownerField: 'ownerUserId',
-    editableFields: ['name'],
-    secretFields: [],
-    serverAuthorityFields: ['ownerUserId', 'revision'],
-    opaquePreserveFields: [],
-    deviceLocalFields: [],
-  }],
-};
+const registry = JSON.parse(fs.readFileSync(
+  path.join(here, '..', 'contracts', 'registries', 'entity-registry.json'),
+  'utf8',
+));
+const connectionSpec = registry.entities.find((entity) => entity.type === 'connection');
 const user = { userId: 'owner-1', username: 'owner' };
 const device = { device_id: 'device-1', owner_user_id: user.userId, refresh_generation: 1 };
 const row = { id: 'connection-1', ownerUserId: user.userId, revision: 1, name: 'fixture', updatedAt: 1 };
+const settingsRow = {
+  sectionKey: 'appearance',
+  userId: user.userId,
+  revision: 1,
+  updatedAt: 1,
+  'appearance.theme': 'dark',
+  'appearance.customCss': '.fixture{}',
+};
 
 function fakeResponse() {
   return {
@@ -43,8 +45,8 @@ try {
   store._hmacKey = Buffer.alloc(32, 0x5a);
   const api = Object.create(MobileV1Api.prototype);
   api.requireDevice = () => ({ user, device });
-  api.bootstrapTypes = ['connection'];
-  api.entityByType = new Map([['connection', registry.entities[0]]]);
+  api.bootstrapTypes = ['connection', 'oneUserSettings'];
+  api.entityByType = new Map(registry.entities.map((entity) => [entity.type, entity]));
   api.adapters = new Map([['connection', {
     list: () => [row],
     read: (_user, id) => id === row.id ? row : null,
@@ -52,6 +54,18 @@ try {
     idOf: (value) => value.id,
     revisionOf: (value) => value.revision,
   }]]);
+  const personalAdapters = createPersonalEntityAdapters({
+    personalSettingsService: {
+      list: () => [settingsRow],
+      read: (_user, id) => id === settingsRow.sectionKey ? settingsRow : null,
+      residency: () => 'owned',
+      currentRevision: () => settingsRow.revision,
+      patchSection: () => settingsRow,
+      resetSection: () => true,
+      restoreSection: () => settingsRow,
+    },
+  });
+  for (const [type, adapter] of personalAdapters) api.adapters.set(type, adapter);
   api.store = store;
   store.serverId = () => 'server-fixture';
   api.serverEncryptionKey = () => null;

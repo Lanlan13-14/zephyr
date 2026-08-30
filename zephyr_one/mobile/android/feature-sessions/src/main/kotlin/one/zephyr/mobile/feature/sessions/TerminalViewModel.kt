@@ -599,13 +599,14 @@ class TerminalViewModel(
         private val host: TerminalHost,
         private val emulator: TerminalEmulator,
         private val secretProvider: suspend (Connection) -> TerminalCredentials,
+        private val findConnection: suspend (String) -> Connection? = connections::find,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = TerminalViewModel(
             sessionId = sessionId,
             connectionId = connectionId,
             registry = registry,
-            findConnection = { id -> connections.find(id) },
+            findConnection = findConnection,
             host = host,
             emulator = emulator,
             secretProvider = secretProvider,

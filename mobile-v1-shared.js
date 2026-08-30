@@ -500,6 +500,7 @@ class SharedResourceApi {
 
         const owner = this.activeOwner(raw);
         if (!owner) return null;
+        if (grant.resourceType === 'connection' && !protocolPurpose(raw.protocol)) return null;
         return {
             resourceType: grant.resourceType,
             resourceId: grant.resourceId,

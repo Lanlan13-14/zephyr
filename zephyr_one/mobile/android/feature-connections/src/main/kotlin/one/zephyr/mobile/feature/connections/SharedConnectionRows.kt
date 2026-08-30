@@ -50,8 +50,8 @@ object SharedConnectionRows {
     fun isConnection(summary: SharedResourceSummary): Boolean =
         summary.resourceType == Connection.ENTITY_TYPE
 
-    fun toDisplayRow(summary: SharedResourceSummary, ownerUserId: String): Connection {
-        val protocol = Protocol.fromWire(summary.protocol) ?: Protocol.SSH
+    fun toDisplayRow(summary: SharedResourceSummary, ownerUserId: String): Connection? {
+        val protocol = Protocol.fromWire(summary.protocol) ?: return null
         return Connection(
             id = summary.resourceId,
             // The bound account is not the owner; the owner label is carried separately because the
@@ -70,5 +70,5 @@ object SharedConnectionRows {
     }
 
     fun rowsFrom(summaries: List<SharedResourceSummary>, ownerUserId: String): List<Connection> =
-        summaries.filter(::isConnection).map { toDisplayRow(it, ownerUserId) }
+        summaries.filter(::isConnection).mapNotNull { toDisplayRow(it, ownerUserId) }
 }

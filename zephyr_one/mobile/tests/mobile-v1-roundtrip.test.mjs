@@ -849,6 +849,32 @@ test("the device list shows the bound device to the SID plane", async () => {
     "the device list must never expose credential material");
 });
 
+test("bound device AI routes use the main-end runtime authority", async () => {
+  const aiDevice = (pathname) => fetch(state.base + pathname, {
+    headers: {
+      authorization: "Bearer " + state.access,
+      "x-zephyr-one-client": "1",
+      "x-zephyr-one-platform": "android",
+      "x-zephyr-protocol-version": "1",
+    },
+  });
+  const statusRes = await aiDevice("/api/ai/runtime/status");
+  assert.equal(statusRes.status, 200, "bound AI status rejected device access: " + statusRes.status);
+  const status = await statusRes.json();
+  assert.equal(typeof status.enabled, "boolean");
+
+  const providersRes = await aiDevice("/api/ai/providers");
+  assert.equal(providersRes.status, 200, "bound AI provider list rejected device access: " + providersRes.status);
+  const providers = (await providersRes.json()).providers || [];
+  const provider = providers.find((item) => item.id === state.providerId);
+  assert.ok(provider, "bound AI provider was not visible to its owner device");
+  assert.equal(Object.hasOwn(provider, "apiKey"), false);
+  assert.equal(Object.hasOwn(provider, "hasApiKey"), false);
+  assert.equal(Object.hasOwn(provider, "baseUrl"), false);
+  assert.equal(Object.hasOwn(provider, "config"), false);
+  assert.equal(JSON.stringify(provider).includes(AI_PROVIDER_SECRET), false);
+});
+
 test("stop the server", async () => {
   await cleanup();
 });
