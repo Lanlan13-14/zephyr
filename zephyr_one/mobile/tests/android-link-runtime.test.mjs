@@ -51,6 +51,30 @@ test('Kotlin drives device-identity ML-KEM through the Go core loopback routes',
   assert.match(node, /DecapsulateMLKEM768/);
 });
 
+test('Android Link TLS uses the system CA store and an explicit insecure switch', () => {
+  const proc = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedLinkProcess.kt');
+  const api = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedLinkApi.kt');
+  const container = read('android/app/src/main/kotlin/one/zephyr/mobile/app/di/AccountContainer.kt');
+  const screen = read('android/app/src/main/kotlin/one/zephyr/mobile/app/BindingScreen.kt');
+  const tls = read('android/core-network/src/main/kotlin/one/zephyr/mobile/network/TlsConfigurator.kt');
+  const model = read('android/core-model/src/main/kotlin/one/zephyr/mobile/model/Binding.kt');
+  const node = readRepo('zephyr-link/internal/link/node.go');
+  assert.match(model, /data object InsecureTrust/);
+  assert.match(tls, /TlsPolicy\.InsecureTrust -> applyInsecure/);
+  assert.match(tls, /systemCaBundlePem/);
+  assert.match(tls, /AndroidCAStore/);
+  assert.match(proc, /SSL_CERT_FILE/);
+  assert.match(proc, /systemCaBundlePem\(\)/);
+  assert.match(api, /"insecure" to JsonPrimitive\(insecure\)/);
+  assert.match(api, /put\("insecure", insecure\)/);
+  assert.match(container, /linkInsecure/);
+  assert.match(container, /insecure = linkInsecure/);
+  assert.match(screen, /允许不安全的证书/);
+  assert.match(screen, /TlsPolicy\.InsecureTrust/);
+  assert.match(node, /InsecureSkipVerify: true/);
+  assert.match(node, /sessionTLS/);
+});
+
 test('Go Link core exposes the embedded dial route the Kotlin client calls', () => {
   const node = readRepo('zephyr-link/internal/link/node.go');
   assert.match(node, /\/link\/dial/);

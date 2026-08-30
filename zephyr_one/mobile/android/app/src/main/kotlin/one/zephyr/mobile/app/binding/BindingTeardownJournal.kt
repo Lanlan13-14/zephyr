@@ -146,6 +146,7 @@ internal class SharedPreferencesBindingReplacementJournal(
             tlsPolicy = when (requiredString(KEY_PROFILE_TLS)) {
                 TLS_SYSTEM -> TlsPolicy.SystemTrust
                 TLS_PINNED -> TlsPolicy.PinnedSpki(pins)
+                TLS_INSECURE -> TlsPolicy.InsecureTrust
                 else -> error("invalid binding replacement TLS policy")
             },
             createdAt = preferences.getLong(KEY_PROFILE_CREATED, Long.MIN_VALUE).also {
@@ -225,7 +226,14 @@ internal class SharedPreferencesBindingReplacementJournal(
             .putString(KEY_PROFILE_ID, profile.id)
             .putString(KEY_PROFILE_URL, profile.baseUrl)
             .putString(KEY_PROFILE_NAME, profile.displayName)
-            .putString(KEY_PROFILE_TLS, if (profile.tlsPolicy is TlsPolicy.PinnedSpki) TLS_PINNED else TLS_SYSTEM)
+            .putString(
+                KEY_PROFILE_TLS,
+                when (profile.tlsPolicy) {
+                    is TlsPolicy.PinnedSpki -> TLS_PINNED
+                    is TlsPolicy.InsecureTrust -> TLS_INSECURE
+                    is TlsPolicy.SystemTrust -> TLS_SYSTEM
+                },
+            )
             .putStringSet(
                 KEY_PROFILE_PINS,
                 (profile.tlsPolicy as? TlsPolicy.PinnedSpki)?.sha256Pins?.toMutableSet() ?: mutableSetOf(),
@@ -255,6 +263,7 @@ internal class SharedPreferencesBindingReplacementJournal(
         const val VERSION = 1
         const val TLS_SYSTEM = "system"
         const val TLS_PINNED = "pinned"
+        const val TLS_INSECURE = "insecure"
         const val KEY_VERSION = "version"
         const val KEY_STAGE = "stage"
         const val KEY_HAS_PREVIOUS = "has-previous"

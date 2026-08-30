@@ -17,8 +17,11 @@ data class ServerProfile(
 }
 
 /**
- * TLS trust for this profile. There is deliberately no "ignore all certificate errors" option;
- * self-signed deployments must pin explicitly.
+ * TLS trust for this profile.
+ *
+ * Default is the system CA store. A self-signed host can either pin an SPKI or,
+ * with an explicit bind-time switch, accept the presented certificate for this
+ * bound URL only. The insecure switch is never the default.
  */
 sealed interface TlsPolicy {
     /** System trust store, strict validation. The only default. */
@@ -31,7 +34,13 @@ sealed interface TlsPolicy {
         }
     }
 
-    val isStrict: Boolean get() = true
+    /**
+     * User-confirmed trust of the bound host's presented certificate. Hostname
+     * still has to match. Not a global "ignore TLS" flag.
+     */
+    data object InsecureTrust : TlsPolicy
+
+    val isStrict: Boolean get() = this !is InsecureTrust
 }
 
 /**

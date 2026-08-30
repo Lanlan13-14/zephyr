@@ -26,6 +26,7 @@ import one.zephyr.mobile.ui.component.CircularProgressIndicator
 import one.zephyr.mobile.ui.component.FieldRow
 import one.zephyr.mobile.ui.component.GroupCard
 import one.zephyr.mobile.ui.component.HorizontalDivider
+import one.zephyr.mobile.ui.component.Switch
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.Composable
@@ -74,6 +75,7 @@ fun BindingScreen(
     var baseUrl by remember { mutableStateOf("https://") }
     var displayName by remember { mutableStateOf("") }
     var deviceName by remember { mutableStateOf("Zephyr One") }
+    var allowInsecureTls by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var prepared by remember { mutableStateOf<BindingCoordinator.PreparedEnrollment?>(null) }
@@ -238,6 +240,25 @@ fun BindingScreen(
                             showDivider = false,
                         )
                     }
+                    GroupCard {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("允许不安全的证书", fontWeight = FontWeight.Medium)
+                                Text(
+                                    "仅用于自签或内网证书。默认关闭，正规 CA 不要打开。",
+                                    color = ZephyrTheme.palette.onFloatingMuted,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                            Switch(checked = allowInsecureTls, onCheckedChange = { allowInsecureTls = it })
+                        }
+                    }
                     Button(
                         enabled = !busy,
                         onClick = {
@@ -253,7 +274,7 @@ fun BindingScreen(
                                     id = UUID.randomUUID().toString(),
                                     baseUrl = url,
                                     displayName = displayName.ifBlank { url },
-                                    tlsPolicy = TlsPolicy.SystemTrust,
+                                    tlsPolicy = if (allowInsecureTls) TlsPolicy.InsecureTrust else TlsPolicy.SystemTrust,
                                     createdAt = System.currentTimeMillis(),
                                     lastUsedAt = null,
                                 )

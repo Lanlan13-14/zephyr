@@ -86,3 +86,37 @@ func TestEmbeddedDialRouteHonoursPinnedSPKI(t *testing.T) {
 		t.Fatalf("wrong pin must fail closed, got %d", status)
 	}
 }
+
+func TestEmbeddedDialRouteInsecureTrustsUnpinnedTLS(t *testing.T) {
+	serverNode := NewNode()
+	server := httptest.NewTLSServer(serverNode.Handler())
+	defer server.Close()
+
+	device := NewNode()
+	deviceSrv := httptest.NewServer(device.Handler())
+	defer deviceSrv.Close()
+
+	call := func(insecure bool) (int, map[string]any) {
+		body, _ := json.Marshal(map[string]any{
+			"serverUrl": server.URL, "deviceId": "device-insecure",
+			"insecure": insecure,
+		})
+		resp, err := http.Post(deviceSrv.URL+"/link/dial", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+
+	status, _ := call(false)
+	if status != http.StatusBadGateway {
+		t.Fatalf("unpinned TLS without insecure must fail closed, got %d", status)
+	}
+	status, out := call(true)
+	if status != http.StatusOK || out["ok"] != true {
+		t.Fatalf("insecure dial failed: %d %#v", status, out)
+	}
+}

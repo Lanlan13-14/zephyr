@@ -47,6 +47,9 @@ internal class EmbeddedLinkProcess(private val context: Context) : Closeable {
         env.clear()
         env["HOME"] = data.absolutePath
         env["TMPDIR"] = File(context.cacheDir, "zephyr-link-tmp").apply { mkdirs() }.absolutePath
+        val caFile = File(data, "android-ca-bundle.pem")
+        caFile.writeBytes(one.zephyr.mobile.network.TlsConfigurator.systemCaBundlePem())
+        env["SSL_CERT_FILE"] = caFile.absolutePath
         val child = builder.start()
         // readLine() blocks forever if the child never writes to stdout (e.g. it is stuck
         // waiting on something). Run it on a throwaway thread with a hard timeout so the
