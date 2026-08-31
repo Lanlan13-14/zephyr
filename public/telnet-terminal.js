@@ -1540,16 +1540,15 @@ function pinMobileImeChrome(open, inset = 0, { authoritative = false } = {}) {
 }
 
 function isTouchKeyboardDevice() {
-    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+    return isMobileStableInputCandidate();
 }
 
 function isMobileStableInputCandidate() {
-    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+    const mobileViewport = window.matchMedia?.('(max-width: 760px)')?.matches === true;
+    const coarsePointer = window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches === true;
+    return mobileViewport && (coarsePointer || (navigator.maxTouchPoints || 0) > 0);
 }
 
-// The active pointer media query is authoritative. maxTouchPoints alone marks
-// many desktop browsers as touch-capable and must not switch terminal input to
-// the external IME path.
 function usesExternalTerminalInput() {
     return isMobileStableInputCandidate();
 }
@@ -12736,6 +12735,8 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
         const focusFromDesktopGesture = (event) => {
             if (event.button !== 0 && event.type !== 'click') return;
             if (event.pointerType === 'touch' || event.pointerType === 'pen') return;
+            // A new primary mouse press is a fresh input gesture. Collapse stale
+            // copy selection before restoring WTerm's native input focus.
             if (hasLiveTerminalSelection()) {
                 if (event.type !== 'mousedown') return;
                 try { window.getSelection?.()?.removeAllRanges?.(); } catch (_) {}

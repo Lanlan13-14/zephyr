@@ -1539,16 +1539,20 @@ function pinMobileImeChrome(open, inset = 0, { authoritative = false } = {}) {
 }
 
 function isTouchKeyboardDevice() {
-    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+    return isMobileStableInputCandidate();
 }
 
 function isMobileStableInputCandidate() {
-    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+    // A desktop browser may expose coarse-pointer/touch capability (hybrid
+    // laptops, remote desktops). Only a genuinely mobile-sized coarse viewport
+    // gets the external IME path; otherwise WTerm must retain its native hidden
+    // textarea or desktop SSH becomes copy-only.
+    const mobileViewport = window.matchMedia?.('(max-width: 760px)')?.matches === true;
+    const coarsePointer = window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches === true;
+    return mobileViewport && (coarsePointer || (navigator.maxTouchPoints || 0) > 0);
 }
 
-// The active pointer media query is authoritative. maxTouchPoints alone marks
-// many desktop browsers as touch-capable and must not switch terminal input to
-// the external IME path.
+// Kept as a named adapter for the WTerm input-mode contract.
 function usesExternalTerminalInput() {
     return isMobileStableInputCandidate();
 }
@@ -12648,6 +12652,7 @@ async function startAutoReconnect(reason = t('连接已断开')) {
 
 // ---------- WTerm 初始化 ----------
 let terminalUserGestureAt = 0;
+let desktopTerminalFocusIntent = false;
 function noteTerminalUserGesture() { terminalUserGestureAt = Date.now(); }
 function decodeOsc52Base64(value) {
     const input = String(value || '');
