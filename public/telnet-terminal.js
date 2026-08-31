@@ -1540,17 +1540,16 @@ function pinMobileImeChrome(open, inset = 0, { authoritative = false } = {}) {
 }
 
 function isTouchKeyboardDevice() {
-    return isMobileStableInputCandidate();
+    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
 }
 
 function isMobileStableInputCandidate() {
-    const mobileViewport = window.matchMedia?.('(max-width: 760px)')?.matches === true;
-    const coarsePointer = window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches === true;
-    return mobileViewport && (coarsePointer || (navigator.maxTouchPoints || 0) > 0);
+    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches
+        || ((navigator.maxTouchPoints || 0) > 0 && !!window.matchMedia?.('(max-width: 700px)')?.matches);
 }
 
 function usesExternalTerminalInput() {
-    return isMobileStableInputCandidate();
+    return isMobileStableInputCandidate() && !!window.matchMedia?.('(max-width: 760px)')?.matches;
 }
 
 function getKeyboardBaselineHeight() {

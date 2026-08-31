@@ -61,8 +61,9 @@ test('desktop terminal clicks focus wterm immediately unless a live selection is
     assert.match(terminalSrc, /const focusFromDesktopGesture = \(event\) =>/);
     assert.match(terminalSrc, /event\.pointerType === 'touch' \|\| event\.pointerType === 'pen'/);
     assert.match(terminalSrc, /wtermWrapper\.addEventListener\('mousedown', focusFromDesktopGesture, true\)/);
-    assert.match(terminalSrc, /function isTouchKeyboardDevice\(\) \{\n\s+return isMobileStableInputCandidate\(\);/);
-    assert.match(terminalSrc, /const mobileViewport = window\.matchMedia\?\.\('\(max-width: 760px\)'\)\?\.matches === true;/);
+    assert.match(terminalSrc, /function isTouchKeyboardDevice\(\) \{\n\s+return !!window\.matchMedia\?\.\('\(hover: none\) and \(pointer: coarse\)'\)\?\.matches;/);
+    assert.match(terminalSrc, /function isMobileStableInputCandidate\(\)/);
+    assert.match(terminalSrc, /function usesExternalTerminalInput\(\)/);
     assert.match(terminalSrc, /if \(hasLiveTerminalSelection\(\)\) \{[\s\S]{0,180}?window\.getSelection\?\.\(\)\?\.removeAllRanges\?\.\(\)/);
     assert.match(terminalSrc, /event\.target\?\.closest\?\.\('a, button, input, textarea, select, \[contenteditable="true"\]'\)/);
     assert.match(terminalSrc, /actual gesture/);

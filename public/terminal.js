@@ -1539,22 +1539,18 @@ function pinMobileImeChrome(open, inset = 0, { authoritative = false } = {}) {
 }
 
 function isTouchKeyboardDevice() {
-    return isMobileStableInputCandidate();
+    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
 }
 
 function isMobileStableInputCandidate() {
-    // A desktop browser may expose coarse-pointer/touch capability (hybrid
-    // laptops, remote desktops). Only a genuinely mobile-sized coarse viewport
-    // gets the external IME path; otherwise WTerm must retain its native hidden
-    // textarea or desktop SSH becomes copy-only.
-    const mobileViewport = window.matchMedia?.('(max-width: 760px)')?.matches === true;
-    const coarsePointer = window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches === true;
-    return mobileViewport && (coarsePointer || (navigator.maxTouchPoints || 0) > 0);
+    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches
+        || ((navigator.maxTouchPoints || 0) > 0 && !!window.matchMedia?.('(max-width: 700px)')?.matches);
 }
 
-// Kept as a named adapter for the WTerm input-mode contract.
+// The external IME path remains mobile-only. Desktop WebSSH always uses native
+// WTerm input, even on hybrid machines exposing touch capability.
 function usesExternalTerminalInput() {
-    return isMobileStableInputCandidate();
+    return isMobileStableInputCandidate() && !!window.matchMedia?.('(max-width: 760px)')?.matches;
 }
 
 function getKeyboardBaselineHeight() {
