@@ -58,10 +58,13 @@ test('snapshot replay restores carriage-return progress and alternate screen wit
 
 test('desktop terminal clicks focus wterm immediately unless a live selection is being copied', () => {
     assert.match(terminalSrc, /_zephyrDesktopClickFocusBound = true/);
-    assert.match(terminalSrc, /if \(isTouchKeyboardDevice\(\) \|\| event\.button !== 0\) return;/);
-    assert.match(terminalSrc, /if \(hasLiveTerminalSelection\(\)\) return;/);
+    assert.match(terminalSrc, /const focusFromDesktopGesture = \(event\) =>/);
+    assert.match(terminalSrc, /event\.pointerType === 'touch' \|\| event\.pointerType === 'pen'/);
+    assert.match(terminalSrc, /wtermWrapper\.addEventListener\('mousedown', focusFromDesktopGesture, true\)/);
+    assert.match(terminalSrc, /function isTouchKeyboardDevice\(\) \{\n\s+return !!window\.matchMedia\?\.\('\(hover: none\) and \(pointer: coarse\)'\)\?\.matches;/);
+    assert.match(terminalSrc, /if \(hasLiveTerminalSelection\(\)\) \{[\s\S]{0,180}?window\.getSelection\?\.\(\)\?\.removeAllRanges\?\.\(\)/);
     assert.match(terminalSrc, /event\.target\?\.closest\?\.\('a, button, input, textarea, select, \[contenteditable="true"\]'\)/);
-    assert.match(terminalSrc, /Focus immediately inside the click gesture/);
+    assert.match(terminalSrc, /actual gesture/);
     assert.doesNotMatch(terminalSrc, /window\.setTimeout\(\(\) => \{\n\s+if \(hasLiveTerminalSelection\(\)\) return;\n\s+try \{ term\?\.focus\?\.\(\); \} catch \(_\) \{\}\n\s+\}, 0\);/);
     assert.match(terminalSrc, /try \{ term\?\.focus\?\.\(\); \} catch \(_\) \{\}/);
 });

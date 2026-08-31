@@ -1539,13 +1539,18 @@ function pinMobileImeChrome(open, inset = 0, { authoritative = false } = {}) {
 }
 
 function isTouchKeyboardDevice() {
-    return (navigator.maxTouchPoints || 0) > 0
-        || window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
 }
 
 function isMobileStableInputCandidate() {
-    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches
-        || ((navigator.maxTouchPoints || 0) > 0 && !!window.matchMedia?.('(max-width: 700px)')?.matches);
+    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+}
+
+// The active pointer media query is authoritative. maxTouchPoints alone marks
+// many desktop browsers as touch-capable and must not switch terminal input to
+// the external IME path.
+function usesExternalTerminalInput() {
+    return isMobileStableInputCandidate();
 }
 
 function getKeyboardBaselineHeight() {
@@ -12707,7 +12712,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             // Mobile is an EXTERNAL input surface: the only IME is
             // #mobileTerminalImeProxy → TerminalSurface. WTerm must not focus
             // its hidden textarea or self-scroll before Zephyr decides.
-            inputMode: isTouchKeyboardDevice() ? 'external' : 'native',
+            inputMode: usesExternalTerminalInput() ? 'external' : 'native',
             onExternalInputRequest: () => {
                 if (isMobileStableInputMode()) ensureTerminalSurface()?.onTerminalTap?.('wterm-external-input');
             },
@@ -12725,28 +12730,29 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     term.onClipboard = (request) => { void handleTerminalClipboardRequest(request); };
     wtermWrapper.addEventListener('pointerdown', noteTerminalUserGesture, { passive: true });
     wtermWrapper.addEventListener('keydown', noteTerminalUserGesture, true);
-    // Desktop parity with ordinary terminals: any clean click in the SSH text
-    // area hands keyboard focus back to wterm. The only exception is an active
-    // selection/copy gesture, where focusing the hidden textarea would collapse
-    // the text the user is trying to copy.
+    // Desktop parity with ordinary terminals: any click in the SSH text area
+    // must leave WTerm's hidden textarea focused for subsequent typing. Do not
+    // gate this on maxTouchPoints: a desktop browser may expose touch support
+    // while still being driven by a mouse/keyboard. Use the pointer type of the
+    // actual gesture instead.
     if (!wtermWrapper._zephyrDesktopClickFocusBound) {
         wtermWrapper._zephyrDesktopClickFocusBound = true;
-        wtermWrapper.addEventListener('mousedown', (event) => {
-            if (isTouchKeyboardDevice() || event.button !== 0) return;
-            if (hasLiveTerminalSelection()) return;
-            if (event.target?.closest?.('a, button, input, textarea, select, [contenteditable="true"]')) return;
-            // Focus immediately inside the click gesture. Waiting a turn gives
-            // WTerm's own selection handler/browser default a chance to leave
-            // the hidden textarea unfocused, which presents exactly as "can
-            // copy but cannot type".
-            try { term?.focus?.(); } catch (_) {}
-        });
-        wtermWrapper.addEventListener('click', (event) => {
-            if (isTouchKeyboardDevice() || event.button !== 0) return;
-            if (hasLiveTerminalSelection()) return;
+        const focusFromDesktopGesture = (event) => {
+            if (event.button !== 0 && event.type !== 'click') return;
+            if (event.pointerType === 'touch' || event.pointerType === 'pen') return;
+            // A previous copy can leave a live DOM range behind. A new primary
+            // mouse press is a fresh input gesture: collapse that stale range,
+            // then focus WTerm. Otherwise WTerm's click guard keeps refusing
+            // focus forever and the terminal becomes copy-only after one click.
+            if (hasLiveTerminalSelection()) {
+                if (event.type !== 'mousedown') return;
+                try { window.getSelection?.()?.removeAllRanges?.(); } catch (_) {}
+            }
             if (event.target?.closest?.('a, button, input, textarea, select, [contenteditable="true"]')) return;
             try { term?.focus?.(); } catch (_) {}
-        });
+        };
+        wtermWrapper.addEventListener('mousedown', focusFromDesktopGesture, true);
+        wtermWrapper.addEventListener('click', focusFromDesktopGesture, true);
     }
     // Desktop double-click → xterm word separators; browser copies selection only.
     if (!wtermWrapper._zephyrWordSelectBound) {

@@ -1540,13 +1540,18 @@ function pinMobileImeChrome(open, inset = 0, { authoritative = false } = {}) {
 }
 
 function isTouchKeyboardDevice() {
-    return (navigator.maxTouchPoints || 0) > 0
-        || window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
 }
 
 function isMobileStableInputCandidate() {
-    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches
-        || ((navigator.maxTouchPoints || 0) > 0 && !!window.matchMedia?.('(max-width: 700px)')?.matches);
+    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+}
+
+// The active pointer media query is authoritative. maxTouchPoints alone marks
+// many desktop browsers as touch-capable and must not switch terminal input to
+// the external IME path.
+function usesExternalTerminalInput() {
+    return isMobileStableInputCandidate();
 }
 
 function getKeyboardBaselineHeight() {
@@ -12705,7 +12710,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             // Mobile is an EXTERNAL input surface: the only IME is
             // #mobileTerminalImeProxy → TerminalSurface. WTerm must not focus
             // its hidden textarea or self-scroll before Zephyr decides.
-            inputMode: isTouchKeyboardDevice() ? 'external' : 'native',
+            inputMode: usesExternalTerminalInput() ? 'external' : 'native',
             onExternalInputRequest: () => {
                 if (isMobileStableInputMode()) ensureTerminalSurface()?.onTerminalTap?.('wterm-external-input');
             },
@@ -12723,6 +12728,24 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     term.onClipboard = (request) => { void handleTerminalClipboardRequest(request); };
     wtermWrapper.addEventListener('pointerdown', noteTerminalUserGesture, { passive: true });
     wtermWrapper.addEventListener('keydown', noteTerminalUserGesture, true);
+    // Desktop parity with ordinary terminals: any click in the terminal text
+    // area must leave WTerm's hidden textarea focused for subsequent typing.
+    // Detect the actual pointer gesture, not maxTouchPoints on hybrid devices.
+    if (!wtermWrapper._zephyrDesktopClickFocusBound) {
+        wtermWrapper._zephyrDesktopClickFocusBound = true;
+        const focusFromDesktopGesture = (event) => {
+            if (event.button !== 0 && event.type !== 'click') return;
+            if (event.pointerType === 'touch' || event.pointerType === 'pen') return;
+            if (hasLiveTerminalSelection()) {
+                if (event.type !== 'mousedown') return;
+                try { window.getSelection?.()?.removeAllRanges?.(); } catch (_) {}
+            }
+            if (event.target?.closest?.('a, button, input, textarea, select, [contenteditable="true"]')) return;
+            try { term?.focus?.(); } catch (_) {}
+        };
+        wtermWrapper.addEventListener('mousedown', focusFromDesktopGesture, true);
+        wtermWrapper.addEventListener('click', focusFromDesktopGesture, true);
+    }
     // Desktop double-click → xterm word separators; browser copies selection only.
     if (!wtermWrapper._zephyrWordSelectBound) {
         wtermWrapper._zephyrWordSelectBound = true;
