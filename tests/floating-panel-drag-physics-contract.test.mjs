@@ -154,7 +154,9 @@ test('cache revision pins style + terminal + floating-panel physics4 + desktop p
   const styleVersion = singleAssetVersion(appHtml, 'style.css', 'app shell style.css');
   const terminalVersion = singleAssetVersion(terminalHtml, 'terminal.js', 'terminal page script');
   const pinVersion = singleAssetVersion(appHtml, 'panel-pin.css', 'app shell panel pin css');
-  assert.equal(cacheNameVersion(sw), pinVersion);
+  // CACHE_NAME is app-wide (see activity/session contracts); panel assets are
+  // pinned by their individual ?v revisions instead of by the cache bucket name.
+  assert.equal(cacheNameVersion(sw), appVersion);
   assertAssetVersion(sw, 'style.css', styleVersion, 'service worker style.css');
   assertAssetVersion(sw, 'terminal.js', terminalVersion, 'service worker terminal.js');
   assertAssetVersion(sw, 'floating-panel.js', CACHE, 'service worker floating-panel.js');
