@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"time"
 
@@ -102,11 +103,21 @@ func normalizeCBORForJSON(value any) (any, error) {
 func normalizeJSONIntegers(value any) (any, error) {
 	switch typed := value.(type) {
 	case json.Number:
-		integer, err := typed.Int64()
-		if err != nil {
-			return nil, fmt.Errorf("link: sync bridge returned a non-integer number")
+		/* Cursor, revision and timestamps must stay integers on the CBOR
+		 * wire. Connection payloads also carry real floats
+		 * (rdpTouchSensitivity defaults to 1.5). Treating every JSON number
+		 * as Int64 aborted the whole owned-sync page as soon as the account
+		 * had a host: empty accounts and notes/snippets have no floats, so
+		 * they looked fine. Keep exact integers as int64; keep finite
+		 * floats as float64. */
+		if integer, err := typed.Int64(); err == nil {
+			return integer, nil
 		}
-		return integer, nil
+		float, err := typed.Float64()
+		if err != nil || math.IsNaN(float) || math.IsInf(float, 0) {
+			return nil, fmt.Errorf("link: sync bridge returned a non-finite number")
+		}
+		return float, nil
 	case []any:
 		for i, item := range typed {
 			normalized, err := normalizeJSONIntegers(item)
