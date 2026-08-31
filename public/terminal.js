@@ -33,7 +33,7 @@ import {
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
 } from './floating-panel.js?v=20260731-panel-drag-physics4';
-import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin7';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -12725,6 +12725,28 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     term.onClipboard = (request) => { void handleTerminalClipboardRequest(request); };
     wtermWrapper.addEventListener('pointerdown', noteTerminalUserGesture, { passive: true });
     wtermWrapper.addEventListener('keydown', noteTerminalUserGesture, true);
+    // Desktop parity with ordinary terminals: any clean click in the SSH text
+    // area hands keyboard focus back to wterm. The only exception is an active
+    // selection/copy gesture, where focusing the hidden textarea would collapse
+    // the text the user is trying to copy.
+    if (!wtermWrapper._zephyrDesktopClickFocusBound) {
+        wtermWrapper._zephyrDesktopClickFocusBound = true;
+        wtermWrapper.addEventListener('mousedown', (event) => {
+            if (isTouchKeyboardDevice() || event.button !== 0) return;
+            if (hasLiveTerminalSelection()) return;
+            if (event.target?.closest?.('a, button, input, textarea, select, [contenteditable="true"]')) return;
+            window.setTimeout(() => {
+                if (hasLiveTerminalSelection()) return;
+                try { term?.focus?.(); } catch (_) {}
+            }, 0);
+        });
+        wtermWrapper.addEventListener('click', (event) => {
+            if (isTouchKeyboardDevice() || event.button !== 0) return;
+            if (hasLiveTerminalSelection()) return;
+            if (event.target?.closest?.('a, button, input, textarea, select, [contenteditable="true"]')) return;
+            try { term?.focus?.(); } catch (_) {}
+        });
+    }
     // Desktop double-click → xterm word separators; browser copies selection only.
     if (!wtermWrapper._zephyrWordSelectBound) {
         wtermWrapper._zephyrWordSelectBound = true;

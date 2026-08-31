@@ -55,10 +55,20 @@ test('panel pins are desktop-only and mobile cannot receive controls', () => {
 test('side rails stay above bottom dock while bottom dock owns and covers the full lower row', () => {
     assert.match(pin, /function halfInset\(page\)/);
     assert.match(pin, /const height = fullHeight - halfInset\(page\)/);
+    assert.match(pin, /const viewport = window\.visualViewport;/);
+    assert.match(pin, /Math\.max\(\(page\.clientWidth \|\| rect\.width \|\| window\.innerWidth\) \+ borderX, vvWidth\)/);
+    assert.match(pin, /Math\.max\(\(page\.clientHeight \|\| rect\.height \|\| window\.innerHeight\) \+ borderY, vvHeight\)/);
     assert.match(pin, /left: `\$\{scope\.left - edge\.left\}px`, top: `\$\{scope\.top \+ fullHeight - height\}px`,\n            width: `\$\{scope\.width \+ edge\.left \+ edge\.right\}px`, height: `\$\{height \+ edge\.bottom\}px`/);
     assert.match(pin, /applyInsets\(page, \{ bottomOverride: next \}\)/);
+    assert.match(pin, /window\.visualViewport\?\.addEventListener\?\.\('resize', onViewportResize\)/);
     assert.match(css, /pin-has-bottom/);
     assert.match(css, /var\(--pin-inset-bottom, 0px\)/);
+});
+
+test('bottom dock inset does not double-add the page safe padding and push SSH off-screen', () => {
+    assert.match(pin, /const bottom = bottomOverride \?\? halfInset\(page\);/);
+    assert.doesNotMatch(pin, /pageSafeInset/);
+    assert.match(css, /padding-bottom: calc\(max\(4px, env\(safe-area-inset-bottom\)\) \+ var\(--pin-inset-bottom, 0px\)\)/);
 });
 
 test('bottom dock locks both pin buttons and supports top-handle vertical resize', () => {
@@ -118,7 +128,7 @@ test('nested cloned panels are explicitly reset to ordinary floating windows', (
 test('all desktop top-level panel surfaces are wired; demo is not referenced', () => {
     for (const source of [terminal, telnet, rdp, vnc, app]) {
         assert.match(source, /attachDesktopPanelPin/);
-        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin7/);
+        assert.match(source, /panel-pin\.js\?v=20260830-desktop-panel-pin8/);
         assert.doesNotMatch(source, /panel-pin-demo/);
     }
     for (const name of ['fileManager', 'infoModal', 'dockerPanel', 'snippetPanel', 'shortcutPanel']) assert.ok(terminal.includes(name));
@@ -139,14 +149,14 @@ test('pinning uses complete geometry and surface transitions without a flash ani
 test('all shipped pages load pin styling without demo artifact', () => {
     for (const file of ['public/terminal.html', 'public/telnet-terminal.html', 'public/rdp.html', 'public/novnc.html', 'public/app.html']) {
         const html = read(file);
-        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin7/);
+        assert.match(html, /panel-pin\.css\?v=20260830-desktop-panel-pin8/);
         assert.doesNotMatch(html, /panel-pin-demo/);
     }
     assert.equal(fs.existsSync(path.join(root, 'public/panel-pin-demo.html')), false);
 });
 
 test('service worker rotates and precaches both panel-pin assets', () => {
-    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin7/);
-    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin7/);
-    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin7/);
+    assert.match(sw, /zephyr-static-20260830-desktop-panel-pin8/);
+    assert.match(sw, /\/panel-pin\.js\?v=20260830-desktop-panel-pin8/);
+    assert.match(sw, /\/panel-pin\.css\?v=20260830-desktop-panel-pin8/);
 });

@@ -56,6 +56,14 @@ test('snapshot replay restores carriage-return progress and alternate screen wit
     restored.dispose();
 });
 
+test('desktop terminal clicks focus wterm unless a live selection is being copied', () => {
+    assert.match(terminalSrc, /_zephyrDesktopClickFocusBound = true/);
+    assert.match(terminalSrc, /if \(isTouchKeyboardDevice\(\) \|\| event\.button !== 0\) return;/);
+    assert.match(terminalSrc, /if \(hasLiveTerminalSelection\(\)\) return;/);
+    assert.match(terminalSrc, /event\.target\?\.closest\?\.\('a, button, input, textarea, select, \[contenteditable="true"\]'\)/);
+    assert.match(terminalSrc, /try \{ term\?\.focus\?\.\(\); \} catch \(_\) \{\}/);
+});
+
 test('mobile copy completion collapses native selection and explicitly resumes IME input', () => {
     for (const [label, src] of [['ssh', terminalSrc], ['telnet', telnetSrc]]) {
         assert.match(src, /function exitMobileTerminalSelectionMode/, `${label}: exit helper`);

@@ -21,8 +21,18 @@ function scopeFor(page) {
     const style = getComputedStyle(page);
     const borderX = (Number.parseFloat(style.borderLeftWidth) || 0) + (Number.parseFloat(style.borderRightWidth) || 0);
     const borderY = (Number.parseFloat(style.borderTopWidth) || 0) + (Number.parseFloat(style.borderBottomWidth) || 0);
-    const width = (page.clientWidth || rect.width || window.innerWidth) + borderX;
-    const height = (page.clientHeight || rect.height || window.innerHeight) + borderY;
+    const viewport = window.visualViewport;
+    const vvWidth = viewport?.width || window.innerWidth;
+    const vvHeight = viewport?.height || window.innerHeight;
+    const vvLeft = viewport?.offsetLeft || 0;
+    const vvTop = viewport?.offsetTop || 0;
+    // A dock is viewport chrome. The page element can be an iframe child whose
+    // CSS height lags the visual viewport by a few px; use the visual viewport
+    // as the floor so bottom/left/right seams cannot open.
+    const width = Math.max((page.clientWidth || rect.width || window.innerWidth) + borderX, vvWidth);
+    const height = Math.max((page.clientHeight || rect.height || window.innerHeight) + borderY, vvHeight);
+    const left = Math.min(rect.left, vvLeft);
+    const top = Math.min(rect.top, vvTop);
     // `.main-nav` is a direct child of .app-shell, but a `.terminal-page` can be
     // embedded inside another shell. Use local chrome only and never climb out
     // into an ancestor nav; that only creates a bogus white band above docks.
@@ -31,7 +41,7 @@ function scopeFor(page) {
     const topbarHeight = topbar?.offsetHeight || 0;
     // Pinned windows use position:fixed so RDP/VNC windows (whose normal parent
     // is the display stage) can still cover the page chrome exactly like SSH.
-    return { left: rect.left, top: rect.top, width, height, topbarHeight };
+    return { left, top, width, height, topbarHeight };
 }
 
 function rememberNormalGeometry(panel) {
@@ -69,18 +79,13 @@ function halfInset(page) {
     }, 0);
 }
 
-function pageSafeInset(page, side) {
-    const value = Number.parseFloat(getComputedStyle(page)[`padding${side}`] || '0') || 0;
-    return Math.max(0, Math.round(value));
-}
-
 function applyInsets(page, { bottomOverride = null } = {}) {
     const left = sideInset(page, 'left');
     const right = sideInset(page, 'right');
-    // A bottom dock covers the page's own bottom safe padding, so content must
-    // reserve dock height + that padding back to keep the terminal above it.
-    const dock = bottomOverride ?? halfInset(page);
-    const bottom = dock > 0 ? dock + pageSafeInset(page, 'Bottom') : 0;
+    // A bottom dock covers the page's own bottom safe padding; the CSS rule
+    // already reserves safe-area separately. Adding both here pushed the SSH
+    // terminal completely off-screen while resizing the dock.
+    const bottom = bottomOverride ?? halfInset(page);
     page.style.setProperty('--pin-inset-left', `${left}px`);
     page.style.setProperty('--pin-inset-right', `${right}px`);
     page.style.setProperty('--pin-inset-bottom', `${bottom}px`);
@@ -566,12 +571,14 @@ export function attachDesktopPanelPin(page, panel, { dragHandle, layoutButton, o
     observer.observe(panel, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
     panel._pinObserver = observer;
 
-    window.addEventListener('resize', () => {
+    const onViewportResize = () => {
         if (!panel.dataset.pinSide) return;
         place(panel);
         panelGroup(panel._pinPage).forEach((other) => other !== panel && place(other));
         applyInsets(panel._pinPage);
-    });
+    };
+    window.addEventListener('resize', onViewportResize);
+    window.visualViewport?.addEventListener?.('resize', onViewportResize);
     return true;
 }
 

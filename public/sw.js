@@ -1,4 +1,4 @@
-const CACHE_NAME = 'zephyr-static-20260830-desktop-panel-pin7';
+const CACHE_NAME = 'zephyr-static-20260830-desktop-panel-pin8';
 const PRECACHE = [
     '/app.js?v=20260811-webdav1',
     '/style.css?v=20260811-webdav1',
@@ -9,15 +9,15 @@ const PRECACHE = [
     '/notes.js?v=20260811-webdav1',
     '/preview-mock.js?v=20260811-webdav1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260801-terminal-grid-converge1-mobile-ime2',
-    '/telnet-terminal.js?v=20260801-terminal-grid-converge1-mobile-ime2',
+    '/terminal.js?v=20260830-terminal-focus1',
+    '/telnet-terminal.js?v=20260830-terminal-focus1',
     '/terminal-history-gesture.js?v=20260801-terminal-stability1',
     '/terminal-grid-convergence.js?v=20260801-terminal-grid-converge1',
     '/vendor/wterm-fork/index.js?v=20260801-terminal-stability1',
     '/vendor/wterm-fork/core/xterm-headless-register.js?v=20260801-terminal-stability1',
     '/floating-panel.js?v=20260731-panel-drag-physics4',
-    '/panel-pin.js?v=20260830-desktop-panel-pin7',
-    '/panel-pin.css?v=20260830-desktop-panel-pin7',
+    '/panel-pin.js?v=20260830-desktop-panel-pin8',
+    '/panel-pin.css?v=20260830-desktop-panel-pin8',
     '/markdown.js?v=20260720-notes-md1',
 ];
 const MAX_CACHE_ENTRIES = 160;
