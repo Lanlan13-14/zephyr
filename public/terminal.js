@@ -12735,10 +12735,11 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             if (isTouchKeyboardDevice() || event.button !== 0) return;
             if (hasLiveTerminalSelection()) return;
             if (event.target?.closest?.('a, button, input, textarea, select, [contenteditable="true"]')) return;
-            window.setTimeout(() => {
-                if (hasLiveTerminalSelection()) return;
-                try { term?.focus?.(); } catch (_) {}
-            }, 0);
+            // Focus immediately inside the click gesture. Waiting a turn gives
+            // WTerm's own selection handler/browser default a chance to leave
+            // the hidden textarea unfocused, which presents exactly as "can
+            // copy but cannot type".
+            try { term?.focus?.(); } catch (_) {}
         });
         wtermWrapper.addEventListener('click', (event) => {
             if (isTouchKeyboardDevice() || event.button !== 0) return;
