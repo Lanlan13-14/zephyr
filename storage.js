@@ -1110,6 +1110,7 @@ function addActivity(activity) {
 function clearActivities() { db.prepare('DELETE FROM activities').run(); }
 
 function listProxies() { return db.prepare('SELECT * FROM proxies ORDER BY createdAt DESC').all().map(rowToProxy); }
+function listProxiesRaw() { return db.prepare('SELECT * FROM proxies ORDER BY createdAt DESC').all().map(decryptProxy).filter(Boolean); }
 function getProxyRaw(id) { return decryptProxy(db.prepare('SELECT * FROM proxies WHERE id=?').get(id)); }
 function saveProxy(p) {
     const prior = db.prepare('SELECT ownerUserId, visibility, createdAt, revision FROM proxies WHERE id=?').get(p.id);
@@ -1120,6 +1121,7 @@ function saveProxy(p) {
 }
 function deleteProxy(id) { db.prepare('DELETE FROM proxies WHERE id=?').run(id); }
 function listSshKeys() { return db.prepare('SELECT * FROM ssh_keys ORDER BY createdAt DESC').all().map((row) => rowToSshKey(row)); }
+function listSshKeysRaw() { return db.prepare('SELECT * FROM ssh_keys ORDER BY createdAt DESC').all().map(decryptSshKey).filter(Boolean); }
 function getSshKeyRaw(id) { return decryptSshKey(db.prepare('SELECT * FROM ssh_keys WHERE id=?').get(id)); }
 function saveSshKey(k) {
     const prior = db.prepare('SELECT ownerUserId, visibility, createdAt, revision FROM ssh_keys WHERE id=?').get(k.id);
@@ -1192,4 +1194,4 @@ function deletePasskey(username, id) { db.prepare('DELETE FROM passkeys WHERE us
 function rawDb() { return db; }
 function close() { if (db) { db.close(); db = null; } }
 
-module.exports = { init, ensureAiGuidanceDefaults, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, archiveDeletedUsername, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, recordResetCodeAttempt, invalidateResetCodesForUser, createPasswordRollbackToken, findPasswordRollbackTokenByHash, markPasswordRollbackTokenUsed, invalidatePasswordRollbackTokensForUser, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close, CLIENT_TOKEN_KEY_FILE, ClientTokenKeyring, createClientTokenKeyring };
+module.exports = { init, ensureAiGuidanceDefaults, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, archiveDeletedUsername, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, listProxiesRaw, getProxyRaw, saveProxy, deleteProxy, listSshKeys, listSshKeysRaw, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, recordResetCodeAttempt, invalidateResetCodesForUser, createPasswordRollbackToken, findPasswordRollbackTokenByHash, markPasswordRollbackTokenUsed, invalidatePasswordRollbackTokensForUser, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close, CLIENT_TOKEN_KEY_FILE, ClientTokenKeyring, createClientTokenKeyring };

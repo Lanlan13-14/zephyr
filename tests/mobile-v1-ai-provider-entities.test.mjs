@@ -161,11 +161,12 @@ test('canonical provider projection and feed never expose credentials or arbitra
     }, { changedSecretFields: ['apiKey'] });
 
     const projected = context.adapter.read(alice, 'provider-safe');
-    assert.deepEqual(Object.keys(projected).sort(), [
+    assert.deepEqual(Object.keys(projected).filter((key) => key !== 'apiKey').sort(), [
       'baseUrl', 'config', 'createdAt', 'defaultModel', 'enabled', 'id', 'models', 'name',
       'ownerUserId', 'revision', 'shareWithAdmins', 'shareWithUsers', 'sharedUserIds',
       'type', 'updatedAt', 'visibility',
     ]);
+    assert.equal(projected.apiKey, canary);
     assert.deepEqual(projected.config, {
       apiMode: 'responses',
       options: { vision: true, max_tokens: 4096 },
@@ -195,14 +196,19 @@ test('canonical provider projection and feed never expose credentials or arbitra
     const providerChanges = context.bridge.store.changePage('alice', 0, 20).changes;
     assert.deepEqual(providerChanges[1].fieldMask, []);
 
+    const { projectPayload } = require(path.join(root, 'mobile-v1-entities.js'));
+    const spec = enabledRegistry.entities.find((entity) => entity.type === 'aiProvider');
+    const wire = projectPayload(spec, projected);
+    assert.equal(wire.apiKey, undefined);
+    assert.equal(wire.hasApiKey, true);
     const syncState = JSON.stringify({
-      projected,
+      wire,
       changes: providerChanges,
       outbox: context.bridge.pendingWakeEvents(),
     });
     assert.ok(!syncState.includes(canary));
     assert.ok(!syncState.includes(replacementCanary));
-    assert.ok(!syncState.includes('apiKey'));
+    assert.ok(!syncState.includes('"apiKey"'));
     assert.deepEqual(context.bridge.store.changePage('alice', 0, 20).changes[0].fieldMask.sort(), [
       'baseUrl', 'config', 'defaultModel', 'enabled', 'models', 'name', 'shareWithAdmins',
       'shareWithUsers', 'sharedUserIds', 'type', 'visibility',

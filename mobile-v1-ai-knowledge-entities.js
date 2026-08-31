@@ -340,6 +340,12 @@ class AiKnowledgeService {
         return {};
     }
 
+    _withEnvSecret(userId, row) {
+        if (!row) return row;
+        const value = this._envValue(userId, row.id);
+        return value ? { ...row, value } : row;
+    }
+
     list(userOrId, type) {
         const user = requireOwner(userOrId);
         type = this._assertType(type);
@@ -352,6 +358,24 @@ class AiKnowledgeService {
         const row = this._row(this.stmtGet.get(String(user.userId), type, validId(id)));
         if (!row || (!includeDeleted && row.deletedAt != null)) return null;
         return row;
+    }
+
+    /**
+     * Mobile sync only. Web listForUser must never see env plaintext; the
+     * projector seals `value` into a device envelope before it hits the wire.
+     */
+    listOwnedForSync(userOrId, type) {
+        const user = requireOwner(userOrId);
+        const rows = this.list(user, type);
+        return type === 'aiEnv'
+            ? rows.map((row) => this._withEnvSecret(user.userId, row))
+            : rows;
+    }
+
+    readOwnedForSync(userOrId, type, id, options = {}) {
+        const user = requireOwner(userOrId);
+        const row = this.read(user, type, id, options);
+        return type === 'aiEnv' ? this._withEnvSecret(user.userId, row) : row;
     }
 
     residency(userOrId, type, id) {
@@ -634,8 +658,8 @@ function createAiKnowledgeEntityAdapters({ db, store, changeBridge, service, now
         adapters.set(type, {
             idOf: (row) => row.id,
             residency: (user, id) => knowledge.residency(user, type, id),
-            list: (user) => knowledge.list(user, type),
-            read: (user, id) => knowledge.read(user, type, id),
+            list: (user) => knowledge.listOwnedForSync(user, type),
+            read: (user, id) => knowledge.readOwnedForSync(user, type, id),
             revisionOf: (row) => Math.max(1, Number(row?.revision) || 1),
             create: (user, id, patch, mutationContext = {}) => knowledge.writeFromMobile(user, type, id, patch, mutationContext),
             update: (user, id, patch, mutationContext = {}) => {

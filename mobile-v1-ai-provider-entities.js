@@ -219,7 +219,7 @@ function safeModels(models) {
 function projectAiProvider(row) {
     if (!row) return null;
     if (row.deletedAt != null) return null;
-    return {
+    const projected = {
         id: stableId(row.id),
         ownerUserId: String(row.ownerUserId || ''),
         revision: Math.max(1, Number(row.revision) || 1),
@@ -237,6 +237,12 @@ function projectAiProvider(row) {
         sharedUserIds: [...new Set((Array.isArray(row.sharedUserIds) ? row.sharedUserIds : []).map(String).filter(Boolean))].slice(0, 200),
         enabled: row.enabled !== false,
     };
+    /* Plaintext stays on the adapter row only long enough for MobileV1Api to
+     * seal a device envelope. projectPayload strips the field before wire. */
+    if (typeof row.apiKey === 'string' && row.apiKey && row.apiKey !== '******') {
+        projected.apiKey = row.apiKey;
+    }
+    return projected;
 }
 
 function mergeModelsWithServerOnlyFields(current, incoming) {
@@ -278,8 +284,8 @@ function createAiProviderEntityAdapters({ registry, service } = {}) {
         idOf: (row) => stableId(row?.id),
         revisionOf: (row) => Math.max(1, Number(row?.revision) || 1),
         residency: (user, id) => service.residency(user?.userId, id),
-        list: (user) => service.listOwned(user?.userId).map(projectAiProvider),
-        read: (user, id) => projectAiProvider(service.readOwned(user?.userId, id)),
+        list: (user) => service.listOwned(user?.userId, { includeSecret: true }).map(projectAiProvider),
+        read: (user, id) => projectAiProvider(service.readOwned(user?.userId, id, { includeSecret: true })),
         create: (user, id, patch, mutationContext = {}) => {
             id = stableId(id);
             if (service.residency(user?.userId, id) !== 'missing') {

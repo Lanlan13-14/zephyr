@@ -380,6 +380,10 @@ test("a change feed row never carries a secret", async () => {
   assert.ok(mine, "the write must appear in the feed");
   assert.equal(mine.payload.password, undefined, "a secret leaked into a change payload");
   assert.equal(mine.payload.privateKey, undefined, "a secret leaked into a change payload");
+  assert.equal(mine.payload.hasPassword, true, "presence must declare the stored password");
+  assert.equal(mine.payload.hasPrivateKey, false);
+  assert.ok(mine.secretEnvelopes && mine.secretEnvelopes.password,
+    "the stored password must be sealed to this device");
   assert.equal(mine.payload.name, "Secret Host");
 });
 
