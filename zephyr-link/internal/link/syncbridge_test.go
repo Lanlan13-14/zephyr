@@ -16,6 +16,55 @@ import (
 // forwards it to the loopback sync bridge (standing in for the Node sync core),
 // and seals the bridge's result back as a SYNC_ACK. This proves the Link channel
 // carries real business frames, not an echo.
+func TestNormalizeJSONNumbersKeepsFiniteFloats(t *testing.T) {
+	raw := []byte(`{
+		"serverCursor": 42,
+		"revision": 1,
+		"rdpTouchSensitivity": 1.5,
+		"nested": {"rdpFps": 30, "ratio": 0.25},
+		"list": [1, 2.5, 3]
+	}`)
+	var decoded any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := normalizeJSONIntegers(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := normalized.(map[string]any)
+	if root["serverCursor"] != int64(42) {
+		t.Fatalf("cursor lost integer identity: %#v", root["serverCursor"])
+	}
+	if root["rdpTouchSensitivity"] != 1.5 {
+		t.Fatalf("connection float was dropped: %#v", root["rdpTouchSensitivity"])
+	}
+	nested := root["nested"].(map[string]any)
+	if nested["rdpFps"] != int64(30) || nested["ratio"] != 0.25 {
+		t.Fatalf("nested numbers not preserved: %#v", nested)
+	}
+	list := root["list"].([]any)
+	if list[0] != int64(1) || list[1] != 2.5 || list[2] != int64(3) {
+		t.Fatalf("array numbers not preserved: %#v", list)
+	}
+}
+
+func TestNormalizeJSONNumbersRejectsNonFinite(t *testing.T) {
+	for _, raw := range []string{`{"x": NaN}`, `{"x": Infinity}`, `{"x": -Infinity}`} {
+		var decoded any
+		decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
+		decoder.UseNumber()
+		if err := decoder.Decode(&decoded); err != nil {
+			continue
+		}
+		if _, err := normalizeJSONIntegers(decoded); err == nil {
+			t.Fatalf("expected non-finite rejection for %s", raw)
+		}
+	}
+}
+
 func TestSyncBridgeCarriesBusinessFrames(t *testing.T) {
 	// A fake Node sync bridge: asserts the loopback token + attested device, then
 	// returns a result the way the real sync core would.
@@ -31,7 +80,10 @@ func TestSyncBridgeCarriesBusinessFrames(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":   true,
 			"kind": codec.KindSyncAck,
-			"body": map[string]any{"batchId": "b1", "serverCursor": 42, "lastError": nil},
+			"body": map[string]any{
+				"batchId": "b1", "serverCursor": 42, "lastError": nil,
+				"rdpTouchSensitivity": 1.5,
+			},
 		})
 	}))
 	defer bridge.Close()
@@ -129,6 +181,9 @@ func TestSyncBridgeCarriesBusinessFrames(t *testing.T) {
 	}
 	if body["serverCursor"] != uint64(42) || body["lastError"] != nil {
 		t.Fatalf("business result not carried back: %+v", body)
+	}
+	if body["rdpTouchSensitivity"] != 1.5 {
+		t.Fatalf("connection float did not survive the Link ack: %+v", body["rdpTouchSensitivity"])
 	}
 }
 
