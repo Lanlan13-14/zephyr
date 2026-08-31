@@ -118,16 +118,51 @@ function residencyOf(rawLookup, type, user, id) {
  * "unknown fields are retained but never emitted in a One-authored fieldMask",
  * so the value round-trips while the client is forbidden from editing it.
  */
+function presenceFlag(fieldName) {
+    const name = String(fieldName || '');
+    return 'has' + name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function hasStoredSecret(value) {
+    if (value == null) return false;
+    if (typeof value === 'boolean') return value === true;
+    const text = String(value);
+    return text.length > 0 && text !== '******';
+}
+
+function extractSecrets(spec, row) {
+    const secrets = {};
+    if (!row) return secrets;
+    for (const field of spec.secretFields || []) {
+        if (hasStoredSecret(row[field])) secrets[field] = String(row[field]);
+    }
+    return secrets;
+}
+
 function projectPayload(spec, row) {
     if (!row) return {};
     const drop = new Set([
         ...(spec.secretFields || []),
         ...(spec.deviceLocalFields || []),
     ]);
+    /* Connection/proxy/sshKey web-library extras must not ride the owned
+     * mirror. `capabilities` is a real resourceAcl field, so it cannot be
+     * dropped globally; only strip the host-library copies here. */
+    if (spec.type === 'connection' || spec.type === 'proxy' || spec.type === 'sshKey' || spec.type === 'jumpHost') {
+        drop.add('capabilities');
+        drop.add('owner');
+    }
+    if (spec.type === 'note') drop.add('preview');
     const payload = {};
     for (const [key, value] of Object.entries(row)) {
         if (drop.has(key)) continue;
         payload[key] = value;
+    }
+    /* One refuses a secret-bearing row whose presence flags are missing, and
+     * refuses hasX=true without a matching device envelope. Always emit the
+     * boolean, including false, so an empty-secret connection can still sync. */
+    for (const field of spec.secretFields || []) {
+        payload[presenceFlag(field)] = hasStoredSecret(row[field]);
     }
     return payload;
 }
@@ -224,14 +259,14 @@ function createEntityAdapters({
     adapters.set('connection', {
         idOf: (row) => row.id,
         residency: (user, id) => residencyOf(rawLookup, 'connection', user, id),
-        list: (user) => resourceService.listConnections(user, { includeEphemeral: false })
-            .filter((row) => row.ownerUserId === user.userId),
+        list: (user) => resourceService.storage.listAllConnectionRows()
+            .filter((row) => row && row.ownerUserId === user.userId && !row.ephemeral),
         read: (user, id) => readOwned(
             rawLookup,
             'connection',
             user,
             id,
-            () => resourceService.getConnection(user, id),
+            () => resourceService.storage.getConnectionById(id),
         ),
         revisionOf: (row) => Math.max(1, Number(row.revision) || 1),
         create: (user, id, patch, mutationContext) => {
@@ -269,8 +304,7 @@ function createEntityAdapters({
         adapters.set(type, {
             idOf: (row) => row.id,
             residency: (user, id) => residencyOf(rawLookup, type, user, id),
-            list: (user) => resourceService.listOwned(user, type)
-                .filter((row) => row.ownerUserId === user.userId),
+            list: (user) => resourceService.listOwnedRawForSync(user, type),
             read: (user, id) => readOwned(
                 rawLookup,
                 type,
@@ -301,11 +335,8 @@ function createEntityAdapters({
         adapters.set('note', {
             idOf: (row) => row.noteId,
             residency: (user, id) => residencyOf(rawLookup, 'note', user, id),
-            list: (user) => {
-                const result = notesService.list(user, { limit: 500 });
-                const rows = result.items || result.notes || [];
-                return rows.filter((row) => row.ownerUserId === user.userId);
-            },
+            list: (user) => notesService.listOwnedForSync(user)
+                .filter((row) => row.ownerUserId === user.userId),
             read: (user, id) => readOwned(
                 rawLookup,
                 'note',
@@ -473,4 +504,12 @@ function connectionDefaults(id, patch) {
     };
 }
 
-module.exports = { createEntityAdapters, projectPayload, assertMaskAllowed, connectionDefaults };
+module.exports = {
+    createEntityAdapters,
+    projectPayload,
+    extractSecrets,
+    presenceFlag,
+    hasStoredSecret,
+    assertMaskAllowed,
+    connectionDefaults,
+};

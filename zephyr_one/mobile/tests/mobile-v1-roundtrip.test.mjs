@@ -512,15 +512,19 @@ test("bootstrap streams the owned mirror and terminates", async () => {
   assert.equal(providerEntity.payload.models[0].userAgent, undefined);
   assert.equal(providerEntity.payload.models[0].extra, undefined);
   assert.equal(providerEntity.payload.apiKey, undefined);
-  assert.equal(providerEntity.payload.hasApiKey, undefined);
+  assert.equal(providerEntity.payload.hasApiKey, true);
+  assert.ok(providerEntity.secretEnvelopes && providerEntity.secretEnvelopes.apiKey,
+    "a stored API key must arrive as a device envelope");
   assert.equal(providerEntity.payload.config.extraHeaders, undefined);
   assert.equal(providerEntity.payload.config.options.extraJson, undefined);
   assert.ok(!JSON.stringify(providerEntity).includes(AI_PROVIDER_SECRET),
     "the AI provider secret canary leaked into bootstrap");
   assert.ok(clientTokenEntity, "the canonical Client Token metadata was absent from bootstrap");
   assert.deepEqual(Object.keys(clientTokenEntity.payload).sort(), [
-    "createdAt", "id", "lastUsedAt", "name", "ownerUserId", "revision", "updatedAt",
+    "createdAt", "hasToken", "id", "lastUsedAt", "name", "ownerUserId", "revision", "updatedAt",
   ]);
+  assert.equal(clientTokenEntity.payload.hasToken, false);
+  assert.equal(clientTokenEntity.secretEnvelopes, undefined);
   assert.deepEqual(clientTokenEntity.fieldMask, ["name"]);
   assert.equal(clientTokenEntity.payload.name, "mobile-roundtrip");
   assert.ok(!JSON.stringify(clientTokenEntity).includes(state.tokenSecret),

@@ -113,7 +113,9 @@
           "ownerUserId": "owner-1",
           "revision": 1,
           "name": "fixture",
-          "updatedAt": 1
+          "updatedAt": 1,
+          "hasPassword": false,
+          "hasPrivateKey": false
         }
       },
       {
@@ -158,7 +160,9 @@
           "ownerUserId": "owner-1",
           "revision": 1,
           "name": "fixture",
-          "updatedAt": 1
+          "updatedAt": 1,
+          "hasPassword": false,
+          "hasPrivateKey": false
         }
       }
     ]

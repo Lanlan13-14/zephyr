@@ -377,11 +377,11 @@ class AiProviderService {
                 return out;
             });
     }
-    listOwned(userId, { includeDeleted = false } = {}) {
+    listOwned(userId, { includeDeleted = false, includeSecret = false } = {}) {
         const sql = includeDeleted
             ? 'SELECT * FROM ai_providers WHERE owner_user_id=? ORDER BY updated_at DESC'
             : 'SELECT * FROM ai_providers WHERE owner_user_id=? AND deleted_at IS NULL ORDER BY updated_at DESC';
-        return this.db.prepare(sql).all(String(userId)).map((r) => this._row(r));
+        return this.db.prepare(sql).all(String(userId)).map((r) => this._row(r, { includeSecret }));
     }
     getOwned(userId, id, opts = {}) {
         const sql = opts.includeDeleted

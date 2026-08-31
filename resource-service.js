@@ -532,6 +532,22 @@ class ResourceService {
         return rows.filter((r) => visible.has(r.id)).map((r) => ({ ...r, owner: r.ownerUserId === user.userId ? 'own' : 'shared' }));
     }
 
+    /**
+     * Owner-only, unmasked rows for the mobile sync projector.
+     *
+     * The web list variants replace secret values with '******'. Sync must
+     * never emit that placeholder: One treats any secret-named payload key as
+     * a residency violation, and a hasPassword=true row without an envelope
+     * aborts the whole page. Presence flags plus a sealed envelope (built by
+     * MobileV1Api) are the only legal downlink for these fields.
+     */
+    listOwnedRawForSync(user, resourceType) {
+        const rows = resourceType === 'proxy' ? this.storage.listProxiesRaw()
+            : resourceType === 'sshKey' ? this.storage.listSshKeysRaw()
+                : this.storage.listJumpHosts();
+        return rows.filter((row) => row && row.ownerUserId === user.userId);
+    }
+
     getRawAuthorized(user, resourceType, id, capability) {
         const raw = this._rawResource(resourceType, id);
         this.authz.assertCan(user, capability, resourceType, id, raw || { ownerUserId: '' }, { resourceExists: !!raw });

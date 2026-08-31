@@ -428,8 +428,9 @@ test('central entity composition registers only owner-safe ACL and Client Token 
     const tokenSpec = registry.entities.find((entity) => entity.type === 'clientToken');
     const projected = projectPayload(tokenSpec, tokenRows[0]);
     assert.deepEqual(Object.keys(projected).sort(), [
-      'createdAt', 'id', 'lastUsedAt', 'name', 'ownerUserId', 'revision', 'updatedAt',
+      'createdAt', 'hasToken', 'id', 'lastUsedAt', 'name', 'ownerUserId', 'revision', 'updatedAt',
     ]);
+    assert.equal(projected.hasToken, false);
     assert.ok(!JSON.stringify(projected).includes('CENTRAL_TOKEN_SECRET_CANARY'));
   } finally {
     context.cleanup();

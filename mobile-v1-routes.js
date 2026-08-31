@@ -41,7 +41,7 @@ const {
     PROOF_MAX_ISSUES_PER_MINUTE,
 } = require('./mobile-v1-store');
 const { MobileV1BlobManager } = require('./mobile-v1-blob-manager');
-const { createEntityAdapters, projectPayload, assertMaskAllowed } = require('./mobile-v1-entities');
+const { createEntityAdapters, projectPayload, extractSecrets, assertMaskAllowed } = require('./mobile-v1-entities');
 const { SharedResourceApi, noStore } = require('./mobile-v1-shared');
 const { MobileV1Wake } = require('./mobile-v1-wake');
 const mobileCrypto = require('./mobile-v1-crypto');
@@ -1611,6 +1611,15 @@ class MobileV1Api {
                                 : (spec.editableFields || []).slice(),
                         ),
                         payload: projectPayload(spec, row),
+                        ...this.ownedSecretEnvelopeFields({
+                            spec,
+                            row,
+                            user: auth.user,
+                            device: auth.device,
+                            entityType,
+                            entityId: rowId,
+                            entityRevision: adapter.revisionOf(row),
+                        }),
                     });
                     afterEntityId = rowId;
                 }
@@ -1675,7 +1684,7 @@ class MobileV1Api {
         /* A foreign row aborts the entire page before nextCursor reaches the
          * device. Advancing past it would leave shared data resident or the owned
          * mirror silently incomplete. */
-        const changes = page.changes.map((change) => this.hydrateChange(auth.user, change));
+        const changes = page.changes.map((change) => this.hydrateChange(auth.user, change, auth.device));
         return {
             ok: true,
             fromCursor: page.fromCursor,
@@ -1859,7 +1868,7 @@ class MobileV1Api {
         return { values, release };
     }
 
-    hydrateChange(user, change) {
+    hydrateChange(user, change, device = null) {
         const spec = this.entityByType.get(change.entityType);
         const adapter = this.adapters.get(change.entityType);
         if (!spec || !adapter) {
@@ -1893,7 +1902,91 @@ class MobileV1Api {
         } catch {
             row = null;
         }
-        return { ...safeChange, payload: row ? projectPayload(spec, row) : {} };
+        if (!row) return { ...safeChange, payload: {} };
+        return {
+            ...safeChange,
+            payload: projectPayload(spec, row),
+            ...this.ownedSecretEnvelopeFields({
+                spec,
+                row,
+                user,
+                device,
+                entityType: change.entityType,
+                entityId: change.entityId,
+                entityRevision: change.revision,
+            }),
+        };
+    }
+
+    deviceEncryptionPublicKey(device) {
+        const raw = device && device.encryption_public_key;
+        if (!raw) return null;
+        const key = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+        return key.length === mobileCrypto.MLKEM768_PUBLIC_KEY_BYTES ? key : null;
+    }
+
+    /**
+     * Seals stored secrets to the bound device's ML-KEM public key.
+     *
+     * One's mirror writer requires a boolean presence flag for every registry
+     * secret field, and a matching envelope whenever that flag is true. Web
+     * library rows used to send `******` / `hasPassword=true` with no envelope,
+     * which aborted the entire bootstrap page as soon as the account had a
+     * real connection. Downlink uses the same envelope suite as uplink, bound
+     * to this deviceId so a captured ciphertext cannot be opened on another
+     * handset.
+     */
+    ownedSecretEnvelopeFields({ spec, row, user, device, entityType, entityId, entityRevision }) {
+        const secrets = extractSecrets(spec, row);
+        const fields = Object.keys(secrets);
+        if (!fields.length) return {};
+
+        const publicKey = this.deviceEncryptionPublicKey(device);
+        if (!publicKey) {
+            throw new MobileStoreError(
+                'server_unavailable',
+                '\u8bbe\u5907\u52a0\u5bc6\u516c\u94a5\u4e0d\u53ef\u7528\uff0c\u65e0\u6cd5\u4e0b\u53d1\u5bc6\u94a5',
+                503,
+                { retryable: true },
+            );
+        }
+
+        const serverKey = this.serverEncryptionKey();
+        if (!serverKey) {
+            throw new MobileStoreError(
+                'server_unavailable',
+                '\u670d\u52a1\u7aef\u52a0\u5bc6\u5bc6\u94a5\u4e0d\u53ef\u7528\uff0c\u65e0\u6cd5\u4e0b\u53d1\u5bc6\u94a5',
+                503,
+                { retryable: true },
+            );
+        }
+        const keyVersion = Number(serverKey.keyVersion);
+        const envelopes = {};
+        for (const fieldName of fields) {
+            const plaintext = Buffer.from(String(secrets[fieldName]), 'utf8');
+            try {
+                const aad = mobileCrypto.secretAadBytes({
+                    serverId: this.store.serverId(),
+                    userId: user.userId,
+                    deviceId: device.device_id,
+                    entityType,
+                    entityId: String(entityId),
+                    fieldName,
+                    entityRevision: Number(entityRevision),
+                    keyVersion,
+                });
+                envelopes[fieldName] = mobileCrypto.sealEnvelope({
+                    plaintext,
+                    publicKey,
+                    aad,
+                    keyVersion,
+                    entityRevision: Number(entityRevision),
+                });
+            } finally {
+                plaintext.fill(0);
+            }
+        }
+        return { secretEnvelopes: envelopes };
     }
 
     /**

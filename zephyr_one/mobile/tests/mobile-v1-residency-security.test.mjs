@@ -61,9 +61,12 @@ function makeAdapterHarness() {
 
   const storage = {
     getConnectionById: (id) => get('connection', id),
+    listAllConnectionRows: () => [...rows.get('connection').values()],
     getProxyRaw: (id) => get('proxy', id),
     getSshKeyRaw: (id) => get('sshKey', id),
     listJumpHosts: () => [...rows.get('jumpHost').values()],
+    listProxiesRaw: () => [...rows.get('proxy').values()],
+    listSshKeysRaw: () => [...rows.get('sshKey').values()],
     rawDb: () => ({
       prepare(sql) {
         const type = /FROM connections/.test(sql) ? 'connection'
@@ -90,8 +93,11 @@ function makeAdapterHarness() {
   };
 
   const resourceService = {
+    storage,
     listConnections: () => [...rows.get('connection').values()],
     getConnection: (user, id) => ownedResult('connection', id, user),
+    listOwnedRawForSync: (user, type) => [...rows.get(type).values()]
+      .filter((row) => row.ownerUserId === user.userId),
     createConnection: (user, patch) => {
       calls.push(['create', 'connection', patch.id]);
       return save('connection', patch.id, user, patch);
@@ -124,6 +130,8 @@ function makeAdapterHarness() {
 
   const notesService = {
     list: () => ({ notes: [...rows.get('note').values()] }),
+    listOwnedForSync: (user) => [...rows.get('note').values()]
+      .filter((row) => row.ownerUserId === user.userId),
     get: (user, id) => ownedResult('note', id, user),
     create: (user, patch) => {
       calls.push(['create', 'note', patch.id]);

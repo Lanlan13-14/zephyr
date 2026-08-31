@@ -472,7 +472,7 @@ class NotesService {
         return this.get(user, noteId);
     }
 
-    list(user, { q = '', group = null, tag = null, connectionId = null, limit = 50, offset = 0, trash = false } = {}) {
+    list(user, { q = '', group = null, tag = null, connectionId = null, limit = 50, offset = 0, trash = false, includeContent = false } = {}) {
         this._assertActiveUser(user);
         limit = Math.min(Math.max(Number(limit) || 50, 1), 200);
         offset = Math.max(Number(offset) || 0, 0);
@@ -517,9 +517,26 @@ class NotesService {
             rows = rows.filter((r) => parseJson(r.linked_connection_ids_json, []).includes(cid));
         }
         return {
-            notes: rows.map((r) => this._row(r, { includeContent: false })),
+            notes: rows.map((r) => this._row(r, { includeContent: includeContent === true })),
             total: trash ? rows.length : this.stmtCountOwner.get(user.userId).c,
         };
+    }
+
+    /**
+     * Owner-complete note projection for mobile bootstrap/changes.
+     *
+     * The web list path redacts `content` to a 240-char preview so the library
+     * page stays cheap. Sync must send the full body: One stores the payload as
+     * the offline mirror, and a title-only page is a durable data loss, not a
+     * UI convenience. Trash stays off this list: a bootstrap upsert would
+     * clear deletedAt on the device. Restore still arrives as a later change.
+     */
+    listOwnedForSync(user) {
+        this._assertActiveUser(user);
+        const rows = this.stmtListUserState.all(user.userId);
+        return rows
+            .filter((row) => this._ownerIsActive(row) && !row.deleted_at)
+            .map((row) => this._row(row, { includeContent: true }));
     }
 
     groups(user) {
