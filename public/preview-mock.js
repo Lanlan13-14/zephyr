@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260831-terminal-iframe-focus1';
+import { t } from './i18n/runtime.js?v=20260831-terminal-native-input1';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 

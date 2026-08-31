@@ -308,7 +308,8 @@ test('contract: external mobile input prevents WTerm IME and self-scroll bypass'
         assert.match(code, /this\._inputMode === ["']external["']/);
         assert.match(code, /this\._inputMode === ["']native["']\) this\._scrollToBottom/);
     }
-    assert.match(terminal, /inputMode:\s*isTouchKeyboardDevice\(\) \? 'external' : 'native'/);
+    assert.match(terminal, /inputMode:\s*usesExternalTerminalInput\(\) \? 'external' : 'native'/);
+    assert.match(terminal, /usesExternalTerminalInput/);
     assert.match(terminal, /onExternalInputRequest/);
     assert.match(terminal, /command-input:resize-only/);
     assert.doesNotMatch(terminal, /command-input:preserve-after/);
