@@ -1538,19 +1538,35 @@ function pinMobileImeChrome(open, inset = 0, { authoritative = false } = {}) {
     }
 }
 
-function isTouchKeyboardDevice() {
+function isMobileViewport() {
+    return !!window.matchMedia?.('(max-width: 760px)')?.matches;
+}
+
+function isCoarsePointer() {
     return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
 }
 
-function isMobileStableInputCandidate() {
-    return !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches
-        || ((navigator.maxTouchPoints || 0) > 0 && !!window.matchMedia?.('(max-width: 700px)')?.matches);
+function isTouchKeyboardDevice() {
+    // Coarse pointer alone is not enough: hybrid laptops and remote-desktop
+    // Chrome often report hover:none/pointer:coarse at desktop width. Those
+    // machines still have a hardware keyboard and must stay on native WTerm
+    // input, not the mobile IME / selection-mode path.
+    return isMobileViewport() && isCoarsePointer();
 }
 
-// The external IME path remains mobile-only. Desktop WebSSH always uses native
-// WTerm input, even on hybrid machines exposing touch capability.
+function isMobileStableInputCandidate() {
+    // Phone-sized coarse/touch surfaces only. Desktop/hybrid browsers may
+    // expose maxTouchPoints or a coarse pointer without being an IME device.
+    return isMobileViewport() && (
+        isCoarsePointer()
+        || (navigator.maxTouchPoints || 0) > 0
+    );
+}
+
+// Desktop WebSSH always uses WTerm's native hidden textarea. External IME is
+// the mobile-only path, even when a laptop reports touch capability.
 function usesExternalTerminalInput() {
-    return isMobileStableInputCandidate() && !!window.matchMedia?.('(max-width: 760px)')?.matches;
+    return isMobileStableInputCandidate();
 }
 
 function getKeyboardBaselineHeight() {
@@ -12649,7 +12665,39 @@ async function startAutoReconnect(reason = t('连接已断开')) {
 // ---------- WTerm 初始化 ----------
 let terminalUserGestureAt = 0;
 let desktopTerminalFocusIntent = false;
+let desktopTerminalFocusTimer = 0;
 function noteTerminalUserGesture() { terminalUserGestureAt = Date.now(); }
+function stopDesktopTerminalFocusIntent() {
+    desktopTerminalFocusIntent = false;
+    window.clearTimeout(desktopTerminalFocusTimer);
+    desktopTerminalFocusTimer = 0;
+}
+function focusDesktopTerminalNow() {
+    try { term?.focus?.(); } catch (_) {}
+}
+function armDesktopTerminalFocusIntent() {
+    desktopTerminalFocusIntent = true;
+    window.clearTimeout(desktopTerminalFocusTimer);
+    const delays = [0, 32, 80];
+    let step = 0;
+    const keepFocus = () => {
+        desktopTerminalFocusTimer = 0;
+        if (!desktopTerminalFocusIntent || !document.hasFocus?.()) return;
+        const selection = window.getSelection?.();
+        if (selection && !selection.isCollapsed) {
+            stopDesktopTerminalFocusIntent();
+            return;
+        }
+        const textarea = term?.input?.textarea;
+        if (textarea && !textarea.isConnected) return;
+        if (!textarea || document.activeElement !== textarea) focusDesktopTerminalNow();
+        step += 1;
+        if (step < delays.length) {
+            desktopTerminalFocusTimer = window.setTimeout(keepFocus, delays[step]);
+        }
+    };
+    keepFocus();
+}
 function decodeOsc52Base64(value) {
     const input = String(value || '');
     if (!input || input.length > 65535 || !/^[A-Za-z0-9+/]*={0,2}$/.test(input)) return null;
@@ -12739,21 +12787,33 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     if (!wtermWrapper._zephyrDesktopClickFocusBound) {
         wtermWrapper._zephyrDesktopClickFocusBound = true;
         const focusFromDesktopGesture = (event) => {
-            if (event.button !== 0 && event.type !== 'click') return;
+            if (usesExternalTerminalInput()) return;
+            if (event.button !== 0) return;
             if (event.pointerType === 'touch' || event.pointerType === 'pen') return;
-            // A previous copy can leave a live DOM range behind. A new primary
-            // mouse press is a fresh input gesture: collapse that stale range,
-            // then focus WTerm. Otherwise WTerm's click guard keeps refusing
-            // focus forever and the terminal becomes copy-only after one click.
-            if (hasLiveTerminalSelection()) {
-                if (event.type !== 'mousedown') return;
-                try { window.getSelection?.()?.removeAllRanges?.(); } catch (_) {}
-            }
             if (event.target?.closest?.('a, button, input, textarea, select, [contenteditable="true"]')) return;
-            try { term?.focus?.(); } catch (_) {}
+            // WTerm's own click focus bails on any non-collapsed Range, including
+            // empty leftover ranges after copy. Collapse that Range on mousedown
+            // so the following click can restore native textarea focus. Do not
+            // steal focus during mousedown: that fights drag-to-select.
+            const selection = window.getSelection?.();
+            if (event.type === 'mousedown') {
+                if (!event.shiftKey && selection && !selection.isCollapsed) {
+                    try { selection.removeAllRanges(); } catch (_) {}
+                }
+                return;
+            }
+            if (selection && !selection.isCollapsed) {
+                stopDesktopTerminalFocusIntent();
+                return;
+            }
+            armDesktopTerminalFocusIntent();
         };
         wtermWrapper.addEventListener('mousedown', focusFromDesktopGesture, true);
         wtermWrapper.addEventListener('click', focusFromDesktopGesture, true);
+        wtermWrapper.addEventListener('mouseleave', stopDesktopTerminalFocusIntent, { passive: true });
+        document.addEventListener('mousedown', (event) => {
+            if (!wtermWrapper.contains(event.target)) stopDesktopTerminalFocusIntent();
+        }, true);
     }
     // Desktop double-click → xterm word separators; browser copies selection only.
     if (!wtermWrapper._zephyrWordSelectBound) {
