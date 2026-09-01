@@ -40,7 +40,8 @@ data class ServerEncryptionKey(val publicKey: ByteArray, val keyVersion: Int) {
 class DeviceSecretSealer(
     private val secretStore: SecretStore,
     private val serverKey: ServerEncryptionKeyProvider,
-    private val serverId: String,
+    /** Same published serverId the opener uses; see DeviceEnvelopeOpener. */
+    private val serverId: () -> String,
     private val userId: String,
     private val deviceId: String,
 ) : SecretSealer {
@@ -59,7 +60,7 @@ class DeviceSecretSealer(
         return try {
             val aad = MobileAad.secretAad(
                 MobileAad.SecretInput(
-                    serverId = serverId,
+                    serverId = serverId(),
                     userId = userId,
                     deviceId = deviceId,
                     entityType = entityType,

@@ -70,6 +70,25 @@ class SyncActorCapabilitiesTest {
     }
 
     @Test
+    fun `validateBinding surfaces the published envelope serverId`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.capabilitiesResult = ApiResult.Success(
+            ServerCapabilities(
+                protocolVersions = listOf(SyncContract.PROTOCOL_VERSION),
+                registryHash = "h",
+                serverId = "srv-published",
+            ),
+            null,
+        )
+        var seen: ServerCapabilities? = null
+        val subject = actor(transport, FakeSyncLocalStore(BindingState.IDLE)) { seen = it }
+
+        subject.request(SyncTrigger.MANUAL)
+
+        assertEquals("srv-published", seen!!.serverId)
+    }
+
+    @Test
     fun `a capabilities payload without a key still fires the callback`() = runTest {
         val transport = FakeSyncTransport()
         transport.capabilitiesResult = ApiResult.Success(
