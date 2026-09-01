@@ -411,6 +411,12 @@ class AccountContainer(
      * key rotation is visible to the sealer and the opener without rebuilding the whole graph.
      */
     private val serverKeyState = MutableStateFlow<ServerEncryptionKey?>(null)
+    /**
+     * Envelope AAD serverId from /capabilities. Empty until the first validated
+     * capabilities payload; opening a secret before that fails closed rather
+     * than silently using the local ServerProfile row id.
+     */
+    private val envelopeServerId = MutableStateFlow("")
 
     fun onServerEncryptionKey(key: ServerEncryptionKey) {
         serverKeyState.value = key
@@ -419,7 +425,7 @@ class AccountContainer(
     val sealer: DeviceSecretSealer = DeviceSecretSealer(
         secretStore = secretStore,
         serverKey = { serverKeyState.value },
-        serverId = binding.serverProfileId,
+        serverId = { envelopeServerId.value },
         userId = binding.userId,
         deviceId = binding.deviceId,
     )
@@ -432,7 +438,7 @@ class AccountContainer(
      */
     val envelopeOpener: DeviceEnvelopeOpener = DeviceEnvelopeOpener(
         identity = deviceIdentity,
-        serverId = binding.serverProfileId,
+        serverId = { envelopeServerId.value },
         userId = binding.userId,
         deviceId = binding.deviceId,
         knownKeyVersions = { serverKeyState.value?.let { setOf(it.keyVersion) } ?: emptySet() },
@@ -535,6 +541,7 @@ class AccountContainer(
             /* Feed the server's published ML-KEM key into the live key state so the sealer can
              * seal and the opener recognises the key version. A null/absent key means "defer
              * secrets", which the sealer already honours, so only an Available key updates state. */
+            if (caps.serverId.isNotEmpty()) envelopeServerId.value = caps.serverId
             val enc = caps.serverEncryption
             if (enc != null) {
                 val decoded = runCatching {

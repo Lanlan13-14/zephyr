@@ -20,7 +20,12 @@ import one.zephyr.mobile.security.MobileAad
  */
 class DeviceEnvelopeOpener(
     private val identity: DeviceIdentity,
-    private val serverId: String,
+    /**
+     * Published main-end serverId from /capabilities, not the local ServerProfile
+     * row id. Envelope AAD is bound to the server's value; a local UUID makes
+     * every password-bearing connection unopenable and aborts the whole page.
+     */
+    private val serverId: () -> String,
     private val userId: String,
     private val deviceId: String,
     private val knownKeyVersions: () -> Set<Int>,
@@ -30,7 +35,7 @@ class DeviceEnvelopeOpener(
     override fun open(change: SyncChange, fieldName: String): ByteArray? {
         val envelope = change.secretEnvelopes[fieldName] ?: return null
         val expected = MobileAad.SecretInput(
-            serverId = serverId,
+            serverId = serverId(),
             userId = userId,
             deviceId = deviceId,
             entityType = change.entityType,
