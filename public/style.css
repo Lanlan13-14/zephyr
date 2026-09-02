@@ -5597,6 +5597,67 @@ html.ssh-kb-open .terminal-page {
 :root[data-theme="light"] .docker-log-box,
 :root[data-theme="light"] .docker-container-log { background: #f6f8fa; color: #1f2328; }
 .docker-settings-desc { color: var(--text-secondary); font-size: 12px; margin-bottom: 10px; }
+
+/* Docker 概览条 */
+.docker-overview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+}
+.docker-overview-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    min-width: 72px;
+}
+.docker-overview-item.docker-overview-wide { flex: 1 1 140px; min-width: 0; }
+.docker-overview-label { font-size: 10px; color: var(--text-secondary); font-weight: 600; }
+.docker-overview-item strong { font-size: 14px; font-weight: 700; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Docker 工具栏与创建区块 */
+.docker-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.docker-toolbar .tool-btn { flex: 0 0 auto; }
+.docker-toolbar-input {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text);
+}
+.docker-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer; user-select: none; }
+.docker-create { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.docker-create summary { cursor: pointer; padding: 10px 12px; font-weight: 600; font-size: 13px; list-style: none; user-select: none; }
+.docker-create summary::before { content: '▸ '; color: var(--text-secondary); }
+.docker-create[open] summary::before { content: '▾ '; }
+.docker-create-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 12px 8px; }
+.docker-create-grid input,
+.docker-create-grid select {
+    min-width: 0;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+}
+.docker-create-actions { display: flex; align-items: center; gap: 10px; padding: 0 12px 12px; flex-wrap: wrap; }
+.docker-create-hint { font-size: 11px; color: var(--text-secondary); }
+@media (max-width: 520px) {
+    .docker-create-grid { grid-template-columns: 1fr; }
+}
+
+/* Docker inspect 抽屉：复用日志抽屉，但更高以容纳格式化 JSON */
+.docker-inspect-drawer { height: min(420px, 62%); }
+.docker-inspect-drawer .docker-container-log { font-size: 11px; line-height: 1.5; white-space: pre; }
+.docker-mountpoint { font-family: var(--font-mono); font-size: 11px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .docker-mirror-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .docker-mirror-item { display: flex; align-items: center; gap: 8px; }
 .docker-mirror-item input {
@@ -5724,6 +5785,17 @@ html.ssh-kb-open .terminal-page {
 /* 小折线图行 */
 .sparkline-row { display: flex; gap: 8px; margin-top: 8px; justify-content: center; }
 .sparkline-row canvas, .line-canvas { flex: 1; height: 30px !important; max-width: 120px; }
+
+/* 连接延迟卡片：左侧数值，右侧带坐标轴的折线图 */
+.latency-card { gap: 12px; }
+.latency-card .disk-card-meta { flex: 0 0 auto; min-width: 120px; }
+.latency-value { font-family: var(--font-mono); }
+.latency-value[data-level="good"] { color: var(--success); }
+.latency-value[data-level="mid"] { color: var(--warning); }
+.latency-value[data-level="bad"] { color: var(--danger); }
+.latency-sub { display: inline-block; margin-left: 8px; margin-top: 0; }
+.latency-chart-wrap { flex: 1; min-width: 0; height: 88px; position: relative; }
+.latency-chart-wrap canvas { width: 100% !important; height: 100% !important; }
 
 /* IP 信息区块 */
 .ip-section { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }

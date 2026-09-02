@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title data-i18n="Zephyr - 终端">Zephyr - 终端</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
-    <link rel="modulepreload" href="terminal.js?v=20260901-terminal-native-input2">
+    <link rel="modulepreload" href="terminal.js?v=20260902-monitor-docker1">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-telnet-page-split1">
     <link rel="modulepreload" href="i18n/runtime.js?v=20260728-ai-handle-only-drag1">
     <link rel="stylesheet" href="/vendor/wterm-fork/terminal.css?v=20260801-terminal-grid-converge1">
-    <link rel="stylesheet" href="style.css?v=20260901-terminal-native-input2">
+    <link rel="stylesheet" href="style.css?v=20260902-monitor-docker1">
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
     <link rel="stylesheet" href="/vendor/viewerjs/viewer.min.css">
     <link rel="stylesheet" href="preview/image/image-preview.css?v=20260725-telnet-page-split1">
@@ -170,15 +170,49 @@
                 <div class="docker-tabs" role="tablist">
                     <button class="docker-tab active" data-docker-tab="containers" data-i18n="容器">容器</button>
                     <button class="docker-tab" data-docker-tab="images" data-i18n="镜像">镜像</button>
+                    <button class="docker-tab" data-docker-tab="networks" data-i18n="网络">网络</button>
+                    <button class="docker-tab" data-docker-tab="volumes" data-i18n="存储卷">存储卷</button>
                     <button class="docker-tab" data-docker-tab="settings" data-i18n="镜像加速器">镜像加速器</button>
                 </div>
+                <div class="docker-overview" id="dockerOverview" hidden>
+                    <div class="docker-overview-item"><span class="docker-overview-label" data-i18n="运行中">运行中</span><strong data-docker-overview="running">0</strong></div>
+                    <div class="docker-overview-item"><span class="docker-overview-label" data-i18n="已停止">已停止</span><strong data-docker-overview="stopped">0</strong></div>
+                    <div class="docker-overview-item"><span class="docker-overview-label" data-i18n="镜像">镜像</span><strong data-docker-overview="images">0</strong></div>
+                    <div class="docker-overview-item docker-overview-wide"><span class="docker-overview-label" data-i18n="存储占用">存储占用</span><strong data-docker-overview="storage">—</strong></div>
+                    <div class="docker-overview-item docker-overview-wide"><span class="docker-overview-label">Docker</span><strong data-docker-overview="version">—</strong></div>
+                </div>
                 <div class="docker-tab-panel active" id="dockerContainersPanel">
+                    <div class="docker-toolbar">
+                        <label class="docker-filter"><input type="checkbox" id="dockerShowAll" checked data-i18n-aria-label="显示全部容器"><span data-i18n="显示全部">显示全部</span></label>
+                        <button class="tool-btn docker-action-btn" id="dockerPruneBtn"><span data-i18n="清理">清理</span></button>
+                    </div>
                     <div class="docker-table-wrap">
                         <table class="docker-table">
-                            <thead><tr><th data-i18n="名称">名称</th><th data-i18n="镜像">镜像</th><th data-i18n="状态">状态</th><th data-i18n="端口">端口</th><th data-i18n="创建时间">创建时间</th><th data-i18n="操作">操作</th></tr></thead>
+                            <thead><tr><th data-i18n="名称">名称</th><th data-i18n="镜像">镜像</th><th data-i18n="状态">状态</th><th>CPU</th><th data-i18n="内存">内存</th><th data-i18n="端口">端口</th><th data-i18n="运行时长">运行时长</th><th data-i18n="操作">操作</th></tr></thead>
                             <tbody id="dockerContainersBody"></tbody>
                         </table>
                     </div>
+                    <details class="docker-create" id="dockerCreateBlock">
+                        <summary data-i18n="创建容器">创建容器</summary>
+                        <div class="docker-create-grid">
+                            <input type="text" id="dockerCreateImage" list="dockerCreateImageList" placeholder="镜像，例如 nginx:alpine" data-i18n-placeholder="镜像，例如 nginx:alpine">
+                            <datalist id="dockerCreateImageList"></datalist>
+                            <input type="text" id="dockerCreateName" placeholder="容器名（可选）" data-i18n-placeholder="容器名（可选）">
+                            <input type="text" id="dockerCreatePorts" placeholder="端口映射，如 8080:80,443:443" data-i18n-placeholder="端口映射，如 8080:80,443:443">
+                            <input type="text" id="dockerCreateEnv" placeholder="环境变量，如 KEY=VAL,FOO=bar" data-i18n-placeholder="环境变量，如 KEY=VAL,FOO=bar">
+                            <select id="dockerCreateRestart" data-i18n-aria-label="重启策略">
+                                <option value="no" data-i18n="不自动重启">不自动重启</option>
+                                <option value="always" data-i18n="总是重启">总是重启</option>
+                                <option value="unless-stopped" data-i18n="除非手动停止">除非手动停止</option>
+                                <option value="on-failure" data-i18n="失败时重启">失败时重启</option>
+                            </select>
+                            <input type="text" id="dockerCreateCmd" placeholder="启动命令（可选）" data-i18n-placeholder="启动命令（可选）">
+                        </div>
+                        <div class="docker-create-actions">
+                            <button class="tool-btn" id="dockerCreateBtn" data-i18n="创建并启动">创建并启动</button>
+                            <span class="docker-create-hint" data-i18n="端口与环境变量用英文逗号分隔">端口与环境变量用英文逗号分隔</span>
+                        </div>
+                    </details>
                 </div>
                 <div class="docker-tab-panel" id="dockerImagesPanel">
                     <div class="docker-pull-row">
@@ -186,10 +220,39 @@
                         <button class="tool-btn" id="dockerPullBtn" data-i18n="拉取">拉取</button>
                     </div>
                     <pre class="docker-log-box" id="dockerPullLog" aria-live="polite"></pre>
+                    <div class="docker-toolbar">
+                        <button class="tool-btn docker-action-btn" id="dockerPruneImagesBtn"><span data-i18n="清理未使用镜像">清理未使用镜像</span></button>
+                    </div>
                     <div class="docker-table-wrap">
                         <table class="docker-table">
                             <thead><tr><th data-i18n="仓库">仓库</th><th data-i18n="标签">标签</th><th data-i18n="大小">大小</th><th data-i18n="创建时间">创建时间</th><th data-i18n="操作">操作</th></tr></thead>
                             <tbody id="dockerImagesBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="docker-tab-panel" id="dockerNetworksPanel">
+                    <div class="docker-toolbar">
+                        <input type="text" id="dockerNetworkCreateInput" class="docker-toolbar-input" placeholder="新网络名称" data-i18n-placeholder="新网络名称">
+                        <button class="tool-btn" id="dockerNetworkCreateBtn" data-i18n="创建网络">创建网络</button>
+                        <button class="tool-btn docker-action-btn" id="dockerPruneNetworksBtn"><span data-i18n="清理未使用网络">清理未使用网络</span></button>
+                    </div>
+                    <div class="docker-table-wrap">
+                        <table class="docker-table">
+                            <thead><tr><th data-i18n="名称">名称</th><th data-i18n="驱动">驱动</th><th data-i18n="范围">范围</th><th data-i18n="子网">子网</th><th data-i18n="网关">网关</th><th data-i18n="操作">操作</th></tr></thead>
+                            <tbody id="dockerNetworksBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="docker-tab-panel" id="dockerVolumesPanel">
+                    <div class="docker-toolbar">
+                        <input type="text" id="dockerVolumeCreateInput" class="docker-toolbar-input" placeholder="新存储卷名称" data-i18n-placeholder="新存储卷名称">
+                        <button class="tool-btn" id="dockerVolumeCreateBtn" data-i18n="创建存储卷">创建存储卷</button>
+                        <button class="tool-btn docker-action-btn" id="dockerPruneVolumesBtn"><span data-i18n="清理未使用卷">清理未使用卷</span></button>
+                    </div>
+                    <div class="docker-table-wrap">
+                        <table class="docker-table">
+                            <thead><tr><th data-i18n="名称">名称</th><th data-i18n="驱动">驱动</th><th data-i18n="挂载点">挂载点</th><th data-i18n="操作">操作</th></tr></thead>
+                            <tbody id="dockerVolumesBody"></tbody>
                         </table>
                     </div>
                 </div>
@@ -202,6 +265,15 @@
                         <button class="tool-btn" id="dockerMirrorSaveBtn" data-i18n="保存配置">保存配置</button>
                     </div>
                 </div>
+            </div>
+            <div class="docker-log-drawer docker-inspect-drawer" id="dockerInspectDrawer" style="display:none;">
+                <div class="docker-log-header">
+                    <span id="dockerInspectTitle" data-i18n="容器详情">容器详情</span>
+                    <div class="docker-log-actions">
+                        <button class="tool-btn" id="dockerInspectCloseBtn" data-i18n="关闭">关闭</button>
+                    </div>
+                </div>
+                <pre class="docker-container-log" id="dockerInspectBody"></pre>
             </div>
             <div class="docker-log-drawer" id="dockerLogDrawer" style="display:none;">
                 <div class="docker-log-header">
@@ -365,6 +437,6 @@
     <script src="preview/image/image-preview.js?v=20260731-panel-drag-physics4"></script>
     <script src="preview/media/media-preview.js?v=20260731-panel-drag-physics4"></script>
     <script src="editor/zephyr-editor.bundle.js?v=20260725-telnet-page-split1" type="module"></script>
-    <script src="terminal.js?v=20260901-terminal-native-input2" type="module"></script>
+    <script src="terminal.js?v=20260902-monitor-docker1" type="module"></script>
 </body>
 </html>

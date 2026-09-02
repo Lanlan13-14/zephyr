@@ -10273,6 +10273,150 @@ wss.on('connection', (ws, req) => {
                 return;
             }
 
+            if (msg.type === 'docker-system-df') {
+                const raw = await execRemoteCommand(sshClient, "docker system df --format '{{json .}}' 2>/dev/null || true");
+                sendJSON({ type: 'docker-system-df', rows: parseJSONLines(raw) });
+                return;
+            }
+
+            if (msg.type === 'docker-list-networks') {
+                const raw = await execRemoteCommand(sshClient, "docker network ls --no-trunc --format '{{json .}}'");
+                sendJSON({ type: 'docker-networks', networks: parseJSONLines(raw) });
+                return;
+            }
+
+            if (msg.type === 'docker-network-inspect') {
+                const target = String(msg.id || msg.name || '').trim();
+                if (!target) throw new Error('缺少网络 ID/名称');
+                const raw = await execRemoteCommand(sshClient, `docker network inspect ${shellQuote(target)} --format '{{json .IPAM.Config}}' 2>/dev/null || printf '[]'`);
+                let configs = [];
+                try { configs = JSON.parse(raw.trim() || '[]'); } catch { configs = []; }
+                sendJSON({ type: 'docker-network-inspect', id: target, configs: Array.isArray(configs) ? configs : [] });
+                return;
+            }
+
+            if (msg.type === 'docker-network-action') {
+                const action = String(msg.action || '');
+                const target = String(msg.id || msg.name || '').trim();
+                if (!target) throw new Error('缺少网络名称');
+                if (action === 'create') {
+                    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(target)) throw new Error('网络名称不合法');
+                    const raw = await execRemoteCommand(sshClient, `docker network create ${shellQuote(target)}`);
+                    sendJSON({ type: 'docker-network-action', action, target, success: true, output: raw });
+                    return;
+                }
+                if (action === 'remove') {
+                    const raw = await execRemoteCommand(sshClient, `docker network rm ${shellQuote(target)}`);
+                    sendJSON({ type: 'docker-network-action', action, target, success: true, output: raw });
+                    return;
+                }
+                throw new Error('不支持的网络操作');
+            }
+
+            if (msg.type === 'docker-create-container') {
+                const image = String(msg.image || '').trim();
+                if (!image) throw new Error('请填写镜像名');
+                const parts = [];
+                const name = String(msg.name || '').trim();
+                if (name) {
+                    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(name)) throw new Error('容器名不合法（仅限字母数字 ._-）');
+                    parts.push(`--name ${shellQuote(name)}`);
+                }
+                const restart = String(msg.restart || '');
+                if (['no', 'always', 'unless-stopped', 'on-failure'].includes(restart)) parts.push(`--restart ${restart}`);
+                const ports = Array.isArray(msg.ports) ? msg.ports : [];
+                for (const p of ports.slice(0, 20)) {
+                    const spec = String(p || '').trim();
+                    if (!spec) continue;
+                    if (!/^[0-9]{1,5}(:(tcp|udp))?:[0-9]{1,5}(\/(tcp|udp))?$/.test(spec)) throw new Error(`端口映射不合法：${spec}`);
+                    parts.push(`-p ${shellQuote(spec)}`);
+                }
+                const env = Array.isArray(msg.env) ? msg.env : [];
+                for (const e of env.slice(0, 50)) {
+                    const spec = String(e || '').trim();
+                    if (!spec) continue;
+                    if (!/^[a-zA-Z_][a-zA-Z0-9_]*=/.test(spec)) throw new Error(`环境变量不合法：${spec}`);
+                    parts.push(`-e ${shellQuote(spec)}`);
+                }
+                const cmd = String(msg.cmd || '').trim();
+                const command = `docker create ${parts.join(' ')} ${shellQuote(image)}${cmd ? ` ${cmd}` : ''}`;
+                const raw = await execRemoteCommand(sshClient, command);
+                const newId = raw.trim().split('\n').pop() || '';
+                sendJSON({ type: 'docker-create-container', success: true, id: newId, name: name || newId.slice(0, 12) });
+                return;
+            }
+
+            if (msg.type === 'docker-prune') {
+                const kind = String(msg.kind || 'system');
+                let command = null;
+                if (kind === 'system') command = 'docker system prune -f';
+                else if (kind === 'images') command = 'docker image prune -f';
+                else if (kind === 'networks') command = 'docker network prune -f';
+                else if (kind === 'volumes') command = 'docker volume prune -f';
+                if (!command) throw new Error('不支持的清理类型');
+                const raw = await execRemoteCommand(sshClient, command);
+                sendJSON({ type: 'docker-prune', kind, success: true, output: raw });
+                return;
+            }
+
+            if (msg.type === 'docker-container-stats') {
+                const raw = await execRemoteCommand(sshClient, "docker stats --no-stream --format '{{json .}}' 2>/dev/null || true");
+                sendJSON({ type: 'docker-container-stats', stats: parseJSONLines(raw) });
+                return;
+            }
+
+            if (msg.type === 'docker-container-inspect') {
+                const target = String(msg.id || msg.name || '').trim();
+                if (!target) throw new Error('缺少容器 ID/名称');
+                const raw = await execRemoteCommand(sshClient, `docker inspect ${shellQuote(target)}`);
+                sendJSON({ type: 'docker-container-inspect', id: target, raw });
+                return;
+            }
+
+            if (msg.type === 'docker-image-tag') {
+                const source = String(msg.source || '').trim();
+                const target = String(msg.target || '').trim();
+                if (!source || !target) throw new Error('缺少镜像或新标签');
+                if (!/^[a-zA-Z0-9][a-zA-Z0-9._\/:@-]{0,255}$/.test(source)) throw new Error('镜像名不合法');
+                if (!/^[a-zA-Z0-9][a-zA-Z0-9._\/:@-]{0,255}$/.test(target)) throw new Error('新标签不合法');
+                const raw = await execRemoteCommand(sshClient, `docker tag ${shellQuote(source)} ${shellQuote(target)}`);
+                sendJSON({ type: 'docker-image-tag', source, target, success: true, output: raw });
+                return;
+            }
+
+            if (msg.type === 'docker-list-volumes') {
+                const raw = await execRemoteCommand(sshClient, "docker volume ls --format '{{json .}}' 2>/dev/null || true");
+                sendJSON({ type: 'docker-volumes', volumes: parseJSONLines(raw) });
+                return;
+            }
+
+            if (msg.type === 'docker-volume-inspect') {
+                const name = String(msg.name || msg.id || '').trim();
+                if (!name) throw new Error('缺少存储卷名称');
+                const raw = await execRemoteCommand(sshClient, `docker volume inspect ${shellQuote(name)} --format '{{json .}}' 2>/dev/null || printf '{}'`).catch(() => '{}');
+                let info = {};
+                try { info = JSON.parse(raw.trim() || '{}'); } catch { info = {}; }
+                sendJSON({ type: 'docker-volume-inspect', name, info });
+                return;
+            }
+
+            if (msg.type === 'docker-volume-action') {
+                const action = String(msg.action || '');
+                const name = String(msg.name || '').trim();
+                if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(name)) throw new Error('存储卷名称不合法');
+                if (action === 'create') {
+                    const raw = await execRemoteCommand(sshClient, `docker volume create ${shellQuote(name)}`);
+                    sendJSON({ type: 'docker-volume-action', action, name, success: true, output: raw });
+                    return;
+                }
+                if (action === 'remove') {
+                    const raw = await execRemoteCommand(sshClient, `docker volume rm ${shellQuote(name)}`);
+                    sendJSON({ type: 'docker-volume-action', action, name, success: true, output: raw });
+                    return;
+                }
+                throw new Error('不支持的存储卷操作');
+            }
+
             if (msg.type === 'docker-container-action') {
                 const action = String(msg.action || '');
                 const target = String(msg.id || msg.name || '').trim();
@@ -10383,6 +10527,18 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             const responseType = msg.type === 'docker-check' ? 'docker-status'
                 : msg.type === 'docker-list-containers' ? 'docker-containers'
                 : msg.type === 'docker-list-images' ? 'docker-images'
+                : msg.type === 'docker-system-df' ? 'docker-system-df'
+                : msg.type === 'docker-list-networks' ? 'docker-networks'
+                : msg.type === 'docker-network-inspect' ? 'docker-network-inspect'
+                : msg.type === 'docker-network-action' ? 'docker-network-action'
+                : msg.type === 'docker-create-container' ? 'docker-create-container'
+                : msg.type === 'docker-prune' ? 'docker-prune'
+                : msg.type === 'docker-container-stats' ? 'docker-container-stats'
+                : msg.type === 'docker-container-inspect' ? 'docker-container-inspect'
+                : msg.type === 'docker-image-tag' ? 'docker-image-tag'
+                : msg.type === 'docker-list-volumes' ? 'docker-volumes'
+                : msg.type === 'docker-volume-inspect' ? 'docker-volume-inspect'
+                : msg.type === 'docker-volume-action' ? 'docker-volume-action'
                 : msg.type === 'docker-mirrors-get' ? 'docker-mirrors'
                 : 'docker-error';
             sendJSON({ type: responseType, success: false, error: err.message, message: err.message, containers: [], images: [] });
