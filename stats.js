@@ -276,9 +276,42 @@ function computeNetRates(current, previous, elapsedSeconds) {
   };
 }
 
+/* 纯 RTT 探针：exec 一个空命令，只测 SSH 通道环回（与"编辑 → 测试连接"
+ * 的握手后环回口径一致），不含 stats 命令的远端执行/公网 IP 探测耗时。
+ * 失败返回 null，调用方降级为不显示延迟，绝不拿采样总耗时冒充 RTT。 */
+function probeLatency(sshClient) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), 3000);
+    try {
+      sshClient.exec('true', (err, stream) => {
+        if (err) { clearTimeout(timer); return finish(null); }
+        stream.on('close', () => {
+          clearTimeout(timer);
+          finish(Math.max(0, Date.now() - startedAt));
+        });
+        stream.on('error', () => { clearTimeout(timer); finish(null); });
+        try { stream.end?.(); } catch {}
+      });
+    } catch {
+      clearTimeout(timer);
+      finish(null);
+    }
+  });
+}
+
 async function getRemoteStats(sshClient, previous = {}) {
-  const startedAt = Date.now();
-  const raw = await execRemote(sshClient, STAT_COMMAND);
+  /* 探针与采样并行：探针只测环回，采样继续干重活。总墙钟时间不变。 */
+  const [latencyMs, raw] = await Promise.all([
+    probeLatency(sshClient),
+    execRemote(sshClient, STAT_COMMAND),
+  ]);
   const sections = splitSections(raw);
   const cpuStat = parseCpuStat(sections.cpu);
   const mem = parseMemory(sections.mem);
@@ -311,10 +344,10 @@ async function getRemoteStats(sshClient, previous = {}) {
       processes,
       ip: { ipv4, ipv6 },
       host: { hostname, os: osInfo },
-      /* 连接延迟：与"编辑 → 测试连接"一致，按 SSH exec 通道环回耗时计量。
-       * stats 采样本身每秒发一次远程命令，它的环回耗时即当前连接延迟的
-       * 一个低开销近似（不再额外发 ping）。 */
-      latency: { ms: Math.max(0, now - startedAt), sampledAt: now }
+      /* 连接延迟：纯 SSH 通道环回（空 exec 探针），口径对齐"编辑 → 测试连接"。
+       * 与 stats 采样并行测，不含远端命令执行/公网 IP 探测耗时。探针失败
+       * 时 ms 为 null，前端降级显示 --。 */
+      latency: { ms: latencyMs, sampledAt: now }
     },
     state: {
       cpuStat,

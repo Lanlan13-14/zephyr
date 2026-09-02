@@ -23,19 +23,25 @@ test('dockerMotion exposes rows / tabPanel / expandIn / pressAll with graceful d
     assert.ok(idx > 0, 'dockerMotion adapter exists');
     const body = terminalJs.slice(idx, idx + 2600);
     assert.ok(/rows\(tbody\)/.test(body), 'rows hook');
-    assert.ok(/tabPanel\(el, fromRect\)/.test(body), 'tab FLIP hook');
+    assert.ok(/tabPanel\(el\)/.test(body), 'tab entry hook');
     assert.ok(/expandIn\(el\)/.test(body), 'create-block expand hook');
     assert.ok(/pressAll\(selector\)/.test(body), 'button press hook');
     assert.ok(/\.catch\(\(\) =>/.test(body), 'engine failure degrades gracefully');
     assert.ok(/reducedMotion/.test(body), 'respects reduced-motion');
 });
 
-test('tab switching feeds the FLIP morph with the outgoing panel rect', () => {
+test('tab switching plays an entry animation, NOT a FLIP morph from a display:none rect', () => {
     const idx = terminalJs.indexOf("document.querySelectorAll('[data-docker-tab]')");
     assert.ok(idx > 0);
     const body = terminalJs.slice(idx, idx + 900);
-    assert.ok(/getBoundingClientRect/.test(body), 'captures fromRect before switch');
-    assert.ok(/dockerMotion\.tabPanel\(target, fromRect\)/.test(body), 'morphs the incoming panel');
+    assert.ok(/dockerMotion\.tabPanel\(target\)/.test(body), 'animates the incoming panel');
+    // Regression: morph() from a display:none panel divides by a zero rect
+    // and blanks the content. The handler must not read the old panel rect.
+    assert.ok(!/getBoundingClientRect/.test(body), 'must not read the hidden outgoing rect');
+    const adapterIdx = terminalJs.indexOf('const dockerMotion = {');
+    const adapter = terminalJs.slice(adapterIdx, adapterIdx + 2600);
+    assert.ok(/M\.set\(el, \{ y: 8, opacity: 0 \}\)/.test(adapter), 'entry sets a safe initial pose');
+    assert.ok(!/M\.morph\(/.test(adapter), 'tab panels must not use FLIP morph');
 });
 
 test('table renderers stream rows through dockerMotion.rows', () => {
