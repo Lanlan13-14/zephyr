@@ -277,6 +277,7 @@ function computeNetRates(current, previous, elapsedSeconds) {
 }
 
 async function getRemoteStats(sshClient, previous = {}) {
+  const startedAt = Date.now();
   const raw = await execRemote(sshClient, STAT_COMMAND);
   const sections = splitSections(raw);
   const cpuStat = parseCpuStat(sections.cpu);
@@ -309,7 +310,11 @@ async function getRemoteStats(sshClient, previous = {}) {
       net,
       processes,
       ip: { ipv4, ipv6 },
-      host: { hostname, os: osInfo }
+      host: { hostname, os: osInfo },
+      /* 连接延迟：与"编辑 → 测试连接"一致，按 SSH exec 通道环回耗时计量。
+       * stats 采样本身每秒发一次远程命令，它的环回耗时即当前连接延迟的
+       * 一个低开销近似（不再额外发 ping）。 */
+      latency: { ms: Math.max(0, now - startedAt), sampledAt: now }
     },
     state: {
       cpuStat,

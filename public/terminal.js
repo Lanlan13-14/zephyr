@@ -821,6 +821,30 @@ const dockerLogPauseBtn = $('#dockerLogPauseBtn');
 const dockerLogDownloadBtn = $('#dockerLogDownloadBtn');
 const dockerLogCloseBtn = $('#dockerLogCloseBtn');
 const dockerContainerLog = $('#dockerContainerLog');
+const dockerOverview = $('#dockerOverview');
+const dockerShowAll = $('#dockerShowAll');
+const dockerPruneBtn = $('#dockerPruneBtn');
+const dockerPruneImagesBtn = $('#dockerPruneImagesBtn');
+const dockerCreateImage = $('#dockerCreateImage');
+const dockerCreateImageList = $('#dockerCreateImageList');
+const dockerCreateName = $('#dockerCreateName');
+const dockerCreatePorts = $('#dockerCreatePorts');
+const dockerCreateEnv = $('#dockerCreateEnv');
+const dockerCreateRestart = $('#dockerCreateRestart');
+const dockerCreateCmd = $('#dockerCreateCmd');
+const dockerCreateBtn = $('#dockerCreateBtn');
+const dockerNetworksBody = $('#dockerNetworksBody');
+const dockerNetworkCreateInput = $('#dockerNetworkCreateInput');
+const dockerNetworkCreateBtn = $('#dockerNetworkCreateBtn');
+const dockerPruneNetworksBtn = $('#dockerPruneNetworksBtn');
+const dockerVolumesBody = $('#dockerVolumesBody');
+const dockerVolumeCreateInput = $('#dockerVolumeCreateInput');
+const dockerVolumeCreateBtn = $('#dockerVolumeCreateBtn');
+const dockerPruneVolumesBtn = $('#dockerPruneVolumesBtn');
+const dockerInspectDrawer = $('#dockerInspectDrawer');
+const dockerInspectTitle = $('#dockerInspectTitle');
+const dockerInspectBody = $('#dockerInspectBody');
+const dockerInspectCloseBtn = $('#dockerInspectCloseBtn');
 const toolbar = topbarActions;  // mobile: original CSS-icon actions row
 
 // ---------- 全局变量 ----------
@@ -941,6 +965,15 @@ let dockerMirrors = [];
 let dockerCurrentLogContainer = null;
 let dockerAutoScrollLog = true;
 let dockerLogBuffer = '';
+let dockerContainersCache = [];
+let dockerImagesCache = [];
+let dockerNetworksCache = [];
+let dockerNetworkIpam = new Map();
+let dockerVolumesCache = [];
+let dockerContainerStats = new Map();
+let dockerStatsTimer = 0;
+let dockerSystemDf = null;
+let dockerVersion = '';
 
 // 图表实例管理
 let chartInstances = {};
@@ -7842,6 +7875,25 @@ function dockerRefreshAll() {
     dockerSend({ type: 'docker-list-containers' });
     dockerSend({ type: 'docker-list-images' });
     dockerSend({ type: 'docker-mirrors-get' });
+    dockerSend({ type: 'docker-system-df' });
+    dockerSend({ type: 'docker-list-networks' });
+    dockerSend({ type: 'docker-list-volumes' });
+    dockerSend({ type: 'docker-container-stats' });
+}
+
+/* 面板打开期间每 5s 增量拉一次容器 stats（DPanel/1Panel 的 CPU/内存列）。
+ * 只在面板可见时轮询，隐藏/断开即停。 */
+function startDockerStatsLoop() {
+    if (dockerStatsTimer || !dockerInstalled) return;
+    dockerStatsTimer = window.setInterval(() => {
+        if (!dockerPanel?.classList.contains('open') || !dockerInstalled) return;
+        dockerSend({ type: 'docker-container-stats' });
+    }, 5000);
+}
+
+function stopDockerStatsLoop() {
+    if (dockerStatsTimer) window.clearInterval(dockerStatsTimer);
+    dockerStatsTimer = 0;
 }
 
 function checkDockerStatus({ force = false } = {}) {
@@ -7869,10 +7921,12 @@ function showDockerPanel() {
         animatePanelFromButton(dockerPanel, dockerBtn, true);
     });
     checkDockerStatus();
+    startDockerStatsLoop();
 }
 
 function hideDockerPanel() {
     if (typeof closePanelLayoutMenu === 'function') closePanelLayoutMenu({ instant: true });
+    stopDockerStatsLoop();
     animatePanelFromButton(dockerPanel, dockerBtn, false);
     dockerPanel.classList.remove('open');
     dockerBtn.classList.remove('active');
@@ -7907,21 +7961,72 @@ function shortId(id = '') {
     return String(id).replace(/^sha256:/, '').slice(0, 12) || '';
 }
 
+function dockerRunningCount() {
+    return dockerContainersCache.map(normalizeContainer).filter((c) => /up|running/i.test(c.status)).length;
+}
+
+function dockerParseSystemDfSize(rows = [], type = '') {
+    const row = rows.find((r) => String(r.Type || r.type || '').toLowerCase() === type.toLowerCase());
+    return row ? (row.Size || row.size || '—') : '—';
+}
+
+function dockerParseSystemDfReclaimable(rows = []) {
+    const row = rows.find((r) => String(r.Type || r.type || '').toLowerCase() === 'images');
+    return row ? (row.Reclaimable || row.reclaimable || '') : '';
+}
+
+function setDockerOverviewField(name, value) {
+    const el = dockerOverview?.querySelector(`[data-docker-overview="${name}"]`);
+    if (el && el.textContent !== value) el.textContent = value;
+}
+
+function renderDockerOverview() {
+    if (!dockerOverview) return;
+    const running = dockerRunningCount();
+    const total = dockerContainersCache.length;
+    setDockerOverviewField('running', String(running));
+    setDockerOverviewField('stopped', String(Math.max(0, total - running)));
+    setDockerOverviewField('images', String(dockerImagesCache.length));
+    const storage = dockerSystemDf
+        ? `${dockerParseSystemDfSize(dockerSystemDf, 'Images')} / ${dockerParseSystemDfSize(dockerSystemDf, 'Containers')} / ${dockerParseSystemDfSize(dockerSystemDf, 'Local Volumes')}`
+        : '—';
+    setDockerOverviewField('storage', storage);
+    setDockerOverviewField('version', dockerVersion || '—');
+}
+
+function dockerCreateImageDatalist() {
+    if (!dockerCreateImageList) return;
+    const refs = dockerImagesCache.map(normalizeImage)
+        .filter((img) => img.repository && img.repository !== '<none>' && img.tag && img.tag !== '<none>')
+        .map((img) => `${img.repository}:${img.tag}`);
+    const unique = [...new Set(refs)].slice(0, 50);
+    dockerCreateImageList.innerHTML = unique.map((ref) => `<option value="${escapeHtml(ref)}"></option>`).join('');
+}
+
 function renderDockerContainers(containers = []) {
     if (!dockerContainersBody) return;
+    dockerContainersCache = Array.isArray(containers) ? containers : [];
     dockerContainersBody.innerHTML = '';
-    if (!containers.length) {
-        dockerContainersBody.innerHTML = `<tr><td colspan="6">${t('暂无容器')}</td></tr>`;
+    const showAll = dockerShowAll ? dockerShowAll.checked : true;
+    const rows = dockerContainersCache.map(normalizeContainer)
+        .filter((container) => showAll || /up|running/i.test(container.status));
+    if (!rows.length) {
+        dockerContainersBody.innerHTML = `<tr><td colspan="8">${t(dockerContainersCache.length ? '没有运行中的容器' : '暂无容器')}</td></tr>`;
+        renderDockerOverview();
+        dockerCreateImageDatalist();
         return;
     }
-    containers.map(normalizeContainer).forEach((container) => {
+    rows.forEach((container) => {
         const tr = document.createElement('tr');
         const target = container.id || container.name;
         const running = /up|running/i.test(container.status);
+        const stat = dockerContainerStats.get(container.name) || dockerContainerStats.get(shortId(container.id)) || null;
         tr.innerHTML = `
             <td title="${escapeHtml(container.id)}">${escapeHtml(container.name)}<div class="docker-sub-id">${escapeHtml(shortId(container.id))}</div></td>
             <td>${escapeHtml(container.image)}</td>
             <td><span class="docker-badge ${running ? 'running' : 'stopped'}">${escapeHtml(container.status)}</span></td>
+            <td data-stat-cpu="${escapeHtml(container.name)}">${running && stat ? escapeHtml(stat.cpu) : '—'}</td>
+            <td data-stat-mem="${escapeHtml(container.name)}">${running && stat ? escapeHtml(stat.mem) : '—'}</td>
             <td>${escapeHtml(container.ports || '—')}</td>
             <td>${escapeHtml(container.created)}</td>
             <td><div class="docker-actions"></div></td>
@@ -7947,18 +8052,30 @@ function renderDockerContainers(containers = []) {
             });
             actions.appendChild(btn);
         });
+        const inspectBtn = document.createElement('button');
+        inspectBtn.className = 'tool-btn docker-action-btn';
+        inspectBtn.innerHTML = `${dockerActionGlyph('logs', t('详情'))}<span>${t('详情')}</span>`;
+        inspectBtn.addEventListener('click', () => {
+            openDockerInspect(container.name || target);
+            dockerSend({ type: 'docker-container-inspect', id: target });
+        });
+        actions.appendChild(inspectBtn);
         dockerContainersBody.appendChild(tr);
     });
+    renderDockerOverview();
 }
 
 function renderDockerImages(images = []) {
     if (!dockerImagesBody) return;
+    dockerImagesCache = Array.isArray(images) ? images : [];
     dockerImagesBody.innerHTML = '';
-    if (!images.length) {
+    if (!dockerImagesCache.length) {
         dockerImagesBody.innerHTML = `<tr><td colspan="5">${t('暂无镜像')}</td></tr>`;
+        renderDockerOverview();
+        dockerCreateImageDatalist();
         return;
     }
-    images.map(normalizeImage).forEach((image) => {
+    dockerImagesCache.map(normalizeImage).forEach((image) => {
         const imageRef = image.repository !== '<none>' && image.tag !== '<none>' ? `${image.repository}:${image.tag}` : image.id;
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -7976,8 +8093,116 @@ function renderDockerImages(images = []) {
             setDockerStatus(t('正在检查镜像使用情况...'), true);
             dockerSend({ type: 'docker-delete-image', image: imageRef, id: image.id });
         });
+        const tagBtn = document.createElement('button');
+        tagBtn.className = 'tool-btn docker-action-btn';
+        tagBtn.innerHTML = `${dockerActionGlyph('restart', t('标签'))}<span>${t('标签')}</span>`;
+        tagBtn.addEventListener('click', () => {
+            const target = prompt(t('为 {image} 添加新标签（如 myrepo/xx:v1）', { image: imageRef }), imageRef);
+            if (!target || !target.trim() || target.trim() === imageRef) return;
+            setDockerStatus(t('正在打标签...'), true);
+            dockerSend({ type: 'docker-image-tag', source: imageRef, target: target.trim() });
+        });
+        tr.querySelector('.docker-actions').appendChild(tagBtn);
         tr.querySelector('.docker-actions').appendChild(deleteBtn);
         dockerImagesBody.appendChild(tr);
+    });
+    renderDockerOverview();
+    dockerCreateImageDatalist();
+}
+
+function normalizeVolume(row = {}) {
+    return {
+        name: row.Name || 'N/A',
+        driver: row.Driver || 'local',
+        mountpoint: row.Mountpoint || row.mountpoint || '—',
+    };
+}
+
+function renderDockerVolumes(volumes = []) {
+    if (!dockerVolumesBody) return;
+    dockerVolumesCache = Array.isArray(volumes) ? volumes : [];
+    dockerVolumesBody.innerHTML = '';
+    if (!dockerVolumesCache.length) {
+        dockerVolumesBody.innerHTML = `<tr><td colspan="4">${t('暂无存储卷')}</td></tr>`;
+        return;
+    }
+    dockerVolumesCache.map(normalizeVolume).forEach((volume) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td title="${escapeHtml(volume.name)}">${escapeHtml(volume.name)}</td>
+            <td>${escapeHtml(volume.driver)}</td>
+            <td data-volume-mount="${escapeHtml(volume.name)}" class="docker-mountpoint">${escapeHtml(volume.mountpoint)}</td>
+            <td><div class="docker-actions"></div></td>
+        `;
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'tool-btn docker-action-btn danger-text';
+        removeBtn.innerHTML = `${dockerActionGlyph('remove', t('删除'))}<span>${t('删除')}</span>`;
+        removeBtn.addEventListener('click', () => {
+            if (!confirm(t('确认删除存储卷 {name}? 数据将丢失。', { name: volume.name }))) return;
+            setDockerStatus(t('正在删除存储卷...'), true);
+            dockerSend({ type: 'docker-volume-action', action: 'remove', name: volume.name });
+        });
+        tr.querySelector('.docker-actions').appendChild(removeBtn);
+        dockerVolumesBody.appendChild(tr);
+        dockerSend({ type: 'docker-volume-inspect', name: volume.name });
+    });
+}
+
+function openDockerInspect(name) {
+    if (!dockerInspectDrawer) return;
+    dockerInspectTitle.textContent = t('容器详情 · {name}', { name: name || '' });
+    dockerInspectBody.textContent = t('正在加载...');
+    dockerInspectDrawer.style.display = 'flex';
+}
+
+function normalizeNetwork(row = {}) {
+    return {
+        id: row.ID || row.NetworkID || '',
+        name: row.Name || 'N/A',
+        driver: row.Driver || 'N/A',
+        scope: row.Scope || 'N/A',
+    };
+}
+
+function renderDockerNetworks(networks = []) {
+    if (!dockerNetworksBody) return;
+    dockerNetworksCache = Array.isArray(networks) ? networks : [];
+    dockerNetworksBody.innerHTML = '';
+    if (!dockerNetworksCache.length) {
+        dockerNetworksBody.innerHTML = `<tr><td colspan="6">${t('暂无网络')}</td></tr>`;
+        return;
+    }
+    const builtin = new Set(['bridge', 'host', 'none']);
+    dockerNetworksCache.map(normalizeNetwork).forEach((network) => {
+        const ipam = dockerNetworkIpam.get(network.id) || dockerNetworkIpam.get(network.name) || [];
+        const subnet = ipam[0]?.Subnet || '—';
+        const gateway = ipam[0]?.Gateway || '—';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td title="${escapeHtml(network.id)}">${escapeHtml(network.name)}<div class="docker-sub-id">${escapeHtml(shortId(network.id))}</div></td>
+            <td>${escapeHtml(network.driver)}</td>
+            <td>${escapeHtml(network.scope)}</td>
+            <td data-network-subnet="${escapeHtml(network.id)}">${escapeHtml(subnet)}</td>
+            <td data-network-gateway="${escapeHtml(network.id)}">${escapeHtml(gateway)}</td>
+            <td><div class="docker-actions"></div></td>
+        `;
+        const actions = tr.querySelector('.docker-actions');
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'tool-btn docker-action-btn danger-text';
+        removeBtn.innerHTML = `${dockerActionGlyph('remove', t('删除'))}<span>${t('删除')}</span>`;
+        removeBtn.disabled = builtin.has(network.name);
+        removeBtn.title = builtin.has(network.name) ? t('内置网络不可删除') : '';
+        removeBtn.addEventListener('click', () => {
+            if (!confirm(t('确认删除网络 {name}?', { name: network.name }))) return;
+            setDockerStatus(t('正在删除网络...'), true);
+            dockerSend({ type: 'docker-network-action', action: 'remove', id: network.name });
+        });
+        actions.appendChild(removeBtn);
+        dockerNetworksBody.appendChild(tr);
+        if (!dockerNetworkIpam.has(network.id)) {
+            dockerNetworkIpam.set(network.id, []);
+            dockerSend({ type: 'docker-network-inspect', id: network.id });
+        }
     });
 }
 
@@ -8039,6 +8264,8 @@ function handleDockerMessage(msg) {
         case 'docker-status':
             dockerChecked = true;
             dockerInstalled = !!msg.installed;
+            dockerVersion = msg.version || '';
+            if (dockerOverview) dockerOverview.hidden = !dockerInstalled;
             if (!dockerInstalled) {
                 setDockerStatus(t('未检测到 Docker，请先安装 Docker'), false, 'warning');
                 dockerInstallHint.style.display = 'flex';
@@ -8049,6 +8276,7 @@ function handleDockerMessage(msg) {
                 dockerContent.style.display = 'flex';
                 dockerRefreshAll();
             }
+            renderDockerOverview();
             break;
         case 'docker-containers':
             if (msg.error) { setDockerStatus(t('容器列表加载失败：{error}', { error: msg.error }), false, 'error'); return; }
@@ -8058,6 +8286,88 @@ function handleDockerMessage(msg) {
         case 'docker-images':
             if (msg.error) { setDockerStatus(t('镜像列表加载失败：{error}', { error: msg.error }), false, 'error'); return; }
             renderDockerImages(msg.images || []);
+            break;
+        case 'docker-networks':
+            if (msg.error) { setDockerStatus(t('网络列表加载失败：{error}', { error: msg.error }), false, 'error'); return; }
+            renderDockerNetworks(msg.networks || []);
+            break;
+        case 'docker-network-inspect': {
+            const key = String(msg.id || '').trim();
+            if (key) {
+                dockerNetworkIpam.set(key, Array.isArray(msg.configs) ? msg.configs : []);
+                const subnetEl = dockerNetworksBody?.querySelector(`[data-network-subnet="${CSS.escape(key)}"]`);
+                const gatewayEl = dockerNetworksBody?.querySelector(`[data-network-gateway="${CSS.escape(key)}"]`);
+                const first = (msg.configs || [])[0] || {};
+                if (subnetEl) subnetEl.textContent = first.Subnet || '—';
+                if (gatewayEl) gatewayEl.textContent = first.Gateway || '—';
+            }
+            break;
+        }
+        case 'docker-network-action':
+            showToast(msg.action === 'create' ? t('网络已创建') : t('网络已删除'), 'success');
+            dockerSend({ type: 'docker-list-networks' });
+            break;
+        case 'docker-create-container':
+            showToast(t('容器已创建：{name}', { name: msg.name || msg.id || '' }), 'success');
+            dockerCreateImage.value = '';
+            dockerCreateName.value = '';
+            dockerSend({ type: 'docker-list-containers' });
+            break;
+        case 'docker-prune':
+            setDockerStatus(msg.output || t('清理完成'), false, 'success');
+            showToast(t('清理完成'), 'success');
+            dockerRefreshAll();
+            break;
+        case 'docker-container-stats': {
+            dockerContainerStats = new Map();
+            (msg.stats || []).forEach((row) => {
+                const name = String(row.Name || row.name || '').trim();
+                if (!name) return;
+                dockerContainerStats.set(name, { cpu: row.CPUPerc || row.CPU || '—', mem: row.MemUsage || row.Mem || '—' });
+            });
+            /* 增量更新可见单元格，避免整表重建抖动 */
+            dockerContainersBody?.querySelectorAll('[data-stat-cpu]').forEach((td) => {
+                const name = td.dataset.statCpu;
+                const stat = dockerContainerStats.get(name);
+                td.textContent = stat ? stat.cpu : '—';
+            });
+            dockerContainersBody?.querySelectorAll('[data-stat-mem]').forEach((td) => {
+                const name = td.dataset.statMem;
+                const stat = dockerContainerStats.get(name);
+                td.textContent = stat ? stat.mem : '—';
+            });
+            break;
+        }
+        case 'docker-container-inspect': {
+            if (dockerInspectBody) {
+                let pretty = msg.raw || '';
+                try { pretty = JSON.stringify(JSON.parse(msg.raw), null, 2); } catch {}
+                dockerInspectBody.textContent = pretty || t('无数据');
+            }
+            break;
+        }
+        case 'docker-image-tag':
+            showToast(t('标签已添加：{target}', { target: msg.target || '' }), 'success');
+            dockerSend({ type: 'docker-list-images' });
+            break;
+        case 'docker-volumes':
+            if (msg.error) { setDockerStatus(t('存储卷加载失败：{error}', { error: msg.error }), false, 'error'); return; }
+            renderDockerVolumes(msg.volumes || []);
+            break;
+        case 'docker-volume-inspect': {
+            const name = String(msg.name || '').trim();
+            const mount = msg.info?.Mountpoint || '';
+            const td = dockerVolumesBody?.querySelector(`[data-volume-mount="${CSS.escape(name)}"]`);
+            if (td && mount) td.textContent = mount;
+            break;
+        }
+        case 'docker-volume-action':
+            showToast(msg.action === 'create' ? t('存储卷已创建') : t('存储卷已删除'), 'success');
+            dockerSend({ type: 'docker-list-volumes' });
+            break;
+        case 'docker-system-df':
+            dockerSystemDf = Array.isArray(msg.rows) ? msg.rows : null;
+            renderDockerOverview();
             break;
         case 'docker-action':
             showToast('Docker 容器操作完成', 'success');
@@ -8128,7 +8438,17 @@ function resetFeatureStateAfterReconnect() {
     dockerCurrentLogContainer = null;
     dockerLogBuffer = '';
     dockerAutoScrollLog = true;
+    dockerContainersCache = [];
+    dockerImagesCache = [];
+    dockerNetworksCache = [];
+    dockerNetworkIpam = new Map();
+    dockerVolumesCache = [];
+    dockerContainerStats = new Map();
+    stopDockerStatsLoop();
+    dockerSystemDf = null;
+    dockerVersion = '';
     if (dockerLogDrawer) dockerLogDrawer.style.display = 'none';
+    if (dockerInspectDrawer) dockerInspectDrawer.style.display = 'none';
     if (dockerPullBtn) dockerPullBtn.disabled = false;
     if (dockerPanel?.classList.contains('open')) checkDockerStatus({ force: true });
     if (fileManager?.classList.contains('open')) initSFTP();
@@ -8196,6 +8516,61 @@ dockerLogDownloadBtn?.addEventListener('click', () => {
     a.click();
     URL.revokeObjectURL(url);
 });
+
+dockerShowAll?.addEventListener('change', () => renderDockerContainers(dockerContainersCache));
+dockerPruneBtn?.addEventListener('click', () => {
+    if (!confirm(t('确认清理所有停止的容器、悬空镜像与未使用网络？'))) return;
+    setDockerStatus(t('正在清理系统...'), true);
+    dockerSend({ type: 'docker-prune', kind: 'system' });
+});
+dockerPruneImagesBtn?.addEventListener('click', () => {
+    if (!confirm(t('确认清理所有未使用的镜像？'))) return;
+    setDockerStatus(t('正在清理镜像...'), true);
+    dockerSend({ type: 'docker-prune', kind: 'images' });
+});
+dockerPruneNetworksBtn?.addEventListener('click', () => {
+    if (!confirm(t('确认清理所有未使用的网络？'))) return;
+    setDockerStatus(t('正在清理网络...'), true);
+    dockerSend({ type: 'docker-prune', kind: 'networks' });
+});
+dockerCreateBtn?.addEventListener('click', () => {
+    const image = dockerCreateImage?.value.trim() || '';
+    if (!image) { showToast(t('请填写镜像名'), 'error'); return; }
+    const ports = (dockerCreatePorts?.value || '').split(',').map((v) => v.trim()).filter(Boolean);
+    const env = (dockerCreateEnv?.value || '').split(',').map((v) => v.trim()).filter(Boolean);
+    setDockerStatus(t('正在创建容器...'), true);
+    dockerSend({
+        type: 'docker-create-container',
+        image,
+        name: dockerCreateName?.value.trim() || '',
+        ports,
+        env,
+        restart: dockerCreateRestart?.value || 'no',
+        cmd: dockerCreateCmd?.value.trim() || '',
+    });
+});
+dockerNetworkCreateBtn?.addEventListener('click', () => {
+    const name = dockerNetworkCreateInput?.value.trim() || '';
+    if (!name) { showToast(t('请填写网络名称'), 'error'); return; }
+    setDockerStatus(t('正在创建网络...'), true);
+    dockerNetworkCreateInput.value = '';
+    dockerSend({ type: 'docker-network-action', action: 'create', id: name });
+});
+dockerNetworkCreateInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') dockerNetworkCreateBtn?.click(); });
+dockerVolumeCreateBtn?.addEventListener('click', () => {
+    const name = dockerVolumeCreateInput?.value.trim() || '';
+    if (!name) { showToast(t('请填写存储卷名称'), 'error'); return; }
+    setDockerStatus(t('正在创建存储卷...'), true);
+    dockerVolumeCreateInput.value = '';
+    dockerSend({ type: 'docker-volume-action', action: 'create', name });
+});
+dockerVolumeCreateInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') dockerVolumeCreateBtn?.click(); });
+dockerPruneVolumesBtn?.addEventListener('click', () => {
+    if (!confirm(t('确认清理所有未使用的存储卷？数据将丢失。'))) return;
+    setDockerStatus(t('正在清理存储卷...'), true);
+    dockerSend({ type: 'docker-prune', kind: 'volumes' });
+});
+dockerInspectCloseBtn?.addEventListener('click', () => { dockerInspectDrawer.style.display = 'none'; });
 
 // ---------- 监控面板 ----------
 function safeVal(val, fallback = 0) {
@@ -8267,13 +8642,38 @@ function initCharts() {
         chartInstances[id] = new Chart(canvas, commonDoughnut);
     });
 
-    document.querySelectorAll('.sparkline-row canvas, .line-canvas').forEach(canvas => {
+    document.querySelectorAll('.sparkline-row canvas, .line-canvas, .latency-line-canvas').forEach(canvas => {
         const id = canvas.id;
         if (!id) return;
         const color = canvas.dataset.color || '#3fb950';
         const config = JSON.parse(JSON.stringify(commonLine));
         config.data.datasets[0].borderColor = color;
         config.data.datasets[0].fill = false;
+        if (canvas.classList.contains('latency-line-canvas')) {
+            /* 延迟折线保留坐标轴（用户要求"折线图显示延迟"）；上下行的 sparkline
+             * 仍然隐藏坐标轴。ticks 尽量精简，避免 480px 面板里拥挤。 */
+            const secondary = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#8b949e';
+            config.options.scales = {
+                x: { display: false },
+                y: {
+                    display: true,
+                    beginAtZero: true,
+                    ticks: {
+                        maxTicksLimit: 4,
+                        color: secondary,
+                        font: { size: 9 },
+                        callback: (value) => `${value}`,
+                    },
+                    grid: { color: 'rgba(139,148,158,0.14)' },
+                },
+            };
+            config.options.plugins.tooltip = {
+                enabled: true,
+                displayColors: false,
+                callbacks: { label: (item) => `${item.parsed.y} ms` },
+            };
+            config.data.datasets[0].borderWidth = 2;
+        }
         chartInstances[id] = new Chart(canvas, config);
     });
 }
@@ -10876,6 +11276,15 @@ function ensureStatsSkeleton(d) {
                 </div>
             </div>
         </div>
+        <div class="doughnut-row">
+            <div class="doughnut-item disk-card full-width latency-card">
+                <div class="disk-card-meta">
+                    <div class="doughnut-label">${t('连接延迟')}</div>
+                    <div class="doughnut-text"><span data-stat="latencyText" class="latency-value">-- ms</span><span class="doughnut-sub latency-sub" data-stat="latencyMeta">${t('统计采样')}</span></div>
+                </div>
+                <div class="latency-chart-wrap"><canvas id="latencyLine" data-color="#bf5af2" class="latency-line-canvas"></canvas></div>
+            </div>
+        </div>
         <div class="ip-section">
             <div class="ip-box"><span>IPv4</span><code data-stat="ipv4">N/A</code><button class="copy-ip-btn" aria-label="${t('复制 IPv4')}" data-copy-stat="ipv4">${zephyrButtonGlyph('copy', t('复制'))}</button></div>
             <div class="ip-box"><span>IPv6</span><code data-stat="ipv6">N/A</code><button class="copy-ip-btn" aria-label="${t('复制 IPv6')}" data-copy-stat="ipv6">${zephyrButtonGlyph('copy', t('复制'))}</button></div>
@@ -10940,6 +11349,24 @@ function renderStats(d) {
     setTextStat('ipv4', d.ip?.ipv4 || 'N/A');
     setTextStat('ipv6', d.ip?.ipv6 || 'N/A');
 
+    /* 连接延迟：来自服务端 stats 采样环回耗时（与"编辑 → 测试连接"同为
+     * SSH 通道环回计时）。采样周期即 1s 的 stats 推送节拍，所以折线每个
+     * stats tick 追加一个点。 */
+    const latencyMsRaw = d.latency?.ms;
+    const latencyMs = (latencyMsRaw == null || isNaN(latencyMsRaw)) ? null : Math.max(0, Math.round(Number(latencyMsRaw)));
+    if (latencyMs != null) {
+        setTextStat('latencyText', `${latencyMs} ms`);
+        setTextStat('latencyMeta', t('统计采样'));
+        const latencyEl = infoBody.querySelector('[data-stat="latencyText"]');
+        if (latencyEl) {
+            const level = latencyMs < 100 ? 'good' : latencyMs < 300 ? 'mid' : 'bad';
+            if (latencyEl.dataset.level !== level) latencyEl.dataset.level = level;
+        }
+    } else {
+        setTextStat('latencyText', '-- ms');
+        setTextStat('latencyMeta', t('暂无采样'));
+    }
+
     diskDevices.forEach((device) => {
         setTextStatName(`[data-disk-text="${device.id}"]`, `${device.usedGB} / ${device.totalGB} GB`);
         setTextStatName(`[data-disk-pct="${device.id}"]`, `已用 ${device.usageLabel}`);
@@ -10962,6 +11389,7 @@ function renderStats(d) {
         diskDevices.forEach(device => updateDoughnut(device.id, device.percent));
         updateLine('rxLine', rxMbps);
         updateLine('txLine', txMbps);
+        if (latencyMs != null) updateLine('latencyLine', latencyMs);
     } catch (err) {
         console.warn(t('[Stats] 图表更新失败:'), err);
     }
