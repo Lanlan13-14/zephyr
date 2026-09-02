@@ -5658,6 +5658,12 @@ html.ssh-kb-open .terminal-page {
 .docker-inspect-drawer { height: min(420px, 62%); }
 .docker-inspect-drawer .docker-container-log { font-size: 11px; line-height: 1.5; white-space: pre; }
 .docker-mountpoint { font-family: var(--font-mono); font-size: 11px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Docker 表格行/创建区块的动画初始值由 dockerMotion.rows/expandIn 在 JS 端
+ * M.set() 即时设置，不走 CSS——保证引擎未就绪时内容立即可见（无 FOUC）。
+ * 引擎就绪后面板会加 .docker-motion-ready，此处仅保留 will-change 提示。 */
+.docker-motion-ready .docker-table tbody tr { will-change: transform, opacity; }
+.docker-motion-ready .docker-create[open] .docker-create-grid { will-change: transform, opacity; }
 .docker-mirror-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .docker-mirror-item { display: flex; align-items: center; gap: 8px; }
 .docker-mirror-item input {
