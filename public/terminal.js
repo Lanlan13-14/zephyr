@@ -7922,6 +7922,7 @@ function showDockerPanel() {
     });
     checkDockerStatus();
     startDockerStatsLoop();
+    armDockerMotion();
 }
 
 function hideDockerPanel() {
@@ -8063,6 +8064,7 @@ function renderDockerContainers(containers = []) {
         dockerContainersBody.appendChild(tr);
     });
     renderDockerOverview();
+    dockerMotion.rows(dockerContainersBody);
 }
 
 function renderDockerImages(images = []) {
@@ -8108,6 +8110,7 @@ function renderDockerImages(images = []) {
     });
     renderDockerOverview();
     dockerCreateImageDatalist();
+    dockerMotion.rows(dockerImagesBody);
 }
 
 function normalizeVolume(row = {}) {
@@ -8146,6 +8149,7 @@ function renderDockerVolumes(volumes = []) {
         dockerVolumesBody.appendChild(tr);
         dockerSend({ type: 'docker-volume-inspect', name: volume.name });
     });
+    dockerMotion.rows(dockerVolumesBody);
 }
 
 function openDockerInspect(name) {
@@ -8204,6 +8208,7 @@ function renderDockerNetworks(networks = []) {
             dockerSend({ type: 'docker-network-inspect', id: network.id });
         }
     });
+    dockerMotion.rows(dockerNetworksBody);
 }
 
 function renderDockerMirrors() {
@@ -8471,9 +8476,12 @@ dockerRestartBtn?.addEventListener('click', () => {
 document.querySelectorAll('[data-docker-tab]').forEach((tab) => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('[data-docker-tab]').forEach((item) => item.classList.toggle('active', item === tab));
+        const previous = document.querySelector('.docker-tab-panel.active');
+        const fromRect = previous?.getBoundingClientRect?.() || null;
         document.querySelectorAll('.docker-tab-panel').forEach((panel) => panel.classList.remove('active'));
         const target = document.getElementById(`docker${tab.dataset.dockerTab[0].toUpperCase()}${tab.dataset.dockerTab.slice(1)}Panel`);
         target?.classList.add('active');
+        if (target && previous && previous !== target) dockerMotion.tabPanel(target, fromRect);
     });
 });
 dockerPullBtn?.addEventListener('click', () => {
@@ -8571,6 +8579,80 @@ dockerPruneVolumesBtn?.addEventListener('click', () => {
     dockerSend({ type: 'docker-prune', kind: 'volumes' });
 });
 dockerInspectCloseBtn?.addEventListener('click', () => { dockerInspectDrawer.style.display = 'none'; });
+
+/* Docker 面板动效：复用现有 zephyr-motion 引擎（与 toast/钉住面板同一套
+ * WASM spring），懒加载且失败可降级——动效挂了不影响任何功能。 */
+const dockerMotion = {
+    engine: null,
+    _p: null,
+    _ensure() {
+        if (this.engine) return Promise.resolve(this.engine);
+        if (this._p) return this._p;
+        this._p = import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
+            .then(async (mod) => {
+                const Motion = mod?.Motion || window.Motion;
+                if (!Motion?.to) throw new Error('Motion unavailable');
+                try { await Motion.init({ capacity: 256 }); } catch {}
+                this.engine = Motion;
+                return Motion;
+            })
+            .catch(() => { this._p = null; return null; });
+        return this._p;
+    },
+    /* 容器/网络/存储卷行：渲染后逐行从下方 10px 淡入（stagger 40ms）。
+     * 初始值由 JS 即时 set（M.set），不依赖 CSS 初始态——避免引擎未就绪
+     * 时行永远隐形。 */
+    rows(tbody) {
+        if (!tbody) return;
+        this._ensure().then((M) => {
+            if (!M || M.reducedMotion) return;
+            tbody.querySelectorAll('tr').forEach((tr, i) => {
+                M.set(tr, { y: 10, opacity: 0 });
+                M.to(tr, { y: 0, opacity: 1 }, { preset: 'snappy', delay: i * 0.04 });
+            });
+        }).catch(() => {});
+    },
+    /* tab 面板切换：FLIP morph + 内容淡入。fromRect 由调用方在切换前取。 */
+    tabPanel(el, fromRect) {
+        if (!el) return;
+        this._ensure().then((M) => {
+            if (!M || M.reducedMotion || !fromRect || fromRect.width < 2 || fromRect.height < 2) return;
+            M.morph(el, fromRect, { preset: 'shape', opacityFrom: 0 });
+        }).catch(() => {});
+    },
+    /* 创建区块内部 grid 展开。初始值 JS set，避免 details 原生先闪现。 */
+    expandIn(el) {
+        if (!el) return;
+        this._ensure().then((M) => {
+            if (!M || M.reducedMotion) return;
+            M.set(el, { y: -6, opacity: 0 });
+            M.to(el, { y: 0, opacity: 1 }, { preset: 'snappy' });
+        }).catch(() => {});
+    },
+    /* 工具栏/操作按钮按压回弹（iOS 手感）。 */
+    pressAll(selector) {
+        this._ensure().then((M) => {
+            if (!M || M.reducedMotion || !M.press) return;
+            document.querySelectorAll(selector).forEach((btn) => M.press(btn));
+        }).catch(() => {});
+    },
+};
+
+/* 引擎就绪后给面板打标记，CSS 初始态才生效；并在面板打开时预热引擎。 */
+function armDockerMotion() {
+    dockerMotion._ensure().then((M) => {
+        if (!M || M.reducedMotion) return;
+        dockerPanel?.classList.add('docker-motion-ready');
+        dockerMotion.pressAll('.docker-toolbar .tool-btn, .docker-actions .tool-btn, .docker-create-actions .tool-btn');
+    }).catch(() => {});
+}
+
+/* 创建区块展开：details 原生切换后，把内部 grid 从收起姿态弹到展开。
+ * details 的 content slot 无法被 FLIP 直接测量，这里只对 grid 做 spring。 */
+$('#dockerCreateBlock')?.addEventListener('toggle', (event) => {
+    const block = event.currentTarget;
+    if (block.open) dockerMotion.expandIn(block.querySelector('.docker-create-grid'));
+});
 
 // ---------- 监控面板 ----------
 function safeVal(val, fallback = 0) {
