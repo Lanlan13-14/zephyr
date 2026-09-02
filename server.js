@@ -44,6 +44,7 @@ const {
     verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
 const { getRemoteStats } = require('./stats');
+const { acceptHandshakeLatency, shouldRefreshHandshakeLatency } = require('./handshake-latency');
 const storage = require('./storage');
 const { createDatabase } = require('./sqlite-driver');
 const {
@@ -9921,6 +9922,14 @@ wss.on('connection', (ws, req) => {
     let statsTimer = null;
     let statsRunning = false;
     let remoteStatsState = {};
+    /* 监控延迟必须走和"编辑 → 测试连接"同一条 createRoutedSSHConnection 握手
+     * 路径（TCP + 跳板 + 认证墙钟），不能在已有会话上 exec。连接配置在
+     * connect 成功后写入；握手每 5s 测一次，数字沿用最近一次成功结果。 */
+    let statsConnectionConfig = null;
+    let statsLatencyMs = null;
+    let statsLatencyAt = 0;
+    let statsLatencyRunning = false;
+    const STATS_LATENCY_INTERVAL_MS = 5000;
     let dockerLogStreams = new Map();
     let sftpUploadStreams = new Map();
     const closeTelnetSocket = (reason = 'cleanup') => {
@@ -9974,17 +9983,44 @@ wss.on('connection', (ws, req) => {
         }
         if (statsTimer) return;
         console.info('[STATS] realtime stats started');
+        /* 延迟：复用 testSSHConnection（编辑→测试连接）的 durationMs。
+         * 与 stats 采样并行发出，节流 5s；失败保留上次成功值。 */
+        const kickHandshakeLatency = () => {
+            if (!statsConnectionConfig) return;
+            if (!shouldRefreshHandshakeLatency({
+                lastMs: statsLatencyMs,
+                lastAt: statsLatencyAt,
+                running: statsLatencyRunning,
+                now: Date.now(),
+                intervalMs: STATS_LATENCY_INTERVAL_MS,
+            })) return;
+            statsLatencyRunning = true;
+            testSSHConnection(statsConnectionConfig, 8000)
+                .then((probe) => {
+                    const ms = acceptHandshakeLatency(probe);
+                    if (ms != null) {
+                        statsLatencyMs = ms;
+                        statsLatencyAt = Date.now();
+                    }
+                })
+                .catch(() => {})
+                .finally(() => { statsLatencyRunning = false; });
+        };
         const pushStats = async () => {
             if (ws.readyState !== ws.OPEN || !sshClient || statsRunning) return;
             statsRunning = true;
             const startedAt = Date.now();
+            kickHandshakeLatency();
             try {
                 const result = await getRemoteStats(sshClient, remoteStatsState);
                 remoteStatsState = result.state;
                 statsSampleSeq += 1;
                 sendJSON({
                     type: 'stats',
-                    data: result.stats,
+                    data: {
+                        ...result.stats,
+                        latency: { ms: statsLatencyMs, sampledAt: statsLatencyAt || startedAt },
+                    },
                     sampleSeq: statsSampleSeq,
                     sampledAt: startedAt,
                     durationMs: Date.now() - startedAt,
@@ -10002,6 +10038,7 @@ wss.on('connection', (ws, req) => {
                 statsRunning = false;
             }
         };
+        kickHandshakeLatency();
         pushStats();
         statsTimer = setInterval(pushStats, 1000);
     }
@@ -10014,6 +10051,9 @@ wss.on('connection', (ws, req) => {
         }
         statsRunning = false;
         remoteStatsState = {};
+        statsLatencyMs = null;
+        statsLatencyAt = 0;
+        statsLatencyRunning = false;
     }
 
     function stopDockerLogStreams() {
@@ -10106,6 +10146,7 @@ wss.on('connection', (ws, req) => {
         sshClient = session.sshClient || null;
         sshClients = session.sshClients || [session.sshClient].filter(Boolean);
         sshStream = session.sshStream || null;
+        statsConnectionConfig = session.connectionConfig || statsConnectionConfig;
         telnetSocket = session.telnetSocket || null;
         telnetProtocol = String(session.protocol || '').toUpperCase() === 'TELNET' || !!session.telnetSocket;
         sftpStream = session.sftpStream || null;
@@ -10903,6 +10944,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 }
                 sshClient = routed.client;
                 sshClients = routed.clients || [routed.client];
+                statsConnectionConfig = conn;
                 console.log(`[SSH] 已连接: ${routed.route}`);
                 console.info('[SSH-DIAG] ssh ready before shell', {
                     connectionId: conn.id || connectionId || '',
@@ -11108,7 +11150,13 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             try {
                 const result = await getRemoteStats(sshClient, remoteStatsState);
                 remoteStatsState = result.state;
-                sendJSON({ type: 'stats', data: result.stats });
+                sendJSON({
+                    type: 'stats',
+                    data: {
+                        ...result.stats,
+                        latency: { ms: statsLatencyMs, sampledAt: statsLatencyAt || Date.now() },
+                    },
+                });
             } catch (err) {
                 console.error('[STATS] 手动读取远程统计失败:', err.message);
                 sendJSON({ type: 'stats-error', message: err.message || '读取远程统计失败' });
