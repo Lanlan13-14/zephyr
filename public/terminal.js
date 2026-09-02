@@ -8477,11 +8477,10 @@ document.querySelectorAll('[data-docker-tab]').forEach((tab) => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('[data-docker-tab]').forEach((item) => item.classList.toggle('active', item === tab));
         const previous = document.querySelector('.docker-tab-panel.active');
-        const fromRect = previous?.getBoundingClientRect?.() || null;
         document.querySelectorAll('.docker-tab-panel').forEach((panel) => panel.classList.remove('active'));
         const target = document.getElementById(`docker${tab.dataset.dockerTab[0].toUpperCase()}${tab.dataset.dockerTab.slice(1)}Panel`);
         target?.classList.add('active');
-        if (target && previous && previous !== target) dockerMotion.tabPanel(target, fromRect);
+        if (target && previous !== target) dockerMotion.tabPanel(target);
     });
 });
 dockerPullBtn?.addEventListener('click', () => {
@@ -8612,12 +8611,15 @@ const dockerMotion = {
             });
         }).catch(() => {});
     },
-    /* tab 面板切换：FLIP morph + 内容淡入。fromRect 由调用方在切换前取。 */
-    tabPanel(el, fromRect) {
+    /* tab 面板切换：进入动画（y:8 + 淡入）。不用 FLIP morph——旧面板
+     * display:none 后 rect 为 0，scale 会除零导致内容不可见。初始值
+     * JS 端 set，降级安全。 */
+    tabPanel(el) {
         if (!el) return;
         this._ensure().then((M) => {
-            if (!M || M.reducedMotion || !fromRect || fromRect.width < 2 || fromRect.height < 2) return;
-            M.morph(el, fromRect, { preset: 'shape', opacityFrom: 0 });
+            if (!M || M.reducedMotion) return;
+            M.set(el, { y: 8, opacity: 0 });
+            M.to(el, { y: 0, opacity: 1 }, { preset: 'snappy' });
         }).catch(() => {});
     },
     /* 创建区块内部 grid 展开。初始值 JS set，避免 details 原生先闪现。 */
@@ -11362,7 +11364,7 @@ function ensureStatsSkeleton(d) {
             <div class="doughnut-item disk-card full-width latency-card">
                 <div class="disk-card-meta">
                     <div class="doughnut-label">${t('连接延迟')}</div>
-                    <div class="doughnut-text"><span data-stat="latencyText" class="latency-value">-- ms</span><span class="doughnut-sub latency-sub" data-stat="latencyMeta">${t('统计采样')}</span></div>
+                    <div class="doughnut-text"><span data-stat="latencyText" class="latency-value">-- ms</span></div>
                 </div>
                 <div class="latency-chart-wrap"><canvas id="latencyLine" data-color="#bf5af2" class="latency-line-canvas"></canvas></div>
             </div>
@@ -11431,14 +11433,12 @@ function renderStats(d) {
     setTextStat('ipv4', d.ip?.ipv4 || 'N/A');
     setTextStat('ipv6', d.ip?.ipv6 || 'N/A');
 
-    /* 连接延迟：来自服务端 stats 采样环回耗时（与"编辑 → 测试连接"同为
-     * SSH 通道环回计时）。采样周期即 1s 的 stats 推送节拍，所以折线每个
-     * stats tick 追加一个点。 */
+    /* 连接延迟：服务端空 exec 探针测的纯 SSH 环回（口径对齐"编辑 → 测试连接"），
+     * 与 1s stats 采样并行发出，每个 stats tick 追加一个折线点。探针失败为 --。 */
     const latencyMsRaw = d.latency?.ms;
     const latencyMs = (latencyMsRaw == null || isNaN(latencyMsRaw)) ? null : Math.max(0, Math.round(Number(latencyMsRaw)));
     if (latencyMs != null) {
         setTextStat('latencyText', `${latencyMs} ms`);
-        setTextStat('latencyMeta', t('统计采样'));
         const latencyEl = infoBody.querySelector('[data-stat="latencyText"]');
         if (latencyEl) {
             const level = latencyMs < 100 ? 'good' : latencyMs < 300 ? 'mid' : 'bad';
@@ -11446,7 +11446,6 @@ function renderStats(d) {
         }
     } else {
         setTextStat('latencyText', '-- ms');
-        setTextStat('latencyMeta', t('暂无采样'));
     }
 
     diskDevices.forEach((device) => {

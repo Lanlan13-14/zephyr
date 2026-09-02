@@ -16,10 +16,22 @@ const terminalJs = fs.readFileSync(path.join(root, 'public', 'terminal.js'), 'ut
 const statsJs = fs.readFileSync(path.join(root, 'stats.js'), 'utf8');
 const styleCss = fs.readFileSync(path.join(root, 'public', 'style.css'), 'utf8');
 
-test('stats.js annotates samples with latency.ms from the exec round-trip', () => {
-    assert.ok(/const startedAt = Date\.now\(\);/.test(statsJs), 'getRemoteStats must stamp startedAt before exec');
-    assert.ok(/latency:\s*\{\s*ms:/.test(statsJs), 'stats payload must include latency.ms');
-    assert.ok(/now - startedAt/.test(statsJs), 'latency.ms must be the exec round-trip duration');
+test('stats.js measures latency with a dedicated empty-exec RTT probe, not the stats exec wall time', () => {
+    assert.ok(/function probeLatency\(/.test(statsJs), 'probeLatency must exist');
+    const idx = statsJs.indexOf('function probeLatency(');
+    const probe = statsJs.slice(idx, idx + 1200);
+    assert.ok(/sshClient\.exec\('true'/.test(probe), 'probe must exec an empty command');
+    assert.ok(/Date\.now\(\) - startedAt/.test(probe), 'probe measures exec round-trip');
+    assert.ok(/finish\(null\)/.test(probe), 'probe failure resolves null (degrades, never fakes RTT)');
+    /* getRemoteStats must run probe in parallel with the heavy stats exec and
+     * report probeLatency's result — never the stats command's own duration. */
+    const gidx = statsJs.indexOf('async function getRemoteStats(');
+    const gend = statsJs.indexOf('module.exports', gidx);
+    const gbody = statsJs.slice(gidx, gend > gidx ? gend : gidx + 3000);
+    assert.ok(/probeLatency\(sshClient\)/.test(gbody), 'getRemoteStats calls the probe');
+    assert.ok(/Promise\.all\(\[/.test(gbody), 'probe runs in parallel with stats exec');
+    assert.ok(/latency:\s*\{\s*ms: latencyMs/.test(gbody), 'latency.ms comes from the probe');
+    assert.ok(!/now - startedAt/.test(gbody), 'latency must NOT reuse stats exec wall time');
 });
 
 test('monitor skeleton renders a dedicated latency block with a line canvas', () => {
