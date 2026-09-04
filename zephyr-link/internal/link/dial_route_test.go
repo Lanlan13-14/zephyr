@@ -120,3 +120,85 @@ func TestEmbeddedDialRouteInsecureTrustsUnpinnedTLS(t *testing.T) {
 		t.Fatalf("insecure dial failed: %d %#v", status, out)
 	}
 }
+
+func TestApplyPeerHostRewritesIPLiteralToOriginalHostname(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://203.0.113.9:8443/handshake", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyPeerHost(req, "https://203.0.113.9:8443/api/link/v2", "zephyr.example")
+	if req.Host != "zephyr.example:8443" {
+		t.Fatalf("host = %q", req.Host)
+	}
+
+	plain, err := http.NewRequest(http.MethodPost, "https://203.0.113.9/handshake", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyPeerHost(plain, "https://203.0.113.9/api/link/v2", "zephyr.example")
+	if plain.Host != "zephyr.example" {
+		t.Fatalf("default-port host = %q", plain.Host)
+	}
+
+	named, err := http.NewRequest(http.MethodPost, "https://zephyr.example/handshake", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyPeerHost(named, "https://zephyr.example/api/link/v2", "other.example")
+	if named.Host != "zephyr.example" {
+		t.Fatalf("named host must stay the URL host, got %q", named.Host)
+	}
+}
+
+func TestClientForPeerUsesExplicitSNIOnIPLiteral(t *testing.T) {
+	client, err := NewNode().clientForPeer("https://203.0.113.9:8443/api/link/v2", nil, true, "zephyr.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil {
+		t.Fatal("expected custom TLS transport")
+	}
+	if transport.TLSClientConfig.ServerName != "zephyr.example" {
+		t.Fatalf("SNI = %q", transport.TLSClientConfig.ServerName)
+	}
+	if !transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("insecure flag must still skip verify")
+	}
+}
+
+func TestEmbeddedDialRouteHonoursServerNameOnIPLiteral(t *testing.T) {
+	serverNode := NewNode()
+	server := httptest.NewTLSServer(serverNode.Handler())
+	defer server.Close()
+
+	device := NewNode()
+	deviceSrv := httptest.NewServer(device.Handler())
+	defer deviceSrv.Close()
+
+	body, _ := json.Marshal(map[string]any{
+		"serverUrl":  server.URL,
+		"deviceId":   "device-sni",
+		"insecure":   true,
+		"serverName": "zephyr.example",
+	})
+	resp, err := http.Post(deviceSrv.URL+"/link/dial", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || out["ok"] != true {
+		t.Fatalf("IP+SNI dial failed: %d %#v", resp.StatusCode, out)
+	}
+	sid, _ := out["sessionId"].(string)
+	device.mu.Lock()
+	stored := device.sessionTLS[sid]
+	device.mu.Unlock()
+	if stored.serverName != "zephyr.example" {
+		t.Fatalf("session SNI = %q", stored.serverName)
+	}
+}

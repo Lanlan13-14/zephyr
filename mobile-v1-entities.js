@@ -139,6 +139,41 @@ function extractSecrets(spec, row) {
     return secrets;
 }
 
+/* SQLite INTEGER 0/1 columns. rdpTouchMode is a string enum ('direct' /
+ * 'relative') and must never be coerced through Boolean('direct') === true. */
+const SQLITE_BOOLEAN_FIELDS = new Set([
+    'rdpClipboard', 'rdpMicrophone', 'rdpCamera', 'rdpStorage', 'rdpLocation',
+    'shareWithUsers', 'shareWithAdmins', 'allowAi', 'allowAiRead', 'allowAiWrite',
+    'enabled', 'autoRun', 'ephemeral',
+]);
+const VISIBILITY_WIRE = ['private', 'shared', 'public'];
+
+function coerceSqliteBoolean(value) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (value === '0' || value === '1') return value === '1';
+    if (value === 'true' || value === 'false') return value === 'true';
+    return Boolean(value);
+}
+
+function coerceOwnedPayloadValue(key, value) {
+    if (SQLITE_BOOLEAN_FIELDS.has(key)) return coerceSqliteBoolean(value);
+    if (key === 'visibility') {
+        if (typeof value === 'number') return VISIBILITY_WIRE[value] || 'private';
+        if (typeof value === 'string' && value.length) return value;
+        return 'private';
+    }
+    if ((key === 'tags' || key === 'jumpHostIds' || key === 'sharedUserIds') && typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+    return value;
+}
+
 function projectPayload(spec, row) {
     if (!row) return {};
     const drop = new Set([
@@ -156,7 +191,7 @@ function projectPayload(spec, row) {
     const payload = {};
     for (const [key, value] of Object.entries(row)) {
         if (drop.has(key)) continue;
-        payload[key] = value;
+        payload[key] = coerceOwnedPayloadValue(key, value);
     }
     /* One refuses a secret-bearing row whose presence flags are missing, and
      * refuses hasX=true without a matching device envelope. Always emit the

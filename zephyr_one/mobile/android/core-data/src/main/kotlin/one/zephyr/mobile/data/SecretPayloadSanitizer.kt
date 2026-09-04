@@ -7,7 +7,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import one.zephyr.mobile.contracts.EntityRegistry
 
 enum class SecretPayloadFailure {
@@ -63,9 +62,7 @@ object SecretPayloadSanitizer {
                         val normalized = normalizeKey(key)
                         val canonicalPresence = presenceNames[normalized]
                         if (canonicalPresence != null) {
-                            if (!root || key != canonicalPresence ||
-                                (child as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull == null
-                            ) {
+                            if (!root || key != canonicalPresence || EntityCodec.booleanOrNull(child) == null) {
                                 fail(SecretPayloadFailure.INVALID_PRESENCE)
                             }
                         } else if (normalized in secretNames || isSecretAlias(normalized)) {
@@ -113,8 +110,10 @@ object SecretPayloadSanitizer {
                         val normalized = normalizeKey(key)
                         val canonicalPresence = presenceNames[normalized]
                         when {
-                            canonicalPresence != null && root && key == canonicalPresence &&
-                                (child as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull != null -> put(key, child)
+                            canonicalPresence != null && root && key == canonicalPresence -> {
+                                val flag = EntityCodec.booleanOrNull(child)
+                                if (flag != null) put(key, JsonPrimitive(flag))
+                            }
                             canonicalPresence != null -> Unit
                             normalized in secretNames || isSecretAlias(normalized) -> Unit
                             else -> put(key, scrub(child))

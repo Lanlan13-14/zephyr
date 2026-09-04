@@ -111,6 +111,42 @@ test('web note list stays preview-only while owned sync carries the full body', 
   }
 });
 
+test('sqlite integer columns become JSON booleans and rdpTouchMode stays an enum', () => {
+  const payload = projectPayload(connectionSpec, {
+    id: 'connection-sql',
+    ownerUserId: user.userId,
+    revision: 2,
+    name: 'rdp',
+    host: '10.0.0.9',
+    port: 3389,
+    protocol: 'RDP',
+    username: 'admin',
+    password: '',
+    privateKey: '',
+    rdpClipboard: 1,
+    rdpMicrophone: 0,
+    rdpCamera: '0',
+    rdpStorage: '1',
+    rdpLocation: false,
+    rdpTouchMode: 'direct',
+    visibility: 0,
+    tags: '["prod","rdp"]',
+    jumpHostIds: '["jh-1"]',
+  });
+  assert.equal(payload.rdpClipboard, true);
+  assert.equal(payload.rdpMicrophone, false);
+  assert.equal(payload.rdpCamera, false);
+  assert.equal(payload.rdpStorage, true);
+  assert.equal(payload.rdpLocation, false);
+  assert.equal(payload.rdpTouchMode, 'direct');
+  assert.equal(payload.visibility, 'private');
+  assert.deepEqual(payload.tags, ['prod', 'rdp']);
+  assert.deepEqual(payload.jumpHostIds, ['jh-1']);
+  assert.equal(payload.ephemeral, undefined);
+  assert.equal(payload.hasPassword, false);
+  assert.equal(payload.hasPrivateKey, false);
+});
+
 test('secret-bearing connections emit presence flags, never placeholders or plaintext', () => {
   const payload = projectPayload(connectionSpec, {
     id: 'connection-1',

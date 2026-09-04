@@ -71,7 +71,7 @@ test('Android Link TLS uses the system CA store and an explicit insecure switch'
   assert.match(container, /insecure = linkInsecure/);
   assert.match(screen, /允许不安全的证书/);
   assert.match(screen, /TlsPolicy\.InsecureTrust/);
-  assert.match(node, /InsecureSkipVerify: true/);
+  assert.match(node, /tlsConfig\.InsecureSkipVerify = true/);
   assert.match(node, /sessionTLS/);
 });
 
@@ -83,6 +83,24 @@ test('Go Link core exposes the embedded dial route the Kotlin client calls', () 
   const main = readRepo('zephyr-link/cmd/zephyr-link-android/main.go');
   assert.match(main, /127\.0\.0\.1:0/);
   assert.match(main, /os\.Stdin\.Read/);
+});
+
+test('Android resolves Link hostnames before the CGO-less Go core dials', () => {
+  const resolver = read('android/app/src/main/kotlin/one/zephyr/mobile/app/LinkPeerResolver.kt');
+  const api = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedLinkApi.kt');
+  const node = readRepo('zephyr-link/internal/link/node.go');
+  const account = read('android/app/src/main/kotlin/one/zephyr/mobile/app/di/AccountContainer.kt');
+  assert.match(resolver, /InetAddress\.getAllByName/);
+  assert.match(resolver, /data class LinkPeerTarget/);
+  assert.match(api, /LinkPeerResolver\.resolve\(linkRoot\(serverUrl\)\)/);
+  assert.match(api, /"serverName" to JsonPrimitive\(peer\.serverName\)/);
+  assert.match(api, /put\("serverName", peer\.serverName\)/);
+  assert.match(node, /ServerName string\s+`json:"serverName"`/);
+  assert.match(node, /func applyPeerHost/);
+  assert.match(node, /tlsConfig := &tls\.Config\{[\s\S]*ServerName: sni,/);
+  assert.match(account, /ENVELOPE_SERVER_ID_PREF/);
+  assert.match(account, /restorePublishedEnvelopeIdentity\(\)/);
+  assert.match(account, /rememberPublishedEnvelopeIdentity/);
 });
 
 test('Android publishes local-to-bound account replacement atomically', () => {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -182,10 +183,11 @@ func (n *Node) handleState(w http.ResponseWriter, r *http.Request) {
 // remote Link server without implementing the handshake itself.
 func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ServerURL string   `json:"serverUrl"`
-		DeviceID  string   `json:"deviceId"`
-		SPKIPins  []string `json:"spkiPins"`
-		Insecure  bool     `json:"insecure"`
+		ServerURL  string   `json:"serverUrl"`
+		DeviceID   string   `json:"deviceId"`
+		SPKIPins   []string `json:"spkiPins"`
+		Insecure   bool     `json:"insecure"`
+		ServerName string   `json:"serverName"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -195,7 +197,7 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "serverUrl required", http.StatusBadRequest)
 		return
 	}
-	ep, sessionID, err := n.dial(req.ServerURL, req.DeviceID, req.SPKIPins, req.Insecure)
+	ep, sessionID, err := n.dial(req.ServerURL, req.DeviceID, req.SPKIPins, req.Insecure, req.ServerName)
 	if err != nil {
 		var remote *RemoteLinkError
 		if errors.As(err, &remote) {
@@ -207,7 +209,11 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 	}
 	n.mu.Lock()
 	n.sessions[sessionID] = ep
-	n.sessionTLS[sessionID] = sessionTLS{pins: append([]string{}, req.SPKIPins...), insecure: req.Insecure}
+	n.sessionTLS[sessionID] = sessionTLS{
+		pins:       append([]string{}, req.SPKIPins...),
+		insecure:   req.Insecure,
+		serverName: strings.TrimSpace(req.ServerName),
+	}
 	n.mu.Unlock()
 	writeJSON(w, map[string]any{
 		"ok": true, "sessionId": sessionID,
@@ -219,18 +225,20 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 // what business kind/body, and whether it rides the secret lane. The peer URL is
 // remembered from the dial so the host only names the session.
 type pushFrameRequest struct {
-	SessionID string   `json:"sessionId"`
-	PeerURL   string   `json:"peerUrl"`
-	Kind      int      `json:"kind"`
-	Body      any      `json:"body"`
-	Secret    bool     `json:"secret"`
-	SPKIPins  []string `json:"spkiPins"`
-	Insecure  bool     `json:"insecure"`
+	SessionID  string   `json:"sessionId"`
+	PeerURL    string   `json:"peerUrl"`
+	Kind       int      `json:"kind"`
+	Body       any      `json:"body"`
+	Secret     bool     `json:"secret"`
+	SPKIPins   []string `json:"spkiPins"`
+	Insecure   bool     `json:"insecure"`
+	ServerName string   `json:"serverName"`
 }
 
 type sessionTLS struct {
-	pins     []string
-	insecure bool
+	pins       []string
+	insecure   bool
+	serverName string
 }
 
 // handlePushFrame is the embedded dial-side sender. The Kotlin/desktop host owns
@@ -259,7 +267,11 @@ func (n *Node) handlePushFrame(w http.ResponseWriter, r *http.Request) {
 		pins = stored.pins
 	}
 	insecure := req.Insecure || stored.insecure
-	ack, err := n.sendFrame(req.PeerURL, req.SessionID, ep, req.Kind, req.Body, req.Secret, pins, insecure)
+	serverName := strings.TrimSpace(req.ServerName)
+	if serverName == "" {
+		serverName = stored.serverName
+	}
+	ack, err := n.sendFrame(req.PeerURL, req.SessionID, ep, req.Kind, req.Body, req.Secret, pins, insecure, serverName)
 	if err != nil {
 		var remote *RemoteLinkError
 		if errors.As(err, &remote) {
@@ -527,10 +539,10 @@ func (n *Node) handleFrame(w http.ResponseWriter, r *http.Request) {
 // end mounts the proxy at /api/link/v2, a Go-native peer serves /link directly, so
 // the caller supplies whichever root and Dial appends the leaf.
 func (n *Node) Dial(baseURL, deviceID string) (*Endpoint, string, error) {
-	return n.dial(baseURL, deviceID, nil, false)
+	return n.dial(baseURL, deviceID, nil, false, "")
 }
 
-func (n *Node) dial(baseURL, deviceID string, spkiPins []string, insecure bool) (*Endpoint, string, error) {
+func (n *Node) dial(baseURL, deviceID string, spkiPins []string, insecure bool, serverName string) (*Endpoint, string, error) {
 	init, err := zsl.HandshakeInitiator()
 	if err != nil {
 		return nil, "", err
@@ -540,11 +552,17 @@ func (n *Node) dial(baseURL, deviceID string, spkiPins []string, insecure bool) 
 		X25519Public: base64.RawURLEncoding.EncodeToString(init.X25519Public),
 		MLKEMPublic:  base64.RawURLEncoding.EncodeToString(init.MLKEMPublic),
 	})
-	client, err := n.clientForPeer(baseURL, spkiPins, insecure)
+	client, err := n.clientForPeer(baseURL, spkiPins, insecure, serverName)
 	if err != nil {
 		return nil, "", err
 	}
-	resp, err := client.Post(baseURL+"/handshake", "application/json", bytes.NewReader(reqBody))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/handshake", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	applyPeerHost(req, baseURL, serverName)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", err
 	}
@@ -575,10 +593,10 @@ func (n *Node) dial(baseURL, deviceID string, spkiPins []string, insecure bool) 
 // SendFrame seals a business frame and posts it to the peer, returning the
 // peer's unsealed ack frame.
 func (n *Node) SendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body any, secret bool) (*codec.Frame, error) {
-	return n.sendFrame(baseURL, sessionID, ep, kind, body, secret, nil, false)
+	return n.sendFrame(baseURL, sessionID, ep, kind, body, secret, nil, false, "")
 }
 
-func (n *Node) sendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body any, secret bool, spkiPins []string, insecure bool) (*codec.Frame, error) {
+func (n *Node) sendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body any, secret bool, spkiPins []string, insecure bool, serverName string) (*codec.Frame, error) {
 	env, err := ep.Send(kind, body, secret)
 	if err != nil {
 		return nil, err
@@ -590,11 +608,17 @@ func (n *Node) sendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body
 		CT:        base64.RawURLEncoding.EncodeToString(env.CT),
 		Tag:       base64.RawURLEncoding.EncodeToString(env.Tag),
 	})
-	client, err := n.clientForPeer(baseURL, spkiPins, insecure)
+	client, err := n.clientForPeer(baseURL, spkiPins, insecure, serverName)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Post(baseURL+"/push", "application/json", bytes.NewReader(reqBody))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/push", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	applyPeerHost(req, baseURL, serverName)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -620,51 +644,50 @@ func (n *Node) sendFrame(baseURL, sessionID string, ep *Endpoint, kind int, body
 	return ack, nil
 }
 
-func (n *Node) clientForPeer(baseURL string, spkiPins []string, insecure bool) (*http.Client, error) {
+func (n *Node) clientForPeer(baseURL string, spkiPins []string, insecure bool, serverName string) (*http.Client, error) {
 	timeout := 20 * time.Second
 	if n.dialClient != nil && n.dialClient.Timeout > 0 {
 		timeout = n.dialClient.Timeout
 	}
-	if insecure {
-		parsed, err := url.Parse(baseURL)
-		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
-			return nil, errors.New("link: insecure peer must be an HTTPS URL")
-		}
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.TLSClientConfig = &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			ServerName:         parsed.Hostname(),
-			InsecureSkipVerify: true,
-		}
-		return &http.Client{Transport: transport, Timeout: timeout}, nil
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Hostname() == "" {
+		return nil, errors.New("link: peer URL is invalid")
 	}
-	if len(spkiPins) == 0 {
+	sni := strings.TrimSpace(serverName)
+	if sni == "" {
+		sni = parsed.Hostname()
+	}
+	explicitSNI := sni != parsed.Hostname()
+	needCustomTLS := insecure || len(spkiPins) > 0 || explicitSNI
+	if !needCustomTLS {
 		if n.dialClient != nil {
 			return n.dialClient, nil
 		}
 		return &http.Client{Timeout: timeout}, nil
 	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
-		return nil, errors.New("link: pinned peer must be an HTTPS URL")
+	if parsed.Scheme != "https" {
+		return nil, errors.New("link: custom TLS peer must be an HTTPS URL")
 	}
-	pins := make(map[[32]byte]struct{}, len(spkiPins))
-	for _, raw := range spkiPins {
-		value := strings.TrimPrefix(strings.TrimSpace(raw), "sha256/")
-		decoded, err := base64.StdEncoding.DecodeString(value)
-		if err != nil || len(decoded) != sha256.Size {
-			return nil, errors.New("link: invalid SPKI pin")
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: sni,
+	}
+	if insecure {
+		tlsConfig.InsecureSkipVerify = true
+	} else if len(spkiPins) > 0 {
+		pins := make(map[[32]byte]struct{}, len(spkiPins))
+		for _, raw := range spkiPins {
+			value := strings.TrimPrefix(strings.TrimSpace(raw), "sha256/")
+			decoded, err := base64.StdEncoding.DecodeString(value)
+			if err != nil || len(decoded) != sha256.Size {
+				return nil, errors.New("link: invalid SPKI pin")
+			}
+			var pin [32]byte
+			copy(pin[:], decoded)
+			pins[pin] = struct{}{}
 		}
-		var pin [32]byte
-		copy(pin[:], decoded)
-		pins[pin] = struct{}{}
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		ServerName:         parsed.Hostname(),
-		InsecureSkipVerify: true, // verification is replaced below, never skipped
-		VerifyConnection: func(state tls.ConnectionState) error {
+		tlsConfig.InsecureSkipVerify = true // verification is replaced below, never skipped
+		tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
 			if len(state.PeerCertificates) == 0 {
 				return errors.New("link: peer certificate missing")
 			}
@@ -675,9 +698,31 @@ func (n *Node) clientForPeer(baseURL string, spkiPins []string, insecure bool) (
 				}
 			}
 			return errors.New("link: SPKI pin mismatch")
-		},
+		}
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsConfig
 	return &http.Client{Transport: transport, Timeout: timeout}, nil
+}
+
+func applyPeerHost(req *http.Request, baseURL, serverName string) {
+	sni := strings.TrimSpace(serverName)
+	if sni == "" {
+		return
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return
+	}
+	if net.ParseIP(parsed.Hostname()) == nil {
+		return
+	}
+	port := parsed.Port()
+	if port == "" || (parsed.Scheme == "https" && port == "443") || (parsed.Scheme == "http" && port == "80") {
+		req.Host = sni
+		return
+	}
+	req.Host = net.JoinHostPort(sni, port)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

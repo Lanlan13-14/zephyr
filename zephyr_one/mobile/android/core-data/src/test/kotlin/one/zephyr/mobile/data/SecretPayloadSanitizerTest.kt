@@ -31,6 +31,26 @@ class SecretPayloadSanitizerTest {
     }
 
     @Test
+    fun `sqlite integer presence is accepted and stored as a JSON boolean`() {
+        val payload = JsonObject(
+            mapOf(
+                "ownerUserId" to JsonPrimitive("user-1"),
+                "name" to JsonPrimitive("host"),
+                "hasPassword" to JsonPrimitive(1),
+                "hasPrivateKey" to JsonPrimitive(0),
+                "rdpClipboard" to JsonPrimitive(1),
+            ),
+        )
+
+        val sanitized = SecretPayloadSanitizer.sanitizeForStorage("connection", payload)
+        assertEquals(JsonPrimitive(true), sanitized["hasPassword"])
+        assertEquals(JsonPrimitive(false), sanitized["hasPrivateKey"])
+        assertEquals(true, EntityCodec.booleanOrNull(payload.getValue("hasPassword")))
+        assertEquals(false, EntityCodec.booleanOrNull(payload.getValue("hasPrivateKey")))
+        assertEquals(true, EntityCodec.bool(payload, "rdpClipboard", false))
+    }
+
+    @Test
     fun `registry secrets and normalized aliases are rejected without echoing canary`() {
         val aliases = listOf(
             "password" to "connection",

@@ -415,6 +415,10 @@ class AccountContainer(
      * Envelope AAD serverId from /capabilities. Empty until the first validated
      * capabilities payload; opening a secret before that fails closed rather
      * than silently using the local ServerProfile row id.
+     *
+     * Persisted in device_preferences so a process restart can open already-
+     * staged envelopes before the next capabilities round. The local
+     * ServerProfile UUID is never written here.
      */
     private val envelopeServerId = MutableStateFlow("")
 
@@ -541,16 +545,7 @@ class AccountContainer(
             /* Feed the server's published ML-KEM key into the live key state so the sealer can
              * seal and the opener recognises the key version. A null/absent key means "defer
              * secrets", which the sealer already honours, so only an Available key updates state. */
-            if (caps.serverId.isNotEmpty()) envelopeServerId.value = caps.serverId
-            val enc = caps.serverEncryption
-            if (enc != null) {
-                val decoded = runCatching {
-                    android.util.Base64.decode(enc.publicKey, android.util.Base64.DEFAULT)
-                }.getOrNull()
-                if (decoded != null && decoded.isNotEmpty()) {
-                    serverKeyState.value = ServerEncryptionKey(publicKey = decoded, keyVersion = enc.keyVersion)
-                }
-            }
+            rememberPublishedEnvelopeIdentity(caps.serverId, caps.serverEncryption)
         },
     )
 
@@ -644,6 +639,7 @@ class AccountContainer(
         check(!preparedDiscarded.get()) { "discarded account graph cannot be activated" }
         shareActivation.activate()
         if (!started.compareAndSet(false, true)) return
+        restorePublishedEnvelopeIdentity()
         journal.recover()
         appContainer.appLock.register(secretStore)
         appContainer.appLock.register(sessionSecrets)
@@ -831,7 +827,63 @@ class AccountContainer(
         }
     }
 
+    private suspend fun restorePublishedEnvelopeIdentity() {
+        if (localMode) return
+        val storedId = runCatching {
+            database.devicePreferenceDao().find(ENVELOPE_SERVER_ID_PREF)?.valueJson
+        }.getOrNull()?.trim().orEmpty()
+        if (storedId.isNotEmpty()) {
+            envelopeServerId.value = storedId
+        }
+        val storedKey = runCatching {
+            database.devicePreferenceDao().find(ENVELOPE_SERVER_KEY_PREF)?.valueJson
+        }.getOrNull()?.trim().orEmpty()
+        if (storedKey.isEmpty()) return
+        val parts = storedKey.split(':', limit = 2)
+        val version = parts.getOrNull(0)?.toIntOrNull() ?: return
+        val publicKey = parts.getOrNull(1)?.let { encoded ->
+            runCatching { one.zephyr.mobile.model.Base64Codec.decode(encoded) }.getOrNull()
+        } ?: return
+        if (version > 0 && publicKey.isNotEmpty()) {
+            serverKeyState.value = ServerEncryptionKey(publicKey = publicKey, keyVersion = version)
+        }
+    }
+
+    private fun rememberPublishedEnvelopeIdentity(
+        publishedServerId: String,
+        encryption: one.zephyr.mobile.model.ServerEncryptionCapabilities?,
+    ) {
+        if (publishedServerId.isNotEmpty()) {
+            envelopeServerId.value = publishedServerId
+            persistPreference(ENVELOPE_SERVER_ID_PREF, publishedServerId)
+        }
+        if (encryption == null) return
+        val decoded = runCatching {
+            one.zephyr.mobile.model.Base64Codec.decode(encryption.publicKey)
+        }.getOrNull()
+        if (decoded == null || decoded.isEmpty()) return
+        serverKeyState.value = ServerEncryptionKey(publicKey = decoded, keyVersion = encryption.keyVersion)
+        persistPreference(
+            ENVELOPE_SERVER_KEY_PREF,
+            encryption.keyVersion.toString() + ":" + one.zephyr.mobile.model.Base64Codec.encode(decoded),
+        )
+    }
+
+    private fun persistPreference(key: String, value: String) {
+        accountScope.launch {
+            database.devicePreferenceDao().upsert(
+                DevicePreferenceRow(
+                    key = key,
+                    valueJson = value,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
     companion object {
+        internal const val ENVELOPE_SERVER_ID_PREF = "published-envelope-server-id"
+        internal const val ENVELOPE_SERVER_KEY_PREF = "published-envelope-server-key"
         /**
          * One row per (server, user, device).
          *
