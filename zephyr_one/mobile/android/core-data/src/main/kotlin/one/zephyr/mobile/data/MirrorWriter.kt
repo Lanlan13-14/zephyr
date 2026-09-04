@@ -4,7 +4,6 @@ import androidx.room.withTransaction
 import java.util.UUID
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import one.zephyr.mobile.contracts.EntityRegistry
 import one.zephyr.mobile.data.db.BootstrapStagingRow
 import one.zephyr.mobile.data.db.Converters
@@ -582,18 +581,10 @@ internal fun prepareSecrets(change: SyncChange, opener: EnvelopeOpener?): Prepar
                 null -> throw SecretReconciliationException(
                     SecretReconciliationFailure.INVALID_PRESENCE,
                 )
-                is JsonPrimitive -> {
-                    if (element.isString) {
-                        throw SecretReconciliationException(SecretReconciliationFailure.INVALID_PRESENCE)
-                    }
-                    element.booleanOrNull
-                        ?: throw SecretReconciliationException(
-                            SecretReconciliationFailure.INVALID_PRESENCE,
-                        )
-                }
-                else -> throw SecretReconciliationException(
-                    SecretReconciliationFailure.INVALID_PRESENCE,
-                )
+                else -> EntityCodec.booleanOrNull(element)
+                    ?: throw SecretReconciliationException(
+                        SecretReconciliationFailure.INVALID_PRESENCE,
+                    )
             }
             states[fieldName] = declared
             if (declared) {
@@ -678,7 +669,7 @@ internal fun requirePresenceValue(presence: JsonObject, fieldName: String): Bool
     if (value.isString) {
         throw SecretReconciliationException(SecretReconciliationFailure.INVALID_PRESENCE)
     }
-    return value.booleanOrNull
+    return EntityCodec.booleanOrNull(value)
         ?: throw SecretReconciliationException(SecretReconciliationFailure.INVALID_PRESENCE)
 }
 

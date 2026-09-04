@@ -3,15 +3,10 @@ package one.zephyr.mobile.data
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import one.zephyr.mobile.contracts.EntityRegistry
 import one.zephyr.mobile.data.db.Converters
@@ -46,8 +41,24 @@ object EntityCodec {
 
     fun longOrNull(payload: JsonObject, key: String): Long? = (payload[key] as? JsonPrimitive)?.longOrNull
 
+    /**
+     * SQLite INTEGER 0/1 columns sometimes leak onto the owned-sync wire as
+     * numbers. Presence flags and RDP toggles are still booleans; only exact
+     * 0/1 are accepted so a float or a string cannot flip a secret flag.
+     */
+    fun booleanOrNull(value: JsonElement): Boolean? {
+        val primitive = value as? JsonPrimitive ?: return null
+        if (primitive.isString) return null
+        primitive.booleanOrNull?.let { return it }
+        return when (primitive.intOrNull) {
+            0 -> false
+            1 -> true
+            else -> null
+        }
+    }
+
     fun bool(payload: JsonObject, key: String, fallback: Boolean): Boolean =
-        (payload[key] as? JsonPrimitive)?.booleanOrNull ?: fallback
+        payload[key]?.let(::booleanOrNull) ?: fallback
 
     fun float(payload: JsonObject, key: String, fallback: Float): Float =
         (payload[key] as? JsonPrimitive)?.doubleOrNull?.toFloat() ?: fallback

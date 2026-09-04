@@ -49,11 +49,13 @@ internal class EmbeddedLinkApi(
         insecure: Boolean = false,
     ): LinkSession = withContext(Dispatchers.IO) {
         val base = process.ensureStarted().baseUrl
+        val peer = LinkPeerResolver.resolve(linkRoot(serverUrl))
         val body = JsonObject(mapOf(
-            "serverUrl" to JsonPrimitive(linkRoot(serverUrl)),
+            "serverUrl" to JsonPrimitive(peer.url),
             "deviceId" to JsonPrimitive(deviceId),
             "spkiPins" to kotlinx.serialization.json.JsonArray(spkiPins.map(::JsonPrimitive)),
             "insecure" to JsonPrimitive(insecure),
+            "serverName" to JsonPrimitive(peer.serverName),
         ))
         val response = post("$base/link/dial", body)
         LinkSession(
@@ -88,14 +90,16 @@ internal class EmbeddedLinkApi(
         insecure: Boolean = false,
     ): LinkPushResult = withContext(Dispatchers.IO) {
         val base = process.ensureStarted().baseUrl
+        val peer = LinkPeerResolver.resolve(linkRoot(serverUrl))
         val payload = buildJsonObject {
             put("sessionId", session.sessionId)
-            put("peerUrl", linkRoot(serverUrl))
+            put("peerUrl", peer.url)
             put("kind", kind)
             put("body", body)
             put("secret", secret)
             put("spkiPins", kotlinx.serialization.json.JsonArray(spkiPins.map(::JsonPrimitive)))
             put("insecure", insecure)
+            put("serverName", peer.serverName)
         }
         val response = post("$base/link/push", payload)
         val ackElement = response["ack"]
