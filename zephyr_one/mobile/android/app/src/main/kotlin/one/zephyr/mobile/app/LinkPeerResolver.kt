@@ -26,7 +26,11 @@ internal object LinkPeerResolver {
         lookup: (String) -> Array<InetAddress> = { InetAddress.getAllByName(it) },
     ): LinkPeerTarget {
         val uri = URI(serverUrl)
+        // java.net.URI.getHost() keeps the RFC 2732 brackets on IPv6 literals.
+        // TLS SNI and Go's url.Hostname() both want the bare address.
         val host = uri.host?.takeIf { it.isNotBlank() }
+            ?.removePrefix("[")
+            ?.removeSuffix("]")
             ?: throw IllegalArgumentException("Link URL missing host")
         if (isLiteralIp(host)) return LinkPeerTarget(serverUrl, host)
         val ip = lookup(host).firstOrNull()?.hostAddress

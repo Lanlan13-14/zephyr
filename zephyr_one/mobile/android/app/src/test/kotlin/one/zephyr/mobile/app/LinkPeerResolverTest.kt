@@ -48,6 +48,8 @@ class LinkPeerResolverTest {
         val target = LinkPeerResolver.resolve(url) { error("must not look up a literal") }
         assertEquals(url, target.url)
         assertEquals("2001:db8::1", target.serverName)
+        assertFalse(target.serverName.startsWith("["))
+        assertFalse(target.serverName.contains(']'))
     }
 
     @Test(expected = UnknownHostException::class)
