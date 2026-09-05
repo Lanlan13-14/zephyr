@@ -133,7 +133,7 @@ class LiquidGlassTest {
                 "bare normalize() is an Adreno SIGSEGV on Xiaomi first frames",
                 Regex("""(?<!safe)normalize\s*\(""").containsMatchIn(source),
             )
-            assertTrue(source.contains("if (length(v) < 1e-4)"))
+            assertTrue(source.contains("len > 1.0e-4"))
             assertTrue(source.contains("if (size.x < 1.0 || size.y < 1.0)"))
         }
         assertTrue(RoundedRectRefractionShaderString.contains("float2 safeNormalize(float2 v)"))
