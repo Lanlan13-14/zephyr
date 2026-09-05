@@ -1902,7 +1902,14 @@ class MobileV1Api {
         } catch {
             row = null;
         }
-        if (!row) return { ...safeChange, payload: {} };
+        if (!row) {
+            /* A live change whose canonical row is gone, or whose owner key
+             * does not match the bound account (legacy activity rows store
+             * username in userId). Emitting an empty payload would fail
+             * residency on the client and freeze the cursor. Mark the row
+             * skippable the same way an unknown type is skipped. */
+            return { ...safeChange, payload: {}, unsupported: true };
+        }
         return {
             ...safeChange,
             payload: projectPayload(spec, row),
@@ -1964,6 +1971,14 @@ class MobileV1Api {
         const envelopes = {};
         for (const fieldName of fields) {
             const plaintext = Buffer.from(String(secrets[fieldName]), 'utf8');
+            /* Bind AAD to the last revision that mutated this secret field,
+             * not the entity revision. A later name/host edit bumps the
+             * entity revision; resealing the unchanged password under that
+             * new number makes One open the envelope with the wrong AAD and
+             * freeze the whole change page. */
+            const fieldRevision = this.store.fieldRevision(
+                user.userId, entityType, entityId, fieldName,
+            ) || Number(entityRevision) || 1;
             try {
                 const aad = mobileCrypto.secretAadBytes({
                     serverId: this.store.serverId(),
@@ -1972,7 +1987,7 @@ class MobileV1Api {
                     entityType,
                     entityId: String(entityId),
                     fieldName,
-                    entityRevision: Number(entityRevision),
+                    entityRevision: fieldRevision,
                     keyVersion,
                 });
                 envelopes[fieldName] = mobileCrypto.sealEnvelope({
@@ -1980,7 +1995,7 @@ class MobileV1Api {
                     publicKey,
                     aad,
                     keyVersion,
-                    entityRevision: Number(entityRevision),
+                    entityRevision: fieldRevision,
                 });
             } finally {
                 plaintext.fill(0);

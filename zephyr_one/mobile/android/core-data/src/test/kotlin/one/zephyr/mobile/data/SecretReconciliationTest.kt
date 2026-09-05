@@ -44,6 +44,43 @@ class SecretReconciliationTest {
     }
 
     @Test
+    fun `incremental presence without an envelope reuses a retained local secret`() {
+        val retained = "s3cret".toByteArray()
+        val secrets = prepareSecrets(
+            change(payload = payload(hasPassword = true, hasPrivateKey = false)),
+            opener = EnvelopeOpener { _, _ -> error("must not open") },
+            retainedSecrets = mapOf("password" to retained),
+        )
+        try {
+            assertEquals("s3cret", secrets.values.getValue("password").decodeToString())
+            assertEquals(true, secrets.states.getValue("password"))
+            assertEquals(false, secrets.states.getValue("privateKey"))
+        } finally {
+            secrets.close()
+            retained.fill(0)
+        }
+    }
+
+    @Test
+    fun `a fresh envelope still wins over a retained local secret`() {
+        val retained = "stale".toByteArray()
+        val secrets = prepareSecrets(
+            change(
+                payload = payload(hasPassword = true, hasPrivateKey = false),
+                envelopes = mapOf("password" to envelope()),
+            ),
+            opener = EnvelopeOpener { _, _ -> "fresh".toByteArray() },
+            retainedSecrets = mapOf("password" to retained),
+        )
+        try {
+            assertEquals("fresh", secrets.values.getValue("password").decodeToString())
+        } finally {
+            secrets.close()
+            retained.fill(0)
+        }
+    }
+
+    @Test
     fun `a missing registry presence flag cannot silently clear a stored secret`() {
         val error = expectSecretFailure {
             prepareSecrets(

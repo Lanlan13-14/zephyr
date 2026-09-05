@@ -7,6 +7,8 @@ import one.zephyr.mobile.contracts.BindingState
 import one.zephyr.mobile.contracts.PushStatus
 import one.zephyr.mobile.contracts.SyncAction
 import one.zephyr.mobile.contracts.SyncPhase
+import one.zephyr.mobile.data.SecretPayloadFailure
+import one.zephyr.mobile.data.SecretPayloadViolationException
 import one.zephyr.mobile.data.SecretReconciliationException
 import one.zephyr.mobile.data.SecretReconciliationFailure
 import one.zephyr.mobile.model.BootstrapPage
@@ -412,6 +414,34 @@ class SyncActorTest {
         val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
 
         assertEquals("internal_error", result.error?.code)
+        assertEquals(40L, store.appliedCursor)
+        assertEquals(40L, store.ackedCursor)
+        assertTrue(transport.ackedCursors.isEmpty())
+        assertEquals(SyncPhase.PULL_CHANGES, result.stoppedAt)
+    }
+
+    @Test
+    fun `an unsafe inbound payload does not crash the round or advance the cursor`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.changePages.add(
+            ApiResult.Success(
+                ChangePage(
+                    fromCursor = 40,
+                    nextCursor = 41,
+                    hasMore = false,
+                    changes = listOf(change(41, revision = 8)),
+                ),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.appliedCursor = 40
+        store.ackedCursor = 40
+        store.applyChangesFailure = SecretPayloadViolationException(SecretPayloadFailure.RAW_SECRET_FIELD)
+
+        val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
+
+        assertEquals("malformed_response", result.error?.code)
         assertEquals(40L, store.appliedCursor)
         assertEquals(40L, store.ackedCursor)
         assertTrue(transport.ackedCursors.isEmpty())

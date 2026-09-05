@@ -1195,6 +1195,19 @@ class MobileV1Store {
             .get(String(ownerUserId), String(entityType), String(entityId)) || null;
     }
 
+    /**
+     * Last revision that actually mutated this field. Envelope AAD is bound to
+     * that number, not the entity revision: a later name/host edit must not
+     * reseal the password under a new AAD or One cannot open it.
+     */
+    fieldRevision(ownerUserId, entityType, entityId, fieldPath) {
+        const row = this.db.prepare(`SELECT revision FROM mobile_entity_field_revisions
+            WHERE owner_user_id = ? AND entity_type = ? AND entity_id = ? AND field_path = ?`)
+            .get(String(ownerUserId), String(entityType), String(entityId), String(fieldPath));
+        const revision = row && Number(row.revision);
+        return Number.isSafeInteger(revision) && revision > 0 ? revision : null;
+    }
+
     /** Field-level revisions: the data SYNC_STATE_MACHINE.md section 7 merges on. */
     setFieldRevisions({ ownerUserId, entityType, entityId, fields, revision, changedAt }) {
         const writtenAt = Number(changedAt);

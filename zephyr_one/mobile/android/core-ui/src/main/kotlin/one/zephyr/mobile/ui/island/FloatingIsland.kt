@@ -139,7 +139,7 @@ fun FloatingIsland(
                         )
                     },
                     onDrawSurface = {
-                        drawRect(palette.surfaces.floating.copy(alpha = if (palette.dark) 0.72f else 0.82f))
+                        drawRect(palette.surfaces.floating.copy(alpha = if (palette.dark) 0.22f else 0.28f))
                     },
                 )
                 .clip(outerShape)
@@ -173,7 +173,7 @@ fun FloatingIsland(
                         },
                         shadow = null,
                         onDrawSurface = {
-                            drawRect(palette.islandSelection.copy(alpha = 0.90f))
+                            drawRect(palette.islandSelection.copy(alpha = 0.32f))
                         },
                     )
                     .clip(pillShape),

@@ -77,6 +77,7 @@ object DtoMappers {
             payload = dto.payload,
             secretEnvelopes = dto.secretEnvelopes ?: emptyMap(),
             tombstone = dto.tombstone,
+            unsupported = dto.unsupported,
         )
     }
 

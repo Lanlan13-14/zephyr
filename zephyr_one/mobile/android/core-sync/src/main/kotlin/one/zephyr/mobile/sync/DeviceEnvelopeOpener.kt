@@ -15,8 +15,9 @@ import one.zephyr.mobile.security.MobileAad
  * sees the [EnvelopeOpener] port, so the mirror writer cannot reach key material.
  *
  * A rejection returns null to the mirror writer, which aborts the complete page without advancing
- * its revision or cursor. Keeping a previous plaintext under a new server presence/revision would
- * pair the wrong secret with the row and make the next round skip the only chance to repair it.
+ * its revision or cursor. Incremental non-secret patches keep the local plaintext instead of
+ * requiring a fresh envelope; only a ciphertext that is actually present is opened here, and it
+ * is opened under the revision stamped on the envelope itself.
  */
 class DeviceEnvelopeOpener(
     private val identity: DeviceIdentity,
@@ -34,6 +35,10 @@ class DeviceEnvelopeOpener(
 
     override fun open(change: SyncChange, fieldName: String): ByteArray? {
         val envelope = change.secretEnvelopes[fieldName] ?: return null
+        /* AAD is bound to the revision the ciphertext was sealed under, not
+         * the change-feed revision. Incremental name/host edits reuse the
+         * previous envelope; opening it with change.revision is an AAD
+         * mismatch that aborts the whole page and freezes the cursor. */
         val expected = MobileAad.SecretInput(
             serverId = serverId(),
             userId = userId,
@@ -41,7 +46,7 @@ class DeviceEnvelopeOpener(
             entityType = change.entityType,
             entityId = change.entityId,
             fieldName = fieldName,
-            entityRevision = change.revision,
+            entityRevision = envelope.entityRevision,
             keyVersion = envelope.keyVersion,
         )
         return try {
