@@ -34,13 +34,18 @@ internal fun RenderEffect?.chain(other: RenderEffect): RenderEffect {
 internal fun createRuntimeShaderEffect(
     runtimeShader: RuntimeShader,
     uniformShaderName: String,
-): RenderEffect {
-    val androidShader = runtimeShader.asAndroidRuntimeShader()
-        ?: throw IllegalStateException("RuntimeShader must be AndroidRuntimeShader on API 33+")
-    return android.graphics.RenderEffect.createRuntimeShaderEffect(
-        androidShader,
-        uniformShaderName,
-    ).asComposeRenderEffect()
+): RenderEffect? {
+    val androidShader = runtimeShader.asAndroidRuntimeShader() ?: return null
+    return try {
+        android.graphics.RenderEffect.createRuntimeShaderEffect(
+            androidShader,
+            uniformShaderName,
+        ).asComposeRenderEffect()
+    } catch (failure: Throwable) {
+        GlassRuntime.disableShaders()
+        android.util.Log.e("ZephyrGlass", "runtime shader effect failed; glass shaders disabled", failure)
+        null
+    }
 }
 
 @RequiresApi(Build.VERSION_CODES.S)
@@ -101,6 +106,7 @@ fun BackdropEffectScope.lens(
         } else {
             obtainRuntimeShader("RefractionWithDispersion", RoundedRectRefractionWithDispersionShaderString)
         }
+        if (size.minDimension < 1f) return
         shader.apply {
             setFloatUniform("size", size.width, size.height)
             setFloatUniform("offset", -padding, -padding)
@@ -112,7 +118,7 @@ fun BackdropEffectScope.lens(
                 setFloatUniform("chromaticAberration", 1f)
             }
         }
-        effect(createRuntimeShaderEffect(shader, "content"))
+        createRuntimeShaderEffect(shader, "content")?.let(::effect)
     }
 }
 
@@ -161,7 +167,7 @@ fun BackdropEffectScope.runtimeShaderEffect(
 ) {
     if (!isRuntimeShaderSupported()) return
     val shader = obtainRuntimeShader(key, shaderString).apply(block)
-    val effect = createRuntimeShaderEffect(shader, uniformShaderName)
+    val effect = createRuntimeShaderEffect(shader, uniformShaderName) ?: return
     renderEffect = renderEffect.chain(effect)
 }
 

@@ -199,7 +199,7 @@ internal class HighlightNode(
 
     override fun ContentDrawScope.draw() {
         val hl = highlight()
-        if (hl == null || hl.width.value <= 0f) {
+        if (hl == null || hl.width.value <= 0f || size.minDimension < 1f) {
             drawContent()
             return
         }
@@ -225,7 +225,7 @@ internal class HighlightNode(
 
         layer.alpha = hl.alpha
         layer.blendMode = hl.style.blendMode
-        layer.record(safeSize) {
+        val recorded = recordLayer(layer, safeSize) {
             translate(1f, 1f) {
                 val canvas = drawContext.canvas
                 canvas.save()
@@ -234,6 +234,7 @@ internal class HighlightNode(
                 canvas.restore()
             }
         }
+        if (!recorded) return
 
         translate(-1f, -1f) {
             drawLayer(layer)
@@ -262,12 +263,17 @@ internal class HighlightNode(
         paint.asFrameworkPaint().maskFilter = if (radius > 0f) BlurMaskFilter(radius, BlurMaskFilter.Blur.NORMAL) else null
 
         if (isRuntimeShaderSupported()) {
-            val shader = with(hl.style) {
-                createShader(
-                    shape = shapeProvider.shape,
-                    runtimeShaderCache = runtimeShaderCache,
-                )
-            }
+            val shader = runCatching {
+                with(hl.style) {
+                    createShader(
+                        shape = shapeProvider.shape,
+                        runtimeShaderCache = runtimeShaderCache,
+                    )
+                }
+            }.onFailure { failure ->
+                GlassRuntime.disableShaders()
+                android.util.Log.e("ZephyrGlass", "highlight shader failed; glass shaders disabled", failure)
+            }.getOrNull()
             paint.asFrameworkPaint().shader = shader?.asAndroidRuntimeShader()
         }
     }

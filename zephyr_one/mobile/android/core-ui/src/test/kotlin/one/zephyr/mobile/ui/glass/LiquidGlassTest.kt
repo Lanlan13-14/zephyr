@@ -118,4 +118,39 @@ class LiquidGlassTest {
         val s3 = cache.obtainRuntimeShader("testKey", RoundedRectRefractionShaderString)
         assertNotNull(s3)
     }
+
+    @Test
+    fun shadersNeverCallBareNormalizeOnAZeroVector() {
+        val sources = listOf(
+            RoundedRectRefractionShaderString,
+            RoundedRectRefractionWithDispersionShaderString,
+            DefaultHighlightShaderString,
+            AmbientHighlightShaderString,
+        )
+        for (source in sources) {
+            assertTrue(source.contains("safeNormalize"))
+            assertFalse(
+                "bare normalize() is an Adreno SIGSEGV on Xiaomi first frames",
+                Regex("""(?<!safe)normalize\s*\(""").containsMatchIn(source),
+            )
+            assertTrue(source.contains("if (length(v) < 1e-4)"))
+            assertTrue(source.contains("if (size.x < 1.0 || size.y < 1.0)"))
+        }
+        assertTrue(RoundedRectRefractionShaderString.contains("float2 safeNormalize(float2 v)"))
+    }
+
+    @Test
+    fun disablingShadersFallsBackWithoutThrowing() {
+        GlassRuntime.resetForTests()
+        try {
+            GlassRuntime.disableShaders()
+            assertFalse(isRuntimeShaderSupported())
+            val shader = createRuntimeShader(RoundedRectRefractionShaderString)
+            assertEquals(null, shader.asAndroidRuntimeShader())
+            GlassRuntime.disableEffects()
+            assertFalse(isRenderEffectSupported())
+        } finally {
+            GlassRuntime.resetForTests()
+        }
+    }
 }

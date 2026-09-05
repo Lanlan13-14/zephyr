@@ -143,6 +143,7 @@ private class LayerBackdropNode(
 
     override fun ContentDrawScope.draw() {
         drawContent()
+        if (size.width < 1f || size.height < 1f) return
         recordLayer(backdrop.graphicsLayer) { backdrop.onDraw(this@draw) }
     }
 

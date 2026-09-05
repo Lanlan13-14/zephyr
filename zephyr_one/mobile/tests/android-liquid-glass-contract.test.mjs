@@ -86,6 +86,37 @@ test('ZephyrOneRoot establishes root Backdrop and propagates LocalBackdrop', () 
   assert.ok(rootSource.includes('LocalBackdrop provides'));
 });
 
+test('AGSL shaders use safeNormalize and skip a 0x0 first frame', () => {
+  const shaderSource = fs.readFileSync(path.join(GLASS_ROOT, 'Shaders.kt'), 'utf8');
+  assert.ok(shaderSource.includes('float2 safeNormalize(float2 v)'));
+  assert.ok(shaderSource.includes('if (size.x < 1.0 || size.y < 1.0)'));
+  assert.ok(shaderSource.includes('Adreno'));
+  const agslBodies = [...shaderSource.matchAll(/"""([\s\S]*?)"""/g)].map((m) => m[1]);
+  assert.ok(agslBodies.length >= 3, 'expected AGSL string bodies');
+  for (const body of agslBodies) {
+    assert.equal((body.match(/(?<!safe)normalize\s*\(/g) || []).length, 0);
+  }
+});
+
+test('glass GPU path can disable itself instead of crashing composition', () => {
+  const platform = fs.readFileSync(path.join(GLASS_ROOT, 'Platform.kt'), 'utf8');
+  assert.ok(platform.includes('object GlassRuntime'));
+  assert.ok(platform.includes('fun disableShaders'));
+  assert.ok(platform.includes('fun disableEffects'));
+
+  const runtime = fs.readFileSync(path.join(GLASS_ROOT, 'RuntimeShader.kt'), 'utf8');
+  assert.ok(runtime.includes('GlassRuntime.disableShaders()'));
+  assert.ok(runtime.includes('NoOpRuntimeShader'));
+
+  const internal = fs.readFileSync(path.join(GLASS_ROOT, 'Internal.kt'), 'utf8');
+  assert.ok(internal.includes('if (size.width <= 0 || size.height <= 0) return false'));
+  assert.ok(internal.includes('GlassRuntime.disableEffects()'));
+
+  const draw = fs.readFileSync(path.join(GLASS_ROOT, 'DrawBackdropModifier.kt'), 'utf8');
+  assert.ok(draw.includes('GlassRuntime.disableEffects()'));
+  assert.ok(draw.includes('backdrop draw failed; glass disabled'));
+});
+
 test('All Liquid Glass Kotlin sources are pure ASCII', () => {
   const files = fs.readdirSync(GLASS_ROOT).filter((f) => f.endsWith('.kt'));
   for (const file of files) {

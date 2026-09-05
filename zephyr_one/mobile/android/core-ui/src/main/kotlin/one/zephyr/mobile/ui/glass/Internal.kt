@@ -34,16 +34,24 @@ internal fun DrawScope.recordLayer(
     size: IntSize = this.size.toIntSize(),
     density: Density? = null,
     block: DrawScope.() -> Unit,
-) {
+): Boolean {
+    if (size.width <= 0 || size.height <= 0) return false
     val d = density ?: this
-    layer.record(size) {
-        val prevDensity = drawContext.density
-        drawContext.density = d
-        try {
-            this.block()
-        } finally {
-            drawContext.density = prevDensity
+    return try {
+        layer.record(size) {
+            val prevDensity = drawContext.density
+            drawContext.density = d
+            try {
+                this.block()
+            } finally {
+                drawContext.density = prevDensity
+            }
         }
+        true
+    } catch (failure: Throwable) {
+        GlassRuntime.disableEffects()
+        android.util.Log.e("ZephyrGlass", "graphics layer record failed; glass disabled", failure)
+        false
     }
 }
 

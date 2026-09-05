@@ -270,7 +270,7 @@ private class DrawBackdropNode(
         val layer = graphicsLayer
         if (layer != null) {
             val pad = padding
-            recordLayer(
+            val recorded = recordLayer(
                 layer,
                 size = IntSize(
                     size.width.toInt() + pad.toInt() * 2,
@@ -278,6 +278,7 @@ private class DrawBackdropNode(
                 ),
                 block = recordBackdropBlock,
             )
+            if (!recorded) return@drawBackdropLayer
 
             layer.topLeft = if (pad != 0f) IntOffset(-pad.toInt(), -pad.toInt()) else IntOffset.Zero
             drawLayer(layer)
@@ -295,23 +296,34 @@ private class DrawBackdropNode(
     }
 
     override fun ContentDrawScope.draw() {
-        if (effectScope.update(this)) {
-            updateEffects()
+        if (size.width < 1f || size.height < 1f) {
+            drawContent()
+            return
         }
-
-        onDrawBehind?.invoke(this)
-        drawBackdropLayer()
-        onDrawSurface?.invoke(this)
-        drawContent()
-        onDrawFront?.invoke(this)
-
-        exportedBackdrop?.graphicsLayer?.let { layer ->
-            recordLayer(layer) {
-                onDrawBehind?.invoke(this)
-                drawBackdropLayer()
-                onDrawSurface?.invoke(this)
-                onDrawFront?.invoke(this)
+        try {
+            if (effectScope.update(this)) {
+                updateEffects()
             }
+
+            onDrawBehind?.invoke(this)
+            drawBackdropLayer()
+            onDrawSurface?.invoke(this)
+            drawContent()
+            onDrawFront?.invoke(this)
+
+            exportedBackdrop?.graphicsLayer?.let { layer ->
+                recordLayer(layer) {
+                    onDrawBehind?.invoke(this)
+                    drawBackdropLayer()
+                    onDrawSurface?.invoke(this)
+                    onDrawFront?.invoke(this)
+                }
+            }
+        } catch (failure: Throwable) {
+            GlassRuntime.disableEffects()
+            android.util.Log.e("ZephyrGlass", "backdrop draw failed; glass disabled", failure)
+            onDrawSurface?.invoke(this)
+            drawContent()
         }
     }
 
@@ -339,11 +351,22 @@ private class DrawBackdropNode(
     }
 
     private fun updateEffects() {
-        if (!isRenderEffectSupported()) return
+        if (!isRenderEffectSupported()) {
+            graphicsLayer?.renderEffect = null
+            padding = 0f
+            return
+        }
 
-        effectScope.apply(effects)
-        graphicsLayer?.renderEffect = effectScope.renderEffect
-        padding = effectScope.padding
+        try {
+            effectScope.apply(effects)
+            graphicsLayer?.renderEffect = effectScope.renderEffect
+            padding = effectScope.padding
+        } catch (failure: Throwable) {
+            GlassRuntime.disableEffects()
+            android.util.Log.e("ZephyrGlass", "backdrop effect failed; glass disabled", failure)
+            graphicsLayer?.renderEffect = null
+            padding = 0f
+        }
     }
 
     override fun onAttach() {
