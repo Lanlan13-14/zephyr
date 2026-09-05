@@ -829,24 +829,23 @@ class AccountContainer(
 
     private suspend fun restorePublishedEnvelopeIdentity() {
         if (localMode) return
-        val storedId = runCatching {
-            database.devicePreferenceDao().find(ENVELOPE_SERVER_ID_PREF)?.valueJson
-        }.getOrNull()?.trim().orEmpty()
+        val storedId = PublishedEnvelopePrefs.decodeServerId(
+            runCatching {
+                database.devicePreferenceDao().find(ENVELOPE_SERVER_ID_PREF)?.valueJson
+            }.getOrNull(),
+        )
         if (storedId.isNotEmpty()) {
             envelopeServerId.value = storedId
         }
-        val storedKey = runCatching {
-            database.devicePreferenceDao().find(ENVELOPE_SERVER_KEY_PREF)?.valueJson
-        }.getOrNull()?.trim().orEmpty()
-        if (storedKey.isEmpty()) return
-        val parts = storedKey.split(':', limit = 2)
-        val version = parts.getOrNull(0)?.toIntOrNull() ?: return
-        val publicKey = parts.getOrNull(1)?.let { encoded ->
-            runCatching { one.zephyr.mobile.model.Base64Codec.decode(encoded) }.getOrNull()
-        } ?: return
-        if (version > 0 && publicKey.isNotEmpty()) {
-            serverKeyState.value = ServerEncryptionKey(publicKey = publicKey, keyVersion = version)
-        }
+        val storedKey = PublishedEnvelopePrefs.decodeServerKey(
+            runCatching {
+                database.devicePreferenceDao().find(ENVELOPE_SERVER_KEY_PREF)?.valueJson
+            }.getOrNull(),
+        ) ?: return
+        serverKeyState.value = ServerEncryptionKey(
+            publicKey = storedKey.second,
+            keyVersion = storedKey.first,
+        )
     }
 
     private fun rememberPublishedEnvelopeIdentity(
@@ -855,7 +854,7 @@ class AccountContainer(
     ) {
         if (publishedServerId.isNotEmpty()) {
             envelopeServerId.value = publishedServerId
-            persistPreference(ENVELOPE_SERVER_ID_PREF, publishedServerId)
+            persistPreference(ENVELOPE_SERVER_ID_PREF, PublishedEnvelopePrefs.encodeServerId(publishedServerId))
         }
         if (encryption == null) return
         val decoded = runCatching {
@@ -865,7 +864,7 @@ class AccountContainer(
         serverKeyState.value = ServerEncryptionKey(publicKey = decoded, keyVersion = encryption.keyVersion)
         persistPreference(
             ENVELOPE_SERVER_KEY_PREF,
-            encryption.keyVersion.toString() + ":" + one.zephyr.mobile.model.Base64Codec.encode(decoded),
+            PublishedEnvelopePrefs.encodeServerKey(encryption.keyVersion, decoded),
         )
     }
 

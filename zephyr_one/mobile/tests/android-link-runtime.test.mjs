@@ -101,6 +101,13 @@ test('Android resolves Link hostnames before the CGO-less Go core dials', () => 
   assert.match(account, /ENVELOPE_SERVER_ID_PREF/);
   assert.match(account, /restorePublishedEnvelopeIdentity\(\)/);
   assert.match(account, /rememberPublishedEnvelopeIdentity/);
+  assert.match(account, /PublishedEnvelopePrefs\.encodeServerId/);
+  assert.match(account, /PublishedEnvelopePrefs\.decodeServerId/);
+  const prefs = read('android/app/src/main/kotlin/one/zephyr/mobile/app/di/PublishedEnvelopePrefs.kt');
+  assert.match(prefs, /JsonObject\(mapOf\("value" to JsonPrimitive\(id\)\)\)/);
+  const settings = read('android/core-data/src/main/kotlin/one/zephyr/mobile/data/repository/SettingsRepository.kt');
+  assert.match(settings, /parsePreferenceValue\(row\.valueJson\)/);
+  assert.match(settings, /runCatching \{ EntityCodec\.parse\(valueJson\) \}\.getOrNull\(\)/);
 });
 
 test('Android publishes local-to-bound account replacement atomically', () => {
