@@ -106,6 +106,10 @@ internal class ShadowNode(
             drawContent()
             return
         }
+        if (size.minDimension < 1f) {
+            drawContent()
+            return
+        }
 
         val layer = shadowLayer
         if (layer != null) {
@@ -126,7 +130,7 @@ internal class ShadowNode(
 
             layer.alpha = sh.alpha
             layer.blendMode = sh.blendMode
-            layer.record(shadowSize) {
+            val recorded = recordLayer(layer, shadowSize) {
                 translate(radius * 2f + offsetX, radius * 2f + offsetY) {
                     val canvas = drawContext.canvas
                     canvas.drawOutline(outline, paint)
@@ -135,9 +139,10 @@ internal class ShadowNode(
                     canvas.translate(offsetX, offsetY)
                 }
             }
-
-            translate(-radius * 2f, -radius * 2f) {
-                drawLayer(layer)
+            if (recorded) {
+                translate(-radius * 2f, -radius * 2f) {
+                    drawLayer(layer)
+                }
             }
         }
 
@@ -204,6 +209,7 @@ internal class InnerShadowNode(
         drawContent()
 
         if (!isRenderEffectSupported()) return
+        if (size.minDimension < 1f) return
 
         val sh = shadow() ?: return
         val layer = shadowLayer ?: return
@@ -229,7 +235,7 @@ internal class InnerShadowNode(
             layer.renderEffect = if (radius > 0f) BlurEffect(radius, radius, TileMode.Decal) else null
             prevRadius = radius
         }
-        layer.record {
+        val recorded = recordLayer(layer) {
             val canvas = drawContext.canvas
             canvas.save()
             canvas.clipOutline(outline, cp)
@@ -239,6 +245,7 @@ internal class InnerShadowNode(
             canvas.translate(-offsetX, -offsetY)
             canvas.restore()
         }
+        if (!recorded) return
 
         val canvas = drawContext.canvas
         canvas.save()

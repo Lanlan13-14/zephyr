@@ -84,9 +84,12 @@ internal object NoOpRuntimeShader : RuntimeShader {
 }
 
 fun createRuntimeShader(@Language("AGSL") shaderString: String): RuntimeShader {
-    return if (isRuntimeShaderSupported()) {
+    if (!isRuntimeShaderSupported()) return NoOpRuntimeShader
+    return try {
         AndroidRuntimeShader(android.graphics.RuntimeShader(shaderString))
-    } else {
+    } catch (failure: Throwable) {
+        GlassRuntime.disableShaders()
+        android.util.Log.e("ZephyrGlass", "AGSL compile failed; glass shaders disabled", failure)
         NoOpRuntimeShader
     }
 }
