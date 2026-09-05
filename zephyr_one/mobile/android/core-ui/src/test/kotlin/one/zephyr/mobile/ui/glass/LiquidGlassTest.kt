@@ -28,11 +28,11 @@ class LiquidGlassTest {
         assertTrue(RoundedRectRefractionWithDispersionShaderString.contains("chromaticAberration"))
         assertTrue(RoundedRectRefractionWithDispersionShaderString.contains("dispersionIntensity"))
 
-        assertTrue(DefaultHighlightShaderString.contains("DefaultHighlight"))
+        assertTrue(DefaultHighlightShaderString.contains("layout(color) uniform half4 color"))
         assertTrue(DefaultHighlightShaderString.contains("angle"))
         assertTrue(DefaultHighlightShaderString.contains("falloff"))
 
-        assertTrue(AmbientHighlightShaderString.contains("AmbientHighlight"))
+        assertTrue(AmbientHighlightShaderString.contains("main(float2 coord)"))
     }
 
     @Test
