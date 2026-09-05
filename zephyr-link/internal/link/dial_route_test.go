@@ -150,6 +150,26 @@ func TestApplyPeerHostRewritesIPLiteralToOriginalHostname(t *testing.T) {
 	}
 }
 
+func TestClientForPeerLoadsSystemCAsForExplicitSNI(t *testing.T) {
+	client, err := NewNode().clientForPeer("https://203.0.113.9:8443/api/link/v2", nil, false, "zephyr.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil {
+		t.Fatal("expected custom TLS transport")
+	}
+	if transport.TLSClientConfig.ServerName != "zephyr.example" {
+		t.Fatalf("SNI = %q", transport.TLSClientConfig.ServerName)
+	}
+	if transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("public-CA domain must not skip verify")
+	}
+	if transport.TLSClientConfig.RootCAs == nil {
+		t.Fatal("rewritten IP literal must keep the system CA pool")
+	}
+}
+
 func TestClientForPeerUsesExplicitSNIOnIPLiteral(t *testing.T) {
 	client, err := NewNode().clientForPeer("https://203.0.113.9:8443/api/link/v2", nil, true, "zephyr.example")
 	if err != nil {

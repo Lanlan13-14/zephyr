@@ -237,6 +237,7 @@ class MobileV1ChangeBridge {
                 entityId: resolvedEntityId,
                 fields: revisionFields,
                 revision: nextRevision,
+                changedAt,
             });
         }
         if (mutationReceipt && typeof mutationReceipt === 'object' && !Array.isArray(mutationReceipt)) {

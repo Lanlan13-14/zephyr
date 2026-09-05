@@ -285,6 +285,14 @@ test('field revisions decide overlap, which is what makes a conflict detectable'
     assert.equal(ctx.store.hasOverlap('u1', 'connection', 'c1', 7, ['remark']), false);
     // Same base as the recorded revision is not an overlap either.
     assert.equal(ctx.store.hasOverlap('u1', 'connection', 'c1', 8, ['name']), false);
+
+    ctx.store.setFieldRevisions({
+      ownerUserId: 'u1', entityType: 'connection', entityId: 'c1',
+      fields: ['name'], revision: 9, changedAt: 1_700_000_000_100,
+    });
+    const times = ctx.store.fieldWriteTimes('u1', 'connection', 'c1');
+    assert.equal(times.get('name'), 1_700_000_000_100);
+    assert.ok((times.get('host') || 0) > 0, 'an omitted changedAt still stamps wall-clock time');
   } finally {
     ctx.cleanup();
   }

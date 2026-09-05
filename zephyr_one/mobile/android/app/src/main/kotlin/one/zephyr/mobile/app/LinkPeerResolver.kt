@@ -5,14 +5,18 @@ import java.net.URI
 import java.net.UnknownHostException
 
 /**
- * Turns a Link peer URL into an IP literal plus the original hostname.
+ * Turns a Link peer URL into IP literals plus the original hostname.
  *
  * The embedded Go core is built CGO_ENABLED=0, so it has no Android DNS
  * (cgo resolver) and no /etc/resolv.conf in the app netns. Dialing
  * `https://example.com/...` from Go therefore fails even when OkHttp on the
  * same device can already reach the host. Resolve here with
- * [InetAddress.getAllByName], then tell Go to connect to the IP while keeping
+ * [InetAddress.getAllByName], then tell Go to connect to each IP while keeping
  * the original hostname for TLS SNI and the HTTP Host header.
+ *
+ * Addresses are IPv4-first. Android commonly returns an unreachable AAAA
+ * record before the working A record; taking only the first address is why
+ * IP literals worked and every domain failed.
  */
 internal data class LinkPeerTarget(
     val url: String,
@@ -24,7 +28,12 @@ internal object LinkPeerResolver {
     fun resolve(
         serverUrl: String,
         lookup: (String) -> Array<InetAddress> = { InetAddress.getAllByName(it) },
-    ): LinkPeerTarget {
+    ): LinkPeerTarget = resolveAll(serverUrl, lookup).first()
+
+    fun resolveAll(
+        serverUrl: String,
+        lookup: (String) -> Array<InetAddress> = { InetAddress.getAllByName(it) },
+    ): List<LinkPeerTarget> {
         val uri = URI(serverUrl)
         // java.net.URI.getHost() keeps the RFC 2732 brackets on IPv6 literals.
         // TLS SNI and Go's url.Hostname() both want the bare address.
@@ -32,14 +41,21 @@ internal object LinkPeerResolver {
             ?.removePrefix("[")
             ?.removeSuffix("]")
             ?: throw IllegalArgumentException("Link URL missing host")
-        if (isLiteralIp(host)) return LinkPeerTarget(serverUrl, host)
-        val ip = lookup(host).firstOrNull()?.hostAddress
-            ?.let(::canonicalIpLiteral)
-            ?: throw UnknownHostException(host)
+        if (isLiteralIp(host)) return listOf(LinkPeerTarget(serverUrl, host))
+        val addresses = lookup(host)
+            .mapNotNull { it.hostAddress?.let(::canonicalIpLiteral)?.takeIf(String::isNotBlank) }
+            .distinct()
+        if (addresses.isEmpty()) throw UnknownHostException(host)
+        return addresses
+            .sortedWith(compareBy<String> { it.contains(':') }.thenBy { it })
+            .map { ip -> rewrite(uri, host, ip) }
+    }
+
+    private fun rewrite(uri: URI, serverName: String, ip: String): LinkPeerTarget {
         val encodedIp = if (ip.contains(':')) "[$ip]" else ip
         val authority = if (uri.port != -1) "$encodedIp:${uri.port}" else encodedIp
         val rewritten = URI(uri.scheme, authority, uri.path, uri.query, uri.fragment).toString()
-        return LinkPeerTarget(rewritten, host)
+        return LinkPeerTarget(rewritten, serverName)
     }
 
     internal fun canonicalIpLiteral(hostAddress: String): String = hostAddress.substringBefore('%')

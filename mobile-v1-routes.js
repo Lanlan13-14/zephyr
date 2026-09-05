@@ -2224,6 +2224,32 @@ class MobileV1Api {
         return false;
     }
 
+    /** Positive `clientModifiedAt` from the frozen SyncOperation schema; 0 means unknown. */
+    clientModifiedAt(operation) {
+        const value = Number(operation && operation.clientModifiedAt);
+        return Number.isSafeInteger(value) && value > 0 ? value : 0;
+    }
+
+    /**
+     * Last-write-wins for overlapping fields.
+     *
+     * Field revisions only serialize writes that already landed on this
+     * server. Two devices that edited the same field while offline share no
+     * such order, so the later wall-clock write (`clientModifiedAt` vs the
+     * stamped `changed_at`) is the source of truth. Missing timestamps fail
+     * closed to a conflict: guessing would silently drop a user's edit.
+     */
+    newerLocalWriteWins(ownerUserId, entityType, entityId, overlapFields, clientModifiedAt) {
+        if (!(clientModifiedAt > 0) || !overlapFields.length) return false;
+        if (typeof this.store.fieldWriteTimes !== 'function') return false;
+        const times = this.store.fieldWriteTimes(ownerUserId, entityType, entityId);
+        for (const field of overlapFields) {
+            const serverAt = Number(times.get(String(field)) || 0);
+            if (!(serverAt > 0) || !(clientModifiedAt > serverAt)) return false;
+        }
+        return true;
+    }
+
     serverChangedFields(ownerUserId, entityType, entityId, baseRevision, fallback, spec) {
         const declared = [
             ...((spec?.editableFields || []).map(String)),
@@ -2395,8 +2421,6 @@ class MobileV1Api {
             baseRevision,
             mutationFieldMask,
         )) {
-            const serverPayload = this.conflictServerPayload({ spec, adapter, user, entityId, current });
-            if (!serverPayload) this.conflictPayloadUnavailable();
             const serverChangedFields = this.serverChangedFields(
                 ownerUserId,
                 entityType,
@@ -2408,19 +2432,30 @@ class MobileV1Api {
             const overlapFields = mutationFieldMask.filter((field) => (
                 serverChangedFields.some((serverField) => fieldPathsOverlap(field, serverField))
             ));
-            return this.recordResult({ ownerUserId, deviceId, opId, batchId, result: {
-                opId,
-                status: 'conflict',
+            const namedOverlap = overlapFields.length ? overlapFields : mutationFieldMask;
+            if (!this.newerLocalWriteWins(
+                ownerUserId,
+                entityType,
                 entityId,
-                revision: currentRevision,
-                conflict: {
-                    reason: 'field_overlap',
-                    fields: overlapFields.length ? overlapFields : mutationFieldMask,
-                    currentRevision,
-                    serverChangedFields,
-                    serverPayload,
-                },
-            } });
+                namedOverlap,
+                this.clientModifiedAt(operation),
+            )) {
+                const serverPayload = this.conflictServerPayload({ spec, adapter, user, entityId, current });
+                if (!serverPayload) this.conflictPayloadUnavailable();
+                return this.recordResult({ ownerUserId, deviceId, opId, batchId, result: {
+                    opId,
+                    status: 'conflict',
+                    entityId,
+                    revision: currentRevision,
+                    conflict: {
+                        reason: 'field_overlap',
+                        fields: namedOverlap,
+                        currentRevision,
+                        serverChangedFields,
+                        serverPayload,
+                    },
+                } });
+            }
         }
 
         // ---- the write itself goes through the canonical service ----
@@ -2527,7 +2562,14 @@ class MobileV1Api {
          * deliberately absent from the public change fieldMask. */
         const revisionFields = mutationFieldMask;
         if (action !== 'delete' && revisionFields.length) {
-            this.store.setFieldRevisions({ ownerUserId, entityType, entityId, fields: revisionFields, revision });
+            this.store.setFieldRevisions({
+                ownerUserId,
+                entityType,
+                entityId,
+                fields: revisionFields,
+                revision,
+                changedAt: this.clientModifiedAt(operation),
+            });
         }
 
         return this.recordResult({ ownerUserId, deviceId, opId, batchId, result: {

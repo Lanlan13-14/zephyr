@@ -49,20 +49,34 @@ internal class EmbeddedLinkApi(
         insecure: Boolean = false,
     ): LinkSession = withContext(Dispatchers.IO) {
         val base = process.ensureStarted().baseUrl
-        val peer = LinkPeerResolver.resolve(linkRoot(serverUrl))
-        val body = JsonObject(mapOf(
-            "serverUrl" to JsonPrimitive(peer.url),
-            "deviceId" to JsonPrimitive(deviceId),
-            "spkiPins" to kotlinx.serialization.json.JsonArray(spkiPins.map(::JsonPrimitive)),
-            "insecure" to JsonPrimitive(insecure),
-            "serverName" to JsonPrimitive(peer.serverName),
-        ))
-        val response = post("$base/link/dial", body)
-        LinkSession(
-            sessionId = response.getValue("sessionId").jsonPrimitive.content,
-            exporter = response.getValue("exporter").jsonPrimitive.content,
-        )
+        val peers = LinkPeerResolver.resolveAll(linkRoot(serverUrl))
+        var lastError: Exception? = null
+        for (peer in peers) {
+            val body = JsonObject(mapOf(
+                "serverUrl" to JsonPrimitive(peer.url),
+                "deviceId" to JsonPrimitive(deviceId),
+                "spkiPins" to kotlinx.serialization.json.JsonArray(spkiPins.map(::JsonPrimitive)),
+                "insecure" to JsonPrimitive(insecure),
+                "serverName" to JsonPrimitive(peer.serverName),
+            ))
+            try {
+                val response = post("$base/link/dial", body)
+                return@withContext LinkSession(
+                    sessionId = response.getValue("sessionId").jsonPrimitive.content,
+                    exporter = response.getValue("exporter").jsonPrimitive.content,
+                )
+            } catch (error: LinkRequestException) {
+                lastError = error
+                if (!isRetryablePeerFailure(error)) throw error
+            }
+        }
+        throw lastError ?: IllegalStateException("Link 无法解析对端地址")
     }
+
+    private fun isRetryablePeerFailure(error: LinkRequestException): Boolean =
+        error.retryable &&
+            !error.sessionInvalid &&
+            (error.code == "link_unavailable" || error.code == "server_unavailable")
 
     /** The unsealed business ack from a pushed frame. */
     data class LinkPushResult(val ackKind: Int, val ack: JsonObject)

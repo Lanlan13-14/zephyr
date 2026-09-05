@@ -201,6 +201,12 @@ class RoomSyncLocalStore(
             },
         )
         db.pendingOperationDao().deleteByIds(accepted.map { it.opId })
+        val stampedAt = clock()
+        for (op in accepted) {
+            if (op.revision <= 0L) continue
+            db.mirrorDao().stampAckedRevision(op.entityType, op.entityId, op.revision, stampedAt)
+        }
+        db.mirrorDao().clearPendingFlagForSyncedRows()
     }
 
     override suspend fun dropOperations(opIds: List<String>) {
