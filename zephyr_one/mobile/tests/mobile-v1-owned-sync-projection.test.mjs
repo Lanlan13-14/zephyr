@@ -300,7 +300,7 @@ test('activity events stored under username still project to the bound userId', 
   }
 });
 
-test('a name-only change reseals the password under the password field revision', () => {
+test('a name-only change keeps hasPassword and does not reseal the password', () => {
   const connection = {
     id: 'connection-rename',
     ownerUserId: user.userId,
@@ -322,13 +322,9 @@ test('a name-only change reseals the password under the password field revision'
       residency: () => 'owned',
     }],
   ]);
-  api.store = { fieldRevision: (_owner, type, id, field) => (field === 'password' ? 1 : 3) };
-  let sealedRevision = null;
-  api.ownedSecretEnvelopeFields = function ownedSecretEnvelopeFields(input) {
-    sealedRevision = this.store.fieldRevision(
-      user.userId, input.entityType, input.entityId, 'password',
-    ) || input.entityRevision;
-    return { secretEnvelopes: { password: { v: 1, entityRevision: sealedRevision } } };
+  api.store = { fieldRevision: (_owner, type, id, field) => (field === 'password' ? 2 : null) };
+  api.ownedSecretEnvelopeFields = () => {
+    throw new Error('name-only incremental changes must not reseal secrets');
   };
 
   const hydrated = api.hydrateChange(user, {
@@ -345,8 +341,7 @@ test('a name-only change reseals the password under the password field revision'
   assert.equal(hydrated.payload.name, 'renamed-host');
   assert.equal(hydrated.payload.hasPassword, true);
   assert.equal(hydrated.payload.password, undefined);
-  assert.equal(sealedRevision, 1);
-  assert.equal(hydrated.secretEnvelopes.password.entityRevision, 1);
+  assert.equal(hydrated.secretEnvelopes, undefined);
 });
 
 test('a full-replacement change still seals stored secrets', () => {

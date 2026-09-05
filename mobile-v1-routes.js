@@ -1910,10 +1910,38 @@ class MobileV1Api {
              * skippable the same way an unknown type is skipped. */
             return { ...safeChange, payload: {}, unsupported: true };
         }
+        const payload = projectPayload(spec, row);
+        /* Presence flags stay in the payload. Re-sealing an unchanged secret
+         * at a later entity revision is what made One fail the whole page
+         * with internal_error after the first successful sync.
+         *
+         * Empty fieldMask is a full replacement (bootstrap / opaque mutation)
+         * and must reseal. A secret field whose stored field-revision equals
+         * this change.revision was mutated by this write and must reseal.
+         * Name/host/tag patches leave secret field-revisions behind, so they
+         * keep hasPassword=true and omit secretEnvelopes. */
+        const secretFields = spec.secretFields || [];
+        const mask = Array.isArray(safeChange.fieldMask) ? safeChange.fieldMask : [];
+        const secretTouched = secretFields.some((field) => {
+            let rev = null;
+            try {
+                if (this.store && typeof this.store.fieldRevision === 'function') {
+                    rev = this.store.fieldRevision(
+                        user.userId, change.entityType, change.entityId, field,
+                    );
+                }
+            } catch {
+                rev = null;
+            }
+            return Number(rev) === Number(change.revision);
+        });
+        const needsSecretDownlink = secretFields.length > 0 && (
+            mask.length === 0 || secretTouched
+        );
         return {
             ...safeChange,
-            payload: projectPayload(spec, row),
-            ...this.ownedSecretEnvelopeFields({
+            payload,
+            ...(needsSecretDownlink ? this.ownedSecretEnvelopeFields({
                 spec,
                 row,
                 user,
@@ -1921,7 +1949,7 @@ class MobileV1Api {
                 entityType: change.entityType,
                 entityId: change.entityId,
                 entityRevision: change.revision,
-            }),
+            }) : {}),
         };
     }
 

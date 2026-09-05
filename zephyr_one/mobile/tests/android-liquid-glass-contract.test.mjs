@@ -71,17 +71,17 @@ test('FloatingIsland integrates Liquid Glass with backdrop sampling and refracti
   const islandSource = readSource('core-ui/src/main/kotlin/one/zephyr/mobile/ui/island/FloatingIsland.kt');
   assert.ok(islandSource.includes('one.zephyr.mobile.ui.glass.drawBackdrop'));
   assert.ok(islandSource.includes('one.zephyr.mobile.ui.glass.LocalBackdrop'));
+  assert.ok(islandSource.includes('rememberCombinedBackdrop'));
+  assert.ok(islandSource.includes('rememberLayerBackdrop'));
+  assert.ok(islandSource.includes('exportedBackdrop = capsuleBackdrop'));
   assert.ok(islandSource.includes('lens('));
-  assert.ok(islandSource.includes('vibrancy()'));
   assert.ok(islandSource.includes('chromaticAberration = true'));
   assert.ok(islandSource.includes('Highlight.Default'));
+  assert.ok(islandSource.includes('Shadow('));
+  assert.equal(islandSource.includes('Modifier.shadow('), false, 'Material elevation hides liquid glass');
   assert.ok(
-    islandSource.includes('palette.surfaces.floating.copy(alpha = if (palette.dark) 0.22f else 0.28f)'),
+    islandSource.includes('Color.White.copy(alpha = 0.10f)') || islandSource.includes('Color.White.copy(alpha = 0.08f)'),
     'island surface tint must stay translucent enough to show the sampled backdrop',
-  );
-  assert.ok(
-    islandSource.includes('palette.islandSelection.copy(alpha = 0.32f)'),
-    'selected pill tint must stay translucent enough to show the sampled backdrop',
   );
   assert.equal(
     islandSource.includes('0.82f') || islandSource.includes('0.90f') || islandSource.includes('0.72f'),
@@ -130,11 +130,19 @@ test('glass GPU path can disable itself instead of crashing composition', () => 
 
   const internal = fs.readFileSync(path.join(GLASS_ROOT, 'Internal.kt'), 'utf8');
   assert.ok(internal.includes('if (size.width <= 0 || size.height <= 0) return false'));
-  assert.ok(internal.includes('GlassRuntime.disableEffects()'));
+  assert.equal(
+    internal.includes('GlassRuntime.disableEffects()'),
+    false,
+    'a single GraphicsLayer.record failure must not kill glass for the process',
+  );
 
   const draw = fs.readFileSync(path.join(GLASS_ROOT, 'DrawBackdropModifier.kt'), 'utf8');
-  assert.ok(draw.includes('GlassRuntime.disableEffects()'));
-  assert.ok(draw.includes('backdrop draw failed; glass disabled'));
+  assert.equal(
+    draw.includes('GlassRuntime.disableEffects()'),
+    false,
+    'a single backdrop draw failure must not kill glass for the process',
+  );
+  assert.ok(draw.includes('exported.notifyRecorded()'));
 });
 
 test('All Liquid Glass Kotlin sources are pure ASCII', () => {

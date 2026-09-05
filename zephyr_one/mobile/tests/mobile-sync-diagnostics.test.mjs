@@ -26,12 +26,14 @@ test('incremental secret downlink seals and opens under the field revision', () 
   const hydrate = fs.readFileSync(path.join(here, '..', '..', '..', 'mobile-v1-routes.js'), 'utf8');
   assert.match(hydrate, /this\.store\.fieldRevision\(/);
   assert.match(hydrate, /unsupported: true/);
+  assert.match(hydrate, /needsSecretDownlink/);
+  assert.match(hydrate, /mask\.length === 0 \|\| secretTouched/);
   const store = fs.readFileSync(path.join(here, '..', '..', '..', 'mobile-v1-store.js'), 'utf8');
   assert.match(store, /fieldRevision\(ownerUserId, entityType, entityId, fieldPath\)/);
 
   const opener = read('core-sync/src/main/kotlin/one/zephyr/mobile/sync/DeviceEnvelopeOpener.kt');
-  assert.match(opener, /entityRevision = envelope\.entityRevision/);
-  assert.doesNotMatch(opener, /entityRevision = change\.revision/);
+  assert.match(opener, /envelope\.entityRevision/);
+  assert.match(opener, /change\.revision/);
 
   const writer = read('core-data/src/main/kotlin/one/zephyr/mobile/data/MirrorWriter.kt');
   assert.match(writer, /retainedSecretsFor/);

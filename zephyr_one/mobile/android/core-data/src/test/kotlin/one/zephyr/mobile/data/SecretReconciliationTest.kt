@@ -116,6 +116,45 @@ class SecretReconciliationTest {
     }
 
     @Test
+    fun `a rejected envelope keeps a retained local secret instead of freezing the page`() {
+        val retained = "local-secret".toByteArray()
+        val secrets = prepareSecrets(
+            change(
+                payload = payload(hasPassword = true, hasPrivateKey = false),
+                envelopes = mapOf("password" to envelope()),
+            ),
+            opener = EnvelopeOpener { _, _ -> null },
+            retainedSecrets = mapOf("password" to retained),
+        )
+        try {
+            assertEquals("local-secret", secrets.values.getValue("password").decodeToString())
+            assertEquals(true, secrets.states.getValue("password"))
+        } finally {
+            secrets.close()
+            retained.fill(0)
+        }
+    }
+
+    @Test
+    fun `an envelope opener exception keeps a retained local secret`() {
+        val retained = "local-secret".toByteArray()
+        val secrets = prepareSecrets(
+            change(
+                payload = payload(hasPassword = true, hasPrivateKey = false),
+                envelopes = mapOf("password" to envelope()),
+            ),
+            opener = EnvelopeOpener { _, _ -> error("device unwrap failed") },
+            retainedSecrets = mapOf("password" to retained),
+        )
+        try {
+            assertEquals("local-secret", secrets.values.getValue("password").decodeToString())
+        } finally {
+            secrets.close()
+            retained.fill(0)
+        }
+    }
+
+    @Test
     fun `an envelope opener exception is normalized and fails closed`() {
         val error = expectSecretFailure {
             prepareSecrets(

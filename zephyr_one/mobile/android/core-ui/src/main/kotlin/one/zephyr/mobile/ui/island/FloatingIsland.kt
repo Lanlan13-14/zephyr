@@ -34,13 +34,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import one.zephyr.mobile.ui.component.Icon
@@ -48,10 +50,12 @@ import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.glass.Highlight
 import one.zephyr.mobile.ui.glass.InnerShadow
 import one.zephyr.mobile.ui.glass.LocalBackdrop
+import one.zephyr.mobile.ui.glass.Shadow
 import one.zephyr.mobile.ui.glass.blur
 import one.zephyr.mobile.ui.glass.drawBackdrop
 import one.zephyr.mobile.ui.glass.lens
-import one.zephyr.mobile.ui.glass.vibrancy
+import one.zephyr.mobile.ui.glass.rememberCombinedBackdrop
+import one.zephyr.mobile.ui.glass.rememberLayerBackdrop
 import one.zephyr.mobile.ui.theme.IslandSpec
 import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
 import one.zephyr.mobile.ui.theme.ZephyrTextStyles
@@ -104,43 +108,53 @@ fun FloatingIsland(
         )
         val innerWidth = IslandGeometry.innerWidth(outerWidth, IslandSpec.innerPadding.value)
         val slotWidth = IslandGeometry.slotWidth(innerWidth, destinations.size)
-        val backdrop = LocalBackdrop.current
+        val contentBackdrop = LocalBackdrop.current
+        val capsuleBackdrop = rememberLayerBackdrop()
+        val selectedBackdrop = rememberCombinedBackdrop(contentBackdrop, capsuleBackdrop)
         val outerShape = RoundedCornerShape(IslandSpec.outerHeight / 2)
         val pillShape = RoundedCornerShape(IslandSpec.selectedPillRadius)
+        val isDark = palette.dark
 
         Box(
             modifier = Modifier
                 .width(outerWidth.dp)
                 .height(IslandSpec.outerHeight)
-                .shadow(
-                    elevation = 12.dp,
-                    shape = outerShape,
-                    ambientColor = palette.islandShadow,
-                    spotColor = palette.islandShadow,
-                )
                 .drawBackdrop(
-                    backdrop = backdrop,
+                    backdrop = contentBackdrop,
                     shape = { outerShape },
                     effects = {
-                        vibrancy()
-                        blur(16f.dp.toPx())
+                        blur(8f.dp.toPx())
                         lens(
-                            refractionHeight = 16f.dp.toPx(),
+                            refractionHeight = 12f.dp.toPx(),
                             refractionAmount = 24f.dp.toPx(),
-                            depthEffect = true,
+                            chromaticAberration = true,
                         )
                     },
-                    highlight = { Highlight.Default.copy(alpha = if (palette.dark) 0.5f else 0.7f) },
-                    shadow = null,
+                    highlight = {
+                        Highlight.Default.copy(alpha = if (isDark) 0.6f else 1f)
+                    },
+                    shadow = {
+                        Shadow(
+                            radius = 32f.dp,
+                            offset = DpOffset(0f.dp, 16f.dp),
+                            color = Color.Black.copy(alpha = if (isDark) 0.4f else 0.16f),
+                        )
+                    },
                     innerShadow = {
                         InnerShadow(
-                            radius = 6.dp,
-                            color = if (palette.dark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.04f),
+                            radius = 8f.dp,
+                            color = Color.Black.copy(alpha = if (isDark) 0.5f else 0.2f),
                         )
                     },
                     onDrawSurface = {
-                        drawRect(palette.surfaces.floating.copy(alpha = if (palette.dark) 0.22f else 0.28f))
+                        val tint = if (isDark) {
+                            Color(0xFF202020).copy(alpha = 0.10f)
+                        } else {
+                            Color.White.copy(alpha = 0.10f)
+                        }
+                        drawRect(tint)
                     },
+                    exportedBackdrop = capsuleBackdrop,
                 )
                 .clip(outerShape)
                 .padding(IslandSpec.innerPadding),
@@ -155,25 +169,27 @@ fun FloatingIsland(
                     }
                     .width(slotWidth.dp)
                     .height(IslandSpec.selectedPillHeight)
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawBackdrop(
-                        backdrop = backdrop,
+                        backdrop = selectedBackdrop,
                         shape = { pillShape },
                         effects = {
                             lens(
-                                refractionHeight = 8f.dp.toPx(),
+                                refractionHeight = 10f.dp.toPx(),
                                 refractionAmount = 14f.dp.toPx(),
                                 chromaticAberration = true,
                             )
                         },
-                        highlight = {
-                            Highlight.Default.copy(
-                                width = 0.75f.dp,
-                                alpha = 0.85f,
+                        highlight = { Highlight.Default },
+                        shadow = null,
+                        innerShadow = {
+                            InnerShadow(
+                                radius = 8f.dp,
+                                color = Color.Black.copy(alpha = 0.8f),
                             )
                         },
-                        shadow = null,
                         onDrawSurface = {
-                            drawRect(palette.islandSelection.copy(alpha = 0.32f))
+                            drawRect(Color.White.copy(alpha = 0.08f))
                         },
                     )
                     .clip(pillShape),
