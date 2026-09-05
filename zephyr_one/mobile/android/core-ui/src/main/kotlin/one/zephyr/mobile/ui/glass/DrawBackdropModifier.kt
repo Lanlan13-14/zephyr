@@ -278,10 +278,10 @@ private class DrawBackdropNode(
                 ),
                 block = recordBackdropBlock,
             )
-            if (!recorded) return@drawBackdropLayer
-
-            layer.topLeft = if (pad != 0f) IntOffset(-pad.toInt(), -pad.toInt()) else IntOffset.Zero
-            drawLayer(layer)
+            if (recorded) {
+                layer.topLeft = if (pad != 0f) IntOffset(-pad.toInt(), -pad.toInt()) else IntOffset.Zero
+                drawLayer(layer)
+            }
         }
     }
 
