@@ -349,6 +349,7 @@ class PersonalSettingsSectionService {
                         entityId: String(after.sectionKey || meta.entityId || ''),
                         fields: changedFields,
                         revision,
+                        changedAt: Date.now(),
                     });
                 }
             }

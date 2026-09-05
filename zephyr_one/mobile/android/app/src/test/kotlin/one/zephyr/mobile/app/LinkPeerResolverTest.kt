@@ -31,6 +31,22 @@ class LinkPeerResolverTest {
     }
 
     @Test
+    fun `AAAA-first lookup still dials IPv4 first and keeps every address`() {
+        val v6 = InetAddress.getByName("2001:db8::1")
+        val v4 = InetAddress.getByName("203.0.113.9")
+        val targets = LinkPeerResolver.resolveAll("https://zephyr.example:8443/api/link/v2") {
+            arrayOf(v6, v4)
+        }
+        assertEquals(2, targets.size)
+        assertEquals("https://203.0.113.9:8443/api/link/v2", targets[0].url)
+        assertTrue(targets[1].url.startsWith("https://[") && targets[1].url.contains("]:8443/api/link/v2"))
+        assertTrue(targets.all { it.serverName == "zephyr.example" })
+        assertEquals("https://203.0.113.9:8443/api/link/v2", LinkPeerResolver.resolve(
+            "https://zephyr.example:8443/api/link/v2",
+        ) { arrayOf(v6, v4) }.url)
+    }
+
+    @Test
     fun `IPv6 zone ids are stripped before rewriting the URL`() {
         assertEquals("fe80::1", LinkPeerResolver.canonicalIpLiteral("fe80::1%wlan0"))
         val loopback6 = InetAddress.getByName("::1")

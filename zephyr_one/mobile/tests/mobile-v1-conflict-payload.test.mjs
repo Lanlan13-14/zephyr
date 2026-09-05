@@ -325,6 +325,97 @@ test('a conflict projection at JSON depth 16 remains valid', () => {
   assert.equal(JSON.stringify(result).includes(canary), false);
 });
 
+test('a later overlapping edit wins instead of parking a conflict card', () => {
+  const db = createDatabase(':memory:', { forceBuiltin: true });
+  try {
+    const store = new MobileV1Store({ db, entityRegistry });
+    store.setEntityVersion({
+      ownerUserId: alice.userId,
+      entityType: 'connection',
+      entityId: 'conn-1',
+      revision: 5,
+    });
+    store.setFieldRevisions({
+      ownerUserId: alice.userId,
+      entityType: 'connection',
+      entityId: 'conn-1',
+      fields: ['name'],
+      revision: 5,
+      changedAt: 1_000,
+    });
+
+    const state = { writes: 0, row: canonicalConnection() };
+    const api = Object.create(MobileV1Api.prototype);
+    api.entityByType = new Map([['connection', connectionSpec]]);
+    api.adapters = new Map([['connection', {
+      read: () => state.row,
+      residency: () => 'owned',
+      revisionOf: (row) => Number(row.revision) || 1,
+      update: (user, id, patch) => {
+        state.writes += 1;
+        state.row = { ...state.row, ...patch, revision: 6, updatedAt: 2_000 };
+        return state.row;
+      },
+      create: () => { throw new Error('LWW must update, not create'); },
+      remove: () => { throw new Error('LWW must not delete'); },
+    }]]);
+    api.store = store;
+    api.db = { transaction: (fn) => () => fn() };
+    api.assertRegistry = () => true;
+    api.changeBridge = { recordMutation: () => ({ changeSeq: 1 }) };
+
+    const result = apply({ api }, alice, operation(connectionSpec, {
+      clientModifiedAt: 2_000,
+      payload: { name: 'Phone name' },
+    }));
+    assert.equal(result.status, 'accepted');
+    assert.equal(state.writes, 1);
+    assert.equal(state.row.name, 'Phone name');
+    assert.equal(store.fieldWriteTimes(alice.userId, 'connection', 'conn-1').get('name'), 2_000);
+  } finally {
+    try { db.close(); } catch {}
+  }
+});
+
+test('an older overlapping edit still conflicts when the server write is newer', () => {
+  const db = createDatabase(':memory:', { forceBuiltin: true });
+  try {
+    const store = new MobileV1Store({ db, entityRegistry });
+    store.setEntityVersion({
+      ownerUserId: alice.userId,
+      entityType: 'connection',
+      entityId: 'conn-1',
+      revision: 5,
+    });
+    store.setFieldRevisions({
+      ownerUserId: alice.userId,
+      entityType: 'connection',
+      entityId: 'conn-1',
+      fields: ['name'],
+      revision: 5,
+      changedAt: 3_000,
+    });
+
+    const api = Object.create(MobileV1Api.prototype);
+    api.entityByType = new Map([['connection', connectionSpec]]);
+    api.adapters = new Map([['connection', {
+      read: () => canonicalConnection(),
+      residency: () => 'owned',
+      revisionOf: (row) => row.revision,
+      update: () => { throw new Error('older write must not clobber'); },
+    }]]);
+    api.store = store;
+    api.db = { transaction: (fn) => () => fn() };
+    api.assertRegistry = () => true;
+
+    const result = apply({ api }, alice, operation(connectionSpec, { clientModifiedAt: 1_000 }));
+    assert.equal(result.status, 'conflict');
+    assert.equal(result.conflict.reason, 'field_overlap');
+  } finally {
+    try { db.close(); } catch {}
+  }
+});
+
 test('OpenAPI source freezes the safe conflict payload and Android field names', () => {
   const openapi = JSON.parse(fs.readFileSync(
     path.join(repoRoot, 'zephyr_one', 'mobile', 'contracts', 'openapi-mobile-v1.json'),

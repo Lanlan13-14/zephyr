@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -699,6 +700,19 @@ func (n *Node) clientForPeer(baseURL string, spkiPins []string, insecure bool, s
 			}
 			return errors.New("link: SPKI pin mismatch")
 		}
+	} else if explicitSNI {
+		// Replacing Transport.TLSClientConfig drops Go's default pool unless
+		// RootCAs is set. Android has no /etc/ssl/certs; the host exports the
+		// system store as SSL_CERT_FILE. Load it so a domain rewritten to an
+		// IP literal still verifies against public CAs.
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("link: system CA pool: %w", err)
+		}
+		if roots == nil {
+			roots = x509.NewCertPool()
+		}
+		tlsConfig.RootCAs = roots
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsConfig

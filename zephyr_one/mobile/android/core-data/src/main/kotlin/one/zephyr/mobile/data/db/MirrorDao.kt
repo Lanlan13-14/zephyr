@@ -97,6 +97,22 @@ interface MirrorDao {
     suspend fun markPending(entityType: String, entityId: String)
 
     /**
+     * ACK of our own push. The echo change is skipped when localRevision >=
+     * change.revision, so the accepted server revision has to land here or the
+     * next local edit still pushes the pre-ACK base and collides with itself.
+     */
+    @Query(
+        "UPDATE mirror_entities SET revision = :revision, localUpdatedAt = :localUpdatedAt " +
+            "WHERE entityType = :entityType AND entityId = :entityId AND revision < :revision",
+    )
+    suspend fun stampAckedRevision(
+        entityType: String,
+        entityId: String,
+        revision: Long,
+        localUpdatedAt: Long,
+    )
+
+    /**
      * FTS4 match. Only owned rows are indexed, so a shared note can never be found here.
      */
     @Query(

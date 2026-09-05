@@ -199,6 +199,7 @@ class MobileV1Store {
                 entity_id TEXT NOT NULL,
                 field_path TEXT NOT NULL,
                 revision INTEGER NOT NULL,
+                changed_at INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(owner_user_id, entity_type, entity_id, field_path)
             );
             CREATE INDEX IF NOT EXISTS idx_mobile_field_revision_entity
@@ -389,6 +390,7 @@ class MobileV1Store {
         };
         ensure('mobile_devices', 'config_revision', 'INTEGER NOT NULL DEFAULT 1');
         ensure('mobile_devices', 'binding_revision', 'INTEGER NOT NULL DEFAULT 1');
+        ensure('mobile_entity_field_revisions', 'changed_at', 'INTEGER NOT NULL DEFAULT 0');
         ensure('mobile_blob_uploads', 'received_bytes', 'INTEGER NOT NULL DEFAULT 0');
         ensure('mobile_blob_uploads', 'finalizing_at', 'INTEGER');
         ensure('mobile_blob_uploads', 'finalize_attempts', 'INTEGER NOT NULL DEFAULT 0');
@@ -1194,15 +1196,40 @@ class MobileV1Store {
     }
 
     /** Field-level revisions: the data SYNC_STATE_MACHINE.md section 7 merges on. */
-    setFieldRevisions({ ownerUserId, entityType, entityId, fields, revision }) {
+    setFieldRevisions({ ownerUserId, entityType, entityId, fields, revision, changedAt }) {
+        const writtenAt = Number(changedAt);
+        const stampedAt = Number.isSafeInteger(writtenAt) && writtenAt > 0 ? writtenAt : nowMs();
         const stmt = this.db.prepare(`INSERT INTO mobile_entity_field_revisions
-            (owner_user_id, entity_type, entity_id, field_path, revision)
-            VALUES (?, ?, ?, ?, ?)
+            (owner_user_id, entity_type, entity_id, field_path, revision, changed_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(owner_user_id, entity_type, entity_id, field_path)
-            DO UPDATE SET revision = excluded.revision`);
+            DO UPDATE SET revision = excluded.revision, changed_at = excluded.changed_at`);
         for (const field of fields || []) {
-            stmt.run(String(ownerUserId), String(entityType), String(entityId), String(field), Number(revision) || 1);
+            stmt.run(
+                String(ownerUserId),
+                String(entityType),
+                String(entityId),
+                String(field),
+                Number(revision) || 1,
+                stampedAt,
+            );
         }
+    }
+
+    /**
+     * Wall-clock write times for last-write-wins on overlapping fields.
+     *
+     * Revision numbers only order writes that already serialized on this
+     * server. Concurrent edits from two devices share no such order, so the
+     * later `clientModifiedAt` / canonical `changedAt` has to break the tie.
+     */
+    fieldWriteTimes(ownerUserId, entityType, entityId) {
+        const rows = this.db.prepare(`SELECT field_path, changed_at FROM mobile_entity_field_revisions
+            WHERE owner_user_id = ? AND entity_type = ? AND entity_id = ?`)
+            .all(String(ownerUserId), String(entityType), String(entityId));
+        const times = new Map();
+        for (const row of rows) times.set(String(row.field_path), Number(row.changed_at) || 0);
+        return times;
     }
 
     fieldRevisions(ownerUserId, entityType, entityId) {
