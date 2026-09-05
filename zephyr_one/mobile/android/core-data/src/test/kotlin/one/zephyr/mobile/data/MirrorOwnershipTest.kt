@@ -80,6 +80,17 @@ class MirrorOwnershipTest {
     }
 
     @Test
+    fun `unsupported rows are skippable without weakening known owner checks`() {
+        requireOwnedChanges(
+            listOf(
+                change(1, entityId = "legacy-activity", payload = JsonObject(emptyMap())).copy(unsupported = true),
+                change(2, entityId = "owned", payload = ownedPayload()),
+            ),
+            BOUND_USER,
+        )
+    }
+
+    @Test
     fun `unknown future entity remains skippable without weakening known owner checks`() {
         requireOwnedChanges(
             listOf(

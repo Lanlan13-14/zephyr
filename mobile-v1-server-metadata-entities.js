@@ -296,13 +296,17 @@ function projectBackupMetadata(row, serverId) {
 }
 
 function projectActivityEvent(row, user) {
-    if (!row || String(row.userId || '') !== String(user?.userId || '')) return null;
+    if (!row || !user) return null;
+    const owner = String(row.userId || '');
+    const bound = String(user.userId || '');
+    const username = String(user.username || '');
+    if (!owner || (owner !== bound && (!username || owner !== username))) return null;
     const id = String(row.id || '');
     if (!id) return null;
     const type = String(row.type || 'info').slice(0, 80);
     return {
         id,
-        userId: String(user.userId),
+        userId: bound,
         time: Math.max(0, Number(row.time) || 0),
         /* Activity text can include arbitrary server output or old command
          * bodies. Mobile transports a fixed label from this allow-list, never
@@ -546,20 +550,60 @@ class CanonicalActivityEventService {
 
     listActivityEventsForUser(userId, { limit = 500 } = {}) {
         const capped = Math.max(1, Math.min(500, Number(limit) || 500));
+        const keys = this.ownerKeys(userId);
+        if (!keys.length) return [];
+        const placeholders = keys.map(() => '?').join(', ');
         return this.db.prepare(`SELECT id, userId, time, message, type, category, outcome, protocol, connectionId
-            FROM activities WHERE userId = ? ORDER BY time DESC LIMIT ?`).all(String(userId || ''), capped);
+            FROM activities WHERE userId IN (${placeholders}) ORDER BY time DESC LIMIT ?`).all(...keys, capped);
     }
 
     readActivityEventForUser(userId, eventId) {
+        const keys = this.ownerKeys(userId);
+        if (!keys.length) return null;
+        const placeholders = keys.map(() => '?').join(', ');
         return this.db.prepare(`SELECT id, userId, time, message, type, category, outcome, protocol, connectionId
-            FROM activities WHERE userId = ? AND id = ?`).get(String(userId || ''), String(eventId || '')) || null;
+            FROM activities WHERE userId IN (${placeholders}) AND id = ?`).get(...keys, String(eventId || '')) || null;
+    }
+
+    /**
+     * Historical activity rows stored username in `userId`. Match both the
+     * canonical userId and username so One can project those rows instead of
+     * emitting an empty payload that freezes the change cursor.
+     */
+    ownerKeys(userId) {
+        const id = String(userId || '');
+        if (!id) return [];
+        const keys = [id];
+        try {
+            const user = this.storage.getUserById(id) || this.storage.getUser(id);
+            if (user?.userId && !keys.includes(user.userId)) keys.push(user.userId);
+            if (user?.username && !keys.includes(user.username)) keys.push(user.username);
+        } catch {
+            /* Storage lookups must not take the change page down. */
+        }
+        return keys;
     }
 
     appendActivityEvent(event) {
-        const row = { ...event, userId: event?.userId || null };
+        const rawOwner = event?.userId ? String(event.userId) : null;
+        let resolved = null;
+        if (rawOwner) {
+            try {
+                resolved = this.storage.getUserById(rawOwner) || this.storage.getUser(rawOwner) || null;
+            } catch {
+                resolved = null;
+            }
+        }
+        const canonicalUserId = resolved?.userId || rawOwner;
+        const row = { ...event, userId: canonicalUserId || null };
         return this.db.transaction(() => {
             this.storage.addActivity(row);
-            if (row.userId) recordActivityEvent(this.changeBridge, { userId: String(row.userId) }, row);
+            if (row.userId) {
+                recordActivityEvent(this.changeBridge, {
+                    userId: String(row.userId),
+                    username: resolved?.username || '',
+                }, row);
+            }
             return row;
         })();
     }

@@ -24,6 +24,12 @@ data class SyncChange(
     /** Envelopes keyed by registry field name. Opened only after the AAD is verified. */
     val secretEnvelopes: Map<String, SecretEnvelope> = emptyMap(),
     val tombstone: JsonObject? = null,
+    /**
+     * Server could not project this row (legacy owner key, deleted-after-upsert).
+     * The client must skip it and still advance the cursor; treating it as an
+     * empty owned payload would freeze the whole page on residency.
+     */
+    val unsupported: Boolean = false,
 ) {
     val isDelete: Boolean get() = action == SyncAction.DELETE
 }

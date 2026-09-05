@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -74,6 +75,18 @@ class LayerBackdrop internal constructor(
 
     internal var layerCoordinates: LayoutCoordinates? by mutableStateOf(null)
 
+    /**
+     * Bumped after every successful off-screen record. Glass consumers read this
+     * during draw so they invalidate when the source layer's pixels change;
+     * otherwise the island keeps sampling the first (often empty) frame.
+     */
+    internal var recordGeneration: Int by mutableIntStateOf(0)
+        private set
+
+    internal fun notifyRecorded() {
+        recordGeneration += 1
+    }
+
     private var inverseLayerScope: InverseLayerScope? = null
 
     override fun DrawScope.drawBackdrop(
@@ -81,6 +94,7 @@ class LayerBackdrop internal constructor(
         coordinates: LayoutCoordinates?,
         layerBlock: (GraphicsLayerScope.() -> Unit)?,
     ) {
+        recordGeneration
         val coords = coordinates ?: return
         val layerCoords = layerCoordinates ?: return
         withTransform({
@@ -144,7 +158,9 @@ private class LayerBackdropNode(
     override fun ContentDrawScope.draw() {
         drawContent()
         if (size.width < 1f || size.height < 1f) return
-        recordLayer(backdrop.graphicsLayer) { backdrop.onDraw(this@draw) }
+        if (recordLayer(backdrop.graphicsLayer) { backdrop.onDraw(this@draw) }) {
+            backdrop.notifyRecorded()
+        }
     }
 
     override fun onGloballyPositioned(coordinates: LayoutCoordinates) {

@@ -267,3 +267,122 @@ test('bootstrap seals stored secrets to the bound device and keeps note bodies i
     try { db.close(); } catch {}
   }
 });
+
+test('activity events stored under username still project to the bound userId', () => {
+  const { CanonicalActivityEventService, projectActivityEvent } = require(
+    path.join(repoRoot, 'mobile-v1-server-metadata-entities.js'),
+  );
+  const db = createDatabase(':memory:', { forceBuiltin: true });
+  try {
+    db.exec(`CREATE TABLE activities (
+      id TEXT PRIMARY KEY, time INTEGER, message TEXT, type TEXT, userId TEXT,
+      category TEXT, outcome TEXT, protocol TEXT, connectionId TEXT
+    );`);
+    db.prepare(`INSERT INTO activities (id,time,message,type,userId,category,outcome,protocol,connectionId)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(
+      'evt-1', 1_700_000_000_000, 'ssh login', 'success', 'root', 'session', 'ok', 'ssh', 'c-1',
+    );
+    const storage = {
+      addActivity() {},
+      getUserById: (id) => id === 'user-uuid' ? { userId: 'user-uuid', username: 'root' } : null,
+      getUser: (name) => name === 'root' ? { userId: 'user-uuid', username: 'root' } : null,
+    };
+    const service = new CanonicalActivityEventService({ db, storage, changeBridge: { recordMutation() {} } });
+    const bound = { userId: 'user-uuid', username: 'root', status: 'active' };
+    const row = service.readActivityEventForUser(bound.userId, 'evt-1');
+    assert.ok(row);
+    const projected = projectActivityEvent(row, bound);
+    assert.equal(projected.userId, 'user-uuid');
+    assert.equal(projected.id, 'evt-1');
+    assert.equal(projected.connectionId, 'c-1');
+  } finally {
+    try { db.close(); } catch {}
+  }
+});
+
+test('a name-only change reseals the password under the password field revision', () => {
+  const connection = {
+    id: 'connection-rename',
+    ownerUserId: user.userId,
+    revision: 3,
+    name: 'renamed-host',
+    host: '10.1.1.1',
+    port: 22,
+    protocol: 'SSH',
+    username: 'root',
+    password: 's3cret-downlink',
+    privateKey: '',
+    updatedAt: 3,
+  };
+  const api = Object.create(MobileV1Api.prototype);
+  api.entityByType = new Map([['connection', connectionSpec]]);
+  api.adapters = new Map([
+    ['connection', {
+      read: (_owner, id) => id === connection.id ? connection : null,
+      residency: () => 'owned',
+    }],
+  ]);
+  api.store = { fieldRevision: (_owner, type, id, field) => (field === 'password' ? 1 : 3) };
+  let sealedRevision = null;
+  api.ownedSecretEnvelopeFields = function ownedSecretEnvelopeFields(input) {
+    sealedRevision = this.store.fieldRevision(
+      user.userId, input.entityType, input.entityId, 'password',
+    ) || input.entityRevision;
+    return { secretEnvelopes: { password: { v: 1, entityRevision: sealedRevision } } };
+  };
+
+  const hydrated = api.hydrateChange(user, {
+    changeSeq: 50,
+    entityType: 'connection',
+    entityId: connection.id,
+    action: 'upsert',
+    revision: 3,
+    actorDeviceId: 'device-1',
+    changedAt: 3,
+    fieldMask: ['name'],
+  });
+
+  assert.equal(hydrated.payload.name, 'renamed-host');
+  assert.equal(hydrated.payload.hasPassword, true);
+  assert.equal(hydrated.payload.password, undefined);
+  assert.equal(sealedRevision, 1);
+  assert.equal(hydrated.secretEnvelopes.password.entityRevision, 1);
+});
+
+test('a full-replacement change still seals stored secrets', () => {
+  const connection = {
+    id: 'connection-full',
+    ownerUserId: user.userId,
+    revision: 1,
+    name: 'bastion',
+    password: 's3cret-downlink',
+    privateKey: '',
+  };
+  const api = Object.create(MobileV1Api.prototype);
+  api.entityByType = new Map([['connection', connectionSpec]]);
+  api.adapters = new Map([
+    ['connection', {
+      read: (_owner, id) => id === connection.id ? connection : null,
+      residency: () => 'owned',
+    }],
+  ]);
+  let sealed = false;
+  api.ownedSecretEnvelopeFields = () => {
+    sealed = true;
+    return { secretEnvelopes: { password: { v: 1 } } };
+  };
+
+  const hydrated = api.hydrateChange(user, {
+    changeSeq: 1,
+    entityType: 'connection',
+    entityId: connection.id,
+    action: 'upsert',
+    revision: 1,
+    actorDeviceId: null,
+    changedAt: 1,
+    fieldMask: [],
+  });
+
+  assert.equal(sealed, true);
+  assert.ok(hydrated.secretEnvelopes?.password);
+});

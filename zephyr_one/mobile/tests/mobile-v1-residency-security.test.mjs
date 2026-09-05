@@ -275,6 +275,7 @@ test('an accidentally owner-mismatched change aborts hydration before a cursor c
     action: 'upsert', revision: 4, fieldMask: ['name'],
   });
   assert.deepEqual(deletedAfterUpsert.payload, {});
+  assert.equal(deletedAfterUpsert.unsupported, true);
 });
 
 test('bootstrap refuses an adapter regression that returns a foreign row', () => {

@@ -25,6 +25,7 @@ import one.zephyr.mobile.model.sync.PushPrediction
 import one.zephyr.mobile.model.sync.SyncEvent
 import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.security.ResidencyViolationException
+import one.zephyr.mobile.data.SecretPayloadViolationException
 import one.zephyr.mobile.data.SecretReconciliationException
 
 /**
@@ -493,6 +494,8 @@ class SyncActor(
                 return residencyFailure(violation)
             } catch (failure: SecretReconciliationException) {
                 return secretReconciliationFailure()
+            } catch (failure: SecretPayloadViolationException) {
+                return malformedResponse("unsafe inbound secret payload")
             }
             acc.applied += applied.applied
             acc.skipped += applied.skipped

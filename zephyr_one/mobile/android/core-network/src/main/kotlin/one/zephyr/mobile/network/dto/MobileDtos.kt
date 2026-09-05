@@ -299,6 +299,7 @@ data class SyncChangeDto(
     val payload: JsonObject = JsonObject(emptyMap()),
     val secretEnvelopes: Map<String, SecretEnvelope>? = null,
     val tombstone: JsonObject? = null,
+    val unsupported: Boolean = false,
 )
 
 @Serializable

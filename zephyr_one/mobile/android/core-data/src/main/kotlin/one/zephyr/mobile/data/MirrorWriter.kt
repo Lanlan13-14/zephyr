@@ -53,11 +53,12 @@ class SecretReconciliationException(
 /**
  * Applies server changes to the account-scoped local mirror.
  *
- * Secret presence is authoritative. A present value must arrive with an envelope that opens before
- * any row is written; an absent value removes exactly the registry-derived ref. SecretStore lives
- * outside SQLite, so every mutation is committed through [SecretMutationJournal]. This also
- * prevents a later bad envelope, a Room rollback or a process death from leaving the mirror and
- * encrypted store at different revisions while the cursor stays put.
+ * Secret presence is authoritative. A present value must arrive with an envelope that opens,
+ * or with a previously opened local secret when the change is a non-secret patch. An absent
+ * value removes exactly the registry-derived ref. SecretStore lives outside SQLite, so every
+ * mutation is committed through [SecretMutationJournal]. This also prevents a later bad
+ * envelope, a Room rollback or a process death from leaving the mirror and encrypted store at
+ * different revisions while the cursor stays put.
  */
 class MirrorWriter(
     private val db: ZephyrDatabase,
@@ -92,7 +93,7 @@ class MirrorWriter(
             ) {
                 for ((index, change) in changes.withIndex()) {
                     val spec = EntityRegistry.byType[change.entityType]
-                    if (spec == null) {
+                    if (spec == null || isSkippableInboundChange(change)) {
                         skipped += 1
                         cursor = maxOf(cursor, change.changeSeq)
                         continue
@@ -136,6 +137,7 @@ class MirrorWriter(
         try {
             for ((index, change) in changes.withIndex()) {
                 if (EntityRegistry.byType[change.entityType] == null) continue
+                if (isSkippableInboundChange(change)) continue
                 val key = EntityKey(change.entityType, change.entityId)
                 val localRevision = if (revisions.containsKey(key)) {
                     revisions[key]
@@ -150,7 +152,18 @@ class MirrorWriter(
                 }
                 if (!PushPrediction.shouldApplyChange(localRevision, change.action, change.revision)) continue
                 applicableIndexes += index
-                if (!change.isDelete) prepared[index] = prepareSecrets(change, opener)
+                if (!change.isDelete) {
+                    val retained = retainedSecretsFor(change)
+                    try {
+                        prepared[index] = prepareSecrets(
+                            change,
+                            opener,
+                            retainedSecrets = retained,
+                        )
+                    } finally {
+                        retained.values.forEach { it.fill(0) }
+                    }
+                }
                 revisions[key] = change.revision
             }
             return ApplicablePage(applicableIndexes, prepared)
@@ -460,6 +473,22 @@ class MirrorWriter(
         throw SecretReconciliationException(SecretReconciliationFailure.SECRET_STORE_FAILURE, failure)
     }
 
+    /**
+     * Local plaintext already opened for this entity. Incremental name/host
+     * edits keep hasPassword=true without a new envelope; the previous secret
+     * is the source of truth until a later page actually reseals it.
+     */
+    private fun retainedSecretsFor(change: SyncChange): Map<String, ByteArray> {
+        val spec = EntityRegistry.byType[change.entityType] ?: return emptyMap()
+        if (spec.secretFields.isEmpty()) return emptyMap()
+        val retained = LinkedHashMap<String, ByteArray>()
+        for (fieldName in spec.secretFields) {
+            val plaintext = readSecret(SecretRef.of(change.entityType, change.entityId, fieldName))
+            if (plaintext != null && plaintext.isNotEmpty()) retained[fieldName] = plaintext
+        }
+        return retained
+    }
+
     private companion object {
         const val DAY_MS = 24L * 60 * 60 * 1000
     }
@@ -566,7 +595,11 @@ internal data class PreparedSecrets(
 }
 
 /** Pure envelope/presence validation shared by change pages and bootstrap staging. */
-internal fun prepareSecrets(change: SyncChange, opener: EnvelopeOpener?): PreparedSecrets {
+internal fun prepareSecrets(
+    change: SyncChange,
+    opener: EnvelopeOpener?,
+    retainedSecrets: Map<String, ByteArray> = emptyMap(),
+): PreparedSecrets {
     val spec = EntityRegistry.require(change.entityType)
     if (change.secretEnvelopes.keys.any { it !in spec.secretFields }) {
         throw SecretReconciliationException(SecretReconciliationFailure.INVALID_SECRET_FIELD)
@@ -588,24 +621,30 @@ internal fun prepareSecrets(change: SyncChange, opener: EnvelopeOpener?): Prepar
             }
             states[fieldName] = declared
             if (declared) {
-                if (!change.secretEnvelopes.containsKey(fieldName)) {
-                    throw SecretReconciliationException(
-                        SecretReconciliationFailure.MISSING_ENVELOPE,
-                    )
-                }
-                values[fieldName] = try {
-                    opener?.open(change, fieldName)
-                        ?: throw SecretReconciliationException(
+                val opened = if (change.secretEnvelopes.containsKey(fieldName)) {
+                    try {
+                        opener?.open(change, fieldName)
+                            ?: throw SecretReconciliationException(
+                                SecretReconciliationFailure.ENVELOPE_REJECTED,
+                            )
+                    } catch (failure: SecretReconciliationException) {
+                        throw failure
+                    } catch (failure: Throwable) {
+                        throw SecretReconciliationException(
                             SecretReconciliationFailure.ENVELOPE_REJECTED,
+                            failure,
                         )
-                } catch (failure: SecretReconciliationException) {
-                    throw failure
-                } catch (failure: Throwable) {
-                    throw SecretReconciliationException(
-                        SecretReconciliationFailure.ENVELOPE_REJECTED,
-                        failure,
-                    )
+                    }
+                } else {
+                    val retained = retainedSecrets[fieldName]
+                    if (retained == null || retained.isEmpty()) {
+                        throw SecretReconciliationException(
+                            SecretReconciliationFailure.MISSING_ENVELOPE,
+                        )
+                    }
+                    retained.copyOf()
                 }
+                values[fieldName] = opened
             } else if (change.secretEnvelopes.containsKey(fieldName)) {
                 throw SecretReconciliationException(
                     SecretReconciliationFailure.INVALID_PRESENCE,
@@ -696,7 +735,9 @@ internal fun requireOwnedChanges(changes: List<SyncChange>, boundUserId: String)
         throw ResidencyViolationException("refusing to mirror without a bound account owner")
     }
     for (change in changes) {
-        if (EntityRegistry.byType[change.entityType] != null) requireOwnedChange(change, boundUserId)
+        if (EntityRegistry.byType[change.entityType] == null) continue
+        if (isSkippableInboundChange(change)) continue
+        requireOwnedChange(change, boundUserId)
     }
 }
 
@@ -704,10 +745,18 @@ internal fun requireOwnedChanges(changes: List<SyncChange>, boundUserId: String)
 internal fun requireSafeInboundChanges(changes: List<SyncChange>) {
     for (change in changes) {
         if (EntityRegistry.byType[change.entityType] == null) continue
+        if (isSkippableInboundChange(change)) continue
         val payload = if (change.isDelete) change.tombstone ?: change.payload else change.payload
         SecretPayloadSanitizer.requireSafe(change.entityType, payload)
     }
 }
+
+/**
+ * A live change whose canonical row cannot be projected (legacy owner keys,
+ * deleted-after-upsert). The server marks these skippable so one bad row
+ * cannot freeze the account cursor.
+ */
+internal fun isSkippableInboundChange(change: SyncChange): Boolean = change.unsupported
 
 internal fun requireOwnedChange(change: SyncChange, boundUserId: String): String {
     val spec = EntityRegistry.require(change.entityType)

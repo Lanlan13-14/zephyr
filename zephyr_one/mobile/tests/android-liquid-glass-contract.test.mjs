@@ -75,6 +75,26 @@ test('FloatingIsland integrates Liquid Glass with backdrop sampling and refracti
   assert.ok(islandSource.includes('vibrancy()'));
   assert.ok(islandSource.includes('chromaticAberration = true'));
   assert.ok(islandSource.includes('Highlight.Default'));
+  assert.ok(
+    islandSource.includes('palette.surfaces.floating.copy(alpha = if (palette.dark) 0.22f else 0.28f)'),
+    'island surface tint must stay translucent enough to show the sampled backdrop',
+  );
+  assert.ok(
+    islandSource.includes('palette.islandSelection.copy(alpha = 0.32f)'),
+    'selected pill tint must stay translucent enough to show the sampled backdrop',
+  );
+  assert.equal(
+    islandSource.includes('0.82f') || islandSource.includes('0.90f') || islandSource.includes('0.72f'),
+    false,
+    'opaque island tints hide liquid glass',
+  );
+});
+
+test('LayerBackdrop invalidates glass consumers after each recorded frame', () => {
+  const backdrop = fs.readFileSync(path.join(GLASS_ROOT, 'Backdrop.kt'), 'utf8');
+  assert.ok(backdrop.includes('recordGeneration'));
+  assert.ok(backdrop.includes('fun notifyRecorded()'));
+  assert.ok(backdrop.includes('backdrop.notifyRecorded()'));
 });
 
 test('ZephyrOneRoot establishes root Backdrop and propagates LocalBackdrop', () => {
