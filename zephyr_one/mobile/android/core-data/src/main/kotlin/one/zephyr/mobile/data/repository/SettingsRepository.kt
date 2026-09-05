@@ -79,11 +79,13 @@ class SettingsRepository(
 
     fun observePreferences(): Flow<Map<String, JsonObject>> =
         db.devicePreferenceDao().observeAll().map { rows ->
-            rows.associate { row -> row.key to EntityCodec.parse(row.valueJson) }
+            rows.mapNotNull { row ->
+                parsePreferenceValue(row.valueJson)?.let { row.key to it }
+            }.toMap()
         }
 
     suspend fun preference(key: String): JsonObject? =
-        db.devicePreferenceDao().find(key)?.let { EntityCodec.parse(it.valueJson) }
+        db.devicePreferenceDao().find(key)?.let { parsePreferenceValue(it.valueJson) }
 
     suspend fun putPreference(key: String, value: JsonObject, nowMs: Long) {
         db.devicePreferenceDao().upsert(
@@ -135,5 +137,14 @@ class SettingsRepository(
         const val PREF_AI_SKILLS = "one.ai.skills"
         const val PREF_AI_ENV_NAMES = "one.ai.envNames"
         const val PREF_AI_ENV_VALUES = "one.ai.envValues"
+
+        /**
+         * `device_preferences.valueJson` is documented as a JSON object, but the
+         * table also holds opaque markers (hex readiness) and, briefly, a bare
+         * envelope serverId. Those must not crash the Compose collectors on
+         * [observePreferences].
+         */
+        internal fun parsePreferenceValue(valueJson: String): JsonObject? =
+            runCatching { EntityCodec.parse(valueJson) }.getOrNull()
     }
 }
