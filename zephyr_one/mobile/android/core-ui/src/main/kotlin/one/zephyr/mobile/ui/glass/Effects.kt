@@ -12,7 +12,6 @@ import androidx.compose.ui.graphics.ColorMatrixColorFilter
 import androidx.compose.ui.graphics.RenderEffect
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asAndroidColorFilter
-import androidx.compose.ui.graphics.asAndroidRenderEffect
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.util.fastCoerceAtLeast
