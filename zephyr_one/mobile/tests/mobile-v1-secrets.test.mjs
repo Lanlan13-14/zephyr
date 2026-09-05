@@ -454,7 +454,10 @@ test("secret clear and replace have deterministic field-conflict semantics", asy
     entityId: state.entityId,
     action: "upsert",
     baseRevision: 1,
-    clientModifiedAt: Date.now(),
+    // The previous test already cleared the password. Last-write-wins only
+    // overwrites when this timestamp is newer than that clear; a stale clock
+    // must still conflict so a late-arriving older secret cannot resurrect.
+    clientModifiedAt: 1,
     fieldMask: [],
     payload: {},
     secretEnvelopes: { password: envelope },
