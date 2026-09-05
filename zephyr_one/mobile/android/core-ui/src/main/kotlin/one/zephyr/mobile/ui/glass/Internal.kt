@@ -49,8 +49,7 @@ internal fun DrawScope.recordLayer(
         }
         true
     } catch (failure: Throwable) {
-        GlassRuntime.disableEffects()
-        android.util.Log.e("ZephyrGlass", "graphics layer record failed; glass disabled", failure)
+        android.util.Log.w("ZephyrGlass", "graphics layer record skipped this frame", failure)
         false
     }
 }

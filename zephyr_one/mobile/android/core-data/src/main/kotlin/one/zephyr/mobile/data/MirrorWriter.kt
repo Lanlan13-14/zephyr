@@ -621,22 +621,23 @@ internal fun prepareSecrets(
             }
             states[fieldName] = declared
             if (declared) {
+                val retained = retainedSecrets[fieldName]
                 val opened = if (change.secretEnvelopes.containsKey(fieldName)) {
-                    try {
+                    val plaintext = try {
                         opener?.open(change, fieldName)
-                            ?: throw SecretReconciliationException(
-                                SecretReconciliationFailure.ENVELOPE_REJECTED,
-                            )
                     } catch (failure: SecretReconciliationException) {
                         throw failure
                     } catch (failure: Throwable) {
-                        throw SecretReconciliationException(
+                        null
+                    }
+                    when {
+                        plaintext != null && plaintext.isNotEmpty() -> plaintext
+                        retained != null && retained.isNotEmpty() -> retained.copyOf()
+                        else -> throw SecretReconciliationException(
                             SecretReconciliationFailure.ENVELOPE_REJECTED,
-                            failure,
                         )
                     }
                 } else {
-                    val retained = retainedSecrets[fieldName]
                     if (retained == null || retained.isEmpty()) {
                         throw SecretReconciliationException(
                             SecretReconciliationFailure.MISSING_ENVELOPE,

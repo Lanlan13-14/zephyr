@@ -311,17 +311,22 @@ private class DrawBackdropNode(
             drawContent()
             onDrawFront?.invoke(this)
 
-            exportedBackdrop?.graphicsLayer?.let { layer ->
-                recordLayer(layer) {
+            val exported = exportedBackdrop
+            exported?.graphicsLayer?.let { layer ->
+                if (recordLayer(layer) {
                     onDrawBehind?.invoke(this)
                     drawBackdropLayer()
                     onDrawSurface?.invoke(this)
                     onDrawFront?.invoke(this)
+                }) {
+                    exported.notifyRecorded()
                 }
             }
         } catch (failure: Throwable) {
-            GlassRuntime.disableEffects()
-            android.util.Log.e("ZephyrGlass", "backdrop draw failed; glass disabled", failure)
+            /* A single bad frame (0x0 record, Adreno quirk) must not kill
+             * glass for the rest of the process. Skip this draw; next frame
+             * retries. AGSL compile failures still disable shaders. */
+            android.util.Log.w("ZephyrGlass", "backdrop draw skipped this frame", failure)
             onDrawSurface?.invoke(this)
             drawContent()
         }
@@ -362,8 +367,7 @@ private class DrawBackdropNode(
             graphicsLayer?.renderEffect = effectScope.renderEffect
             padding = effectScope.padding
         } catch (failure: Throwable) {
-            GlassRuntime.disableEffects()
-            android.util.Log.e("ZephyrGlass", "backdrop effect failed; glass disabled", failure)
+            android.util.Log.w("ZephyrGlass", "backdrop effect skipped this frame", failure)
             graphicsLayer?.renderEffect = null
             padding = 0f
         }

@@ -14,10 +14,10 @@ import one.zephyr.mobile.security.MobileAad
  * (core-security) and the binding identity needed to rebuild the AAD. core-data deliberately only
  * sees the [EnvelopeOpener] port, so the mirror writer cannot reach key material.
  *
- * A rejection returns null to the mirror writer, which aborts the complete page without advancing
- * its revision or cursor. Incremental non-secret patches keep the local plaintext instead of
- * requiring a fresh envelope; only a ciphertext that is actually present is opened here, and it
- * is opened under the revision stamped on the envelope itself.
+ * A rejection returns null. The mirror writer then either keeps a previously
+ * opened local secret (incremental non-secret patches) or fails the page.
+ * Ciphertext is opened first under the envelope's own revision, then under
+ * the change-feed revision for older main ends.
  */
 class DeviceEnvelopeOpener(
     private val identity: DeviceIdentity,
@@ -35,37 +35,42 @@ class DeviceEnvelopeOpener(
 
     override fun open(change: SyncChange, fieldName: String): ByteArray? {
         val envelope = change.secretEnvelopes[fieldName] ?: return null
-        /* AAD is bound to the revision the ciphertext was sealed under, not
-         * the change-feed revision. Incremental name/host edits reuse the
-         * previous envelope; opening it with change.revision is an AAD
-         * mismatch that aborts the whole page and freezes the cursor. */
-        val expected = MobileAad.SecretInput(
-            serverId = serverId(),
-            userId = userId,
-            deviceId = deviceId,
-            entityType = change.entityType,
-            entityId = change.entityId,
-            fieldName = fieldName,
-            entityRevision = envelope.entityRevision,
-            keyVersion = envelope.keyVersion,
-        )
-        return try {
-            identity.withPrivateKey { privateKey ->
-                DeviceEnvelopeCrypto.openSecretEnvelope(
-                    envelope = envelope,
-                    expected = expected,
-                    knownKeyVersions = knownKeyVersions(),
-                    privateKey = privateKey,
-                )
+        /* Prefer the revision stamped on the envelope (the one the ciphertext
+         * was sealed under). Fall back to the change-feed revision for older
+         * main ends that resealed every patch at the entity revision. */
+        val revisions = linkedSetOf(envelope.entityRevision, change.revision)
+            .filter { it > 0L }
+        var lastRejection: String? = null
+        for (revision in revisions) {
+            val expected = MobileAad.SecretInput(
+                serverId = serverId(),
+                userId = userId,
+                deviceId = deviceId,
+                entityType = change.entityType,
+                entityId = change.entityId,
+                fieldName = fieldName,
+                entityRevision = revision,
+                keyVersion = envelope.keyVersion,
+            )
+            try {
+                return identity.withPrivateKey { privateKey ->
+                    DeviceEnvelopeCrypto.openSecretEnvelope(
+                        envelope = envelope,
+                        expected = expected,
+                        knownKeyVersions = knownKeyVersions(),
+                        privateKey = privateKey,
+                    )
+                }
+            } catch (rejection: EnvelopeRejection) {
+                lastRejection = rejection.code
+            } catch (_: Exception) {
+                lastRejection = "envelope_open_failed"
             }
-        } catch (rejection: EnvelopeRejection) {
-            onRejected(change.entityType + "/" + change.entityId + "/" + fieldName, rejection.code)
-            null
-        } catch (failure: Exception) {
-            // A cipher failure is reported the same way as a structural rejection: the message is
-            // never surfaced, because it could echo ciphertext into a log.
-            onRejected(change.entityType + "/" + change.entityId + "/" + fieldName, "envelope_open_failed")
-            null
         }
+        onRejected(
+            change.entityType + "/" + change.entityId + "/" + fieldName,
+            lastRejection ?: "envelope_open_failed",
+        )
+        return null
     }
 }
