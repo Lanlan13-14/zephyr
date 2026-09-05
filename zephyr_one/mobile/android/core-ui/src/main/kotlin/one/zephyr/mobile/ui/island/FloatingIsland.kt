@@ -35,6 +35,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -44,6 +45,13 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import one.zephyr.mobile.ui.component.Icon
 import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.glass.Highlight
+import one.zephyr.mobile.ui.glass.InnerShadow
+import one.zephyr.mobile.ui.glass.LocalBackdrop
+import one.zephyr.mobile.ui.glass.blur
+import one.zephyr.mobile.ui.glass.drawBackdrop
+import one.zephyr.mobile.ui.glass.lens
+import one.zephyr.mobile.ui.glass.vibrancy
 import one.zephyr.mobile.ui.theme.IslandSpec
 import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
 import one.zephyr.mobile.ui.theme.ZephyrTextStyles
@@ -96,6 +104,9 @@ fun FloatingIsland(
         )
         val innerWidth = IslandGeometry.innerWidth(outerWidth, IslandSpec.innerPadding.value)
         val slotWidth = IslandGeometry.slotWidth(innerWidth, destinations.size)
+        val backdrop = LocalBackdrop.current
+        val outerShape = RoundedCornerShape(IslandSpec.outerHeight / 2)
+        val pillShape = RoundedCornerShape(IslandSpec.selectedPillRadius)
 
         Box(
             modifier = Modifier
@@ -103,12 +114,35 @@ fun FloatingIsland(
                 .height(IslandSpec.outerHeight)
                 .shadow(
                     elevation = 12.dp,
-                    shape = RoundedCornerShape(IslandSpec.outerHeight / 2),
+                    shape = outerShape,
                     ambientColor = palette.islandShadow,
                     spotColor = palette.islandShadow,
                 )
-                .clip(RoundedCornerShape(IslandSpec.outerHeight / 2))
-                .background(palette.surfaces.floating)
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { outerShape },
+                    effects = {
+                        vibrancy()
+                        blur(16f.dp.toPx())
+                        lens(
+                            refractionHeight = 16f.dp.toPx(),
+                            refractionAmount = 24f.dp.toPx(),
+                            depthEffect = true,
+                        )
+                    },
+                    highlight = { Highlight.Default.copy(alpha = if (palette.dark) 0.5f else 0.7f) },
+                    shadow = null,
+                    innerShadow = {
+                        InnerShadow(
+                            radius = 6.dp,
+                            color = if (palette.dark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.04f),
+                        )
+                    },
+                    onDrawSurface = {
+                        drawRect(palette.surfaces.floating.copy(alpha = if (palette.dark) 0.72f else 0.82f))
+                    },
+                )
+                .clip(outerShape)
                 .padding(IslandSpec.innerPadding),
         ) {
             Box(
@@ -121,8 +155,28 @@ fun FloatingIsland(
                     }
                     .width(slotWidth.dp)
                     .height(IslandSpec.selectedPillHeight)
-                    .clip(RoundedCornerShape(IslandSpec.selectedPillRadius))
-                    .background(palette.islandSelection),
+                    .drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { pillShape },
+                        effects = {
+                            lens(
+                                refractionHeight = 8f.dp.toPx(),
+                                refractionAmount = 14f.dp.toPx(),
+                                chromaticAberration = true,
+                            )
+                        },
+                        highlight = {
+                            Highlight.Default.copy(
+                                width = 0.75f.dp,
+                                alpha = 0.85f,
+                            )
+                        },
+                        shadow = null,
+                        onDrawSurface = {
+                            drawRect(palette.islandSelection.copy(alpha = 0.90f))
+                        },
+                    )
+                    .clip(pillShape),
             )
 
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

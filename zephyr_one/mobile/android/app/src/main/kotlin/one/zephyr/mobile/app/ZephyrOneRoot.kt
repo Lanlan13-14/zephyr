@@ -31,6 +31,7 @@ import one.zephyr.mobile.ui.component.TextButton
 import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -135,6 +136,9 @@ import one.zephyr.mobile.security.AuthResult
 import one.zephyr.mobile.security.UnlockPresentation
 import one.zephyr.mobile.data.session.SessionExecution
 import one.zephyr.mobile.ui.chrome.PushedPageHeader
+import one.zephyr.mobile.ui.glass.LocalBackdrop
+import one.zephyr.mobile.ui.glass.layerBackdrop
+import one.zephyr.mobile.ui.glass.rememberLayerBackdrop
 import one.zephyr.mobile.ui.island.FloatingIsland
 import one.zephyr.mobile.ui.island.IslandDestination
 import one.zephyr.mobile.ui.island.islandContentBottomInset
@@ -513,13 +517,18 @@ private fun BoundRoot(
         route = popRoute(route)
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        val current = route
+    val rootBackdrop = rememberLayerBackdrop()
 
-        AnimatedContent(
-            targetState = current,
-            modifier = Modifier.fillMaxSize(),
-            contentKey = ::routeContentKey,
+    CompositionLocalProvider(LocalBackdrop provides rootBackdrop) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            val current = route
+
+            AnimatedContent(
+                targetState = current,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .layerBackdrop(rootBackdrop),
+                contentKey = ::routeContentKey,
             transitionSpec = {
                 routeTransition(
                     initial = initialState,
@@ -1041,6 +1050,7 @@ private fun BoundRoot(
             modifier = Modifier.align(Alignment.BottomCenter),
             onDismiss = { toastMessage = null },
         )
+    }
     }
 }
 
