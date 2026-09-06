@@ -873,9 +873,7 @@ private fun AiMessage(text: String, user: Boolean, modifier: Modifier = Modifier
                 Text(text, color = Color.White, style = TextStyle(fontSize = 13.5.sp, lineHeight = 20.sp))
             } else {
                 one.zephyr.mobile.ui.component.MarkdownView(
-                    content = text,
-                    baseTextColor = palette.onBackground,
-                    linkColor = palette.brand.accent,
+                    source = text,
                 )
             }
         }
