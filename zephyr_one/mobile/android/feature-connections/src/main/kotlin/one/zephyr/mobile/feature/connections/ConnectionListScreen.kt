@@ -209,12 +209,17 @@ private fun DashboardHeader(
 @Composable
 private fun SyncPill(status: SyncStatus, localMode: Boolean, onClick: (() -> Unit)?) {
     val palette = ZephyrTheme.palette
+    val failedPrefix = stringResource(R.string.connections_sync_failed)
+    val failedLabel = status.lastError?.let { error ->
+        val detail = error.message.substringBefore(" · code=").trim().take(64)
+        if (detail.isEmpty() || detail == error.code) failedPrefix else failedPrefix + "·" + detail
+    }
     val (label, color) = when {
         localMode -> stringResource(R.string.connections_local_mode) to palette.status.offline
         status.conflictCount > 0 -> stringResource(R.string.connection_conflict) to palette.status.conflict
         status.isRunning -> stringResource(R.string.connections_syncing) to palette.status.pendingSync
         status.pendingCount > 0 -> stringResource(R.string.connection_pending) to palette.status.pendingSync
-        status.lastError != null -> stringResource(R.string.connections_sync_failed) to palette.status.error
+        failedLabel != null -> failedLabel to palette.status.error
         status.lastSuccessAt != null -> stringResource(R.string.connections_synced) to palette.status.success
         else -> stringResource(R.string.connections_not_synced) to palette.status.offline
     }

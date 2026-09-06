@@ -1186,7 +1186,7 @@ private fun RootDestination(
 
             ConnectionListRoute(
                 viewModel = viewModel(
-                    key = "connections",
+                    key = "connections-" + ownerUserId,
                     factory = ConnectionListViewModel.factory(
                         connections = account.connections,
                         settings = account.settings,
