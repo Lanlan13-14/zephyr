@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -39,7 +38,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -116,7 +114,6 @@ fun FloatingIsland(
         val outerShape = Capsule()
         val pillShape = Capsule()
         val isDark = palette.dark
-        val accentColor = if (isDark) Color(0xFF0091FF) else Color(0xFF0088FF)
         val containerColor = if (isDark) {
             Color(0xFF121212).copy(alpha = 0.4f)
         } else {
@@ -219,7 +216,8 @@ fun FloatingIsland(
             ) {
                 Box(
                     modifier = Modifier
-                        .matchParentSize()
+                        .fillMaxWidth()
+                        .height(IslandSpec.selectedPillHeight)
                         .alpha(0f)
                         .clearAndSetSemantics {}
                         .layerBackdrop(capsuleBackdrop)
@@ -239,8 +237,7 @@ fun FloatingIsland(
                                 Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress)
                             },
                             onDrawSurface = { drawRect(containerColor) },
-                        )
-                        .graphicsLayer { colorFilter = ColorFilter.tint(accentColor) },
+                        ),
                 )
 
                 Box(
