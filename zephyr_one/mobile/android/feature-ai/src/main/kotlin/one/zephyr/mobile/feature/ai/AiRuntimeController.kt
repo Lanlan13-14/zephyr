@@ -38,11 +38,19 @@ data class AiPendingPermission(
     val args: JsonObject,
 )
 
+data class AiConversationBrief(
+    val id: String,
+    val title: String,
+    val updatedAt: Long,
+)
+
 data class AiRuntimeState(
     val runtimeEnabled: Boolean = false,
     val loading: Boolean = false,
     val providers: List<AiProviderOption> = emptyList(),
     val conversationId: String? = null,
+    val conversationTitle: String = "新对话",
+    val conversations: List<AiConversationBrief> = emptyList(),
     val runtimeSessionId: String? = null,
     val runId: String? = null,
     val running: Boolean = false,
@@ -74,6 +82,9 @@ interface AiRuntimeController {
     fun selectPermission(mode: String)
     fun selectThinking(value: String)
     fun setPlanEnabled(enabled: Boolean)
+    fun selectConversation(id: String)
+    fun newConversation()
+    suspend fun deleteConversation(id: String)
     suspend fun send(text: String)
     suspend fun stop()
     suspend fun decide(approve: Boolean)

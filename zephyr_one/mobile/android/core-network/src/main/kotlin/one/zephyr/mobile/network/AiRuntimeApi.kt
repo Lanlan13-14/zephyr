@@ -119,6 +119,19 @@ class AiRuntimeApi(
             AiOkResponseDto.serializer(),
         ).map { it.ok }
 
+    suspend fun deleteConversation(id: String, expectedRevision: Long? = null): ApiResult<Boolean> {
+        val query = if (expectedRevision != null && expectedRevision > 0) {
+            mapOf("expectedRevision" to expectedRevision.toString())
+        } else emptyMap()
+        return execute(
+            Request.Builder()
+                .url(url(PATH_HISTORY + "/" + pathSegment(id), query))
+                .delete()
+                .build(),
+            AiOkResponseDto.serializer(),
+        ).map { it.ok }
+    }
+
     /** Consumes the Node SSE proxy with SID auth and bounded line/event sizes. */
     suspend fun stream(
         ssePath: String,

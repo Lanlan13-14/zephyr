@@ -114,6 +114,8 @@ fun AiWorkspaceOverlay(
     var handlePressed by remember { mutableStateOf(false) }
     var seedHeightPx by remember { mutableStateOf<Float?>(null) }
     var picker by remember { mutableStateOf<AiPicker?>(null) }
+    var showConversationList by remember { mutableStateOf(false) }
+    var confirmDeleteTargetId by remember { mutableStateOf<String?>(null) }
     var fabOffset by remember { mutableStateOf(Offset.Zero) }
     val heightAnim = remember { Animatable(0f) }
     val motion = ZephyrTheme.motion
@@ -261,6 +263,14 @@ fun AiWorkspaceOverlay(
             } else Spacer(Modifier.height(AiSheetGeometry.HANDLE_TOP_PAD_DP.dp))
 
             AiContextBanner(context, true)
+            AiConversationBar(
+                title = runtime.conversationTitle,
+                onOpenList = { showConversationList = true },
+                onNew = { controller.newConversation() },
+                onDelete = {
+                    runtime.conversationId?.let { confirmDeleteTargetId = it }
+                },
+            )
             AiToolStrip(
                 chrome = chrome,
                 runtime = runtime,
@@ -320,6 +330,50 @@ fun AiWorkspaceOverlay(
                         AiPicker.THINKING -> controller.selectThinking(value)
                     }
                     picker = null
+                },
+            )
+        }
+
+        if (showConversationList) {
+            AiConversationListOverlay(
+                conversations = runtime.conversations,
+                currentId = runtime.conversationId,
+                onSelect = { id ->
+                    controller.selectConversation(id)
+                    showConversationList = false
+                },
+                onNew = {
+                    controller.newConversation()
+                    showConversationList = false
+                },
+                onDelete = { id ->
+                    confirmDeleteTargetId = id
+                },
+                onDismiss = { showConversationList = false },
+            )
+        }
+
+        confirmDeleteTargetId?.let { targetId ->
+            one.zephyr.mobile.ui.component.AlertDialog(
+                onDismissRequest = { confirmDeleteTargetId = null },
+                title = { Text("删除对话") },
+                text = { Text("将从同账号的所有设备删除此对话及其消息。") },
+                confirmButton = {
+                    one.zephyr.mobile.ui.component.TextButton(
+                        onClick = {
+                            confirmDeleteTargetId = null
+                            scope.launch {
+                                controller.deleteConversation(targetId)
+                            }
+                        },
+                    ) {
+                        Text("删除", color = palette.status.error)
+                    }
+                },
+                dismissButton = {
+                    one.zephyr.mobile.ui.component.TextButton(onClick = { confirmDeleteTargetId = null }) {
+                        Text("取消")
+                    }
                 },
             )
         }
@@ -477,6 +531,206 @@ private fun AiContextBanner(context: AiContextHeader, runtime: Boolean) {
 }
 
 @Composable
+private fun AiConversationBar(
+    title: String,
+    onOpenList: () -> Unit,
+    onNew: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Surface(
+            modifier = Modifier
+                .weight(1f)
+                .height(34.dp)
+                .clickable(onClick = onOpenList),
+            shape = RoundedCornerShape(10.dp),
+            color = palette.surfaces.content,
+            border = BorderStroke(1.dp, palette.surfaces.outlineSoft),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(ZephyrIcons.Notes, null, tint = palette.brand.accent, modifier = Modifier.size(13.dp))
+                Text(
+                    text = title.ifBlank { "新对话" },
+                    color = palette.onBackground,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(ZephyrIcons.Chevron, null, tint = palette.onFloatingSubtle, modifier = Modifier.size(12.dp))
+            }
+        }
+        Surface(
+            modifier = Modifier
+                .size(34.dp)
+                .clickable(onClick = onNew),
+            shape = RoundedCornerShape(10.dp),
+            color = palette.surfaces.content,
+            border = BorderStroke(1.dp, palette.surfaces.outlineSoft),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(ZephyrIcons.Plus, contentDescription = "新建对话", tint = palette.brand.accent, modifier = Modifier.size(15.dp))
+            }
+        }
+        Surface(
+            modifier = Modifier
+                .size(34.dp)
+                .clickable(onClick = onDelete),
+            shape = RoundedCornerShape(10.dp),
+            color = palette.surfaces.content,
+            border = BorderStroke(1.dp, palette.surfaces.outlineSoft),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(ZephyrIcons.Delete, contentDescription = "删除对话", tint = palette.status.error, modifier = Modifier.size(14.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiConversationListOverlay(
+    conversations: List<AiConversationBrief>,
+    currentId: String?,
+    onSelect: (String) -> Unit,
+    onNew: () -> Unit,
+    onDelete: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    BackHandler(onBack = onDismiss)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.surfaces.scrim)
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.65f)
+                .clip(RoundedCornerShape(topStart = ZephyrRadius.xl, topEnd = ZephyrRadius.xl))
+                .background(palette.surfaces.elevated)
+                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}
+                .padding(top = 16.dp, bottom = 20.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("历史对话", color = palette.onBackground, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        modifier = Modifier
+                            .height(30.dp)
+                            .clickable(onClick = onNew),
+                        shape = RoundedCornerShape(15.dp),
+                        color = palette.brand.accent,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(ZephyrIcons.Plus, null, tint = Color.White, modifier = Modifier.size(13.dp))
+                            Text("新建", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Icon(
+                        ZephyrIcons.Close,
+                        contentDescription = "关闭",
+                        tint = palette.onFloatingSubtle,
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clickable(onClick = onDismiss),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            if (conversations.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("暂无历史对话", color = palette.onFloatingSubtle, fontSize = 13.sp)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                ) {
+                    items(conversations.size, key = { conversations[it].id }) { index ->
+                        val item = conversations[index]
+                        val isSelected = item.id == currentId
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(item.id) }
+                                .background(if (isSelected) palette.brand.accent.copy(alpha = 0.12f) else Color.Transparent)
+                                .padding(horizontal = 18.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                ZephyrIcons.Notes,
+                                null,
+                                tint = if (isSelected) palette.brand.accent else palette.onFloatingSubtle,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    item.title.ifBlank { "新对话" },
+                                    color = if (isSelected) palette.brand.accent else palette.onBackground,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Icon(
+                                ZephyrIcons.Delete,
+                                contentDescription = "删除",
+                                tint = palette.onFloatingSubtle,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clickable { onDelete(item.id) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun AiToolStrip(
     chrome: AiWorkspaceChrome,
     runtime: AiRuntimeState,
@@ -607,15 +861,21 @@ private fun AiEmptyTranscript(runtime: Boolean) {
 @Composable
 private fun AiMessage(text: String, user: Boolean, modifier: Modifier = Modifier, caption: String? = null) {
     val palette = ZephyrTheme.palette
-    val shape = RoundedCornerShape(16.dp, 16.dp, if (user) 16.dp else 5.dp, if (user) 5.dp else 16.dp)
+    val shape = RoundedCornerShape(16.dp, 16.dp, if (user) 16.dp else 6.dp, if (user) 6.dp else 16.dp)
     Box(modifier.padding(bottom = 10.dp), contentAlignment = if (user) Alignment.CenterEnd else Alignment.CenterStart) {
         Column(
-            Modifier.fillMaxWidth(0.86f).clip(shape).background(if (user) palette.brand.accent else palette.surfaces.content)
+            Modifier.fillMaxWidth(if (user) 0.86f else 0.96f).clip(shape).background(if (user) palette.brand.accent else palette.surfaces.content)
                 .then(if (user) Modifier else Modifier.border(BorderStroke(1.dp, palette.surfaces.outlineSoft), shape))
-                .padding(horizontal = 13.dp, vertical = 10.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
-            caption?.let { Text(it, color = palette.onFloatingSubtle, fontSize = 12.sp); Spacer(Modifier.height(2.dp)) }
-            Text(text, color = if (user) Color.White else palette.onBackground, style = TextStyle(fontSize = 13.5.sp, lineHeight = 20.sp))
+            caption?.let { Text(it, color = palette.onFloatingSubtle, fontSize = 12.sp); Spacer(Modifier.height(3.dp)) }
+            if (user) {
+                Text(text, color = Color.White, style = TextStyle(fontSize = 13.5.sp, lineHeight = 20.sp))
+            } else {
+                one.zephyr.mobile.ui.component.MarkdownView(
+                    source = text,
+                )
+            }
         }
     }
 }

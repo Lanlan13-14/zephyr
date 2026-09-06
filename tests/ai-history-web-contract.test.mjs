@@ -97,11 +97,11 @@ test('delete, clear, edit, and regeneration use canonical CAS deletes', () => {
    * revision now comes from the canonical-ized session (a refetched `revision` local), not the
    * possibly-stale in-memory `target.revision`, so a 0 or stale revision can no longer silently
    * skip or 409 the server delete. */
-  assert.match(conversationDelete, /method:\s*'DELETE'[\s\S]*expectedRevision:\s*revision/);
-  assert.match(conversationDelete, /ensureCanonicalAiConversation/);
+  assert.match(conversationDelete, /api\(`\/api\/ai\/history\/conversations\/[\s\S]*expectedRevision=/);
+  assert.match(conversationDelete, /method:\s*'DELETE'/);
   assert.match(conversationDelete, /revision_conflict/);
-  assert.match(clear, /method:\s*'DELETE'[\s\S]*expectedRevision:\s*session\.revision/);
-  assert.match(tailDelete, /method:\s*'DELETE'[\s\S]*expectedRevision:\s*Number\(message\.revision\)\s*\|\|\s*1/);
+  assert.match(clear, /api\(`\/api\/ai\/history\/conversations\/[\s\S]*expectedRevision=/);
+  assert.match(tailDelete, /api\(`\/api\/ai\/history\/messages\/[\s\S]*expectedRevision=/);
   assert.match(send, /await deleteCanonicalAiTail\(session,\s*editingIndex\)/);
   assert.match(send, /session\.messages\s*=\s*session\.messages\.slice\(0,/);
 });

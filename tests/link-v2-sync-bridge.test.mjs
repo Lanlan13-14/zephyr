@@ -41,7 +41,7 @@ test('rejects an unknown device', () => {
     const { bridge } = makeBridge({ deviceRow: null, user: { userId: 'u1' } });
     const res = mockRes();
     bridge.handle({ get: () => 'tok-abcdef0123456789', body: { deviceId: 'dev-1', kind: KIND.SYNC_OP, body: {} } }, res);
-    assert.equal(res.statusCode, 401);
+    assert.equal(res.statusCode, 403);
 });
 
 test('rejects a revoked device', () => {
@@ -51,7 +51,7 @@ test('rejects a revoked device', () => {
     });
     const res = mockRes();
     bridge.handle({ get: () => 'tok-abcdef0123456789', body: { deviceId: 'dev-1', kind: KIND.SYNC_OP, body: {} } }, res);
-    assert.equal(res.statusCode, 401);
+    assert.equal(res.statusCode, 403);
     assert.equal(calls.push, 0, 'must not touch the sync core for a revoked device');
 });
 

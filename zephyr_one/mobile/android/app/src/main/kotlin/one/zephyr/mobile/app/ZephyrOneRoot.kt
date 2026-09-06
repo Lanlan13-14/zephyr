@@ -530,10 +530,17 @@ private fun BoundRoot(
                     .layerBackdrop(rootBackdrop),
                 contentKey = ::routeContentKey,
             transitionSpec = {
+                val isInteractiveSurface = targetState is RootRoute.Terminal || targetState is RootRoute.Remote ||
+                    initialState is RootRoute.Terminal || initialState is RootRoute.Remote
+                val duration = if (isInteractiveSurface) {
+                    motion.scale(ZephyrMotionTokens.MED_MS)
+                } else {
+                    motion.scale(ZephyrMotionTokens.SHEET_MS)
+                }
                 routeTransition(
                     initial = initialState,
                     target = targetState,
-                    durationMillis = motion.scale(ZephyrMotionTokens.SHEET_MS),
+                    durationMillis = duration,
                     reduceMotion = motion.reduceMotion,
                 )
             },
@@ -882,40 +889,43 @@ private fun BoundRoot(
                         route = RootRoute.Root(IslandDestination.SESSIONS)
                     }
                 }
+                val terminalFactory = remember(current.sessionId, current.connectionId) {
+                    TerminalViewModel.Factory(
+                        sessionId = current.sessionId,
+                        connectionId = current.connectionId,
+                        registry = account.sessions,
+                        connections = account.connections,
+                        host = terminalHost,
+                        emulator = productionTerminalEmulator(
+                            onCopy = { text ->
+                                if (text.isNotEmpty()) {
+                                    clipboardManager.setText(AnnotatedString(text))
+                                }
+                            },
+                        ),
+                        secretProvider = { connection ->
+                            if (connection.residency == Residency.SHARED_ONLINE_ONLY) {
+                                TerminalCredentials()
+                            } else {
+                                account.terminalCredentials(connection)
+                            }
+                        },
+                        findConnection = { id ->
+                            account.connections.find(id)
+                                ?: account.sharedResources.find(Connection.ENTITY_TYPE, id)
+                                    ?.let { summary ->
+                                        one.zephyr.mobile.feature.connections.SharedConnectionRows.toDisplayRow(
+                                            summary,
+                                            ownerUserId,
+                                        )
+                                    }
+                        },
+                    )
+                }
                 TerminalRoute(
                     viewModel = viewModel(
                         key = "terminal:" + current.sessionId,
-                        factory = TerminalViewModel.Factory(
-                            sessionId = current.sessionId,
-                            connectionId = current.connectionId,
-                            registry = account.sessions,
-                            connections = account.connections,
-                            host = terminalHost,
-                            emulator = productionTerminalEmulator(
-                                onCopy = { text ->
-                                    if (text.isNotEmpty()) {
-                                        clipboardManager.setText(AnnotatedString(text))
-                                    }
-                                },
-                            ),
-                            secretProvider = { connection ->
-                                if (connection.residency == Residency.SHARED_ONLINE_ONLY) {
-                                    TerminalCredentials()
-                                } else {
-                                    account.terminalCredentials(connection)
-                                }
-                            },
-                            findConnection = { id ->
-                                account.connections.find(id)
-                                    ?: account.sharedResources.find(Connection.ENTITY_TYPE, id)
-                                        ?.let { summary ->
-                                            one.zephyr.mobile.feature.connections.SharedConnectionRows.toDisplayRow(
-                                                summary,
-                                                ownerUserId,
-                                            )
-                                        }
-                            },
-                        ),
+                        factory = terminalFactory,
                     ),
                     onDock = { item -> onTerminalDock(item, notice) { route = it } },
                     onMessage = { messages.emit(it) },
@@ -1113,25 +1123,13 @@ private fun routeTransition(
         )
     } else {
         slideInHorizontally(
-            initialOffsetX = { (-it * 0.28f).roundToInt() },
-            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
-        ) + fadeIn(
-            initialAlpha = ZephyrMotionTokens.PAGE_BEHIND_ALPHA,
-            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
-        ) + scaleIn(
-            initialScale = ZephyrMotionTokens.PAGE_BEHIND_SCALE,
+            initialOffsetX = { (-it * 0.25f).roundToInt() },
             animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
         )
     }
     val exit = if (pushing) {
         slideOutHorizontally(
-            targetOffsetX = { (-it * 0.28f).roundToInt() },
-            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
-        ) + fadeOut(
-            targetAlpha = ZephyrMotionTokens.PAGE_BEHIND_ALPHA,
-            animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
-        ) + scaleOut(
-            targetScale = ZephyrMotionTokens.PAGE_BEHIND_SCALE,
+            targetOffsetX = { (-it * 0.25f).roundToInt() },
             animationSpec = tween(durationMillis, easing = ZephyrMotionTokens.easeDrawer),
         )
     } else {
@@ -1458,22 +1456,25 @@ private fun RemoteDestination(
     val autoConnect = account.sessions.find(route.sessionId)?.restoredFromWorkspace != true
 
     if (route.protocol == Protocol.VNC) {
+        val vncFactory = remember(route.sessionId, route.connectionId) {
+            VncViewModel.Factory(
+                sessionId = route.sessionId,
+                connectionId = route.connectionId,
+                registry = account.sessions,
+                connections = account.connections,
+                engine = vncEngine,
+                secretProvider = { connection ->
+                    RemoteCredentials(password = account.passwordChars(connection))
+                },
+                registerSensitiveSink = account::registerSensitiveSink,
+                unregisterSensitiveSink = account::unregisterSensitiveSink,
+            )
+        }
         VncRemoteRoute(
             autoConnect = autoConnect,
             viewModel = viewModel(
                 key = "vnc:" + route.sessionId,
-                factory = VncViewModel.Factory(
-                    sessionId = route.sessionId,
-                    connectionId = route.connectionId,
-                    registry = account.sessions,
-                    connections = account.connections,
-                    engine = vncEngine,
-                    secretProvider = { connection ->
-                        RemoteCredentials(password = account.passwordChars(connection))
-                    },
-                    registerSensitiveSink = account::registerSensitiveSink,
-                    unregisterSensitiveSink = account::unregisterSensitiveSink,
-                ),
+                factory = vncFactory,
             ),
             nowMs = nowMs,
             online = online,
@@ -1518,9 +1519,8 @@ private fun RemoteDestination(
             },
         )
 
-        val rdpViewModel: RdpViewModel = viewModel(
-            key = "rdp:" + route.sessionId,
-            factory = RdpViewModel.Factory(
+        val rdpFactory = remember(route.sessionId, route.connectionId) {
+            RdpViewModel.Factory(
                 sessionId = route.sessionId,
                 connectionId = route.connectionId,
                 registry = account.sessions,
@@ -1538,7 +1538,11 @@ private fun RemoteDestination(
                 driveProfileProvider = { candidate ->
                     account.fileSyncShares.profile(candidate.id)
                 },
-            ),
+            )
+        }
+        val rdpViewModel: RdpViewModel = viewModel(
+            key = "rdp:" + route.sessionId,
+            factory = rdpFactory,
         )
         val permissionActions = rememberRdpChannelPermissionActions(
             onObserved = rdpViewModel::onPermissionStateObserved,
