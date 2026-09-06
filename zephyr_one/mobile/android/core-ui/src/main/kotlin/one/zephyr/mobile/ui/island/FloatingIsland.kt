@@ -258,19 +258,19 @@ fun FloatingIsland(
                                         dampedDragAnimation.press()
                                     },
                                     onDragEnd = {
-                                        dampedDragAnimation.onDragStopped()
+                                        dampedDragAnimation.onDragStopped
+                                            .invoke(dampedDragAnimation)
                                         dampedDragAnimation.release()
                                     },
                                     onDragCancel = {
-                                        dampedDragAnimation.onDragStopped()
+                                        dampedDragAnimation.onDragStopped
+                                            .invoke(dampedDragAnimation)
                                         dampedDragAnimation.release()
                                     },
                                 ) { change, dragAmount ->
                                     change.consume()
-                                    dampedDragAnimation.onDrag(
-                                        size,
-                                        Offset(dragAmount, 0f),
-                                    )
+                                    dampedDragAnimation.onDrag
+                                        .invoke(dampedDragAnimation, size, Offset(dragAmount, 0f))
                                 }
                             }
                             .selectable(
