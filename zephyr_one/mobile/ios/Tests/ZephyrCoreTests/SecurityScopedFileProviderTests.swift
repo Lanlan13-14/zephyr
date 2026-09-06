@@ -243,8 +243,8 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         XCTAssertEqual(first.count, 34)
         XCTAssertTrue(first.dropFirst(2).allSatisfy { "0123456789abcdef".contains($0) })
         /* A counter increases (weakly) in open order. Random handles clear the
-         * increasing-order property with probability 1 - 1/8! ≈ 99.99998% over
-         * eight sampled handles, while a counter never can — a deterministic
+         * increasing-order property with probability 1 - 1/8! ~= 99.99998% over
+         * eight sampled handles, while a counter never can - a deterministic
          * discriminator with no false-positive flake. (The previous
          * hasSuffix("1") && hasSuffix("2") check failed 1/256 runs even on the
          * correct random implementation.) */
