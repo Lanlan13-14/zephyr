@@ -159,6 +159,31 @@ func (n *Node) registerBuiltinHandlers() {
 	n.dispatch.Register(codec.KindWake, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
 		return codec.KindWake, map[string]any{"state": "ready", "serverTime": time.Now().UnixMilli()}, false, nil
 	})
+	/* KindAI is a registered lane. Leaving it unregistered made every AI
+	 * frame a 500 handler_failed and poisoned the shared ZSL session that
+	 * owned-sync also uses. Acknowledge here; the embedding host may replace
+	 * this with a real broker bridge. */
+	n.dispatch.Register(codec.KindAI, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
+		var body map[string]any
+		if len(fr.Body) > 0 {
+			if err := codec.Decode(fr.Body, &body); err != nil {
+				return codec.KindAI, map[string]any{
+					"ok": false,
+					"error": map[string]any{
+						"code":      "invalid_request",
+						"message":   "invalid AI frame",
+						"retryable": false,
+					},
+				}, false, nil
+			}
+		}
+		op, _ := body["op"].(string)
+		return codec.KindAI, map[string]any{
+			"ok": true,
+			"op": op,
+			"channel": string(codec.ChannelAI),
+		}, false, nil
+	})
 }
 
 // handleState answers a session liveness probe. The reply is sealed under the

@@ -5329,15 +5329,6 @@ app.post('/api/connections', requireUser, (req, res) => {
 app.put('/api/connections/:id', requireUser, (req, res) => {
     const body = req.body || {};
     try {
-        const changedSecretFields = [];
-        if (Object.prototype.hasOwnProperty.call(body, 'password') && body.password !== '******') {
-            changedSecretFields.push('password');
-        }
-        if ((Object.prototype.hasOwnProperty.call(body, 'privateKey') && body.privateKey !== '******')
-            || (Object.prototype.hasOwnProperty.call(body, 'protocol')
-                && String(body.protocol || '').toUpperCase() === 'TELNET')) {
-            changedSecretFields.push('privateKey');
-        }
         const saved = resourceService.updateConnection(req.user, req.params.id, (conn) => {
             ['name', 'host', 'username', 'remark'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
             if (body.port !== undefined) conn.port = Number(body.port) || protocolDefaultPort(body.protocol || conn.protocol);
@@ -5373,7 +5364,7 @@ app.put('/api/connections/:id', requireUser, (req, res) => {
                 if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
             }
             return conn;
-        }, { changedSecretFields });
+        });
         addActivity(`编辑连接：${saved.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: saved.protocol, target: `${saved.host}:${saved.port}`, connectionId: saved.id }));
         res.json({ connection: saved });
     } catch (err) {

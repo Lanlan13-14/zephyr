@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { isDeepStrictEqual } = require('util');
 const { MobileV1Store, MobileStoreError } = require('./mobile-v1-store');
-const { projectPayload } = require('./mobile-v1-entities');
+const { projectPayload, changedStoredSecretFields } = require('./mobile-v1-entities');
 
 const sharedByDb = new WeakMap();
 
@@ -187,7 +187,12 @@ class MobileV1ChangeBridge {
          * editable field revisions at the restore revision. */
         const restored = action === 'upsert' && before?.deletedAt && after && !after.deletedAt;
         const fieldMask = action === 'upsert' ? editableFieldMask(spec, restored ? null : before, after) : [];
-        const secretMask = action === 'upsert' ? secretFieldMask(spec, changedSecretFields) : [];
+        /* Callers historically stamped every secret the form posted, including
+         * empty privateKey on a rename. The feed ledger follows stored values. */
+        if (changedSecretFields.length) secretFieldMask(spec, changedSecretFields);
+        const secretMask = action === 'upsert'
+            ? secretFieldMask(spec, changedStoredSecretFields(spec, restored ? null : before, after))
+            : [];
 
         /* A service may receive the same logical mutation twice. Do not move
          * the cursor for a no-op update, but do keep the authoritative revision

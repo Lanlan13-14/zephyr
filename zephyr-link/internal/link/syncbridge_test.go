@@ -16,6 +16,27 @@ import (
 // forwards it to the loopback sync bridge (standing in for the Node sync core),
 // and seals the bridge's result back as a SYNC_ACK. This proves the Link channel
 // carries real business frames, not an echo.
+func TestNormalizeCBORPreservesFalseHasMoreOnEmptyPage(t *testing.T) {
+	page := map[string]any{
+		"ok":         true,
+		"fromCursor": int64(53),
+		"nextCursor": int64(53),
+		"hasMore":    false,
+		"changes":    []any{},
+	}
+	normalized, err := normalizeCBORForJSON(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := normalized.(map[string]any)
+	if root["hasMore"] != false {
+		t.Fatalf("empty page lost hasMore=false: %#v", root["hasMore"])
+	}
+	if _, ok := root["changes"]; !ok {
+		t.Fatal("empty page dropped changes")
+	}
+}
+
 func TestNormalizeJSONNumbersKeepsFiniteFloats(t *testing.T) {
 	raw := []byte(`{
 		"serverCursor": 42,

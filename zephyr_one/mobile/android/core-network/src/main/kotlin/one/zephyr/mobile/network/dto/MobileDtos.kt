@@ -337,7 +337,7 @@ data class ChangePageDto(
     val ok: Boolean = false,
     val fromCursor: Long,
     val nextCursor: Long,
-    val hasMore: Boolean,
+    val hasMore: Boolean = false,
     val changes: List<SyncChangeDto> = emptyList(),
 )
 
