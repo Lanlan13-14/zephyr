@@ -8,14 +8,21 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import one.zephyr.mobile.app.di.AccountContainer
+import one.zephyr.mobile.data.repository.LocalAiMemory
+import one.zephyr.mobile.data.repository.LocalAiPlan
+import one.zephyr.mobile.data.repository.LocalAiPlanStep
 import one.zephyr.mobile.feature.notes.SftpPort
 import one.zephyr.mobile.network.MobileJson
 
@@ -38,6 +45,12 @@ internal class AndroidAiPlatformHost(
     private val lifecycleLock = Any()
     @Volatile private var active: ActiveHost? = null
     @Volatile private var closed = false
+    private val http: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
 
     /**
      * Starts the loopback bridge on demand.
@@ -127,6 +140,15 @@ internal class AndroidAiPlatformHost(
             catalog += tool("sftp_rename_v1", "重命名/移动远程路径。", listOf("connectionId", "oldPath", "newPath"), false, "high")
             catalog += tool("sftp_delete_v1", "删除远程文件或目录。", listOf("connectionId", "path"), false, "high")
         }
+        catalog += tool("web_search", "搜索公开网页（DuckDuckGo HTML）。", listOf("query"), true, "low")
+        catalog += tool("fetch_url", "抓取公开 http/https 页面正文。", listOf("url"), true, "low")
+        catalog += tool("memory_search", "搜索本机长期 Memory。", listOf("query"), true, "low")
+        catalog += tool("memory_save", "保存一条本机长期 Memory。", listOf("title", "content"), false, "high")
+        catalog += tool("list_env_vars", "列出对本机 AI 可见的环境变量元数据，不含值。", emptyList(), true, "low")
+        catalog += tool("get_env_var", "读取一条已对 AI 暴露值的环境变量。", listOf("name"), false, "high")
+        catalog += tool("plan_task", "创建一条本机任务计划。", listOf("title"), false, "low")
+        catalog += tool("plan_update", "更新本机任务计划状态或步骤。", listOf("id"), false, "high")
+        catalog += tool("plan_delete", "删除一条本机任务计划。", listOf("id"), false, "high")
         return JsonObject(mapOf("tools" to JsonArray(catalog)))
     }
 
@@ -163,6 +185,15 @@ internal class AndroidAiPlatformHost(
             "sftp_mkdir_v1" -> sftpMkdir(args)
             "sftp_rename_v1" -> sftpRename(args)
             "sftp_delete_v1" -> sftpDelete(args)
+            "web_search" -> webSearch(args)
+            "fetch_url" -> fetchUrl(args)
+            "memory_search" -> memorySearch(args)
+            "memory_save" -> memorySave(args)
+            "list_env_vars" -> listEnvVars()
+            "get_env_var" -> getEnvVar(args)
+            "plan_task" -> planTask(args)
+            "plan_update" -> planUpdate(args)
+            "plan_delete" -> planDelete(args)
             else -> return error("unknown_tool", "工具不存在")
         }
         return JsonObject(mapOf("ok" to JsonPrimitive(true), "result" to result))
@@ -537,6 +568,147 @@ internal class AndroidAiPlatformHost(
             requireSftp()!!.delete(h, args.string("path"), args["recursive"]?.let { (it as? JsonPrimitive)?.content == "true" } ?: false)
             JsonObject(mapOf("deleted" to JsonPrimitive(true)))
         }
+    }
+
+    private suspend fun webSearch(args: JsonObject): JsonElement {
+        val query = args.string("query").trim()
+        if (query.isEmpty()) return error("invalid_tool_arguments", "query 不能为空")
+        val maxResults = args.string("maxResults").toIntOrNull()?.coerceIn(1, 12) ?: 6
+        return try {
+            JsonArray(AndroidAiWebTools.search(http, query, maxResults).map { hit ->
+                JsonObject(
+                    mapOf(
+                        "title" to JsonPrimitive(hit.title),
+                        "url" to JsonPrimitive(hit.url),
+                        "snippet" to JsonPrimitive(hit.snippet),
+                    ),
+                )
+            })
+        } catch (failure: Exception) {
+            error("web_search_failed", failure.message ?: "网页搜索失败")
+        }
+    }
+
+    private suspend fun fetchUrl(args: JsonObject): JsonElement {
+        val url = args.string("url").trim()
+        if (url.isEmpty()) return error("invalid_tool_arguments", "url 不能为空")
+        val maxChars = args.string("maxChars").toIntOrNull()?.coerceIn(1000, 120_000) ?: 24_000
+        return try {
+            JsonObject(mapOf("text" to JsonPrimitive(AndroidAiWebTools.fetch(http, url, maxChars))))
+        } catch (failure: Exception) {
+            error("fetch_url_failed", failure.message ?: "抓取失败")
+        }
+    }
+
+    private suspend fun memorySearch(args: JsonObject): JsonElement {
+        val query = args.string("query").trim().lowercase()
+        val catalog = account.localAi.load()
+        val hits = catalog.memories.filter { it.enabled }.filter { memory ->
+            query.isEmpty() ||
+                memory.title.lowercase().contains(query) ||
+                memory.content.lowercase().contains(query) ||
+                memory.tags.any { it.lowercase().contains(query) }
+        }.take(catalog.context.memoryItems.coerceAtLeast(1))
+        return JsonArray(
+            hits.map { memory ->
+                JsonObject(
+                    mapOf(
+                        "id" to JsonPrimitive(memory.id),
+                        "title" to JsonPrimitive(memory.title),
+                        "scope" to JsonPrimitive(memory.scope),
+                        "content" to JsonPrimitive(memory.content.take(4_000)),
+                    ),
+                )
+            },
+        )
+    }
+
+    private suspend fun memorySave(args: JsonObject): JsonElement {
+        val title = args.string("title").trim()
+        val content = args.string("content").trim()
+        if (title.isEmpty() || content.isEmpty()) return error("invalid_tool_arguments", "title 和 content 不能为空")
+        val item = LocalAiMemory(
+            title = title.take(200),
+            content = content.take(16_000),
+            scope = args.string("scope").ifBlank { "global" },
+            project = args.string("project"),
+            tags = args.array("tags"),
+            enabled = true,
+        )
+        account.localAi.upsertMemory(item)
+        return JsonObject(mapOf("saved" to JsonPrimitive(true), "title" to JsonPrimitive(item.title)))
+    }
+
+    private suspend fun listEnvVars(): JsonElement {
+        val catalog = account.localAi.load()
+        return JsonArray(
+            catalog.environment.filter { it.enabled && it.visibleToAi }.map { env ->
+                JsonObject(
+                    mapOf(
+                        "id" to JsonPrimitive(env.id),
+                        "name" to JsonPrimitive(env.name),
+                        "description" to JsonPrimitive(env.description),
+                        "valueVisibleToAi" to JsonPrimitive(env.valueVisibleToAi),
+                    ),
+                )
+            },
+        )
+    }
+
+    private suspend fun getEnvVar(args: JsonObject): JsonElement {
+        val name = args.string("name").trim()
+        if (name.isEmpty()) return error("invalid_tool_arguments", "name 不能为空")
+        val catalog = account.localAi.load()
+        val env = catalog.environment.firstOrNull { it.enabled && it.visibleToAi && it.name.equals(name, ignoreCase = true) }
+            ?: return error("env_not_found", "环境变量不存在或未对 AI 可见")
+        if (!env.valueVisibleToAi) return error("env_value_hidden", "该变量值未对 AI 开放")
+        val chars = account.localAi.environmentValue(env.id) ?: return error("env_empty", "环境变量没有值")
+        return try {
+            JsonObject(mapOf("name" to JsonPrimitive(env.name), "value" to JsonPrimitive(String(chars))))
+        } finally {
+            chars.fill('\u0000')
+        }
+    }
+
+    private suspend fun planTask(args: JsonObject): JsonElement {
+        val title = args.string("title").trim()
+        if (title.isEmpty()) return error("invalid_tool_arguments", "title 不能为空")
+        val steps = args.array("steps").ifEmpty {
+            args.string("steps").lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
+        }
+        val plan = LocalAiPlan(
+            id = UUID.randomUUID().toString(),
+            title = title.take(200),
+            status = "planned",
+            risk = args.string("risk"),
+            note = args.string("note"),
+            steps = steps.mapIndexed { index, step -> LocalAiPlanStep(id = "${index + 1}", title = step) },
+        )
+        account.localAi.upsertPlan(plan)
+        return JsonObject(mapOf("id" to JsonPrimitive(plan.id), "title" to JsonPrimitive(plan.title), "status" to JsonPrimitive(plan.status)))
+    }
+
+    private suspend fun planUpdate(args: JsonObject): JsonElement {
+        val id = args.string("id").trim()
+        if (id.isEmpty()) return error("invalid_tool_arguments", "id 不能为空")
+        val catalog = account.localAi.load()
+        val current = catalog.plans.firstOrNull { it.id == id } ?: return error("plan_not_found", "计划不存在")
+        val next = current.copy(
+            title = args.string("title").ifBlank { current.title },
+            status = args.string("status").ifBlank { current.status },
+            risk = args.string("risk").ifBlank { current.risk },
+            note = args.string("note").ifBlank { current.note },
+            updatedAt = System.currentTimeMillis(),
+        )
+        account.localAi.upsertPlan(next)
+        return JsonObject(mapOf("id" to JsonPrimitive(next.id), "status" to JsonPrimitive(next.status)))
+    }
+
+    private suspend fun planDelete(args: JsonObject): JsonElement {
+        val id = args.string("id").trim()
+        if (id.isEmpty()) return error("invalid_tool_arguments", "id 不能为空")
+        account.localAi.deletePlan(id)
+        return JsonObject(mapOf("deleted" to JsonPrimitive(true), "id" to JsonPrimitive(id)))
     }
 
     private suspend fun runSftp(args: JsonObject, block: suspend () -> JsonElement): JsonElement {

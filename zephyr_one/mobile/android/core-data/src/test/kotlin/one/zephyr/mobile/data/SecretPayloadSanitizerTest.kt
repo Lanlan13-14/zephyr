@@ -139,14 +139,14 @@ class SecretPayloadSanitizerTest {
     }
 
     @Test
-    fun `local ai provider config rejects nested token before it is projected`() {
+    fun `local ai provider config rejects nested access_token before it is projected`() {
         val error = expectViolation {
             SecretPayloadSanitizer.sanitizeLocalEditableValues(
                 entityType = "aiProvider",
                 values = JsonObject(
                     mapOf(
                         "config" to JsonObject(
-                            mapOf("transport" to JsonObject(mapOf("tokenValue" to JsonPrimitive(CANARY)))),
+                            mapOf("transport" to JsonObject(mapOf("access_token" to JsonPrimitive(CANARY)))),
                         ),
                     ),
                 ),
@@ -155,6 +155,31 @@ class SecretPayloadSanitizerTest {
         }
 
         assertEquals(SecretPayloadFailure.RAW_SECRET_FIELD, error.failure)
+    }
+
+    @Test
+    fun `local ai provider config keeps numeric token fields that are not credentials`() {
+        val sanitized = SecretPayloadSanitizer.sanitizeLocalEditableValues(
+            entityType = "aiProvider",
+            values = JsonObject(
+                mapOf(
+                    "config" to JsonObject(
+                        mapOf(
+                            "options" to JsonObject(
+                                mapOf(
+                                    "max_tokens" to JsonPrimitive(4096),
+                                    "presence_penalty" to JsonPrimitive(0.1),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            acceptedMask = listOf("config"),
+        )
+        val options = ((sanitized["config"] as JsonObject)["options"] as JsonObject)
+        assertEquals(JsonPrimitive(4096), options["max_tokens"])
+        assertEquals(JsonPrimitive(0.1), options["presence_penalty"])
     }
 
     @Test
@@ -274,6 +299,108 @@ class SecretPayloadSanitizerTest {
             SecretPayloadFailure.PAYLOAD_TOO_DEEP,
             expectViolation("aiProvider", JsonObject(mapOf("config" to nested))).failure,
         )
+    }
+
+    @Test
+    fun `canonical ai provider downlink with option numbers is accepted`() {
+        val payload = JsonObject(
+            mapOf(
+                "ownerUserId" to JsonPrimitive("user-1"),
+                "name" to JsonPrimitive("openai"),
+                "type" to JsonPrimitive("openai-compatible"),
+                "baseUrl" to JsonPrimitive("https://api.openai.com/v1"),
+                "defaultModel" to JsonPrimitive("gpt-4o"),
+                "enabled" to JsonPrimitive(true),
+                "hasApiKey" to JsonPrimitive(true),
+                "config" to JsonObject(
+                    mapOf(
+                        "apiMode" to JsonPrimitive("auto"),
+                        "options" to JsonObject(
+                            mapOf(
+                                "temperature" to JsonPrimitive(0.7),
+                                "top_p" to JsonPrimitive(1.0),
+                                "max_tokens" to JsonPrimitive(4096),
+                                "max_output_tokens" to JsonPrimitive(8192),
+                                "presence_penalty" to JsonPrimitive(0.0),
+                                "frequency_penalty" to JsonPrimitive(0.0),
+                            ),
+                        ),
+                    ),
+                ),
+                "models" to JsonArray(
+                    listOf(
+                        JsonObject(
+                            mapOf(
+                                "id" to JsonPrimitive("gpt-4o"),
+                                "label" to JsonPrimitive("GPT-4o"),
+                                "contextWindowTokens" to JsonPrimitive(128000),
+                                "maxOutputTokens" to JsonPrimitive(16384),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertSame(payload, SecretPayloadSanitizer.requireSafe("aiProvider", payload))
+        requireSafeInboundChanges(
+            listOf(
+                SyncChange(
+                    changeSeq = 1,
+                    entityType = "aiProvider",
+                    entityId = "prov-1",
+                    action = SyncAction.UPSERT,
+                    revision = 3,
+                    changedAt = 4,
+                    payload = payload,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `local ai provider writes still cannot forge hasApiKey`() {
+        val error = expectViolation {
+            SecretPayloadSanitizer.sanitizeLocalEditableValues(
+                entityType = "aiProvider",
+                values = JsonObject(mapOf("hasApiKey" to JsonPrimitive(true), "name" to JsonPrimitive("x"))),
+                acceptedMask = listOf("name"),
+            )
+        }
+        assertEquals(SecretPayloadFailure.RAW_SECRET_FIELD, error.failure)
+    }
+
+    @Test
+    fun `ai knowledge and history payloads without secrets are accepted`() {
+        val memory = JsonObject(
+            mapOf(
+                "ownerUserId" to JsonPrimitive("user-1"),
+                "title" to JsonPrimitive("prod host"),
+                "content" to JsonPrimitive("ssh as deploy"),
+                "scope" to JsonPrimitive("global"),
+            ),
+        )
+        val env = JsonObject(
+            mapOf(
+                "ownerUserId" to JsonPrimitive("user-1"),
+                "name" to JsonPrimitive("OPENAI_BASE"),
+                "enabled" to JsonPrimitive(true),
+                "visibleToAi" to JsonPrimitive(true),
+                "hasValue" to JsonPrimitive(true),
+            ),
+        )
+        val conversation = JsonObject(
+            mapOf(
+                "ownerUserId" to JsonPrimitive("user-1"),
+                "title" to JsonPrimitive("deploy"),
+                "providerId" to JsonPrimitive("prov-1"),
+                "model" to JsonPrimitive("gpt-4o"),
+                "archived" to JsonPrimitive(false),
+            ),
+        )
+        assertSame(memory, SecretPayloadSanitizer.requireSafe("aiMemory", memory))
+        assertSame(env, SecretPayloadSanitizer.requireSafe("aiEnv", env))
+        assertSame(conversation, SecretPayloadSanitizer.requireSafe("aiConversation", conversation))
     }
 
     @Test

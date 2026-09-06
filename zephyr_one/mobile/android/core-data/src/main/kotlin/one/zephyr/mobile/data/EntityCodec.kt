@@ -63,9 +63,19 @@ object EntityCodec {
     fun float(payload: JsonObject, key: String, fallback: Float): Float =
         (payload[key] as? JsonPrimitive)?.doubleOrNull?.toFloat() ?: fallback
 
+    fun doubleOrNull(payload: JsonObject, key: String): Double? =
+        (payload[key] as? JsonPrimitive)?.doubleOrNull
+
+    fun obj(payload: JsonObject, key: String): JsonObject? = payload[key] as? JsonObject
+
     fun stringList(payload: JsonObject, key: String): List<String> =
         (payload[key] as? kotlinx.serialization.json.JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            ?: emptyList()
+
+    fun objectList(payload: JsonObject, key: String): List<JsonObject> =
+        (payload[key] as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { it as? JsonObject }
             ?: emptyList()
 
     /**
@@ -116,6 +126,11 @@ object EntityCodec {
                 .filter { it.isNotEmpty() }
                 .joinToString(" ")
         "snippet" -> text(payload, "name") to text(payload, "command")
+        "aiProvider" -> text(payload, "name") to text(payload, "type")
+        "aiMemory" -> text(payload, "title") to text(payload, "content")
+        "aiSkill" -> text(payload, "name") to text(payload, "description")
+        "aiConversation" -> text(payload, "title") to listOf(text(payload, "providerId"), text(payload, "model")).filter { it.isNotEmpty() }.joinToString(" ")
+        "aiMessage" -> text(payload, "role") to text(payload, "content")
         else -> null
     }
 }
