@@ -229,12 +229,24 @@ object SecretPayloadSanitizer {
         if (nested.isEmpty()) destination.remove(segment) else destination[segment] = JsonObject(nested)
     }
 
-    private fun isSecretAlias(normalized: String): Boolean =
-        normalized in EXACT_SECRET_ALIASES || SECRET_MARKERS.any(normalized::contains)
+    private fun isSecretAlias(normalized: String): Boolean {
+        if (normalized in SAFE_NUMERIC_ALIASES) return false
+        if (isPresenceFlagAlias(normalized)) return false
+        return normalized in EXACT_SECRET_ALIASES || SECRET_MARKERS.any(normalized::contains)
+    }
+
+    /**
+     * Registry presence flags (`hasApiKey`, `hasValue`, `hasPassword`) are metadata, not
+     * secret material. Substring markers like `apikey`/`password` would otherwise reject a
+     * canonical downlink page and freeze the account cursor. `normalizeKey` already strips
+     * case, so `hasApiKey` arrives as `hasapikey`.
+     */
+    private fun isPresenceFlagAlias(normalized: String): Boolean =
+        normalized.startsWith("has") && normalized.removePrefix("has") in PRESENCE_FLAG_FIELDS
 
     /** Local writes may not forge server presence metadata; SecretState is its only source. */
     private fun isLocalSecretKey(normalized: String): Boolean =
-        isSecretAlias(normalized) || normalized in PRESENCE_ALIASES
+        isSecretAlias(normalized) || normalized in PRESENCE_ALIASES || isPresenceFlagAlias(normalized)
 
     private fun normalizeKey(value: String): String = buildString(value.length) {
         for (character in Normalizer.normalize(value, Normalizer.Form.NFKC).lowercase(Locale.ROOT)) {
@@ -287,6 +299,8 @@ object SecretPayloadSanitizer {
         "secretkey",
         "secretenvelope",
         "secretenvelopes",
+        "token",
+        "clienttoken",
     )
 
     private val SECRET_MARKERS = listOf(
@@ -300,12 +314,42 @@ object SecretPayloadSanitizer {
         "bearertoken",
         "clientsecret",
         "secret",
-        "token",
         "secretkey",
         "envelope",
-        "presence",
         "authorization",
         "bearer",
+    )
+
+    /**
+     * Exact token/presence keys stay secret (`token`, `clientToken`). Substrings such as
+     * `max_tokens` and `presence_penalty` are published AI provider options and must ride
+     * the owned-sync wire.
+     */
+    private val SAFE_NUMERIC_ALIASES = setOf(
+        "maxtokens",
+        "maxoutputtokens",
+        "contextwindowtokens",
+        "presencepenalty",
+        "frequencypenalty",
+        "maximagestokens",
+        "windowtokens",
+        "toolresultchars",
+        "maxinputchars",
+        "maxtoolrounds",
+        "memoryitems",
+        "maximagesperrequest",
+        "maximagebytes",
+    )
+
+    /** Secret field names whose `hasX` flag is emitted by projectPayload. */
+    private val PRESENCE_FLAG_FIELDS = setOf(
+        "password",
+        "privatekey",
+        "passphrase",
+        "apikey",
+        "value",
+        "token",
+        "clienttoken",
     )
 
     private val PRESENCE_ALIASES = setOf("presence", "haspresence")

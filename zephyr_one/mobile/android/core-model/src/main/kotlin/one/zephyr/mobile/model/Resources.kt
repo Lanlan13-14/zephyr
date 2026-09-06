@@ -166,3 +166,159 @@ data class ActivityEvent(
 ) {
     companion object { const val ENTITY_TYPE = "activityEvent" }
 }
+
+data class AiProvider(
+    val id: String,
+    val ownerUserId: String,
+    val name: String,
+    val type: String = "openai-compatible",
+    val baseUrl: String = "",
+    val defaultModel: String = "",
+    val models: List<AiModel> = emptyList(),
+    val config: AiProviderConfig = AiProviderConfig(),
+    val visibility: String = "private",
+    val shareWithUsers: Boolean = false,
+    val shareWithAdmins: Boolean = false,
+    val sharedUserIds: List<String> = emptyList(),
+    val enabled: Boolean = true,
+    val apiKey: SecretPresence = SecretPresence.absent,
+    val revision: Long = 0,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    val deletedAt: Long? = null,
+    val residency: Residency = Residency.OWNED,
+    val capabilities: CapabilitySet = CapabilitySet.owner,
+    val syncState: SyncState = SyncState.SYNCED,
+) {
+    companion object { const val ENTITY_TYPE = "aiProvider" }
+}
+
+data class AiModel(
+    val id: String,
+    val label: String = id,
+    val hidden: Boolean = false,
+    val reasoning: Boolean = false,
+    val reasoningConfigured: Boolean = false,
+    val tools: Boolean = true,
+    val parallelToolCalls: Boolean = true,
+    val contextWindowTokens: Int? = null,
+    val maxOutputTokens: Int? = null,
+    val temperature: Double? = null,
+    val topP: Double? = null,
+    val maxImagesPerRequest: Int? = null,
+    val maxImageBytes: Long? = null,
+    val reasoningEffort: String? = null,
+    val promptCache: String = "auto",
+    val apiMode: String? = null,
+    val inputImage: Boolean = true,
+    val inputPdf: Boolean = false,
+    val inputAudio: Boolean = false,
+    val inputVideo: Boolean = false,
+    val outputImage: Boolean = false,
+    val outputAudio: Boolean = false,
+)
+
+data class AiProviderConfig(
+    val apiMode: String = "auto",
+    val temperature: Double? = null,
+    val topP: Double? = null,
+    val maxTokens: Int? = null,
+    val maxOutputTokens: Int? = null,
+    val presencePenalty: Double? = null,
+    val frequencyPenalty: Double? = null,
+    val vision: Boolean = true,
+    val usePreviousResponseId: Boolean = false,
+    val reasoningEffort: String? = null,
+    val windowTokens: Int? = null,
+)
+
+data class AiMemory(
+    val id: String,
+    val ownerUserId: String,
+    val title: String,
+    val content: String = "",
+    val scope: String = "global",
+    val project: String = "",
+    val projects: List<String> = emptyList(),
+    val tags: List<String> = emptyList(),
+    val connectionIds: List<String> = emptyList(),
+    val enabled: Boolean = true,
+    val revision: Long = 0,
+    val updatedAt: Long = 0,
+    val deletedAt: Long? = null,
+    val residency: Residency = Residency.OWNED,
+    val capabilities: CapabilitySet = CapabilitySet.owner,
+    val syncState: SyncState = SyncState.SYNCED,
+) {
+    companion object { const val ENTITY_TYPE = "aiMemory" }
+}
+
+data class AiSkill(
+    val id: String,
+    val ownerUserId: String,
+    val name: String,
+    val description: String = "",
+    val prompt: String = "",
+    val enabled: Boolean = true,
+    val revision: Long = 0,
+    val updatedAt: Long = 0,
+    val deletedAt: Long? = null,
+    val residency: Residency = Residency.OWNED,
+    val capabilities: CapabilitySet = CapabilitySet.owner,
+    val syncState: SyncState = SyncState.SYNCED,
+) {
+    companion object { const val ENTITY_TYPE = "aiSkill" }
+}
+
+data class AiEnv(
+    val id: String,
+    val ownerUserId: String,
+    val name: String,
+    val enabled: Boolean = true,
+    val visibleToAi: Boolean = false,
+    val value: SecretPresence = SecretPresence.absent,
+    val revision: Long = 0,
+    val updatedAt: Long = 0,
+    val deletedAt: Long? = null,
+    val residency: Residency = Residency.OWNED,
+    val capabilities: CapabilitySet = CapabilitySet.owner,
+    val syncState: SyncState = SyncState.SYNCED,
+) {
+    companion object { const val ENTITY_TYPE = "aiEnv" }
+}
+
+data class AiConversationRecord(
+    val id: String,
+    val ownerUserId: String,
+    val title: String = "",
+    val providerId: String = "",
+    val model: String = "",
+    val archived: Boolean = false,
+    val revision: Long = 0,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    val deletedAt: Long? = null,
+    val residency: Residency = Residency.OWNED,
+    val capabilities: CapabilitySet = CapabilitySet.owner,
+    val syncState: SyncState = SyncState.SYNCED,
+) {
+    companion object { const val ENTITY_TYPE = "aiConversation" }
+}
+
+data class AiMessageRecord(
+    val id: String,
+    val ownerUserId: String,
+    val conversationId: String,
+    val role: String,
+    val content: String = "",
+    val attachments: List<String> = emptyList(),
+    val revision: Long = 0,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    val deletedAt: Long? = null,
+    val residency: Residency = Residency.OWNED,
+    val capabilities: CapabilitySet = CapabilitySet.owner,
+    val syncState: SyncState = SyncState.SYNCED,
+) {
+    companion object { const val ENTITY_TYPE = "aiMessage" }
+}

@@ -620,10 +620,15 @@ internal fun DiagnosticsLiveDestination(
 @Composable
 internal fun AiSettingsLiveDestination(
     account: AccountContainer,
-    @Suppress("UNUSED_PARAMETER") ownerUserId: String,
+    ownerUserId: String,
     onBack: () -> Unit,
 ) {
     val discoverer = remember(account) { AiModelDiscoverer(account) }
+    val providers by account.ownedAi.observeProviders(ownerUserId).collectAsState(initial = emptyList())
+    val memories by account.ownedAi.observeMemories(ownerUserId).collectAsState(initial = emptyList())
+    val skills by account.ownedAi.observeSkills(ownerUserId).collectAsState(initial = emptyList())
+    val env by account.ownedAi.observeEnv(ownerUserId).collectAsState(initial = emptyList())
+    val conversations by account.ownedAi.observeConversations(ownerUserId).collectAsState(initial = emptyList())
     one.zephyr.mobile.feature.tools.AiSettingsLiveRoute(
         localAi = account.localAi,
         bound = !account.isLocalMode,
@@ -636,6 +641,13 @@ internal fun AiSettingsLiveDestination(
                     one.zephyr.mobile.feature.tools.ModelDiscoveryResult(emptyList(), outcome.reason)
             }
         },
+        mainSyncCounts = one.zephyr.mobile.feature.tools.MainAiSyncCounts(
+            providers = providers.size,
+            memories = memories.size,
+            skills = skills.size,
+            env = env.size,
+            conversations = conversations.size,
+        ),
     )
 }
 

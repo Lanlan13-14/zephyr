@@ -34,6 +34,7 @@ import one.zephyr.mobile.data.repository.ConflictRepository
 import one.zephyr.mobile.data.repository.ConnectionRepository
 import one.zephyr.mobile.data.repository.LocalAiRepository
 import one.zephyr.mobile.data.repository.NoteRepository
+import one.zephyr.mobile.data.repository.OwnedAiRepository
 import one.zephyr.mobile.data.repository.ResourceRepository
 import one.zephyr.mobile.data.repository.SettingsRepository
 import one.zephyr.mobile.data.repository.SharedResourceStore
@@ -282,6 +283,9 @@ class AccountContainer(
 
     /** Full local AI authority. Server binding is never required to edit or run it. */
     val localAi: LocalAiRepository = LocalAiRepository(database, secretStore)
+
+    /** Bound-account AI entities that ride the owned-sync change feed. */
+    val ownedAi: OwnedAiRepository = OwnedAiRepository(database, writeGateway)
 
     internal val localAiWorkspace: LocalAiWorkspace = LocalAiWorkspace(
         File(context.noBackupFilesDir, "ai-workspaces/$generation"),

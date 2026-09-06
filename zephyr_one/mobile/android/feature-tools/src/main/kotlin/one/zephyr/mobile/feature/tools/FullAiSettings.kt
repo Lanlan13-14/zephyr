@@ -36,7 +36,7 @@ import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 
-private enum class AiSettingsPage { ROOT, PROVIDERS, PROVIDER_EDIT, MODELS, MODEL_EDIT, PERMISSIONS, MCP, ENV, MEMORIES, MEMORY_EDIT, SKILLS, SKILL_EDIT, SANDBOX }
+private enum class AiSettingsPage { ROOT, PROVIDERS, PROVIDER_EDIT, MODELS, MODEL_EDIT, PERMISSIONS, MCP, ENV, MEMORIES, MEMORY_EDIT, SKILLS, SKILL_EDIT, PLANS, PLAN_EDIT, SANDBOX, MAIN_SYNC }
 
 /**
  * Fetches the live model list for a provider draft. Implemented by the app layer, which owns the
@@ -54,6 +54,7 @@ fun FullAiSettingsRoute(
     bound: Boolean,
     onBack: () -> Unit,
     discoverModels: ModelDiscovery? = null,
+    mainSyncCounts: MainAiSyncCounts? = null,
 ) {
     val catalog by repository.observe().collectAsState(initial = LocalAiCatalog())
     val scope = rememberCoroutineScope()
@@ -62,17 +63,19 @@ fun FullAiSettingsRoute(
     var modelDraft by remember { mutableStateOf(LocalAiModel("")) }
     var memoryDraft by remember { mutableStateOf(LocalAiMemory()) }
     var skillDraft by remember { mutableStateOf(LocalAiSkill()) }
+    var planDraft by remember { mutableStateOf(LocalAiPlan()) }
     var parentProviderId by remember { mutableStateOf("") }
     val goBack = { when (page) {
         AiSettingsPage.PROVIDER_EDIT, AiSettingsPage.MODELS -> page = AiSettingsPage.PROVIDERS
         AiSettingsPage.MODEL_EDIT -> page = AiSettingsPage.MODELS
         AiSettingsPage.MEMORY_EDIT -> page = AiSettingsPage.MEMORIES
         AiSettingsPage.SKILL_EDIT -> page = AiSettingsPage.SKILLS
+        AiSettingsPage.PLAN_EDIT -> page = AiSettingsPage.PLANS
         AiSettingsPage.ROOT -> onBack()
         else -> page = AiSettingsPage.ROOT
     } }
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = when(page){AiSettingsPage.ROOT->"AI 助理";AiSettingsPage.PROVIDERS->"模型供应商";AiSettingsPage.PROVIDER_EDIT->if(providerDraft.id.isBlank())"添加供应商" else "编辑供应商";AiSettingsPage.MODELS->"模型";AiSettingsPage.MODEL_EDIT->"模型详情";AiSettingsPage.PERMISSIONS->"工具与权限";AiSettingsPage.MCP->"MCP 服务器";AiSettingsPage.ENV->"AI 环境变量";AiSettingsPage.MEMORIES->"长期 Memory";AiSettingsPage.MEMORY_EDIT->"编辑 Memory";AiSettingsPage.SKILLS->"Skills 能力包";AiSettingsPage.SKILL_EDIT->"编辑 Skill";AiSettingsPage.SANDBOX->"本机沙箱"}, onBack = goBack)
+        PushedPageHeader(title = when(page){AiSettingsPage.ROOT->"AI 助理";AiSettingsPage.PROVIDERS->"模型供应商";AiSettingsPage.PROVIDER_EDIT->if(providerDraft.id.isBlank())"添加供应商" else "编辑供应商";AiSettingsPage.MODELS->"模型";AiSettingsPage.MODEL_EDIT->"模型详情";AiSettingsPage.PERMISSIONS->"工具与权限";AiSettingsPage.MCP->"MCP 服务器";AiSettingsPage.ENV->"AI 环境变量";AiSettingsPage.MEMORIES->"长期 Memory";AiSettingsPage.MEMORY_EDIT->"编辑 Memory";AiSettingsPage.SKILLS->"Skills 能力包";AiSettingsPage.SKILL_EDIT->"编辑 Skill";AiSettingsPage.PLANS->"任务计划";AiSettingsPage.PLAN_EDIT->"编辑计划";AiSettingsPage.SANDBOX->"本机沙箱";AiSettingsPage.MAIN_SYNC->"主端 AI 数据"}, onBack = goBack)
         AnimatedContent(
             targetState = page,
             transitionSpec = {
@@ -92,7 +95,10 @@ fun FullAiSettingsRoute(
             AiSettingsPage.MEMORY_EDIT -> MemoryEditor(memoryDraft){scope.launch{repository.upsertMemory(it);page=AiSettingsPage.MEMORIES}}
             AiSettingsPage.SKILLS -> ResourceList(catalog.skills.map{it.id to it.name},"Skill",{skillDraft=LocalAiSkill();page=AiSettingsPage.SKILL_EDIT},{id->skillDraft=catalog.skills.first{it.id==id};page=AiSettingsPage.SKILL_EDIT},{scope.launch{repository.deleteSkill(it)}})
             AiSettingsPage.SKILL_EDIT -> SkillEditor(skillDraft){scope.launch{repository.upsertSkill(it);page=AiSettingsPage.SKILLS}}
+            AiSettingsPage.PLANS -> ResourceList(catalog.plans.map{it.id to it.title.ifBlank{it.status}},"计划",{planDraft=LocalAiPlan();page=AiSettingsPage.PLAN_EDIT},{id->planDraft=catalog.plans.first{it.id==id};page=AiSettingsPage.PLAN_EDIT},{scope.launch{repository.deletePlan(it)}})
+            AiSettingsPage.PLAN_EDIT -> PlanEditor(planDraft){scope.launch{repository.upsertPlan(it);page=AiSettingsPage.PLANS}}
             AiSettingsPage.SANDBOX -> SandboxEditor(catalog){scope.launch{repository.save(it)}}
+            AiSettingsPage.MAIN_SYNC -> MainSyncStatus(bound, catalog, mainSyncCounts)
         } }
     }
 }
@@ -106,7 +112,22 @@ fun FullAiSettingsRoute(
         Nav("AI 环境变量","${c.environment.size} 个；值存 Android Keystore",AiSettingsPage.ENV,open)
         Nav("长期 Memory","${c.memories.size} / ${c.memoryMaxItems}",AiSettingsPage.MEMORIES,open)
         Nav("Skills 能力包","${c.skills.count{it.enabled}} 个启用",AiSettingsPage.SKILLS,open)
+        Nav("任务计划","${c.plans.size} 条",AiSettingsPage.PLANS,open)
         Nav("本机沙箱","L2 · ${if(c.sandbox.enabled)"启用" else "停用"} · 默认无网络",AiSettingsPage.SANDBOX,open,false)
+    }
+    if (c.providers.isNotEmpty()) {
+        Section("默认供应商")
+        Card {
+            Choice(
+                "默认供应商",
+                c.providers.firstOrNull { it.id == c.defaultProviderId }?.name ?: "未选择",
+                c.providers.map { it.name.ifBlank { it.id } },
+            ) { name ->
+                val chosen = c.providers.firstOrNull { it.name == name || it.id == name }
+                if (chosen != null) save(c.copy(defaultProviderId = chosen.id, defaultModel = chosen.defaultModel.ifBlank { c.defaultModel }))
+            }
+            Field("默认模型", c.defaultModel) { save(c.copy(defaultModel = it)) }
+        }
     }
     Section("上下文与规划")
     Card {
@@ -132,7 +153,10 @@ fun FullAiSettingsRoute(
             save(c.copy(planner = c.planner.copy(requirePlanBeforeTools = it)))
         }
     }
-    Section("可选同步"); Card { Toggle("从主端同步 AI 数据",if(bound)"可选增量来源；本机配置始终可编辑、可运行" else "绑定主端后可选；未绑定不影响任何 AI 功能",c.syncFromMainEnabled){save(c.copy(syncFromMainEnabled=it))} }
+    Section("可选同步"); Card {
+        Toggle("从主端同步 AI 数据",if(bound)"开启后把主端 Provider / Memory / Skill / 会话写入本机镜像，本机配置始终可编辑" else "绑定主端后可选；未绑定不影响任何 AI 功能",c.syncFromMainEnabled){save(c.copy(syncFromMainEnabled=it))}
+        if (bound) Nav("主端 AI 数据","Provider / Memory / Skill / 会话镜像状态",AiSettingsPage.MAIN_SYNC,open,false)
+    }
 } }
 
 @Composable private fun AiProviders(c:LocalAiCatalog,edit:(LocalAiProvider)->Unit,models:(LocalAiProvider)->Unit,delete:(String)->Unit){ AiScroll { PrimaryButton({edit(LocalAiProvider())},Modifier.fillMaxWidth()){Text("添加模型供应商")}; c.providers.forEach{p->Card{SettingsRow(p.name.ifBlank{"未命名"},subtitle="${p.type} · ${p.models.size} 模型 · ${p.source}",value=if(p.enabled)"启用" else "停用",showChevron=true,onClick={edit(p)});SettingsRow("模型列表",value="${p.models.size}",showChevron=true,onClick={models(p)});SettingsRow("删除供应商",titleColor=ZephyrTheme.palette.status.error,showDivider=false,onClick={delete(p.id)})}} } }
@@ -175,6 +199,48 @@ fun FullAiSettingsRoute(
 @Composable private fun ResourceList(items:List<Pair<String,String>>,label:String,add:()->Unit,edit:(String)->Unit,delete:(String)->Unit){AiScroll{PrimaryButton(add,Modifier.fillMaxWidth()){Text("添加 $label")};items.forEach{(id,name)->Card{SettingsRow(name.ifBlank{"未命名 $label"},showChevron=true,onClick={edit(id)});SettingsRow("删除",titleColor=ZephyrTheme.palette.status.error,showDivider=false,onClick={delete(id)})}}}}
 @Composable private fun MemoryEditor(i:LocalAiMemory,save:(LocalAiMemory)->Unit){var d by remember(i){mutableStateOf(i)};AiScroll{Card{Field("标题",d.title){d=d.copy(title=it)};Field("Scope",d.scope){d=d.copy(scope=it)};Field("Project",d.project){d=d.copy(project=it)};Field("关联连接 ID",d.connectionIds.joinToString(",")){d=d.copy(connectionIds=csv(it))};Field("标签",d.tags.joinToString(",")){d=d.copy(tags=csv(it))};Field("内容",d.content,false,7){d=d.copy(content=it)};Toggle("启用此 Memory",null,d.enabled){d=d.copy(enabled=it)}};PrimaryButton({save(d)},Modifier.fillMaxWidth(),d.title.isNotBlank()&&d.content.isNotBlank()){Text("保存 Memory")}}}
 @Composable private fun SkillEditor(i:LocalAiSkill,save:(LocalAiSkill)->Unit){var d by remember(i){mutableStateOf(i)};AiScroll{Card{Field("Skill 名称",d.name){d=d.copy(name=it)};Field("说明",d.description){d=d.copy(description=it)};Field("Skill 指令",d.prompt,false,9){d=d.copy(prompt=it)};Toggle("启用 Skill",null,d.enabled){d=d.copy(enabled=it)}};PrimaryButton({save(d)},Modifier.fillMaxWidth(),d.name.isNotBlank()&&d.prompt.isNotBlank()){Text("保存 Skill")}}}
+@Composable private fun PlanEditor(i:LocalAiPlan,save:(LocalAiPlan)->Unit){
+    var d by remember(i){mutableStateOf(i)}
+    AiScroll{
+        Card{
+            Field("标题",d.title){d=d.copy(title=it)}
+            Choice("状态",d.status,listOf("planned","running","paused","completed","failed","cancelled")){d=d.copy(status=it)}
+            Field("风险说明",d.risk,false,3){d=d.copy(risk=it)}
+            Field("备注",d.note,false,4){d=d.copy(note=it)}
+            Field("步骤（每行一步）",d.steps.joinToString("\n"){it.title},false,8){ lines ->
+                d=d.copy(steps=lines.lineSequence().map(String::trim).filter(String::isNotEmpty).mapIndexed{index,title->
+                    d.steps.getOrNull(index)?.copy(title=title) ?: LocalAiPlanStep(id="${index+1}", title=title)
+                }.toList())
+            }
+        }
+        PrimaryButton({save(d.copy(updatedAt=System.currentTimeMillis()))},Modifier.fillMaxWidth(),d.title.isNotBlank()){Text("保存计划")}
+    }
+}
+@Composable private fun MainSyncStatus(bound:Boolean, catalog:LocalAiCatalog, counts:MainAiSyncCounts?){
+    AiScroll{
+        Card{
+            SettingsRow("绑定状态", value=if(bound) "已绑定主端" else "本机模式")
+            SettingsRow("主端增量同步", value=if(catalog.syncFromMainEnabled) "开启" else "关闭")
+            SettingsRow("镜像供应商", value="${counts?.providers ?: 0}")
+            SettingsRow("镜像 Memory", value="${counts?.memories ?: 0}")
+            SettingsRow("镜像 Skill", value="${counts?.skills ?: 0}")
+            SettingsRow("镜像环境变量", value="${counts?.env ?: 0}")
+            SettingsRow("镜像会话", value="${counts?.conversations ?: 0}", showDivider=false)
+        }
+        Card{
+            SettingsRow("本机供应商", value="${catalog.providers.size}")
+            SettingsRow("本机 Memory", value="${catalog.memories.size}")
+            SettingsRow("本机 Skill", value="${catalog.skills.size}")
+            SettingsRow("本机计划", value="${catalog.plans.size}", showDivider=false)
+        }
+        Text(
+            if (bound) "主端 Provider / Memory / Skill / Env / 会话走 owned-sync 镜像。密钥只以设备信封进 SecretStore，payload 只有 hasApiKey / hasValue。"
+            else "未绑定主端时 AI 完全走本机 catalog，不请求主端。",
+            color=ZephyrTheme.palette.onFloatingMuted,
+            fontSize=12.sp,
+        )
+    }
+}
 @Composable private fun SandboxEditor(c:LocalAiCatalog,save:(LocalAiCatalog)->Unit){var x by remember(c){mutableStateOf(c)};AiScroll{Card{Toggle("启用本机沙箱","会话隔离目录 · 无 shell · 命令白名单 · 审计",x.sandbox.enabled){x=x.copy(sandbox=x.sandbox.copy(enabled=it));save(x)};NumberField("工作区配额 MB",x.sandbox.workspaceQuotaMb){x=x.copy(sandbox=x.sandbox.copy(workspaceQuotaMb=it.coerceIn(32,2048)));save(x)};NumberField("命令超时秒",x.sandbox.timeoutSeconds){x=x.copy(sandbox=x.sandbox.copy(timeoutSeconds=it.coerceIn(1,300)));save(x)};Toggle("默认允许网络","Android 沙箱强制关闭；需要网络请使用网页/MCP 工具",false){};Lines("允许命令",x.sandbox.allowedCommands){x=x.copy(sandbox=x.sandbox.copy(allowedCommands=it));save(x)}};Text("内置文本工具可直接运行；Python / Node / Go / Rust / FFmpeg 当前 APK 未打包时会明确报告 not-packaged，不会伪装成功。",color=ZephyrTheme.palette.onFloatingMuted,fontSize=12.sp)}}
 
 @Composable private fun AiScroll(content:@Composable androidx.compose.foundation.layout.ColumnScope.()->Unit){Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=ZephyrSpacing.lg,vertical=8.dp).padding(bottom=140.dp),verticalArrangement=Arrangement.spacedBy(12.dp),content=content)}

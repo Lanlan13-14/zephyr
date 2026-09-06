@@ -598,9 +598,18 @@ fun AiSettingsLiveRoute(
     bound: Boolean,
     onBack: () -> Unit,
     discoverModels: ModelDiscovery? = null,
+    mainSyncCounts: MainAiSyncCounts? = null,
 ) {
-    FullAiSettingsRoute(localAi, bound, onBack, discoverModels)
+    FullAiSettingsRoute(localAi, bound, onBack, discoverModels, mainSyncCounts)
 }
+
+data class MainAiSyncCounts(
+    val providers: Int = 0,
+    val memories: Int = 0,
+    val skills: Int = 0,
+    val env: Int = 0,
+    val conversations: Int = 0,
+)
 
 @Composable
 fun DiagnosticsLiveRoute(

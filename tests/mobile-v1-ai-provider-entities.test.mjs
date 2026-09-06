@@ -341,3 +341,54 @@ test('renaming an AI provider does not stamp apiKey as a secret change', () => {
     context.cleanup();
   }
 });
+
+test('owned-sync wire keeps hasApiKey and numeric option fields for One', () => {
+  const context = fresh();
+  try {
+    const alice = { userId: 'alice' };
+    context.service.create(alice, {
+      id: 'provider-options',
+      name: 'Options',
+      type: 'openai-compatible',
+      baseUrl: 'https://api.example.invalid/v1',
+      apiKey: 'sk-live-secret',
+      defaultModel: 'gpt-4o',
+      config: {
+        apiMode: 'chat',
+        options: {
+          max_tokens: 4096,
+          max_output_tokens: 8192,
+          presence_penalty: 0.2,
+          frequency_penalty: 0.1,
+          vision: true,
+        },
+      },
+      models: [{
+        id: 'gpt-4o',
+        label: 'GPT-4o',
+        contextWindowTokens: 128000,
+        maxOutputTokens: 16384,
+      }],
+    }, { changedSecretFields: ['apiKey'] });
+    const projected = context.adapter.read(alice, 'provider-options');
+    const { projectPayload } = require(path.join(root, 'mobile-v1-entities.js'));
+    const spec = enabledRegistry.entities.find((entity) => entity.type === 'aiProvider');
+    const wire = projectPayload(spec, projected);
+    assert.equal(wire.apiKey, undefined);
+    assert.equal(wire.hasApiKey, true);
+    assert.equal(wire.config.options.max_tokens, 4096);
+    assert.equal(wire.config.options.max_output_tokens, 8192);
+    assert.equal(wire.config.options.presence_penalty, 0.2);
+    assert.equal(wire.models[0].contextWindowTokens, 128000);
+    assert.equal(wire.models[0].maxOutputTokens, 16384);
+    const page = context.bridge.store.changePage(alice.userId, 0, 20);
+    const created = page.changes.find((change) => change.entityType === 'aiProvider');
+    assert.ok(created);
+    const serialized = JSON.stringify(created);
+    assert.equal(created.payload?.apiKey, undefined);
+    assert.ok(!serialized.includes('sk-live-secret'));
+    assert.ok(!serialized.includes('"apiKey"'));
+  } finally {
+    context.cleanup();
+  }
+});

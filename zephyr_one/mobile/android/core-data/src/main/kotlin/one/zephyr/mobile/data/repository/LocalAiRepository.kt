@@ -85,8 +85,10 @@ class LocalAiRepository(
 
     suspend fun upsertMemory(item: LocalAiMemory) = updateList(item.id, { it.memories }, { c, list -> c.copy(memories = list) }, item)
     suspend fun upsertSkill(item: LocalAiSkill) = updateList(item.id, { it.skills }, { c, list -> c.copy(skills = list) }, item)
+    suspend fun upsertPlan(item: LocalAiPlan) = updateList(item.id, { it.plans }, { c, list -> c.copy(plans = list) }, item)
     suspend fun deleteMemory(id: String) { val c = load(); save(c.copy(memories = c.memories.filterNot { it.id == id })) }
     suspend fun deleteSkill(id: String) { val c = load(); save(c.copy(skills = c.skills.filterNot { it.id == id })) }
+    suspend fun deletePlan(id: String) { val c = load(); save(c.copy(plans = c.plans.filterNot { it.id == id })) }
 
     private suspend inline fun <reified T> updateList(
         id: String,
@@ -99,10 +101,16 @@ class LocalAiRepository(
         val patched: T = when (item) {
             is LocalAiMemory -> item.copy(id = resolved) as T
             is LocalAiSkill -> item.copy(id = resolved) as T
+            is LocalAiPlan -> item.copy(id = resolved) as T
             else -> item
         }
         val list = get(current).filterNot {
-            when (it) { is LocalAiMemory -> it.id == resolved; is LocalAiSkill -> it.id == resolved; else -> false }
+            when (it) {
+                is LocalAiMemory -> it.id == resolved
+                is LocalAiSkill -> it.id == resolved
+                is LocalAiPlan -> it.id == resolved
+                else -> false
+            }
         } + patched
         save(copy(current, list))
     }
@@ -148,6 +156,7 @@ data class LocalAiCatalog(
     val environment: List<LocalAiEnvironment> = emptyList(),
     val memories: List<LocalAiMemory> = emptyList(),
     val skills: List<LocalAiSkill> = emptyList(),
+    val plans: List<LocalAiPlan> = emptyList(),
     val sandbox: LocalAiSandbox = LocalAiSandbox(),
     val syncFromMainEnabled: Boolean = false,
 ) {
@@ -156,7 +165,7 @@ data class LocalAiCatalog(
         context = context.normalized(), memoryMaxItems = memoryMaxItems.coerceIn(1, 2000),
         providers = providers.distinctBy { it.id }, mcpServers = mcpServers.distinctBy { it.id },
         environment = environment.distinctBy { it.id }, memories = memories.distinctBy { it.id }.take(memoryMaxItems),
-        skills = skills.distinctBy { it.id },
+        skills = skills.distinctBy { it.id }, plans = plans.distinctBy { it.id }.take(200),
     )
 }
 
@@ -173,4 +182,14 @@ data class LocalAiCatalog(
 @Serializable data class LocalAiEnvironment(val id: String = "", val name: String = "", val description: String = "", val enabled: Boolean = true, val visibleToAi: Boolean = false, val valueVisibleToAi: Boolean = false)
 @Serializable data class LocalAiMemory(val id: String = "", val title: String = "", val scope: String = "global", val project: String = "", val connectionIds: List<String> = emptyList(), val tags: List<String> = emptyList(), val content: String = "", val enabled: Boolean = true, val updatedAt: Long = System.currentTimeMillis())
 @Serializable data class LocalAiSkill(val id: String = "", val name: String = "", val description: String = "", val prompt: String = "", val enabled: Boolean = true, val updatedAt: Long = System.currentTimeMillis())
+@Serializable data class LocalAiPlanStep(val id: String = "", val title: String = "", val status: String = "pending", val note: String = "", val error: String = "")
+@Serializable data class LocalAiPlan(
+    val id: String = "",
+    val title: String = "",
+    val status: String = "planned",
+    val risk: String = "",
+    val steps: List<LocalAiPlanStep> = emptyList(),
+    val note: String = "",
+    val updatedAt: Long = System.currentTimeMillis(),
+)
 @Serializable data class LocalAiSandbox(val enabled: Boolean = true, val workspaceQuotaMb: Int = 256, val timeoutSeconds: Int = 60, val networkDefault: Boolean = false, val allowedCommands: List<String> = listOf("cat", "grep", "sed", "awk", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "sha256sum"))
