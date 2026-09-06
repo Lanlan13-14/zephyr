@@ -139,14 +139,14 @@ class SecretPayloadSanitizerTest {
     }
 
     @Test
-    fun `local ai provider config rejects nested token before it is projected`() {
+    fun `local ai provider config rejects nested access_token before it is projected`() {
         val error = expectViolation {
             SecretPayloadSanitizer.sanitizeLocalEditableValues(
                 entityType = "aiProvider",
                 values = JsonObject(
                     mapOf(
                         "config" to JsonObject(
-                            mapOf("transport" to JsonObject(mapOf("tokenValue" to JsonPrimitive(CANARY)))),
+                            mapOf("transport" to JsonObject(mapOf("access_token" to JsonPrimitive(CANARY)))),
                         ),
                     ),
                 ),
@@ -155,6 +155,31 @@ class SecretPayloadSanitizerTest {
         }
 
         assertEquals(SecretPayloadFailure.RAW_SECRET_FIELD, error.failure)
+    }
+
+    @Test
+    fun `local ai provider config keeps numeric token fields that are not credentials`() {
+        val sanitized = SecretPayloadSanitizer.sanitizeLocalEditableValues(
+            entityType = "aiProvider",
+            values = JsonObject(
+                mapOf(
+                    "config" to JsonObject(
+                        mapOf(
+                            "options" to JsonObject(
+                                mapOf(
+                                    "max_tokens" to JsonPrimitive(4096),
+                                    "presence_penalty" to JsonPrimitive(0.1),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            acceptedMask = listOf("config"),
+        )
+        val options = ((sanitized["config"] as JsonObject)["options"] as JsonObject)
+        assertEquals(JsonPrimitive(4096), options["max_tokens"])
+        assertEquals(JsonPrimitive(0.1), options["presence_penalty"])
     }
 
     @Test
