@@ -20,6 +20,7 @@ import one.zephyr.mobile.model.ServerProfile
 import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.security.DeviceIdentity
 import one.zephyr.mobile.security.LockSensitiveSink
+import one.zephyr.mobile.sync.BootstrapOutcome
 import one.zephyr.mobile.sync.SyncRoundResult
 import one.zephyr.mobile.sync.SyncSettings
 
@@ -364,9 +365,9 @@ class BindingCoordinator internal constructor(
         preparation.restoredGraph?.takeIf { bootstrap }?.let { graph ->
             graph.startNetworkProducers()
             if (preparation.requiresBootstrap) {
-                graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
-                    markBootstrapReadyIfCurrent(graph, checkNotNull(preparation.binding), round.endState)
-                }
+                /* Readiness follows the committed snapshot, not the whole round: a promoted
+                 * mirror must not be re-bootstrapped from scratch because a later phase failed. */
+                markReadyWhenSnapshotPromoted(graph, checkNotNull(preparation.binding), graph.bootstrapAfterBind())
             } else {
                 graph.runForegroundRound()
             }
@@ -380,11 +381,29 @@ class BindingCoordinator internal constructor(
         val graph = mutex.withLock { host.currentGraph() ?: return }
         graph.startNetworkProducers()
         if (graph.accountDatabaseRequiresBootstrap()) {
-            graph.bootstrapAfterBind().lastOrNull()?.takeIf { it.complete }?.let { round ->
-                markBootstrapReadyIfCurrent(graph, graph.binding, round.endState)
-            }
+            markReadyWhenSnapshotPromoted(graph, graph.binding, graph.bootstrapAfterBind())
         } else {
             graph.runForegroundRound()
+        }
+    }
+
+    /**
+     * Marks the account database ready as soon as any round promoted a bootstrap snapshot, even
+     * when a later phase of that round failed. The end state recorded with the marker is the last
+     * round's state: a later failure parks the binding in the state machine's own terminal for it
+     * (IDLE/CONFLICTED/REAUTH_REQUIRED), and a normal round retries the failed phases without
+     * re-downloading the account. Before this, a first round that promoted the mirror but failed
+     * push/pull/ack left the marker unset, so every launch reset the binding to
+     * BOUND_NEEDS_BOOTSTRAP and re-staged the whole snapshot.
+     */
+    private suspend fun markReadyWhenSnapshotPromoted(
+        graph: ManagedBindingGraph,
+        binding: AccountBinding,
+        rounds: List<SyncRoundResult>,
+    ) {
+        val lastComplete = rounds.lastOrNull() ?: return
+        if (rounds.any { it.bootstrapOutcome is BootstrapOutcome.Complete }) {
+            markBootstrapReadyIfCurrent(graph, binding, lastComplete.endState)
         }
     }
 
@@ -530,9 +549,14 @@ class BindingCoordinator internal constructor(
                 if (host.currentGraph() === prepared.graph) workersMayRun = true
                 prepared.graph.startNetworkProducers()
                 val bootstrap = prepared.graph.bootstrapAfterBind()
-                val bootstrapSucceeded = bootstrap.lastOrNull()?.takeIf { it.complete }?.let { round ->
-                    markBootstrapReadyIfCurrent(prepared.graph, prepared.binding, round.endState)
-                } ?: false
+                /* bootstrapSucceeded reports whether the account database is usable now —
+                 * which the promoted snapshot already guarantees, even when a later phase of
+                 * the same round failed and will be retried as a normal round. */
+                val bootstrapSucceeded = bootstrap
+                    .takeIf { rounds -> rounds.any { it.bootstrapOutcome is BootstrapOutcome.Complete } }
+                    ?.let { rounds ->
+                        markBootstrapReadyIfCurrent(prepared.graph, prepared.binding, rounds.last().endState)
+                    } ?: false
                 BindingCompletionResult.Completed(
                     binding = prepared.binding,
                     bootstrapSucceeded = bootstrapSucceeded,
@@ -715,9 +739,11 @@ class BindingCoordinator internal constructor(
             if (host.currentGraph() === prepared.graph) workersMayRun = true
             prepared.graph.startNetworkProducers()
             val bootstrap = prepared.graph.bootstrapAfterBind()
-            val bootstrapSucceeded = bootstrap.lastOrNull()?.takeIf { it.complete }?.let { round ->
-                markBootstrapReadyIfCurrent(prepared.graph, prepared.binding, round.endState)
-            } ?: false
+            val bootstrapSucceeded = bootstrap
+                .takeIf { rounds -> rounds.any { it.bootstrapOutcome is BootstrapOutcome.Complete } }
+                ?.let { rounds ->
+                    markBootstrapReadyIfCurrent(prepared.graph, prepared.binding, rounds.last().endState)
+                } ?: false
             BindingCompletionResult.Completed(
                 binding = prepared.binding,
                 bootstrapSucceeded = bootstrapSucceeded,

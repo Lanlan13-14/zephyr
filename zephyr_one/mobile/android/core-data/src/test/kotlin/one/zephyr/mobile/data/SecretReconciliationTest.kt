@@ -451,4 +451,139 @@ class SecretReconciliationTest {
     } catch (failure: SecretReconciliationException) {
         failure
     }
+
+    // ---- bootstrap snapshot semantics (§19: snapshot is self-contained; local mirror may
+    // ------ retain secrets when the page cannot supply an openable envelope) ------------------
+
+    @Test
+    fun `snapshot full-replacement mask is never treated as an incremental secret patch`() {
+        /* The live failure shape: a bootstrap page carries fieldMask = the full editable set,
+         * which contains no secret fields, so isIncrementalSecretPatch(change) would answer
+         * true and silently swallow an unopenable envelope. Snapshot semantics must disable
+         * that fallback and fail closed with the true code when no retained secret exists. */
+        val error = expectSecretFailure {
+            prepareSecrets(
+                change(
+                    payload = payload(hasPassword = true, hasPrivateKey = false),
+                    envelopes = mapOf("password" to envelope()),
+                    fieldMask = listOf("name", "host", "port", "protocol", "username"),
+                ),
+                opener = EnvelopeOpener { _, _ -> null },
+                snapshot = true,
+            )
+        }
+        assertEquals(SecretReconciliationFailure.ENVELOPE_REJECTED, error.failure)
+        assertEquals("connection", error.entityType)
+        assertEquals("c-1", error.entityId)
+        assertEquals("password", error.fieldName)
+    }
+
+    @Test
+    fun `snapshot without an envelope and without a retained secret fails closed as missing envelope`() {
+        val error = expectSecretFailure {
+            prepareSecrets(
+                change(
+                    payload = payload(hasPassword = true, hasPrivateKey = false),
+                    fieldMask = listOf("name", "host"),
+                ),
+                opener = EnvelopeOpener { _, _ -> error("must not open") },
+                snapshot = true,
+            )
+        }
+        assertEquals(SecretReconciliationFailure.MISSING_ENVELOPE, error.failure)
+    }
+
+    @Test
+    fun `snapshot re-stage retains the local mirror secret when the envelope cannot be opened`() {
+        /* The second-bootstrap repair path: the mirror already holds the password from the
+         * first bootstrap, the re-staged page's envelope cannot be opened (stale AAD), and
+         * the retained plaintext must keep the snapshot complete instead of failing staging. */
+        val retained = "kept-local".toByteArray()
+        val secrets = prepareSecrets(
+            change(
+                payload = payload(hasPassword = true, hasPrivateKey = false),
+                envelopes = mapOf("password" to envelope()),
+                fieldMask = listOf("name", "host", "port"),
+            ),
+            opener = EnvelopeOpener { _, _ -> null },
+            retainedSecrets = mapOf("password" to retained),
+            snapshot = true,
+        )
+        try {
+            assertEquals("kept-local", secrets.values.getValue("password").decodeToString())
+            assertEquals(true, secrets.states.getValue("password"))
+        } finally {
+            secrets.close()
+            retained.fill(0)
+        }
+    }
+
+    @Test
+    fun `snapshot re-stage retains the local mirror secret when the envelope is absent`() {
+        val retained = "kept-local".toByteArray()
+        val secrets = prepareSecrets(
+            change(
+                payload = payload(hasPassword = true, hasPrivateKey = false),
+                fieldMask = listOf("name", "host"),
+            ),
+            opener = EnvelopeOpener { _, _ -> error("must not open") },
+            retainedSecrets = mapOf("password" to retained),
+            snapshot = true,
+        )
+        try {
+            assertEquals("kept-local", secrets.values.getValue("password").decodeToString())
+        } finally {
+            secrets.close()
+            retained.fill(0)
+        }
+    }
+
+    @Test
+    fun `snapshot planner re-puts a retained value so promotion stays complete`() {
+        val retained = "kept-local".toByteArray()
+        val change = change(
+            payload = payload(hasPassword = true, hasPrivateKey = false),
+            envelopes = mapOf("password" to envelope()),
+            fieldMask = listOf("name", "host"),
+        )
+        val secrets = prepareSecrets(
+            change,
+            opener = EnvelopeOpener { _, _ -> null },
+            retainedSecrets = mapOf("password" to retained),
+            snapshot = true,
+        )
+        try {
+            val mutations = planBootstrapPageSecretMutations(
+                generation = 77L,
+                changes = listOf(change),
+                prepared = mapOf(0 to secrets),
+            )
+            val put = mutations.filterIsInstance<PlannedSecretMutation.Put>().first()
+            assertEquals("kept-local", put.plaintext.decodeToString())
+            assertTrue(put.ref.canonical().value.contains("77"))
+        } finally {
+            secrets.close()
+            retained.fill(0)
+        }
+    }
+
+    @Test
+    fun `incremental pages keep the pre-existing behavior without snapshot flag`() {
+        /* Regression guard: the incremental fallback must remain byte-for-byte intact for
+         * change-feed pages — this is exactly what PR #115/#116 established. */
+        val secrets = prepareSecrets(
+            change(
+                payload = payload(hasPassword = true, hasPrivateKey = false),
+                envelopes = mapOf("password" to envelope()),
+                fieldMask = listOf("name"),
+            ),
+            opener = EnvelopeOpener { _, _ -> null },
+        )
+        try {
+            assertEquals(true, secrets.states.getValue("password"))
+            assertTrue(secrets.values["password"] == null)
+        } finally {
+            secrets.close()
+        }
+    }
 }
