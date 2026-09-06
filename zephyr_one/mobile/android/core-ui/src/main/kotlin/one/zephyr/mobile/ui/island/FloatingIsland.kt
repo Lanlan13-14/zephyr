@@ -1,11 +1,11 @@
 package one.zephyr.mobile.ui.island
 
 import android.view.HapticFeedbackConstants
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -24,25 +24,27 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.util.fastCoerceIn
+import androidx.compose.ui.util.fastRoundToInt
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import one.zephyr.mobile.ui.component.Icon
@@ -53,9 +55,12 @@ import one.zephyr.mobile.ui.glass.LocalBackdrop
 import one.zephyr.mobile.ui.glass.Shadow
 import one.zephyr.mobile.ui.glass.blur
 import one.zephyr.mobile.ui.glass.drawBackdrop
+import one.zephyr.mobile.ui.glass.interactive.DampedDragAnimation
 import one.zephyr.mobile.ui.glass.lens
 import one.zephyr.mobile.ui.glass.rememberCombinedBackdrop
 import one.zephyr.mobile.ui.glass.rememberLayerBackdrop
+import one.zephyr.mobile.ui.glass.shape.Capsule
+import one.zephyr.mobile.ui.glass.vibrancy
 import one.zephyr.mobile.ui.theme.IslandSpec
 import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
 import one.zephyr.mobile.ui.theme.ZephyrTextStyles
@@ -76,21 +81,6 @@ fun FloatingIsland(
     val density = LocalDensity.current
     val labels = destinations.map { stringResource(it.labelRes) }
     val selectedIndex = destinations.indexOf(selected).coerceAtLeast(0)
-    val position = remember { Animatable(selectedIndex.toFloat()) }
-
-    LaunchedEffect(selectedIndex, motion.reduceMotion) {
-        if (motion.reduceMotion) {
-            position.snapTo(selectedIndex.toFloat())
-        } else {
-            position.animateTo(
-                targetValue = selectedIndex.toFloat(),
-                animationSpec = tween(
-                    durationMillis = motion.scale(IslandSpec.SELECTION_MS),
-                    easing = ZephyrMotionTokens.easeOut,
-                ),
-            )
-        }
-    }
 
     val safeBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val bottomGap = IslandGeometry.bottomGap(safeBottom.value, IslandSpec.bottomGap.value).dp
@@ -111,9 +101,46 @@ fun FloatingIsland(
         val contentBackdrop = LocalBackdrop.current
         val capsuleBackdrop = rememberLayerBackdrop()
         val selectedBackdrop = rememberCombinedBackdrop(contentBackdrop, capsuleBackdrop)
-        val outerShape = RoundedCornerShape(IslandSpec.outerHeight / 2)
-        val pillShape = RoundedCornerShape(IslandSpec.selectedPillRadius)
+        val outerShape = Capsule()
+        val pillShape = Capsule()
         val isDark = palette.dark
+        val containerColor = if (isDark) {
+            Color(0xFF121212).copy(alpha = 0.4f)
+        } else {
+            Color(0xFFFAFAFA).copy(alpha = 0.4f)
+        }
+        val animationScope = rememberCoroutineScope()
+        val dampedDragAnimation = remember(animationScope, destinations.size) {
+            DampedDragAnimation(
+                animationScope = animationScope,
+                initialValue = selectedIndex.toFloat(),
+                valueRange = 0f..(destinations.size - 1).coerceAtLeast(0).toFloat(),
+                visibilityThreshold = 0.001f,
+                initialScale = 1f,
+                pressedScale = 78f / 56f,
+                onDragStarted = {},
+                onDragStopped = {
+                    val targetIndex = targetValue
+                        .fastRoundToInt()
+                        .fastCoerceIn(0, destinations.size - 1)
+                    if (targetIndex != selectedIndex) {
+                        onSelect(destinations[targetIndex])
+                    }
+                    animateToValue(targetIndex.toFloat())
+                },
+                onDrag = { _, dragAmount ->
+                    updateValue(
+                        (targetValue + dragAmount.x / (slotWidth * density.density))
+                            .fastCoerceIn(0f, (destinations.size - 1).coerceAtLeast(0).toFloat()),
+                    )
+                },
+            )
+        }
+        LaunchedEffect(selectedIndex) {
+            if (dampedDragAnimation.targetValue != selectedIndex.toFloat()) {
+                dampedDragAnimation.animateToValue(selectedIndex.toFloat())
+            }
+        }
 
         Box(
             modifier = Modifier
@@ -123,37 +150,20 @@ fun FloatingIsland(
                     backdrop = contentBackdrop,
                     shape = { outerShape },
                     effects = {
+                        vibrancy()
                         blur(8f.dp.toPx())
                         lens(
-                            refractionHeight = 12f.dp.toPx(),
+                            refractionHeight = 24f.dp.toPx(),
                             refractionAmount = 24f.dp.toPx(),
-                            chromaticAberration = true,
                         )
                     },
-                    highlight = {
-                        Highlight.Default.copy(alpha = if (isDark) 0.6f else 1f)
+                    layerBlock = {
+                        val progress = dampedDragAnimation.pressProgress
+                        val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
+                        scaleX = scale
+                        scaleY = scale
                     },
-                    shadow = {
-                        Shadow(
-                            radius = 32f.dp,
-                            offset = DpOffset(0f.dp, 16f.dp),
-                            color = Color.Black.copy(alpha = if (isDark) 0.4f else 0.16f),
-                        )
-                    },
-                    innerShadow = {
-                        InnerShadow(
-                            radius = 8f.dp,
-                            color = Color.Black.copy(alpha = if (isDark) 0.5f else 0.2f),
-                        )
-                    },
-                    onDrawSurface = {
-                        val tint = if (isDark) {
-                            Color(0xFF202020).copy(alpha = 0.10f)
-                        } else {
-                            Color.White.copy(alpha = 0.10f)
-                        }
-                        drawRect(tint)
-                    },
+                    onDrawSurface = { drawRect(containerColor) },
                     exportedBackdrop = capsuleBackdrop,
                 )
                 .clip(outerShape)
@@ -163,33 +173,47 @@ fun FloatingIsland(
                 modifier = Modifier
                     .offset {
                         IntOffset(
-                            x = (position.value * slotWidth * density.density).roundToInt(),
+                            x = (dampedDragAnimation.value * slotWidth * density.density).roundToInt(),
                             y = 0,
                         )
                     }
+                    .then(dampedDragAnimation.gesturelessModifier)
                     .width(slotWidth.dp)
                     .height(IslandSpec.selectedPillHeight)
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawBackdrop(
                         backdrop = selectedBackdrop,
                         shape = { pillShape },
                         effects = {
+                            val progress = dampedDragAnimation.pressProgress
                             lens(
-                                refractionHeight = 10f.dp.toPx(),
-                                refractionAmount = 14f.dp.toPx(),
+                                refractionHeight = 10f.dp.toPx() * progress,
+                                refractionAmount = 14f.dp.toPx() * progress,
                                 chromaticAberration = true,
                             )
                         },
-                        highlight = { Highlight.Default },
-                        shadow = null,
+                        highlight = {
+                            Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress)
+                        },
+                        shadow = {
+                            Shadow(alpha = dampedDragAnimation.pressProgress)
+                        },
                         innerShadow = {
                             InnerShadow(
-                                radius = 8f.dp,
-                                color = Color.Black.copy(alpha = 0.8f),
+                                radius = 8f.dp * dampedDragAnimation.pressProgress,
+                                alpha = dampedDragAnimation.pressProgress,
                             )
                         },
+                        layerBlock = {
+                            scaleX = dampedDragAnimation.scaleX
+                            scaleY = dampedDragAnimation.scaleY
+                            val velocity = dampedDragAnimation.velocity / 10f
+                            scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
+                            scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+                        },
                         onDrawSurface = {
-                            drawRect(Color.White.copy(alpha = 0.08f))
+                            val progress = dampedDragAnimation.pressProgress
+                            drawRect(Color.White.copy(alpha = 0.1f * (1f - progress)))
+                            drawRect(Color.Black.copy(alpha = 0.03f * progress))
                         },
                     )
                     .clip(pillShape),
@@ -228,6 +252,24 @@ fun FloatingIsland(
                             .height(IslandSpec.selectedPillHeight)
                             .sizeIn(minWidth = IslandSpec.minTouchTarget, minHeight = IslandSpec.minTouchTarget)
                             .scale(pressScale)
+                            .pointerInput(index, destinations.size) {
+                                detectHorizontalDragGestures(
+                                    onDragStart = {
+                                        dampedDragAnimation.press()
+                                    },
+                                    onDragEnd = {
+                                        dampedDragAnimation.onDragStopped()
+                                        dampedDragAnimation.release()
+                                    },
+                                    onDragCancel = {
+                                        dampedDragAnimation.onDragStopped()
+                                        dampedDragAnimation.release()
+                                    },
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    dampedDragAnimation.onDrag(size, Offset(dragAmount.x, 0f))
+                                }
+                            }
                             .selectable(
                                 selected = isSelected,
                                 interactionSource = interaction,
@@ -237,6 +279,7 @@ fun FloatingIsland(
                                     if (!isSelected) {
                                         view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                                         onSelect(destination)
+                                        dampedDragAnimation.animateToValue(index.toFloat())
                                     }
                                 },
                             ),

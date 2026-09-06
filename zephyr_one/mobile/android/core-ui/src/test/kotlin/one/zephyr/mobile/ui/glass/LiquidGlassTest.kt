@@ -82,12 +82,27 @@ class LiquidGlassTest {
     }
 
     @Test
-    fun capsuleShapeCreatesRoundedOutline() {
+    fun capsuleShapeUsesContinuousCurvatureOutline() {
         val capsule = Capsule()
         val density = Density(density = 2f, fontScale = 1f)
         val size = Size(200f, 60f)
         val outline = capsule.createOutline(size, LayoutDirection.Ltr, density)
 
+        // Non-square capsule with Continuous style resolves to the generic
+        // continuous-curvature path (Kyant0/shapes), not a plain arc RoundRect.
+        assertTrue(outline is Outline.Generic)
+        val generic = outline as Outline.Generic
+        assertTrue(generic.path.isEmpty.not())
+    }
+
+    @Test
+    fun squareCapsuleUsesRoundedOutline() {
+        val capsule = Capsule()
+        val density = Density(density = 2f, fontScale = 1f)
+        val size = Size(60f, 60f)
+        val outline = capsule.createOutline(size, LayoutDirection.Ltr, density)
+
+        // width == height && radius >= maxRadius short-circuits to Outline.Rounded.
         assertTrue(outline is Outline.Rounded)
         val rounded = outline as Outline.Rounded
         assertEquals(30f, rounded.roundRect.topLeftCornerRadius.x, 0.001f)

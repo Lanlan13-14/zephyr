@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import one.zephyr.mobile.ui.theme.ZephyrRadius
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 
-fun Capsule(): Shape = RoundedCornerShape(percent = 50)
+fun Capsule(): Shape = shape.Capsule()
 
 /**
  * Convenient modifier applying the complete Liquid Glass effect stack:
