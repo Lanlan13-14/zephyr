@@ -511,6 +511,26 @@ class ConnectionDraftTest {
     }
 
     @Test
+    fun `blank sshKeyId from the main-end TEXT column is not a missing dependency`() {
+        val stored = Fixtures.connection().copy(sshKeyId = "")
+        val draft = ConnectionDraft.edit(stored)
+        assertEquals(emptyList<DraftIssue>(), draft.routeIssues(Fixtures.inventory()))
+        assertNull(draft.normalized().sshKeyId)
+        assertTrue(draft.changedFields().contains("sshKeyId"))
+        assertTrue(draft.canSave)
+    }
+
+    @Test
+    fun `whitespace sshKeyId is treated as absent and does not block save`() {
+        val stored = Fixtures.connection().copy(sshKeyId = "   ")
+        val draft = ConnectionDraft.edit(stored)
+        assertEquals(emptyList<DraftIssue>(), draft.routeIssues(RouteInventory()))
+        assertNull(draft.normalized().sshKeyId)
+        assertTrue(draft.validate(RouteInventory()).none { it.field == "sshKeyId" })
+        assertTrue(draft.canSave)
+    }
+
+    @Test
     fun usableDependenciesRaiseNoRouteIssue() {
         val stored = Fixtures.connection().copy(
             connectionMode = ConnectionMode.JUMP,

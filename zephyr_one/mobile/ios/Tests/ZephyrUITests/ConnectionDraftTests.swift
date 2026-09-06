@@ -279,6 +279,26 @@ final class ConnectionDraftTests: XCTestCase {
         )
     }
 
+    func testBlankSshKeyIdFromMainEndIsNotAMissingDependency() {
+        var stored = UiTestData.connection()
+        stored.sshKeyId = ""
+        let draft = ConnectionDraft.edit(stored)
+        XCTAssertEqual(draft.routeIssues(inventory: UiTestData.inventory()), [])
+        XCTAssertNil(draft.normalized().sshKeyId)
+        XCTAssertTrue(draft.changedFields().contains("sshKeyId"))
+        XCTAssertTrue(draft.canSave)
+    }
+
+    func testWhitespaceSshKeyIdDoesNotBlockSave() {
+        var stored = UiTestData.connection()
+        stored.sshKeyId = "   "
+        let draft = ConnectionDraft.edit(stored)
+        XCTAssertEqual(draft.routeIssues(inventory: RouteInventory()), [])
+        XCTAssertNil(draft.normalized().sshKeyId)
+        XCTAssertTrue(draft.validate(inventory: RouteInventory()).allSatisfy { $0.field != "sshKeyId" })
+        XCTAssertTrue(draft.canSave)
+    }
+
     func testRouteRepairIsReportedPerDependency() {
         var stored = UiTestData.connection()
         stored.proxyId = "p-gone"

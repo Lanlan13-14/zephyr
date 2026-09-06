@@ -27,7 +27,10 @@ object EntityCodec {
     fun encode(payload: JsonObject): String = Converters.jsonObjectToText(payload)
 
     fun string(payload: JsonObject, key: String): String? =
-        (payload[key] as? JsonPrimitive)?.takeIf { it.isString || it.contentOrNull != null }?.contentOrNull
+        (payload[key] as? JsonPrimitive)
+            ?.takeIf { it.isString || it.contentOrNull != null }
+            ?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
 
     fun text(payload: JsonObject, key: String, fallback: String = ""): String = string(payload, key) ?: fallback
 
