@@ -8,6 +8,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import one.zephyr.mobile.ui.glass.shape.Capsule as CapsuleShape
+import one.zephyr.mobile.ui.glass.shape.ContinuousCurvatureRoundedRectangleCornerBuilder
+import one.zephyr.mobile.ui.glass.shape.RoundedCornerStyle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -82,12 +85,28 @@ class LiquidGlassTest {
     }
 
     @Test
-    fun capsuleShapeCreatesRoundedOutline() {
+    fun capsuleShapeUsesContinuousCurvatureOutline() {
+        val capsule = Capsule()
+        assertTrue(capsule is CapsuleShape)
+        assertEquals(RoundedCornerStyle.Continuous, (capsule as CapsuleShape).style)
+
+        // Non-square capsules go through Outline.Generic + android.graphics.Path,
+        // which JVM unit tests cannot instantiate. Prove the corner builder
+        // that feeds that path instead: a 200x60 capsule has tW=1, tH=0.
+        val points = ContinuousCurvatureRoundedRectangleCornerBuilder.Default
+            .getCornerBezierPoints(tH = 1.0, tV = 0.0)
+        assertEquals(20, points.size)
+        assertTrue(points.any { it != 0.0 })
+    }
+
+    @Test
+    fun squareCapsuleUsesRoundedOutline() {
         val capsule = Capsule()
         val density = Density(density = 2f, fontScale = 1f)
-        val size = Size(200f, 60f)
+        val size = Size(60f, 60f)
         val outline = capsule.createOutline(size, LayoutDirection.Ltr, density)
 
+        // width == height && radius >= maxRadius short-circuits to Outline.Rounded.
         assertTrue(outline is Outline.Rounded)
         val rounded = outline as Outline.Rounded
         assertEquals(30f, rounded.roundRect.topLeftCornerRadius.x, 0.001f)
@@ -99,7 +118,7 @@ class LiquidGlassTest {
         val capsule = Capsule()
         val provider = ShapeProvider { capsule }
         val density = Density(density = 2f, fontScale = 1f)
-        val size = Size(160f, 50f)
+        val size = Size(60f, 60f)
 
         val outline1 = provider.shape.createOutline(size, LayoutDirection.Ltr, density)
         val outline2 = provider.shape.createOutline(size, LayoutDirection.Ltr, density)

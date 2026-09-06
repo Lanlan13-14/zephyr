@@ -25,6 +25,8 @@ The Zephyr-SSH project itself is licensed under the GNU General Public License v
 | FreeRDP | Apache-2.0 | RDP client runtime used by Zephyr's native RDP pipeline | <https://www.freerdp.com/> |
 | OpenSSL 3.6.3 / OpenSSL-Package | Apache-2.0 | FIPS 203 ML-KEM-768 for iOS/macOS. SwiftPM manifest commit `0b0cc7392a4ff6a798c9ed8f4981f1c1bbcb4722`; XCFramework SHA-256 `6c4b064d12b8de2ae77ac59fbcbbd1c20b4fecfb7fc50b8ab326347c52ecbf0c` | <https://www.openssl.org/> / <https://github.com/krzyzanowskim/OpenSSL-Package> |
 | noVNC | MPL-2.0 | Browser-side VNC client | <https://novnc.com/> |
+| AndroidLiquidGlass (vendored port under `zephyr_one/mobile/android/core-ui/.../ui/glass`) | Apache-2.0 | Liquid Glass backdrop rendering: layer backdrops, AGSL refraction/dispersion shaders, highlights, shadows | <https://github.com/Kyant0/AndroidLiquidGlass> |
+| kyant0/shapes (vendored port under `zephyr_one/mobile/android/core-ui/.../ui/glass/shape`) | Apache-2.0 | Continuous-curvature rounded-rectangle / capsule shapes | <https://github.com/Kyant0/AndroidLiquidGlass> (shapes artifact `io.github.kyant0:shapes`) |
 
 ## Editor and frontend dependencies
 
