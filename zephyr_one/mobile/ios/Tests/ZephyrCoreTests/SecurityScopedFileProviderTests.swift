@@ -242,7 +242,20 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         // "h_" plus 16 bytes of hex.
         XCTAssertEqual(first.count, 34)
         XCTAssertTrue(first.dropFirst(2).allSatisfy { "0123456789abcdef".contains($0) })
-        XCTAssertFalse(first.hasSuffix("1") && second.hasSuffix("2"), "a handle must not be a counter")
+        /* A counter increases (weakly) in open order; random handles make the
+         * whole sampled sequence increasing with probability 1/8! only. Assert
+         * the sequence is NOT increasing overall: a counter always fails this,
+         * random handles fail with probability 1/8! ~= 0.0025% (156x less flaky
+         * than the previous hasSuffix("1") && hasSuffix("2") check, which failed
+         * 1/256 runs even on the correct random implementation). */
+        var tails: [UInt64] = []
+        for _ in 0..<8 {
+            let handle = try await provider.open(path: "/docs/a.txt", mode: "read")
+            try await provider.close(handle: handle)
+            tails.append(UInt64(String(handle.dropFirst(2).suffix(8)), radix: 16) ?? UInt64.max)
+        }
+        let increasing = zip(tails, tails.dropFirst()).allSatisfy { $0 < $1 }
+        XCTAssertFalse(increasing, "eight handles in a row must not be monotonically increasing like a counter")
     }
 
     func testAnUnknownHandleIsRefusedRatherThanIgnored() async throws {
