@@ -294,7 +294,20 @@ class MirrorWriter(
             val rows = entities.mapIndexedNotNull { index, change ->
                 EntityRegistry.byType[change.entityType] ?: return@mapIndexedNotNull null
                 val ownerUserId = requireOwnedChange(change, boundUserId)
-                val secrets = prepareSecrets(change, opener).also { prepared[index] = it }
+                /* A bootstrap snapshot page carries a full-replacement fieldMask that happens
+                 * to contain no secret fields, which isIncrementalSecretPatch would misread as
+                 * an incremental patch and silently swallow an unopenable envelope until the
+                 * mutation planner reported a misleading missing_envelope. The snapshot
+                 * semantics are explicit instead: keep a retained local secret when the
+                 * envelope cannot be opened or is absent, and fail closed with the true code
+                 * only when neither the page nor the local mirror can supply the value. */
+                val retained = retainedSecretsFor(change)
+                val secrets = try {
+                    prepareSecrets(change, opener, retainedSecrets = retained, snapshot = true)
+                } finally {
+                    retained.values.forEach { it.fill(0) }
+                }
+                prepared[index] = secrets
                 BootstrapStagingRow(
                     generation = generation,
                     entityType = change.entityType,
@@ -638,6 +651,7 @@ internal fun prepareSecrets(
     opener: EnvelopeOpener?,
     retainedSecrets: Map<String, ByteArray> = emptyMap(),
     allowMissingEnvelope: Boolean = false,
+    snapshot: Boolean = false,
 ): PreparedSecrets {
     val spec = EntityRegistry.require(change.entityType)
     if (change.secretEnvelopes.keys.any { it !in spec.secretFields }) {
@@ -663,6 +677,10 @@ internal fun prepareSecrets(
             states[fieldName] = declared
             if (declared) {
                 val retained = retainedSecrets[fieldName]
+                /* Snapshot pages are full replacements: the incremental-patch fallback never
+                 * applies, and a rejected/absent envelope falls back to the retained local
+                 * secret before failing closed with the true code. */
+                val incrementalFallback = !snapshot && isIncrementalSecretPatch(change)
                 val opened = if (change.secretEnvelopes.containsKey(fieldName)) {
                     val plaintext = try {
                         opener?.open(change, fieldName)
@@ -680,7 +698,7 @@ internal fun prepareSecrets(
                          * an older main end. Incremental pages must keep the
                          * local secret and apply the non-secret fields instead
                          * of freezing the account cursor. */
-                        isIncrementalSecretPatch(change) -> null
+                        incrementalFallback -> null
                         else -> throw SecretReconciliationException(
                             SecretReconciliationFailure.ENVELOPE_REJECTED,
                         )
@@ -688,7 +706,7 @@ internal fun prepareSecrets(
                 } else {
                     if (retained != null && retained.isNotEmpty()) {
                         retained.copyOf()
-                    } else if (allowMissingEnvelope || isIncrementalSecretPatch(change)) {
+                    } else if (allowMissingEnvelope || incrementalFallback) {
                         null
                     } else {
                         throw SecretReconciliationException(

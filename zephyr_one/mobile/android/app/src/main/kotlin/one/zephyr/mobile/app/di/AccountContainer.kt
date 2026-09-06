@@ -69,6 +69,7 @@ import one.zephyr.mobile.security.SessionSecretArena
 import one.zephyr.mobile.security.LockSensitiveSink
 import one.zephyr.mobile.sync.ApiSharedResourceFetcher
 import one.zephyr.mobile.sync.BlobTransferPort
+import one.zephyr.mobile.sync.BootstrapOutcome
 import one.zephyr.mobile.sync.DeviceEnvelopeOpener
 import one.zephyr.mobile.sync.DeviceSecretSealer
 import kotlinx.coroutines.sync.Mutex
@@ -699,7 +700,18 @@ class AccountContainer(
                 syncState.ensure(bindingKey)
                 syncState.updateState(bindingKey, one.zephyr.mobile.contracts.BindingState.BOUND_NEEDS_BOOTSTRAP)
             }
-            syncEngine.onBindComplete()
+            val rounds = syncEngine.onBindComplete()
+            /* The readiness marker must track the committed snapshot, not the whole round. A
+             * first round whose bootstrap promoted the mirror but then failed a later phase
+             * (push/pull/ack) used to leave the marker unset, so the next launch reset the
+             * binding to BOUND_NEEDS_BOOTSTRAP and re-downloaded the entire account — and a
+             * re-staged snapshot whose envelopes could not be opened then froze staging with
+             * a misleading missing_envelope. Once any round promoted the snapshot, the mirror
+             * is complete and later phases are retried as an ordinary normal round. */
+            if (rounds.any { it.bootstrapOutcome is BootstrapOutcome.Complete }) {
+                markAccountDatabaseReady()
+            }
+            rounds
         }.await() else emptyList()
 
     /** Runs once after a restored, already-bootstrapped graph is published. */
