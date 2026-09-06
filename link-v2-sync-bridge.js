@@ -122,13 +122,13 @@ function createLinkSyncBridge({ api, storage, adminToken }) {
             res.json({ ok: true, ...out });
         } catch (err) {
             const typed = err instanceof MobileStoreError;
-            const status = typed ? (Number(err.status) || 400) : 500;
+            const status = typed ? (Number(err.status) || 400) : (Number(err.status) || 500);
             res.status(status).json({
                 ok: false,
                 error: {
-                    code: typed ? String(err.code || 'internal_error') : 'internal_error',
-                    message: typed ? String(err.message || '请求失败') : '服务器内部错误',
-                    retryable: typed ? err.retryable === true : true,
+                    code: String(err.code || 'internal_error'),
+                    message: typed ? String(err.message || '请求失败') : (err.expose ? err.message : '服务器内部错误'),
+                    retryable: typed ? err.retryable === true : false,
                     details: typed ? (err.details || null) : null,
                 },
             });

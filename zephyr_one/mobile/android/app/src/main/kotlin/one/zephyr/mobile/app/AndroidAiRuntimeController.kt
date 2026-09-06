@@ -84,11 +84,16 @@ internal class AndroidAiRuntimeController(
         planEnabled = currentChrome.planEnabled
         val conversations = (history as ApiResult.Success).value
         val selectedConversation = selectConversation(conversations)
+        val briefList = conversations.map {
+            one.zephyr.mobile.feature.ai.AiConversationBrief(it.id, it.title.ifBlank { "新对话" }, it.updatedAt)
+        }
         mutable.value = AiRuntimeState(
             runtimeEnabled = runtimeEnabled,
             loading = false,
             providers = providerOptions,
             conversationId = selectedConversation?.id,
+            conversationTitle = selectedConversation?.title?.ifBlank { "新对话" } ?: "新对话",
+            conversations = briefList,
             runtimeSessionId = mutable.value.runtimeSessionId,
             runId = mutable.value.runId,
             running = mutable.value.running,
@@ -97,6 +102,70 @@ internal class AndroidAiRuntimeController(
             attachments = mutable.value.attachments,
         )
         persistSelection()
+    }
+
+    override fun selectConversation(id: String) {
+        scope.launch {
+            val history = (account.aiRuntime.history() as? ApiResult.Success)?.value.orEmpty()
+            val target = history.firstOrNull { it.id == id }
+            if (target != null) {
+                mutable.update {
+                    it.copy(
+                        conversationId = target.id,
+                        conversationTitle = target.title.ifBlank { "新对话" },
+                        conversation = target.toConversation(),
+                        error = null,
+                    )
+                }
+            }
+        }
+    }
+
+    override fun newConversation() {
+        val newId = "conversation-${UUID.randomUUID()}"
+        mutable.update {
+            it.copy(
+                conversationId = newId,
+                conversationTitle = "新对话",
+                conversation = AiConversation(),
+                error = null,
+            )
+        }
+    }
+
+    override suspend fun deleteConversation(id: String) {
+        val targetId = id.ifBlank { mutable.value.conversationId } ?: return
+        mutable.update { it.copy(loading = true, error = null) }
+        val ownerUserId = account.binding.userId
+        runCatching {
+            val history = (account.aiRuntime.history() as? ApiResult.Success)?.value.orEmpty()
+            val target = history.firstOrNull { it.id == targetId }
+            account.aiRuntime.deleteConversation(targetId, target?.revision)
+        }
+
+        account.ownedAi.delete(one.zephyr.mobile.model.AiConversationRecord.ENTITY_TYPE, targetId, ownerUserId)
+        val messages = account.ownedAi.listMessages(ownerUserId, targetId)
+        for (m in messages) {
+            account.ownedAi.delete(one.zephyr.mobile.model.AiMessageRecord.ENTITY_TYPE, m.id, ownerUserId)
+        }
+        if (!account.isLocalMode) {
+            runCatching { account.syncEngine.syncNow() }
+        }
+
+        val history = (account.aiRuntime.history() as? ApiResult.Success)?.value.orEmpty()
+        val briefList = history.map {
+            one.zephyr.mobile.feature.ai.AiConversationBrief(it.id, it.title.ifBlank { "新对话" }, it.updatedAt)
+        }
+        val next = history.firstOrNull { it.id != targetId } ?: history.maxByOrNull { it.updatedAt }
+        mutable.update {
+            it.copy(
+                loading = false,
+                conversations = briefList,
+                conversationId = next?.id,
+                conversationTitle = next?.title?.ifBlank { "新对话" } ?: "新对话",
+                conversation = next?.toConversation() ?: AiConversation(),
+            )
+        }
     }
 
     override fun selectProvider(providerId: String) {

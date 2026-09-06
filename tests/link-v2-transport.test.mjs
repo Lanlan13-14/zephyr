@@ -213,6 +213,13 @@ test('large frames are compressed before encryption and inflate within limits', 
         assert.throws(() => env.transport.openEnvelope({
             sessionId, seq: bombSealed.seq, iv: b64(bombSealed.iv), ct: b64(bombSealed.ct), tag: b64(bombSealed.tag),
         }), /decompression ratio|max size/);
+
+        // A frame flagged secret on a non-secret channel is rejected outright by channel policy.
+        const invalidSecretPacked = codec.pack({ kind: codec.KIND.SYNC_OP, body: { test: 1 }, secret: true });
+        const invalidSecretSealed = deviceSession.seal(invalidSecretPacked);
+        assert.throws(() => env.transport.openEnvelope({
+            sessionId, seq: invalidSecretSealed.seq, iv: b64(invalidSecretSealed.iv), ct: b64(invalidSecretSealed.ct), tag: b64(invalidSecretSealed.tag),
+        }), /secret flag on non-secret channel/);
     } finally {
         env.cleanup();
     }

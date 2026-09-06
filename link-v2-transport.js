@@ -216,8 +216,19 @@ function createLinkV2Transport({ enrollments, store, log } = {}) {
             if (plain.length > MAX_FRAME_BYTES) {
                 throw Object.assign(new Error('frame exceeds max size'), { code: 'frame_too_large' });
             }
+            const unpacked = codec.unpack(plain);
+            const channel = codec.channelOf(unpacked.kind);
+            if (!channel) {
+                throw Object.assign(new Error('unknown kind: ' + unpacked.kind), { code: 'unknown_kind' });
+            }
+            if (unpacked.secret && channel !== codec.CHANNEL.SECRET) {
+                throw Object.assign(new Error('secret flag on non-secret channel ' + channel), { code: 'invalid_channel_policy' });
+            }
+            if (channel === codec.CHANNEL.SECRET && !unpacked.secret) {
+                throw Object.assign(new Error('secret-channel kind ' + unpacked.kind + ' without the secret flag'), { code: 'invalid_channel_policy' });
+            }
             record.expiresAt = nowMs() + SESSION_TTL_MS;
-            return { record, frame: codec.unpack(plain) };
+            return { record, frame: unpacked };
         },
 
         /**
@@ -226,6 +237,16 @@ function createLinkV2Transport({ enrollments, store, log } = {}) {
         sealFrame(record, kind, body, { secret = false } = {}) {
             if (!record || !record.session) {
                 throw Object.assign(new Error('unknown Link session'), { code: 'session_unknown' });
+            }
+            const channel = codec.channelOf(kind);
+            if (!channel) {
+                throw Object.assign(new Error('unknown kind: ' + kind), { code: 'unknown_kind' });
+            }
+            if (secret && channel !== codec.CHANNEL.SECRET) {
+                throw Object.assign(new Error('secret flag on non-secret channel ' + channel), { code: 'invalid_channel_policy' });
+            }
+            if (channel === codec.CHANNEL.SECRET) {
+                secret = true;
             }
             const packed = codec.pack({ kind, body, secret });
             const sealed = record.session.seal(packed);

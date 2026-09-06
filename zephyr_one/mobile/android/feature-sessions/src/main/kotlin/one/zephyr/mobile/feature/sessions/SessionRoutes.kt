@@ -113,7 +113,10 @@ fun TerminalRoute(
     CollectSessionMessages(viewModel.message, onMessage)
 
     LaunchedEffect(viewModel, autoConnect) {
-        if (autoConnect) viewModel.connect()
+        if (autoConnect) {
+            kotlinx.coroutines.delay(16L)
+            viewModel.connect()
+        }
     }
 
     LaunchedEffect(viewModel) {

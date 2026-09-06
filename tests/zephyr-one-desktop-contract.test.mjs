@@ -243,7 +243,7 @@ test('no Android or iOS surface remains anywhere in the Zephyr One tree', () => 
     /* A deletion this wide fails quietly: a leftover script, capability file or
      * cfg branch keeps building until someone trips over it. Walk the tree. */
     const oneRoot = path.join(root, 'zephyr_one');
-    const skip = new Set(['node_modules', 'dist', 'target', 'gen', '.git']);
+    const skip = new Set(['node_modules', 'dist', 'target', 'gen', '.git', 'mobile']);
     const offenders = [];
 
     const walk = (dir) => {

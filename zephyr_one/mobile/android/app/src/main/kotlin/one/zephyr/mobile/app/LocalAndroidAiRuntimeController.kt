@@ -59,12 +59,83 @@ internal class LocalAndroidAiRuntimeController(
             ?: catalog.defaultModel.takeIf { id -> selected?.models?.any { it.id == id } == true }
             ?: catalog.providers.firstOrNull { it.id == providerId }?.defaultModel?.takeIf { id -> selected?.models?.any { it.id == id } == true }
             ?: selected?.models?.firstOrNull()?.id.orEmpty()
-        val sessions = api.listSessions(account.binding.userId, account.generation)
-        val session = (sessions as? ApiResult.Success)?.value?.maxByOrNull { it.updatedAt }
+        val sessions = (api.listSessions(account.binding.userId, account.generation) as? ApiResult.Success)?.value.orEmpty()
+        val session = sessions.maxByOrNull { it.updatedAt }
+        val briefList = sessions.map {
+            one.zephyr.mobile.feature.ai.AiConversationBrief(it.id, it.title.ifBlank { "新对话" }, it.updatedAt)
+        }
         val conversation = session?.let { api.messages(account.binding.userId, account.generation, it.id) }
             .let { result -> (result as? ApiResult.Success)?.value?.mapNotNull { m -> when (m.role) { "user" -> AiTranscriptItem.User(m.content); "assistant" -> AiTranscriptItem.Assistant(m.content, modelId); else -> null } }.orEmpty() }
-        mutable.value = mutable.value.copy(runtimeEnabled = catalog.enabled && providers.isNotEmpty(), loading = false, providers = providers, conversationId = session?.id, runtimeSessionId = session?.id, conversation = AiConversation(conversation))
+        mutable.value = mutable.value.copy(
+            runtimeEnabled = catalog.enabled && providers.isNotEmpty(),
+            loading = false,
+            providers = providers,
+            conversationId = session?.id,
+            conversationTitle = session?.title?.ifBlank { "新对话" } ?: "新对话",
+            conversations = briefList,
+            runtimeSessionId = session?.id,
+            conversation = AiConversation(conversation),
+        )
         persist()
+    }
+
+    override fun selectConversation(id: String) {
+        scope.launch {
+            val messages = api.messages(account.binding.userId, account.generation, id)
+            val conversation = (messages as? ApiResult.Success)?.value?.mapNotNull { m ->
+                when (m.role) {
+                    "user" -> AiTranscriptItem.User(m.content)
+                    "assistant" -> AiTranscriptItem.Assistant(m.content, modelId)
+                    else -> null
+                }
+            }.orEmpty()
+            val sessions = (api.listSessions(account.binding.userId, account.generation) as? ApiResult.Success)?.value.orEmpty()
+            val target = sessions.firstOrNull { it.id == id }
+            mutable.update {
+                it.copy(
+                    conversationId = id,
+                    runtimeSessionId = id,
+                    conversationTitle = target?.title?.ifBlank { "新对话" } ?: "新对话",
+                    conversation = AiConversation(conversation),
+                    error = null,
+                )
+            }
+        }
+    }
+
+    override fun newConversation() {
+        val newId = "session-${UUID.randomUUID()}"
+        mutable.update {
+            it.copy(
+                conversationId = newId,
+                runtimeSessionId = newId,
+                conversationTitle = "新对话",
+                conversation = AiConversation(),
+                error = null,
+            )
+        }
+    }
+
+    override suspend fun deleteConversation(id: String) {
+        val targetId = id.ifBlank { mutable.value.conversationId } ?: return
+        mutable.update { it.copy(loading = true, error = null) }
+        val ownerUserId = account.binding.userId
+        account.ownedAi.delete(one.zephyr.mobile.model.AiConversationRecord.ENTITY_TYPE, targetId, ownerUserId)
+        val messages = account.ownedAi.listMessages(ownerUserId, targetId)
+        for (m in messages) {
+            account.ownedAi.delete(one.zephyr.mobile.model.AiMessageRecord.ENTITY_TYPE, m.id, ownerUserId)
+        }
+        val sessions = (api.listSessions(account.binding.userId, account.generation) as? ApiResult.Success)?.value.orEmpty()
+        val briefList = sessions.filter { it.id != targetId }.map {
+            one.zephyr.mobile.feature.ai.AiConversationBrief(it.id, it.title.ifBlank { "新对话" }, it.updatedAt)
+        }
+        val next = sessions.filter { it.id != targetId }.maxByOrNull { it.updatedAt }
+        if (next != null) {
+            selectConversation(next.id)
+        } else {
+            newConversation()
+        }
+        mutable.update { it.copy(loading = false, conversations = briefList) }
     }
 
     override fun selectProvider(providerId: String) { if (catalog.providers.any { it.id == providerId && it.enabled }) { this.providerId = providerId; modelId = catalog.providers.first { it.id == providerId }.models.firstOrNull { !it.hidden }?.id.orEmpty(); persistAsync() } }
