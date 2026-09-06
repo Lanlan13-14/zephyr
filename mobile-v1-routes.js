@@ -41,7 +41,7 @@ const {
     PROOF_MAX_ISSUES_PER_MINUTE,
 } = require('./mobile-v1-store');
 const { MobileV1BlobManager } = require('./mobile-v1-blob-manager');
-const { createEntityAdapters, projectPayload, extractSecrets, assertMaskAllowed } = require('./mobile-v1-entities');
+const { createEntityAdapters, projectPayload, extractSecrets, secretFieldsNeedingDownlink, assertMaskAllowed } = require('./mobile-v1-entities');
 const { SharedResourceApi, noStore } = require('./mobile-v1-shared');
 const { MobileV1Wake } = require('./mobile-v1-wake');
 const mobileCrypto = require('./mobile-v1-crypto');
@@ -1916,32 +1916,23 @@ class MobileV1Api {
          * with internal_error after the first successful sync.
          *
          * Empty fieldMask is a full replacement (bootstrap / opaque mutation)
-         * and must reseal. A secret field whose stored field-revision equals
-         * this change.revision was mutated by this write and must reseal.
-         * Name/host/tag patches leave secret field-revisions behind, so they
-         * keep hasPassword=true and omit secretEnvelopes. */
-        const secretFields = spec.secretFields || [];
-        const mask = Array.isArray(safeChange.fieldMask) ? safeChange.fieldMask : [];
-        const secretTouched = secretFields.some((field) => {
-            let rev = null;
-            try {
-                if (this.store && typeof this.store.fieldRevision === 'function') {
-                    rev = this.store.fieldRevision(
-                        user.userId, change.entityType, change.entityId, field,
-                    );
-                }
-            } catch {
-                rev = null;
-            }
-            return Number(rev) === Number(change.revision);
-        });
-        const needsSecretDownlink = secretFields.length > 0 && (
-            mask.length === 0 || secretTouched
+         * and must reseal every stored secret. Incremental patches reseal
+         * only a secret whose field-revision equals this change.revision and
+         * that still has a real value. A later name/host edit that also
+         * stamped an empty privateKey must keep hasPassword=true and omit
+         * secretEnvelopes. */
+        const downlinkSecrets = secretFieldsNeedingDownlink(
+            spec,
+            row,
+            change,
+            (field) => this.store.fieldRevision(
+                user.userId, change.entityType, change.entityId, field,
+            ),
         );
         return {
             ...safeChange,
             payload,
-            ...(needsSecretDownlink ? this.ownedSecretEnvelopeFields({
+            ...(downlinkSecrets.length ? this.ownedSecretEnvelopeFields({
                 spec,
                 row,
                 user,
@@ -1949,6 +1940,7 @@ class MobileV1Api {
                 entityType: change.entityType,
                 entityId: change.entityId,
                 entityRevision: change.revision,
+                fields: downlinkSecrets,
             }) : {}),
         };
     }
@@ -1971,9 +1963,11 @@ class MobileV1Api {
      * to this deviceId so a captured ciphertext cannot be opened on another
      * handset.
      */
-    ownedSecretEnvelopeFields({ spec, row, user, device, entityType, entityId, entityRevision }) {
+    ownedSecretEnvelopeFields({ spec, row, user, device, entityType, entityId, entityRevision, fields: requestedFields }) {
         const secrets = extractSecrets(spec, row);
-        const fields = Object.keys(secrets);
+        const fields = Array.isArray(requestedFields) && requestedFields.length
+            ? requestedFields.filter((field) => Object.prototype.hasOwnProperty.call(secrets, field))
+            : Object.keys(secrets);
         if (!fields.length) return {};
 
         const publicKey = this.deviceEncryptionPublicKey(device);

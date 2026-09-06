@@ -306,7 +306,7 @@ class AiProviderService {
         const models = parseModelsInput(input.models, { options: config.options, config });
         const stored = this._storageValues(id, input.baseUrl, config, models);
         const user = { userId: String(ownerUserId) };
-        return this._runMutation({
+        this._runMutation({
             entityType: 'aiProvider', entityId: id, action: 'upsert', user, before: null,
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
@@ -322,8 +322,9 @@ class AiProviderService {
                 this._visibility(input), input.shareWithUsers ? 1 : 0, input.shareWithAdmins ? 1 : 0,
                 JSON.stringify(shared), input.enabled === false ? 0 : 1, now, now
             );
-            return this.getOwned(ownerUserId, id);
+            return this.getOwned(ownerUserId, id, { includeSecret: true });
         });
+        return this.getOwned(ownerUserId, id);
     }
 
     _row(row, { includeSecret = false } = {}) {
@@ -438,7 +439,6 @@ class AiProviderService {
             throw new HttpError(409, 'revision_conflict', 'AI Provider revision conflict');
         }
         const before = { ...current };
-        delete before.apiKey;
         const mergedConfig = {
             ...(current.config || {}),
             ...(patch.config || {}),
@@ -455,7 +455,7 @@ class AiProviderService {
         const key = patch.apiKey === undefined || patch.apiKey === '******' ? current.apiKey : String(patch.apiKey || '');
         const visibility = this._visibility(next);
         const stored = this._storageValues(current.id, next.baseUrl, next.config, next.models);
-        return this._runMutation({
+        this._runMutation({
             entityType: 'aiProvider', entityId: current.id, action: 'upsert', user, before,
             actorDeviceId,
             mutationReceipt,
@@ -469,8 +469,9 @@ class AiProviderService {
                 next.enabled === false ? 0 : 1, this.now(), current.id, user.userId, current.revision
             );
             if (!result.changes) throw new HttpError(409, 'revision_conflict', 'AI Provider revision conflict');
-            return this.getOwned(user.userId, current.id);
+            return this.getOwned(user.userId, current.id, { includeSecret: true });
         });
+        return this.getOwned(user.userId, current.id);
     }
 
     /** Merge a refreshed remote model id list while preserving per-model capabilities. */

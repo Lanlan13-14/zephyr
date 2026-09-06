@@ -313,3 +313,31 @@ test('owner isolation, tombstones, restore revisions, and feed rollback are atom
     context.cleanup();
   }
 });
+
+test('renaming an AI provider does not stamp apiKey as a secret change', () => {
+  const context = fresh();
+  try {
+    const alice = { userId: 'alice' };
+    const created = context.service.create(alice, {
+      id: 'provider-rename',
+      name: 'Old name',
+      type: 'openai-compatible',
+      baseUrl: 'https://api.example.invalid/v1',
+      apiKey: 'sk-live-secret',
+    });
+    assert.equal(created.revision, 1);
+    assert.equal(created.apiKey, undefined);
+    const renamed = context.service.update(alice, 'provider-rename', { name: 'New name' });
+    assert.equal(renamed.revision, 2);
+    assert.equal(renamed.apiKey, undefined);
+    const revisions = context.bridge.store.fieldRevisions(alice.userId, 'aiProvider', 'provider-rename');
+    assert.equal(revisions.get('name'), 2);
+    assert.notEqual(revisions.get('apiKey'), 2);
+    const page = context.bridge.store.changePage(alice.userId, 0, 20);
+    const rename = page.changes.find((change) => change.revision === 2);
+    assert.ok(rename.fieldMask.includes('name'));
+    assert.ok(!rename.fieldMask.includes('apiKey'));
+  } finally {
+    context.cleanup();
+  }
+});

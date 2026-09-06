@@ -26,8 +26,11 @@ test('incremental secret downlink seals and opens under the field revision', () 
   const hydrate = fs.readFileSync(path.join(here, '..', '..', '..', 'mobile-v1-routes.js'), 'utf8');
   assert.match(hydrate, /this\.store\.fieldRevision\(/);
   assert.match(hydrate, /unsupported: true/);
-  assert.match(hydrate, /needsSecretDownlink/);
-  assert.match(hydrate, /mask\.length === 0 \|\| secretTouched/);
+  assert.match(hydrate, /secretFieldsNeedingDownlink/);
+  assert.match(hydrate, /downlinkSecrets/);
+  const entities = fs.readFileSync(path.join(here, '..', '..', '..', 'mobile-v1-entities.js'), 'utf8');
+  assert.match(entities, /function secretFieldsNeedingDownlink/);
+  assert.match(entities, /function changedStoredSecretFields/);
   const store = fs.readFileSync(path.join(here, '..', '..', '..', 'mobile-v1-store.js'), 'utf8');
   assert.match(store, /fieldRevision\(ownerUserId, entityType, entityId, fieldPath\)/);
 
@@ -40,6 +43,7 @@ test('incremental secret downlink seals and opens under the field revision', () 
   assert.match(writer, /retainedSecrets: Map<String, ByteArray> = emptyMap\(\)/);
   assert.match(writer, /isSkippableInboundChange/);
   assert.match(writer, /change\.unsupported/);
+  assert.match(writer, /isIncrementalSecretPatch/);
 
   const actor = read('core-sync/src/main/kotlin/one/zephyr/mobile/sync/SyncActor.kt');
   assert.match(actor, /SecretPayloadViolationException/);
@@ -47,6 +51,7 @@ test('incremental secret downlink seals and opens under the field revision', () 
 
   const dto = read('core-network/src/main/kotlin/one/zephyr/mobile/network/dto/MobileDtos.kt');
   assert.match(dto, /val unsupported: Boolean = false/);
+  assert.match(dto, /val hasMore: Boolean = false/);
 });
 
 test('remote and parser messages are not implicitly trusted as local diagnostics', () => {

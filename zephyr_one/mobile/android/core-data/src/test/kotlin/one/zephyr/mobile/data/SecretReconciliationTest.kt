@@ -35,12 +35,33 @@ class SecretReconciliationTest {
     fun `true presence without an envelope fails closed`() {
         val error = expectSecretFailure {
             prepareSecrets(
-                change(payload = payload(hasPassword = true, hasPrivateKey = false)),
+                change(
+                    payload = payload(hasPassword = true, hasPrivateKey = false),
+                    fieldMask = emptyList(),
+                ),
                 opener = EnvelopeOpener { _, _ -> "unused".toByteArray() },
             )
         }
 
         assertEquals(SecretReconciliationFailure.MISSING_ENVELOPE, error.failure)
+    }
+
+    @Test
+    fun `incremental name patch without a local secret does not freeze the cursor`() {
+        val secrets = prepareSecrets(
+            change(
+                payload = payload(hasPassword = true, hasPrivateKey = false),
+                envelopes = mapOf("password" to envelope()),
+                fieldMask = listOf("name"),
+            ),
+            opener = EnvelopeOpener { _, _ -> null },
+        )
+        try {
+            assertEquals(true, secrets.states.getValue("password"))
+            assertTrue(secrets.values["password"] == null)
+        } finally {
+            secrets.close()
+        }
     }
 
     @Test
@@ -107,12 +128,35 @@ class SecretReconciliationTest {
                 change(
                     payload = payload(hasPassword = true, hasPrivateKey = false),
                     envelopes = mapOf("password" to envelope()),
+                    fieldMask = emptyList(),
                 ),
                 opener = EnvelopeOpener { _, _ -> null },
             )
         }
 
         assertEquals(SecretReconciliationFailure.ENVELOPE_REJECTED, error.failure)
+    }
+
+    @Test
+    fun `opener SecretReconciliationException keeps a retained secret on a name patch`() {
+        val retained = "local-secret".toByteArray()
+        val secrets = prepareSecrets(
+            change(
+                payload = payload(hasPassword = true, hasPrivateKey = false),
+                envelopes = mapOf("password" to envelope()),
+                fieldMask = listOf("name"),
+            ),
+            opener = EnvelopeOpener { _, _ ->
+                throw SecretReconciliationException(SecretReconciliationFailure.ENVELOPE_REJECTED)
+            },
+            retainedSecrets = mapOf("password" to retained),
+        )
+        try {
+            assertEquals("local-secret", secrets.values.getValue("password").decodeToString())
+        } finally {
+            secrets.close()
+            retained.fill(0)
+        }
     }
 
     @Test
@@ -161,6 +205,7 @@ class SecretReconciliationTest {
                 change(
                     payload = payload(hasPassword = true, hasPrivateKey = false),
                     envelopes = mapOf("password" to envelope()),
+                    fieldMask = emptyList(),
                 ),
                 opener = EnvelopeOpener { _, _ -> error("device unwrap failed") },
             )
@@ -284,6 +329,7 @@ class SecretReconciliationTest {
         action: SyncAction = SyncAction.UPSERT,
         tombstone: JsonObject? = null,
         revision: Long = 2,
+        fieldMask: List<String> = listOf("name"),
     ) = SyncChange(
         changeSeq = 5,
         entityType = "connection",
@@ -291,7 +337,7 @@ class SecretReconciliationTest {
         action = action,
         revision = revision,
         changedAt = 10,
-        fieldMask = listOf("name"),
+        fieldMask = fieldMask,
         payload = payload,
         secretEnvelopes = envelopes,
         tombstone = tombstone,

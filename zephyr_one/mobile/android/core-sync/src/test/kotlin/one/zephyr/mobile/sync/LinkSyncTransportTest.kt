@@ -176,6 +176,26 @@ class LinkSyncTransportTest {
     }
 
     @Test
+    fun `empty change page with omitted hasMore still decodes`() = runTest {
+        val channel = FakeChannel()
+        channel.ackResponder = { _, _ ->
+            buildJsonObject {
+                put("ok", true)
+                put("fromCursor", 53)
+                put("nextCursor", 53)
+                putJsonArray("changes") {}
+            }
+        }
+        val result = LinkSyncTransport(channel, "dev-1", NoopFallback).changes(53, 200)
+        assertTrue(result is ApiResult.Success)
+        val page = (result as ApiResult.Success).value
+        assertEquals(53L, page.fromCursor)
+        assertEquals(53L, page.nextCursor)
+        assertEquals(false, page.hasMore)
+        assertTrue(page.changes.isEmpty())
+    }
+
+    @Test
     fun `ack carries its op discriminator and standard fields`() = runTest {
         val channel = FakeChannel()
         channel.ackResponder = { _, _ -> buildJsonObject { put("ok", true) } }

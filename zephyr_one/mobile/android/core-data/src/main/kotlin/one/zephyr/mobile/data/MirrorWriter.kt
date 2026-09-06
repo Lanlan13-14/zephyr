@@ -527,22 +527,29 @@ internal fun planPageSecretMutations(
             ?: throw SecretReconciliationException(SecretReconciliationFailure.MISSING_ENVELOPE)
         for ((fieldName, hasValue) in secrets.states) {
             val ref = SecretRef.of(change.entityType, change.entityId, fieldName)
-            add(
-                if (hasValue) {
-                    PlannedSecretMutation.Put(
-                        ref,
-                        secrets.values[fieldName]
-                            ?: throw SecretReconciliationException(
-                                SecretReconciliationFailure.MISSING_ENVELOPE,
-                            ),
-                    )
-                } else {
-                    PlannedSecretMutation.Clear(ref)
-                },
-            )
+            if (!hasValue) {
+                add(PlannedSecretMutation.Clear(ref))
+                continue
+            }
+            val plaintext = secrets.values[fieldName]
+            if (plaintext != null) {
+                add(PlannedSecretMutation.Put(ref, plaintext))
+            } else if (!isIncrementalSecretPatch(change)) {
+                throw SecretReconciliationException(SecretReconciliationFailure.MISSING_ENVELOPE)
+            }
         }
     }
 }.coalesced()
+
+/** Incremental patches name only non-secret fields; they must not reseal or clear secrets. */
+internal fun isIncrementalSecretPatch(change: SyncChange): Boolean {
+    val spec = EntityRegistry.byType[change.entityType] ?: return false
+    if (change.isDelete) return false
+    val mask = change.fieldMask
+    if (mask.isEmpty()) return false
+    val secretFields = spec.secretFields.toSet()
+    return mask.none { it in secretFields }
+}
 
 internal fun planBootstrapPageSecretMutations(
     generation: Long,
@@ -625,27 +632,37 @@ internal fun prepareSecrets(
                 val opened = if (change.secretEnvelopes.containsKey(fieldName)) {
                     val plaintext = try {
                         opener?.open(change, fieldName)
-                    } catch (failure: SecretReconciliationException) {
-                        throw failure
-                    } catch (failure: Throwable) {
+                    } catch (_: Throwable) {
+                        /* DeviceEnvelopeOpener wraps AAD/unwrap failures as
+                         * SecretReconciliationException. Rethrowing that here
+                         * froze the second One pull: a rename still carried a
+                         * password envelope bound to an older revision. */
                         null
                     }
                     when {
                         plaintext != null && plaintext.isNotEmpty() -> plaintext
                         retained != null && retained.isNotEmpty() -> retained.copyOf()
+                        /* A name/host patch may still carry a stale envelope from
+                         * an older main end. Incremental pages must keep the
+                         * local secret and apply the non-secret fields instead
+                         * of freezing the account cursor. */
+                        isIncrementalSecretPatch(change) -> null
                         else -> throw SecretReconciliationException(
                             SecretReconciliationFailure.ENVELOPE_REJECTED,
                         )
                     }
                 } else {
-                    if (retained == null || retained.isEmpty()) {
+                    if (retained != null && retained.isNotEmpty()) {
+                        retained.copyOf()
+                    } else if (isIncrementalSecretPatch(change)) {
+                        null
+                    } else {
                         throw SecretReconciliationException(
                             SecretReconciliationFailure.MISSING_ENVELOPE,
                         )
                     }
-                    retained.copyOf()
                 }
-                values[fieldName] = opened
+                if (opened != null) values[fieldName] = opened
             } else if (change.secretEnvelopes.containsKey(fieldName)) {
                 throw SecretReconciliationException(
                     SecretReconciliationFailure.INVALID_PRESENCE,

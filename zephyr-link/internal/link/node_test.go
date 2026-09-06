@@ -84,3 +84,29 @@ func TestThreeNodesOverHTTP(t *testing.T) {
 		t.Fatal("mobile accepted a frame sealed for the desktop channel")
 	}
 }
+
+func TestKindAIHasBuiltinHandler(t *testing.T) {
+	n := NewNode()
+	packed, err := codec.Pack(codec.KindAI, map[string]any{"op": "status"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr, err := codec.Unpack(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, body, _, err := n.Dispatcher().Dispatch(&FrameContext{SessionID: "sess-ai"}, fr)
+	if err != nil {
+		t.Fatalf("KindAI must not fail closed as handler_failed: %v", err)
+	}
+	if kind != codec.KindAI {
+		t.Fatalf("ack kind=%d", kind)
+	}
+	m, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("body type %T", body)
+	}
+	if m["ok"] != true {
+		t.Fatalf("ai ack %+v", m)
+	}
+}

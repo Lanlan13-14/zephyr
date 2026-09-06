@@ -139,6 +139,41 @@ function extractSecrets(spec, row) {
     return secrets;
 }
 
+/**
+ * Secret fields that must be resealed on this change.
+ *
+ * Empty fieldMask is a full replacement and reseals every stored secret.
+ * Incremental patches reseal only a secret whose field-revision equals this
+ * change.revision *and* that still has a real value. A later name/host edit
+ * that also stamped an empty privateKey must not count as a password change.
+ */
+function changedStoredSecretFields(spec, before, after) {
+    return (spec.secretFields || []).filter((field) => {
+        const previous = hasStoredSecret(before && before[field]) ? String(before[field]) : '';
+        const current = hasStoredSecret(after && after[field]) ? String(after[field]) : '';
+        return previous !== current;
+    });
+}
+
+function secretFieldsNeedingDownlink(spec, row, change, fieldRevisionOf) {
+    const secretFields = spec.secretFields || [];
+    if (!secretFields.length) return [];
+    const stored = secretFields.filter((field) => hasStoredSecret(row && row[field]));
+    const mask = Array.isArray(change && change.fieldMask) ? change.fieldMask : [];
+    if (mask.length === 0) return stored;
+    const revision = Number(change && change.revision);
+    if (!Number.isFinite(revision)) return [];
+    return stored.filter((field) => {
+        let rev = null;
+        try {
+            rev = typeof fieldRevisionOf === 'function' ? fieldRevisionOf(field) : null;
+        } catch {
+            rev = null;
+        }
+        return Number(rev) === revision;
+    });
+}
+
 /* SQLite INTEGER 0/1 columns. rdpTouchMode is a string enum ('direct' /
  * 'relative') and must never be coerced through Boolean('direct') === true. */
 const SQLITE_BOOLEAN_FIELDS = new Set([
@@ -543,6 +578,8 @@ module.exports = {
     createEntityAdapters,
     projectPayload,
     extractSecrets,
+    changedStoredSecretFields,
+    secretFieldsNeedingDownlink,
     presenceFlag,
     hasStoredSecret,
     assertMaskAllowed,
