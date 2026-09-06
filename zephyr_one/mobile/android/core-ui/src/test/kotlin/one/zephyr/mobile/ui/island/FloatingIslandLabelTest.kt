@@ -21,7 +21,7 @@ class FloatingIslandLabelTest {
         ).readText()
         assertFalse(source.contains("labelHeight"))
         assertFalse(source.contains("11.dp"))
-        assertTrue(source.contains("if (isSelected)"))
+        assertTrue(source.contains("if (selected)"))
         assertTrue(source.contains("overflow = TextOverflow.Visible"))
         assertFalse(source.contains("softWrap"))
     }

@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
@@ -29,12 +28,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -46,11 +49,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.lerp
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.ui.component.Icon
 import one.zephyr.mobile.ui.component.Text
@@ -76,7 +80,12 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
 
-/** Demo `#island`: Kyant LiquidBottomTabs recipe on the 62-high chrome capsule. */
+/**
+ * Bottom island chrome, stacked like Kyant LiquidBottomTabs:
+ * 1. visible tabs (bottom of z-order, clickable)
+ * 2. hidden sampling row (alpha 0, tinted, recorded into LayerBackdrop)
+ * 3. selected pill (top of z-order, damped drag + interactive highlight)
+ */
 @Composable
 fun FloatingIsland(
     selected: IslandDestination,
@@ -114,10 +123,12 @@ fun FloatingIsland(
         val outerShape = Capsule()
         val pillShape = Capsule()
         val isDark = palette.dark
-        val containerColor = if (isDark) {
-            Color(0xFF121212).copy(alpha = 0.4f)
-        } else {
+        val isLightTheme = !isDark
+        val accentColor = if (isLightTheme) Color(0xFF0088FF) else Color(0xFF0091FF)
+        val containerColor = if (isLightTheme) {
             Color(0xFFFAFAFA).copy(alpha = 0.4f)
+        } else {
+            Color(0xFF121212).copy(alpha = 0.4f)
         }
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
@@ -125,11 +136,22 @@ fun FloatingIsland(
         val panelOffset by remember(density, outerWidth) {
             derivedStateOf {
                 val maxPx = outerWidth * density.density
-                val fraction = if (maxPx == 0f) 0f else (offsetAnimation.value / maxPx).fastCoerceIn(-1f, 1f)
+                val fraction = if (maxPx == 0f) {
+                    0f
+                } else {
+                    (offsetAnimation.value / maxPx).fastCoerceIn(-1f, 1f)
+                }
                 4f * density.density * fraction.sign * EaseOut.transform(abs(fraction))
             }
         }
+
+        var tabWidthPxState by remember { mutableFloatStateOf(tabWidthPx) }
+        tabWidthPxState = tabWidthPx
+        var isLtrState by remember { mutableStateOf(isLtr) }
+        isLtrState = isLtr
         val lastSlot = (destinations.size - 1).coerceAtLeast(0).toFloat()
+        var currentIndex by remember { mutableIntStateOf(selectedIndex) }
+
         val dampedDragAnimation = remember(animationScope, destinations.size) {
             DampedDragAnimation(
                 animationScope = animationScope,
@@ -143,18 +165,16 @@ fun FloatingIsland(
                     val targetIndex = targetValue
                         .roundToInt()
                         .coerceIn(0, destinations.size - 1)
-                    if (targetIndex != selectedIndex) {
-                        onSelect(destinations[targetIndex])
-                    }
+                    currentIndex = targetIndex
                     animateToValue(targetIndex.toFloat())
                     animationScope.launch {
                         offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f))
                     }
                 },
                 onDrag = { _, dragAmount ->
-                    val direction = if (isLtr) 1f else -1f
+                    val direction = if (isLtrState) 1f else -1f
                     updateValue(
-                        (targetValue + dragAmount.x / tabWidthPx * direction)
+                        (targetValue + dragAmount.x / tabWidthPxState * direction)
                             .fastCoerceIn(0f, lastSlot),
                     )
                     animationScope.launch {
@@ -164,17 +184,29 @@ fun FloatingIsland(
             )
         }
         LaunchedEffect(selectedIndex) {
-            if (dampedDragAnimation.targetValue != selectedIndex.toFloat()) {
-                dampedDragAnimation.animateToValue(selectedIndex.toFloat())
-            }
+            currentIndex = selectedIndex
         }
+        LaunchedEffect(dampedDragAnimation) {
+            snapshotFlow { currentIndex }
+                .drop(1)
+                .collectLatest { index ->
+                    dampedDragAnimation.animateToValue(index.toFloat())
+                    if (index in destinations.indices) {
+                        onSelect(destinations[index])
+                    }
+                }
+        }
+
         val interactiveHighlight = remember(animationScope) {
             InteractiveHighlight(
                 animationScope = animationScope,
                 position = { size, _ ->
                     Offset(
-                        if (isLtr) (dampedDragAnimation.value + 0.5f) * tabWidthPx + panelOffset
-                        else size.width - (dampedDragAnimation.value + 0.5f) * tabWidthPx + panelOffset,
+                        if (isLtrState) {
+                            (dampedDragAnimation.value + 0.5f) * tabWidthPxState + panelOffset
+                        } else {
+                            size.width - (dampedDragAnimation.value + 0.5f) * tabWidthPxState + panelOffset
+                        },
                         size.height / 2f,
                     )
                 },
@@ -184,191 +216,233 @@ fun FloatingIsland(
         Box(
             modifier = Modifier
                 .width(outerWidth.dp)
-                .height(IslandSpec.outerHeight)
-                .graphicsLayer { translationX = panelOffset }
-                .drawBackdrop(
-                    backdrop = contentBackdrop,
-                    shape = { outerShape },
-                    effects = {
-                        vibrancy()
-                        blur(8f.dp.toPx())
-                        lens(
-                            refractionHeight = 24f.dp.toPx(),
-                            refractionAmount = 24f.dp.toPx(),
-                        )
-                    },
-                    layerBlock = {
-                        val progress = dampedDragAnimation.pressProgress
-                        val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
-                        scaleX = scale
-                        scaleY = scale
-                    },
-                    onDrawSurface = { drawRect(containerColor) },
-                )
-                .then(interactiveHighlight.modifier)
-                .clip(outerShape)
-                .padding(IslandSpec.innerPadding),
+                .height(IslandSpec.outerHeight),
+            contentAlignment = Alignment.CenterStart,
         ) {
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(IslandSpec.selectedPillHeight),
+                    .height(IslandSpec.outerHeight)
+                    .graphicsLayer { translationX = panelOffset }
+                    .drawBackdrop(
+                        backdrop = contentBackdrop,
+                        shape = { outerShape },
+                        effects = {
+                            vibrancy()
+                            blur(8f.dp.toPx())
+                            lens(24f.dp.toPx(), 24f.dp.toPx())
+                        },
+                        layerBlock = {
+                            val progress = dampedDragAnimation.pressProgress
+                            val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
+                            scaleX = scale
+                            scaleY = scale
+                        },
+                        onDrawSurface = { drawRect(containerColor) },
+                    )
+                    .then(interactiveHighlight.modifier)
+                    .padding(IslandSpec.innerPadding),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IslandSpec.selectedPillHeight)
-                        .alpha(0f)
-                        .clearAndSetSemantics {}
-                        .layerBackdrop(capsuleBackdrop)
-                        .drawBackdrop(
-                            backdrop = contentBackdrop,
-                            shape = { pillShape },
-                            effects = {
-                                val progress = dampedDragAnimation.pressProgress
-                                vibrancy()
-                                blur(8f.dp.toPx())
-                                lens(
-                                    refractionHeight = 24f.dp.toPx() * progress,
-                                    refractionAmount = 24f.dp.toPx() * progress,
-                                )
-                            },
-                            highlight = {
-                                Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress)
-                            },
-                            onDrawSurface = { drawRect(containerColor) },
-                        ),
-                )
-
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                x = (dampedDragAnimation.value * tabWidthPx).roundToInt(),
-                                y = 0,
-                            )
-                        }
-                        .then(interactiveHighlight.gestureModifier)
-                        .then(dampedDragAnimation.modifier)
-                        .width(slotWidth.dp)
-                        .height(IslandSpec.selectedPillHeight)
-                        .drawBackdrop(
-                            backdrop = selectedBackdrop,
-                            shape = { pillShape },
-                            effects = {
-                                val progress = dampedDragAnimation.pressProgress
-                                lens(
-                                    refractionHeight = 10f.dp.toPx() * progress,
-                                    refractionAmount = 14f.dp.toPx() * progress,
-                                    chromaticAberration = true,
-                                )
-                            },
-                            highlight = {
-                                Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress)
-                            },
-                            shadow = {
-                                Shadow(alpha = dampedDragAnimation.pressProgress)
-                            },
-                            innerShadow = {
-                                InnerShadow(
-                                    radius = 8f.dp * dampedDragAnimation.pressProgress,
-                                    alpha = dampedDragAnimation.pressProgress,
-                                )
-                            },
-                            layerBlock = {
-                                scaleX = dampedDragAnimation.scaleX
-                                scaleY = dampedDragAnimation.scaleY
-                                val velocity = dampedDragAnimation.velocity / 10f
-                                scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
-                                scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
-                            },
-                            onDrawSurface = {
-                                val progress = dampedDragAnimation.pressProgress
-                                drawRect(
-                                    if (isDark) Color.White.copy(alpha = 0.1f)
-                                    else Color.Black.copy(alpha = 0.1f),
-                                    alpha = 1f - progress,
-                                )
-                                drawRect(Color.Black.copy(alpha = 0.03f * progress))
-                            },
-                        )
-                        .clip(pillShape),
-                )
-
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    destinations.forEachIndexed { index, destination ->
-                        val isSelected = index == selectedIndex
-                        val interaction = remember { MutableInteractionSource() }
-                        val pressed by interaction.collectIsPressedAsState()
-                        val pressScale by animateFloatAsState(
-                            targetValue = if (pressed) IslandSpec.PRESS_SCALE else 1f,
-                            animationSpec = tween(
-                                motion.scale(IslandSpec.PRESS_FEEDBACK_MS),
-                                easing = ZephyrMotionTokens.easeOut,
-                            ),
-                            label = "islandPress",
-                        )
-                        val iconSize by animateDpAsState(
-                            targetValue = if (isSelected) IslandSpec.selectedIconSize else IslandSpec.iconSize,
-                            animationSpec = tween(
-                                motion.scale(ZephyrMotionTokens.MED_MS),
-                                easing = ZephyrMotionTokens.easeOut,
-                            ),
-                            label = "islandIconSize",
-                        )
-                        val labelAlpha by animateFloatAsState(
-                            targetValue = if (isSelected) 1f else 0f,
-                            animationSpec = tween(motion.scale(IslandSpec.LABEL_CROSSFADE_MS)),
-                            label = "islandLabel",
-                        )
-
-                        Column(
-                            modifier = Modifier
-                                .width(slotWidth.dp)
-                                .height(IslandSpec.selectedPillHeight)
-                                .sizeIn(
-                                    minWidth = IslandSpec.minTouchTarget,
-                                    minHeight = IslandSpec.minTouchTarget,
-                                )
-                                .scale(pressScale)
-                                .selectable(
-                                    selected = isSelected,
-                                    interactionSource = interaction,
-                                    indication = null,
-                                    role = Role.Tab,
-                                    onClick = {
-                                        if (!isSelected) {
-                                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                            onSelect(destination)
-                                            dampedDragAnimation.animateToValue(index.toFloat())
-                                        }
-                                    },
-                                ),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                        ) {
-                            Icon(
-                                imageVector = destination.icon,
-                                contentDescription = labels[index],
-                                tint = if (isSelected) palette.brand.accent else palette.onFloatingSubtle,
-                                modifier = Modifier.size(iconSize),
-                            )
-                            if (isSelected) {
-                                Text(
-                                    text = labels[index],
-                                    style = ZephyrTextStyles.islandLabel,
-                                    color = palette.brand.accent,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Visible,
-                                    modifier = Modifier
-                                        .padding(top = IslandSpec.iconLabelGap)
-                                        .alpha(labelAlpha),
-                                )
+                destinations.forEachIndexed { index, destination ->
+                    IslandTabItem(
+                        destination = destination,
+                        label = labels[index],
+                        selected = index == selectedIndex,
+                        slotWidth = slotWidth,
+                        interactive = true,
+                        contentColor = if (index == selectedIndex) {
+                            palette.brand.accent
+                        } else {
+                            palette.onFloatingSubtle
+                        },
+                        onClick = {
+                            if (index != currentIndex) {
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                currentIndex = index
                             }
-                        }
-                    }
+                        },
+                    )
                 }
             }
+
+            Row(
+                modifier = Modifier
+                    .alpha(0f)
+                    .clearAndSetSemantics {}
+                    .layerBackdrop(capsuleBackdrop)
+                    .fillMaxWidth()
+                    .height(IslandSpec.selectedPillHeight)
+                    .graphicsLayer { translationX = panelOffset }
+                    .drawBackdrop(
+                        backdrop = contentBackdrop,
+                        shape = { pillShape },
+                        effects = {
+                            val progress = dampedDragAnimation.pressProgress
+                            vibrancy()
+                            blur(8f.dp.toPx())
+                            lens(24f.dp.toPx() * progress, 24f.dp.toPx() * progress)
+                        },
+                        highlight = {
+                            Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress)
+                        },
+                        onDrawSurface = { drawRect(containerColor) },
+                    )
+                    .then(interactiveHighlight.modifier)
+                    .padding(horizontal = IslandSpec.innerPadding),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                destinations.forEachIndexed { index, destination ->
+                    IslandTabItem(
+                        destination = destination,
+                        label = labels[index],
+                        selected = index == selectedIndex,
+                        slotWidth = slotWidth,
+                        interactive = false,
+                        contentColor = accentColor,
+                        onClick = {},
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = IslandSpec.innerPadding)
+                    .graphicsLayer {
+                        translationX =
+                            if (isLtrState) {
+                                dampedDragAnimation.value * tabWidthPxState + panelOffset
+                            } else {
+                                size.width - (dampedDragAnimation.value + 1f) * tabWidthPxState + panelOffset
+                            }
+                    }
+                    .then(interactiveHighlight.gestureModifier)
+                    .then(dampedDragAnimation.modifier)
+                    .drawBackdrop(
+                        backdrop = selectedBackdrop,
+                        shape = { pillShape },
+                        effects = {
+                            val progress = dampedDragAnimation.pressProgress
+                            lens(
+                                refractionHeight = 10f.dp.toPx() * progress,
+                                refractionAmount = 14f.dp.toPx() * progress,
+                                chromaticAberration = true,
+                            )
+                        },
+                        highlight = {
+                            Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress)
+                        },
+                        shadow = {
+                            Shadow(alpha = dampedDragAnimation.pressProgress)
+                        },
+                        innerShadow = {
+                            InnerShadow(
+                                radius = 8f.dp * dampedDragAnimation.pressProgress,
+                                alpha = dampedDragAnimation.pressProgress,
+                            )
+                        },
+                        layerBlock = {
+                            scaleX = dampedDragAnimation.scaleX
+                            scaleY = dampedDragAnimation.scaleY
+                            val velocity = dampedDragAnimation.velocity / 10f
+                            scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
+                            scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+                        },
+                        onDrawSurface = {
+                            val progress = dampedDragAnimation.pressProgress
+                            drawRect(
+                                if (isLightTheme) Color.Black.copy(alpha = 0.1f)
+                                else Color.White.copy(alpha = 0.1f),
+                                alpha = 1f - progress,
+                            )
+                            drawRect(Color.Black.copy(alpha = 0.03f * progress))
+                        },
+                    )
+                    .height(IslandSpec.selectedPillHeight)
+                    .fillMaxWidth(1f / destinations.size.coerceAtLeast(1)),
+            )
+        }
+    }
+}
+
+@Composable
+private fun IslandTabItem(
+    destination: IslandDestination,
+    label: String,
+    selected: Boolean,
+    slotWidth: Float,
+    interactive: Boolean,
+    contentColor: Color,
+    onClick: () -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    val motion = ZephyrTheme.motion
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (interactive && pressed) IslandSpec.PRESS_SCALE else 1f,
+        animationSpec = tween(
+            motion.scale(IslandSpec.PRESS_FEEDBACK_MS),
+            easing = ZephyrMotionTokens.easeOut,
+        ),
+        label = "islandPress",
+    )
+    val iconSize by animateDpAsState(
+        targetValue = if (selected) IslandSpec.selectedIconSize else IslandSpec.iconSize,
+        animationSpec = tween(
+            motion.scale(ZephyrMotionTokens.MED_MS),
+            easing = ZephyrMotionTokens.easeOut,
+        ),
+        label = "islandIconSize",
+    )
+    val labelAlpha by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = tween(motion.scale(IslandSpec.LABEL_CROSSFADE_MS)),
+        label = "islandLabel",
+    )
+
+    Column(
+        modifier = Modifier
+            .width(slotWidth.dp)
+            .height(IslandSpec.selectedPillHeight)
+            .sizeIn(
+                minWidth = IslandSpec.minTouchTarget,
+                minHeight = IslandSpec.minTouchTarget,
+            )
+            .scale(pressScale)
+            .then(
+                if (interactive) {
+                    Modifier.selectable(
+                        selected = selected,
+                        interactionSource = interaction,
+                        indication = null,
+                        role = Role.Tab,
+                        onClick = onClick,
+                    )
+                } else {
+                    Modifier
+                },
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = destination.icon,
+            contentDescription = if (interactive) label else null,
+            tint = contentColor,
+            modifier = Modifier.size(iconSize),
+        )
+        if (selected) {
+            Text(
+                text = label,
+                style = ZephyrTextStyles.islandLabel,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Visible,
+                modifier = Modifier
+                    .padding(top = IslandSpec.iconLabelGap)
+                    .alpha(labelAlpha),
+            )
         }
     }
 }
