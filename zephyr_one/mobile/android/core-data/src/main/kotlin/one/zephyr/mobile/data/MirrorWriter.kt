@@ -159,6 +159,12 @@ class MirrorWriter(
                             change,
                             opener,
                             retainedSecrets = retained,
+                            // A change-feed patch of an already-mirrored row must not
+                            // freeze the account when the page omits envelopes. Live
+                            // v1.1.538 seq 50 was a name-only connection upsert with
+                            // hasPassword=true and no password envelope; One pre65
+                            // reported sync.pull: missing_envelope and stopped the cursor.
+                            allowMissingEnvelope = localRevision != null,
                         )
                     } finally {
                         retained.values.forEach { it.fill(0) }
@@ -534,9 +540,10 @@ internal fun planPageSecretMutations(
             val plaintext = secrets.values[fieldName]
             if (plaintext != null) {
                 add(PlannedSecretMutation.Put(ref, plaintext))
-            } else if (!isIncrementalSecretPatch(change)) {
-                throw SecretReconciliationException(SecretReconciliationFailure.MISSING_ENVELOPE)
             }
+            // Presence true without new plaintext keeps the stored secret.
+            // prepareSecrets is the gate for missing envelopes; this planner
+            // must not undo an incremental keep by failing the whole page.
         }
     }
 }.coalesced()
@@ -606,6 +613,7 @@ internal fun prepareSecrets(
     change: SyncChange,
     opener: EnvelopeOpener?,
     retainedSecrets: Map<String, ByteArray> = emptyMap(),
+    allowMissingEnvelope: Boolean = false,
 ): PreparedSecrets {
     val spec = EntityRegistry.require(change.entityType)
     if (change.secretEnvelopes.keys.any { it !in spec.secretFields }) {
@@ -654,7 +662,7 @@ internal fun prepareSecrets(
                 } else {
                     if (retained != null && retained.isNotEmpty()) {
                         retained.copyOf()
-                    } else if (isIncrementalSecretPatch(change)) {
+                    } else if (allowMissingEnvelope || isIncrementalSecretPatch(change)) {
                         null
                     } else {
                         throw SecretReconciliationException(

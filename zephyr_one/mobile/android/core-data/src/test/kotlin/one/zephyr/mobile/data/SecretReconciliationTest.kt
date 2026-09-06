@@ -47,6 +47,59 @@ class SecretReconciliationTest {
     }
 
     @Test
+    fun `an already-mirrored row with empty mask and no envelope does not freeze the cursor`() {
+        val change = change(
+            payload = payload(hasPassword = true, hasPrivateKey = false),
+            fieldMask = emptyList(),
+        )
+        val secrets = prepareSecrets(
+            change,
+            opener = EnvelopeOpener { _, _ -> error("must not open") },
+            allowMissingEnvelope = true,
+        )
+        try {
+            assertEquals(true, secrets.states.getValue("password"))
+            assertTrue(secrets.values["password"] == null)
+            val mutations = planPageSecretMutations(
+                changes = listOf(change),
+                page = ApplicablePage(setOf(0), mapOf(0 to secrets)),
+            )
+            assertTrue(mutations.none { it.ref.partsOrNull()?.fieldName == "password" && it is PlannedSecretMutation.Put })
+        } finally {
+            secrets.close()
+        }
+    }
+
+    @Test
+    fun `live seq50 name-only page with empty decoded mask still plans without a password put`() {
+        val change = change(
+            payload = JsonObject(
+                mapOf(
+                    "ownerUserId" to JsonPrimitive("8f9d1961-1fbb-436c-ab4a-09aaf7c42bce"),
+                    "name" to JsonPrimitive("home1"),
+                    "hasPassword" to JsonPrimitive(true),
+                    "hasPrivateKey" to JsonPrimitive(false),
+                ),
+            ),
+            fieldMask = emptyList(),
+        )
+        val secrets = prepareSecrets(
+            change,
+            opener = EnvelopeOpener { _, _ -> error("must not open") },
+            allowMissingEnvelope = true,
+        )
+        try {
+            val mutations = planPageSecretMutations(
+                changes = listOf(change),
+                page = ApplicablePage(setOf(0), mapOf(0 to secrets)),
+            )
+            assertTrue(mutations.none { it is PlannedSecretMutation.Put })
+        } finally {
+            secrets.close()
+        }
+    }
+
+    @Test
     fun `live name-only page with presence and no envelope does not freeze the cursor`() {
         val secrets = prepareSecrets(
             change(
