@@ -43,9 +43,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.util.fastCoerceIn
-import androidx.compose.ui.util.fastRoundToInt
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import one.zephyr.mobile.ui.component.Icon
 import one.zephyr.mobile.ui.component.Text
@@ -121,7 +121,7 @@ fun FloatingIsland(
                 onDragStarted = {},
                 onDragStopped = {
                     val targetIndex = targetValue
-                        .fastRoundToInt()
+                        .roundToInt()
                         .fastCoerceIn(0, destinations.size - 1)
                     if (targetIndex != selectedIndex) {
                         onSelect(destinations[targetIndex])
@@ -254,10 +254,10 @@ fun FloatingIsland(
                             .scale(pressScale)
                             .pointerInput(index, destinations.size) {
                                 detectHorizontalDragGestures(
-                                    onDragStart = {
+                                    onDragStart = { _ ->
                                         dampedDragAnimation.press()
                                     },
-                                    onDragEnd = {
+                                    onDragEnd = { _ ->
                                         dampedDragAnimation.onDragStopped()
                                         dampedDragAnimation.release()
                                     },
@@ -267,7 +267,7 @@ fun FloatingIsland(
                                     },
                                 ) { change, dragAmount ->
                                     change.consume()
-                                    dampedDragAnimation.onDrag(size, Offset(dragAmount.x, 0f))
+                                    dampedDragAnimation.onDrag(size, Offset(dragAmount, 0f))
                                 }
                             }
                             .selectable(

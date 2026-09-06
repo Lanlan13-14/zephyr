@@ -11,8 +11,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.util.fastCoerceIn
+import one.zephyr.mobile.ui.glass.asAndroidRuntimeShader
 import one.zephyr.mobile.ui.glass.createRuntimeShader
 import one.zephyr.mobile.ui.glass.isRuntimeShaderSupported
 import kotlinx.coroutines.CoroutineScope
@@ -69,7 +71,7 @@ half4 main(float2 coord) {
                     androidShader.apply {
                         val position = position(size, positionAnimation.value)
                         setFloatUniform("size", size.width, size.height)
-                        setColorUniform("color", Color.White.copy(0.15f * progress))
+                        setColorUniform("color", Color.White.copy(0.15f * progress).toArgb())
                         setFloatUniform("radius", size.minDimension * 1.5f)
                         setFloatUniform(
                             "position",
