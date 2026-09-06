@@ -280,6 +280,20 @@ object Markdown {
         return spaces / 2
     }
 
+    private fun findMatchingCloseParen(source: String, openIndex: Int): Int {
+        var depth = 0
+        for (i in openIndex until source.length) {
+            when (source[i]) {
+                '(' -> depth++
+                ')' -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+        }
+        return -1
+    }
+
     private fun isSafeHref(url: String): Boolean {
         val value = url.trim().lowercase()
         if (value.isEmpty()) return false
@@ -319,7 +333,7 @@ object Markdown {
                 character == '[' -> {
                     val labelEnd = source.indexOf(']', index + 1)
                     val urlOpen = if (labelEnd >= 0 && labelEnd + 1 < source.length && source[labelEnd + 1] == '(') labelEnd + 1 else -1
-                    val urlClose = if (urlOpen >= 0) source.indexOf(')', urlOpen + 1) else -1
+                    val urlClose = if (urlOpen >= 0) findMatchingCloseParen(source, urlOpen) else -1
                     if (labelEnd < 0 || urlOpen < 0 || urlClose < 0) {
                         out.append(character)
                         index++
