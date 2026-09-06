@@ -10182,10 +10182,27 @@ async function deleteAiPlan(planId) {
 async function deleteAiPlanConfirmed(planId) {
     try {
         const data = await api('/api/ai/tools/run', { method: 'POST', body: JSON.stringify({ tool: 'plan_delete', args: { planId }, context: collectAiContext() }) });
+        let result = data.result || {};
+        // The delete button already has an explicit UI confirmation. The server
+        // still protects the destructive tool with its canonical confirmation
+        // gate, so finish that same request instead of pretending the local
+        // row was deleted while the stored plan remains on the server.
+        if (result.confirmationRequired || result.data?.confirmationRequired) {
+            const confirmation = result.confirmation || result.data?.confirmation;
+            if (!confirmation?.id) throw new Error(t('计划删除确认请求无效'));
+            const confirmed = await api(`/api/ai/confirm/${encodeURIComponent(confirmation.id)}`, {
+                method: 'POST',
+                body: JSON.stringify({ approve: true }),
+            });
+            result = confirmed.result || {};
+        }
+        const deleted = result.deleted === true || result.data?.deleted === true;
+        if (!deleted) throw new Error(t('计划删除未完成'));
         const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-        ai.plans = (ai.plans || []).filter((p) => p.id !== planId);
+        const serverPlans = result.data?.plans || result.plans;
+        ai.plans = Array.isArray(serverPlans) ? serverPlans : (ai.plans || []).filter((p) => p.id !== planId);
         settings.ai = ai; aiSettingsState = ai; renderAiPlanList();
-        toast(data.result?.deleted ? t('计划已删除') : t('计划删除完成'));
+        toast(t('计划已删除'));
     } catch (err) { toast(err.message || t('计划删除失败')); }
 }
 async function revealAiProviderKey(id, trigger = null) {
