@@ -386,7 +386,7 @@ class SyncActor(
             try {
                 store.resetBootstrap()
             } catch (failure: SecretReconciliationException) {
-                return BootstrapAttempt.Failed(secretReconciliationFailure())
+                return BootstrapAttempt.Failed(secretReconciliationFailure(failure))
             }
         }
 
@@ -413,7 +413,7 @@ class SyncActor(
             } catch (violation: ResidencyViolationException) {
                 return BootstrapAttempt.Failed(residencyFailure(violation))
             } catch (failure: SecretReconciliationException) {
-                return BootstrapAttempt.Failed(secretReconciliationFailure())
+                return BootstrapAttempt.Failed(secretReconciliationFailure(failure))
             }
             // A rejected first page must not advance even the snapshot cursor. Staging is invisible
             // and reset on recovery, so persisting the join only after validation is crash-safe.
@@ -432,7 +432,7 @@ class SyncActor(
                 } catch (violation: ResidencyViolationException) {
                     return BootstrapAttempt.Failed(residencyFailure(violation))
                 } catch (failure: SecretReconciliationException) {
-                    return BootstrapAttempt.Failed(secretReconciliationFailure())
+                    return BootstrapAttempt.Failed(secretReconciliationFailure(failure))
                 }
                 acc.applied += staged
                 return BootstrapAttempt.Finished(BootstrapOutcome.Complete)
@@ -493,9 +493,17 @@ class SyncActor(
             } catch (violation: ResidencyViolationException) {
                 return residencyFailure(violation)
             } catch (failure: SecretReconciliationException) {
-                return secretReconciliationFailure()
+                return secretReconciliationFailure(failure)
             } catch (failure: SecretPayloadViolationException) {
                 return malformedResponse("unsafe inbound secret payload")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                return MobileError.local(
+                    code = "internal_error",
+                    message = "local change apply failed",
+                    retryable = true,
+                ).withLocalDiagnostic("sync.pull: " + failure::class.java.simpleName)
             }
             acc.applied += applied.applied
             acc.skipped += applied.skipped
@@ -512,14 +520,19 @@ class SyncActor(
         MobileError.local(
             code = "shared_residency_violation",
             message = violation.message ?: "server change did not prove ownership",
+        ).withLocalDiagnostic(
+            (violation.message ?: "server change did not prove ownership")
+                .lineSequence()
+                .first()
+                .take(180),
         )
 
-    private fun secretReconciliationFailure(): MobileError =
+    private fun secretReconciliationFailure(failure: SecretReconciliationException): MobileError =
         MobileError.local(
             code = "internal_error",
             message = "secret envelope reconciliation failed",
             retryable = true,
-        )
+        ).withLocalDiagnostic("sync.pull: " + failure.failure.name.lowercase())
 
     private suspend fun pushPending(acc: RoundAccumulator): MobileError? {
         val queued = store.pendingOperations()
@@ -838,7 +851,7 @@ class SyncActor(
                         code = "internal_error",
                         message = "local ACK commit failed",
                         retryable = true,
-                    )
+                    ).withLocalDiagnostic("sync.ack: local commit failed")
                 }
             }
         }

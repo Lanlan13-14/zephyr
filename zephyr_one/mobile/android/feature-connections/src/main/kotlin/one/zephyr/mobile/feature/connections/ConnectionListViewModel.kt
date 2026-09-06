@@ -92,19 +92,19 @@ class ConnectionListViewModel(
             bound = localMode || status.bindingState.isBound,
             lastSyncedAt = status.lastSuccessAt,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), PageState.InitialLoading)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, PageState.InitialLoading)
 
     /** The recents strip is derived from the same rows so it can never disagree with the list. */
     val recents: StateFlow<List<Connection>> = merged
         .map { rows -> ConnectionFilters.recents(rows ?: emptyList()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val availableTags: StateFlow<List<String>> = merged
         .map { rows -> ConnectionFilters.availableTags(rows ?: emptyList()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val favouriteIds: StateFlow<Set<String>> = favourites
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptySet())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
     // ---- filter intents ----------------------------------------------------------------------
 
@@ -173,8 +173,6 @@ class ConnectionListViewModel(
     }
 
     companion object {
-        private const val STOP_TIMEOUT_MS = 5_000L
-
         const val MSG_DELETED = "已删除，待同步"
         const val MSG_DELETE_DENIED = "你没有删除此连接的权限"
         const val MSG_DELETE_FAILED = "删除未完成，请重试"

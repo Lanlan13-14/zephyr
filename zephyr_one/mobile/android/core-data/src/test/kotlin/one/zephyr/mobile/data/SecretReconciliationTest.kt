@@ -47,6 +47,31 @@ class SecretReconciliationTest {
     }
 
     @Test
+    fun `live name-only page with presence and no envelope does not freeze the cursor`() {
+        val secrets = prepareSecrets(
+            change(
+                payload = JsonObject(
+                    mapOf(
+                        "ownerUserId" to JsonPrimitive("8f9d1961-1fbb-436c-ab4a-09aaf7c42bce"),
+                        "name" to JsonPrimitive("home1"),
+                        "hasPassword" to JsonPrimitive(true),
+                        "hasPrivateKey" to JsonPrimitive(false),
+                    ),
+                ),
+                fieldMask = listOf("name"),
+            ),
+            opener = EnvelopeOpener { _, _ -> error("must not open") },
+        )
+        try {
+            assertEquals(true, secrets.states.getValue("password"))
+            assertEquals(false, secrets.states.getValue("privateKey"))
+            assertTrue(secrets.values["password"] == null)
+        } finally {
+            secrets.close()
+        }
+    }
+
+    @Test
     fun `incremental name patch without a local secret does not freeze the cursor`() {
         val secrets = prepareSecrets(
             change(

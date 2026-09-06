@@ -414,6 +414,43 @@ class SyncActorTest {
         val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
 
         assertEquals("internal_error", result.error?.code)
+        assertEquals(
+            "sync.pull: envelope_rejected",
+            result.error?.details?.get("clientLocalDiagnostic"),
+        )
+        assertEquals(40L, store.appliedCursor)
+        assertEquals(40L, store.ackedCursor)
+        assertTrue(transport.ackedCursors.isEmpty())
+        assertEquals(SyncPhase.PULL_CHANGES, result.stoppedAt)
+        assertEquals(
+            "sync.pull: envelope_rejected",
+            store.recordedFailures.single().details["clientLocalDiagnostic"],
+        )
+    }
+
+    @Test
+    fun `an unexpected apply fault keeps the cursor and records a local diagnostic`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.changePages.add(
+            ApiResult.Success(
+                ChangePage(
+                    fromCursor = 40,
+                    nextCursor = 41,
+                    hasMore = false,
+                    changes = listOf(change(41, revision = 8)),
+                ),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.appliedCursor = 40
+        store.ackedCursor = 40
+        store.applyChangesFailure = IllegalStateException("room write failed")
+
+        val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
+
+        assertEquals("internal_error", result.error?.code)
+        assertEquals("sync.pull: IllegalStateException", result.error?.details?.get("clientLocalDiagnostic"))
         assertEquals(40L, store.appliedCursor)
         assertEquals(40L, store.ackedCursor)
         assertTrue(transport.ackedCursors.isEmpty())
@@ -1084,6 +1121,7 @@ class SyncActorTest {
         val interrupted = actor(transport, store).request(SyncTrigger.INTERVAL).single()
 
         assertEquals("internal_error", interrupted.error?.code)
+        assertEquals("sync.ack: local commit failed", interrupted.error?.details?.get("clientLocalDiagnostic"))
         assertEquals(listOf("op-1"), store.queue.map { it.opId })
         assertEquals(setOf("op-1"), store.retainedJournalOpIds)
         assertTrue(store.completed.isEmpty())
@@ -1351,6 +1389,7 @@ class SyncActorTest {
         val result = subject.request(SyncTrigger.INTERVAL).single()
 
         assertEquals("shared_residency_violation", result.error?.code)
+        assertEquals("missing ownerUserId", result.error?.details?.get("clientLocalDiagnostic"))
         assertEquals(SyncPhase.PULL_CHANGES, result.stoppedAt)
         assertEquals(0L, store.appliedCursor)
         assertEquals(0L, store.ackedCursor)
