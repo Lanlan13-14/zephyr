@@ -122,7 +122,7 @@ fun FloatingIsland(
                 onDragStopped = {
                     val targetIndex = targetValue
                         .roundToInt()
-                        .fastCoerceIn(0, destinations.size - 1)
+                        .coerceIn(0, destinations.size - 1)
                     if (targetIndex != selectedIndex) {
                         onSelect(destinations[targetIndex])
                     }
@@ -257,7 +257,7 @@ fun FloatingIsland(
                                     onDragStart = { _ ->
                                         dampedDragAnimation.press()
                                     },
-                                    onDragEnd = { _ ->
+                                    onDragEnd = {
                                         dampedDragAnimation.onDragStopped()
                                         dampedDragAnimation.release()
                                     },
@@ -267,7 +267,10 @@ fun FloatingIsland(
                                     },
                                 ) { change, dragAmount ->
                                     change.consume()
-                                    dampedDragAnimation.onDrag(size, Offset(dragAmount, 0f))
+                                    dampedDragAnimation.onDrag(
+                                        size,
+                                        Offset(dragAmount, 0f),
+                                    )
                                 }
                             }
                             .selectable(
