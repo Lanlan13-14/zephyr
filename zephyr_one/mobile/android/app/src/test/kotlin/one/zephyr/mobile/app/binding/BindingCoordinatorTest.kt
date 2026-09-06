@@ -162,7 +162,27 @@ class BindingCoordinatorTest {
         val host = FakeHost(events)
         val graphs = mutableListOf<FakeGraph>()
         val gateway = FakeGateway()
-        val coordinator = coordinator(storage, host, graphs, events)
+        val promotedWithLaterFailure = SyncRoundResult(
+            trigger = SyncTrigger.BIND_COMPLETE,
+            startedAt = 1L,
+            finishedAt = 2L,
+            phasesRun = listOf(SyncPhase.BOOTSTRAP_PAGE, SyncPhase.PULL_CHANGES),
+            endState = BindingState.CATCHING_UP,
+            pushed = 0,
+            conflicts = 0,
+            deferred = emptyList(),
+            applied = 1,
+            skipped = 0,
+            appliedCursor = 1L,
+            ackedCursor = 0L,
+            error = MobileError.local("internal_error", "pull failed", retryable = true),
+            stoppedAt = SyncPhase.PULL_CHANGES,
+            bootstrapOutcome = BootstrapOutcome.Complete,
+        )
+        val coordinator = coordinator(
+            storage, host, graphs, events,
+            nextBootstrapRounds = listOf(promotedWithLaterFailure),
+        )
 
         val login = coordinator.login(profile(), "alice", "password".toCharArray(), gateway)
         assertTrue(login is BindingAuthenticationResult.Authenticated)
@@ -179,39 +199,35 @@ class BindingCoordinatorTest {
         val storage = FakeStorage(events)
         val host = FakeHost(events)
         val graphs = mutableListOf<FakeGraph>()
-        val gateway = FakeGateway()
-        val coordinator = coordinator(storage, host, graphs, events)
-
-        val login = coordinator.login(profile(), "alice", "password".toCharArray(), gateway)
-        assertTrue(login is BindingAuthenticationResult.Authenticated)
-
-        /* The round promoted the snapshot (BootstrapOutcome.Complete) but ended with a pull
-         * failure — not complete in the whole-round sense. */
-        val graph = graphs.single()
-        graph.bootstrapRounds = listOf(
-            SyncRoundResult(
-                trigger = SyncTrigger.BIND_COMPLETE,
-                startedAt = 1L,
-                finishedAt = 2L,
-                phasesRun = listOf(SyncPhase.BOOTSTRAP_PAGE, SyncPhase.PULL_CHANGES),
-                endState = BindingState.CATCHING_UP,
-                pushed = 0,
-                conflicts = 0,
-                deferred = emptyList(),
-                applied = 1,
-                skipped = 0,
-                appliedCursor = 1L,
-                ackedCursor = 0L,
-                error = MobileError.local("internal_error", "pull failed", retryable = true),
-                stoppedAt = SyncPhase.PULL_CHANGES,
-                bootstrapOutcome = BootstrapOutcome.Complete,
-            ),
+        val promotedWithLaterFailure = SyncRoundResult(
+            trigger = SyncTrigger.BIND_COMPLETE,
+            startedAt = 1L,
+            finishedAt = 2L,
+            phasesRun = listOf(SyncPhase.BOOTSTRAP_PAGE, SyncPhase.PULL_CHANGES),
+            endState = BindingState.CATCHING_UP,
+            pushed = 0,
+            conflicts = 0,
+            deferred = emptyList(),
+            applied = 1,
+            skipped = 0,
+            appliedCursor = 1L,
+            ackedCursor = 0L,
+            error = MobileError.local("internal_error", "pull failed", retryable = true),
+            stoppedAt = SyncPhase.PULL_CHANGES,
+            bootstrapOutcome = BootstrapOutcome.Complete,
         )
+        val coordinator = coordinator(
+            storage, host, graphs, events,
+            nextBootstrapRounds = listOf(promotedWithLaterFailure),
+        )
+
+        val login = coordinator.login(profile(), "alice", "password".toCharArray(), FakeGateway())
+        assertTrue(login is BindingAuthenticationResult.Authenticated)
 
         val result = coordinator.completeBinding(bindingRequest(), "123456".toCharArray())
         result as BindingCompletionResult.Completed
         assertTrue(result.bootstrapSucceeded)
-        assertEquals(1, graph.databaseReadyCalls)
+        assertEquals(1, graphs.single().databaseReadyCalls)
     }
 
     @Test
@@ -221,37 +237,36 @@ class BindingCoordinatorTest {
         val host = FakeHost(events)
         val graphs = mutableListOf<FakeGraph>()
         val gateway = FakeGateway()
-        val coordinator = coordinator(storage, host, graphs, events)
+        /* An incomplete bootstrap (continuation pending) or a failure before promotion must
+         * not mark the database ready: that is what guarantees a fresh bootstrap retries. */
+        val neverPromoted = SyncRoundResult(
+            trigger = SyncTrigger.BIND_COMPLETE,
+            startedAt = 1L,
+            finishedAt = 2L,
+            phasesRun = listOf(SyncPhase.BOOTSTRAP_PAGE),
+            endState = BindingState.BOOTSTRAPPING,
+            pushed = 0,
+            conflicts = 0,
+            deferred = emptyList(),
+            applied = 0,
+            skipped = 0,
+            appliedCursor = 0L,
+            ackedCursor = 0L,
+            error = MobileError.local("network_offline", "offline", retryable = true),
+            stoppedAt = SyncPhase.BOOTSTRAP_PAGE,
+        )
+        val coordinator = coordinator(
+            storage, host, graphs, events,
+            nextBootstrapRounds = listOf(neverPromoted),
+        )
 
         val login = coordinator.login(profile(), "alice", "password".toCharArray(), gateway)
         assertTrue(login is BindingAuthenticationResult.Authenticated)
 
-        /* An incomplete bootstrap (continuation pending) or a failure before promotion must
-         * not mark the database ready: that is what guarantees a fresh bootstrap retries. */
-        val graph = graphs.single()
-        graph.bootstrapRounds = listOf(
-            SyncRoundResult(
-                trigger = SyncTrigger.BIND_COMPLETE,
-                startedAt = 1L,
-                finishedAt = 2L,
-                phasesRun = listOf(SyncPhase.BOOTSTRAP_PAGE),
-                endState = BindingState.BOOTSTRAPPING,
-                pushed = 0,
-                conflicts = 0,
-                deferred = emptyList(),
-                applied = 0,
-                skipped = 0,
-                appliedCursor = 0L,
-                ackedCursor = 0L,
-                error = MobileError.local("network_offline", "offline", retryable = true),
-                stoppedAt = SyncPhase.BOOTSTRAP_PAGE,
-            ),
-        )
-
         val result = coordinator.completeBinding(bindingRequest(), "123456".toCharArray())
         result as BindingCompletionResult.Completed
         assertFalse(result.bootstrapSucceeded)
-        assertEquals(0, graph.databaseReadyCalls)
+        assertEquals(0, graphs.single().databaseReadyCalls)
     }
 
     @Test
@@ -1638,6 +1653,8 @@ class BindingCoordinatorTest {
         noAccountCleanupJournal: FakeNoAccountCleanupJournal = FakeNoAccountCleanupJournal(),
         noAccountStateWiper: FakeNoAccountStateWiper = FakeNoAccountStateWiper(),
         graphRecoverability: ((StoredBinding) -> Boolean)? = null,
+        /** Rounds the next freshly created FakeGraph returns from bootstrapAfterBind. */
+        nextBootstrapRounds: List<SyncRoundResult>? = null,
     ): BindingCoordinator = BindingCoordinator(
         storage = storage,
         host = host,
@@ -1647,6 +1664,7 @@ class BindingCoordinatorTest {
                 events,
                 initiallyRecoverable = graphRecoverability?.invoke(stored) ?: restoredGraphsAreRecoverable,
                 databaseRequiresBootstrap = restoredDatabaseRequiresBootstrap,
+                bootstrapRounds = nextBootstrapRounds,
             ).also {
                 it.startFailures = restoredGraphStartFailures
                 graphs += it
@@ -2007,7 +2025,9 @@ private class FakeGraph(
     override suspend fun bootstrapAfterBind(): List<SyncRoundResult> = scope.async {
         events += "graph.bootstrap"
         bootstrapCalls += 1
-        bootstrapRounds ?: listOf(successfulRound(SyncTrigger.BIND_COMPLETE))
+        /* A BIND_COMPLETE round always enters the bootstrap phase; the realistic default is a
+         * promoted snapshot. Tests inject non-default outcomes via nextBootstrapRounds. */
+        bootstrapRounds ?: listOf(successfulRound(SyncTrigger.BIND_COMPLETE).promoteSnapshot())
     }.await()
 
     override suspend fun runForegroundRound(): List<SyncRoundResult> = scope.async {
@@ -2207,3 +2227,6 @@ private fun successfulRound(trigger: SyncTrigger) = SyncRoundResult(
     appliedCursor = 1L,
     ackedCursor = 1L,
 )
+
+/** The same round with an explicitly promoted bootstrap snapshot (a realistic BIND_COMPLETE). */
+private fun SyncRoundResult.promoteSnapshot() = copy(bootstrapOutcome = BootstrapOutcome.Complete)
