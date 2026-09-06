@@ -73,17 +73,19 @@ test('FloatingIsland integrates Liquid Glass with backdrop sampling and refracti
   assert.ok(islandSource.includes('one.zephyr.mobile.ui.glass.LocalBackdrop'));
   assert.ok(islandSource.includes('rememberCombinedBackdrop'));
   assert.ok(islandSource.includes('rememberLayerBackdrop'));
-  assert.ok(islandSource.includes('exportedBackdrop = capsuleBackdrop'));
+  assert.ok(islandSource.includes('layerBackdrop(capsuleBackdrop)'));
   assert.ok(islandSource.includes('lens('));
   assert.ok(islandSource.includes('chromaticAberration = true'));
   assert.ok(islandSource.includes('Highlight.Default'));
   assert.ok(islandSource.includes('Shadow('));
+  assert.ok(islandSource.includes('InteractiveHighlight'));
+  assert.ok(islandSource.includes('dampedDragAnimation.modifier'));
+  assert.ok(islandSource.includes('vibrancy()'));
   assert.equal(islandSource.includes('Modifier.shadow('), false, 'Material elevation hides liquid glass');
   assert.ok(
-    islandSource.includes('Color.White.copy(alpha = 0.1f * (1f - progress))') ||
-      islandSource.includes('Color.White.copy(alpha = 0.10f)') ||
-      islandSource.includes('Color.White.copy(alpha = 0.08f)') ||
-      islandSource.includes('containerColor'),
+    islandSource.includes('containerColor') ||
+      islandSource.includes('Color.White.copy(alpha = 0.1f)') ||
+      islandSource.includes('Color.Black.copy(alpha = 0.1f)'),
     'island surface tint must stay translucent enough to show the sampled backdrop',
   );
   assert.ok(islandSource.includes('DampedDragAnimation'), 'island pill must use damped drag interaction');

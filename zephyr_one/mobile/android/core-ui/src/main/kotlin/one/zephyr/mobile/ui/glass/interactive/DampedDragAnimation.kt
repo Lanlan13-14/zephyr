@@ -75,14 +75,11 @@ class DampedDragAnimation(
             onDragCancel = {
                 onDragStopped()
                 release()
-            }
+            },
         ) { change, dragAmount ->
             onDrag(size, dragAmount)
         }
     }
-
-    /** Layer-only modifier for consumers that drive press/release from their own gesture handling. */
-    val gesturelessModifier: Modifier = Modifier
 
     fun press() {
         velocityTracker.resetTracking()
