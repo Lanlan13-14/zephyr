@@ -223,6 +223,9 @@ data class ConnectionDraft(
             host = trimmedHost,
             username = current.username.trim(),
             tags = tags,
+            proxyId = current.proxyId?.takeIf { it.isNotBlank() },
+            sshKeyId = current.sshKeyId?.takeIf { it.isNotBlank() },
+            jumpHostIds = current.jumpHostIds.map { it.trim() }.filter { it.isNotEmpty() },
             rdp = current.rdp.copy(domain = current.rdp.domain.trim()),
         )
     }
@@ -314,10 +317,10 @@ data class ConnectionDraft(
      */
     fun routeIssues(inventory: RouteInventory): List<DraftIssue> = buildList {
         val candidate = current
-        candidate.proxyId?.let { id ->
+        candidate.proxyId?.takeIf { it.isNotBlank() }?.let { id ->
             if (id !in inventory.usableProxyIds) add(DraftIssue("proxyId", MSG_ROUTE_REPAIR))
         }
-        candidate.sshKeyId?.let { id ->
+        candidate.sshKeyId?.takeIf { it.isNotBlank() }?.let { id ->
             if (id !in inventory.usableSshKeyIds) add(DraftIssue("sshKeyId", MSG_ROUTE_REPAIR))
         }
         for (id in candidate.jumpHostIds) {
@@ -398,7 +401,11 @@ data class ConnectionDraft(
         fun edit(connection: Connection): ConnectionDraft =
             ConnectionDraft(
                 original = connection,
-                current = connection,
+                current = connection.copy(
+                    proxyId = connection.proxyId?.takeIf { it.isNotBlank() },
+                    sshKeyId = connection.sshKeyId?.takeIf { it.isNotBlank() },
+                    jumpHostIds = connection.jumpHostIds.map { it.trim() }.filter { it.isNotEmpty() },
+                ),
                 portWasEdited = connection.port != connection.protocol.defaultPort,
                 password = if (connection.password.hasValue) {
                     SecretState.Unchanged

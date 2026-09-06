@@ -206,6 +206,14 @@ function coerceOwnedPayloadValue(key, value) {
             return [];
         }
     }
+    /* Main-end storage coalesces a missing sshKeyId to '' (TEXT column). One
+     * treats any non-null string as a live dependency, so the empty sentinel
+     * has to become JSON null on the owned-sync wire. Same for proxy/jump. */
+    if (key === 'sshKeyId' || key === 'proxyId' || key === 'jumpHostId') {
+        if (value == null) return null;
+        const text = String(value).trim();
+        return text ? text : null;
+    }
     return value;
 }
 

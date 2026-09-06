@@ -313,8 +313,20 @@ public struct ConnectionDraft: Equatable, Sendable {
         copy.host = trimmedHost
         copy.username = current.username.trimmingCharacters(in: .whitespaces)
         copy.tags = tags
+        copy.proxyId = Self.presentId(current.proxyId)
+        copy.sshKeyId = Self.presentId(current.sshKeyId)
+        copy.jumpHostIds = current.jumpHostIds
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
         copy.rdp.domain = current.rdp.domain.trimmingCharacters(in: .whitespaces)
         return copy
+    }
+
+    private static func presentId(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 
     /// The fieldMask for this save.
@@ -404,13 +416,16 @@ public struct ConnectionDraft: Equatable, Sendable {
     /// offer to clear each one.
     public func routeIssues(inventory: RouteInventory) -> [DraftIssue] {
         var issues: [DraftIssue] = []
-        if let proxyId = current.proxyId, !inventory.usableProxyIds.contains(proxyId) {
+        if let proxyId = current.proxyId, !proxyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !inventory.usableProxyIds.contains(proxyId) {
             issues.append(DraftIssue(field: "proxyId", message: ConnectionDraft.msgRouteRepair))
         }
-        if let sshKeyId = current.sshKeyId, !inventory.usableSshKeyIds.contains(sshKeyId) {
+        if let sshKeyId = current.sshKeyId, !sshKeyId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !inventory.usableSshKeyIds.contains(sshKeyId) {
             issues.append(DraftIssue(field: "sshKeyId", message: ConnectionDraft.msgRouteRepair))
         }
-        for id in current.jumpHostIds where !inventory.usableJumpHostIds.contains(id) {
+        for id in current.jumpHostIds where !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !inventory.usableJumpHostIds.contains(id) {
             issues.append(DraftIssue(field: "jumpHostIds", message: ConnectionDraft.msgRouteRepair))
             break
         }
@@ -493,9 +508,15 @@ public struct ConnectionDraft: Equatable, Sendable {
     /// following the default when the protocol changes, while a custom port
     /// must survive the switch (ZEPHYR_PARITY.md 5.1).
     public static func edit(_ connection: Connection) -> ConnectionDraft {
-        ConnectionDraft(
+        var current = connection
+        current.proxyId = presentId(connection.proxyId)
+        current.sshKeyId = presentId(connection.sshKeyId)
+        current.jumpHostIds = connection.jumpHostIds
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return ConnectionDraft(
             original: connection,
-            current: connection,
+            current: current,
             portWasEdited: connection.port != connection.`protocol`.defaultPort
         )
     }
