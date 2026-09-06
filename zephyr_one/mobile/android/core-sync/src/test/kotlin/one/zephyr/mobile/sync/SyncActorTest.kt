@@ -415,7 +415,7 @@ class SyncActorTest {
 
         assertEquals("internal_error", result.error?.code)
         assertEquals(
-            "sync.pull: envelope_rejected",
+            "sync.pull.apply: envelope_rejected",
             result.error?.details?.get("clientLocalDiagnostic"),
         )
         assertEquals(40L, store.appliedCursor)
@@ -423,7 +423,7 @@ class SyncActorTest {
         assertTrue(transport.ackedCursors.isEmpty())
         assertEquals(SyncPhase.PULL_CHANGES, result.stoppedAt)
         assertEquals(
-            "sync.pull: envelope_rejected",
+            "sync.pull.apply: envelope_rejected",
             store.recordedFailures.single().details["clientLocalDiagnostic"],
         )
     }

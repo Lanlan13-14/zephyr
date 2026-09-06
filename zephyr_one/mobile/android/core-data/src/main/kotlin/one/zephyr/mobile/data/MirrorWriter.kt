@@ -48,7 +48,22 @@ enum class SecretReconciliationFailure {
 class SecretReconciliationException(
     val failure: SecretReconciliationFailure,
     cause: Throwable? = null,
-) : IllegalStateException("secret reconciliation failed: " + failure.name.lowercase(), cause)
+    val entityType: String? = null,
+    val entityId: String? = null,
+    val fieldName: String? = null,
+) : IllegalStateException("secret reconciliation failed: " + failure.name.lowercase(), cause) {
+    fun withContext(
+        entityType: String,
+        entityId: String,
+        fieldName: String? = null,
+    ): SecretReconciliationException = SecretReconciliationException(
+        failure = failure,
+        entityType = this.entityType ?: entityType,
+        entityId = this.entityId ?: entityId,
+        fieldName = this.fieldName ?: fieldName,
+        cause = cause,
+    )
+}
 
 /**
  * Applies server changes to the account-scoped local mirror.
@@ -146,9 +161,18 @@ class MirrorWriter(
                     // tombstone keeps the delete durable: an inbound UPSERT older than the tombstone
                     // revision must not resurrect the row (SYNC_STATE_MACHINE.md 7.4). UPSERTs newer
                     // than the delete still apply — a later server-side recreation is legitimate.
-                    db.mirrorDao().revisionOf(change.entityType, change.entityId)
-                        ?: db.tombstoneDao().find(change.entityType, change.entityId)?.revision
-                            .also { revisions[key] = it }
+                    //
+                    // Cache both branches. The previous code cached only the tombstone branch;
+                    // an existing mirror row therefore left localRevision null, which made an
+                    // already-mirrored name-only change require a new secret envelope after an
+                    // app restart even though the change did not modify that secret.
+                    val resolvedRevision = rememberResolvedRevision(
+                        revisions = revisions,
+                        key = key,
+                        mirrorRevision = db.mirrorDao().revisionOf(change.entityType, change.entityId),
+                        tombstoneRevision = db.tombstoneDao().find(change.entityType, change.entityId)?.revision,
+                    )
+                    resolvedRevision
                 }
                 if (!PushPrediction.shouldApplyChange(localRevision, change.action, change.revision)) continue
                 applicableIndexes += index
@@ -622,8 +646,10 @@ internal fun prepareSecrets(
 
     val states = LinkedHashMap<String, Boolean>()
     val values = LinkedHashMap<String, ByteArray>()
+    var currentField: String? = null
     try {
         for (fieldName in spec.secretFields) {
+            currentField = fieldName
             val element = change.payload[presenceFlag(fieldName)]
             val declared = when (element) {
                 null -> throw SecretReconciliationException(
@@ -680,6 +706,15 @@ internal fun prepareSecrets(
         return PreparedSecrets(states, values)
     } catch (failure: Throwable) {
         values.values.forEach { it.fill(0) }
+        if (failure is SecretReconciliationException && failure.entityType == null) {
+            throw SecretReconciliationException(
+                failure = failure.failure,
+                entityType = change.entityType,
+                entityId = change.entityId,
+                fieldName = currentField,
+                cause = failure.cause,
+            )
+        }
         throw failure
     }
 }
@@ -697,6 +732,17 @@ internal fun shouldRemoveSnapshotSecret(
 }
 
 internal data class EntityKey(val entityType: String, val entityId: String)
+
+internal fun rememberResolvedRevision(
+    revisions: MutableMap<EntityKey, Long?>,
+    key: EntityKey,
+    mirrorRevision: Long?,
+    tombstoneRevision: Long?,
+): Long? {
+    val resolved = mirrorRevision ?: tombstoneRevision
+    revisions[key] = resolved
+    return resolved
+}
 
 private fun BootstrapStagingRow.toMirror(now: Long): MirrorEntityRow {
     val payload = SecretPayloadSanitizer.sanitizeForStorage(entityType, EntityCodec.parse(payloadJson))
