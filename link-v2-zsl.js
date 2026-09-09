@@ -89,15 +89,58 @@ function handshakeFinish(local, responder) {
     return openSession(master, 'initiator');
 }
 
+function transcriptHash({ deviceId, initX25519, initMlkem, respX25519, mlkemCiphertext, challenge }) {
+    return crypto.createHash('sha256').update(Buffer.concat([
+        Buffer.from('zsl2-transcript-v1', 'utf8'),
+        Buffer.from([0]),
+        Buffer.from(String(deviceId || ''), 'utf8'),
+        Buffer.from([0]),
+        Buffer.from(initX25519),
+        Buffer.from(initMlkem),
+        Buffer.from(respX25519),
+        Buffer.from(mlkemCiphertext),
+        Buffer.from(challenge),
+    ])).digest();
+}
+
+function handshakeProofPayload(deviceId, transcript) {
+    return Buffer.concat([
+        Buffer.from('zephyr-zsl2-handshake-v1', 'utf8'),
+        Buffer.from([0]),
+        Buffer.from(String(deviceId || ''), 'utf8'),
+        Buffer.from([0]),
+        Buffer.from(transcript),
+    ]);
+}
+
+function bindTranscript(session, transcript) {
+    if (!session || !session._master) {
+        throw new Error('ZSL/2 session cannot bind transcript');
+    }
+    if (session._bound) {
+        throw new Error('ZSL/2 session already bound');
+    }
+    const bound = derive(Buffer.concat([session._master, Buffer.from(transcript)]), 'zsl2-bound');
+    session.sendKey = derive(bound, session.role === 'initiator' ? 'zsl2-send-i' : 'zsl2-send-r');
+    session.recvKey = derive(bound, session.role === 'initiator' ? 'zsl2-send-r' : 'zsl2-send-i');
+    session.exporter = derive(bound, 'zsl2-exporter');
+    session._master = bound;
+    session._bound = true;
+    return session;
+}
+
 function openSession(master, role) {
     const sendLabel = role === 'initiator' ? 'zsl2-send-i' : 'zsl2-send-r';
     const recvLabel = role === 'initiator' ? 'zsl2-send-r' : 'zsl2-send-i';
-    return new Zsl2Session({
+    const session = new Zsl2Session({
         role,
         sendKey: derive(master, sendLabel),
         recvKey: derive(master, recvLabel),
         exporter: derive(master, 'zsl2-exporter'),
     });
+    session._master = Buffer.from(master);
+    session.bindTranscript = (transcript) => bindTranscript(session, transcript);
+    return session;
 }
 
 class Zsl2Session {
@@ -161,6 +204,9 @@ module.exports = {
     handshakeInitiator,
     handshakeResponder,
     handshakeFinish,
+    transcriptHash,
+    handshakeProofPayload,
+    bindTranscript,
     Zsl2Session,
     MLKEM768_PUBLIC_KEY_BYTES,
     X25519_BYTES,

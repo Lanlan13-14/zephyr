@@ -488,6 +488,9 @@ class AccountContainer(
                 val sess = sessionMutex.withLock {
                     session ?: appContainer.embeddedLink.dial(
                         endpoint.baseUrl, binding.deviceId, linkSpkiPins, linkInsecure,
+                        signer = one.zephyr.mobile.app.EmbeddedLinkApi.HandshakeSigner { transcript ->
+                            deviceIdentity.signHandshakeTranscript(transcript)
+                        },
                     ).also { session = it }
                 }
                 try {

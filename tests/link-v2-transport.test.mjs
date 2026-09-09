@@ -38,8 +38,34 @@ function fresh() {
 
 function deviceId(tag) { return 'dev-' + tag + '-' + crypto.randomBytes(12).toString('hex'); }
 
+function generateSigningKey() {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    return { privateKey, jwk: publicKey.export({ format: 'jwk' }) };
+}
+
+function signHandshakeProof(privateKey, deviceId, transcript) {
+    return crypto.sign('sha256', zsl.handshakeProofPayload(deviceId, transcript), {
+        key: privateKey, dsaEncoding: 'ieee-p1363',
+    }).toString('base64');
+}
+
+function finishHandshake(env, hello, init, privateKey, deviceId) {
+    const transcript = Buffer.from(hello.transcript, 'base64url');
+    const proof = signHandshakeProof(privateKey, deviceId, transcript);
+    const res = mockRes();
+    env.transport.handshakeFinish({ body: { sessionId: hello.sessionId, proof } }, res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    const deviceSession = zsl.handshakeFinish(init, {
+        x25519Public: Buffer.from(hello.x25519Public, 'base64url'),
+        mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url'),
+    });
+    deviceSession.bindTranscript(transcript);
+    return deviceSession;
+}
+
 /** Drive a device all the way to a consumed enrollment. */
-function enrollDevice(env, id) {
+function enrollDevice(env, id, signingJwk) {
+    const jwk = signingJwk || generateSigningKey().jwk;
     const created = env.enrollments.create({
         deviceId: id,
         deviceName: 'Test Pixel',
@@ -48,7 +74,7 @@ function enrollDevice(env, id) {
         keys: {
             // The store decodes this field with plain base64 and demands 1184 bytes.
             encryption: { publicKey: crypto.randomBytes(1184).toString('base64') },
-            signing: { alg: 'ES256', jwk: { kty: 'EC', crv: 'P-256', x: b64(crypto.randomBytes(32)), y: b64(crypto.randomBytes(32)) } },
+            signing: { alg: 'ES256', jwk },
         },
         origin: 'https://z.example',
         serverId: 'srv-1',
@@ -72,7 +98,9 @@ function mockRes() {
 test('ZSL handshake then sealed frame round-trips through the transport', () => {
     const env = fresh();
     try {
-        const ID_A = deviceId('A'); enrollDevice(env, ID_A);
+        const ID_A = deviceId('A');
+        const signing = generateSigningKey();
+        enrollDevice(env, ID_A, signing.jwk);
         // Device side: build the initiator hello.
         const init = zsl.handshakeInitiator();
         const res = mockRes();
@@ -82,13 +110,11 @@ test('ZSL handshake then sealed frame round-trips through the transport', () => 
         assert.equal(res.statusCode, 200);
         assert.equal(res.body.ok, true);
         assert.equal(res.body.suite, zsl.SUITE);
+        assert.ok(res.body.challenge);
+        assert.ok(res.body.transcript);
         const sessionId = res.body.sessionId;
 
-        // Device finishes the handshake → its own session.
-        const deviceSession = zsl.handshakeFinish(init, {
-            x25519Public: Buffer.from(res.body.x25519Public, 'base64url'),
-            mlkemCiphertext: Buffer.from(res.body.mlkemCiphertext, 'base64url'),
-        });
+        const deviceSession = finishHandshake(env, res.body, init, signing.privateKey, ID_A);
 
         // Device seals a SYNC_OP business frame (CBOR body via codec).
         const packed = codec.pack({ kind: codec.KIND.SYNC_OP, body: { op: 'upsert', entity: 'note', id: 'n1' } });
@@ -113,6 +139,51 @@ test('ZSL handshake then sealed frame round-trips through the transport', () => 
         const replyFrame = codec.unpack(replyPlain);
         assert.equal(replyFrame.kind, codec.KIND.SYNC_ACK);
         assert.deepEqual(replyFrame.body, { appliedCursor: 42 });
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('handshake hello does not establish a session until the ES256 finish', () => {
+    const env = fresh();
+    try {
+        const ID = deviceId('P');
+        const signing = generateSigningKey();
+        enrollDevice(env, ID, signing.jwk);
+        const init = zsl.handshakeInitiator();
+        const helloRes = mockRes();
+        env.transport.handshake({
+            body: { deviceId: ID, x25519Public: b64(init.x25519Public), mlkemPublic: b64(init.mlkemPublic) },
+        }, helloRes);
+        assert.equal(helloRes.statusCode, 200);
+        const unbound = zsl.handshakeFinish(init, {
+            x25519Public: Buffer.from(helloRes.body.x25519Public, 'base64url'),
+            mlkemCiphertext: Buffer.from(helloRes.body.mlkemCiphertext, 'base64url'),
+        });
+        const packed = codec.pack({ kind: codec.KIND.SYNC_OP, body: { op: 'upsert' } });
+        const sealed = unbound.seal(packed);
+        assert.throws(() => env.transport.openEnvelope({
+            sessionId: helloRes.body.sessionId, seq: sealed.seq,
+            iv: b64(sealed.iv), ct: b64(sealed.ct), tag: b64(sealed.tag),
+        }), /unknown or expired Link session/);
+
+        const bad = mockRes();
+        env.transport.handshakeFinish({
+            body: { sessionId: helloRes.body.sessionId, proof: Buffer.alloc(64).toString('base64') },
+        }, bad);
+        assert.equal(bad.statusCode, 403);
+        assert.equal(bad.body.error.code, 'proof_invalid');
+
+        const replay = mockRes();
+        const transcript = Buffer.from(helloRes.body.transcript, 'base64url');
+        env.transport.handshakeFinish({
+            body: {
+                sessionId: helloRes.body.sessionId,
+                proof: signHandshakeProof(signing.privateKey, ID, transcript),
+            },
+        }, replay);
+        assert.equal(replay.statusCode, 400);
+        assert.equal(replay.body.error.code, 'invalid_handshake');
     } finally {
         env.cleanup();
     }
@@ -162,17 +233,16 @@ test('opening a frame for an unknown session is rejected', () => {
 test('a replayed frame sequence is rejected by the session window', () => {
     const env = fresh();
     try {
-        const ID_C = deviceId('C'); enrollDevice(env, ID_C);
+        const ID_C = deviceId('C');
+        const signing = generateSigningKey();
+        enrollDevice(env, ID_C, signing.jwk);
         const init = zsl.handshakeInitiator();
         const res = mockRes();
         env.transport.handshake({
             body: { deviceId: ID_C, x25519Public: b64(init.x25519Public), mlkemPublic: b64(init.mlkemPublic) },
         }, res);
         const sessionId = res.body.sessionId;
-        const deviceSession = zsl.handshakeFinish(init, {
-            x25519Public: Buffer.from(res.body.x25519Public, 'base64url'),
-            mlkemCiphertext: Buffer.from(res.body.mlkemCiphertext, 'base64url'),
-        });
+        const deviceSession = finishHandshake(env, res.body, init, signing.privateKey, ID_C);
         const packed = codec.pack({ kind: codec.KIND.WAKE, body: { cursor: 1 } });
         const sealed = deviceSession.seal(packed);
         const envelope = { sessionId, seq: sealed.seq, iv: b64(sealed.iv), ct: b64(sealed.ct), tag: b64(sealed.tag) };
@@ -187,17 +257,16 @@ test('a replayed frame sequence is rejected by the session window', () => {
 test('large frames are compressed before encryption and inflate within limits', () => {
     const env = fresh();
     try {
-        const ID_D = deviceId('D'); enrollDevice(env, ID_D);
+        const ID_D = deviceId('D');
+        const signing = generateSigningKey();
+        enrollDevice(env, ID_D, signing.jwk);
         const init = zsl.handshakeInitiator();
         const res = mockRes();
         env.transport.handshake({
             body: { deviceId: ID_D, x25519Public: b64(init.x25519Public), mlkemPublic: b64(init.mlkemPublic) },
         }, res);
         const sessionId = res.body.sessionId;
-        const deviceSession = zsl.handshakeFinish(init, {
-            x25519Public: Buffer.from(res.body.x25519Public, 'base64url'),
-            mlkemCiphertext: Buffer.from(res.body.mlkemCiphertext, 'base64url'),
-        });
+        const deviceSession = finishHandshake(env, res.body, init, signing.privateKey, ID_D);
         // Random 64KB stays above the decompression-ratio guard and round-trips exactly.
         const big = crypto.randomBytes(64 * 1024).toString('base64');
         const packed = codec.pack({ kind: codec.KIND.SYNC_OP, body: { blob: big } });

@@ -2,6 +2,7 @@ package link
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -62,35 +63,41 @@ type Node struct {
 	// the same pins / insecure flag. Without this, a public-CA host that bound
 	// through OkHttp still fails on the Go push path.
 	sessionTLS map[string]sessionTLS
-	// devices, when non-nil, gates handshakes to enrolled device IDs. nil accepts
-	// any handshake (tests and the embedded node); the server populates it from the
-	// enrollment consume path so a session only anchors to an enrolled device.
-	devices map[string]bool
+	// devices, when non-nil, gates handshakes to enrolled device IDs and their
+	// ES256 public keys. nil accepts any handshake (in-process tests and the
+	// embedded node that is not itself a server). The production server
+	// populates it from the enrollment consume path.
+	devices map[string]*DeviceRecord
+	// requireAuth, set by RequireEnrollment, demands an ES256 finish bound to
+	// the handshake transcript before a session is established. Registering a
+	// device id without this flag only gates the id (legacy test nodes).
+	requireAuth bool
 	// sessionDevice records which enrolled device a session was anchored to at
 	// handshake, so a business handler can attest the caller's device without the
 	// frame carrying a forgeable deviceId.
 	sessionDevice map[string]string
+	// pending holds half-open hellos awaiting an ES256 finish. Keys are
+	// session ids. An expired or consumed challenge is deleted, never reused.
+	pending map[string]*pendingHandshake
+	// pendingDial holds initiator-side hellos that still need a Keystore
+	// signature from the Android host before BindTranscript.
+	pendingDial map[string]*pendingDial
+	// signers is the optional in-process ES256 private key used by Dial when
+	// the host (tests, a Go peer) can sign without leaving the process.
+	signers map[string]*ecdsa.PrivateKey
 	// dispatch routes unsealed business frames to per-kind handlers. It is what
 	// turns the node from a pipe into the Link channel.
 	dispatch *Dispatcher
 }
 
-// RegisterDevice marks a device ID as eligible to handshake.
-func (n *Node) RegisterDevice(deviceID string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.devices == nil {
-		n.devices = make(map[string]bool)
-	}
-	n.devices[deviceID] = true
-}
-
-// RequireEnrollment makes the handshake reject unregistered devices.
+// RequireEnrollment makes the handshake reject unregistered devices and require
+// an ES256 proof bound to the handshake transcript.
 func (n *Node) RequireEnrollment() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.requireAuth = true
 	if n.devices == nil {
-		n.devices = make(map[string]bool)
+		n.devices = make(map[string]*DeviceRecord)
 	}
 }
 
@@ -101,6 +108,9 @@ func NewNode() *Node {
 		sessions:      make(map[string]*Endpoint),
 		sessionTLS:    make(map[string]sessionTLS),
 		sessionDevice: make(map[string]string),
+		pending:       make(map[string]*pendingHandshake),
+		pendingDial:   make(map[string]*pendingDial),
+		signers:       make(map[string]*ecdsa.PrivateKey),
 		dispatch:      NewDispatcher(),
 		// Generous enough for a slow LAN server, hard enough to never hang the host.
 		dialClient: &http.Client{Timeout: 15 * time.Second},
@@ -110,11 +120,14 @@ func NewNode() *Node {
 	// root or the main end's /api/link/v2 root with the same leaf paths.
 	n.mux.HandleFunc("/link/handshake", n.handleHandshake)
 	n.mux.HandleFunc("/handshake", n.handleHandshake)
+	n.mux.HandleFunc("/link/handshake/finish", n.handleHandshakeFinish)
+	n.mux.HandleFunc("/handshake/finish", n.handleHandshakeFinish)
 	n.mux.HandleFunc("/link/frame", n.handleFrame)
 	n.mux.HandleFunc("/push", n.handleFrame)
 	// Embedded hosts (Android/desktop) drive outbound dials through this local
 	// endpoint, so the device side also runs the shared Go core.
 	n.mux.HandleFunc("/link/dial", n.handleDial)
+	n.mux.HandleFunc("/link/dial/finish", n.handleDialFinish)
 	// And they push business frames on an established session through this local
 	// endpoint: seal with the session endpoint, POST to the peer's /link/frame,
 	// unseal the reply. The host never sees key material.
@@ -179,8 +192,8 @@ func (n *Node) registerBuiltinHandlers() {
 		}
 		op, _ := body["op"].(string)
 		return codec.KindAI, map[string]any{
-			"ok": true,
-			"op": op,
+			"ok":      true,
+			"op":      op,
 			"channel": string(codec.ChannelAI),
 		}, false, nil
 	})
@@ -207,6 +220,12 @@ func (n *Node) handleState(w http.ResponseWriter, r *http.Request) {
 
 // handleDial lets an embedded host establish an outbound ZSL/2 channel to a
 // remote Link server without implementing the handshake itself.
+//
+// When the peer requires an ES256 finish and this process has no in-process
+// signer, the response is a pending hello: {ok, pending:true, sessionId,
+// transcript}. The host signs the transcript with Keystore and POSTs
+// /link/dial/finish. Tests and a Go peer that installed SetDeviceSigner still
+// complete in one round trip.
 func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ServerURL  string   `json:"serverUrl"`
@@ -223,7 +242,7 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "serverUrl required", http.StatusBadRequest)
 		return
 	}
-	ep, sessionID, err := n.dial(req.ServerURL, req.DeviceID, req.SPKIPins, req.Insecure, req.ServerName)
+	result, err := n.dial(req.ServerURL, req.DeviceID, req.SPKIPins, req.Insecure, req.ServerName)
 	if err != nil {
 		var remote *RemoteLinkError
 		if errors.As(err, &remote) {
@@ -233,17 +252,87 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	n.mu.Lock()
-	n.sessions[sessionID] = ep
-	n.sessionTLS[sessionID] = sessionTLS{
+	tls := sessionTLS{
 		pins:       append([]string{}, req.SPKIPins...),
 		insecure:   req.Insecure,
 		serverName: strings.TrimSpace(req.ServerName),
 	}
+	if result.pending {
+		n.mu.Lock()
+		n.pendingDial[result.sessionID] = &pendingDial{
+			peerURL:    req.ServerURL,
+			deviceID:   req.DeviceID,
+			sessionID:  result.sessionID,
+			session:    result.session,
+			transcript: result.transcript,
+			spkiPins:   tls.pins,
+			insecure:   tls.insecure,
+			serverName: tls.serverName,
+			expiresAt:  time.Now().Add(HandshakePendingTTL),
+		}
+		n.sessionTLS[result.sessionID] = tls
+		n.mu.Unlock()
+		writeJSON(w, map[string]any{
+			"ok": true, "pending": true,
+			"sessionId":  result.sessionID,
+			"transcript": base64.RawURLEncoding.EncodeToString(result.transcript),
+		})
+		return
+	}
+	n.mu.Lock()
+	n.sessions[result.sessionID] = NewEndpoint(result.session)
+	n.sessionTLS[result.sessionID] = tls
 	n.mu.Unlock()
 	writeJSON(w, map[string]any{
-		"ok": true, "sessionId": sessionID,
-		"exporter": base64.RawURLEncoding.EncodeToString(ep.Exporter()),
+		"ok": true, "sessionId": result.sessionID,
+		"exporter": base64.RawURLEncoding.EncodeToString(result.session.Exporter()),
+	})
+}
+
+func (n *Node) handleDialFinish(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+		Proof     string `json:"proof"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad json")
+		return
+	}
+	now := time.Now()
+	n.mu.Lock()
+	n.sweepPendingLocked(now)
+	pending := n.pendingDial[req.SessionID]
+	if pending != nil {
+		delete(n.pendingDial, req.SessionID)
+	}
+	n.mu.Unlock()
+	if pending == nil {
+		errJSON(w, http.StatusBadRequest, "invalid_handshake", "unknown or expired handshake")
+		return
+	}
+	if req.Proof == "" {
+		errJSON(w, http.StatusForbidden, "proof_required", errProofRequired.Error())
+		return
+	}
+	if err := n.completePeerFinish(pending.peerURL, pending.sessionID, req.Proof, pending.spkiPins, pending.insecure, pending.serverName); err != nil {
+		var remote *RemoteLinkError
+		if errors.As(err, &remote) {
+			errJSONRetryable(w, http.StatusBadGateway, remote.Code, remote.Message, remote.Retryable)
+			return
+		}
+		errJSONRetryable(w, http.StatusBadGateway, "link_unavailable", "Link handshake finish failed", true)
+		return
+	}
+	if err := pending.session.BindTranscript(pending.transcript); err != nil {
+		errJSON(w, http.StatusInternalServerError, "handshake_failed", err.Error())
+		return
+	}
+	n.mu.Lock()
+	n.sessions[pending.sessionID] = NewEndpoint(pending.session)
+	n.mu.Unlock()
+	writeJSON(w, map[string]any{
+		"ok": true, "sessionId": pending.sessionID,
+		"exporter": base64.RawURLEncoding.EncodeToString(pending.session.Exporter()),
 	})
 }
 
@@ -411,18 +500,6 @@ func (n *Node) handleMlkemDecapsulate(w http.ResponseWriter, r *http.Request) {
 // Handler exposes the node's HTTP routes.
 func (n *Node) Handler() http.Handler { return n.mux }
 
-type handshakeRequest struct {
-	DeviceID     string `json:"deviceId"`
-	X25519Public string `json:"x25519Public"`
-	MLKEMPublic  string `json:"mlkemPublic"`
-}
-
-type handshakeResponse struct {
-	SessionID       string `json:"sessionId"`
-	X25519Public    string `json:"x25519Public"`
-	MLKEMCiphertext string `json:"mlkemCiphertext"`
-}
-
 type frameRequest struct {
 	SessionID string `json:"sessionId"`
 	Seq       uint64 `json:"seq"`
@@ -462,53 +539,6 @@ func errJSONRetryable(w http.ResponseWriter, status int, code, message string, r
 		"ok": false, "error": map[string]any{
 			"code": code, "message": message, "retryable": retryable,
 		},
-	})
-}
-
-func (n *Node) handleHandshake(w http.ResponseWriter, r *http.Request) {
-	var req handshakeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad json")
-		return
-	}
-	x25519Public, err := b64d(req.X25519Public)
-	if err != nil {
-		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad x25519")
-		return
-	}
-	mlkemPublic, err := b64d(req.MLKEMPublic)
-	if err != nil {
-		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad mlkem")
-		return
-	}
-	// Fail closed on bad key sizes before any enrollment lookup, so a malformed key
-	// is not an oracle for whether a deviceId is enrolled. Only then, when the
-	// server runs a device table, require the device to be enrolled.
-	if len(mlkemPublic) != zsl.MLKEM768PublicKeyBytes || len(x25519Public) != zsl.X25519Bytes {
-		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad key size")
-		return
-	}
-	n.mu.Lock()
-	enrolled := n.devices == nil || n.devices[req.DeviceID]
-	n.mu.Unlock()
-	if !enrolled {
-		errJSON(w, http.StatusForbidden, "device_not_enrolled", "设备未完成绑定")
-		return
-	}
-	hello, sess, err := zsl.HandshakeResponder(x25519Public, mlkemPublic)
-	if err != nil {
-		errJSON(w, http.StatusBadRequest, "invalid_handshake", err.Error())
-		return
-	}
-	sessionID := base64.RawURLEncoding.EncodeToString(sess.Exporter()[:16])
-	n.mu.Lock()
-	n.sessions[sessionID] = NewEndpoint(sess)
-	n.sessionDevice[sessionID] = req.DeviceID
-	n.mu.Unlock()
-	writeJSON(w, handshakeResponse{
-		SessionID:       sessionID,
-		X25519Public:    base64.RawURLEncoding.EncodeToString(hello.X25519Public),
-		MLKEMCiphertext: base64.RawURLEncoding.EncodeToString(hello.MLKEMCiphertext),
 	})
 }
 
@@ -565,55 +595,99 @@ func (n *Node) handleFrame(w http.ResponseWriter, r *http.Request) {
 // end mounts the proxy at /api/link/v2, a Go-native peer serves /link directly, so
 // the caller supplies whichever root and Dial appends the leaf.
 func (n *Node) Dial(baseURL, deviceID string) (*Endpoint, string, error) {
-	return n.dial(baseURL, deviceID, nil, false, "")
-}
-
-func (n *Node) dial(baseURL, deviceID string, spkiPins []string, insecure bool, serverName string) (*Endpoint, string, error) {
-	init, err := zsl.HandshakeInitiator()
+	result, err := n.dial(baseURL, deviceID, nil, false, "")
 	if err != nil {
 		return nil, "", err
 	}
-	reqBody, _ := json.Marshal(handshakeRequest{
+	if result.pending {
+		return nil, "", errors.New("link: handshake requires a device proof this process cannot produce")
+	}
+	return NewEndpoint(result.session), result.sessionID, nil
+}
+
+type dialResult struct {
+	session    *zsl.Session
+	sessionID  string
+	pending    bool
+	transcript []byte
+}
+
+func (n *Node) dial(baseURL, deviceID string, spkiPins []string, insecure bool, serverName string) (*dialResult, error) {
+	init, err := zsl.HandshakeInitiator()
+	if err != nil {
+		return nil, err
+	}
+	reqBody, _ := json.Marshal(handshakeHelloRequest{
 		DeviceID:     deviceID,
 		X25519Public: base64.RawURLEncoding.EncodeToString(init.X25519Public),
 		MLKEMPublic:  base64.RawURLEncoding.EncodeToString(init.MLKEMPublic),
 	})
 	client, err := n.clientForPeer(baseURL, spkiPins, insecure, serverName)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	req, err := http.NewRequest(http.MethodPost, baseURL+"/handshake", bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyPeerHost(req, baseURL, serverName)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, "", decodeRemoteLinkError(resp.StatusCode, msg, "handshake_failed")
+		return nil, decodeRemoteLinkError(resp.StatusCode, msg, "handshake_failed")
 	}
-	var hr handshakeResponse
+	var hr handshakeHelloResponse
 	if err := json.NewDecoder(resp.Body).Decode(&hr); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	x25519Public, err := b64d(hr.X25519Public)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	kemCt, err := b64d(hr.MLKEMCiphertext)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	sess, err := init.HandshakeFinish(&zsl.ResponderHello{X25519Public: x25519Public, MLKEMCiphertext: kemCt})
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return NewEndpoint(sess), hr.SessionID, nil
+	if hr.Challenge == "" {
+		return &dialResult{session: sess, sessionID: hr.SessionID}, nil
+	}
+	challenge, err := b64d(hr.Challenge)
+	if err != nil {
+		return nil, err
+	}
+	transcript := zsl.TranscriptHash(deviceID, init.X25519Public, init.MLKEMPublic, x25519Public, kemCt, challenge)
+	if hr.Transcript != "" {
+		claimed, err := b64d(hr.Transcript)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Equal(claimed, transcript) {
+			return nil, errors.New("link: peer transcript mismatch")
+		}
+	}
+	if signer := n.signerFor(deviceID); signer != nil {
+		proof, err := signHandshakeProof(signer, deviceID, transcript)
+		if err != nil {
+			return nil, err
+		}
+		if err := n.completePeerFinish(baseURL, hr.SessionID, proof, spkiPins, insecure, serverName); err != nil {
+			return nil, err
+		}
+		if err := sess.BindTranscript(transcript); err != nil {
+			return nil, err
+		}
+		return &dialResult{session: sess, sessionID: hr.SessionID}, nil
+	}
+	return &dialResult{session: sess, sessionID: hr.SessionID, pending: true, transcript: transcript}, nil
 }
 
 // SendFrame seals a business frame and posts it to the peer, returning the

@@ -9,6 +9,12 @@
 //   - send keys = HKDF(master, info="zsl2-send-i" | "zsl2-send-r")
 //   - exporter  = HKDF(master, info="zsl2-exporter")
 //   - AAD       = "zsl2-aad-v1" || exporter || direction || seq(padded to 20)
+//
+// Device authentication (P0) binds the established session to the enrollment
+// transcript: after the ES256 proof verifies, both peers re-derive send/recv/
+// exporter from HKDF(master || transcript, info="zsl2-bound"). An unbound
+// session is a KEM-only channel and must not carry business frames on an
+// enrolled device.
 package zsl
 
 import (
@@ -29,17 +35,19 @@ const (
 	// Suite names the single frozen ZSL/2 construction.
 	Suite = "ZSL/2-X25519+ML-KEM-768-HKDF-SHA256-AES-256-GCM"
 
-	IVBytes    = 12
-	TagBytes   = 16
-	KeyBytes   = 32
+	IVBytes     = 12
+	TagBytes    = 16
+	KeyBytes    = 32
 	X25519Bytes = 32
 	// ML-KEM-768 encoded sizes, checked fail-closed before any cipher is built.
-	MLKEM768PublicKeyBytes     = 1184
-	MLKEM768CiphertextBytes    = 1088
-	maxSkip                    = 64
-	hkdfSaltInput              = "zephyr-zsl2-v1"
-	aadPrefix                  = "zsl2-aad-v1"
-	maxSeq                     = ^uint64(0)
+	MLKEM768PublicKeyBytes  = 1184
+	MLKEM768CiphertextBytes = 1088
+	maxSkip                 = 64
+	hkdfSaltInput           = "zephyr-zsl2-v1"
+	aadPrefix               = "zsl2-aad-v1"
+	maxSeq                  = ^uint64(0)
+	transcriptInfo          = "zsl2-transcript-v1"
+	boundInfo               = "zsl2-bound"
 )
 
 var hkdfSalt = sha256.Sum256([]byte(hkdfSaltInput))
@@ -52,6 +60,28 @@ func derive(ikm []byte, info string, length int) []byte {
 		panic(fmt.Sprintf("zsl: hkdf %s: %v", info, err))
 	}
 	return out
+}
+
+// TranscriptHash is the canonical handshake transcript:
+//
+//	SHA-256("zsl2-transcript-v1" || 0x00 || deviceId || 0x00 ||
+//	        initX25519 || initMLKEM || respX25519 || mlkemCT || challenge)
+//
+// Both peers hash the same bytes. The ES256 proof is over this digest, and
+// BindTranscript mixes it into the traffic keys so a captured KEM transcript
+// cannot be spliced onto another device's session.
+func TranscriptHash(deviceID string, initX25519, initMLKEM, respX25519, mlkemCT, challenge []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte(transcriptInfo))
+	h.Write([]byte{0})
+	h.Write([]byte(deviceID))
+	h.Write([]byte{0})
+	h.Write(initX25519)
+	h.Write(initMLKEM)
+	h.Write(respX25519)
+	h.Write(mlkemCT)
+	h.Write(challenge)
+	return h.Sum(nil)
 }
 
 // Initiator is the device side's half of a handshake: fresh X25519 + ML-KEM
@@ -117,8 +147,23 @@ type ResponderHello struct {
 	MLKEMCiphertext []byte
 }
 
+func kemMaster(xShared, pqShared []byte) []byte {
+	ikm := make([]byte, 0, len(xShared)+len(pqShared))
+	ikm = append(ikm, xShared...)
+	ikm = append(ikm, pqShared...)
+	return derive(ikm, "zsl2-master", KeyBytes)
+}
+
+func boundMaster(master, transcript []byte) []byte {
+	ikm := make([]byte, 0, len(master)+len(transcript))
+	ikm = append(ikm, master...)
+	ikm = append(ikm, transcript...)
+	return derive(ikm, boundInfo, KeyBytes)
+}
+
 // HandshakeResponder answers an initiator hello and returns the hello plus the
-// responder-side session (already keyed).
+// responder-side session (already keyed to the unbound KEM master). Callers
+// that authenticate a device MUST BindTranscript before sealing business frames.
 func HandshakeResponder(x25519Public, mlkemPublic []byte) (*ResponderHello, *Session, error) {
 	if len(mlkemPublic) != MLKEM768PublicKeyBytes {
 		return nil, nil, fmt.Errorf("zsl: ML-KEM-768 public key must be %d bytes", MLKEM768PublicKeyBytes)
@@ -140,7 +185,7 @@ func HandshakeResponder(x25519Public, mlkemPublic []byte) (*ResponderHello, *Ses
 		return nil, nil, fmt.Errorf("zsl: bad mlkem public key: %w", err)
 	}
 	pqShared, kemCt := ek.Encapsulate()
-	master := derive(append(append([]byte{}, xShared...), pqShared...), "zsl2-master", KeyBytes)
+	master := kemMaster(xShared, pqShared)
 	hello := &ResponderHello{
 		X25519Public:    x.PublicKey().Bytes(),
 		MLKEMCiphertext: kemCt,
@@ -148,7 +193,8 @@ func HandshakeResponder(x25519Public, mlkemPublic []byte) (*ResponderHello, *Ses
 	return hello, openSession(master, "responder"), nil
 }
 
-// HandshakeFinish completes the device side and returns its session.
+// HandshakeFinish completes the device side and returns its session keyed to
+// the unbound KEM master. BindTranscript after the proof step.
 func (i *Initiator) HandshakeFinish(hello *ResponderHello) (*Session, error) {
 	if len(hello.MLKEMCiphertext) != MLKEM768CiphertextBytes {
 		return nil, fmt.Errorf("zsl: ML-KEM-768 ciphertext must be %d bytes", MLKEM768CiphertextBytes)
@@ -165,7 +211,7 @@ func (i *Initiator) HandshakeFinish(hello *ResponderHello) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("zsl: mlkem decapsulate: %w", err)
 	}
-	master := derive(append(append([]byte{}, xShared...), pqShared...), "zsl2-master", KeyBytes)
+	master := kemMaster(xShared, pqShared)
 	return openSession(master, "initiator"), nil
 }
 
@@ -174,11 +220,13 @@ func openSession(master []byte, role string) *Session {
 	if role == "initiator" {
 		sendLabel, recvLabel = "zsl2-send-i", "zsl2-send-r"
 	}
+	masterCopy := append([]byte{}, master...)
 	return &Session{
 		role:     role,
-		sendKey:  derive(master, sendLabel, KeyBytes),
-		recvKey:  derive(master, recvLabel, KeyBytes),
-		exporter: derive(master, "zsl2-exporter", KeyBytes),
+		master:   masterCopy,
+		sendKey:  derive(masterCopy, sendLabel, KeyBytes),
+		recvKey:  derive(masterCopy, recvLabel, KeyBytes),
+		exporter: derive(masterCopy, "zsl2-exporter", KeyBytes),
 		seen:     make(map[uint64]struct{}),
 	}
 }
@@ -194,9 +242,11 @@ type Frame struct {
 // Session is a keyed ZSL/2 channel with replay protection.
 type Session struct {
 	role     string
+	master   []byte
 	sendKey  []byte
 	recvKey  []byte
 	exporter []byte
+	bound    bool
 
 	mu      sync.Mutex
 	sendSeq uint64
@@ -206,6 +256,39 @@ type Session struct {
 
 // Exporter returns the channel exporter, used to bind capabilities to this session.
 func (s *Session) Exporter() []byte { return append([]byte{}, s.exporter...) }
+
+// Bound reports whether BindTranscript has mixed the handshake proof into the
+// traffic keys. Enrolled sessions must be bound before they carry frames.
+func (s *Session) Bound() bool { return s.bound }
+
+// BindTranscript re-derives send/recv/exporter from the KEM master and the
+// canonical handshake transcript. It may run once; a second call with a
+// different transcript is rejected so a MITM cannot rotate keys after the
+// proof step.
+func (s *Session) BindTranscript(transcript []byte) error {
+	if len(transcript) != sha256.Size {
+		return errors.New("zsl: transcript must be 32 bytes")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bound {
+		return errors.New("zsl: session already bound")
+	}
+	if s.sendSeq != 0 || s.recvSeq != 0 || len(s.seen) != 0 {
+		return errors.New("zsl: cannot bind a session that has already carried frames")
+	}
+	bound := boundMaster(s.master, transcript)
+	sendLabel, recvLabel := "zsl2-send-r", "zsl2-send-i"
+	if s.role == "initiator" {
+		sendLabel, recvLabel = "zsl2-send-i", "zsl2-send-r"
+	}
+	s.sendKey = derive(bound, sendLabel, KeyBytes)
+	s.recvKey = derive(bound, recvLabel, KeyBytes)
+	s.exporter = derive(bound, "zsl2-exporter", KeyBytes)
+	s.master = bound
+	s.bound = true
+	return nil
+}
 
 func (s *Session) aad(direction byte, seq uint64) []byte {
 	out := make([]byte, 0, len(aadPrefix)+KeyBytes+1+20)

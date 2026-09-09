@@ -86,6 +86,49 @@ func TestBadKEMSizeFailsClosed(t *testing.T) {
 	}
 }
 
+func TestBindTranscriptChangesKeysAndRoundTrips(t *testing.T) {
+	init, err := HandshakeInitiator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hello, responder, err := HandshakeResponder(init.X25519Public, init.MLKEMPublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initiator, err := init.HandshakeFinish(hello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unbound := append([]byte{}, initiator.Exporter()...)
+	transcript := TranscriptHash("dev-1", init.X25519Public, init.MLKEMPublic, hello.X25519Public, hello.MLKEMCiphertext, bytes.Repeat([]byte{7}, 32))
+	if err := initiator.BindTranscript(transcript); err != nil {
+		t.Fatal(err)
+	}
+	if err := responder.BindTranscript(transcript); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(initiator.Exporter(), unbound) {
+		t.Fatal("bind must rotate the exporter")
+	}
+	if !bytes.Equal(initiator.Exporter(), responder.Exporter()) {
+		t.Fatal("bound exporters diverged")
+	}
+	f, err := initiator.Seal([]byte("bound"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := responder.Open(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "bound" {
+		t.Fatalf("got %q", got)
+	}
+	if err := initiator.BindTranscript(transcript); err == nil {
+		t.Fatal("second bind must fail")
+	}
+}
+
 // keyVector mirrors the deterministic key-schedule JSON the Node reference emits.
 type keyVector struct {
 	Master   string `json:"master"`

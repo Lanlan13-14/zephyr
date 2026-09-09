@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -38,6 +39,14 @@ internal class EmbeddedLinkApi(
 
     data class LinkSession(val sessionId: String, val exporter: String)
 
+    /**
+     * Signs the handshake transcript the Go core returns when the peer requires
+     * an ES256 finish. The host owns the Keystore key; Go never sees it.
+     */
+    fun interface HandshakeSigner {
+        fun signTranscript(transcript: ByteArray): String
+    }
+
     /** Establish a ZSL/2 channel to a Link server URL through the embedded Go core. */
     /** The main end mounts the Link proxy at /api/link/v2; the Go Dial/push append the leaf. */
     private fun linkRoot(serverUrl: String): String = serverUrl.trimEnd('/') + "/api/link/v2"
@@ -47,6 +56,7 @@ internal class EmbeddedLinkApi(
         deviceId: String,
         spkiPins: List<String>,
         insecure: Boolean = false,
+        signer: HandshakeSigner? = null,
     ): LinkSession = withContext(Dispatchers.IO) {
         val base = process.ensureStarted().baseUrl
         val peers = LinkPeerResolver.resolveAll(linkRoot(serverUrl))
@@ -61,6 +71,29 @@ internal class EmbeddedLinkApi(
             ))
             try {
                 val response = post("$base/link/dial", body)
+                val pending = response["pending"]?.jsonPrimitive?.booleanOrNull == true
+                if (pending) {
+                    val sessionId = response.getValue("sessionId").jsonPrimitive.content
+                    val transcriptB64 = response.getValue("transcript").jsonPrimitive.content
+                    val transcript = one.zephyr.mobile.model.Base64Codec.decodeUrlNoPad(transcriptB64)
+                    val proof = signer?.signTranscript(transcript)
+                        ?: throw LinkRequestException(
+                            code = "proof_required",
+                            message = "Link 握手需要设备签名",
+                            retryable = false,
+                        )
+                    val finished = post(
+                        "$base/link/dial/finish",
+                        JsonObject(mapOf(
+                            "sessionId" to JsonPrimitive(sessionId),
+                            "proof" to JsonPrimitive(proof),
+                        )),
+                    )
+                    return@withContext LinkSession(
+                        sessionId = finished.getValue("sessionId").jsonPrimitive.content,
+                        exporter = finished.getValue("exporter").jsonPrimitive.content,
+                    )
+                }
                 return@withContext LinkSession(
                     sessionId = response.getValue("sessionId").jsonPrimitive.content,
                     exporter = response.getValue("exporter").jsonPrimitive.content,

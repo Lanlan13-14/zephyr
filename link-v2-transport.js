@@ -154,6 +154,52 @@ function createLinkV2Transport({ enrollments, store, log } = {}) {
          * Body: { deviceId, x25519Public, mlkemPublic } (base64url).
          * Response: { sessionId, x25519Public, mlkemCiphertext } (base64url).
          */
+        handshakeFinish(req, res) {
+            try {
+                const body = req.body || {};
+                const sessionId = String(body.sessionId || '');
+                const proof = String(body.proof || '');
+                const record = table.get(sessionId);
+                if (!record || !record.pending || !record.pending.session) {
+                    return res.status(400).json({ ok: false, error: { code: 'invalid_handshake', message: 'unknown or expired handshake' } });
+                }
+                const pending = record.pending;
+                record.pending = null; // one-shot: a failed proof cannot retry the same challenge
+                if (!proof) {
+                    table.destroy(sessionId);
+                    return res.status(403).json({ ok: false, error: { code: 'proof_required', message: 'handshake proof required' } });
+                }
+                const jwk = pending.signingJwk;
+                const payload = zsl.handshakeProofPayload(record.deviceId, pending.transcript);
+                let ok = false;
+                try {
+                    const key = crypto.createPublicKey({ key: { ...jwk, kty: 'EC', crv: 'P-256' }, format: 'jwk' });
+                    const sig = Buffer.from(proof, 'base64');
+                    ok = sig.length === 64
+                        && sig.toString('base64') === proof
+                        && crypto.verify('sha256', payload, { key, dsaEncoding: 'ieee-p1363' }, sig);
+                } catch {
+                    ok = false;
+                }
+                if (!ok) {
+                    table.destroy(sessionId);
+                    return res.status(403).json({ ok: false, error: { code: 'proof_invalid', message: 'handshake proof invalid' } });
+                }
+                zsl.bindTranscript(pending.session, pending.transcript);
+                table.establish(sessionId, pending.session);
+                const established = table.get(sessionId);
+                return res.status(200).json({
+                    ok: true,
+                    sessionId,
+                    exporter: established.session.exporter.toString('base64url'),
+                });
+            } catch (err) {
+                const code = (err && err.code) || 'handshake_failed';
+                logger('[link-v2] handshake finish failed', err && err.message);
+                return res.status(400).json({ ok: false, error: { code, message: String(err && err.message || '握手失败'), retryable: true } });
+            }
+        },
+
         handshake(req, res) {
             try {
                 const body = req.body || {};
@@ -172,12 +218,25 @@ function createLinkV2Transport({ enrollments, store, log } = {}) {
                     return res.status(403).json({ ok: false, error: { code: 'device_not_enrolled', message: '设备未完成绑定', retryable: false } });
                 }
                 const responder = zsl.handshakeResponder(initiator);
-                // Stash the responder's half-open session; the stream/push/pull
-                // upgrade proves possession by sealing a frame only the peer can produce.
+                const challenge = crypto.randomBytes(32);
+                const transcript = zsl.transcriptHash({
+                    deviceId,
+                    initX25519: initiator.x25519Public,
+                    initMlkem: initiator.mlkemPublic,
+                    respX25519: responder.x25519Public,
+                    mlkemCiphertext: responder.mlkemCiphertext,
+                    challenge,
+                });
                 const record = table.create({
                     deviceId,
                     userId: device.ownerUserId || device.userId || '',
-                    session: responder.session,
+                    session: null,
+                    pending: {
+                        session: responder.session,
+                        challenge,
+                        transcript,
+                        signingJwk: device.signingJwk || null,
+                    },
                 });
                 return res.status(200).json({
                     ok: true,
@@ -185,6 +244,8 @@ function createLinkV2Transport({ enrollments, store, log } = {}) {
                     suite: zsl.SUITE,
                     x25519Public: responder.x25519Public.toString('base64url'),
                     mlkemCiphertext: responder.mlkemCiphertext.toString('base64url'),
+                    challenge: challenge.toString('base64url'),
+                    transcript: transcript.toString('base64url'),
                     expiresAt: record.expiresAt,
                 });
             } catch (err) {
