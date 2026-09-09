@@ -12,12 +12,13 @@ import (
 )
 
 // A server with enrollment required must reject a handshake from a device that
-// never completed enrollment, and accept one that did. The ZSL keys are real so
-// the size checks pass and only the enrollment gate decides.
+// never completed enrollment, and accept a hello from one that did. The hello
+// itself does not establish the session: finish still needs an ES256 proof.
 func TestHandshakeEnrollmentGate(t *testing.T) {
+	priv := mustKey(t)
 	server := NewNode()
 	server.RequireEnrollment()
-	server.RegisterDevice("enrolled-device-0001")
+	server.RegisterDeviceKey("enrolled-device-0001", jwkFromPublic(&priv.PublicKey))
 	srv := httptest.NewServer(server.Handler())
 	defer srv.Close()
 

@@ -66,6 +66,32 @@ test('codec compresses large metadata but never secrets', () => {
   assert.equal(secretFrame.f & codec.FLAG_SECRET, codec.FLAG_SECRET);
 });
 
+test('ZSL/2 transcript bind rotates keys and still round-trips', () => {
+  const initiator = zsl.handshakeInitiator();
+  const responder = zsl.handshakeResponder({
+    x25519Public: initiator.x25519Public,
+    mlkemPublic: initiator.mlkemPublic,
+  });
+  const client = zsl.handshakeFinish(initiator, responder);
+  const server = responder.session;
+  const unbound = Buffer.from(client.exporter);
+  const transcript = zsl.transcriptHash({
+    deviceId: 'dev-bind',
+    initX25519: initiator.x25519Public,
+    initMlkem: initiator.mlkemPublic,
+    respX25519: responder.x25519Public,
+    mlkemCiphertext: responder.mlkemCiphertext,
+    challenge: Buffer.alloc(32, 7),
+  });
+  client.bindTranscript(transcript);
+  server.bindTranscript(transcript);
+  assert.notDeepEqual(client.exporter, unbound);
+  assert.deepEqual(client.exporter, server.exporter);
+  const sealed = client.seal(Buffer.from('bound'));
+  assert.equal(server.open(sealed).toString(), 'bound');
+  assert.throws(() => client.bindTranscript(transcript), /already bound/);
+});
+
 test('ZSL/2 hybrid handshake yields a working bidirectional session', () => {
   const initiator = zsl.handshakeInitiator();
   const responder = zsl.handshakeResponder({

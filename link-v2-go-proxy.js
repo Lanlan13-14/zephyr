@@ -127,9 +127,11 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
     const proc = sharedProcess(log, { adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken });
     // Devices the Go service is known to hold this process lifetime, so we only
     // re-register once per device per restart instead of on every handshake.
-    const registered = new Set();
+    // Value is true once the ES256 JWK has been pushed; an id-only registration
+    // is upgraded the first time a JWK is available.
+    const registered = new Map();
 
-    async function registerDevice(deviceId) {
+    async function registerDevice(deviceId, signingJwk) {
         if (!deviceId) return;
         /* Registering the device with the Go transport is a hard precondition for the very
          * first handshake: RequireEnrollment rejects every frame from an unknown device, so a
@@ -141,7 +143,9 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
                 const addr = await proc.ensureStarted();
                 const [host, port] = addr.split(':');
                 const ok = await new Promise((resolve) => {
-                    const body = JSON.stringify({ deviceId });
+                    const payload = { deviceId };
+                    if (signingJwk) payload.signingJwk = signingJwk;
+                    const body = JSON.stringify(payload);
                     const req = http.request({
                         host, port: Number(port),
                         path: '/admin/register-device', method: 'POST',
@@ -208,12 +212,14 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
     // empty, so we re-register any consumed device the first time it handshakes after
     // a restart. An unenrolled device is left to fail closed at the Go side.
     async function ensureDevice(deviceId) {
-        if (!deviceId || registered.has(deviceId)) return;
+        if (!deviceId) return;
         if (!enrollments || typeof enrollments.deviceById !== 'function') return;
         const row = enrollments.deviceById(deviceId);
         if (!row) return; // not consumed -> Go will reject; do not register unknowns
-        await registerDevice(deviceId);
-        registered.add(deviceId);
+        const haveJwk = !!(row.signingJwk && typeof row.signingJwk === 'object');
+        if (registered.get(deviceId) === true || (registered.has(deviceId) && !haveJwk)) return;
+        await registerDevice(deviceId, row.signingJwk);
+        registered.set(deviceId, haveJwk);
     }
 
     function router() {
@@ -238,6 +244,9 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
                 });
         });
         r.post('/push', (req, res) => forward(req, res, '/link/frame'));
+        r.post('/handshake/finish', express.json({ limit: '8kb' }), (req, res) => {
+            forward(req, res, '/link/handshake/finish', req.body);
+        });
         r.get('/state', (req, res) => {
             const sessionId = String(req.query.sessionId || '');
             forward(req, res, '/link/state?sessionId=' + encodeURIComponent(sessionId));
@@ -245,7 +254,12 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
         return r;
     }
 
-    return { router, registerDevice, _proc: proc };
+    async function registerDeviceTracked(deviceId, signingJwk) {
+        await registerDevice(deviceId, signingJwk);
+        registered.set(deviceId, !!(signingJwk && typeof signingJwk === 'object'));
+    }
+
+    return { router, registerDevice: registerDeviceTracked, _proc: proc };
 }
 
 /* WSS relay: the client terminates TLS+WS at Node; Node opens a second WS to the Go

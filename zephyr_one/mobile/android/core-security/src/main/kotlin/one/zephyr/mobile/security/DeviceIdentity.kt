@@ -100,6 +100,25 @@ class DeviceIdentity(
     }
 
     /**
+     * Signs the ZSL/2 handshake transcript. Payload is
+     * `zephyr-zsl2-handshake-v1 || 0x00 || deviceId || 0x00 || transcript`
+     * and the signature is standard Base64 P1363, matching the Go verifier.
+     */
+    fun signHandshakeTranscript(transcript: ByteArray): String {
+        require(transcript.size == 32) { "handshake transcript must be 32 bytes" }
+        val prefix = HANDSHAKE_PROOF_PREFIX.toByteArray(Charsets.UTF_8)
+        val id = scope.deviceId.toByteArray(Charsets.UTF_8)
+        val payload = ByteArray(prefix.size + 1 + id.size + 1 + transcript.size)
+        var offset = 0
+        prefix.copyInto(payload, offset); offset += prefix.size
+        payload[offset] = 0; offset += 1
+        id.copyInto(payload, offset); offset += id.size
+        payload[offset] = 0; offset += 1
+        transcript.copyInto(payload, offset)
+        return signPayload(payload)
+    }
+
+    /**
      * Signs arbitrary enrollment/bind proof bytes with the device ES256 key.
      * Returns standard Base64 P1363, matching `mobile-v1-proof.js`.
      */
@@ -296,6 +315,7 @@ class DeviceIdentity(
         private const val RESERVED_ENTITY = "__deviceIdentity"
         private const val AAD_PREFIX = "zephyr-one-device-identity-v1"
         private const val PROOF_V2_PREFIX = "zephyr-one-device-proof-v2"
+        private const val HANDSHAKE_PROOF_PREFIX = "zephyr-zsl2-handshake-v1"
     }
 }
 

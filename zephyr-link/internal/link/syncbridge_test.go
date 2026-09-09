@@ -2,6 +2,9 @@ package link
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -9,8 +12,19 @@ import (
 	"testing"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
-	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/zsl"
 )
+
+func enrollAndHandshake(t *testing.T, node *Node, srvURL, deviceID string) (*Endpoint, string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.RequireEnrollment()
+	node.RegisterDeviceKey(deviceID, jwkFromPublic(&priv.PublicKey))
+	sess, sessionID := completeAuthenticatedHandshake(t, srvURL, deviceID, priv)
+	return NewEndpoint(sess), sessionID
+}
 
 // The owned-sync lane end to end: a device dials, sends a SYNC_OP frame, the node
 // forwards it to the loopback sync bridge (standing in for the Node sync core),
@@ -110,38 +124,11 @@ func TestSyncBridgeCarriesBusinessFrames(t *testing.T) {
 	defer bridge.Close()
 
 	node := NewNode()
-	node.RegisterDevice("dev-sync")
 	node.RegisterSyncBridge(SyncBridgeConfig{URL: bridge.URL, AdminToken: "tok-1234567890abcdef"})
 	srv := httptest.NewServer(node.Handler())
 	defer srv.Close()
 
-	// Device dials with a real ZSL/2 handshake.
-	init, _ := zsl.HandshakeInitiator()
-	hsBody, _ := json.Marshal(map[string]any{
-		"deviceId":     "dev-sync",
-		"x25519Public": base64.RawURLEncoding.EncodeToString(init.X25519Public),
-		"mlkemPublic":  base64.RawURLEncoding.EncodeToString(init.MLKEMPublic),
-	})
-	hsResp, err := http.Post(srv.URL+"/link/handshake", "application/json", bytes.NewReader(hsBody))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer hsResp.Body.Close()
-	var hs struct {
-		SessionID       string `json:"sessionId"`
-		X25519Public    string `json:"x25519Public"`
-		MLKEMCiphertext string `json:"mlkemCiphertext"`
-	}
-	if err := json.NewDecoder(hsResp.Body).Decode(&hs); err != nil {
-		t.Fatal(err)
-	}
-	xPub, _ := base64.RawURLEncoding.DecodeString(hs.X25519Public)
-	kemCT, _ := base64.RawURLEncoding.DecodeString(hs.MLKEMCiphertext)
-	sess, err := init.HandshakeFinish(&zsl.ResponderHello{X25519Public: xPub, MLKEMCiphertext: kemCT})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ep := NewEndpoint(sess)
+	ep, sessionID := enrollAndHandshake(t, node, srv.URL, "dev-sync")
 
 	// Push a SYNC_OP frame through the channel.
 	env, err := ep.Send(codec.KindSyncOp, map[string]any{"operations": []any{}, "batchId": "b1"}, false)
@@ -149,7 +136,7 @@ func TestSyncBridgeCarriesBusinessFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	frBody, _ := json.Marshal(map[string]any{
-		"sessionId": hs.SessionID,
+		"sessionId": sessionID,
 		"seq":       env.Seq,
 		"iv":        base64.RawURLEncoding.EncodeToString(env.IV),
 		"ct":        base64.RawURLEncoding.EncodeToString(env.CT),
@@ -223,39 +210,17 @@ func TestSyncBridgeReturnsStructuredBusinessError(t *testing.T) {
 	defer bridge.Close()
 
 	node := NewNode()
-	node.RegisterDevice("dev-expired")
 	node.RegisterSyncBridge(SyncBridgeConfig{URL: bridge.URL, AdminToken: "tok-1234567890abcdef"})
 	srv := httptest.NewServer(node.Handler())
 	defer srv.Close()
 
-	init, _ := zsl.HandshakeInitiator()
-	hsBody, _ := json.Marshal(map[string]any{
-		"deviceId":     "dev-expired",
-		"x25519Public": base64.RawURLEncoding.EncodeToString(init.X25519Public),
-		"mlkemPublic":  base64.RawURLEncoding.EncodeToString(init.MLKEMPublic),
-	})
-	hsResp, err := http.Post(srv.URL+"/link/handshake", "application/json", bytes.NewReader(hsBody))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer hsResp.Body.Close()
-	var hs struct{ SessionID, X25519Public, MLKEMCiphertext string }
-	if err := json.NewDecoder(hsResp.Body).Decode(&hs); err != nil {
-		t.Fatal(err)
-	}
-	xPub, _ := base64.RawURLEncoding.DecodeString(hs.X25519Public)
-	kemCT, _ := base64.RawURLEncoding.DecodeString(hs.MLKEMCiphertext)
-	sess, err := init.HandshakeFinish(&zsl.ResponderHello{X25519Public: xPub, MLKEMCiphertext: kemCT})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ep := NewEndpoint(sess)
+	ep, sessionID := enrollAndHandshake(t, node, srv.URL, "dev-expired")
 	env, err := ep.Send(codec.KindSyncOp, map[string]any{"op": "changes", "sinceCursor": 0}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	frBody, _ := json.Marshal(map[string]any{
-		"sessionId": hs.SessionID, "seq": env.Seq,
+		"sessionId": sessionID, "seq": env.Seq,
 		"iv":  base64.RawURLEncoding.EncodeToString(env.IV),
 		"ct":  base64.RawURLEncoding.EncodeToString(env.CT),
 		"tag": base64.RawURLEncoding.EncodeToString(env.Tag),

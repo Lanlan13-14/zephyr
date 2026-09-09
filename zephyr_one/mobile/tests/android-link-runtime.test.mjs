@@ -23,6 +23,14 @@ test('Android ships and drives the embedded Go Link core instead of re-implement
   assert.ok(proc.includes('127.0.0.1'), 'loopback readiness parse');
   const api = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedLinkApi.kt');
   assert.match(api, /\/link\/dial/);
+  assert.match(api, /\/link\/dial\/finish/);
+  assert.match(api, /fun interface HandshakeSigner/);
+  assert.match(api, /signTranscript/);
+  const identity = read('android/core-security/src/main/kotlin/one/zephyr/mobile/security/DeviceIdentity.kt');
+  assert.match(identity, /signHandshakeTranscript/);
+  assert.match(identity, /zephyr-zsl2-handshake-v1/);
+  const account = read('android/app/src/main/kotlin/one/zephyr/mobile/app/di/AccountContainer.kt');
+  assert.match(account, /deviceIdentity\.signHandshakeTranscript/);
   // The Kotlin side must not contain any ZSL/KEM primitive — that lives in Go only.
   // It may name the loopback /link/mlkem/* routes, but never the crypto primitives.
   assert.doesNotMatch(api, /x25519|X25519|hkdf|Hkdf|mlkem\.Encapsulate|mlkem\.Decapsulate|mlkem\.GenerateKey/i);
@@ -185,7 +193,8 @@ test('startup sync recovery resets incomplete generations and avoids duplicate r
 test('server never caches a failed Go device registration', () => {
   const proxy = readRepo('link-v2-go-proxy.js');
   assert.match(proxy, /throw failure/);
-  assert.match(proxy, /await registerDevice\(deviceId\);\s*registered\.add\(deviceId\)/s);
+  assert.match(proxy, /await registerDevice\(deviceId, row\.signingJwk\);\s*registered\.set\(deviceId, haveJwk\)/s);
+  assert.match(proxy, /registered\.set\(deviceId, !!\(signingJwk && typeof signingJwk === 'object'\)\)/);
   assert.doesNotMatch(proxy, /ensureDevice\(deviceId\)\s*\.catch\(\(\) => \{\}\)\s*\.finally/s);
   assert.match(proxy, /link_device_registration_failed/);
 });

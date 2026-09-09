@@ -282,6 +282,8 @@ class LinkV2EnrollmentStore {
         this.purgeExpired();
         const row = this._getConsumedByDevice.get(String(deviceId || ''));
         if (!row) return null;
+        let signingJwk = null;
+        try { signingJwk = JSON.parse(row.signing_public_jwk); } catch { signingJwk = null; }
         return {
             deviceId: row.device_id,
             deviceName: row.device_name,
@@ -290,6 +292,7 @@ class LinkV2EnrollmentStore {
             ownerUsername: row.owner_username,
             fingerprint: row.device_fingerprint,
             consumedAt: Number(row.consumed_at || 0),
+            signingJwk,
         };
     }
 
@@ -689,7 +692,11 @@ function createLinkV2EnrollmentApi({
                 // fail an otherwise-complete enrollment; the device simply retries, and the
                 // admin route is idempotent.
                 if (typeof onDeviceEnrolled === 'function') {
-                    try { onDeviceEnrolled(String(bound.row && bound.row.device_id || '')); } catch (e) { /* never block consume */ }
+                    try {
+                        let signingJwk = null;
+                        try { signingJwk = JSON.parse(bound.row && bound.row.signing_public_jwk || 'null'); } catch { signingJwk = null; }
+                        onDeviceEnrolled(String(bound.row && bound.row.device_id || ''), signingJwk);
+                    } catch (e) { /* never block consume */ }
                 }
                 res.json({
                     ok: true,

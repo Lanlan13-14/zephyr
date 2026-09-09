@@ -23,7 +23,7 @@ import (
 const envListen = "ZEPHYR_LINK_LISTEN"
 const envAddr = "ZEPHYR_LINK_ADDR" // set by the Node supervisor to an ephemeral port
 const envAdminToken = "ZEPHYR_LINK_ADMIN_TOKEN"
-const envDevices = "ZEPHYR_LINK_DEVICES" // path to a JSON list of enrolled device IDs
+const envDevices = "ZEPHYR_LINK_DEVICES"        // path to a JSON list of enrolled device IDs
 const envSyncBridge = "ZEPHYR_LINK_SYNC_BRIDGE" // loopback Node sync-core bridge URL
 const envSyncToken = "ZEPHYR_LINK_SYNC_TOKEN"   // loopback shared secret for the bridge
 
@@ -77,14 +77,15 @@ func main() {
 			return
 		}
 		var body struct {
-			DeviceID string `json:"deviceId"`
+			DeviceID   string          `json:"deviceId"`
+			SigningJWK json.RawMessage `json:"signingJwk"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil || body.DeviceID == "" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		adminMu.Lock()
-		node.RegisterDevice(body.DeviceID)
+		node.RegisterDeviceKey(body.DeviceID, body.SigningJWK)
 		adminMu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	})

@@ -106,6 +106,46 @@ function signProof(privateKey, payload) {
   return crypto.sign('sha256', payload, { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64');
 }
 
+function signHandshakeProof(privateKey, deviceId, transcript) {
+  return crypto.sign('sha256', zsl.handshakeProofPayload(deviceId, transcript), {
+    key: privateKey, dsaEncoding: 'ieee-p1363',
+  }).toString('base64');
+}
+
+async function completeLinkHandshake(server, deviceId, privateKey) {
+  const init = zsl.handshakeInitiator();
+  const handshake = await server.fetch('/api/link/v2/handshake', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      deviceId,
+      x25519Public: Buffer.from(init.x25519Public).toString('base64url'),
+      mlkemPublic: Buffer.from(init.mlkemPublic).toString('base64url'),
+    }),
+  });
+  assert.equal(handshake.status, 200, await handshake.clone().text());
+  const hello = await handshake.json();
+  assert.ok(hello.challenge, 'enrolled handshake must issue a one-shot challenge');
+  assert.ok(hello.transcript, 'enrolled handshake must bind a transcript');
+  assert.ok(hello.mlkemCiphertext, 'ZSL/2 responder must return an ML-KEM-768 ciphertext');
+  const transcript = Buffer.from(hello.transcript, 'base64url');
+  const finish = await server.fetch('/api/link/v2/handshake/finish', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: hello.sessionId,
+      proof: signHandshakeProof(privateKey, deviceId, transcript),
+    }),
+  });
+  assert.equal(finish.status, 200, await finish.clone().text());
+  const session = zsl.handshakeFinish(init, {
+    x25519Public: Buffer.from(hello.x25519Public, 'base64url'),
+    mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url'),
+  });
+  session.bindTranscript(transcript);
+  return { hello, session };
+}
+
 function createPending(enrollments, keys, extras = {}) {
   return enrollments.create({
     deviceId: extras.deviceId || 'device-android-0001',
@@ -528,22 +568,7 @@ test('real server closes enrollment -> device list -> Go handshake -> SYNC_ACK l
   assert.equal(devices.status, 200);
   assert.ok(devices.body.clients.some((client) => client.clientId === deviceId));
 
-  const init = zsl.handshakeInitiator();
-  const handshake = await server.fetch('/api/link/v2/handshake', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      deviceId,
-      x25519Public: Buffer.from(init.x25519Public).toString('base64url'),
-      mlkemPublic: Buffer.from(init.mlkemPublic).toString('base64url'),
-    }),
-  });
-  assert.equal(handshake.status, 200, await handshake.clone().text());
-  const hello = await handshake.json();
-  const session = zsl.handshakeFinish(init, {
-    x25519Public: Buffer.from(hello.x25519Public, 'base64url'),
-    mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url'),
-  });
+  const { hello, session } = await completeLinkHandshake(server, deviceId, signing.privateKey);
   async function syncOp(body) {
     const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
     const push = await server.fetch('/api/link/v2/push', {
@@ -726,16 +751,7 @@ test('real Link two devices converge through canonical change log', async (t) =>
     });
     assert.equal(consume.status, 200, await consume.clone().text());
     const binding = await consume.json();
-    const init = zsl.handshakeInitiator();
-    const handshake = await server.fetch('/api/link/v2/handshake', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ deviceId, x25519Public: Buffer.from(init.x25519Public).toString('base64url'),
-        mlkemPublic: Buffer.from(init.mlkemPublic).toString('base64url') }),
-    });
-    assert.equal(handshake.status, 200, await handshake.clone().text());
-    const hello = await handshake.json();
-    const session = zsl.handshakeFinish(init, { x25519Public: Buffer.from(hello.x25519Public, 'base64url'),
-      mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url') });
+    const { hello, session } = await completeLinkHandshake(server, deviceId, signing.privateKey);
     const syncOp = async (body) => {
       const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
       const push = await server.fetch('/api/link/v2/push', { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -814,23 +830,7 @@ async function enrollLinkDevice(server, login, { deviceId, deviceName, fill }) {
   });
   assert.equal(consume.status, 200, await consume.clone().text());
   const binding = await consume.json();
-  const init = zsl.handshakeInitiator();
-  const handshake = await server.fetch('/api/link/v2/handshake', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      deviceId,
-      x25519Public: Buffer.from(init.x25519Public).toString('base64url'),
-      mlkemPublic: Buffer.from(init.mlkemPublic).toString('base64url'),
-    }),
-  });
-  assert.equal(handshake.status, 200, await handshake.clone().text());
-  const hello = await handshake.json();
-  assert.ok(hello.mlkemCiphertext, 'ZSL/2 responder must return an ML-KEM-768 ciphertext');
-  const session = zsl.handshakeFinish(init, {
-    x25519Public: Buffer.from(hello.x25519Public, 'base64url'),
-    mlkemCiphertext: Buffer.from(hello.mlkemCiphertext, 'base64url'),
-  });
+  const { hello, session } = await completeLinkHandshake(server, deviceId, signing.privateKey);
   const syncOp = async (body) => {
     const sealed = session.seal(codec.pack({ kind: codec.KIND.SYNC_OP, body }));
     const push = await server.fetch('/api/link/v2/push', {

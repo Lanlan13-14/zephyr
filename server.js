@@ -9039,8 +9039,8 @@ try {
             publicOrigin,
             qrcode: QRCode,
             log: (...args) => console.log('[link-v2]', ...args),
-            onDeviceEnrolled: (deviceId) => {
-                linkGo.registerDevice(deviceId).catch((error) => {
+            onDeviceEnrolled: (deviceId, signingJwk) => {
+                linkGo.registerDevice(deviceId, signingJwk).catch((error) => {
                     console.error('[link-v2] post-enrollment device registration failed', error && error.message);
                 });
             },
