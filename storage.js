@@ -359,7 +359,7 @@ function defaultSettings(legacySettings = {}) {
         dataManage: { exportEncryptHint: true },
         appearance: {
             brandName: 'Zephyr',
-            brandIcon: '🌬️',
+            brandIcon: '/zephyr-mark.svg',
             theme: 'auto',
             autoThemeEnabled: true,
             colorScheme: 'frost',

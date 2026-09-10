@@ -87,7 +87,7 @@ let previewSettings = {
     version: '3.0.0 Preview',
     appearance: {
         brandName: 'Zephyr',
-        brandIcon: '🌬️',
+        brandIcon: '/zephyr-mark.svg',
         theme: 'light',
         autoThemeEnabled: false,
         colorScheme: 'frost',

@@ -3550,8 +3550,8 @@ function normalizeSettingsInput(body) {
     if (body.appearance) {
         const currentAppearance = current.appearance || {};
         const brandName = String(body.appearance.brandName ?? currentAppearance.brandName ?? 'Zephyr').trim().slice(0, 40) || 'Zephyr';
-        const rawIcon = String(body.appearance.brandIcon ?? currentAppearance.brandIcon ?? '🌬️').trim();
-        const isAllowedIcon = rawIcon === '🌬️' || /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,/i.test(rawIcon);
+        const rawIcon = String(body.appearance.brandIcon ?? currentAppearance.brandIcon ?? '/zephyr-mark.svg').trim();
+        const isAllowedIcon = rawIcon === '/zephyr-mark.svg' || rawIcon === '🌬️' || /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,/i.test(rawIcon);
         const colorScheme = ['frost', 'lava', 'asagi', 'cyber', 'custom'].includes(body.appearance.colorScheme) ? body.appearance.colorScheme : (currentAppearance.colorScheme || 'frost');
         const customThemeMode = ['light', 'dark', 'auto'].includes(body.appearance.customThemeMode) ? body.appearance.customThemeMode : (currentAppearance.customThemeMode || 'dark');
         const theme = body.appearance.theme === 'light' || body.appearance.theme === 'dark' ? body.appearance.theme : 'auto';
@@ -3599,7 +3599,7 @@ function normalizeSettingsInput(body) {
             ...currentAppearance,
             ...body.appearance,
             brandName,
-            brandIcon: isAllowedIcon ? rawIcon : (currentAppearance.brandIcon || '🌬️'),
+            brandIcon: isAllowedIcon ? rawIcon : (currentAppearance.brandIcon || '/zephyr-mark.svg'),
             theme,
             colorScheme,
             customThemeMode,
@@ -3614,7 +3614,7 @@ function normalizeSettingsInput(body) {
         };
         console.info('[appearance-settings]', 'normalized appearance settings', {
             brandName,
-            customIcon: next.appearance.brandIcon !== '🌬️',
+            customIcon: next.appearance.brandIcon !== '/zephyr-mark.svg' && next.appearance.brandIcon !== '🌬️',
             theme: next.appearance.theme,
             colorScheme: next.appearance.colorScheme,
             autoThemeEnabled: next.appearance.autoThemeEnabled,
@@ -3649,7 +3649,7 @@ function publicAppearanceSettings(settings = storage.getSettings()) {
     return {
         appearance: {
             brandName: String(appearance.brandName || 'Zephyr').slice(0, 40) || 'Zephyr',
-            brandIcon: String(appearance.brandIcon || '🌬️'),
+            brandIcon: String(appearance.brandIcon || '/zephyr-mark.svg'),
             colorScheme: appearance.colorScheme || 'frost',
             theme: appearance.theme || 'auto',
         },
@@ -6217,7 +6217,7 @@ app.get('/api/public/settings', (req, res) => {
         defaultUsername: user?.username || 'admin',
         appearance: {
             brandName: String(appearance.brandName || 'Zephyr').slice(0, 40) || 'Zephyr',
-            brandIcon: String(appearance.brandIcon || '🌬️'),
+            brandIcon: String(appearance.brandIcon || '/zephyr-mark.svg'),
             theme: appearance.theme === 'light' || appearance.theme === 'dark' ? appearance.theme : 'auto',
             autoThemeEnabled: appearance.autoThemeEnabled !== false,
             colorScheme: ['frost', 'lava', 'asagi', 'cyber', 'custom'].includes(appearance.colorScheme) ? appearance.colorScheme : 'frost',
@@ -12069,7 +12069,7 @@ async function startServer() {
         }),
     ]);
     console.log(`🔒 Zephyr AI Tool Host 运行在 http://${aiHostListen.host}:${aiHostListen.port}（仅 loopback）`);
-    if (HTTP_ENABLED) console.log(`🌬️  Zephyr HTTP 服务运行在 http://localhost:${PORT}`);
+    if (HTTP_ENABLED) console.log(`Zephyr HTTP 服务运行在 http://localhost:${PORT}`);
     else console.log('🔒 Zephyr HTTP 服务已禁用（设置 HTTP_ENABLED=true 可重新启用）');
     if (httpsServer) console.log(`🔐 Zephyr HTTPS 服务运行在 https://localhost:${HTTPS_PORT}`);
     else if (HTTPS_ENABLED) console.warn('[https] HTTPS requested but disabled because certificate setup failed');

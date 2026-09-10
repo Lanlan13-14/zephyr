@@ -31,146 +31,78 @@ html, body.app-body, body {
 }
 
 /* ==========================================================================
-   Main Navigation — Floating Liquid Glass Island Bar
+   Main Navigation — True Liquid Glass Top Bar
    ========================================================================== */
 .main-nav {
     position: sticky !important;
-    top: 12px !important;
+    top: 0 !important;
     z-index: 50 !important;
     display: flex !important;
     align-items: center !important;
     justify-content: space-between !important;
     gap: 16px !important;
     padding: 8px 24px !important;
-    margin: 10px auto 16px auto !important;
-    width: min(1180px, calc(100% - 32px)) !important;
-    border-radius: 9999px !important;
-    background: rgba(18, 23, 36, 0.72) !important;
+    background: rgba(14, 18, 28, 0.75) !important;
     backdrop-filter: blur(28px) saturate(190%) !important;
     -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.16) !important;
-    box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.55),
-                inset 0 1px 0 0 rgba(255, 255, 255, 0.22),
-                inset 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
-    transition: padding var(--terminal-shelf-duration) var(--terminal-shelf-ease),
-                box-shadow 300ms ease,
-                background 300ms ease !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.45) !important;
+    transition: padding var(--terminal-shelf-duration) var(--terminal-shelf-ease) !important;
 }
 
 :root[data-theme="light"] .main-nav {
-    background: rgba(255, 255, 255, 0.75) !important;
-    border: 1px solid rgba(255, 255, 255, 0.85) !important;
-    box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.12),
-                inset 0 1px 0 0 rgba(255, 255, 255, 0.95),
-                inset 0 0 0 1px rgba(0, 0, 0, 0.04) !important;
+    background: rgba(255, 255, 255, 0.80) !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+    box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.08) !important;
 }
 
-/* Nav Tabs Container — Faithful to LiquidBottomTabs Container Row */
+/* Nav Tabs Container — Houses the WebGL LiquidBottomTabs Canvas */
 .nav-tabs {
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    height: 44px !important;
-    padding: 3px !important;
-    border-radius: 9999px !important;
-    background: rgba(0, 0, 0, 0.28) !important;
-    backdrop-filter: blur(16px) !important;
-    -webkit-backdrop-filter: blur(16px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.10) !important;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35),
-                0 2px 8px rgba(0, 0, 0, 0.20) !important;
     position: relative !important;
-    box-sizing: border-box !important;
-}
-
-:root[data-theme="light"] .nav-tabs {
-    background: rgba(0, 0, 0, 0.06) !important;
-    border: 1px solid rgba(255, 255, 255, 0.50) !important;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06),
-                0 2px 8px rgba(0, 0, 0, 0.04) !important;
-}
-
-/* Sliding Liquid Glass Indicator Thumb */
-.liquid-tab-thumb {
-    position: absolute !important;
-    top: 3px !important;
-    left: 3px !important;
-    height: calc(100% - 6px) !important;
-    border-radius: 9999px !important;
-    pointer-events: none !important;
-    z-index: 1 !important;
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.32) 0%, rgba(56, 189, 248, 0.16) 100%) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(56, 189, 248, 0.50) !important;
-    box-shadow: 0 4px 18px -2px rgba(14, 165, 233, 0.40),
-                inset 0 1px 0 0 rgba(255, 255, 255, 0.45),
-                inset 0 -1px 2px 0 rgba(0, 0, 0, 0.30) !important;
-    transition: transform 260ms cubic-bezier(0.23, 1, 0.32, 1),
-                width 260ms cubic-bezier(0.23, 1, 0.32, 1) !important;
-    will-change: transform, width;
-}
-
-:root[data-theme="light"] .liquid-tab-thumb {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(224, 242, 254, 0.85) 100%) !important;
-    border: 1px solid rgba(14, 165, 233, 0.35) !important;
-    box-shadow: 0 4px 18px -2px rgba(14, 165, 233, 0.25),
-                inset 0 1px 0 0 rgba(255, 255, 255, 1.0),
-                inset 0 -1px 2px 0 rgba(0, 0, 0, 0.05) !important;
-}
-
-/* Nav Tab Items — Sits directly inside the Liquid Glass Container */
-.nav-tab {
-    position: relative !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    height: 38px !important;
-    padding: 0 18px !important;
-    border-radius: 9999px !important;
-    font-weight: 600 !important;
-    font-size: 13.5px !important;
-    letter-spacing: -0.01em;
-    color: rgba(255, 255, 255, 0.70) !important;
-    background: transparent !important;
+    width: 660px !important;
+    max-width: calc(100vw - 320px) !important;
+    height: 46px !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
     border: none !important;
+    background: transparent !important;
+    border-radius: 9999px !important;
     box-shadow: none !important;
+    overflow: visible !important;
+}
+
+/* Dedicated WebGL Liquid Tabs Canvas */
+.zephyr-liquid-tabs-canvas {
+    display: block !important;
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 9999px !important;
     cursor: pointer !important;
-    user-select: none !important;
     touch-action: none !important;
-    z-index: 2 !important;
+    user-select: none !important;
+    z-index: 10 !important;
+}
+
+/* Original DOM Tab Buttons — Hidden visually, fully accessible for tests/readers */
+.nav-tabs .nav-tab,
+.settings-menu .settings-tab,
+.activity-range-tabs .activity-range-btn {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
     white-space: nowrap !important;
-    transition: color 150ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
-}
-
-:root[data-theme="light"] .nav-tab {
-    color: rgba(15, 23, 42, 0.70) !important;
-}
-
-.nav-tab:hover {
-    color: #ffffff !important;
-}
-
-:root[data-theme="light"] .nav-tab:hover {
-    color: #0f172a !important;
-}
-
-.nav-tab:active {
-    transform: scale(0.96) !important;
-}
-
-/* Active tab text is illuminated by the underlying WebGL Liquid Glass indicator */
-.nav-tab.active {
-    color: #38bdf8 !important;
-    font-weight: 700 !important;
-}
-
-:root[data-theme="light"] .nav-tab.active {
-    color: #0284c7 !important;
-}
-
-.nav-tab.active::after, .nav-tab::after {
-    display: none !important;
+    border: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
 }
 
 /* Nav Action Buttons */
@@ -220,7 +152,7 @@ html, body.app-body, body {
 }
 
 /* ==========================================================================
-   Settings Navigation Menu — Authentic LiquidBottomTabs Bar
+   Settings Navigation Menu — Dedicated Liquid Tabs Bar
    ========================================================================== */
 .settings-layout {
     display: flex !important;
@@ -229,85 +161,18 @@ html, body.app-body, body {
 }
 
 .settings-menu {
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: flex-start !important;
-    gap: 0 !important;
+    display: block !important;
+    position: relative !important;
+    width: 100% !important;
+    max-width: 980px !important;
     height: 48px !important;
-    padding: 4px !important;
-    border-radius: 9999px !important;
-    background: rgba(0, 0, 0, 0.28) !important;
-    backdrop-filter: blur(20px) !important;
-    -webkit-backdrop-filter: blur(20px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.10) !important;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35),
-                0 2px 8px rgba(0, 0, 0, 0.20) !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    -webkit-overflow-scrolling: touch !important;
-    box-sizing: border-box !important;
-    width: fit-content !important;
-    max-width: 100% !important;
-    margin: 0 auto 8px auto !important;
-    position: relative !important;
-}
-
-:root[data-theme="light"] .settings-menu {
-    background: rgba(0, 0, 0, 0.06) !important;
-    border: 1px solid rgba(255, 255, 255, 0.50) !important;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06),
-                0 2px 8px rgba(0, 0, 0, 0.04) !important;
-}
-
-.settings-tab {
-    position: relative !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    height: 40px !important;
-    padding: 0 20px !important;
-    border-radius: 9999px !important;
-    font-weight: 600 !important;
-    font-size: 13.5px !important;
-    white-space: nowrap !important;
-    color: rgba(255, 255, 255, 0.70) !important;
-    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 auto 16px auto !important;
     border: none !important;
+    background: transparent !important;
+    border-radius: 9999px !important;
     box-shadow: none !important;
-    cursor: pointer !important;
-    user-select: none !important;
-    touch-action: none !important;
-    transition: color 150ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
-    z-index: 2 !important;
-}
-
-:root[data-theme="light"] .settings-tab {
-    color: rgba(15, 23, 42, 0.70) !important;
-}
-
-.settings-tab:hover {
-    color: #ffffff !important;
-}
-
-:root[data-theme="light"] .settings-tab:hover {
-    color: #0f172a !important;
-}
-
-.settings-tab:active {
-    transform: scale(0.96) !important;
-}
-
-.settings-tab.active {
-    color: #38bdf8 !important;
-    font-weight: 700 !important;
-}
-
-:root[data-theme="light"] .settings-tab.active {
-    color: #0284c7 !important;
-}
-
-.settings-tab.active::after, .settings-tab::after {
-    display: none !important;
+    overflow: visible !important;
 }
 
 .settings-content, .settings-section-card {
@@ -329,77 +194,22 @@ html, body.app-body, body {
 }
 
 /* ==========================================================================
-   Activity Range Tabs — Authentic LiquidBottomTabs Bar
+   Activity Range Tabs
    ========================================================================== */
 .activity-range-tabs {
     display: inline-flex !important;
-    align-items: center !important;
-    gap: 0 !important;
+    position: relative !important;
     height: 42px !important;
-    padding: 3px !important;
+    width: 380px !important;
+    padding: 0 !important;
     border-radius: 9999px !important;
-    background: rgba(0, 0, 0, 0.28) !important;
-    backdrop-filter: blur(16px) !important;
-    -webkit-backdrop-filter: blur(16px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.10) !important;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35) !important;
-    position: relative !important;
-    box-sizing: border-box !important;
-}
-
-:root[data-theme="light"] .activity-range-tabs {
-    background: rgba(0, 0, 0, 0.06) !important;
-    border: 1px solid rgba(255, 255, 255, 0.50) !important;
-}
-
-.activity-range-thumb {
-    display: none !important; /* Replaced by LiquidTabThumb */
-}
-
-.activity-range-btn {
-    position: relative !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    height: 36px !important;
-    padding: 0 18px !important;
-    border-radius: 9999px !important;
-    font-size: 13px !important;
-    font-weight: 600 !important;
-    color: rgba(255, 255, 255, 0.70) !important;
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
-    cursor: pointer !important;
-    user-select: none !important;
-    touch-action: none !important;
-    transition: color 150ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
-    z-index: 2 !important;
 }
 
-:root[data-theme="light"] .activity-range-btn {
-    color: rgba(15, 23, 42, 0.70) !important;
-}
-
-.activity-range-btn:hover {
-    color: #ffffff !important;
-}
-
-:root[data-theme="light"] .activity-range-btn:hover {
-    color: #0f172a !important;
-}
-
-.activity-range-btn:active {
-    transform: scale(0.96) !important;
-}
-
-.activity-range-btn.active {
-    color: #38bdf8 !important;
-    font-weight: 700 !important;
-}
-
-:root[data-theme="light"] .activity-range-btn.active {
-    color: #0284c7 !important;
+.activity-range-thumb {
+    display: none !important;
 }
 
 /* ==========================================================================
@@ -478,7 +288,7 @@ html, body.app-body, body {
 }
 
 /* ==========================================================================
-   Connection Cards & Panels — True WebGL Glass Surface
+   Connection Cards & Panels
    ========================================================================== */
 .connection-card {
     background: rgba(22, 27, 40, 0.55) !important;
@@ -575,7 +385,7 @@ html, body.app-body, body {
 }
 
 /* ==========================================================================
-   Modals & Overlays — High Index Optical Glass
+   Modals & Overlays
    ========================================================================== */
 .modal-backdrop, .modal, .dialog-overlay {
     backdrop-filter: blur(12px) !important;
