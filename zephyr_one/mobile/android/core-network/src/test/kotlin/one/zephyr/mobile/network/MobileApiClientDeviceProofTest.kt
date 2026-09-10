@@ -14,6 +14,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -278,6 +279,26 @@ class MobileApiClientDeviceProofTest {
         assertEquals("devices.list", seen.single().usage)
         assertEquals("GET", challengeBody.method)
         assertEquals("/api/mobile/v1/devices", challengeBody.path)
+    }
+
+    @Test
+    fun `sensitive verify is a SID-plane call and does not request device proof`() = runTest {
+        server.enqueue(successResponse())
+        val client = client(DeviceProofSigner { error("sensitive verify must not request device proof") })
+
+        val result = client.post(
+            path = "/api/mobile/v1/sensitive/verify",
+            body = TestPushBody(message = "secret", sequence = 1),
+            bodySerializer = TestPushBody.serializer(),
+            responseSerializer = TestReply.serializer(),
+        )
+
+        assertTrue(result is ApiResult.Success)
+        val request = server.takeRequest()
+        assertEquals("/api/mobile/v1/sensitive/verify", request.path)
+        assertNull(request.getHeader(HEADER_DEVICE_PROOF))
+        assertNull(request.getHeader(HEADER_SERVER_NONCE))
+        assertEquals(1, server.requestCount)
     }
 
     @Test

@@ -141,7 +141,6 @@ internal object DeviceProofPolicy {
             "POST /api/mobile/v1/sync/now" -> "sync.now"
             "GET /api/mobile/v1/sync/status" -> "sync.status"
             "GET /api/mobile/v1/devices" -> "devices.list"
-            "POST /api/mobile/v1/sensitive/verify" -> "sensitive.verify"
             "POST /api/mobile/v1/blobs/uploads" -> "blob.upload.create"
             "GET /api/mobile/v1/shared" -> "shared.list"
             "POST /api/mobile/v1/file-bridge/lease" -> "file-bridge.lease"
