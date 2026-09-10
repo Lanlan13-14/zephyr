@@ -2,7 +2,7 @@
 // Zephyr WebGL Liquid Glass Integration Runtime
 // Authentic port of martin65536/liquid-glass-webgl & Kyant0/AndroidLiquidGlass
 // Full WebGL pipeline: G2 continuous curvature, refractive lens, chromatic aberration,
-// specular rim highlights, radial press glow, and spring dynamics.
+// specular rim highlights, radial press glow, spring dynamics, and LiquidBottomTabs.
 
 import { LiquidGlassRenderer } from './renderer/index'
 import type { GlassElementConfig, GlassHighlight } from './renderer/types'
@@ -101,7 +101,7 @@ export class ZephyrLiquidGlass {
     // Start render loop
     this.start()
 
-    console.info('[Zephyr Liquid Glass] Running WebGL G2 Continuous Curvature Liquid Glass Engine')
+    console.info('[Zephyr Liquid Glass] Running WebGL G2 Continuous Curvature Liquid Glass Engine with LiquidTabs')
     return true
   }
 
@@ -117,8 +117,6 @@ export class ZephyrLiquidGlass {
 
   private applyThemeBackground(): void {
     if (!this.renderer) return
-    // Authentic Zephyr theme colors: Deep obsidian dark (#0e1015) / Pristine light (#f4f5f7)
-    // No external phone wallpaper is loaded!
     const darkBg: [number, number, number] = [0.055, 0.063, 0.082]
     const lightBg: [number, number, number] = [0.957, 0.960, 0.968]
     this.renderer.setBackgroundColor(this.isDark ? darkBg : lightBg)
@@ -170,7 +168,6 @@ export class ZephyrLiquidGlass {
   public scanAndTrack(root: Document | HTMLElement = document): void {
     const selectors = [
       '.main-nav',
-      '.nav-tab',
       '.nav-actions .btn-sm',
       '.btn-primary',
       '.add-btn',
@@ -184,14 +181,10 @@ export class ZephyrLiquidGlass {
       '.modal-content',
       '.terminal-smartbar',
       '.smartbar-tab',
-      '.activity-range-tabs',
-      '.activity-range-btn',
       '.activity-item',
       '.activity-card',
       '.search-input',
       '.action-bar select',
-      '.settings-menu',
-      '.settings-tab',
       '.settings-content',
       '.settings-section-card',
       '.ai-chat-container',
@@ -203,6 +196,11 @@ export class ZephyrLiquidGlass {
 
     const matched = root.querySelectorAll<HTMLElement>(selectors.join(', '))
     matched.forEach((el) => {
+      // Avoid tracking individual nav-tabs and settings-tabs here; they are tracked as unified LiquidTabs
+      if (el.classList.contains('nav-tab') || el.classList.contains('settings-tab') || el.classList.contains('activity-range-btn')) {
+        return
+      }
+
       let type: TrackedElement['type'] = 'default'
       if (el.classList.contains('main-nav') || el.classList.contains('terminal-smartbar')) {
         type = 'nav'
@@ -216,9 +214,9 @@ export class ZephyrLiquidGlass {
         type = 'card'
       } else if (el.classList.contains('modal-content')) {
         type = 'modal'
-      } else if (el.classList.contains('nav-tab') || el.classList.contains('smartbar-tab') || el.classList.contains('settings-tab')) {
+      } else if (el.classList.contains('smartbar-tab')) {
         type = 'tab'
-      } else if (el.classList.contains('protocol-badge') || el.classList.contains('activity-range-btn') || el.classList.contains('activity-range-tabs')) {
+      } else if (el.classList.contains('protocol-badge')) {
         type = 'pill'
       } else if (el.classList.contains('search-input') || el.tagName === 'INPUT' || el.tagName === 'SELECT') {
         type = 'input'
@@ -234,7 +232,7 @@ export class ZephyrLiquidGlass {
       this.requestRedraw()
     }, { passive: true, capture: true })
 
-    // Mouse pointer movement drives dynamic specular highlights and Fresnel rim glints
+    // Pointer movement drives dynamic specular highlights and Fresnel rim glints
     window.addEventListener('pointermove', (e) => {
       this.pointerX = e.clientX
       this.pointerY = e.clientY
@@ -246,7 +244,7 @@ export class ZephyrLiquidGlass {
     // Tactile spring press feedback with pointer coordinates
     window.addEventListener('pointerdown', (e) => {
       const target = (e.target as HTMLElement)?.closest?.(
-        'button, .btn, .nav-tab, .smartbar-tab, .connection-card, .login-card, [data-liquid-glass]'
+        'button, .btn, .nav-tab, .settings-tab, .smartbar-tab, .activity-range-btn, .connection-card, .login-card, [data-liquid-glass]'
       ) as HTMLElement | null
 
       if (target && this.renderer) {
@@ -278,6 +276,49 @@ export class ZephyrLiquidGlass {
         this.renderer.needsRedraw = true
       }
     }, { passive: true })
+
+    // Tab click handlers for instantaneous spring gliding
+    document.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement | null
+      const navTab = target?.closest?.('.nav-tab') as HTMLElement | null
+      if (navTab && this.renderer) {
+        const parent = navTab.parentElement
+        if (parent) {
+          const tabs = Array.from(parent.querySelectorAll<HTMLElement>('.nav-tab:not(.force-hidden)'))
+          const idx = tabs.indexOf(navTab)
+          if (idx >= 0) {
+            this.renderer.setTabSelected('nav-tabs', idx, tabs.length)
+            this.requestRedraw()
+          }
+        }
+      }
+
+      const settingsTab = target?.closest?.('.settings-tab') as HTMLElement | null
+      if (settingsTab && this.renderer) {
+        const parent = settingsTab.parentElement
+        if (parent) {
+          const tabs = Array.from(parent.querySelectorAll<HTMLElement>('.settings-tab:not(.force-hidden)'))
+          const idx = tabs.indexOf(settingsTab)
+          if (idx >= 0) {
+            this.renderer.setTabSelected('settings-tabs', idx, tabs.length)
+            this.requestRedraw()
+          }
+        }
+      }
+
+      const activityBtn = target?.closest?.('.activity-range-btn') as HTMLElement | null
+      if (activityBtn && this.renderer) {
+        const parent = activityBtn.parentElement
+        if (parent) {
+          const tabs = Array.from(parent.querySelectorAll<HTMLElement>('.activity-range-btn'))
+          const idx = tabs.indexOf(activityBtn)
+          if (idx >= 0) {
+            this.renderer.setTabSelected('activity-tabs', idx, tabs.length)
+            this.requestRedraw()
+          }
+        }
+      }
+    }, true)
 
     // ResizeObserver
     if (typeof ResizeObserver !== 'undefined') {
@@ -346,6 +387,191 @@ export class ZephyrLiquidGlass {
     return 16
   }
 
+  /** Build authentic LiquidBottomTabs from martin65536/liquid-glass-webgl (Container + Tabs + Sliding Indicator) */
+  private buildLiquidTabs(
+    groupId: string,
+    containerEl: HTMLElement | null,
+    tabSelector: string,
+    configs: GlassElementConfig[],
+    accentColor: [number, number, number] = [0.04, 0.52, 0.98]
+  ): void {
+    if (!this.renderer || !containerEl || !containerEl.isConnected || containerEl.offsetParent === null) return
+    const containerRect = containerEl.getBoundingClientRect()
+    if (containerRect.width <= 2 || containerRect.height <= 2) return
+
+    const tabs = Array.from(containerEl.querySelectorAll<HTMLElement>(tabSelector)).filter(
+      (el) => el.offsetParent !== null && !el.classList.contains('force-hidden')
+    )
+    const tabsCount = tabs.length
+    if (tabsCount === 0) return
+
+    const activeIndex = Math.max(0, tabs.findIndex((t) => t.classList.contains('active')))
+
+    const isDark = this.isDark
+    const GLASS_PAD = 3
+    const containerH = containerRect.height
+    const containerW = containerRect.width
+    const containerR = Math.min(containerH / 2, 28)
+    const indicatorH = containerH - 2 * GLASS_PAD
+    const indicatorR = indicatorH / 2
+    const tabW = (containerW - 2 * GLASS_PAD) / tabsCount
+
+    // Sync selected tab with renderer state
+    const currentTarget = this.renderer.getTabTarget(groupId)
+    if (currentTarget !== activeIndex) {
+      this.renderer.setTabSelected(groupId, activeIndex, tabsCount)
+    }
+
+    // --- Layer 1: Container (Liquid Glass capsule bar) ---
+    const containerConfig: GlassElementConfig = {
+      id: `${groupId}-container`,
+      kind: 'glass-shape',
+      rect: {
+        x: containerRect.left,
+        y: containerRect.top,
+        w: containerW,
+        h: containerH,
+      },
+      cornerRadius: containerR,
+      refractionHeight: 20,
+      refractionAmount: -22,
+      depthEffect: true,
+      chromaticAberration: true,
+      blurRadius: 10,
+      saturation: 1.5,
+      contrast: 1.06,
+      brightness: 0.02,
+      tintColor: [0, 0, 0, 0],
+      surfaceColor: isDark ? [1.0, 1.0, 1.0, 0.10] : [1.0, 1.0, 1.0, 0.50],
+      highlight: {
+        mode: 0,
+        color: [1, 1, 1],
+        angle: Math.PI / 4,
+        falloff: 1.0,
+        alpha: isDark ? 0.60 : 0.80,
+        widthDp: 0.5,
+      },
+      outerShadow: {
+        radius: 20,
+        alpha: isDark ? 0.30 : 0.12,
+        offsetX: 0,
+        offsetY: 4,
+        color: [0, 0, 0],
+      },
+      label: '',
+      labelColor: [1, 1, 1, 1],
+      showChevron: false,
+      isInteractive: false,
+      isBottomTabContainer: { groupId, tabsCount },
+      useContinuousSdf: true,
+    }
+    configs.push(containerConfig)
+
+    // --- Layer 2: Tab Content items (for scaling/transform sync) ---
+    tabs.forEach((tabEl, i) => {
+      const tabRect = tabEl.getBoundingClientRect()
+      const contentConfig: GlassElementConfig = {
+        id: `${groupId}-tab-${i}`,
+        kind: 'glass-shape',
+        rect: {
+          x: tabRect.left,
+          y: tabRect.top,
+          w: tabRect.width,
+          h: tabRect.height,
+        },
+        cornerRadius: indicatorR,
+        refractionHeight: 0,
+        refractionAmount: 0,
+        depthEffect: false,
+        chromaticAberration: false,
+        blurRadius: 0,
+        saturation: 1,
+        contrast: 1,
+        brightness: 0,
+        tintColor: [0, 0, 0, 0],
+        surfaceColor: [0, 0, 0, 0],
+        highlight: null,
+        outerShadow: null,
+        label: '',
+        labelColor: [1, 1, 1, 1],
+        showChevron: false,
+        isInteractive: false,
+        isBottomTabContent: {
+          groupId,
+          containerCenterX: containerRect.left + containerW / 2,
+          containerCenterY: containerRect.top + containerH / 2,
+          containerWidth: containerW,
+        },
+      }
+      configs.push(contentConfig)
+    })
+
+    // --- Layer 3: Selected Indicator (Sliding Optical Glass Capsule, TOPMOST) ---
+    const indicatorConfig: GlassElementConfig = {
+      id: `${groupId}-indicator`,
+      kind: 'glass-shape',
+      rect: {
+        x: containerRect.left + GLASS_PAD,
+        y: containerRect.top + GLASS_PAD,
+        w: tabW,
+        h: indicatorH,
+      },
+      cornerRadius: indicatorR,
+      refractionHeight: 12,
+      refractionAmount: -16,
+      depthEffect: true,
+      chromaticAberration: true, // 7-path rainbow dispersion!
+      blurRadius: 0,
+      saturation: 1.0,
+      contrast: 1.0,
+      brightness: 0.0,
+      tintColor: [0, 0, 0, 0],
+      surfaceColor: [0, 0, 0, 0],
+      highlight: {
+        mode: 0,
+        color: [1, 1, 1],
+        angle: Math.PI / 4,
+        falloff: 1.0,
+        alpha: isDark ? 0.70 : 0.90,
+        widthDp: 0.6,
+      },
+      outerShadow: {
+        radius: 14,
+        alpha: isDark ? 0.40 : 0.18,
+        offsetX: 0,
+        offsetY: 3,
+        color: [0, 0, 0],
+      },
+      innerShadow: {
+        radius: 8,
+        alpha: 0.30,
+        offsetX: 0,
+        offsetY: 8,
+      },
+      label: '',
+      labelColor: [1, 1, 1, 1],
+      showChevron: false,
+      isInteractive: false,
+      isBottomTabIndicator: {
+        groupId,
+        dragWidth: tabW,
+        dimColor: isDark ? [1, 1, 1, 0.12] : [0, 0, 0, 0.08],
+        accentColor,
+        containerRect: {
+          x: containerRect.left,
+          y: containerRect.top + GLASS_PAD,
+          w: containerW,
+          h: indicatorH,
+        },
+        containerCenterX: containerRect.left + containerW / 2,
+        containerCenterY: containerRect.top + containerH / 2,
+        containerWidth: containerW,
+      },
+      useContinuousSdf: true,
+    }
+    configs.push(indicatorConfig)
+  }
+
   public refreshElements(): void {
     if (!this.renderer) return
 
@@ -353,7 +579,19 @@ export class ZephyrLiquidGlass {
     const viewportW = window.innerWidth
     const viewportH = window.innerHeight
 
-    // Render sequence: Nav & Cards (background) -> Pills & Tabs -> Buttons & Inputs -> Modals (foreground)
+    // 1. Build Top Navigation Bar LiquidTabs (.nav-tabs)
+    const navTabsContainer = document.querySelector<HTMLElement>('.nav-tabs')
+    this.buildLiquidTabs('nav-tabs', navTabsContainer, '.nav-tab', configs, [0.04, 0.52, 0.98])
+
+    // 2. Build Settings Navigation Menu LiquidTabs (.settings-menu)
+    const settingsMenuContainer = document.querySelector<HTMLElement>('.settings-menu')
+    this.buildLiquidTabs('settings-tabs', settingsMenuContainer, '.settings-tab', configs, [0.04, 0.52, 0.98])
+
+    // 3. Build Activity Range LiquidTabs (.activity-range-tabs)
+    const activityTabsContainer = document.querySelector<HTMLElement>('.activity-range-tabs')
+    this.buildLiquidTabs('activity-tabs', activityTabsContainer, '.activity-range-btn', configs, [0.04, 0.52, 0.98])
+
+    // 4. Render all other tracked UI elements
     const orderMap: Record<TrackedElement['type'], number> = {
       nav: 10,
       card: 20,
@@ -378,6 +616,11 @@ export class ZephyrLiquidGlass {
         return
       }
 
+      // Skip elements that are inside the specialized liquid tab containers
+      if (el.closest('.nav-tabs') || el.closest('.settings-menu') || el.closest('.activity-range-tabs')) {
+        return
+      }
+
       const rect = el.getBoundingClientRect()
       // Viewport culling
       if (rect.bottom < -80 || rect.top > viewportH + 80 || rect.right < -80 || rect.left > viewportW + 80) {
@@ -397,8 +640,6 @@ export class ZephyrLiquidGlass {
 
       const isDark = this.isDark
 
-      // Authentic Liquid Glass Parameters: G2 continuous curvature, chromatic aberration,
-      // Fresnel specular reflection, and multi-tap drop shadow
       let refractionHeight = 14
       let refractionAmount = -24
       let blurRadius = 14
@@ -521,7 +762,7 @@ export class ZephyrLiquidGlass {
         refractionHeight,
         refractionAmount,
         depthEffect: true,
-        chromaticAberration: true, // 7-channel rainbow dispersion
+        chromaticAberration: true,
         blurRadius,
         saturation,
         brightness,

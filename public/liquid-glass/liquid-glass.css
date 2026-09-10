@@ -38,36 +38,57 @@ html, body.app-body, body {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     box-shadow: none !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+    padding: 10px 24px !important;
     transition: padding var(--terminal-shelf-duration) var(--terminal-shelf-ease) !important;
 }
 
-/* Nav Tab Pills */
+/* Nav Tabs Container — Faithful to LiquidBottomTabs Container Row */
+.nav-tabs {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 4px !important;
+    border-radius: 9999px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    position: relative;
+    height: 44px;
+    box-sizing: border-box;
+}
+
+/* Nav Tab Items — Sits directly inside the Liquid Glass Container */
 .nav-tab {
     position: relative;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 36px !important;
+    padding: 0 18px !important;
     border-radius: 9999px !important;
-    padding: 7px 18px !important;
     font-weight: 600 !important;
     font-size: 13.5px !important;
     letter-spacing: -0.01em;
-    color: rgba(255, 255, 255, 0.75) !important;
+    color: rgba(255, 255, 255, 0.70) !important;
     background: transparent !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
-    border: 1px solid transparent !important;
+    border: none !important;
     box-shadow: none !important;
-    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), color 200ms ease !important;
-    will-change: transform;
+    transition: color 160ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
     cursor: pointer;
+    z-index: 1;
+    white-space: nowrap;
 }
 
 :root[data-theme="light"] .nav-tab {
-    color: rgba(15, 23, 42, 0.75) !important;
+    color: rgba(15, 23, 42, 0.70) !important;
 }
 
 .nav-tab:hover {
     color: #ffffff !important;
-    transform: translateY(-1px) scale(1.02);
+    transform: translateY(-1px);
 }
 
 :root[data-theme="light"] .nav-tab:hover {
@@ -78,18 +99,17 @@ html, body.app-body, body {
     transform: scale(0.96) !important;
 }
 
+/* Active tab text is illuminated by the underlying WebGL Liquid Glass indicator */
 .nav-tab.active {
     color: #38bdf8 !important;
     font-weight: 700 !important;
-    border-color: rgba(56, 189, 248, 0.40) !important;
 }
 
 :root[data-theme="light"] .nav-tab.active {
     color: #0284c7 !important;
-    border-color: rgba(14, 165, 233, 0.50) !important;
 }
 
-.nav-tab.active::after {
+.nav-tab.active::after, .nav-tab::after {
     display: none !important;
 }
 
@@ -129,6 +149,159 @@ html, body.app-body, body {
 .ai-floating-btn:hover {
     transform: translateY(-1px) scale(1.05) !important;
     color: #e9d5ff !important;
+}
+
+/* ==========================================================================
+   Settings Navigation Menu — Authentic LiquidBottomTabs Bar
+   ========================================================================== */
+.settings-layout {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 18px !important;
+}
+
+.settings-menu {
+    display: flex !important;
+    align-items: center !important;
+    gap: 0 !important;
+    padding: 4px !important;
+    border-radius: 9999px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    height: 44px !important;
+    box-sizing: border-box !important;
+    width: fit-content !important;
+    max-width: 100% !important;
+    position: relative !important;
+}
+
+.settings-tab {
+    position: relative;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 36px !important;
+    padding: 0 18px !important;
+    border-radius: 9999px !important;
+    font-weight: 600 !important;
+    font-size: 13.5px !important;
+    white-space: nowrap !important;
+    color: rgba(255, 255, 255, 0.70) !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    cursor: pointer;
+    transition: color 160ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
+    z-index: 1;
+}
+
+:root[data-theme="light"] .settings-tab {
+    color: rgba(15, 23, 42, 0.70) !important;
+}
+
+.settings-tab:hover {
+    color: #ffffff !important;
+    transform: translateY(-1px);
+}
+
+:root[data-theme="light"] .settings-tab:hover {
+    color: #0f172a !important;
+}
+
+.settings-tab:active {
+    transform: scale(0.96) !important;
+}
+
+.settings-tab.active {
+    color: #38bdf8 !important;
+    font-weight: 700 !important;
+}
+
+:root[data-theme="light"] .settings-tab.active {
+    color: #0284c7 !important;
+}
+
+.settings-tab.active::after, .settings-tab::after {
+    display: none !important;
+}
+
+.settings-content, .settings-section-card {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 20px !important;
+    box-shadow: none !important;
+    padding: 24px !important;
+}
+
+/* ==========================================================================
+   Activity Range Tabs — Authentic LiquidBottomTabs Bar
+   ========================================================================== */
+.activity-range-tabs {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 0 !important;
+    padding: 4px !important;
+    border-radius: 9999px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    height: 40px !important;
+    box-sizing: border-box !important;
+    position: relative;
+}
+
+.activity-range-thumb {
+    display: none !important; /* Replaced by WebGL Liquid Glass Indicator */
+}
+
+.activity-range-btn {
+    position: relative;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 32px !important;
+    padding: 0 16px !important;
+    border-radius: 9999px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: rgba(255, 255, 255, 0.70) !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    cursor: pointer;
+    transition: color 160ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
+    z-index: 1;
+}
+
+:root[data-theme="light"] .activity-range-btn {
+    color: rgba(15, 23, 42, 0.70) !important;
+}
+
+.activity-range-btn:hover {
+    color: #ffffff !important;
+}
+
+:root[data-theme="light"] .activity-range-btn:hover {
+    color: #0f172a !important;
+}
+
+.activity-range-btn:active {
+    transform: scale(0.96) !important;
+}
+
+.activity-range-btn.active {
+    color: #38bdf8 !important;
+    font-weight: 700 !important;
+}
+
+:root[data-theme="light"] .activity-range-btn.active {
+    color: #0284c7 !important;
 }
 
 /* ==========================================================================
@@ -336,41 +509,7 @@ html, body.app-body, body {
     font-weight: 700;
 }
 
-/* ==========================================================================
-   Activity View & Time Range
-   ========================================================================== */
-.activity-range-tabs {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: 1px solid rgba(255, 255, 255, 0.18) !important;
-    border-radius: 9999px !important;
-    padding: 3px !important;
-    box-shadow: none !important;
-}
-
-.activity-range-btn {
-    border-radius: 9999px !important;
-    border: none !important;
-    background: transparent !important;
-    color: rgba(255, 255, 255, 0.70) !important;
-    font-weight: 600 !important;
-    transition: all 140ms ease !important;
-}
-
-:root[data-theme="light"] .activity-range-btn {
-    color: rgba(15, 23, 42, 0.70) !important;
-}
-
-.activity-range-btn.active {
-    color: #38bdf8 !important;
-    font-weight: 700 !important;
-}
-
-:root[data-theme="light"] .activity-range-btn.active {
-    color: #0284c7 !important;
-}
-
+/* Activity Items */
 .activity-item, .activity-card {
     background: transparent !important;
     backdrop-filter: none !important;
@@ -384,41 +523,6 @@ html, body.app-body, body {
 .activity-item:hover, .activity-card:hover {
     transform: translateY(-1px);
     border-color: rgba(255, 255, 255, 0.28) !important;
-}
-
-/* ==========================================================================
-   Settings View
-   ========================================================================== */
-.settings-menu, .settings-nav {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    border-radius: 18px !important;
-    box-shadow: none !important;
-}
-
-.settings-tab {
-    border-radius: 9999px !important;
-    transition: transform 120ms ease !important;
-}
-
-.settings-tab:hover {
-    transform: translateY(-1px);
-}
-
-.settings-tab.active {
-    border-color: rgba(56, 189, 248, 0.45) !important;
-    color: #38bdf8 !important;
-}
-
-.settings-content, .settings-section-card {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    border-radius: 18px !important;
-    box-shadow: none !important;
 }
 
 /* ==========================================================================
