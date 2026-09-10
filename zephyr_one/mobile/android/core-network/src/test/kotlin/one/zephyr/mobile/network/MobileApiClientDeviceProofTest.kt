@@ -247,6 +247,37 @@ class MobileApiClientDeviceProofTest {
     }
 
     @Test
+    fun `GET devices signs with devices list usage`() = runTest {
+        server.enqueue(
+            challengeResponse(
+                NONCE_A,
+                "GET",
+                "/api/mobile/v1/devices",
+                EMPTY_SHA256,
+                "devices.list",
+            ),
+        )
+        server.enqueue(successResponse())
+        val seen = mutableListOf<DeviceProofChallenge>()
+        val client = client(DeviceProofSigner { challenge ->
+            seen += challenge
+            proofFor(challenge)
+        })
+
+        val result = client.get("/api/mobile/v1/devices", TestReply.serializer())
+
+        assertTrue(result is ApiResult.Success)
+        val challengeBody = MobileJson.instance.decodeFromString(
+            DeviceProofChallengeRequestDto.serializer(),
+            server.takeRequest().body.readUtf8(),
+        )
+        assertEquals("devices.list", challengeBody.usage)
+        assertEquals("devices.list", seen.single().usage)
+        assertEquals("GET", challengeBody.method)
+        assertEquals("/api/mobile/v1/devices", challengeBody.path)
+    }
+
+    @Test
     fun `challenge diagnostic text redacts nonce and canonical query`() {
         val challenge = DeviceProofChallenge(
             nonce = NONCE_A,

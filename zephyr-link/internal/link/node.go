@@ -361,7 +361,9 @@ type sessionTLS struct {
 // byte-identical Link v2.
 func (n *Node) handlePushFrame(w http.ResponseWriter, r *http.Request) {
 	var req pushFrameRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
+	decoder.UseNumber()
+	if err := decoder.Decode(&req); err != nil {
 		errJSON(w, http.StatusBadRequest, "bad_request", "bad json")
 		return
 	}

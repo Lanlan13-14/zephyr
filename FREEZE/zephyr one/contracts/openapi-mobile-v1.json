@@ -701,6 +701,10 @@
         "security": [
           {
             "ZephyrSid": []
+          },
+          {
+            "DeviceAccess": [],
+            "DeviceProof": []
           }
         ]
       }
@@ -788,6 +792,10 @@
         "security": [
           {
             "ZephyrSid": []
+          },
+          {
+            "DeviceAccess": [],
+            "DeviceProof": []
           }
         ],
         "requestBody": {
@@ -893,6 +901,10 @@
         "security": [
           {
             "ZephyrSid": []
+          },
+          {
+            "DeviceAccess": [],
+            "DeviceProof": []
           }
         ],
         "requestBody": {
@@ -1710,6 +1722,10 @@
         "security": [
           {
             "ZephyrSid": []
+          },
+          {
+            "DeviceAccess": [],
+            "DeviceProof": []
           }
         ],
         "requestBody": {
@@ -4787,7 +4803,8 @@
               "GET",
               "POST",
               "PUT",
-              "DELETE"
+              "DELETE",
+              "PATCH"
             ]
           },
           "path": {
@@ -4820,7 +4837,11 @@
               "shared.session.open",
               "shared.session.refresh",
               "shared.session.close",
-              "file-bridge.lease"
+              "file-bridge.lease",
+              "devices.list",
+              "devices.patch",
+              "devices.revoke",
+              "sensitive.verify"
             ],
             "description": "Optional assertion; when present it must equal the server-derived usage."
           }
@@ -4889,7 +4910,11 @@
               "shared.session.open",
               "shared.session.refresh",
               "shared.session.close",
-              "file-bridge.lease"
+              "file-bridge.lease",
+              "devices.list",
+              "devices.patch",
+              "devices.revoke",
+              "sensitive.verify"
             ]
           },
           "algorithm": {

@@ -4,8 +4,11 @@
 package codec
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 
 	"github.com/fxamacker/cbor/v2"
@@ -139,6 +142,76 @@ func init() {
 // Encode marshals v to canonical CBOR.
 func Encode(v any) ([]byte, error) { return encMode.Marshal(v) }
 
+// canonicalizeFrameBody expands JSON bytes (json.RawMessage from /link/push,
+// or a []byte that is a JSON object/array) into a map/slice before CBOR
+// encoding. Leaving those as a CBOR byte string makes the host unpack a Buffer
+// with no `op`, and the sync bridge answers invalid_request.
+func canonicalizeFrameBody(body any) (any, error) {
+	var raw []byte
+	switch typed := body.(type) {
+	case json.RawMessage:
+		raw = []byte(typed)
+	case []byte:
+		raw = typed
+	default:
+		return canonicalizeJSONNumbers(body), nil
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return map[string]any{}, nil
+	}
+	if trimmed[0] == '{' || trimmed[0] == '[' {
+		decoder := json.NewDecoder(bytes.NewReader(trimmed))
+		decoder.UseNumber()
+		var decoded any
+		if err := decoder.Decode(&decoded); err != nil {
+			return nil, fmt.Errorf("json body: %w", err)
+		}
+		return canonicalizeJSONNumbers(decoded), nil
+	}
+	return raw, nil
+}
+
+// canonicalizeJSONNumbers rewrites JSON/Go numbers so Link CBOR stays in the
+// Node codec's accepted set. encoding/json turns 59 into float64(59), and
+// CoreDet CBOR then emits a float. Node's link-v2-cbor.js fail-closes on
+// floats, so a second-round changes/ack frame would never expose `op`.
+func canonicalizeJSONNumbers(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		if integer, err := typed.Int64(); err == nil {
+			return integer
+		}
+		float, err := typed.Float64()
+		if err != nil || math.IsNaN(float) || math.IsInf(float, 0) {
+			return typed
+		}
+		return canonicalizeJSONNumbers(float)
+	case float32:
+		return canonicalizeJSONNumbers(float64(typed))
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return typed
+		}
+		if typed == math.Trunc(typed) && typed >= math.MinInt64 && typed <= math.MaxInt64 {
+			return int64(typed)
+		}
+		return typed
+	case map[string]any:
+		for key, item := range typed {
+			typed[key] = canonicalizeJSONNumbers(item)
+		}
+		return typed
+	case []any:
+		for i, item := range typed {
+			typed[i] = canonicalizeJSONNumbers(item)
+		}
+		return typed
+	default:
+		return value
+	}
+}
+
 // Decode unmarshals canonical CBOR.
 func Decode(data []byte, v any) error { return decMode.Unmarshal(data, v) }
 
@@ -209,7 +282,11 @@ func Pack(kind int, body any, secret bool) ([]byte, error) {
 	if kind < 1 {
 		return nil, errors.New("kind must be a registry integer")
 	}
-	payload, err := Encode(body)
+	canonicalBody, err := canonicalizeFrameBody(body)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := Encode(canonicalBody)
 	if err != nil {
 		return nil, err
 	}
