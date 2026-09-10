@@ -2,6 +2,7 @@ package link
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -95,6 +96,17 @@ func normalizeCBORForJSON(value any) (any, error) {
 			typed[i] = normalized
 		}
 		return typed, nil
+	case []byte:
+		trimmed := bytes.TrimSpace(typed)
+		if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+			var decoded any
+			if err := json.Unmarshal(trimmed, &decoded); err == nil {
+				return normalizeCBORForJSON(decoded)
+			}
+		}
+		return base64.StdEncoding.EncodeToString(typed), nil
+	case json.RawMessage:
+		return normalizeCBORForJSON([]byte(typed))
 	default:
 		return value, nil
 	}

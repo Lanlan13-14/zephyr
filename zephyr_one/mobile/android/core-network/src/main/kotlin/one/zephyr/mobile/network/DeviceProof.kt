@@ -140,6 +140,7 @@ internal object DeviceProofPolicy {
             "POST /api/mobile/v1/sync/ack" -> "sync.ack"
             "POST /api/mobile/v1/sync/now" -> "sync.now"
             "GET /api/mobile/v1/sync/status" -> "sync.status"
+            "GET /api/mobile/v1/devices" -> "devices.list"
             "POST /api/mobile/v1/blobs/uploads" -> "blob.upload.create"
             "GET /api/mobile/v1/shared" -> "shared.list"
             "POST /api/mobile/v1/file-bridge/lease" -> "file-bridge.lease"
@@ -156,10 +157,13 @@ internal object DeviceProofPolicy {
             method == "POST" && SHARED_SESSION_OPEN.matches(encodedPath) -> "shared.session.open"
             method == "POST" && SHARED_SESSION_REFRESH.matches(encodedPath) -> "shared.session.refresh"
             method == "DELETE" && SHARED_SESSION_CLOSE.matches(encodedPath) -> "shared.session.close"
+            method == "PATCH" && DEVICE_BY_ID.matches(encodedPath) -> "devices.patch"
+            method == "DELETE" && DEVICE_BY_ID.matches(encodedPath) -> "devices.revoke"
             else -> null
         }
     }
 
+    private val DEVICE_BY_ID = Regex("^/api/mobile/v1/devices/[^/]+$")
     private val BLOB_UPLOAD_STATUS = Regex("^/api/mobile/v1/blobs/uploads/[^/]+$")
     private val BLOB_CHUNK_UPLOAD = Regex("^/api/mobile/v1/blobs/uploads/[^/]+/chunks/[^/]+$")
     private val BLOB_CHUNK_DOWNLOAD = Regex("^/api/mobile/v1/blobs/[^/]+/chunks/[^/]+$")

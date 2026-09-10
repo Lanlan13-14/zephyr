@@ -76,6 +76,8 @@ function proofUsage(methodValue, targetValue) {
         ['POST /api/mobile/v1/sync/ack', 'sync.ack'],
         ['POST /api/mobile/v1/sync/now', 'sync.now'],
         ['GET /api/mobile/v1/sync/status', 'sync.status'],
+        ['GET /api/mobile/v1/devices', 'devices.list'],
+        ['POST /api/mobile/v1/sensitive/verify', 'sensitive.verify'],
         ['POST /api/mobile/v1/blobs/uploads', 'blob.upload.create'],
         ['GET /api/mobile/v1/shared', 'shared.list'],
         ['POST /api/mobile/v1/file-bridge/lease', 'file-bridge.lease'],
@@ -108,6 +110,12 @@ function proofUsage(methodValue, targetValue) {
     }
     if (method === 'DELETE' && /^\/api\/mobile\/v1\/shared\/sessions\/[^/]+$/.test(pathname)) {
         return 'shared.session.close';
+    }
+    if (method === 'PATCH' && /^\/api\/mobile\/v1\/devices\/[^/]+$/.test(pathname)) {
+        return 'devices.patch';
+    }
+    if (method === 'DELETE' && /^\/api\/mobile\/v1\/devices\/[^/]+$/.test(pathname)) {
+        return 'devices.revoke';
     }
     return null;
 }
