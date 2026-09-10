@@ -3436,7 +3436,7 @@ function renderConnections() {
         const sourceBadge = c.owner === 'shared'
             ? `<span class="connection-source-badge shared">${t('共享')}</span>`
             : (c.owner === 'own' ? `<span class="connection-source-badge">${t('我的')}</span>` : '');
-        return `<article class="connection-card"><div class="card-top"><span class="protocol-badge">${escapeHtml(c.protocol)}</span><div class="card-top-meta">${sourceBadge}<span class="last-time">${fmtTime(c.lastConnectedAt)}</span></div></div>
+        return `<article class="connection-card"><div class="card-top"><span class="protocol-badge ${escapeHtml(String(c.protocol || '').toLowerCase())}">${escapeHtml(c.protocol)}</span><div class="card-top-meta">${sourceBadge}<span class="last-time">${fmtTime(c.lastConnectedAt)}</span></div></div>
         <h2>${escapeHtml(c.name)}</h2><p class="host-line">${escapeHtml(c.host)}:${escapeHtml(c.port)} · ${c.connectionMode === 'proxy' ? t('代理') : c.connectionMode === 'jump' ? t('跳板机') : t('直连')}</p>
         <div class="tag-row">${(c.tags || []).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="remark-md">${renderMarkdown(c.remark || t('暂无备注'))}</div>
         <div class="card-actions">${canEdit ? `<button class="tool-btn" data-edit="${c.id}">${t('编辑')}</button>` : ''}${canDelete ? `<button class="tool-btn danger" data-delete="${c.id}">${t('删除')}</button>` : ''}${canUse ? `<button class="btn btn-primary" data-connect="${c.id}">${t('连接')}</button>` : `<button class="btn btn-primary" disabled title="${t('仅观察')}">${t('只读')}</button>`}</div></article>`;

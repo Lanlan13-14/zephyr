@@ -7,6 +7,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "build:editor": "esbuild public/editor/src/zephyr-editor.js --bundle --format=esm --target=es2020 --outfile=public/editor/zephyr-editor.bundle.js --minify",
+    "build:liquid-glass": "esbuild public/liquid-glass/src/index.ts --bundle --format=esm --target=es2020 --outfile=public/liquid-glass/liquid-glass.bundle.js --minify",
     "build:terminal": "node scripts/build-xterm-headless.mjs && node scripts/transpile-wterm.mjs core && node scripts/transpile-wterm.mjs dom",
     "build:terminal:wasm": "BUILD_WASM=1 bash scripts/build-wterm.sh",
     "test": "npm run test:rdp-node",
