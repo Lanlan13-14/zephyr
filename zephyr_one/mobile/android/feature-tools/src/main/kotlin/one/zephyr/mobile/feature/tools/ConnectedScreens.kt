@@ -61,7 +61,6 @@ import one.zephyr.mobile.model.ClientToken
 import one.zephyr.mobile.model.ConflictRecord
 import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.SensitiveGrant
-import one.zephyr.mobile.model.diagnosticText
 import one.zephyr.mobile.model.persistedDiagnosticText
 import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.network.MobileApi

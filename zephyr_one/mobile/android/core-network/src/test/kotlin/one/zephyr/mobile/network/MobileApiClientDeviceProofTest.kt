@@ -264,7 +264,10 @@ class MobileApiClientDeviceProofTest {
             proofFor(challenge)
         })
 
-        val result = client.get("/api/mobile/v1/devices", TestReply.serializer())
+        val result = client.get(
+            path = "/api/mobile/v1/devices",
+            responseSerializer = TestReply.serializer(),
+        )
 
         assertTrue(result is ApiResult.Success)
         val challengeBody = MobileJson.instance.decodeFromString(
