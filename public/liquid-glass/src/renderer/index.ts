@@ -970,8 +970,8 @@ export class LiquidGlassRenderer {
       premultipliedAlpha: false,
       alpha: false,
       antialias: false,
-      preserveDrawingBuffer: false,
-      powerPreference: 'low-power',
+      preserveDrawingBuffer: true,
+      powerPreference: 'high-performance',
     })
     if (!gl) throw new Error('WebGL not supported')
     this.gl = gl

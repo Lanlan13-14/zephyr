@@ -1,4 +1,4 @@
-const DEFAULT_BRAND_ICON = '🌬️';
+const DEFAULT_BRAND_ICON = '/zephyr-mark.svg';
 const SCHEME_IDS = new Set(['frost', 'lava', 'asagi', 'cyber', 'custom']);
 
 /* ── Zephyr One mark geometry ───────────────────────────────────────────
@@ -303,7 +303,7 @@ function zephyrOneCompactSvg({ gradientId = 'zephyr-one-gradient', title = 'Zeph
 export function zephyrBrandIconHtml(icon = DEFAULT_BRAND_ICON, opts = {}) {
     const value = String(icon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
     if (value.startsWith('data:image/')) return `<img src="${value}" alt="">`;
-    if (value === DEFAULT_BRAND_ICON) {
+    if (value === DEFAULT_BRAND_ICON || value === '🌬️' || value === '/zephyr-mark.svg') {
         const seq = ++iconSeq;
         let svg;
         if (!isOneProduct()) {
@@ -314,6 +314,9 @@ export function zephyrBrandIconHtml(icon = DEFAULT_BRAND_ICON, opts = {}) {
             svg = zephyrOneWindSvg({ gradientId: `zephyr-one-gradient-${seq}`, maskId: `zephyr-one-cut-${seq}` });
         }
         return `<span class="zephyr-brand-mark" aria-hidden="true">${svg}</span>`;
+    }
+    if (value.endsWith('.svg') || value.startsWith('/')) {
+        return `<img src="${escapeHtml(value)}" alt="" class="zephyr-brand-logo">`;
     }
     return escapeHtml(value);
 }

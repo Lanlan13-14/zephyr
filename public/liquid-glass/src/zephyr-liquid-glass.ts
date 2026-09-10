@@ -1,10 +1,11 @@
 // public/liquid-glass/src/zephyr-liquid-glass.ts
 // Zephyr WebGL Liquid Glass Integration Runtime
-// Connects the high-fidelity WebGL Liquid Glass shader engine to Zephyr DOM UI
+// Authentic port of martin65536/liquid-glass-webgl & Kyant0/AndroidLiquidGlass
+// Full WebGL pipeline: G2 continuous curvature, refractive lens, chromatic aberration,
+// specular rim highlights, radial press glow, and spring dynamics.
 
 import { LiquidGlassRenderer } from './renderer/index'
 import type { GlassElementConfig, GlassHighlight } from './renderer/types'
-import { ContinuousCurvatureRoundedRectangleCornerBuilder } from './shapes/continuous-corners'
 
 export interface ZephyrLiquidGlassOptions {
   canvasId?: string
@@ -16,8 +17,7 @@ export interface ZephyrLiquidGlassOptions {
 interface TrackedElement {
   id: string
   el: HTMLElement
-  type: 'nav' | 'card' | 'button' | 'modal' | 'pill' | 'panel' | 'input' | 'tab' | 'default'
-  rect?: DOMRect
+  type: 'nav' | 'card' | 'button' | 'btn-primary' | 'btn-danger' | 'modal' | 'pill' | 'panel' | 'input' | 'tab' | 'default'
   customRadius?: number
 }
 
@@ -31,11 +31,9 @@ export class ZephyrLiquidGlass {
   private rafId: number | null = null
   private pointerX = 0
   private pointerY = 0
-  private lightAngle = Math.PI / 4 // 45 deg default
   private isDark = true
   private resizeObserver: ResizeObserver | null = null
   private mutationObserver: MutationObserver | null = null
-  private bgCanvas: HTMLCanvasElement | null = null
   private lastUpdate = 0
   private activePressedId: string | null = null
   private options: ZephyrLiquidGlassOptions
@@ -59,7 +57,6 @@ export class ZephyrLiquidGlass {
       canvas.id = this.options.canvasId || 'zephyr-liquid-canvas'
       canvas.className = 'zephyr-liquid-canvas'
       canvas.setAttribute('aria-hidden', 'true')
-      // Position as fixed background layer
       canvas.style.position = 'fixed'
       canvas.style.top = '0'
       canvas.style.left = '0'
@@ -67,7 +64,6 @@ export class ZephyrLiquidGlass {
       canvas.style.height = '100vh'
       canvas.style.zIndex = '0'
       canvas.style.pointerEvents = 'none'
-      canvas.style.opacity = '1'
       canvas.style.display = 'block'
       document.body.prepend(canvas)
     }
@@ -82,14 +78,19 @@ export class ZephyrLiquidGlass {
 
     if (!this.renderer) return false
 
+    // WebGL configuration: G2 continuous curvature, full refraction
+    this.renderer.useContinuousSdf = true
+    this.renderer.cornerStyle = 1 // Continuous G2 squircle
+    this.renderer.directBackdropSample = false // Full refractive sampling
+
     // Initial theme detection
     this.detectTheme()
 
     // Setup dimensions
     this.resize()
 
-    // Initialize ambient background texture
-    this.initAmbientBackground()
+    // Set authentic Zephyr theme background (NO mobile wallpapers!)
+    this.applyThemeBackground()
 
     // Track existing DOM elements
     this.scanAndTrack()
@@ -100,7 +101,7 @@ export class ZephyrLiquidGlass {
     // Start render loop
     this.start()
 
-    console.info('[Zephyr Liquid Glass] Initialized with WebGL G2 Continuous Curvature & Refraction Lens')
+    console.info('[Zephyr Liquid Glass] Running WebGL G2 Continuous Curvature Liquid Glass Engine')
     return true
   }
 
@@ -114,86 +115,21 @@ export class ZephyrLiquidGlass {
     }
   }
 
-  private initAmbientBackground(): void {
+  private applyThemeBackground(): void {
     if (!this.renderer) return
-
-    // Create an ambient gradient wallpaper texture to provide caustics and refraction depth
-    const w = 512
-    const h = 512
-    const bgCanvas = document.createElement('canvas')
-    bgCanvas.width = w
-    bgCanvas.height = h
-    const ctx = bgCanvas.getContext('2d')
-    if (!ctx) return
-    this.bgCanvas = bgCanvas
-
-    this.drawAmbientBackground(ctx, w, h)
-
-    const dataUrl = bgCanvas.toDataURL('image/webp', 0.9)
-    this.renderer.loadWallpaper(dataUrl).then(() => {
-      if (this.renderer) {
-        this.renderer.wallpaperReady = true
-        this.renderer.markAllDirty()
-        this.renderer.needsRedraw = true
-      }
-    }).catch(() => {
-      // Fallback to solid background color if wallpaper load fails
-      if (this.renderer) {
-        this.renderer.setBackgroundColor(this.isDark ? [0.07, 0.09, 0.14] : [0.94, 0.96, 0.98])
-      }
-    })
-  }
-
-  private drawAmbientBackground(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-    if (this.isDark) {
-      // Deep obsidian slate with subtle refractive cyan/indigo/violet caustics
-      const grad = ctx.createLinearGradient(0, 0, w, h)
-      grad.addColorStop(0, '#090d16')
-      grad.addColorStop(0.5, '#0e1526')
-      grad.addColorStop(1, '#080c14')
-      ctx.fillStyle = grad
-      ctx.fillRect(0, 0, w, h)
-
-      // Ambient light blooms for rich glass refraction
-      this.drawLightOrb(ctx, w * 0.2, h * 0.2, 220, 'rgba(56, 189, 248, 0.12)') // cyan
-      this.drawLightOrb(ctx, w * 0.8, h * 0.3, 260, 'rgba(99, 102, 241, 0.14)') // indigo
-      this.drawLightOrb(ctx, w * 0.5, h * 0.8, 240, 'rgba(168, 85, 247, 0.10)') // purple
-      this.drawLightOrb(ctx, w * 0.15, h * 0.85, 180, 'rgba(14, 165, 233, 0.08)') // sky
-    } else {
-      // Crisp luminous daylight glass with subtle pristine sky/azure caustics
-      const grad = ctx.createLinearGradient(0, 0, w, h)
-      grad.addColorStop(0, '#f8fafc')
-      grad.addColorStop(0.5, '#eef2ff')
-      grad.addColorStop(1, '#f1f5f9')
-      ctx.fillStyle = grad
-      ctx.fillRect(0, 0, w, h)
-
-      this.drawLightOrb(ctx, w * 0.25, h * 0.2, 240, 'rgba(125, 211, 252, 0.25)')
-      this.drawLightOrb(ctx, w * 0.8, h * 0.35, 280, 'rgba(199, 210, 254, 0.30)')
-      this.drawLightOrb(ctx, w * 0.45, h * 0.85, 260, 'rgba(221, 214, 254, 0.22)')
-    }
-  }
-
-  private drawLightOrb(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
-    const radial = ctx.createRadialGradient(x, y, 0, x, y, r)
-    radial.addColorStop(0, color)
-    radial.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = radial
-    ctx.beginPath()
-    ctx.arc(x, y, r, 0, Math.PI * 2)
-    ctx.fill()
+    // Authentic Zephyr theme colors: Deep obsidian dark (#0e1015) / Pristine light (#f4f5f7)
+    // No external phone wallpaper is loaded!
+    const darkBg: [number, number, number] = [0.055, 0.063, 0.082]
+    const lightBg: [number, number, number] = [0.957, 0.960, 0.968]
+    this.renderer.setBackgroundColor(this.isDark ? darkBg : lightBg)
+    this.renderer.wallpaperReady = true
+    this.renderer.markAllDirty()
+    this.renderer.needsRedraw = true
   }
 
   public updateTheme(): void {
     this.detectTheme()
-    if (this.bgCanvas && this.renderer) {
-      const ctx = this.bgCanvas.getContext('2d')
-      if (ctx) {
-        this.drawAmbientBackground(ctx, this.bgCanvas.width, this.bgCanvas.height)
-        const dataUrl = this.bgCanvas.toDataURL('image/webp', 0.9)
-        this.renderer.loadWallpaper(dataUrl).catch(() => {})
-      }
-    }
+    this.applyThemeBackground()
     this.refreshElements()
   }
 
@@ -232,69 +168,87 @@ export class ZephyrLiquidGlass {
   }
 
   public scanAndTrack(root: Document | HTMLElement = document): void {
-    // Select all UI components that qualify for liquid glass styling
     const selectors = [
       '.main-nav',
-      '.nav-tab.active',
+      '.nav-tab',
+      '.nav-actions .btn-sm',
       '.btn-primary',
       '.add-btn',
+      '.btn.danger',
+      '.btn',
+      '.tool-btn',
       '.login-card',
       '.auth-card',
       '.connection-card',
+      '.protocol-badge',
       '.modal-content',
       '.terminal-smartbar',
-      '.smartbar-tab.active',
+      '.smartbar-tab',
       '.activity-range-tabs',
+      '.activity-range-btn',
+      '.activity-item',
       '.activity-card',
-      '.ai-chat-container',
-      '.ai-message.assistant',
-      '.ai-message.user',
-      '.notes-sidebar',
-      '.settings-nav',
+      '.search-input',
+      '.action-bar select',
+      '.settings-menu',
+      '.settings-tab',
+      '.settings-content',
       '.settings-section-card',
-      '.liquid-glass',
+      '.ai-chat-container',
+      '.ai-floating-btn',
+      '.floating-panel',
+      '.toast',
       '[data-liquid-glass]',
     ]
 
     const matched = root.querySelectorAll<HTMLElement>(selectors.join(', '))
     matched.forEach((el) => {
-      // Determine element type
       let type: TrackedElement['type'] = 'default'
       if (el.classList.contains('main-nav') || el.classList.contains('terminal-smartbar')) {
         type = 'nav'
-      } else if (el.classList.contains('btn') || el.tagName === 'BUTTON') {
+      } else if (el.classList.contains('btn-primary') || el.classList.contains('add-btn')) {
+        type = 'btn-primary'
+      } else if (el.classList.contains('danger')) {
+        type = 'btn-danger'
+      } else if (el.classList.contains('btn') || el.tagName === 'BUTTON' || el.classList.contains('tool-btn')) {
         type = 'button'
-      } else if (el.classList.contains('connection-card') || el.classList.contains('login-card') || el.classList.contains('auth-card') || el.classList.contains('settings-section-card')) {
+      } else if (el.classList.contains('connection-card') || el.classList.contains('login-card') || el.classList.contains('auth-card') || el.classList.contains('settings-section-card') || el.classList.contains('settings-content')) {
         type = 'card'
       } else if (el.classList.contains('modal-content')) {
         type = 'modal'
-      } else if (el.classList.contains('nav-tab') || el.classList.contains('smartbar-tab')) {
+      } else if (el.classList.contains('nav-tab') || el.classList.contains('smartbar-tab') || el.classList.contains('settings-tab')) {
         type = 'tab'
-      } else if (el.classList.contains('activity-range-tabs')) {
+      } else if (el.classList.contains('protocol-badge') || el.classList.contains('activity-range-btn') || el.classList.contains('activity-range-tabs')) {
         type = 'pill'
+      } else if (el.classList.contains('search-input') || el.tagName === 'INPUT' || el.tagName === 'SELECT') {
+        type = 'input'
       }
       this.registerElement(el, type)
     })
   }
 
   private attachEvents(): void {
-    // Window resize
     window.addEventListener('resize', () => this.resize(), { passive: true })
-    window.addEventListener('scroll', () => this.requestRedraw(), { passive: true, capture: true })
+    window.addEventListener('scroll', () => {
+      this.refreshElements()
+      this.requestRedraw()
+    }, { passive: true, capture: true })
 
-    // Mouse / pointer movement for dynamic specular rim lighting & refraction
+    // Mouse pointer movement drives dynamic specular highlights and Fresnel rim glints
     window.addEventListener('pointermove', (e) => {
       this.pointerX = e.clientX
       this.pointerY = e.clientY
-      this.lightAngle = Math.atan2(e.clientY - window.innerHeight / 2, e.clientX - window.innerWidth / 2)
       if (this.renderer) {
         this.renderer.needsRedraw = true
       }
     }, { passive: true })
 
-    // Press feedback for tactile spring animations
+    // Tactile spring press feedback with pointer coordinates
     window.addEventListener('pointerdown', (e) => {
-      const target = (e.target as HTMLElement)?.closest?.('[data-liquid-glass], .btn, .nav-tab, .connection-card, .login-card') as HTMLElement | null
+      const target = (e.target as HTMLElement)?.closest?.(
+        'button, .btn, .nav-tab, .smartbar-tab, .connection-card, .login-card, [data-liquid-glass]'
+      ) as HTMLElement | null
+
       if (target && this.renderer) {
         const id = this.elToId.get(target)
         if (id) {
@@ -325,14 +279,14 @@ export class ZephyrLiquidGlass {
       }
     }, { passive: true })
 
-    // ResizeObserver for tracking geometry changes
+    // ResizeObserver
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => {
         this.requestRedraw()
       })
     }
 
-    // MutationObserver to track theme and DOM changes
+    // MutationObserver
     if (typeof MutationObserver !== 'undefined') {
       this.mutationObserver = new MutationObserver((mutations) => {
         let themeChanged = false
@@ -368,8 +322,9 @@ export class ZephyrLiquidGlass {
     if (!this.canvas || !this.renderer) return
     const w = window.innerWidth
     const h = window.innerHeight
-    this.canvas.width = w * (window.devicePixelRatio || 1)
-    this.canvas.height = h * (window.devicePixelRatio || 1)
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    this.canvas.width = Math.round(w * dpr)
+    this.canvas.height = Math.round(h * dpr)
     this.canvas.style.width = w + 'px'
     this.canvas.style.height = h + 'px'
     this.renderer.resize(w, h)
@@ -383,13 +338,12 @@ export class ZephyrLiquidGlass {
     const style = window.getComputedStyle(el)
     const br = parseFloat(style.borderRadius)
     if (!isNaN(br) && br > 0) {
-      // If border radius is 50% or >= half min dimension, treat as capsule
       if (style.borderRadius.includes('50%') || style.borderRadius.includes('9999px') || br >= Math.min(rect.width, rect.height) / 2) {
         return Math.min(rect.width, rect.height) / 2
       }
       return br
     }
-    return 16 // Default modern squircle radius
+    return 16
   }
 
   public refreshElements(): void {
@@ -399,92 +353,164 @@ export class ZephyrLiquidGlass {
     const viewportW = window.innerWidth
     const viewportH = window.innerHeight
 
-    this.trackedElements.forEach((item) => {
+    // Render sequence: Nav & Cards (background) -> Pills & Tabs -> Buttons & Inputs -> Modals (foreground)
+    const orderMap: Record<TrackedElement['type'], number> = {
+      nav: 10,
+      card: 20,
+      panel: 25,
+      pill: 30,
+      tab: 35,
+      input: 40,
+      button: 50,
+      'btn-primary': 60,
+      'btn-danger': 60,
+      modal: 100,
+      default: 20,
+    }
+
+    const sortedItems = Array.from(this.trackedElements.values()).sort((a, b) => {
+      return (orderMap[a.type] || 20) - (orderMap[b.type] || 20)
+    })
+
+    sortedItems.forEach((item) => {
       const { el, id, type, customRadius } = item
       if (!el.isConnected || el.offsetParent === null) {
-        return // Hidden or detached
-      }
-
-      const rect = el.getBoundingClientRect()
-      // Frustum culling: skip elements completely outside viewport
-      if (rect.bottom < -40 || rect.top > viewportH + 40 || rect.right < -40 || rect.left > viewportW + 40) {
         return
       }
 
-      if (rect.width <= 0 || rect.height <= 0) return
+      const rect = el.getBoundingClientRect()
+      // Viewport culling
+      if (rect.bottom < -80 || rect.top > viewportH + 80 || rect.right < -80 || rect.left > viewportW + 80) {
+        return
+      }
+
+      if (rect.width <= 2 || rect.height <= 2) return
 
       const cornerRadius = this.computeCornerRadius(el, rect, customRadius)
       
       // Dynamic angle from center of element to current pointer position
       const centerX = rect.left + rect.width / 2
       const centerY = rect.top + rect.height / 2
-      const elAngle = Math.atan2(this.pointerY - centerY, this.pointerX - centerX)
+      const elAngle = this.options.enableDynamicHighlight
+        ? Math.atan2(this.pointerY - centerY, this.pointerX - centerX)
+        : Math.PI / 4
 
       const isDark = this.isDark
 
-      // Create highlight tuned to type and theme
-      const highlight: GlassHighlight = {
-        mode: 0,
-        color: isDark ? [1, 1, 1] : [1, 1, 1],
-        angle: this.options.enableDynamicHighlight ? elAngle : Math.PI / 4,
-        falloff: type === 'button' ? 1.4 : 1.0,
-        alpha: isDark ? (type === 'button' ? 0.65 : 0.45) : (type === 'button' ? 0.85 : 0.65),
-        widthDp: type === 'button' ? 0.75 : 0.5,
-        blurRadiusDp: 0.5,
+      // Authentic Liquid Glass Parameters: G2 continuous curvature, chromatic aberration,
+      // Fresnel specular reflection, and multi-tap drop shadow
+      let refractionHeight = 14
+      let refractionAmount = -24
+      let blurRadius = 14
+      let saturation = isDark ? 1.45 : 1.25
+      let contrast = 1.05
+      let brightness = 0.02
+      let surfaceAlpha = isDark ? 0.12 : 0.45
+      let tintColor: [number, number, number, number] = [0, 0, 0, 0]
+      let surfaceColor: [number, number, number, number] = isDark
+        ? [1.0, 1.0, 1.0, surfaceAlpha]
+        : [1.0, 1.0, 1.0, surfaceAlpha]
+      let shadowRadius = 24
+      let shadowAlpha = isDark ? 0.35 : 0.12
+      let shadowOffsetY = 6
+      let highlightAlpha = isDark ? 0.65 : 0.85
+      let highlightWidth = 0.75
+
+      switch (type) {
+        case 'nav':
+          refractionHeight = 14
+          refractionAmount = -24
+          blurRadius = 20
+          surfaceAlpha = isDark ? 0.08 : 0.40
+          surfaceColor = isDark ? [1.0, 1.0, 1.0, surfaceAlpha] : [1.0, 1.0, 1.0, surfaceAlpha]
+          shadowRadius = 28
+          shadowOffsetY = 8
+          break
+        case 'card':
+          refractionHeight = 14
+          refractionAmount = -24
+          blurRadius = 16
+          surfaceAlpha = isDark ? 0.09 : 0.42
+          surfaceColor = isDark ? [1.0, 1.0, 1.0, surfaceAlpha] : [1.0, 1.0, 1.0, surfaceAlpha]
+          shadowRadius = 24
+          shadowOffsetY = 6
+          break
+        case 'modal':
+          refractionHeight = 18
+          refractionAmount = -30
+          blurRadius = 28
+          surfaceAlpha = isDark ? 0.22 : 0.60
+          surfaceColor = isDark ? [0.15, 0.20, 0.30, surfaceAlpha] : [1.0, 1.0, 1.0, surfaceAlpha]
+          shadowRadius = 48
+          shadowAlpha = isDark ? 0.60 : 0.25
+          shadowOffsetY = 16
+          highlightAlpha = 0.95
+          break
+        case 'btn-primary':
+          refractionHeight = 12
+          refractionAmount = -24
+          blurRadius = 10
+          tintColor = [0.04, 0.52, 0.98, 0.85] // Electric Azure Crystal
+          surfaceColor = [0.20, 0.65, 1.0, 0.30]
+          shadowRadius = 16
+          shadowAlpha = 0.40
+          shadowOffsetY = 4
+          highlightAlpha = 0.90
+          break
+        case 'btn-danger':
+          refractionHeight = 12
+          refractionAmount = -24
+          blurRadius = 10
+          tintColor = [0.95, 0.22, 0.22, 0.85] // Ruby Crystal
+          surfaceColor = [1.0, 0.35, 0.35, 0.30]
+          shadowRadius = 16
+          shadowAlpha = 0.40
+          shadowOffsetY = 4
+          highlightAlpha = 0.90
+          break
+        case 'button':
+        case 'tab':
+          refractionHeight = 10
+          refractionAmount = -18
+          blurRadius = 8
+          surfaceAlpha = isDark ? 0.16 : 0.45
+          surfaceColor = isDark ? [1.0, 1.0, 1.0, surfaceAlpha] : [1.0, 1.0, 1.0, surfaceAlpha]
+          shadowRadius = 12
+          shadowOffsetY = 3
+          break
+        case 'input':
+          refractionHeight = 8
+          refractionAmount = -14
+          blurRadius = 8
+          surfaceAlpha = isDark ? 0.06 : 0.25
+          surfaceColor = isDark ? [1.0, 1.0, 1.0, surfaceAlpha] : [1.0, 1.0, 1.0, surfaceAlpha]
+          shadowRadius = 8
+          shadowOffsetY = 2
+          break
+        case 'pill':
+          refractionHeight = 8
+          refractionAmount = -14
+          blurRadius = 8
+          surfaceAlpha = isDark ? 0.14 : 0.40
+          surfaceColor = isDark ? [1.0, 1.0, 1.0, surfaceAlpha] : [1.0, 1.0, 1.0, surfaceAlpha]
+          shadowRadius = 8
+          shadowOffsetY = 2
+          break
       }
 
-      // Colors customized by element type
-      let tintColor: [number, number, number, number]
-      let surfaceColor: [number, number, number, number]
-      let blurRadius = 16
-      let refractionAmount = -24
-      let refractionHeight = 12
-
-      if (isDark) {
-        // Deep obsidian crystal
-        if (type === 'button') {
-          tintColor = [0.12, 0.45, 0.95, 0.35] // Subtle electric azure
-          surfaceColor = [0.25, 0.40, 0.75, 0.20]
-          refractionAmount = -28
-          refractionHeight = 14
-        } else if (type === 'nav' || type === 'tab') {
-          tintColor = [0.10, 0.14, 0.24, 0.30]
-          surfaceColor = [0.18, 0.24, 0.36, 0.16]
-          blurRadius = 24
-        } else if (type === 'modal') {
-          tintColor = [0.08, 0.12, 0.22, 0.50]
-          surfaceColor = [0.15, 0.22, 0.34, 0.25]
-          blurRadius = 32
-        } else {
-          tintColor = [0.09, 0.13, 0.22, 0.22]
-          surfaceColor = [0.18, 0.24, 0.38, 0.14]
-          blurRadius = 18
-        }
-      } else {
-        // Pure luminous crystal water
-        if (type === 'button') {
-          tintColor = [0.20, 0.50, 0.95, 0.40]
-          surfaceColor = [0.85, 0.92, 1.0, 0.45]
-          refractionAmount = -26
-          refractionHeight = 13
-        } else if (type === 'nav' || type === 'tab') {
-          tintColor = [0.95, 0.97, 1.0, 0.55]
-          surfaceColor = [1.0, 1.0, 1.0, 0.40]
-          blurRadius = 24
-        } else if (type === 'modal') {
-          tintColor = [0.96, 0.98, 1.0, 0.75]
-          surfaceColor = [1.0, 1.0, 1.0, 0.60]
-          blurRadius = 32
-        } else {
-          tintColor = [0.95, 0.97, 1.0, 0.45]
-          surfaceColor = [1.0, 1.0, 1.0, 0.35]
-          blurRadius = 18
-        }
+      const highlight: GlassHighlight = {
+        mode: 0,
+        color: [1, 1, 1],
+        angle: elAngle,
+        falloff: 1.2,
+        alpha: highlightAlpha,
+        widthDp: highlightWidth,
+        blurRadiusDp: 0.5,
       }
 
       configs.push({
         id,
-        kind: 'glass-shape',
+        kind: (type === 'button' || type === 'btn-primary' || type === 'btn-danger') ? 'button' : 'glass-shape',
         rect: {
           x: rect.left,
           y: rect.top,
@@ -495,25 +521,26 @@ export class ZephyrLiquidGlass {
         refractionHeight,
         refractionAmount,
         depthEffect: true,
-        chromaticAberration: true, // Full chromatic aberration for authentic liquid glass!
+        chromaticAberration: true, // 7-channel rainbow dispersion
         blurRadius,
-        saturation: isDark ? 1.4 : 1.25,
-        brightness: 0,
-        contrast: 1.05,
+        saturation,
+        brightness,
+        contrast,
         tintColor,
         surfaceColor,
         highlight,
         outerShadow: {
-          radius: type === 'modal' ? 32 : (type === 'card' ? 20 : 12),
-          alpha: isDark ? 0.25 : 0.12,
+          radius: shadowRadius,
+          alpha: shadowAlpha,
           offsetX: 0,
-          offsetY: type === 'modal' ? 8 : 4,
+          offsetY: shadowOffsetY,
           color: [0, 0, 0],
         },
         label: '',
         labelColor: [1, 1, 1, 1],
         showChevron: false,
-        isInteractive: type === 'button' || type === 'tab',
+        isInteractive: type === 'button' || type === 'btn-primary' || type === 'btn-danger' || type === 'tab',
+        useContinuousSdf: true,
       })
     })
 
@@ -533,8 +560,7 @@ export class ZephyrLiquidGlass {
     const tick = (now: number) => {
       if (!this.isRunning) return
 
-      // Throttle DOM geometry updates to ~30Hz or on interaction, while WebGL renders at 60Hz
-      if (now - this.lastUpdate > 33) {
+      if (now - this.lastUpdate > 30) {
         this.lastUpdate = now
         this.refreshElements()
       }

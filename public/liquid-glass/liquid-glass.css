@@ -2,78 +2,9 @@
    Zephyr Liquid Glass Design System
    Full-stack optical liquid glass styling for Zephyr Web Client
    Ported from martin65536/liquid-glass-webgl & Kyant0/AndroidLiquidGlass
-   Crafted with Emil Kowalski design engineering & Apple fluid interface standards
    ========================================================================== */
 
-:root {
-    /* --- Optical Liquid Glass Tokens (Dark Obsidian Default) --- */
-    --lg-glass-bg: rgba(26, 32, 48, 0.45);
-    --lg-glass-bg-hover: rgba(36, 45, 68, 0.58);
-    --lg-glass-bg-active: rgba(45, 56, 84, 0.72);
-    --lg-glass-card-bg: rgba(22, 27, 40, 0.55);
-    --lg-glass-modal-bg: rgba(18, 23, 36, 0.78);
-    --lg-glass-nav-bg: rgba(15, 20, 32, 0.68);
-    
-    /* Refractive specular borders */
-    --lg-glass-border: rgba(255, 255, 255, 0.12);
-    --lg-glass-border-hover: rgba(255, 255, 255, 0.22);
-    --lg-glass-border-specular: linear-gradient(135deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.04) 50%, rgba(56, 189, 248, 0.16) 100%);
-    --lg-glass-border-bottom: rgba(0, 0, 0, 0.28);
-    
-    /* Optical highlights and caustics */
-    --lg-glass-highlight-top: inset 0 1px 0 0 rgba(255, 255, 255, 0.20);
-    --lg-glass-highlight-rim: inset 0 1px 1px 0 rgba(255, 255, 255, 0.25), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-    --lg-glass-inner-shadow: inset 0 -1px 1px 0 rgba(0, 0, 0, 0.32);
-    --lg-glass-shadow-sm: 0 4px 16px -2px rgba(0, 0, 0, 0.28), var(--lg-glass-highlight-top);
-    --lg-glass-shadow-md: 0 8px 30px -4px rgba(0, 0, 0, 0.36), var(--lg-glass-highlight-top);
-    --lg-glass-shadow-lg: 0 16px 48px -8px rgba(0, 0, 0, 0.45), var(--lg-glass-highlight-top);
-    --lg-glass-shadow-modal: 0 24px 64px -12px rgba(0, 0, 0, 0.65), var(--lg-glass-highlight-top);
-    
-    /* Blur & Vibrancy */
-    --lg-glass-blur: blur(20px) saturate(180%);
-    --lg-glass-blur-heavy: blur(28px) saturate(190%);
-    
-    /* G2 Continuous Curvature / Squircles */
-    --lg-radius-sm: 10px;
-    --lg-radius-md: 16px;
-    --lg-radius-lg: 20px;
-    --lg-radius-xl: 26px;
-    --lg-radius-capsule: 9999px;
-    
-    /* Apple / Emil Spring Physics Curves */
-    --lg-ease-spring: cubic-bezier(0.23, 1, 0.32, 1);
-    --lg-ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
-    --lg-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-    --lg-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
-    --lg-duration-quick: 140ms;
-    --lg-duration-normal: 220ms;
-    --lg-duration-smooth: 340ms;
-}
-
-/* --- Light Theme Optical Glass (Pure Crystal Water) --- */
-:root[data-theme="light"], html[data-theme="light"] {
-    --lg-glass-bg: rgba(255, 255, 255, 0.65);
-    --lg-glass-bg-hover: rgba(255, 255, 255, 0.78);
-    --lg-glass-bg-active: rgba(255, 255, 255, 0.88);
-    --lg-glass-card-bg: rgba(255, 255, 255, 0.68);
-    --lg-glass-modal-bg: rgba(255, 255, 255, 0.84);
-    --lg-glass-nav-bg: rgba(255, 255, 255, 0.72);
-    
-    --lg-glass-border: rgba(255, 255, 255, 0.60);
-    --lg-glass-border-hover: rgba(255, 255, 255, 0.85);
-    --lg-glass-border-specular: linear-gradient(135deg, rgba(255, 255, 255, 0.90) 0%, rgba(255, 255, 255, 0.30) 50%, rgba(14, 165, 233, 0.20) 100%);
-    --lg-glass-border-bottom: rgba(0, 0, 0, 0.08);
-    
-    --lg-glass-highlight-top: inset 0 1px 0 0 rgba(255, 255, 255, 0.85);
-    --lg-glass-highlight-rim: inset 0 1px 1px 0 rgba(255, 255, 255, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.40);
-    --lg-glass-inner-shadow: inset 0 -1px 1px 0 rgba(0, 0, 0, 0.05);
-    --lg-glass-shadow-sm: 0 4px 16px -2px rgba(0, 0, 0, 0.06), var(--lg-glass-highlight-top);
-    --lg-glass-shadow-md: 0 8px 30px -4px rgba(0, 0, 0, 0.09), var(--lg-glass-highlight-top);
-    --lg-glass-shadow-lg: 0 16px 48px -8px rgba(0, 0, 0, 0.12), var(--lg-glass-highlight-top);
-    --lg-glass-shadow-modal: 0 24px 64px -12px rgba(0, 0, 0, 0.18), var(--lg-glass-highlight-top);
-}
-
-/* Background canvas positioning */
+/* Background WebGL canvas positioning */
 .zephyr-liquid-canvas {
     position: fixed;
     top: 0;
@@ -85,11 +16,12 @@
     display: block;
 }
 
-/* Ensure body & root allow glass transparency */
-body.app-body, body {
+/* Ensure body & root allow 100% glass transparency so WebGL shines through */
+html, body.app-body, body {
     background-color: transparent !important;
     position: relative;
     min-height: 100vh;
+    color: var(--text);
 }
 
 .app-shell {
@@ -99,41 +31,47 @@ body.app-body, body {
 }
 
 /* ==========================================================================
-   Main Navigation — Floating Liquid Glass Bar
+   Main Navigation — True Optical Liquid Glass Bar
    ========================================================================== */
 .main-nav {
-    background: var(--lg-glass-nav-bg) !important;
-    backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    border-bottom: 1px solid var(--lg-glass-border) !important;
-    box-shadow: var(--lg-glass-shadow-sm) !important;
-    border-radius: 0 0 var(--lg-radius-lg) var(--lg-radius-lg);
-    transition: all var(--lg-duration-smooth) var(--lg-ease-spring) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15) !important;
+    transition: padding var(--terminal-shelf-duration) var(--terminal-shelf-ease) !important;
 }
 
 /* Nav Tab Pills */
 .nav-tab {
     position: relative;
-    border-radius: var(--lg-radius-capsule) !important;
-    padding: 7px 16px !important;
+    border-radius: 9999px !important;
+    padding: 7px 18px !important;
     font-weight: 600 !important;
     font-size: 13.5px !important;
     letter-spacing: -0.01em;
-    color: var(--text-secondary) !important;
+    color: rgba(255, 255, 255, 0.75) !important;
     background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid transparent !important;
-    transition: transform var(--lg-duration-quick) var(--lg-ease-spring),
-                background var(--lg-duration-normal) var(--lg-ease-out),
-                color var(--lg-duration-normal) var(--lg-ease-out),
-                box-shadow var(--lg-duration-normal) var(--lg-ease-out) !important;
+    box-shadow: none !important;
+    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), color 200ms ease !important;
     will-change: transform;
+    cursor: pointer;
+}
+
+:root[data-theme="light"] .nav-tab {
+    color: rgba(15, 23, 42, 0.75) !important;
 }
 
 .nav-tab:hover {
-    color: var(--text) !important;
-    background: var(--lg-glass-bg-hover) !important;
-    border-color: var(--lg-glass-border) !important;
+    color: #ffffff !important;
     transform: translateY(-1px) scale(1.02);
+}
+
+:root[data-theme="light"] .nav-tab:hover {
+    color: #0f172a !important;
 }
 
 .nav-tab:active {
@@ -142,32 +80,33 @@ body.app-body, body {
 
 .nav-tab.active {
     color: #38bdf8 !important;
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.22) 0%, rgba(56, 189, 248, 0.10) 100%) !important;
-    border: 1px solid rgba(56, 189, 248, 0.35) !important;
-    box-shadow: 0 2px 10px -1px rgba(14, 165, 233, 0.25), inset 0 1px 0 0 rgba(255, 255, 255, 0.25) !important;
+    font-weight: 700 !important;
+    border-color: rgba(56, 189, 248, 0.40) !important;
+}
+
+:root[data-theme="light"] .nav-tab.active {
+    color: #0284c7 !important;
+    border-color: rgba(14, 165, 233, 0.50) !important;
 }
 
 .nav-tab.active::after {
-    display: none !important; /* Replaced by full liquid pill container */
+    display: none !important;
 }
 
 /* Nav Action Buttons */
 .nav-actions .btn-sm {
-    border-radius: var(--lg-radius-capsule) !important;
-    background: var(--lg-glass-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    box-shadow: var(--lg-glass-highlight-top);
-    transition: transform var(--lg-duration-quick) var(--lg-ease-spring),
-                background var(--lg-duration-normal) var(--lg-ease-out),
-                box-shadow var(--lg-duration-normal) var(--lg-ease-out) !important;
+    border-radius: 9999px !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    box-shadow: none !important;
+    color: var(--text) !important;
+    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
 }
 
 .nav-actions .btn-sm:hover {
-    background: var(--lg-glass-bg-hover) !important;
-    border-color: var(--lg-glass-border-hover) !important;
-    transform: translateY(-1px) scale(1.03);
+    transform: translateY(-1px) scale(1.04);
 }
 
 .nav-actions .btn-sm:active {
@@ -176,108 +115,106 @@ body.app-body, body {
 
 /* AI Floating Pill Button */
 .ai-floating-btn {
-    background: linear-gradient(135deg, rgba(129, 140, 248, 0.28) 0%, rgba(192, 132, 252, 0.18) 100%) !important;
-    border: 1px solid rgba(168, 85, 247, 0.40) !important;
-    box-shadow: 0 0 14px -2px rgba(168, 85, 247, 0.35), var(--lg-glass-highlight-top) !important;
-    color: #e0e7ff !important;
+    border-radius: 9999px !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(168, 85, 247, 0.50) !important;
+    box-shadow: none !important;
+    color: #c084fc !important;
     font-weight: 700 !important;
+    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
 }
 
 .ai-floating-btn:hover {
-    box-shadow: 0 0 20px 0 rgba(168, 85, 247, 0.50), var(--lg-glass-highlight-top) !important;
-    transform: translateY(-1px) scale(1.04) !important;
+    transform: translateY(-1px) scale(1.05) !important;
+    color: #e9d5ff !important;
 }
 
 /* ==========================================================================
    Buttons — Tactile Spring Liquid Glass
    ========================================================================== */
-.btn {
-    border-radius: var(--lg-radius-md) !important;
-    background: var(--lg-glass-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    box-shadow: var(--lg-glass-shadow-sm) !important;
+.btn, .tool-btn {
+    border-radius: 14px !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    box-shadow: none !important;
     color: var(--text) !important;
     font-weight: 600 !important;
-    transition: transform var(--lg-duration-quick) var(--lg-ease-spring),
-                background var(--lg-duration-normal) var(--lg-ease-out),
-                border-color var(--lg-duration-normal) var(--lg-ease-out),
-                box-shadow var(--lg-duration-normal) var(--lg-ease-out) !important;
+    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
     will-change: transform;
     cursor: pointer;
 }
 
-.btn:hover {
-    background: var(--lg-glass-bg-hover) !important;
-    border-color: var(--lg-glass-border-hover) !important;
-    box-shadow: var(--lg-glass-shadow-md) !important;
-    transform: translateY(-1px) scale(1.015);
+.btn:hover, .tool-btn:hover {
+    transform: translateY(-1px) scale(1.02);
+    border-color: rgba(255, 255, 255, 0.35) !important;
 }
 
-.btn:active {
-    transform: scale(0.97) !important;
-    box-shadow: var(--lg-glass-inner-shadow) !important;
+.btn:active, .tool-btn:active {
+    transform: scale(0.96) !important;
 }
 
 /* Primary Glass Button */
 .btn-primary, .add-btn {
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.85) 0%, rgba(37, 99, 235, 0.85) 100%) !important;
+    border-radius: 14px !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.35) !important;
-    box-shadow: 0 4px 18px -2px rgba(14, 165, 233, 0.45), var(--lg-glass-highlight-top) !important;
+    box-shadow: none !important;
     color: #ffffff !important;
+    font-weight: 700 !important;
 }
 
 .btn-primary:hover, .add-btn:hover {
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.95) 0%, rgba(37, 99, 235, 0.95) 100%) !important;
-    box-shadow: 0 6px 24px -2px rgba(14, 165, 233, 0.60), var(--lg-glass-highlight-top) !important;
-    transform: translateY(-1.5px) scale(1.02) !important;
+    transform: translateY(-1.5px) scale(1.03) !important;
+    border-color: rgba(255, 255, 255, 0.55) !important;
 }
 
 .btn-primary:active, .add-btn:active {
-    transform: scale(0.97) !important;
-    box-shadow: 0 2px 8px rgba(14, 165, 233, 0.40), inset 0 2px 4px rgba(0, 0, 0, 0.20) !important;
+    transform: scale(0.96) !important;
 }
 
-/* Danger Glass Button */
+/* Danger Button */
 .btn.danger, button.danger {
-    background: linear-gradient(135deg, rgba(239, 68, 68, 0.80) 0%, rgba(220, 38, 38, 0.80) 100%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.30) !important;
-    box-shadow: 0 4px 16px -2px rgba(239, 68, 68, 0.40), var(--lg-glass-highlight-top) !important;
-    color: #ffffff !important;
+    border-radius: 14px !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(248, 113, 113, 0.45) !important;
+    box-shadow: none !important;
+    color: #fca5a5 !important;
 }
 
 .btn.danger:hover, button.danger:hover {
-    background: linear-gradient(135deg, rgba(239, 68, 68, 0.92) 0%, rgba(220, 38, 38, 0.92) 100%) !important;
-    box-shadow: 0 6px 22px -2px rgba(239, 68, 68, 0.55), var(--lg-glass-highlight-top) !important;
-    transform: translateY(-1px) scale(1.02) !important;
+    transform: translateY(-1px) scale(1.03) !important;
+    color: #fee2e2 !important;
+    border-color: rgba(248, 113, 113, 0.70) !important;
 }
 
 .btn.danger:active, button.danger:active {
-    transform: scale(0.97) !important;
+    transform: scale(0.96) !important;
 }
 
 /* ==========================================================================
-   Cards & Panels — Translucent Liquid Glass
+   Connection Cards & Panels — True WebGL Glass Surface
    ========================================================================== */
 .connection-card {
-    background: var(--lg-glass-card-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-lg) !important;
-    box-shadow: var(--lg-glass-shadow-md) !important;
-    transition: transform var(--lg-duration-smooth) var(--lg-ease-spring),
-                box-shadow var(--lg-duration-smooth) var(--lg-ease-spring),
-                border-color var(--lg-duration-normal) var(--lg-ease-out),
-                background var(--lg-duration-normal) var(--lg-ease-out) !important;
-    will-change: transform, box-shadow;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 20px !important;
+    box-shadow: none !important;
+    transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1), border-color 200ms ease !important;
+    will-change: transform;
 }
 
 .connection-card:hover {
-    background: var(--lg-glass-bg-hover) !important;
-    border-color: var(--lg-glass-border-hover) !important;
-    box-shadow: var(--lg-glass-shadow-lg), 0 0 20px -4px rgba(56, 189, 248, 0.18) !important;
+    border-color: rgba(255, 255, 255, 0.35) !important;
     transform: translateY(-3px) scale(1.012) !important;
 }
 
@@ -285,79 +222,75 @@ body.app-body, body {
     transform: scale(0.985) !important;
 }
 
-/* Protocol Badges in Connection Cards */
+/* Protocol Badges */
 .protocol-badge {
-    border-radius: var(--lg-radius-capsule) !important;
-    padding: 3px 10px !important;
+    border-radius: 9999px !important;
+    padding: 3px 12px !important;
     font-weight: 700 !important;
     font-size: 11px !important;
     letter-spacing: 0.04em !important;
     text-transform: uppercase;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid rgba(255, 255, 255, 0.18) !important;
-    box-shadow: var(--lg-glass-highlight-top);
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.25) !important;
 }
 
 .protocol-badge.ssh {
-    background: rgba(14, 165, 233, 0.20) !important;
     color: #38bdf8 !important;
-    border-color: rgba(56, 189, 248, 0.35) !important;
+    border-color: rgba(56, 189, 248, 0.45) !important;
 }
 
 .protocol-badge.rdp {
-    background: rgba(168, 85, 247, 0.20) !important;
     color: #c084fc !important;
-    border-color: rgba(168, 85, 247, 0.35) !important;
+    border-color: rgba(168, 85, 247, 0.45) !important;
 }
 
 .protocol-badge.vnc {
-    background: rgba(249, 115, 22, 0.20) !important;
     color: #fb923c !important;
-    border-color: rgba(249, 115, 22, 0.35) !important;
+    border-color: rgba(249, 115, 22, 0.45) !important;
 }
 
 .protocol-badge.telnet {
-    background: rgba(34, 197, 94, 0.20) !important;
     color: #4ade80 !important;
-    border-color: rgba(34, 197, 94, 0.35) !important;
+    border-color: rgba(34, 197, 94, 0.45) !important;
 }
 
-/* Search Bar and Filters */
+/* Search Bar and Dropdown Filters */
 .search-input, .action-bar select, .settings-form input, .settings-form select, .settings-form textarea {
-    background: var(--lg-glass-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-md) !important;
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.15), var(--lg-glass-highlight-top) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 14px !important;
+    box-shadow: none !important;
     color: var(--text) !important;
-    transition: all var(--lg-duration-normal) var(--lg-ease-out) !important;
+    transition: border-color 200ms ease, box-shadow 200ms ease !important;
 }
 
 .search-input:focus, .action-bar select:focus, .settings-form input:focus, .settings-form select:focus, .settings-form textarea:focus {
-    background: var(--lg-glass-bg-hover) !important;
-    border-color: rgba(56, 189, 248, 0.55) !important;
-    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.25), var(--lg-glass-highlight-top) !important;
+    border-color: rgba(56, 189, 248, 0.60) !important;
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.25) !important;
 }
 
 /* ==========================================================================
    Modals & Overlays — High Index Optical Glass
    ========================================================================== */
-.modal, .dialog-overlay {
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    background: rgba(0, 0, 0, 0.45) !important;
+.modal-backdrop, .modal, .dialog-overlay {
+    backdrop-filter: blur(8px) !important;
+    -webkit-backdrop-filter: blur(8px) !important;
+    background: rgba(0, 0, 0, 0.50) !important;
 }
 
-.modal-content, .dialog-content {
-    background: var(--lg-glass-modal-bg) !important;
-    backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-xl) !important;
-    box-shadow: var(--lg-glass-shadow-modal) !important;
-    animation: lgModalEnter 0.28s var(--lg-ease-spring) both !important;
+.modal-content, .dialog-content, .connection-modal {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.25) !important;
+    border-radius: 24px !important;
+    box-shadow: none !important;
+    animation: lgModalEnter 0.28s cubic-bezier(0.23, 1, 0.32, 1) both !important;
 }
 
 @keyframes lgModalEnter {
@@ -372,200 +305,152 @@ body.app-body, body {
 }
 
 /* ==========================================================================
-   Terminal Smartbar & Workspace
+   Terminal Smartbar
    ========================================================================== */
 .terminal-smartbar {
-    background: var(--lg-glass-nav-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border-bottom: 1px solid var(--lg-glass-border) !important;
-    box-shadow: var(--lg-glass-shadow-sm) !important;
-    border-radius: var(--lg-radius-lg);
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15) !important;
+    box-shadow: none !important;
+    border-radius: 16px;
     margin: 8px 12px;
 }
 
 .smartbar-tab {
-    border-radius: var(--lg-radius-capsule) !important;
-    background: var(--lg-glass-bg) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    transition: all var(--lg-duration-quick) var(--lg-ease-spring) !important;
+    border-radius: 9999px !important;
+    background: transparent !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    box-shadow: none !important;
+    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
 }
 
 .smartbar-tab:hover {
-    background: var(--lg-glass-bg-hover) !important;
-    border-color: var(--lg-glass-border-hover) !important;
+    border-color: rgba(255, 255, 255, 0.35) !important;
     transform: translateY(-1px);
 }
 
 .smartbar-tab.active {
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.25) 0%, rgba(56, 189, 248, 0.12) 100%) !important;
-    border-color: rgba(56, 189, 248, 0.40) !important;
-    box-shadow: 0 2px 10px -1px rgba(14, 165, 233, 0.30), var(--lg-glass-highlight-top) !important;
+    border-color: rgba(56, 189, 248, 0.50) !important;
     color: #38bdf8 !important;
+    font-weight: 700;
 }
 
 /* ==========================================================================
-   Activity View & Filter Range Tabs
+   Activity View & Time Range
    ========================================================================== */
 .activity-range-tabs {
-    background: var(--lg-glass-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-capsule) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 9999px !important;
     padding: 3px !important;
-    box-shadow: var(--lg-glass-highlight-top);
+    box-shadow: none !important;
 }
 
 .activity-range-btn {
-    border-radius: var(--lg-radius-capsule) !important;
+    border-radius: 9999px !important;
     border: none !important;
-    color: var(--text-secondary) !important;
+    background: transparent !important;
+    color: rgba(255, 255, 255, 0.70) !important;
     font-weight: 600 !important;
-    transition: all var(--lg-duration-normal) var(--lg-ease-spring) !important;
+    transition: all 140ms ease !important;
 }
 
-.activity-range-btn:hover {
-    color: var(--text) !important;
+:root[data-theme="light"] .activity-range-btn {
+    color: rgba(15, 23, 42, 0.70) !important;
 }
 
 .activity-range-btn.active {
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.30) 0%, rgba(56, 189, 248, 0.15) 100%) !important;
     color: #38bdf8 !important;
-    box-shadow: 0 2px 8px rgba(14, 165, 233, 0.25), var(--lg-glass-highlight-top) !important;
+    font-weight: 700 !important;
+}
+
+:root[data-theme="light"] .activity-range-btn.active {
+    color: #0284c7 !important;
 }
 
 .activity-item, .activity-card {
-    background: var(--lg-glass-card-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-md) !important;
-    box-shadow: var(--lg-glass-shadow-sm) !important;
-    transition: transform var(--lg-duration-normal) var(--lg-ease-spring) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 14px !important;
+    box-shadow: none !important;
+    transition: transform 140ms ease !important;
 }
 
 .activity-item:hover, .activity-card:hover {
-    transform: translateY(-1px) scale(1.008);
-    background: var(--lg-glass-bg-hover) !important;
-    border-color: var(--lg-glass-border-hover) !important;
+    transform: translateY(-1px);
+    border-color: rgba(255, 255, 255, 0.28) !important;
 }
 
 /* ==========================================================================
-   AI Chat Interface — Floating Fluid Glass
-   ========================================================================== */
-.ai-chat-container, .ai-panel {
-    background: var(--lg-glass-modal-bg) !important;
-    backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-xl) !important;
-    box-shadow: var(--lg-glass-shadow-modal) !important;
-}
-
-.ai-message.assistant {
-    background: var(--lg-glass-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-lg) !important;
-    box-shadow: var(--lg-glass-shadow-sm) !important;
-}
-
-.ai-message.user {
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.25) 0%, rgba(99, 102, 241, 0.20) 100%) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid rgba(56, 189, 248, 0.35) !important;
-    border-radius: var(--lg-radius-lg) !important;
-    box-shadow: 0 4px 16px -2px rgba(14, 165, 233, 0.25), var(--lg-glass-highlight-top) !important;
-}
-
-.ai-input-box {
-    background: var(--lg-glass-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-capsule) !important;
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.20), var(--lg-glass-highlight-top) !important;
-}
-
-/* ==========================================================================
-   Settings Views & Sidebar
+   Settings View
    ========================================================================== */
 .settings-menu, .settings-nav {
-    background: var(--lg-glass-card-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-lg) !important;
-    box-shadow: var(--lg-glass-shadow-md) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 18px !important;
+    box-shadow: none !important;
 }
 
 .settings-tab {
-    border-radius: var(--lg-radius-capsule) !important;
-    transition: all var(--lg-duration-quick) var(--lg-ease-spring) !important;
+    border-radius: 9999px !important;
+    transition: transform 120ms ease !important;
 }
 
 .settings-tab:hover {
-    background: var(--lg-glass-bg-hover) !important;
     transform: translateY(-1px);
 }
 
 .settings-tab.active {
-    background: linear-gradient(135deg, rgba(14, 165, 233, 0.22) 0%, rgba(56, 189, 248, 0.10) 100%) !important;
-    border-color: rgba(56, 189, 248, 0.35) !important;
+    border-color: rgba(56, 189, 248, 0.45) !important;
     color: #38bdf8 !important;
 }
 
 .settings-content, .settings-section-card {
-    background: var(--lg-glass-card-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-lg) !important;
-    box-shadow: var(--lg-glass-shadow-md) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 18px !important;
+    box-shadow: none !important;
 }
 
 /* ==========================================================================
    Login / Auth Card (index.html)
    ========================================================================== */
-.auth-page-body, .login-page {
-    position: relative;
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-    background: transparent !important;
-}
-
 .login-card, .auth-card {
-    background: var(--lg-glass-modal-bg) !important;
-    backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-xl) !important;
-    box-shadow: var(--lg-glass-shadow-modal) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+    border-radius: 24px !important;
+    box-shadow: none !important;
     padding: 36px 32px 28px !important;
-    transition: transform var(--lg-duration-smooth) var(--lg-ease-spring),
-                box-shadow var(--lg-duration-smooth) var(--lg-ease-spring) !important;
+    transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1) !important;
 }
 
 .login-card:hover, .auth-card:hover {
-    box-shadow: var(--lg-glass-shadow-modal), 0 0 32px -4px rgba(56, 189, 248, 0.25) !important;
+    border-color: rgba(255, 255, 255, 0.35) !important;
 }
 
 .theme-btn-login, .locale-switch-login {
-    background: var(--lg-glass-bg) !important;
-    backdrop-filter: var(--lg-glass-blur) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-capsule) !important;
-    box-shadow: var(--lg-glass-highlight-top);
-    transition: transform var(--lg-duration-quick) var(--lg-ease-spring) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.20) !important;
+    border-radius: 9999px !important;
+    box-shadow: none !important;
+    color: var(--text) !important;
+    transition: transform 120ms ease !important;
 }
 
 .theme-btn-login:hover, .locale-switch-login:hover {
-    background: var(--lg-glass-bg-hover) !important;
     transform: translateY(-1px) scale(1.05);
 }
 
@@ -573,21 +458,17 @@ body.app-body, body {
     transform: scale(0.95) !important;
 }
 
-/* ==========================================================================
-   Floating Panels & Toasts
-   ========================================================================== */
+/* Floating Panels & Toasts */
 .floating-panel, .toast, .dropdown-menu {
-    background: var(--lg-glass-modal-bg) !important;
-    backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    -webkit-backdrop-filter: var(--lg-glass-blur-heavy) !important;
-    border: 1px solid var(--lg-glass-border) !important;
-    border-radius: var(--lg-radius-lg) !important;
-    box-shadow: var(--lg-glass-shadow-lg) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.20) !important;
+    border-radius: 16px !important;
+    box-shadow: none !important;
 }
 
-/* ==========================================================================
-   Touch & Motion Safeguards (Emil Kowalski / Apple Standards)
-   ========================================================================== */
+/* Touch & Motion Safeguards */
 @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after {
         animation-duration: 0.01ms !important;

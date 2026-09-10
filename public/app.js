@@ -406,7 +406,7 @@ const TERMINAL_EDGE_SNAP_PX = 56;
  * screen identified which product the user was actually in.
  */
 const defaultBrandName = () => zephyrDefaultBrandName();
-const DEFAULT_BRAND_ICON = '🌬️';
+const DEFAULT_BRAND_ICON = '/zephyr-mark.svg';
 let pendingBrandIcon = DEFAULT_BRAND_ICON;
 const SMARTBAR_TEXT_IMAGE_CACHE = new Map();
 
