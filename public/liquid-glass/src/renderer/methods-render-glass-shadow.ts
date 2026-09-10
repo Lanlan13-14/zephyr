@@ -25,7 +25,7 @@ export function renderGlassShadowPass(
   // shadow is invisible; when pressed, Shadow.Default becomes visible.
   let shadowAlpha = el.outerShadow.alpha
   if (el.isBottomTabIndicator) {
-    shadowAlpha *= state.togglePressProgress
+    shadowAlpha *= Math.max(0.60, state.togglePressProgress)
   }
   // Debug: record the shadow bbox — the TRUE per-direction reach of the
   // shadow shape on screen (not the conservative scissor margin). This

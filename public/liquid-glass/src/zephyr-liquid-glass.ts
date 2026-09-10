@@ -21,6 +21,16 @@ interface TrackedElement {
   customRadius?: number
 }
 
+interface ActiveTabDrag {
+  groupId: string
+  containerEl: HTMLElement
+  tabs: HTMLElement[]
+  tabWidth: number
+  startTabIndex: number
+  startX: number
+  pointerId: number
+}
+
 export class ZephyrLiquidGlass {
   public renderer: LiquidGlassRenderer | null = null
   public canvas: HTMLCanvasElement | null = null
@@ -36,6 +46,7 @@ export class ZephyrLiquidGlass {
   private mutationObserver: MutationObserver | null = null
   private lastUpdate = 0
   private activePressedId: string | null = null
+  private activeTabDrag: ActiveTabDrag | null = null
   private options: ZephyrLiquidGlassOptions
 
   constructor(options: ZephyrLiquidGlassOptions = {}) {
@@ -89,13 +100,13 @@ export class ZephyrLiquidGlass {
     // Setup dimensions
     this.resize()
 
-    // Set authentic Zephyr theme background (NO mobile wallpapers!)
-    this.applyThemeBackground()
+    // Generate and load authentic ambient light caustics
+    this.initAmbientAtmosphere()
 
     // Track existing DOM elements
     this.scanAndTrack()
 
-    // Attach event listeners
+    // Attach event listeners including fluid tab dragging
     this.attachEvents()
 
     // Start render loop
@@ -115,19 +126,78 @@ export class ZephyrLiquidGlass {
     }
   }
 
-  private applyThemeBackground(): void {
+  /**
+   * Generates a sleek, high-fidelity ambient chromatic lightfield on an offscreen canvas.
+   * This provides the physical light gradients and caustics necessary for the WebGL
+   * chromatic aberration and circleMap refraction to displace into realistic optical glass,
+   * without using a photo wallpaper.
+   */
+  private initAmbientAtmosphere(): void {
     if (!this.renderer) return
-    const darkBg: [number, number, number] = [0.055, 0.063, 0.082]
-    const lightBg: [number, number, number] = [0.957, 0.960, 0.968]
-    this.renderer.setBackgroundColor(this.isDark ? darkBg : lightBg)
-    this.renderer.wallpaperReady = true
-    this.renderer.markAllDirty()
-    this.renderer.needsRedraw = true
+    const w = 1024
+    const h = 1024
+    const bgCanvas = document.createElement('canvas')
+    bgCanvas.width = w
+    bgCanvas.height = h
+    const ctx = bgCanvas.getContext('2d')
+    if (!ctx) return
+
+    if (this.isDark) {
+      // Deep obsidian slate with rich chromatic caustics
+      const grad = ctx.createLinearGradient(0, 0, 0, h)
+      grad.addColorStop(0, '#0a0d14')
+      grad.addColorStop(0.5, '#0e121a')
+      grad.addColorStop(1, '#07090f')
+      ctx.fillStyle = grad
+      ctx.fillRect(0, 0, w, h)
+
+      // Light caustics positioned to cast prismatic dispersion through top bars
+      this.drawLightOrb(ctx, w * 0.5, h * 0.08, 480, 'rgba(56, 189, 248, 0.16)') // Azure caustic bloom
+      this.drawLightOrb(ctx, w * 0.2, h * 0.15, 360, 'rgba(99, 102, 241, 0.14)') // Indigo bloom
+      this.drawLightOrb(ctx, w * 0.8, h * 0.18, 380, 'rgba(168, 85, 247, 0.13)') // Violet bloom
+      this.drawLightOrb(ctx, w * 0.35, h * 0.65, 520, 'rgba(14, 165, 233, 0.08)')
+      this.drawLightOrb(ctx, w * 0.75, h * 0.75, 460, 'rgba(139, 92, 246, 0.09)')
+    } else {
+      // Crisp luminous daylight with pristine sky & lavender caustics
+      const grad = ctx.createLinearGradient(0, 0, 0, h)
+      grad.addColorStop(0, '#f8fafc')
+      grad.addColorStop(0.5, '#f1f5f9')
+      grad.addColorStop(1, '#edf2f7')
+      ctx.fillStyle = grad
+      ctx.fillRect(0, 0, w, h)
+
+      this.drawLightOrb(ctx, w * 0.5, h * 0.08, 500, 'rgba(14, 165, 233, 0.22)')
+      this.drawLightOrb(ctx, w * 0.2, h * 0.15, 400, 'rgba(99, 102, 241, 0.18)')
+      this.drawLightOrb(ctx, w * 0.8, h * 0.18, 420, 'rgba(168, 85, 247, 0.16)')
+    }
+
+    const dataUrl = bgCanvas.toDataURL('image/webp', 0.92)
+    this.renderer.loadWallpaper(dataUrl).then(() => {
+      if (this.renderer) {
+        this.renderer.wallpaperReady = true
+        this.renderer.markAllDirty()
+        this.renderer.needsRedraw = true
+      }
+    }).catch(() => {
+      if (this.renderer) {
+        this.renderer.setBackgroundColor(this.isDark ? [0.055, 0.063, 0.082] : [0.957, 0.960, 0.968])
+      }
+    })
+  }
+
+  private drawLightOrb(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string): void {
+    const radial = ctx.createRadialGradient(x, y, 0, x, y, r)
+    radial.addColorStop(0, color)
+    radial.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = radial
+    ctx.beginPath()
+    ctx.arc(x, y, r, 0, Math.PI * 2)
+    ctx.fill()
   }
 
   public updateTheme(): void {
     this.detectTheme()
-    this.applyThemeBackground()
+    this.initAmbientAtmosphere()
     this.refreshElements()
   }
 
@@ -196,7 +266,7 @@ export class ZephyrLiquidGlass {
 
     const matched = root.querySelectorAll<HTMLElement>(selectors.join(', '))
     matched.forEach((el) => {
-      // Avoid tracking individual nav-tabs and settings-tabs here; they are tracked as unified LiquidTabs
+      // Skip items managed as unified LiquidBottomTabs
       if (el.classList.contains('nav-tab') || el.classList.contains('settings-tab') || el.classList.contains('activity-range-btn')) {
         return
       }
@@ -236,22 +306,76 @@ export class ZephyrLiquidGlass {
     window.addEventListener('pointermove', (e) => {
       this.pointerX = e.clientX
       this.pointerY = e.clientY
-      if (this.renderer) {
+
+      // If a tab drag gesture is active, forward drag coordinates directly to WebGL renderer
+      if (this.activeTabDrag && this.renderer) {
+        const { groupId, startTabIndex, startX, tabWidth, tabs, containerEl } = this.activeTabDrag
+        this.renderer.dragTab(groupId, startTabIndex, e.clientX, startX, tabWidth, tabs.length)
+        this.renderer.needsRedraw = true
+
+        const thumb = containerEl.querySelector<HTMLElement>('.liquid-tab-thumb')
+        if (thumb && tabs[startTabIndex]) {
+          const baseRect = tabs[startTabIndex].getBoundingClientRect()
+          const containerRect = containerEl.getBoundingClientRect()
+          const deltaX = e.clientX - startX
+          const x = (baseRect.left - containerRect.left) + deltaX
+          thumb.style.transition = 'none'
+          thumb.style.transform = `translate3d(${x}px, 0, 0)`
+        }
+      } else if (this.renderer) {
         this.renderer.needsRedraw = true
       }
     }, { passive: true })
 
-    // Tactile spring press feedback with pointer coordinates
+    // Gesture handling: supports both button press springs and fluid tab dragging
     window.addEventListener('pointerdown', (e) => {
-      const target = (e.target as HTMLElement)?.closest?.(
-        'button, .btn, .nav-tab, .settings-tab, .smartbar-tab, .activity-range-btn, .connection-card, .login-card, [data-liquid-glass]'
+      const target = e.target as HTMLElement | null
+
+      // Check if pointer hit a tab inside a LiquidTabs container
+      const navTab = target?.closest?.('.nav-tab') as HTMLElement | null
+      const settingsTab = target?.closest?.('.settings-tab') as HTMLElement | null
+      const activityBtn = target?.closest?.('.activity-range-btn') as HTMLElement | null
+
+      if ((navTab || settingsTab || activityBtn) && this.renderer) {
+        const tabEl = (navTab || settingsTab || activityBtn)!
+        const containerEl = tabEl.parentElement
+        if (containerEl) {
+          const groupId = navTab ? 'nav-tabs' : settingsTab ? 'settings-tabs' : 'activity-tabs'
+          const tabSelector = navTab ? '.nav-tab:not(.force-hidden)' : settingsTab ? '.settings-tab:not(.force-hidden)' : '.activity-range-btn'
+          const tabs = Array.from(containerEl.querySelectorAll<HTMLElement>(tabSelector)).filter(t => t.offsetParent !== null)
+          const startTabIndex = tabs.indexOf(tabEl)
+
+          if (startTabIndex >= 0 && tabs.length > 0) {
+            const containerRect = containerEl.getBoundingClientRect()
+            const tabWidth = (containerRect.width - 6) / tabs.length
+
+            this.activeTabDrag = {
+              groupId,
+              containerEl,
+              tabs,
+              tabWidth,
+              startTabIndex,
+              startX: e.clientX,
+              pointerId: e.pointerId,
+            }
+
+            this.renderer.beginTabDrag(groupId, startTabIndex, tabs.length)
+            this.renderer.needsRedraw = true
+            return
+          }
+        }
+      }
+
+      // Other interactive elements: buttons, cards
+      const pressTarget = target?.closest?.(
+        'button, .btn, .smartbar-tab, .connection-card, .login-card, [data-liquid-glass]'
       ) as HTMLElement | null
 
-      if (target && this.renderer) {
-        const id = this.elToId.get(target)
+      if (pressTarget && this.renderer) {
+        const id = this.elToId.get(pressTarget)
         if (id) {
           this.activePressedId = id
-          const rect = target.getBoundingClientRect()
+          const rect = pressTarget.getBoundingClientRect()
           this.renderer.setPressed(id, true, {
             x: e.clientX - rect.left,
             y: e.clientY - rect.top,
@@ -261,23 +385,37 @@ export class ZephyrLiquidGlass {
       }
     }, { passive: true })
 
-    window.addEventListener('pointerup', () => {
+    const handlePointerUpOrCancel = (e: PointerEvent) => {
+      // Complete active tab drag with critically damped spring snap
+      if (this.activeTabDrag && this.renderer) {
+        const { groupId, tabs, containerEl } = this.activeTabDrag
+        const finalIndex = this.renderer.endTabDrag(groupId, tabs.length)
+        if (finalIndex >= 0 && finalIndex < tabs.length) {
+          tabs[finalIndex].click()
+          const thumb = containerEl.querySelector<HTMLElement>('.liquid-tab-thumb')
+          if (thumb) {
+            thumb.style.transition = 'transform 260ms cubic-bezier(0.23, 1, 0.32, 1), width 260ms cubic-bezier(0.23, 1, 0.32, 1)'
+            const targetRect = tabs[finalIndex].getBoundingClientRect()
+            const containerRect = containerEl.getBoundingClientRect()
+            thumb.style.transform = `translate3d(${targetRect.left - containerRect.left}px, 0, 0)`
+            thumb.style.width = `${targetRect.width}px`
+          }
+        }
+        this.activeTabDrag = null
+        this.renderer.needsRedraw = true
+      }
+
       if (this.activePressedId && this.renderer) {
         this.renderer.setPressed(this.activePressedId, false)
         this.activePressedId = null
         this.renderer.needsRedraw = true
       }
-    }, { passive: true })
+    }
 
-    window.addEventListener('pointercancel', () => {
-      if (this.activePressedId && this.renderer) {
-        this.renderer.setPressed(this.activePressedId, false)
-        this.activePressedId = null
-        this.renderer.needsRedraw = true
-      }
-    }, { passive: true })
+    window.addEventListener('pointerup', handlePointerUpOrCancel, { passive: true })
+    window.addEventListener('pointercancel', handlePointerUpOrCancel, { passive: true })
 
-    // Tab click handlers for instantaneous spring gliding
+    // Tab click handlers for instantaneous programmatic tab jumps
     document.addEventListener('click', (e) => {
       const target = e.target as HTMLElement | null
       const navTab = target?.closest?.('.nav-tab') as HTMLElement | null
@@ -387,7 +525,12 @@ export class ZephyrLiquidGlass {
     return 16
   }
 
-  /** Build authentic LiquidBottomTabs from martin65536/liquid-glass-webgl (Container + Tabs + Sliding Indicator) */
+  /**
+   * Builds the authentic 3-layer LiquidBottomTabs pipeline from martin65536/liquid-glass-webgl:
+   * Layer 1: Floating Liquid Glass Capsule Container
+   * Layer 2: Tab Content items
+   * Layer 3: Sliding Optical Glass Capsule Indicator with Chromatic Dispersion & Spring Inertia
+   */
   private buildLiquidTabs(
     groupId: string,
     containerEl: HTMLElement | null,
@@ -411,18 +554,42 @@ export class ZephyrLiquidGlass {
     const GLASS_PAD = 3
     const containerH = containerRect.height
     const containerW = containerRect.width
-    const containerR = Math.min(containerH / 2, 28)
+    const containerR = containerH / 2 // Pure capsule
     const indicatorH = containerH - 2 * GLASS_PAD
     const indicatorR = indicatorH / 2
     const tabW = (containerW - 2 * GLASS_PAD) / tabsCount
 
+    // Ensure the toggle state exists and has accurate span
+    this.renderer.ensureToggleState(groupId, activeIndex, LiquidGlassRenderer.TAB_PRESSED_SCALE, tabsCount - 1)
+
     // Sync selected tab with renderer state
     const currentTarget = this.renderer.getTabTarget(groupId)
-    if (currentTarget !== activeIndex) {
+    if (currentTarget !== activeIndex && !this.activeTabDrag) {
       this.renderer.setTabSelected(groupId, activeIndex, tabsCount)
     }
 
-    // --- Layer 1: Container (Liquid Glass capsule bar) ---
+    // Ensure the DOM container has a sliding thumb indicator
+    let thumb = containerEl.querySelector<HTMLElement>('.liquid-tab-thumb')
+    if (!thumb) {
+      thumb = document.createElement('span')
+      thumb.className = 'liquid-tab-thumb'
+      thumb.setAttribute('aria-hidden', 'true')
+      containerEl.prepend(thumb)
+    }
+
+    // Position the thumb over the active tab
+    const activeTab = tabs[activeIndex]
+    if (activeTab && thumb) {
+      const activeRect = activeTab.getBoundingClientRect()
+      const x = activeRect.left - containerRect.left
+      const w = activeRect.width
+      if (!this.activeTabDrag || this.activeTabDrag.groupId !== groupId) {
+        thumb.style.transform = `translate3d(${x}px, 0, 0)`
+        thumb.style.width = `${w}px`
+      }
+    }
+
+    // --- Layer 1: Container (Floating Liquid Glass capsule bar) ---
     const containerConfig: GlassElementConfig = {
       id: `${groupId}-container`,
       kind: 'glass-shape',
@@ -433,27 +600,27 @@ export class ZephyrLiquidGlass {
         h: containerH,
       },
       cornerRadius: containerR,
-      refractionHeight: 20,
-      refractionAmount: -22,
+      refractionHeight: 24,
+      refractionAmount: -24,
       depthEffect: true,
       chromaticAberration: true,
-      blurRadius: 10,
+      blurRadius: 8,
       saturation: 1.5,
       contrast: 1.06,
       brightness: 0.02,
       tintColor: [0, 0, 0, 0],
-      surfaceColor: isDark ? [1.0, 1.0, 1.0, 0.10] : [1.0, 1.0, 1.0, 0.50],
+      surfaceColor: isDark ? [1.0, 1.0, 1.0, 0.12] : [1.0, 1.0, 1.0, 0.40],
       highlight: {
         mode: 0,
         color: [1, 1, 1],
         angle: Math.PI / 4,
         falloff: 1.0,
-        alpha: isDark ? 0.60 : 0.80,
+        alpha: isDark ? 0.65 : 0.85,
         widthDp: 0.5,
       },
       outerShadow: {
-        radius: 20,
-        alpha: isDark ? 0.30 : 0.12,
+        radius: 24,
+        alpha: isDark ? 0.35 : 0.15,
         offsetX: 0,
         offsetY: 4,
         color: [0, 0, 0],
@@ -526,25 +693,25 @@ export class ZephyrLiquidGlass {
       contrast: 1.0,
       brightness: 0.0,
       tintColor: [0, 0, 0, 0],
-      surfaceColor: [0, 0, 0, 0],
+      surfaceColor: isDark ? [1.0, 1.0, 1.0, 0.08] : [1.0, 1.0, 1.0, 0.20],
       highlight: {
         mode: 0,
         color: [1, 1, 1],
         angle: Math.PI / 4,
         falloff: 1.0,
-        alpha: isDark ? 0.70 : 0.90,
+        alpha: isDark ? 0.75 : 0.90,
         widthDp: 0.6,
       },
       outerShadow: {
-        radius: 14,
-        alpha: isDark ? 0.40 : 0.18,
+        radius: 16,
+        alpha: isDark ? 0.45 : 0.20,
         offsetX: 0,
         offsetY: 3,
         color: [0, 0, 0],
       },
       innerShadow: {
         radius: 8,
-        alpha: 0.30,
+        alpha: 0.35,
         offsetX: 0,
         offsetY: 8,
       },
@@ -555,7 +722,7 @@ export class ZephyrLiquidGlass {
       isBottomTabIndicator: {
         groupId,
         dragWidth: tabW,
-        dimColor: isDark ? [1, 1, 1, 0.12] : [0, 0, 0, 0.08],
+        dimColor: isDark ? [1, 1, 1, 0.15] : [0, 0, 0, 0.08],
         accentColor,
         containerRect: {
           x: containerRect.left,
@@ -579,19 +746,19 @@ export class ZephyrLiquidGlass {
     const viewportW = window.innerWidth
     const viewportH = window.innerHeight
 
-    // 1. Build Top Navigation Bar LiquidTabs (.nav-tabs)
+    // 1. Top Navigation Bar LiquidTabs (.nav-tabs)
     const navTabsContainer = document.querySelector<HTMLElement>('.nav-tabs')
     this.buildLiquidTabs('nav-tabs', navTabsContainer, '.nav-tab', configs, [0.04, 0.52, 0.98])
 
-    // 2. Build Settings Navigation Menu LiquidTabs (.settings-menu)
+    // 2. Settings Navigation Menu LiquidTabs (.settings-menu)
     const settingsMenuContainer = document.querySelector<HTMLElement>('.settings-menu')
     this.buildLiquidTabs('settings-tabs', settingsMenuContainer, '.settings-tab', configs, [0.04, 0.52, 0.98])
 
-    // 3. Build Activity Range LiquidTabs (.activity-range-tabs)
+    // 3. Activity Range LiquidTabs (.activity-range-tabs)
     const activityTabsContainer = document.querySelector<HTMLElement>('.activity-range-tabs')
     this.buildLiquidTabs('activity-tabs', activityTabsContainer, '.activity-range-btn', configs, [0.04, 0.52, 0.98])
 
-    // 4. Render all other tracked UI elements
+    // 4. Other tracked UI elements: cards, buttons, modals
     const orderMap: Record<TrackedElement['type'], number> = {
       nav: 10,
       card: 20,
@@ -616,7 +783,7 @@ export class ZephyrLiquidGlass {
         return
       }
 
-      // Skip elements that are inside the specialized liquid tab containers
+      // Skip elements handled inside specialized LiquidTabs
       if (el.closest('.nav-tabs') || el.closest('.settings-menu') || el.closest('.activity-range-tabs')) {
         return
       }
@@ -631,7 +798,6 @@ export class ZephyrLiquidGlass {
 
       const cornerRadius = this.computeCornerRadius(el, rect, customRadius)
       
-      // Dynamic angle from center of element to current pointer position
       const centerX = rect.left + rect.width / 2
       const centerY = rect.top + rect.height / 2
       const elAngle = this.options.enableDynamicHighlight

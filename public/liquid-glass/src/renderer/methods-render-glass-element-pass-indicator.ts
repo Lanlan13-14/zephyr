@@ -59,13 +59,13 @@ export function applyIndicatorBackdrop(
   //   highlight: Highlight.Default.copy(alpha=progress)
   //   shadow: Shadow(alpha=progress)
   //   innerShadow: InnerShadow(radius=8dp*progress, alpha=progress)
-  // The indicator is NOT a toggle knob, so applyToggleKnobBackdrop didn't
-  // run — we apply the same progress modulation here.
-  const progress = togglePressProgress
+  // Provide baseline resting progress (0.65) so the indicator remains a tactile,
+  // refractive liquid glass lens at rest, and ramps to 1.0 during active press/drag.
+  const progress = Math.max(0.65, togglePressProgress)
   ctx.elRefractionHeight = el.refractionHeight * progress
   ctx.elRefractionAmount = el.refractionAmount * progress
   ctx.elBlurRadius = 0 // indicator has NO blur (original only has lens)
-  ctx.elHighlightAlpha = (el.highlight?.alpha ?? 0) * progress
+  ctx.elHighlightAlpha = Math.max(0.45, (el.highlight?.alpha ?? 0) * progress)
 
   // --- CombinedBackdrop (faithful to LiquidBottomTabs.kt 指示器) ---
   if (el.isBottomTabIndicator.accentColor && el.isBottomTabIndicator.containerRect) {

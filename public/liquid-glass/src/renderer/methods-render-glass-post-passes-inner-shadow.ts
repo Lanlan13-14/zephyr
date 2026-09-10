@@ -51,7 +51,11 @@ export function renderGlassInnerShadowPass(
     shadowIndex: number // 0 = the only inner shadow (original has just ONE)
   ) {
     const progress =
-      (st.el.isToggleKnob || st.el.isBottomTabIndicator) ? togglePressProgress : 1
+      st.el.isToggleKnob
+        ? togglePressProgress
+        : st.el.isBottomTabIndicator
+        ? Math.max(0.60, togglePressProgress)
+        : 1
     const shadowAlpha = shadowCfg.alpha * progress * st.enterAlpha
     const shadowRadius = shadowCfg.radius * progress
     const shadowOffsetX = shadowCfg.offsetX * progress

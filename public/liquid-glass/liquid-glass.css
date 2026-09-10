@@ -16,7 +16,7 @@
     display: block;
 }
 
-/* Ensure body & root allow 100% glass transparency so WebGL shines through */
+/* Ensure body & root allow 100% glass transparency */
 html, body.app-body, body {
     background-color: transparent !important;
     position: relative;
@@ -31,40 +31,101 @@ html, body.app-body, body {
 }
 
 /* ==========================================================================
-   Main Navigation — True Optical Liquid Glass Bar
+   Main Navigation — Floating Liquid Glass Island Bar
    ========================================================================== */
 .main-nav {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    box-shadow: none !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
-    padding: 10px 24px !important;
-    transition: padding var(--terminal-shelf-duration) var(--terminal-shelf-ease) !important;
+    position: sticky !important;
+    top: 12px !important;
+    z-index: 50 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 16px !important;
+    padding: 8px 24px !important;
+    margin: 10px auto 16px auto !important;
+    width: min(1180px, calc(100% - 32px)) !important;
+    border-radius: 9999px !important;
+    background: rgba(18, 23, 36, 0.72) !important;
+    backdrop-filter: blur(28px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.55),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.22),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+    transition: padding var(--terminal-shelf-duration) var(--terminal-shelf-ease),
+                box-shadow 300ms ease,
+                background 300ms ease !important;
+}
+
+:root[data-theme="light"] .main-nav {
+    background: rgba(255, 255, 255, 0.75) !important;
+    border: 1px solid rgba(255, 255, 255, 0.85) !important;
+    box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.12),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.95),
+                inset 0 0 0 1px rgba(0, 0, 0, 0.04) !important;
 }
 
 /* Nav Tabs Container — Faithful to LiquidBottomTabs Container Row */
 .nav-tabs {
-    display: flex !important;
+    display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    padding: 4px !important;
+    height: 44px !important;
+    padding: 3px !important;
     border-radius: 9999px !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    position: relative;
-    height: 44px;
-    box-sizing: border-box;
+    background: rgba(0, 0, 0, 0.28) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35),
+                0 2px 8px rgba(0, 0, 0, 0.20) !important;
+    position: relative !important;
+    box-sizing: border-box !important;
+}
+
+:root[data-theme="light"] .nav-tabs {
+    background: rgba(0, 0, 0, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.50) !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06),
+                0 2px 8px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Sliding Liquid Glass Indicator Thumb */
+.liquid-tab-thumb {
+    position: absolute !important;
+    top: 3px !important;
+    left: 3px !important;
+    height: calc(100% - 6px) !important;
+    border-radius: 9999px !important;
+    pointer-events: none !important;
+    z-index: 1 !important;
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.32) 0%, rgba(56, 189, 248, 0.16) 100%) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(56, 189, 248, 0.50) !important;
+    box-shadow: 0 4px 18px -2px rgba(14, 165, 233, 0.40),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.45),
+                inset 0 -1px 2px 0 rgba(0, 0, 0, 0.30) !important;
+    transition: transform 260ms cubic-bezier(0.23, 1, 0.32, 1),
+                width 260ms cubic-bezier(0.23, 1, 0.32, 1) !important;
+    will-change: transform, width;
+}
+
+:root[data-theme="light"] .liquid-tab-thumb {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(224, 242, 254, 0.85) 100%) !important;
+    border: 1px solid rgba(14, 165, 233, 0.35) !important;
+    box-shadow: 0 4px 18px -2px rgba(14, 165, 233, 0.25),
+                inset 0 1px 0 0 rgba(255, 255, 255, 1.0),
+                inset 0 -1px 2px 0 rgba(0, 0, 0, 0.05) !important;
 }
 
 /* Nav Tab Items — Sits directly inside the Liquid Glass Container */
 .nav-tab {
-    position: relative;
+    position: relative !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    height: 36px !important;
+    height: 38px !important;
     padding: 0 18px !important;
     border-radius: 9999px !important;
     font-weight: 600 !important;
@@ -72,14 +133,14 @@ html, body.app-body, body {
     letter-spacing: -0.01em;
     color: rgba(255, 255, 255, 0.70) !important;
     background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
     border: none !important;
     box-shadow: none !important;
-    transition: color 160ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
-    cursor: pointer;
-    z-index: 1;
-    white-space: nowrap;
+    cursor: pointer !important;
+    user-select: none !important;
+    touch-action: none !important;
+    z-index: 2 !important;
+    white-space: nowrap !important;
+    transition: color 150ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
 }
 
 :root[data-theme="light"] .nav-tab {
@@ -88,7 +149,6 @@ html, body.app-body, body {
 
 .nav-tab:hover {
     color: #ffffff !important;
-    transform: translateY(-1px);
 }
 
 :root[data-theme="light"] .nav-tab:hover {
@@ -116,17 +176,26 @@ html, body.app-body, body {
 /* Nav Action Buttons */
 .nav-actions .btn-sm {
     border-radius: 9999px !important;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
     border: 1px solid rgba(255, 255, 255, 0.18) !important;
-    box-shadow: none !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.20) !important;
     color: var(--text) !important;
-    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
+    font-weight: 600 !important;
+    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
+                background 150ms ease !important;
+}
+
+:root[data-theme="light"] .nav-actions .btn-sm {
+    background: rgba(0, 0, 0, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.80) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.90) !important;
 }
 
 .nav-actions .btn-sm:hover {
     transform: translateY(-1px) scale(1.04);
+    background: rgba(255, 255, 255, 0.14) !important;
 }
 
 .nav-actions .btn-sm:active {
@@ -136,19 +205,18 @@ html, body.app-body, body {
 /* AI Floating Pill Button */
 .ai-floating-btn {
     border-radius: 9999px !important;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    background: linear-gradient(135deg, rgba(129, 140, 248, 0.30) 0%, rgba(192, 132, 252, 0.18) 100%) !important;
     border: 1px solid rgba(168, 85, 247, 0.50) !important;
-    box-shadow: none !important;
-    color: #c084fc !important;
+    box-shadow: 0 0 14px -2px rgba(168, 85, 247, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.30) !important;
+    color: #e0e7ff !important;
     font-weight: 700 !important;
     transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
 }
 
 .ai-floating-btn:hover {
     transform: translateY(-1px) scale(1.05) !important;
-    color: #e9d5ff !important;
+    box-shadow: 0 0 20px 0 rgba(168, 85, 247, 0.60), inset 0 1px 0 rgba(255, 255, 255, 0.40) !important;
+    color: #ffffff !important;
 }
 
 /* ==========================================================================
@@ -157,35 +225,47 @@ html, body.app-body, body {
 .settings-layout {
     display: flex !important;
     flex-direction: column !important;
-    gap: 18px !important;
+    gap: 20px !important;
 }
 
 .settings-menu {
-    display: flex !important;
+    display: inline-flex !important;
     align-items: center !important;
+    justify-content: flex-start !important;
     gap: 0 !important;
+    height: 48px !important;
     padding: 4px !important;
     border-radius: 9999px !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
+    background: rgba(0, 0, 0, 0.28) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35),
+                0 2px 8px rgba(0, 0, 0, 0.20) !important;
     overflow-x: auto !important;
     overflow-y: hidden !important;
     -webkit-overflow-scrolling: touch !important;
-    height: 44px !important;
     box-sizing: border-box !important;
     width: fit-content !important;
     max-width: 100% !important;
+    margin: 0 auto 8px auto !important;
     position: relative !important;
 }
 
+:root[data-theme="light"] .settings-menu {
+    background: rgba(0, 0, 0, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.50) !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06),
+                0 2px 8px rgba(0, 0, 0, 0.04) !important;
+}
+
 .settings-tab {
-    position: relative;
+    position: relative !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    height: 36px !important;
-    padding: 0 18px !important;
+    height: 40px !important;
+    padding: 0 20px !important;
     border-radius: 9999px !important;
     font-weight: 600 !important;
     font-size: 13.5px !important;
@@ -194,9 +274,11 @@ html, body.app-body, body {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
-    cursor: pointer;
-    transition: color 160ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
-    z-index: 1;
+    cursor: pointer !important;
+    user-select: none !important;
+    touch-action: none !important;
+    transition: color 150ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
+    z-index: 2 !important;
 }
 
 :root[data-theme="light"] .settings-tab {
@@ -205,7 +287,6 @@ html, body.app-body, body {
 
 .settings-tab:hover {
     color: #ffffff !important;
-    transform: translateY(-1px);
 }
 
 :root[data-theme="light"] .settings-tab:hover {
@@ -230,13 +311,21 @@ html, body.app-body, body {
 }
 
 .settings-content, .settings-section-card {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    background: rgba(22, 27, 40, 0.60) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
     border: 1px solid rgba(255, 255, 255, 0.12) !important;
-    border-radius: 20px !important;
-    box-shadow: none !important;
+    border-radius: 24px !important;
+    box-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.40),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.18) !important;
     padding: 24px !important;
+}
+
+:root[data-theme="light"] .settings-content, :root[data-theme="light"] .settings-section-card {
+    background: rgba(255, 255, 255, 0.70) !important;
+    border: 1px solid rgba(255, 255, 255, 0.80) !important;
+    box-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.08),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.95) !important;
 }
 
 /* ==========================================================================
@@ -246,27 +335,34 @@ html, body.app-body, body {
     display: inline-flex !important;
     align-items: center !important;
     gap: 0 !important;
-    padding: 4px !important;
+    height: 42px !important;
+    padding: 3px !important;
     border-radius: 9999px !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    height: 40px !important;
+    background: rgba(0, 0, 0, 0.28) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35) !important;
+    position: relative !important;
     box-sizing: border-box !important;
-    position: relative;
+}
+
+:root[data-theme="light"] .activity-range-tabs {
+    background: rgba(0, 0, 0, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.50) !important;
 }
 
 .activity-range-thumb {
-    display: none !important; /* Replaced by WebGL Liquid Glass Indicator */
+    display: none !important; /* Replaced by LiquidTabThumb */
 }
 
 .activity-range-btn {
-    position: relative;
+    position: relative !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    height: 32px !important;
-    padding: 0 16px !important;
+    height: 36px !important;
+    padding: 0 18px !important;
     border-radius: 9999px !important;
     font-size: 13px !important;
     font-weight: 600 !important;
@@ -274,9 +370,11 @@ html, body.app-body, body {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
-    cursor: pointer;
-    transition: color 160ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
-    z-index: 1;
+    cursor: pointer !important;
+    user-select: none !important;
+    touch-action: none !important;
+    transition: color 150ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
+    z-index: 2 !important;
 }
 
 :root[data-theme="light"] .activity-range-btn {
@@ -309,20 +407,29 @@ html, body.app-body, body {
    ========================================================================== */
 .btn, .tool-btn {
     border-radius: 14px !important;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
     border: 1px solid rgba(255, 255, 255, 0.18) !important;
-    box-shadow: none !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.20) !important;
     color: var(--text) !important;
     font-weight: 600 !important;
-    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
+    transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
+                background 150ms ease,
+                border-color 150ms ease !important;
     will-change: transform;
     cursor: pointer;
 }
 
+:root[data-theme="light"] .btn, :root[data-theme="light"] .tool-btn {
+    background: rgba(255, 255, 255, 0.70) !important;
+    border: 1px solid rgba(255, 255, 255, 0.90) !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 1.0) !important;
+}
+
 .btn:hover, .tool-btn:hover {
     transform: translateY(-1px) scale(1.02);
+    background: rgba(255, 255, 255, 0.14) !important;
     border-color: rgba(255, 255, 255, 0.35) !important;
 }
 
@@ -333,18 +440,19 @@ html, body.app-body, body {
 /* Primary Glass Button */
 .btn-primary, .add-btn {
     border-radius: 14px !important;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.85) 0%, rgba(37, 99, 235, 0.85) 100%) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
     border: 1px solid rgba(255, 255, 255, 0.35) !important;
-    box-shadow: none !important;
+    box-shadow: 0 6px 20px -2px rgba(14, 165, 233, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.40) !important;
     color: #ffffff !important;
     font-weight: 700 !important;
 }
 
 .btn-primary:hover, .add-btn:hover {
     transform: translateY(-1.5px) scale(1.03) !important;
-    border-color: rgba(255, 255, 255, 0.55) !important;
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.95) 0%, rgba(37, 99, 235, 0.95) 100%) !important;
+    box-shadow: 0 8px 24px -2px rgba(14, 165, 233, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.50) !important;
 }
 
 .btn-primary:active, .add-btn:active {
@@ -354,18 +462,15 @@ html, body.app-body, body {
 /* Danger Button */
 .btn.danger, button.danger {
     border-radius: 14px !important;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: 1px solid rgba(248, 113, 113, 0.45) !important;
-    box-shadow: none !important;
-    color: #fca5a5 !important;
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.80) 0%, rgba(220, 38, 38, 0.80) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.30) !important;
+    box-shadow: 0 6px 20px -2px rgba(239, 68, 68, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+    color: #ffffff !important;
 }
 
 .btn.danger:hover, button.danger:hover {
     transform: translateY(-1px) scale(1.03) !important;
-    color: #fee2e2 !important;
-    border-color: rgba(248, 113, 113, 0.70) !important;
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.92) 0%, rgba(220, 38, 38, 0.92) 100%) !important;
 }
 
 .btn.danger:active, button.danger:active {
@@ -376,18 +481,31 @@ html, body.app-body, body {
    Connection Cards & Panels — True WebGL Glass Surface
    ========================================================================== */
 .connection-card {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    background: rgba(22, 27, 40, 0.55) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
     border-radius: 20px !important;
-    box-shadow: none !important;
-    transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1), border-color 200ms ease !important;
+    box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.35),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.18) !important;
+    transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1),
+                border-color 200ms ease,
+                box-shadow 200ms ease !important;
     will-change: transform;
 }
 
+:root[data-theme="light"] .connection-card {
+    background: rgba(255, 255, 255, 0.70) !important;
+    border: 1px solid rgba(255, 255, 255, 0.85) !important;
+    box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.08),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.95) !important;
+}
+
 .connection-card:hover {
-    border-color: rgba(255, 255, 255, 0.35) !important;
+    border-color: rgba(255, 255, 255, 0.30) !important;
+    box-shadow: 0 16px 40px -4px rgba(0, 0, 0, 0.45),
+                0 0 24px -4px rgba(56, 189, 248, 0.20),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.30) !important;
     transform: translateY(-3px) scale(1.012) !important;
 }
 
@@ -403,67 +521,84 @@ html, body.app-body, body {
     font-size: 11px !important;
     letter-spacing: 0.04em !important;
     text-transform: uppercase;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    box-shadow: none !important;
-    border: 1px solid rgba(255, 255, 255, 0.25) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+    border: 1px solid rgba(255, 255, 255, 0.20) !important;
 }
 
 .protocol-badge.ssh {
+    background: rgba(14, 165, 233, 0.20) !important;
     color: #38bdf8 !important;
     border-color: rgba(56, 189, 248, 0.45) !important;
 }
 
 .protocol-badge.rdp {
+    background: rgba(168, 85, 247, 0.20) !important;
     color: #c084fc !important;
     border-color: rgba(168, 85, 247, 0.45) !important;
 }
 
 .protocol-badge.vnc {
+    background: rgba(249, 115, 22, 0.20) !important;
     color: #fb923c !important;
     border-color: rgba(249, 115, 22, 0.45) !important;
 }
 
 .protocol-badge.telnet {
+    background: rgba(34, 197, 94, 0.20) !important;
     color: #4ade80 !important;
     border-color: rgba(34, 197, 94, 0.45) !important;
 }
 
 /* Search Bar and Dropdown Filters */
 .search-input, .action-bar select, .settings-form input, .settings-form select, .settings-form textarea {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
     border-radius: 14px !important;
-    box-shadow: none !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25) !important;
     color: var(--text) !important;
     transition: border-color 200ms ease, box-shadow 200ms ease !important;
 }
 
+:root[data-theme="light"] .search-input, :root[data-theme="light"] .action-bar select, :root[data-theme="light"] .settings-form input, :root[data-theme="light"] .settings-form select, :root[data-theme="light"] .settings-form textarea {
+    background: rgba(255, 255, 255, 0.70) !important;
+    border: 1px solid rgba(255, 255, 255, 0.85) !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+}
+
 .search-input:focus, .action-bar select:focus, .settings-form input:focus, .settings-form select:focus, .settings-form textarea:focus {
     border-color: rgba(56, 189, 248, 0.60) !important;
-    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.25) !important;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.25), inset 0 1px 2px rgba(0, 0, 0, 0.20) !important;
 }
 
 /* ==========================================================================
    Modals & Overlays — High Index Optical Glass
    ========================================================================== */
 .modal-backdrop, .modal, .dialog-overlay {
-    backdrop-filter: blur(8px) !important;
-    -webkit-backdrop-filter: blur(8px) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
     background: rgba(0, 0, 0, 0.50) !important;
 }
 
 .modal-content, .dialog-content, .connection-modal {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: 1px solid rgba(255, 255, 255, 0.25) !important;
-    border-radius: 24px !important;
-    box-shadow: none !important;
+    background: rgba(18, 23, 36, 0.82) !important;
+    backdrop-filter: blur(32px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(32px) saturate(190%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.20) !important;
+    border-radius: 26px !important;
+    box-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.65),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.30) !important;
     animation: lgModalEnter 0.28s cubic-bezier(0.23, 1, 0.32, 1) both !important;
+}
+
+:root[data-theme="light"] .modal-content, :root[data-theme="light"] .dialog-content, :root[data-theme="light"] .connection-modal {
+    background: rgba(255, 255, 255, 0.85) !important;
+    border: 1px solid rgba(255, 255, 255, 0.90) !important;
+    box-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.15),
+                inset 0 1px 0 0 rgba(255, 255, 255, 1.0) !important;
 }
 
 @keyframes lgModalEnter {
@@ -481,18 +616,18 @@ html, body.app-body, body {
    Terminal Smartbar
    ========================================================================== */
 .terminal-smartbar {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.15) !important;
-    box-shadow: none !important;
-    border-radius: 16px;
+    background: rgba(18, 23, 36, 0.70) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.14) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+    border-radius: 18px;
     margin: 8px 12px;
 }
 
 .smartbar-tab {
     border-radius: 9999px !important;
-    background: transparent !important;
+    background: rgba(255, 255, 255, 0.08) !important;
     border: 1px solid rgba(255, 255, 255, 0.18) !important;
     box-shadow: none !important;
     transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1) !important;
@@ -504,19 +639,21 @@ html, body.app-body, body {
 }
 
 .smartbar-tab.active {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.30) 0%, rgba(56, 189, 248, 0.15) 100%) !important;
     border-color: rgba(56, 189, 248, 0.50) !important;
+    box-shadow: 0 2px 10px -1px rgba(14, 165, 233, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.30) !important;
     color: #38bdf8 !important;
     font-weight: 700;
 }
 
 /* Activity Items */
 .activity-item, .activity-card {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: 1px solid rgba(255, 255, 255, 0.12) !important;
-    border-radius: 14px !important;
-    box-shadow: none !important;
+    background: rgba(22, 27, 40, 0.50) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
     transition: transform 140ms ease !important;
 }
 
@@ -529,27 +666,31 @@ html, body.app-body, body {
    Login / Auth Card (index.html)
    ========================================================================== */
 .login-card, .auth-card {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: 1px solid rgba(255, 255, 255, 0.22) !important;
-    border-radius: 24px !important;
-    box-shadow: none !important;
+    background: rgba(18, 23, 36, 0.82) !important;
+    backdrop-filter: blur(32px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(32px) saturate(190%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.20) !important;
+    border-radius: 26px !important;
+    box-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.65),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.30) !important;
     padding: 36px 32px 28px !important;
     transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1) !important;
 }
 
 .login-card:hover, .auth-card:hover {
     border-color: rgba(255, 255, 255, 0.35) !important;
+    box-shadow: 0 28px 72px -12px rgba(0, 0, 0, 0.70),
+                0 0 32px -4px rgba(56, 189, 248, 0.25),
+                inset 0 1px 0 0 rgba(255, 255, 255, 0.40) !important;
 }
 
 .theme-btn-login, .locale-switch-login {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
     border: 1px solid rgba(255, 255, 255, 0.20) !important;
     border-radius: 9999px !important;
-    box-shadow: none !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.20) !important;
     color: var(--text) !important;
     transition: transform 120ms ease !important;
 }
@@ -564,12 +705,13 @@ html, body.app-body, body {
 
 /* Floating Panels & Toasts */
 .floating-panel, .toast, .dropdown-menu {
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    background: rgba(18, 23, 36, 0.85) !important;
+    backdrop-filter: blur(28px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
     border: 1px solid rgba(255, 255, 255, 0.20) !important;
-    border-radius: 16px !important;
-    box-shadow: none !important;
+    border-radius: 18px !important;
+    box-shadow: 0 16px 48px -8px rgba(0, 0, 0, 0.55),
+                inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
 }
 
 /* Touch & Motion Safeguards */
