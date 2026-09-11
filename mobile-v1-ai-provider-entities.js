@@ -110,24 +110,6 @@ function copyObject(value) {
     return { ...value };
 }
 
-function normalizeContextWindow(value) {
-    if (value == null || value === '') return {};
-    if (typeof value === 'number' || typeof value === 'string') {
-        const windowTokens = Number(value);
-        if (!Number.isFinite(windowTokens) || windowTokens < 1) {
-            throw invalid('invalid_ai_provider', 'AI provider context window is invalid.');
-        }
-        return { windowTokens: Math.floor(windowTokens) };
-    }
-    const context = copyObject(value);
-    if (!Object.prototype.hasOwnProperty.call(context, 'windowTokens')) return {};
-    const windowTokens = Number(context.windowTokens);
-    if (!Number.isFinite(windowTokens) || windowTokens < 1) {
-        throw invalid('invalid_ai_provider', 'AI provider context window is invalid.');
-    }
-    return { windowTokens: Math.floor(windowTokens) };
-}
-
 function safeOptions(value, { patch = false } = {}) {
     const input = copyObject(value);
     const output = {};
@@ -148,11 +130,16 @@ function safeOptions(value, { patch = false } = {}) {
         output.reasoning_effort = effort;
     }
     if (Object.prototype.hasOwnProperty.call(input, 'context')) {
-        output.context = normalizeContextWindow(input.context);
-    } else if (Object.prototype.hasOwnProperty.call(input, 'windowTokens')) {
-        /* Android historically flattened windowTokens onto options. Accept
-         * both shapes so a second-round provider upsert does not 400. */
-        output.context = normalizeContextWindow({ windowTokens: input.windowTokens });
+        const context = copyObject(input.context);
+        if (Object.prototype.hasOwnProperty.call(context, 'windowTokens')) {
+            const windowTokens = Number(context.windowTokens);
+            if (!Number.isFinite(windowTokens) || windowTokens < 1) {
+                throw invalid('invalid_ai_provider', 'AI provider context window is invalid.');
+            }
+            output.context = { windowTokens: Math.floor(windowTokens) };
+        } else if (!patch) {
+            output.context = {};
+        }
     }
     return output;
 }

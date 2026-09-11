@@ -53,10 +53,6 @@ test('canonical binding is deterministic and DER signatures are rejected', () =>
   assert.equal(proofProtocol.canonicalPath('/api/mobile/v1/sync/changes?a=1&a=2'), null);
   assert.equal(proofProtocol.canonicalPath('https://evil.example/api/mobile/v1/sync/status'), null);
   assert.equal(proofProtocol.proofUsage('GET', '/api/mobile/v1/sync/status'), 'sync.status');
-  assert.equal(proofProtocol.proofUsage('GET', '/api/mobile/v1/devices'), 'devices.list');
-  assert.equal(proofProtocol.proofUsage('PATCH', '/api/mobile/v1/devices/abc'), 'devices.patch');
-  assert.equal(proofProtocol.proofUsage('DELETE', '/api/mobile/v1/devices/abc'), 'devices.revoke');
-  assert.equal(proofProtocol.proofUsage('POST', '/api/mobile/v1/sensitive/verify'), 'sensitive.verify');
   assert.equal(proofProtocol.proofUsage('POST', '/api/mobile/v1/devices/proof-challenge'), null);
 
   const pair = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });

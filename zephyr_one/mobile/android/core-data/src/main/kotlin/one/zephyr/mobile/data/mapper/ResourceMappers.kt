@@ -243,9 +243,7 @@ object ResourceMappers {
                 usePreviousResponseId = EntityCodec.bool(options, "use_previous_response_id", false),
                 reasoningEffort = EntityCodec.string(options, "reasoning_effort")
                     ?: EntityCodec.string(options, "reasoningEffort"),
-                windowTokens = EntityCodec.obj(options, "context")
-                    ?.let { EntityCodec.intOrNull(it, "windowTokens") }
-                    ?: EntityCodec.intOrNull(options, "context")
+                windowTokens = EntityCodec.intOrNull(options, "context")
                     ?: EntityCodec.intOrNull(options, "windowTokens"),
             ),
             visibility = EntityCodec.text(payload, "visibility", "private"),
@@ -275,12 +273,7 @@ object ResourceMappers {
             put("vision", JsonPrimitive(provider.config.vision))
             put("use_previous_response_id", JsonPrimitive(provider.config.usePreviousResponseId))
             provider.config.reasoningEffort?.let { put("reasoning_effort", JsonPrimitive(it)) }
-            provider.config.windowTokens?.let {
-                put(
-                    "context",
-                    JsonObject(mapOf("windowTokens" to JsonPrimitive(it))),
-                )
-            }
+            provider.config.windowTokens?.let { put("context", JsonPrimitive(it)) }
         }
         return JsonObject(
             mapOf(

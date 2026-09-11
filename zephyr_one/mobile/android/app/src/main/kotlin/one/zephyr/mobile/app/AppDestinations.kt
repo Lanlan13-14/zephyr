@@ -51,7 +51,6 @@ import one.zephyr.mobile.model.NetworkPolicy
 import one.zephyr.mobile.model.Note
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.Snippet
-import one.zephyr.mobile.model.persistedDiagnosticText
 import one.zephyr.mobile.security.BiometricAvailability
 import one.zephyr.mobile.security.LockDelay
 import one.zephyr.mobile.ui.theme.ZephyrThemeId
@@ -597,21 +596,22 @@ internal fun DeviceListDestination(
 internal fun DiagnosticsLiveDestination(
     account: AccountContainer,
     onBack: () -> Unit,
+    onCheckUpdate: () -> Unit,
+    onOpenGitHub: () -> Unit,
+    onOpenLicenses: () -> Unit,
     onExport: () -> Unit,
 ) {
     val status by account.syncEngine.status.collectAsState(initial = one.zephyr.mobile.model.SyncStatus.unbound())
-    val lastRound by account.syncEngine.lastRoundResult.collectAsState(initial = null)
     one.zephyr.mobile.feature.tools.DiagnosticsLiveRoute(
         appVersion = BuildConfig.VERSION_NAME,
         localMode = account.isLocalMode,
         bindingLabel = account.binding.username + " @ " + account.binding.deviceName,
         pending = status.pendingCount,
         conflicts = status.conflictCount,
-        lastError = lastRound?.error ?: status.lastError,
-        lastAttemptAt = status.lastAttemptAt,
-        lastSuccessAt = status.lastSuccessAt,
-        appliedCursor = status.appliedCursor,
-        acknowledgedCursor = status.acknowledgedCursor,
+        lastError = status.lastError?.code,
+        onCheckUpdate = onCheckUpdate,
+        onOpenGitHub = onOpenGitHub,
+        onOpenLicenses = onOpenLicenses,
         onExport = onExport,
         onBack = onBack,
     )
@@ -693,30 +693,8 @@ internal class AiModelDiscoverer(account: AccountContainer) {
     }
 }
 
-internal fun diagnosticExport(account: AccountContainer): String {
-    val lastRound = account.syncEngine.lastRoundResult.value
-    val error = lastRound?.error
-    return buildString {
-        append("one=${BuildConfig.VERSION_NAME}")
-        append(" mode=${if (account.isLocalMode) "local" else "bound"}")
-        append(" state=${account.binding.state.name}")
-        append(" device=${account.binding.deviceId.take(8)}")
-        append(" lastAttempt=${lastRound?.startedAt ?: 0}")
-        append(" lastSuccess=${lastRound?.finishedAt ?: 0}")
-        if (lastRound != null) {
-            append(" pending=${lastRound.deferred.size}")
-            append(" conflicts=${lastRound.conflicts}")
-            append(" applied=${lastRound.appliedCursor}")
-            append(" acked=${lastRound.ackedCursor}")
-            append(" lastRound=${lastRound.endState.name}")
-            append(" stopped=${lastRound.stoppedAt?.name ?: "-"}")
-            append(" phases=${lastRound.phasesRun.joinToString("/") { it.name }}")
-        }
-        if (error != null) {
-            append(" error=${error.persistedDiagnosticText()}")
-        }
-    }
-}
+internal fun diagnosticExport(account: AccountContainer): String =
+    "one=${BuildConfig.VERSION_NAME} mode=${if (account.isLocalMode) "local" else "bound"} state=${account.binding.state.name} device=${account.binding.deviceId.take(8)}"
 
 @Composable
 private fun rememberKeepAliveToggle(account: AccountContainer): (Boolean) -> Unit {

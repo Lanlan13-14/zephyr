@@ -280,13 +280,7 @@ function assertMaskAllowed(spec, fieldMask) {
          * exact path. Treating every child of an editable root as editable
          * defeats the registry when a later canonical object grows a secret or
          * server-authority member. */
-        /* aiProvider payloads contain structured config/model fields. Android
-         * legitimately sends their leaf paths on later edits; validate the
-         * structured root against the registry, then let the adapter project
-         * the leaf values. Reject all other undeclared paths. */
-        const nestedStructured = spec.type === 'aiProvider'
-            && (root === 'config' || root === 'models');
-        if (!editable.has(path) && !nestedStructured) {
+        if (!editable.has(path)) {
             throw new MobileStoreError(
                 'invalid_request',
                 '\u5b57\u6bb5 ' + path + ' \u4e0d\u5728\u53ef\u540c\u6b65\u5b57\u6bb5\u8868\u4e2d',

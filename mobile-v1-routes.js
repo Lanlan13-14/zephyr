@@ -227,9 +227,7 @@ function validatePushRequest(body) {
         || [...body.batchId].length > MAX_PUSH_ID_LENGTH || body.batchId.includes('\u0000')) {
         throw invalidPush('batchId is invalid');
     }
-    try {
-        body.baseCursor = coerceNonNegativeInteger(body.baseCursor, 'baseCursor', { required: true });
-    } catch (err) {
+    if (!Number.isSafeInteger(body.baseCursor) || body.baseCursor < 0) {
         throw invalidPush('baseCursor must be a non-negative safe integer');
     }
     if (typeof body.registryHash !== 'string' || !/^[0-9a-f]{64}$/.test(body.registryHash)) {
@@ -308,32 +306,6 @@ function clampPageSize(value) {
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) return DEFAULT_PAGE_SIZE;
     return Math.max(1, Math.min(MAX_PAGE_SIZE, Math.floor(n)));
-}
-
-/**
- * Link ZSL/2 JSON→CBOR→JSON can revive a safe integer as a float, a digit
- * string, or (rarely) a BigInt. The second One round is mostly changes/ack, so
- * a type-strict `Number.isSafeInteger` check would fail a cursor the first
- * bootstrap round never sent through that seam.
- */
-function coerceNonNegativeInteger(value, field, { required = false } = {}) {
-    if (value == null || value === '') {
-        if (required) {
-            throw new MobileStoreError('invalid_request', `${field} 必须是非负整数`, 400);
-        }
-        return 0;
-    }
-    if (typeof value === 'bigint') {
-        if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
-            throw new MobileStoreError('invalid_request', `${field} 必须是非负整数`, 400);
-        }
-        return Number(value);
-    }
-    const n = typeof value === 'number' ? value : Number(value);
-    if (!Number.isFinite(n) || n < 0 || Math.floor(n) !== n || n > Number.MAX_SAFE_INTEGER) {
-        throw new MobileStoreError('invalid_request', `${field} 必须是非负整数`, 400);
-    }
-    return n;
 }
 
 
@@ -781,20 +753,6 @@ class MobileV1Api {
 
     // --------------------------------------------------------------- auth ---
 
-    /**
-     * Account-level device management: the browser uses ZephyrSid, One uses the
-     * bound DeviceAccess credential. Either plane lists/patches the same
-     * `mobile_devices` rows. A SID, when present, wins so a stolen bearer cannot
-     * impersonate a browser session that is also attached.
-     */
-    requireSidOrDeviceAccess(req, res, { passwordReady = false } = {}) {
-        if (String(req.headers['x-zephyr-sid'] || '').trim()) {
-            return this.requireSid(req, res, { passwordReady });
-        }
-        const auth = this.requireDevice(req, res);
-        return auth ? auth.user : null;
-    }
-
     /** ZephyrSid plane: the human's own session. */
     requireSid(req, res, { passwordReady = false } = {}) {
         const sid = String(req.headers['x-zephyr-sid'] || '').trim();
@@ -1187,7 +1145,7 @@ class MobileV1Api {
     }
 
     handleListDevices(req, res) {
-        const auth = this.requireSidOrDeviceAccess(req, res);
+        const auth = this.requireSid(req, res);
         if (!auth) return undefined;
         const devices = this.store.listDeviceRows(auth.userId).map((row) => this.store.devicePublic(row));
         return res.json({ ok: true, devices });
@@ -1195,7 +1153,7 @@ class MobileV1Api {
 
     handlePatchDevice(req, res) {
         const requestId = req.mobileRequestId;
-        const auth = this.requireSidOrDeviceAccess(req, res);
+        const auth = this.requireSid(req, res);
         if (!auth) return undefined;
         try {
             const row = this.store.patchDevice(auth.userId, req.params.deviceId, req.body || {});
@@ -1215,7 +1173,7 @@ class MobileV1Api {
      */
     handleDeleteDevice(req, res) {
         const requestId = req.mobileRequestId;
-        const auth = this.requireSidOrDeviceAccess(req, res);
+        const auth = this.requireSid(req, res);
         if (!auth) return undefined;
 
         const deviceId = String(req.params.deviceId || '');
@@ -1242,7 +1200,7 @@ class MobileV1Api {
 
     handleSensitiveVerify(req, res) {
         const requestId = req.mobileRequestId;
-        const auth = this.requireSidOrDeviceAccess(req, res, { passwordReady: true });
+        const auth = this.requireSid(req, res, { passwordReady: true });
         if (!auth) return undefined;
 
         const body = req.body || {};
@@ -1693,7 +1651,7 @@ class MobileV1Api {
         if (!auth) return undefined;
         try {
             const result = this.executeChangesForDevice(auth, {
-                sinceCursor: req.query.sinceCursor,
+                sinceCursor: Number(req.query.sinceCursor || 0),
                 limit: req.query.limit,
             });
             return res.json(result);
@@ -1706,7 +1664,10 @@ class MobileV1Api {
      * the Link owned-sync bridge both run. Throws MobileStoreError on a bad or
      * expired cursor so each transport maps it onto its own error envelope. */
     executeChangesForDevice(auth, { sinceCursor, limit } = {}) {
-        sinceCursor = coerceNonNegativeInteger(sinceCursor, 'sinceCursor');
+        sinceCursor = Number(sinceCursor || 0);
+        if (!Number.isSafeInteger(sinceCursor) || sinceCursor < 0) {
+            throw new MobileStoreError('invalid_request', 'sinceCursor 必须是非负整数', 400);
+        }
         const latestCursor = this.store.latestCursor(auth.user.userId);
         if (sinceCursor > latestCursor) {
             throw new MobileStoreError('cursor_invalid', '游标超过服务端最新位置', 409,
@@ -2674,7 +2635,10 @@ class MobileV1Api {
     /* Transport-independent ack. Refuses a cursor the server never issued rather
      * than clamping, so a device can never skip changes forever. */
     executeAckForDevice(auth, cursor) {
-        cursor = coerceNonNegativeInteger(cursor, 'cursor');
+        cursor = Number(cursor || 0);
+        if (!Number.isFinite(cursor) || cursor < 0) {
+            throw new MobileStoreError('invalid_request', 'cursor 必须是非负整数', 400);
+        }
         const latest = this.store.latestCursor(auth.user.userId);
         if (cursor > latest) {
             throw new MobileStoreError('cursor_invalid', 'cursor 超过服务端游标', 409, { details: { latest } });

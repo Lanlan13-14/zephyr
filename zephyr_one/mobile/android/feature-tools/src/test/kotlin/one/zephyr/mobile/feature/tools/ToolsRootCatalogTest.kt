@@ -2,7 +2,6 @@ package one.zephyr.mobile.feature.tools
 
 import one.zephyr.mobile.model.ActionGate
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -30,8 +29,6 @@ class ToolsRootCatalogTest {
         )
         assertTrue(ToolEntry.FILE_SYNC in ToolsCatalog.rows(ToolSection.FILE_SYNC))
         assertTrue(ToolEntry.SERVER_SETTINGS in ToolsCatalog.rows(ToolSection.SERVER))
-        assertFalse(ToolsRootSummaries().fileSync.contains("3 项待同步"))
-        assertEquals("未绑定", ToolsRootSummaries().fileSync)
     }
 
     @Test

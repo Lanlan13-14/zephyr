@@ -140,28 +140,6 @@ test('fieldMask accepts only exact registry paths and rejects every prototype se
   }
 });
 
-test('aiProvider fieldMask accepts structured config and model leaves', () => {
-  const spec = {
-    type: 'aiProvider',
-    editableFields: ['name', 'config', 'models'],
-    secretFields: ['apiKey'],
-    serverAuthorityFields: ['ownerUserId', 'revision'],
-    opaquePreserveFields: [],
-    deviceLocalFields: [],
-  };
-  assert.doesNotThrow(() => assertMaskAllowed(spec, [
-    'name',
-    'config',
-    'config.options.vision',
-    'config.options.context.windowTokens',
-    'models[0].label',
-  ]));
-  assert.throws(() => assertMaskAllowed(spec, ['apiKey']), /\u5b57\u6bb5/);
-  assert.throws(() => assertMaskAllowed(spec, ['ownerUserId']), /\u5b57\u6bb5/);
-  assert.throws(() => assertMaskAllowed(spec, ['config.__proto__.x']), /\u5b57\u6bb5/);
-  assert.throws(() => assertMaskAllowed(spec, ['unknown']), /\u5b57\u6bb5/);
-});
-
 test('null-prototype patch construction cannot mutate the global object prototype', () => {
   delete Object.prototype.mobilePushPolluted;
   const patch = Object.create(null);
