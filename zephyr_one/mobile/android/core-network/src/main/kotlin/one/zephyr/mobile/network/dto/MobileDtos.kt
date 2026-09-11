@@ -208,7 +208,6 @@ data class DeviceDto(
     val enabled: Boolean,
     val automaticEnabled: Boolean,
     val syncIntervalSec: Int,
-    val bindingRevision: Long? = null,
     val lastSyncAt: Long? = null,
     val lastSeenAt: Long? = null,
     val createdAt: Long,

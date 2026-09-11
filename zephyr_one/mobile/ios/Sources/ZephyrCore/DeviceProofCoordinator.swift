@@ -176,7 +176,6 @@ public struct DeviceProofRequestBinding: Equatable, Sendable {
             "POST /api/mobile/v1/sync/ack": "sync.ack",
             "POST /api/mobile/v1/sync/now": "sync.now",
             "GET /api/mobile/v1/sync/status": "sync.status",
-            "GET /api/mobile/v1/devices": "devices.list",
             "POST /api/mobile/v1/blobs/uploads": "blob.upload.create",
             "GET /api/mobile/v1/shared": "shared.list",
             "POST /api/mobile/v1/file-bridge/lease": "file-bridge.lease",
@@ -217,12 +216,6 @@ public struct DeviceProofRequestBinding: Equatable, Sendable {
         }
         if segments.count == 6, segments[3] == "shared", segments[4] == "sessions", verb == "DELETE" {
             return "shared.session.close"
-        }
-        if segments.count == 5, segments[3] == "devices", verb == "PATCH" {
-            return "devices.patch"
-        }
-        if segments.count == 5, segments[3] == "devices", verb == "DELETE" {
-            return "devices.revoke"
         }
         return nil
     }

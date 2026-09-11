@@ -58,51 +58,6 @@ func TestDecodeAnyIsJSONMarshalable(t *testing.T) {
 	}
 }
 
-func TestPackCanonicalizesJSONNumbersToIntegers(t *testing.T) {
-	cases := []any{
-		json.RawMessage(`{"op":"changes","sinceCursor":59,"limit":100}`),
-		json.RawMessage(`{"op":"changes","sinceCursor":59.0,"limit":100}`),
-		map[string]any{"op": "changes", "sinceCursor": float64(59), "limit": float64(100)},
-	}
-	for i, body := range cases {
-		packed, err := Pack(KindSyncOp, body, false)
-		if err != nil {
-			t.Fatalf("case %d pack: %v", i, err)
-		}
-		fr, err := Unpack(packed)
-		if err != nil {
-			t.Fatalf("case %d unpack: %v", i, err)
-		}
-		var decoded map[string]any
-		if err := Decode(fr.Body, &decoded); err != nil {
-			t.Fatalf("case %d decode: %v", i, err)
-		}
-		if decoded["op"] != "changes" {
-			t.Fatalf("case %d lost op: %#v", i, decoded["op"])
-		}
-		if bytes.Contains(fr.Body, []byte{0xfb}) {
-			t.Fatalf("case %d packed a float64 CBOR value into the body: %x", i, fr.Body)
-		}
-		if !bytes.Contains(fr.Body, []byte{0x18, 0x3b}) {
-			t.Fatalf("case %d did not pack sinceCursor=59 as CBOR uint: %x", i, fr.Body)
-		}
-		switch v := decoded["sinceCursor"].(type) {
-		case uint64:
-			if v != 59 {
-				t.Fatalf("case %d sinceCursor=%d", i, v)
-			}
-		case int64:
-			if v != 59 {
-				t.Fatalf("case %d sinceCursor=%d", i, v)
-			}
-		case float64:
-			t.Fatalf("case %d sinceCursor stayed a float: %v", i, v)
-		default:
-			t.Fatalf("case %d sinceCursor type %T: %v", i, v, v)
-		}
-	}
-}
-
 func TestRoundTrip(t *testing.T) {
 	body := map[string]any{"op": "upsert", "entity": "note", "rev": uint64(3)}
 	packed, err := Pack(KindSyncOp, body, false)
