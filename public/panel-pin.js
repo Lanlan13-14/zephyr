@@ -2,7 +2,13 @@
  * Desktop-only side pinning for Zephyr's secondary floating panels.
  * The toggle's geometry/motion are the exact 18px `.tgl` component from
  * tgl-pin.html; its colors deliberately follow the active Zephyr theme.
+ *
+ * Menu strings go through the shared i18n runtime `t()` (same as the unpinned
+ * layout menu in app.js) so English users never see raw Chinese literals;
+ * audit-js-ui-templates.py/audit-js-visible-calls.py enforce this.
  */
+import { t } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
+
 const pinned = new Set();
 let zSeed = 10100;
 let activePinMenu = null;
@@ -337,14 +343,14 @@ function openPinMenu(anchor, panel, onClose) {
     // the ordinary unpinned ⋯ menu. Pinned state only changes available actions.
     menu.className = 'panel-layout-menu panel-pin-menu';
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', '钉住布局');
+    menu.setAttribute('aria-label', t('钉住布局'));
     menu.innerHTML = `
-        <button data-pin-layout="full" title="全屏" aria-label="全屏"><span class="panel-layout-icon full"></span></button>
-        <button data-pin-layout="half" title="下 1/2" aria-label="下 1/2"><span class="panel-layout-icon half"></span></button>
-        <button data-pin-layout="switch-left" title="钉到左边" aria-label="钉到左边"><span class="panel-layout-icon left"></span></button>
-        <button data-pin-layout="switch-right" title="钉到右边" aria-label="钉到右边"><span class="panel-layout-icon right"></span></button>
-        <button data-pin-layout="unpin" title="取消钉住" aria-label="取消钉住"><span class="panel-layout-icon unpin"></span></button>
-        <button data-pin-layout="close" class="panel-layout-close" title="关闭窗口" aria-label="关闭窗口"><span class="panel-layout-icon close"></span></button>`;
+        <button data-pin-layout="full" title="${t('全屏')}" aria-label="${t('全屏')}"><span class="panel-layout-icon full"></span></button>
+        <button data-pin-layout="half" title="${t('下 1/2')}" aria-label="${t('下 1/2')}"><span class="panel-layout-icon half"></span></button>
+        <button data-pin-layout="switch-left" title="${t('钉到左边')}" aria-label="${t('钉到左边')}"><span class="panel-layout-icon left"></span></button>
+        <button data-pin-layout="switch-right" title="${t('钉到右边')}" aria-label="${t('钉到右边')}"><span class="panel-layout-icon right"></span></button>
+        <button data-pin-layout="unpin" title="${t('取消钉住')}" aria-label="${t('取消钉住')}"><span class="panel-layout-icon unpin"></span></button>
+        <button data-pin-layout="close" class="panel-layout-close" title="${t('关闭窗口')}" aria-label="${t('关闭窗口')}"><span class="panel-layout-icon close"></span></button>`;
     menu.style.transition = 'none';
     menu.style.zIndex = String(Math.max(10000, (Number(panel.style.zIndex) || zSeed) + 20));
     document.body.appendChild(menu);

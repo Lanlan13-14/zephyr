@@ -71,6 +71,29 @@ function editableFieldMask(spec, before, after) {
     });
 }
 
+/* Union of the stored-value diff with caller-declared secret changes.
+ *
+ * Observable fields (the after projection carries the stored value, possibly
+ * masked to '******'): the stored diff alone decides, so a rename that re-posts
+ * an unchanged privateKey does not stamp a revision (#112).
+ *
+ * Unobservable fields (the projection never carries the stored value, e.g.
+ * clientToken `token` — metadata-only by design): the diff is vacuously
+ * empty, so a caller-declared change is the only signal and must pass
+ * through, or a token create/rotate would never stamp its CAS ledger. */
+function mergeSecretChanges(spec, storedDiff, declared, before, after) {
+    if (!Array.isArray(declared) || declared.length === 0) return storedDiff;
+    const secretFields = spec.secretFields || [];
+    const observable = new Set(secretFields.filter((field) => (
+        after == null || Object.prototype.hasOwnProperty.call(after, field)
+    )));
+    const merged = new Set(storedDiff.map(String));
+    for (const field of declared.map(String)) {
+        if (!observable.has(field)) merged.add(field);
+    }
+    return [...merged];
+}
+
 function secretFieldMask(spec, changedSecretFields) {
     if (changedSecretFields == null) return [];
     if (!Array.isArray(changedSecretFields)) {
@@ -188,10 +211,20 @@ class MobileV1ChangeBridge {
         const restored = action === 'upsert' && before?.deletedAt && after && !after.deletedAt;
         const fieldMask = action === 'upsert' ? editableFieldMask(spec, restored ? null : before, after) : [];
         /* Callers historically stamped every secret the form posted, including
-         * empty privateKey on a rename. The feed ledger follows stored values. */
+         * empty privateKey on a rename. The feed ledger follows stored values.
+         * A field the after-projection cannot observe (clientToken's `token`
+         * is metadata-only) has no stored diff to consult, so a caller-declared
+         * change for such an unobservable field is the only signal and is
+         * honoured; observable fields always follow the stored diff. */
         if (changedSecretFields.length) secretFieldMask(spec, changedSecretFields);
         const secretMask = action === 'upsert'
-            ? secretFieldMask(spec, changedStoredSecretFields(spec, restored ? null : before, after))
+            ? secretFieldMask(spec, mergeSecretChanges(
+                spec,
+                changedStoredSecretFields(spec, restored ? null : before, after),
+                changedSecretFields,
+                before,
+                after,
+            ))
             : [];
 
         /* A service may receive the same logical mutation twice. Do not move

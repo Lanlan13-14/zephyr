@@ -2434,5 +2434,12 @@
   "重启策略": "Restart policy",
   "镜像，例如 nginx:alpine": "Image, e.g. nginx:alpine",
   "除非手动停止": "Unless stopped",
-  "驱动": "Driver"
+  "驱动": "Driver",
+  "钉住布局": "Pin layout",
+  "下 1/2": "Bottom 1/2",
+  "钉到左边": "Pin left",
+  "钉到右边": "Pin right",
+  "取消钉住": "Unpin",
+  "计划删除确认请求无效": "Task-plan delete confirmation request was invalid",
+  "计划删除未完成": "Task-plan deletion did not complete"
 }

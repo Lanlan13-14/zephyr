@@ -267,7 +267,13 @@ test('every i18n key the One transform introduces resolves in both locales', () 
         'the transform is expected to introduce at least one key; if it stopped, '
         + 'this test has gone vacuous and must be revisited',
     );
-    assert.ok(introduced.includes('文件同步'), 'the File-sync rename must be among them');
+    /* The agent tab/heading rename to 文件同步 was the original anchor, but
+     * 231ab450 ("feat(one): add file sync panel to desktop settings") landed a
+     * second 文件同步-named Link tab/panel in app.html itself, so the rename
+     * no longer shows up as a *new* key. The storage-section keys the transform
+     * injects for One's native folder picker are still transform-introduced and
+     * prove the diff is live. */
+    assert.ok(introduced.includes('选择文件夹'), 'the One folder-picker key must be among them');
 
     for (const key of introduced) assertKeyResolves(key);
 });
