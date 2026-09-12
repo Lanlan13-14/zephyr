@@ -59,7 +59,9 @@ import one.zephyr.mobile.data.repository.SettingsRepository
 import one.zephyr.mobile.feature.filesync.SafShareGrant
 import one.zephyr.mobile.model.ClientToken
 import one.zephyr.mobile.model.ConflictRecord
+import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.model.SensitiveGrant
+import one.zephyr.mobile.model.persistedDiagnosticText
 import one.zephyr.mobile.network.ApiResult
 import one.zephyr.mobile.network.MobileApi
 import one.zephyr.mobile.network.dto.DeviceDto
@@ -464,6 +466,7 @@ fun DeviceListRoute(
 ) {
     var devices by remember { mutableStateOf<List<DeviceDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    var loaded by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<DeviceDto?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -475,8 +478,9 @@ fun DeviceListRoute(
                     devices = result.value
                     error = null
                 }
-                is ApiResult.Failure -> error = result.error.message
+                is ApiResult.Failure -> error = result.error.persistedDiagnosticText()
             }
+            loaded = true
         }
     }
 
@@ -490,6 +494,15 @@ fun DeviceListRoute(
         }
         error?.let { Text(it, color = ZephyrTheme.palette.status.error, modifier = Modifier.padding(ZephyrSpacing.lg)) }
         LazyColumn(Modifier.padding(horizontal = ZephyrSpacing.lg)) {
+            if (loaded && devices.isEmpty() && error == null) {
+                item {
+                    Text(
+                        "当前账号还没有已注册的 One 设备。",
+                        color = ZephyrTheme.palette.onFloatingMuted,
+                        modifier = Modifier.padding(vertical = ZephyrSpacing.lg),
+                    )
+                }
+            }
             items(devices, key = { it.deviceId }) { device ->
                 Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                     Text(
@@ -618,41 +631,63 @@ fun DiagnosticsLiveRoute(
     bindingLabel: String,
     pending: Int,
     conflicts: Int,
-    lastError: String?,
-    onCheckUpdate: () -> Unit,
-    onOpenGitHub: () -> Unit,
-    onOpenLicenses: () -> Unit,
+    lastError: MobileError?,
+    lastAttemptAt: Long?,
+    lastSuccessAt: Long?,
+    appliedCursor: Long,
+    acknowledgedCursor: Long,
     onExport: () -> Unit,
     onBack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = "关于 Zephyr One", onBack = onBack)
+        PushedPageHeader(title = "诊断", onBack = onBack)
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = ZephyrSpacing.lg)
                 .padding(top = 4.dp, bottom = 140.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "版本",
-                    value = "One $appVersion · 主端 v2.4.1",
+                    title = "绑定",
+                    value = if (localMode) "本地模式 · 未绑定主端" else bindingLabel,
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "检查更新",
-                    showChevron = true,
-                    onClick = onCheckUpdate,
+                    title = "待推送 / 冲突",
+                    value = "$pending / $conflicts",
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "GitHub",
-                    showChevron = true,
-                    onClick = onOpenGitHub,
+                    title = "已应用 / 已确认游标",
+                    value = "$appliedCursor / $acknowledgedCursor",
                 )
                 one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "开源许可证",
-                    showChevron = true,
-                    onClick = onOpenLicenses,
+                    title = "上次尝试",
+                    value = lastAttemptAt?.let { RelativeTime.format(System.currentTimeMillis(), it) } ?: "从未",
                 )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "上次成功",
+                    value = lastSuccessAt?.let { RelativeTime.format(System.currentTimeMillis(), it) } ?: "从未",
+                    showDivider = false,
+                )
+            }
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "最近错误",
+                    value = lastError?.persistedDiagnosticText() ?: "无",
+                    showDivider = lastError != null,
+                )
+                if (lastError != null) {
+                    Text(
+                        lastError.diagnosticText(),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        color = ZephyrTheme.palette.onFloatingMuted,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+            }
+            one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.component.SettingsRow(
                     title = "导出诊断日志",
                     showChevron = true,
@@ -660,6 +695,11 @@ fun DiagnosticsLiveRoute(
                     onClick = onExport,
                 )
             }
+            Text(
+                "诊断只含错误码 / requestId / 本地阶段，不含 host / 用户 / 路径 / 密钥。版本、更新与许可证在「关于」。应用版本 One $appVersion。",
+                color = ZephyrTheme.palette.onFloatingMuted,
+                fontSize = 12.sp,
+            )
         }
     }
 }

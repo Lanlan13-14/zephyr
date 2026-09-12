@@ -45,6 +45,9 @@ final class DeviceProofTests: XCTestCase {
             ("POST", "/api/mobile/v1/shared/connections/id-1/sessions", "shared.session.open"),
             ("POST", "/api/mobile/v1/shared/sessions/id-1/refresh", "shared.session.refresh"),
             ("DELETE", "/api/mobile/v1/shared/sessions/id-1", "shared.session.close"),
+            ("GET", "/api/mobile/v1/devices", "devices.list"),
+            ("PATCH", "/api/mobile/v1/devices/device-1", "devices.patch"),
+            ("DELETE", "/api/mobile/v1/devices/device-1", "devices.revoke"),
         ]
         for (method, path, expected) in cases {
             let binding = try DeviceProofRequestBinding(
@@ -53,6 +56,16 @@ final class DeviceProofTests: XCTestCase {
                 body: Data()
             )
             XCTAssertEqual(binding.usage, expected, path)
+        }
+
+        XCTAssertThrowsError(
+            try DeviceProofRequestBinding(
+                method: "POST",
+                url: try XCTUnwrap(URL(string: "https://example.test/api/mobile/v1/sensitive/verify")),
+                body: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? DeviceProofCoordinatorError, .unsupportedRequest)
         }
     }
 

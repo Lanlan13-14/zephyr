@@ -4,8 +4,8 @@
     {
       "path": "contracts/openapi-mobile-v1.json",
       "freezePath": "FREEZE/zephyr one/contracts/openapi-mobile-v1.json",
-      "sha256": "e1dc2388bb9124ef4d98d267839a2985dc91af5e5a94d927d729a0f90ab160c6",
-      "bytes": 129432
+      "sha256": "6011f5f9e17e785ddff2f7066b08bd968e31130f4572f8a27f56477a01c92de7",
+      "bytes": 130057
     },
     {
       "path": "contracts/registries/entity-registry.json",
