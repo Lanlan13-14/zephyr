@@ -287,6 +287,37 @@ data class AiEnv(
     companion object { const val ENTITY_TYPE = "aiEnv" }
 }
 
+/* Account-scoped standard todo (server entity `aiTodo`, PR #129). Same
+ * shared-CRUD contract as the web panel: the model writes rows through the
+ * todo_* tools, the user edits them in settings, sync mirrors both. */
+data class AiTodo(
+    val id: String,
+    val ownerUserId: String,
+    val title: String,
+    val description: String = "",
+    val status: String = "pending",
+    val priority: String = "medium",
+    val dueAt: Long? = null,
+    val steps: List<AiTodoStep> = emptyList(),
+    val note: String = "",
+    val source: String = "",
+    val revision: Long = 0,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    val deletedAt: Long? = null,
+    val residency: Residency = Residency.OWNED,
+    val capabilities: CapabilitySet = CapabilitySet.owner,
+    val syncState: SyncState = SyncState.SYNCED,
+) {
+    companion object { const val ENTITY_TYPE = "aiTodo" }
+}
+
+data class AiTodoStep(
+    val id: String,
+    val title: String,
+    val done: Boolean = false,
+)
+
 data class AiConversationRecord(
     val id: String,
     val ownerUserId: String,

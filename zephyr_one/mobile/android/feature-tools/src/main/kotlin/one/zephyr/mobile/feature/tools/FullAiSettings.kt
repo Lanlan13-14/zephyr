@@ -10,9 +10,12 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -23,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -36,7 +40,7 @@ import one.zephyr.mobile.ui.theme.ZephyrMotionTokens
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 
-private enum class AiSettingsPage { ROOT, PROVIDERS, PROVIDER_EDIT, MODELS, MODEL_EDIT, PERMISSIONS, MCP, ENV, MEMORIES, MEMORY_EDIT, SKILLS, SKILL_EDIT, PLANS, PLAN_EDIT, SANDBOX, MAIN_SYNC }
+private enum class AiSettingsPage { ROOT, PROVIDERS, PROVIDER_EDIT, MODELS, MODEL_EDIT, PERMISSIONS, MCP, ENV, MEMORIES, MEMORY_EDIT, SKILLS, SKILL_EDIT, PLANS, PLAN_EDIT, TODOS, TODO_EDIT, SANDBOX, MAIN_SYNC }
 
 /**
  * Fetches the live model list for a provider draft. Implemented by the app layer, which owns the
@@ -64,6 +68,7 @@ fun FullAiSettingsRoute(
     var memoryDraft by remember { mutableStateOf(LocalAiMemory()) }
     var skillDraft by remember { mutableStateOf(LocalAiSkill()) }
     var planDraft by remember { mutableStateOf(LocalAiPlan()) }
+    var todoDraft by remember { mutableStateOf(LocalAiTodo()) }
     var parentProviderId by remember { mutableStateOf("") }
     val goBack = { when (page) {
         AiSettingsPage.PROVIDER_EDIT, AiSettingsPage.MODELS -> page = AiSettingsPage.PROVIDERS
@@ -71,11 +76,12 @@ fun FullAiSettingsRoute(
         AiSettingsPage.MEMORY_EDIT -> page = AiSettingsPage.MEMORIES
         AiSettingsPage.SKILL_EDIT -> page = AiSettingsPage.SKILLS
         AiSettingsPage.PLAN_EDIT -> page = AiSettingsPage.PLANS
+        AiSettingsPage.TODO_EDIT -> page = AiSettingsPage.TODOS
         AiSettingsPage.ROOT -> onBack()
         else -> page = AiSettingsPage.ROOT
     } }
     Column(Modifier.fillMaxSize()) {
-        PushedPageHeader(title = when(page){AiSettingsPage.ROOT->"AI 助理";AiSettingsPage.PROVIDERS->"模型供应商";AiSettingsPage.PROVIDER_EDIT->if(providerDraft.id.isBlank())"添加供应商" else "编辑供应商";AiSettingsPage.MODELS->"模型";AiSettingsPage.MODEL_EDIT->"模型详情";AiSettingsPage.PERMISSIONS->"工具与权限";AiSettingsPage.MCP->"MCP 服务器";AiSettingsPage.ENV->"AI 环境变量";AiSettingsPage.MEMORIES->"长期 Memory";AiSettingsPage.MEMORY_EDIT->"编辑 Memory";AiSettingsPage.SKILLS->"Skills 能力包";AiSettingsPage.SKILL_EDIT->"编辑 Skill";AiSettingsPage.PLANS->"任务计划";AiSettingsPage.PLAN_EDIT->"编辑计划";AiSettingsPage.SANDBOX->"本机沙箱";AiSettingsPage.MAIN_SYNC->"主端 AI 数据"}, onBack = goBack)
+        PushedPageHeader(title = when(page){AiSettingsPage.ROOT->"AI 助理";AiSettingsPage.PROVIDERS->"模型供应商";AiSettingsPage.PROVIDER_EDIT->if(providerDraft.id.isBlank())"添加供应商" else "编辑供应商";AiSettingsPage.MODELS->"模型";AiSettingsPage.MODEL_EDIT->"模型详情";AiSettingsPage.PERMISSIONS->"工具与权限";AiSettingsPage.MCP->"MCP 服务器";AiSettingsPage.ENV->"AI 环境变量";AiSettingsPage.MEMORIES->"长期 Memory";AiSettingsPage.MEMORY_EDIT->"编辑 Memory";AiSettingsPage.SKILLS->"Skills 能力包";AiSettingsPage.SKILL_EDIT->"编辑 Skill";AiSettingsPage.PLANS->"任务计划（旧）";AiSettingsPage.PLAN_EDIT->"编辑计划";AiSettingsPage.TODOS->"待办事项";AiSettingsPage.TODO_EDIT->"编辑待办";AiSettingsPage.SANDBOX->"本机沙箱";AiSettingsPage.MAIN_SYNC->"主端 AI 数据"}, onBack = goBack)
         AnimatedContent(
             targetState = page,
             transitionSpec = {
@@ -97,6 +103,8 @@ fun FullAiSettingsRoute(
             AiSettingsPage.SKILL_EDIT -> SkillEditor(skillDraft){scope.launch{repository.upsertSkill(it);page=AiSettingsPage.SKILLS}}
             AiSettingsPage.PLANS -> ResourceList(catalog.plans.map{it.id to it.title.ifBlank{it.status}},"计划",{planDraft=LocalAiPlan();page=AiSettingsPage.PLAN_EDIT},{id->planDraft=catalog.plans.first{it.id==id};page=AiSettingsPage.PLAN_EDIT},{scope.launch{repository.deletePlan(it)}})
             AiSettingsPage.PLAN_EDIT -> PlanEditor(planDraft){scope.launch{repository.upsertPlan(it);page=AiSettingsPage.PLANS}}
+            AiSettingsPage.TODOS -> TodoList(catalog,repository)
+            AiSettingsPage.TODO_EDIT -> TodoEditor(todoDraft){scope.launch{repository.upsertTodo(it);page=AiSettingsPage.TODOS}}
             AiSettingsPage.SANDBOX -> SandboxEditor(catalog){scope.launch{repository.save(it)}}
             AiSettingsPage.MAIN_SYNC -> MainSyncStatus(bound, catalog, mainSyncCounts)
         } }
@@ -112,7 +120,8 @@ fun FullAiSettingsRoute(
         Nav("AI 环境变量","${c.environment.size} 个；值存 Android Keystore",AiSettingsPage.ENV,open)
         Nav("长期 Memory","${c.memories.size} / ${c.memoryMaxItems}",AiSettingsPage.MEMORIES,open)
         Nav("Skills 能力包","${c.skills.count{it.enabled}} 个启用",AiSettingsPage.SKILLS,open)
-        Nav("任务计划","${c.plans.size} 条",AiSettingsPage.PLANS,open)
+        Nav("待办事项","${c.todos.count{it.status=="pending"||it.status=="in_progress"}} 条进行中",AiSettingsPage.TODOS,open)
+        Nav("任务计划","${c.plans.size} 条（旧版）",AiSettingsPage.PLANS,open)
         Nav("本机沙箱","L2 · ${if(c.sandbox.enabled)"启用" else "停用"} · 默认无网络",AiSettingsPage.SANDBOX,open,false)
     }
     if (c.providers.isNotEmpty()) {
@@ -256,3 +265,69 @@ fun FullAiSettingsRoute(
 @Composable private fun Lines(label:String,v:List<String>,set:(List<String>)->Unit)=Field(label,v.joinToString("\n"),false,4){set(it.lineSequence().map(String::trim).filter(String::isNotEmpty).toList())}
 @Composable private fun Choice(label:String,v:String,options:List<String>,set:(String)->Unit){var open by remember{mutableStateOf(false)};SettingsRow(label,value=v,showChevron=true,onClick={open=true});ActionSheet(visible=open,onDismiss={open=false},groups=listOf(ActionSheetGroup(items=options.map{option->ActionSheetItem(label=option,onClick={set(option)})})))}
 private fun csv(s:String)=s.split(',','\n').map(String::trim).filter(String::isNotEmpty).distinct()
+/* ── Standard todo UI (user surface; the model writes the same rows via
+ * todo_* tools in AndroidAiPlatformHost). Mirrors the web settings panel:
+ * checkbox completion (auto-completes remaining steps), status/priority
+ * editing, manual delete. Rows authored by the model carry an AI badge. */
+@Composable private fun TodoList(c: LocalAiCatalog, repository: LocalAiRepository) {
+    val scope = rememberCoroutineScope()
+    val open: (LocalAiTodo) -> Unit = { }
+    AiScroll {
+        Section("待办事项")
+        if (c.todos.isEmpty()) {
+            Card { Text("暂无待办。AI 会通过 todo 工具自动创建并推进任务；你也可以手动添加。", color=ZephyrTheme.palette.onFloatingMuted, fontSize=12.sp) }
+        }
+        c.todos.filter { it.status != "completed" && it.status != "cancelled" }.forEach { t -> TodoRow(t, repository, scope) }
+        val done = c.todos.filter { it.status == "completed" || it.status == "cancelled" }
+        if (done.isNotEmpty()) {
+            Section("已完成 / 已取消（${done.size}）")
+            done.forEach { t -> TodoRow(t, repository, scope) }
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+@Composable private fun TodoRow(t: LocalAiTodo, repository: LocalAiRepository, scope: kotlinx.coroutines.CoroutineScope) {
+    val statusLabel = mapOf("pending" to "待办", "in_progress" to "进行中", "completed" to "已完成", "cancelled" to "已取消")[t.status] ?: t.status
+    val priorityLabel = mapOf("low" to "低", "medium" to "中", "high" to "高", "urgent" to "紧急")[t.priority] ?: t.priority
+    Card {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Checkbox(checked = t.status == "completed", onCheckedChange = { checked ->
+                val next = if (checked) t.copy(status = "completed", steps = t.steps.map { it.copy(done = true) }) else t.copy(status = "pending")
+                scope.launch { repository.upsertTodo(next.copy(updatedAt = System.currentTimeMillis(), source = t.source.ifBlank { "web" })) }
+            })
+            Column(Modifier.weight(1f)) {
+                Text(t.title, style = ZephyrTheme.typography.body)
+                Text(
+                    buildString {
+                        append(statusLabel); append(" · "); append(priorityLabel)
+                        if (t.source == "ai") append(" · AI")
+                    },
+                    color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp,
+                )
+            }
+            Text("删除", color = ZephyrTheme.palette.status.error, style = ZephyrTheme.typography.caption, modifier = Modifier.clickable { scope.launch { repository.deleteTodo(t.id) } })
+        }
+    }
+}
+
+@Composable private fun TodoEditor(i: LocalAiTodo, save: (LocalAiTodo) -> Unit) {
+    var d by remember(i) { mutableStateOf(i) }
+    AiScroll {
+        Card {
+            Field("标题", d.title) { d = d.copy(title = it) }
+            Field("描述", d.description, false, 3) { d = d.copy(description = it) }
+            Choice("状态", d.status, listOf("pending", "in_progress", "completed", "cancelled")) { d = d.copy(status = it) }
+            Choice("优先级", d.priority, listOf("low", "medium", "high", "urgent")) { d = d.copy(priority = it) }
+            Field("备注", d.note, false, 3) { d = d.copy(note = it) }
+            Field("步骤（每行一步，已完成的行首加 [x]）", d.steps.joinToString("\n") { s -> (if (s.done) "[x] " else "") + s.title }, false, 8) { lines ->
+                d = d.copy(steps = lines.lineSequence().map(String::trim).filter(String::isNotEmpty).mapIndexed { index, line ->
+                    val done = line.startsWith("[x] ")
+                    val title = line.removePrefix("[x] ")
+                    d.steps.getOrNull(index)?.copy(title = title, done = done) ?: LocalAiTodoStep(id = "step-${index + 1}", title = title, done = done)
+                }.toList())
+            }
+        }
+        PrimaryButton({ save(d.copy(updatedAt = System.currentTimeMillis(), source = d.source.ifBlank { "web" })) }, Modifier.fillMaxWidth(), d.title.isNotBlank()) { Text("保存待办") }
+    }
+}

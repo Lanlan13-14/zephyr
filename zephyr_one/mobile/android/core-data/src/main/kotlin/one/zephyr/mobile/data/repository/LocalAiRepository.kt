@@ -90,6 +90,11 @@ class LocalAiRepository(
     suspend fun deleteSkill(id: String) { val c = load(); save(c.copy(skills = c.skills.filterNot { it.id == id })) }
     suspend fun deletePlan(id: String) { val c = load(); save(c.copy(plans = c.plans.filterNot { it.id == id })) }
 
+    /* Standard todo CRUD — same storage channel as plans so sync, when it
+     * lands, only has to project rows onto the aiTodo entity. */
+    suspend fun upsertTodo(item: LocalAiTodo) = updateList(item.id, { it.todos }, { c, list -> c.copy(todos = list) }, item)
+    suspend fun deleteTodo(id: String) { val c = load(); save(c.copy(todos = c.todos.filterNot { it.id == id })) }
+
     private suspend inline fun <reified T> updateList(
         id: String,
         crossinline get: (LocalAiCatalog) -> List<T>,
@@ -102,6 +107,7 @@ class LocalAiRepository(
             is LocalAiMemory -> item.copy(id = resolved) as T
             is LocalAiSkill -> item.copy(id = resolved) as T
             is LocalAiPlan -> item.copy(id = resolved) as T
+            is LocalAiTodo -> item.copy(id = resolved) as T
             else -> item
         }
         val list = get(current).filterNot {
@@ -109,6 +115,7 @@ class LocalAiRepository(
                 is LocalAiMemory -> it.id == resolved
                 is LocalAiSkill -> it.id == resolved
                 is LocalAiPlan -> it.id == resolved
+                is LocalAiTodo -> it.id == resolved
                 else -> false
             }
         } + patched
@@ -157,6 +164,7 @@ data class LocalAiCatalog(
     val memories: List<LocalAiMemory> = emptyList(),
     val skills: List<LocalAiSkill> = emptyList(),
     val plans: List<LocalAiPlan> = emptyList(),
+    val todos: List<LocalAiTodo> = emptyList(),
     val sandbox: LocalAiSandbox = LocalAiSandbox(),
     val syncFromMainEnabled: Boolean = false,
 ) {
@@ -166,6 +174,10 @@ data class LocalAiCatalog(
         providers = providers.distinctBy { it.id }, mcpServers = mcpServers.distinctBy { it.id },
         environment = environment.distinctBy { it.id }, memories = memories.distinctBy { it.id }.take(memoryMaxItems),
         skills = skills.distinctBy { it.id }, plans = plans.distinctBy { it.id }.take(200),
+        todos = todos.distinctBy { it.id }
+            .filter { it.title.isNotBlank() }
+            .map { it.copy(status = it.status.ifBlank { "pending" }, priority = it.priority.ifBlank { "medium" }) }
+            .take(2000),
     )
 }
 
@@ -190,6 +202,23 @@ data class LocalAiCatalog(
     val risk: String = "",
     val steps: List<LocalAiPlanStep> = emptyList(),
     val note: String = "",
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+/* Standard todo list — one CRUD surface shared by the user and the model.
+ * Mirrors the main side's AiKnowledgeService 'aiTodo' entity (PR #129):
+ * status pending|in_progress|completed|cancelled, priority low|medium|high|urgent,
+ * dueAt epoch millis (null = none), source records who last wrote the row. */
+@Serializable data class LocalAiTodoStep(val id: String = "", val title: String = "", val done: Boolean = false)
+@Serializable data class LocalAiTodo(
+    val id: String = "",
+    val title: String = "",
+    val description: String = "",
+    val status: String = "pending",
+    val priority: String = "medium",
+    val dueAt: Long? = null,
+    val steps: List<LocalAiTodoStep> = emptyList(),
+    val note: String = "",
+    val source: String = "",
     val updatedAt: Long = System.currentTimeMillis(),
 )
 @Serializable data class LocalAiSandbox(val enabled: Boolean = true, val workspaceQuotaMb: Int = 256, val timeoutSeconds: Int = 60, val networkDefault: Boolean = false, val allowedCommands: List<String> = listOf("cat", "grep", "sed", "awk", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "sha256sum"))
