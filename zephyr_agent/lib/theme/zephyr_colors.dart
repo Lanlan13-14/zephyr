@@ -30,8 +30,7 @@ class ZephyrPalette {
   final Color iconMid;
   final Color iconEnd;
   final Color iconDotA;
-  final Color iconDotB;
-  final double iconMidStop;
+    final double iconMidStop;
 
   const ZephyrPalette({
     required this.bg,
@@ -48,7 +47,6 @@ class ZephyrPalette {
     required this.iconMid,
     required this.iconEnd,
     required this.iconDotA,
-    required this.iconDotB,
     this.iconMidStop = 0.60,
   });
 }
@@ -61,7 +59,7 @@ class ZephyrColors {
       text: Color(0xFFF4F4F6), textSecondary: Color(0xFF9A9CA3), accent: Color(0xFF0A84FF),
       accentHover: Color(0xFF2997FF), danger: Color(0xFFFF453A), success: Color(0xFF32D74B), warning: Color(0xFFFFD60A),
       iconStart: Color(0xFFEEF2F7), iconMid: Color(0xFFA8B5C3), iconEnd: Color(0xFF6E7B88),
-      iconDotA: Color(0xFF0A84FF), iconDotB: Color(0xFF8E99A6),
+      iconDotA: Color(0xFF0A84FF),
       iconMidStop: 0.58,
     ),
     ZephyrTheme.lava: ZephyrPalette(
@@ -69,7 +67,7 @@ class ZephyrColors {
       text: Color(0xFFF5F2EE), textSecondary: Color(0xFFA39D95), accent: Color(0xFFBF5A1F),
       accentHover: Color(0xFFD06A2C), danger: Color(0xFFFF453A), success: Color(0xFF30D158), warning: Color(0xFFD49328),
       iconStart: Color(0xFFF1E8DF), iconMid: Color(0xFFC79672), iconEnd: Color(0xFF8D5A3A),
-      iconDotA: Color(0xFFBF5A1F), iconDotB: Color(0xFFA58A78),
+      iconDotA: Color(0xFFBF5A1F),
       iconMidStop: 0.58,
     ),
     ZephyrTheme.asagi: ZephyrPalette(
@@ -77,7 +75,7 @@ class ZephyrColors {
       text: Color(0xFFEDF3F2), textSecondary: Color(0xFF93A09E), accent: Color(0xFF4D9C8A),
       accentHover: Color(0xFF62AD9B), danger: Color(0xFFFF5A66), success: Color(0xFF36C98F), warning: Color(0xFFD7A446),
       iconStart: Color(0xFFEDF4F2), iconMid: Color(0xFF9BBDB5), iconEnd: Color(0xFF5E8F83),
-      iconDotA: Color(0xFF4D9C8A), iconDotB: Color(0xFF829B96),
+      iconDotA: Color(0xFF4D9C8A),
       iconMidStop: 0.58,
     ),
     ZephyrTheme.cyber: ZephyrPalette(
@@ -85,7 +83,7 @@ class ZephyrColors {
       text: Color(0xFFEDF2F5), textSecondary: Color(0xFF909AA3), accent: Color(0xFF4F9DA6),
       accentHover: Color(0xFF67B0B8), danger: Color(0xFFFF453A), success: Color(0xFF32D74B), warning: Color(0xFFD7A446),
       iconStart: Color(0xFFEEF3F5), iconMid: Color(0xFF9EB7BD), iconEnd: Color(0xFF5D858D),
-      iconDotA: Color(0xFF4F9DA6), iconDotB: Color(0xFF7F9298),
+      iconDotA: Color(0xFF4F9DA6),
       iconMidStop: 0.58,
     ),
   };
@@ -96,7 +94,7 @@ class ZephyrColors {
       text: Color(0xFF1D1D1F), textSecondary: Color(0xFF6E6E73), accent: Color(0xFF007AFF),
       accentHover: Color(0xFF006BD6), danger: Color(0xFFD70015), success: Color(0xFF248A3D), warning: Color(0xFFB26A00),
       iconStart: Color(0xFFEEF2F7), iconMid: Color(0xFFA8B5C3), iconEnd: Color(0xFF6E7B88),
-      iconDotA: Color(0xFF0A84FF), iconDotB: Color(0xFF8E99A6),
+      iconDotA: Color(0xFF0A84FF),
       iconMidStop: 0.58,
     ),
     ZephyrTheme.lava: ZephyrPalette(
@@ -104,7 +102,7 @@ class ZephyrColors {
       text: Color(0xFF2B241F), textSecondary: Color(0xFF746860), accent: Color(0xFFB85C22),
       accentHover: Color(0xFF9F4E1D), danger: Color(0xFFD70015), success: Color(0xFF248A3D), warning: Color(0xFFA35F00),
       iconStart: Color(0xFFF1E8DF), iconMid: Color(0xFFC79672), iconEnd: Color(0xFF8D5A3A),
-      iconDotA: Color(0xFFBF5A1F), iconDotB: Color(0xFFA58A78),
+      iconDotA: Color(0xFFBF5A1F),
       iconMidStop: 0.58,
     ),
     ZephyrTheme.asagi: ZephyrPalette(
@@ -112,7 +110,7 @@ class ZephyrColors {
       text: Color(0xFF1F2625), textSecondary: Color(0xFF657270), accent: Color(0xFF3F8F82),
       accentHover: Color(0xFF357A70), danger: Color(0xFFC2414A), success: Color(0xFF248A64), warning: Color(0xFF9A6700),
       iconStart: Color(0xFFEDF4F2), iconMid: Color(0xFF9BBDB5), iconEnd: Color(0xFF5E8F83),
-      iconDotA: Color(0xFF4D9C8A), iconDotB: Color(0xFF829B96),
+      iconDotA: Color(0xFF4D9C8A),
       iconMidStop: 0.58,
     ),
     ZephyrTheme.cyber: ZephyrPalette(
@@ -120,7 +118,7 @@ class ZephyrColors {
       text: Color(0xFF182025), textSecondary: Color(0xFF5F6B72), accent: Color(0xFF448E96),
       accentHover: Color(0xFF36777E), danger: Color(0xFFD70015), success: Color(0xFF248A3D), warning: Color(0xFFA35F00),
       iconStart: Color(0xFFEEF3F5), iconMid: Color(0xFF9EB7BD), iconEnd: Color(0xFF5D858D),
-      iconDotA: Color(0xFF4F9DA6), iconDotB: Color(0xFF7F9298),
+      iconDotA: Color(0xFF4F9DA6),
       iconMidStop: 0.58,
     ),
   };

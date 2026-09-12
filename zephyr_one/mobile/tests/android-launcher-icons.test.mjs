@@ -23,10 +23,10 @@ const activity = fs.readFileSync(
 );
 
 const themes = [
-  { wire: 'frost', enumName: 'FROST', alias: 'FrostLauncher', resource: 'ic_launcher', colors: ['EEF2F7', 'A8B5C3', '6E7B88', '0A84FF', '8E99A6'] },
-  { wire: 'lava', enumName: 'LAVA', alias: 'LavaLauncher', resource: 'ic_launcher_lava', colors: ['F1E8DF', 'C79672', '8D5A3A', 'BF5A1F', 'A58A78'] },
-  { wire: 'asagi', enumName: 'ASAGI', alias: 'AsagiLauncher', resource: 'ic_launcher_asagi', colors: ['EDF4F2', '9BBDB5', '5E8F83', '4D9C8A', '829B96'] },
-  { wire: 'cyber', enumName: 'CYBER', alias: 'CyberLauncher', resource: 'ic_launcher_cyber', colors: ['EEF3F5', '9EB7BD', '5D858D', '4F9DA6', '7F9298'] },
+  { wire: 'frost', enumName: 'FROST', alias: 'FrostLauncher', resource: 'ic_launcher', colors: ['EEF2F7', 'A8B5C3', '6E7B88', '0A84FF'] },
+  { wire: 'lava', enumName: 'LAVA', alias: 'LavaLauncher', resource: 'ic_launcher_lava', colors: ['F1E8DF', 'C79672', '8D5A3A', 'BF5A1F'] },
+  { wire: 'asagi', enumName: 'ASAGI', alias: 'AsagiLauncher', resource: 'ic_launcher_asagi', colors: ['EDF4F2', '9BBDB5', '5E8F83', '4D9C8A'] },
+  { wire: 'cyber', enumName: 'CYBER', alias: 'CyberLauncher', resource: 'ic_launcher_cyber', colors: ['EEF3F5', '9EB7BD', '5D858D', '4F9DA6'] },
 ];
 
 function blockForAlias(alias) {
