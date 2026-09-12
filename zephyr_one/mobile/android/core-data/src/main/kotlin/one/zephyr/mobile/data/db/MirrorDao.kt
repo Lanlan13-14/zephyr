@@ -37,6 +37,13 @@ interface MirrorDao {
     )
     suspend fun listByType(entityType: String, ownerUserId: String): List<MirrorEntityRow>
 
+    /** Full server picture including tombstones; the todo merge needs deletes to propagate. */
+    @Query(
+        "SELECT * FROM mirror_entities WHERE entityType = :entityType AND ownerUserId = :ownerUserId " +
+            "ORDER BY sortKey, entityId",
+    )
+    suspend fun listByTypeWithTombstones(entityType: String, ownerUserId: String): List<MirrorEntityRow>
+
     @Query("SELECT * FROM mirror_entities WHERE entityType = :entityType AND entityId = :entityId")
     suspend fun find(entityType: String, entityId: String): MirrorEntityRow?
 

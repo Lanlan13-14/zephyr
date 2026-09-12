@@ -76,6 +76,14 @@ class OwnedAiRepository(
     suspend fun listTodos(ownerUserId: String): List<AiTodo> =
         db.mirrorDao().listByType(AiTodo.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiTodo)
 
+    /**
+     * Includes tombstoned rows. The todo coordinator needs the full server
+     * picture to propagate deletes; [listByType] filters deletedAt IS NULL
+     * and would hide server tombstones from the merge.
+     */
+    suspend fun listTodosWithTombstones(ownerUserId: String): List<AiTodo> =
+        db.mirrorDao().listByTypeWithTombstones(AiTodo.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiTodo)
+
     suspend fun listEnv(ownerUserId: String): List<AiEnv> =
         db.mirrorDao().listByType(AiEnv.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiEnv)
 
