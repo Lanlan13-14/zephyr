@@ -8,7 +8,10 @@ const permissions = { browser: true, webSearch: true, webFetch: true, memory: tr
 
 test('every model-visible platform tool has capability risk and confirmation metadata', () => {
   const catalog = aiAgent.listToolCatalog({ permissions });
-  const unbound = catalog.filter((tool) => !tool.capabilityId || !/^R[0-4]$/.test(tool.risk) || !['never', 'always'].includes(tool.confirmation));
+  /* 'auto' is the context-sensitive tier (todo.update/todo.delete): the
+   * canonical wrapper stays out of the way and the case-level logic in the
+   * executor is the single decision point. */
+  const unbound = catalog.filter((tool) => !tool.capabilityId || !/^R[0-4]$/.test(tool.risk) || !['never', 'always', 'auto'].includes(tool.confirmation));
   assert.deepEqual(unbound.map((tool) => ({ name: tool.name, capabilityId: tool.capabilityId, risk: tool.risk, confirmation: tool.confirmation })), []);
   const loose = catalog.filter((tool) => tool.parameters?.type === 'object' && tool.parameters.additionalProperties !== false);
   assert.deepEqual(loose.map((tool) => tool.name), []);
