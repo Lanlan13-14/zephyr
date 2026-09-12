@@ -9,6 +9,8 @@ import one.zephyr.mobile.model.ActivityEvent
 import one.zephyr.mobile.model.AiConversationRecord
 import one.zephyr.mobile.model.AiEnv
 import one.zephyr.mobile.model.AiMemory
+import one.zephyr.mobile.model.AiTodo
+import one.zephyr.mobile.model.AiTodoStep
 import one.zephyr.mobile.model.AiMessageRecord
 import one.zephyr.mobile.model.AiModel
 import one.zephyr.mobile.model.AiProvider
@@ -326,6 +328,52 @@ object ResourceMappers {
             "projects" to JsonArrays.of(memory.projects),
             "tags" to JsonArrays.of(memory.tags),
             "connectionIds" to JsonArrays.of(memory.connectionIds),
+        ),
+    )
+
+    fun aiTodo(row: MirrorEntityRow, conflicted: Boolean = false): AiTodo {
+        val payload = EntityCodec.parse(row.payloadJson)
+        return AiTodo(
+            id = row.entityId,
+            ownerUserId = row.ownerUserId,
+            title = EntityCodec.text(payload, "title"),
+            description = EntityCodec.text(payload, "description"),
+            status = EntityCodec.text(payload, "status", "pending"),
+            priority = EntityCodec.text(payload, "priority", "medium"),
+            dueAt = EntityCodec.longOrNull(payload, "dueAt"),
+            steps = EntityCodec.objectList(payload, "steps").map { s ->
+                AiTodoStep(
+                    id = EntityCodec.text(s, "id"),
+                    title = EntityCodec.text(s, "title"),
+                    done = EntityCodec.bool(s, "done", false),
+                )
+            },
+            note = EntityCodec.text(payload, "note"),
+            source = EntityCodec.text(payload, "source"),
+            revision = row.revision,
+            createdAt = EntityCodec.longOrNull(payload, "createdAt") ?: (row.serverUpdatedAt ?: row.localUpdatedAt),
+            updatedAt = row.serverUpdatedAt ?: row.localUpdatedAt,
+            deletedAt = row.deletedAt,
+            syncState = syncStateOf(row, conflicted),
+        )
+    }
+
+    fun aiTodoValues(todo: AiTodo): JsonObject = JsonObject(
+        mapOf(
+            "title" to JsonPrimitive(todo.title),
+            "description" to JsonPrimitive(todo.description),
+            "status" to JsonPrimitive(todo.status),
+            "priority" to JsonPrimitive(todo.priority),
+            "dueAt" to (todo.dueAt?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull),
+            "steps" to JsonArray(todo.steps.map { s ->
+                JsonObject(mapOf(
+                    "id" to JsonPrimitive(s.id),
+                    "title" to JsonPrimitive(s.title),
+                    "done" to JsonPrimitive(s.done),
+                ))
+            }),
+            "note" to JsonPrimitive(todo.note),
+            "source" to JsonPrimitive(todo.source),
         ),
     )
 

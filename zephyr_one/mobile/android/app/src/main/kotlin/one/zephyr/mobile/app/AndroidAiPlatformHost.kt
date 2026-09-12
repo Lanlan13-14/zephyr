@@ -23,6 +23,8 @@ import one.zephyr.mobile.app.di.AccountContainer
 import one.zephyr.mobile.data.repository.LocalAiMemory
 import one.zephyr.mobile.data.repository.LocalAiPlan
 import one.zephyr.mobile.data.repository.LocalAiPlanStep
+import one.zephyr.mobile.data.repository.LocalAiTodo
+import one.zephyr.mobile.data.repository.LocalAiTodoStep
 import one.zephyr.mobile.feature.notes.SftpPort
 import one.zephyr.mobile.network.MobileJson
 
@@ -149,6 +151,11 @@ internal class AndroidAiPlatformHost(
         catalog += tool("plan_task", "创建一条本机任务计划。", listOf("title"), false, "low")
         catalog += tool("plan_update", "更新本机任务计划状态或步骤。", listOf("id"), false, "high")
         catalog += tool("plan_delete", "删除一条本机任务计划。", listOf("id"), false, "high")
+        /* Standard todo list (mirrors the main side's todo_* tools). */
+        catalog += tool("todo_list", "列出本机待办事项，可按状态过滤。", emptyList(), true, "low")
+        catalog += tool("todo_create", "创建一条待办事项，可带子步骤、优先级与截止时间。", listOf("title"), false, "low")
+        catalog += tool("todo_update", "更新待办事项：状态、标题、步骤勾选、优先级、截止时间。", listOf("todoId"), false, "medium")
+        catalog += tool("todo_delete", "删除一条待办事项。删除自己创建的待办无需确认；删除用户手动创建的需用户确认。", listOf("todoId"), false, "high")
         return JsonObject(mapOf("tools" to JsonArray(catalog)))
     }
 
@@ -194,6 +201,10 @@ internal class AndroidAiPlatformHost(
             "plan_task" -> planTask(args)
             "plan_update" -> planUpdate(args)
             "plan_delete" -> planDelete(args)
+            "todo_list" -> todoList(args)
+            "todo_create" -> todoCreate(args)
+            "todo_update" -> todoUpdate(args)
+            "todo_delete" -> todoDelete(args)
             else -> return error("unknown_tool", "工具不存在")
         }
         return JsonObject(mapOf("ok" to JsonPrimitive(true), "result" to result))
@@ -709,6 +720,92 @@ internal class AndroidAiPlatformHost(
         if (id.isEmpty()) return error("invalid_tool_arguments", "id 不能为空")
         account.localAi.deletePlan(id)
         return JsonObject(mapOf("deleted" to JsonPrimitive(true), "id" to JsonPrimitive(id)))
+    }
+
+    /* ── Standard todo list (same semantics as the main side, PR #129) ──
+     * todo_delete is context-sensitive: rows the model authored (source=ai)
+     * delete without a confirmation round; rows the user authored in the UI
+     * (source=web) come back as confirmationRequired and the app surfaces a
+     * confirm dialog before re-invoking with confirmed=true. */
+    private suspend fun todoList(args: JsonObject): JsonElement {
+        val catalog = account.localAi.load()
+        val status = args.string("status").trim()
+        val includeCompleted = (args["includeCompleted"] as? JsonPrimitive)?.content == "true"
+        val todos = catalog.todos.filter {
+            when {
+                status.isNotEmpty() -> it.status == status
+                includeCompleted -> true
+                else -> it.status != "completed" && it.status != "cancelled"
+            }
+        }
+        return JsonObject(mapOf("todos" to JsonArray(todos.map(::todoJson))))
+    }
+
+    private fun todoJson(t: LocalAiTodo): JsonObject = JsonObject(mapOf(
+        "todoId" to JsonPrimitive(t.id),
+        "title" to JsonPrimitive(t.title),
+        "description" to JsonPrimitive(t.description),
+        "status" to JsonPrimitive(t.status),
+        "priority" to JsonPrimitive(t.priority),
+        "dueAt" to (t.dueAt?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull),
+        "steps" to JsonArray(t.steps.map { s -> JsonObject(mapOf("id" to JsonPrimitive(s.id), "title" to JsonPrimitive(s.title), "done" to JsonPrimitive(s.done))) }),
+        "note" to JsonPrimitive(t.note),
+        "source" to JsonPrimitive(t.source),
+        "updatedAt" to JsonPrimitive(t.updatedAt),
+    ))
+
+    private suspend fun todoCreate(args: JsonObject): JsonElement {
+        val title = args.string("title").trim()
+        if (title.isEmpty()) return error("invalid_tool_arguments", "title 不能为空")
+        val steps = args.array("steps").mapIndexed { index, step -> LocalAiTodoStep(id = "step-${index + 1}", title = step.take(200)) }.filter { it.title.isNotBlank() }
+        val priority = args.string("priority").trim().let { if (it in setOf("low", "medium", "high", "urgent")) it else "medium" }
+        val dueAt = (args["dueAt"] as? JsonPrimitive)?.content?.toLongOrNull()?.takeIf { it > 0 }
+        val todo = LocalAiTodo(
+            id = UUID.randomUUID().toString(),
+            title = title.take(200),
+            description = args.string("description").take(2000),
+            status = "pending",
+            priority = priority,
+            dueAt = dueAt,
+            steps = steps,
+            source = "ai",
+        )
+        account.localAi.upsertTodo(todo)
+        return JsonObject(mapOf("todo" to todoJson(todo)))
+    }
+
+    private suspend fun todoUpdate(args: JsonObject): JsonElement {
+        val id = args.string("todoId").trim()
+        if (id.isEmpty()) return error("invalid_tool_arguments", "todoId 不能为空")
+        val catalog = account.localAi.load()
+        val current = catalog.todos.firstOrNull { it.id == id } ?: return error("todo_not_found", "待办不存在")
+        val next = current.copy(
+            title = args.string("title").trim().take(200).ifEmpty { current.title },
+            description = args.string("description").take(2000).ifEmpty { current.description },
+            status = args.string("status").trim().takeIf { it in setOf("pending", "in_progress", "completed", "cancelled") } ?: current.status,
+            priority = args.string("priority").trim().takeIf { it in setOf("low", "medium", "high", "urgent") } ?: current.priority,
+            note = args.string("note").take(2000).ifEmpty { current.note },
+            updatedAt = System.currentTimeMillis(),
+        )
+        account.localAi.upsertTodo(next)
+        return JsonObject(mapOf("todo" to todoJson(next)))
+    }
+
+    private suspend fun todoDelete(args: JsonObject): JsonElement {
+        val id = args.string("todoId").trim()
+        if (id.isEmpty()) return error("invalid_tool_arguments", "todoId 不能为空")
+        val catalog = account.localAi.load()
+        val current = catalog.todos.firstOrNull { it.id == id } ?: return error("todo_not_found", "待办不存在")
+        val confirmed = (args["confirmed"] as? JsonPrimitive)?.content == "true"
+        if (current.source != "ai" && !confirmed) {
+            return JsonObject(mapOf(
+                "confirmationRequired" to JsonPrimitive(true),
+                "todoId" to JsonPrimitive(id),
+                "reason" to JsonPrimitive("该待办由用户手动创建，删除需要用户确认。"),
+            ))
+        }
+        account.localAi.deleteTodo(id)
+        return JsonObject(mapOf("deleted" to JsonPrimitive(true), "todoId" to JsonPrimitive(id)))
     }
 
     private suspend fun runSftp(args: JsonObject, block: suspend () -> JsonElement): JsonElement {

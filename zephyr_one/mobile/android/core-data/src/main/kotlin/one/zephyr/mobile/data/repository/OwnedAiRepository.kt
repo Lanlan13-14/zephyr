@@ -18,6 +18,7 @@ import one.zephyr.mobile.model.AiMemory
 import one.zephyr.mobile.model.AiMessageRecord
 import one.zephyr.mobile.model.AiProvider
 import one.zephyr.mobile.model.AiSkill
+import one.zephyr.mobile.model.AiTodo
 import one.zephyr.mobile.model.SecretState
 
 /**
@@ -48,6 +49,11 @@ class OwnedAiRepository(
             .map { rows -> rows.map(ResourceMappers::aiSkill) }
             .flowOn(Dispatchers.Default)
 
+    fun observeTodos(ownerUserId: String): Flow<List<AiTodo>> =
+        db.mirrorDao().observeByType(AiTodo.ENTITY_TYPE, ownerUserId)
+            .map { rows -> rows.map(ResourceMappers::aiTodo) }
+            .flowOn(Dispatchers.Default)
+
     fun observeEnv(ownerUserId: String): Flow<List<AiEnv>> =
         db.mirrorDao().observeByType(AiEnv.ENTITY_TYPE, ownerUserId)
             .map { rows -> rows.map(ResourceMappers::aiEnv) }
@@ -66,6 +72,9 @@ class OwnedAiRepository(
 
     suspend fun listSkills(ownerUserId: String): List<AiSkill> =
         db.mirrorDao().listByType(AiSkill.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiSkill)
+
+    suspend fun listTodos(ownerUserId: String): List<AiTodo> =
+        db.mirrorDao().listByType(AiTodo.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiTodo)
 
     suspend fun listEnv(ownerUserId: String): List<AiEnv> =
         db.mirrorDao().listByType(AiEnv.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiEnv)
@@ -147,6 +156,25 @@ class OwnedAiRepository(
             values = ResourceMappers.aiSkillValues(skill),
             residency = skill.residency,
             capabilities = skill.capabilities,
+            createdLocally = createdLocally,
+        ),
+        ownerUserId = ownerUserId,
+    )
+
+    suspend fun saveTodo(
+        todo: AiTodo,
+        mask: List<String>,
+        ownerUserId: String,
+        createdLocally: Boolean = false,
+    ): LocalEditResult = gateway.apply(
+        LocalEdit(
+            entityType = AiTodo.ENTITY_TYPE,
+            entityId = todo.id.ifBlank { UUID.randomUUID().toString() },
+            action = SyncAction.UPSERT,
+            requestedMask = mask,
+            values = ResourceMappers.aiTodoValues(todo),
+            residency = todo.residency,
+            capabilities = todo.capabilities,
             createdLocally = createdLocally,
         ),
         ownerUserId = ownerUserId,
