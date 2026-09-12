@@ -875,6 +875,17 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'plan_task', description: '创建执行计划，返回 planId；后续用 plan_update 更新步骤状态。', parameters: { type: 'object', properties: { title: { type: 'string' }, steps: { type: 'array', items: { type: 'string' } }, risk: { type: 'string' } }, required: ['title', 'steps'] } } });
     tools.push({ type: 'function', function: { name: 'plan_update', description: '更新任务计划：步骤状态、暂停/继续、失败重试、追加日志。', parameters: { type: 'object', properties: { planId: { type: 'string' }, status: { type: 'string', enum: ['planned', 'running', 'paused', 'completed', 'failed', 'cancelled'] }, pause: { type: 'boolean' }, resume: { type: 'boolean' }, retryFailed: { type: 'boolean' }, note: { type: 'string' }, steps: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, index: { type: 'number' }, status: { type: 'string', enum: ['pending', 'running', 'paused', 'completed', 'failed', 'skipped', 'retrying'] }, note: { type: 'string' }, error: { type: 'string' } } } } }, required: ['planId'] } } });
     tools.push({ type: 'function', function: { name: 'plan_delete', description: '删除一个任务计划。', parameters: { type: 'object', properties: { planId: { type: 'string' } }, required: ['planId'] } } });
+    /* Standard todo list: one CRUD surface shared by the user and the model.
+     * plan_* above remain as stable aliases so existing conversations and
+     * older model tool caches keep working; they call the same canonical
+     * storage. Deleting a todo you created earlier in THIS conversation needs
+     * no confirmation (status transitions and self-cleanup are the model's
+     * own bookkeeping); deleting anything else still asks, see
+     * ai-extended-capabilities.js todo.delete policy. */
+    tools.push({ type: 'function', function: { name: 'todo_list', description: '列出当前账号的待办事项，可按状态过滤。', parameters: { type: 'object', properties: { status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'] }, includeCompleted: { type: 'boolean' } } } } });
+    tools.push({ type: 'function', function: { name: 'todo_create', description: '创建一条待办事项。可选携带子步骤、优先级与截止时间。', parameters: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, steps: { type: 'array', items: { type: 'string' } }, priority: { type: 'string', enum: ['low', 'medium', 'high', 'urgent'] }, dueAt: { type: 'number', description: 'Unix 毫秒时间戳' } }, required: ['title'] } } });
+    tools.push({ type: 'function', function: { name: 'todo_update', description: '更新待办事项：状态、标题、描述、子步骤勾选、优先级、截止时间。同一轮对话里自己创建的待办可直接更新。', parameters: { type: 'object', properties: { todoId: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'] }, priority: { type: 'string', enum: ['low', 'medium', 'high', 'urgent'] }, dueAt: { type: 'number', description: 'Unix 毫秒时间戳；null 表示清除截止时间' }, note: { type: 'string' }, steps: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, done: { type: 'boolean' } }, required: ['done'] } } }, required: ['todoId'] } } });
+    tools.push({ type: 'function', function: { name: 'todo_delete', description: '删除一条待办事项。同一轮对话里自己创建的待办可直接删除；删除用户手动创建的待办需要用户确认。', parameters: { type: 'object', properties: { todoId: { type: 'string' } }, required: ['todoId'] } } });
     if (p.remoteExecute !== false) tools.push({ type: 'function', function: { name: 'remote_execute', description: '在一个或多个 SSH 连接上执行 shell 命令。敏感操作需要用户确认。', parameters: { type: 'object', properties: { connectionIds: { type: 'array', items: { type: 'string' } }, command: { type: 'string' }, timeoutSeconds: { type: 'number' } }, required: ['connectionIds', 'command'] } } });
     if (p.fileRead !== false) tools.push({ type: 'function', function: { name: 'remote_read_file', description: '读取远程 SSH 主机上的文本文件。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, path: { type: 'string' }, maxBytes: { type: 'number' } }, required: ['connectionId', 'path'] } } });
     if (p.fileWrite !== false) {
@@ -1932,6 +1943,37 @@ function createPendingConfirmation(toolName, args, ctx, deps) {
     pendingActions.set(id, { ...confirmation, userId: ctx.user?.userId || ctx.req?.session?.userId || '', username: ctx.req?.session?.username || '', rawArgs: args, context: ctx.context || {} });
     return { confirmationRequired: true, confirmation };
 }
+/* ── Standard todo helpers (account-scoped AiKnowledgeService 'aiTodo') ── */
+function todoKnowledge(deps, ctx) {
+    const service = deps?.userSettingsService?.aiKnowledgeService;
+    if (!service) {
+        const err = new Error('待办存储不可用（AI knowledge 服务未初始化）');
+        err.status = 503;
+        throw err;
+    }
+    return service;
+}
+function userForTodo(ctx) {
+    const user = ctx?.user || ctx?.req?.user;
+    if (!user?.userId) throw Object.assign(new Error('AI 待办需要一个已登录账号'), { status: 401 });
+    return user;
+}
+function publicTodo(todo = {}) {
+    return {
+        todoId: todo.id,
+        title: todo.title || '',
+        description: todo.description || '',
+        status: todo.status || 'pending',
+        priority: todo.priority || 'medium',
+        dueAt: todo.dueAt ?? null,
+        steps: Array.isArray(todo.steps) ? todo.steps : [],
+        note: todo.note || '',
+        source: todo.source || '',
+        revision: Math.max(1, Number(todo.revision) || 1),
+        createdAt: todo.createdAt || null,
+        updatedAt: todo.updatedAt || null,
+    };
+}
 async function maybeRequireConfirmation(toolName, args, ctx, run, deps) {
     const ai = accountAiSettings(deps, ctx?.user);
     const sensitive = ai.sensitive || {};
@@ -2836,6 +2878,76 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             const plans = (Array.isArray(ai.plans) ? ai.plans : []).filter((plan) => plan.id !== planId);
             deps.storage.updateSettings({ ai: { plans } });
             return { deleted: true, planId, plans };
+        }
+        /* ── Standard todo list (canonical: AiKnowledgeService 'aiTodo') ──
+         * plan_* above still write the legacy process-wide settings bag for
+         * compatibility; todo_* is the account-scoped replacement and the
+         * only surface the settings UI edits. Migration is lazy: the UI reads
+         * todos from knowledge first, then falls back to legacy plans. */
+        case 'todo_list': {
+            const knowledge = todoKnowledge(deps, ctx);
+            let todos = knowledge.list(userForTodo(ctx), 'aiTodo');
+            if (args.status) todos = todos.filter((todo) => todo.status === String(args.status));
+            else if (!args.includeCompleted) todos = todos.filter((todo) => todo.status !== 'completed' && todo.status !== 'cancelled');
+            return { todos: todos.map(publicTodo) };
+        }
+        case 'todo_create': {
+            const knowledge = todoKnowledge(deps, ctx);
+            const steps = Array.isArray(args.steps)
+                ? args.steps.map((text, index) => ({ id: `step-${index + 1}`, title: String(text || '').slice(0, 200), done: false })).filter((s) => s.title.trim())
+                : [];
+            const todo = knowledge.create(userForTodo(ctx), 'aiTodo', crypto.randomUUID(), {
+                title: String(args.title || '').slice(0, 200),
+                description: String(args.description || '').slice(0, 2000),
+                status: 'pending',
+                priority: ['low', 'medium', 'high', 'urgent'].includes(args.priority) ? String(args.priority) : 'medium',
+                dueAt: Number.isFinite(Number(args.dueAt)) && Number(args.dueAt) > 0 ? Math.floor(Number(args.dueAt)) : null,
+                steps,
+                source: 'ai',
+            });
+            return { todo: publicTodo(todo) };
+        }
+        case 'todo_update': {
+            const knowledge = todoKnowledge(deps, ctx);
+            const todoId = String(args.todoId || '').trim();
+            const current = knowledge.read(userForTodo(ctx), 'aiTodo', todoId);
+            if (!current) throw Object.assign(new Error('待办不存在或不可访问'), { status: 404 });
+            const patch = {};
+            if (args.title !== undefined) patch.title = String(args.title).slice(0, 200);
+            if (args.description !== undefined) patch.description = String(args.description).slice(0, 2000);
+            if (args.status !== undefined) patch.status = String(args.status);
+            if (args.priority !== undefined) patch.priority = String(args.priority);
+            if (args.dueAt !== undefined) patch.dueAt = args.dueAt === null ? null : (Number.isFinite(Number(args.dueAt)) ? Math.floor(Number(args.dueAt)) : null);
+            if (args.note !== undefined) patch.note = String(args.note).slice(0, 2000);
+            if (Array.isArray(args.steps)) {
+                const byId = new Map((current.steps || []).map((s) => [s.id, s]));
+                patch.steps = args.steps.map((step, index) => ({
+                    id: String(step.id || `step-${index + 1}`).slice(0, 64),
+                    title: String(step.title ?? ((byId.get(String(step.id || '')) || {}).title ?? '')).slice(0, 200),
+                    done: step.done === true,
+                })).filter((s) => s.title.trim());
+            }
+            /* AI is allowed to steer its own todos without a confirmation
+             * round; the change feed still records who wrote what. */
+            patch.source = current.source === 'web' && patch.status === undefined && !patch.steps ? current.source : 'ai';
+            const todo = knowledge.writeFromMobile(userForTodo(ctx), 'aiTodo', todoId, patch);
+            return { todo: publicTodo(todo) };
+        }
+        case 'todo_delete': {
+            const knowledge = todoKnowledge(deps, ctx);
+            const todoId = String(args.todoId || '').trim();
+            const current = knowledge.read(userForTodo(ctx), 'aiTodo', todoId);
+            if (!current) throw Object.assign(new Error('待办不存在或不可访问'), { status: 404 });
+            const selfOwned = current.source === 'ai';
+            const confirmed = ctx.confirmed || ctx.confirmedToolId === 'todo_delete';
+            if (!selfOwned && !confirmed) {
+                /* Deleting something the user authored is a destructive edit of
+                 * user data: gate it behind the standard pending-confirmation
+                 * flow instead of the model's own judgement. */
+                return createPendingConfirmation(toolName, args, ctx, deps);
+            }
+            const todo = knowledge.remove(userForTodo(ctx), 'aiTodo', todoId, { expectedRevision: current.revision });
+            return { deleted: true, todoId, revision: todo.revision };
         }
         case 'remote_execute':
             if (p.remoteExecute === false) throw new Error('远程执行权限未开启');
@@ -3805,6 +3917,76 @@ function registerAiRoutes(app, deps) {
         // normalizeAiSettingsInput strips it before persisting user settings.
         ai.skills = mergeZephyrDefaultSkills(ai.skills || []);
         res.json({ ai: { ...ai, providers }, pending: pendingActions.size, policy });
+    });
+
+    /* ── Standard todo list: account-scoped Web CRUD (user surface) ──
+     * The model reaches the same rows through the todo_* tools; both sides
+     * share AiKnowledgeService 'aiTodo' so sync, tombstones and the change
+     * feed need exactly one implementation. */
+    app.get('/api/ai/todos', requireUser, (req, res) => {
+        try {
+            const todos = todoKnowledge(deps, { user: req.user }).list(req.user, 'aiTodo');
+            res.json({ todos: todos.map(publicTodo) });
+        } catch (err) { handleServiceError(res, err, err?.status || 500); }
+    });
+    app.post('/api/ai/todos', requireUser, (req, res) => {
+        try {
+            const body = req.body || {};
+            const steps = Array.isArray(body.steps)
+                ? body.steps.map((step, index) => ({
+                    id: String(step?.id || `step-${index + 1}`).slice(0, 64),
+                    title: String(step?.title || '').slice(0, 200),
+                    done: step?.done === true,
+                })).filter((s) => s.title.trim())
+                : [];
+            const todo = todoKnowledge(deps, { user: req.user }).create(req.user, 'aiTodo', crypto.randomUUID(), {
+                title: String(body.title || '').slice(0, 200),
+                description: String(body.description || '').slice(0, 2000),
+                status: ['pending', 'in_progress', 'completed', 'cancelled'].includes(body.status) ? String(body.status) : 'pending',
+                priority: ['low', 'medium', 'high', 'urgent'].includes(body.priority) ? String(body.priority) : 'medium',
+                dueAt: Number.isFinite(Number(body.dueAt)) && Number(body.dueAt) > 0 ? Math.floor(Number(body.dueAt)) : null,
+                steps,
+                source: 'web',
+            });
+            res.json({ todo: publicTodo(todo) });
+        } catch (err) { handleServiceError(res, err, err?.status || 400); }
+    });
+    app.patch('/api/ai/todos/:id', requireUser, (req, res) => {
+        try {
+            const knowledge = todoKnowledge(deps, { user: req.user });
+            const current = knowledge.read(req.user, 'aiTodo', String(req.params.id || ''));
+            if (!current) return res.status(404).json({ error: '待办不存在或不可访问' });
+            const body = req.body || {};
+            const patch = {};
+            if (body.title !== undefined) patch.title = String(body.title).slice(0, 200);
+            if (body.description !== undefined) patch.description = String(body.description).slice(0, 2000);
+            if (body.status !== undefined) patch.status = String(body.status);
+            if (body.priority !== undefined) patch.priority = String(body.priority);
+            if (body.dueAt !== undefined) patch.dueAt = body.dueAt === null ? null : (Number.isFinite(Number(body.dueAt)) ? Math.floor(Number(body.dueAt)) : null);
+            if (body.note !== undefined) patch.note = String(body.note).slice(0, 2000);
+            if (Array.isArray(body.steps)) {
+                const byId = new Map((current.steps || []).map((s) => [s.id, s]));
+                patch.steps = body.steps.map((step, index) => ({
+                    id: String(step?.id || `step-${index + 1}`).slice(0, 64),
+                    title: String(step?.title ?? ((byId.get(String(step?.id || '')) || {}).title ?? '')).slice(0, 200),
+                    done: step?.done === true,
+                })).filter((s) => s.title.trim());
+            }
+            /* A manual edit keeps the row user-authored unless the model
+             * writes it through todo_update (which stamps 'ai'). */
+            patch.source = current.source || 'web';
+            const todo = knowledge.writeFromMobile(req.user, 'aiTodo', current.id, patch);
+            res.json({ todo: publicTodo(todo) });
+        } catch (err) { handleServiceError(res, err, err?.status || 400); }
+    });
+    app.delete('/api/ai/todos/:id', requireUser, (req, res) => {
+        try {
+            const knowledge = todoKnowledge(deps, { user: req.user });
+            const current = knowledge.read(req.user, 'aiTodo', String(req.params.id || ''));
+            if (!current) return res.status(404).json({ error: '待办不存在或不可访问' });
+            const todo = knowledge.remove(req.user, 'aiTodo', current.id, { expectedRevision: current.revision });
+            res.json({ deleted: true, todoId: current.id, revision: todo.revision });
+        } catch (err) { handleServiceError(res, err, err?.status || 400); }
     });
 
     app.get('/api/ai/providers', requireUser, (req, res) => {

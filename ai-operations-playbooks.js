@@ -29,6 +29,11 @@ const OPERATIONS_PLAYBOOKS = freeze([
 - plan_task 只建立计划，不代表步骤已执行。
 - plan_update 依据真实 Tool 结果更新状态；失败必须记录证据。
 - 删除计划需确认；不能用状态更新伪造完成。`),
+    pb('todo-management-v1', '待办事项操作', ['todo.read', 'todo.create', 'todo.update', 'todo.delete'], ['待办', '任务清单', 'todo', '勾选'], `# 待办事项 Playbook
+- todo 是用户与 AI 共享的标准任务清单：AI 创建的条目用户可以随时手动改，反之亦然。
+- todo_create/todo_update 无需确认；完成一项就立即把 status 更新为 completed，不要积压。
+- 删除自己本轮创建的待办可直接 todo_delete；删除用户手动创建的待办会触发用户确认。
+- 汇报时以 todo 列表为准，不要凭记忆复述任务状态。`),
     pb('ssh-operations-v1', 'SSH 命令执行', ['ssh.execute'], ['SSH 命令', '远程执行', '服务器排障'], `# SSH 命令执行 Playbook
 - 先确认连接是 SSH 且用户有 execute 权限；TELNET 必须走 terminal_*_v1。
 - 命令执行需确认；避免交互式和无限运行命令。

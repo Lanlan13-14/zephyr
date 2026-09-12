@@ -206,6 +206,23 @@ public enum EntityRegistry {
             status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
         ),
         SyncEntitySpec(
+            type: "aiTodo",
+            source: "AiKnowledgeService/ai_knowledge_entities",
+            idField: "id",
+            ownerField: "ownerUserId",
+            revisionField: "revision",
+            deleteMode: "tombstone",
+            dependencyOrder: 50,
+            minimumClientVersion: 1,
+            editableFields: ["title", "description", "status", "priority", "dueAt", "steps", "note", "source"],
+            secretFields: [],
+            serverAuthorityFields: ["ownerUserId", "revision", "createdAt", "updatedAt"],
+            opaquePreserveFields: [],
+            deviceLocalFields: [],
+            capabilities: [],
+            status: "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
+        ),
+        SyncEntitySpec(
             type: "aiConversation",
             source: "AiHistoryService/ai_conversations",
             idField: "id",
@@ -382,7 +399,7 @@ public enum EntityRegistry {
     )
 
     /// Push topology order: dependencies first, ties broken by type name.
-    public static let pushOrder: [String] = ["clientToken", "fileSyncConfig", "aiProvider", "proxy", "sshKey", "aiEnv", "jumpHost", "resourceAcl", "connection", "aiConversation", "aiMemory", "aiSkill", "note", "oneUserSettings", "serverSettings", "snippet", "aiMessage", "backupMetadata", "activityEvent", "workspaceState"]
+    public static let pushOrder: [String] = ["clientToken", "fileSyncConfig", "aiProvider", "proxy", "sshKey", "aiEnv", "jumpHost", "resourceAcl", "connection", "aiConversation", "aiMemory", "aiSkill", "aiTodo", "note", "oneUserSettings", "serverSettings", "snippet", "aiMessage", "backupMetadata", "activityEvent", "workspaceState"]
 
     public static func spec(for type: String) throws -> SyncEntitySpec {
         guard let spec = byType[type] else { throw ContractError.unknownEntityType(type) }

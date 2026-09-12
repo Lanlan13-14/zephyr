@@ -24,6 +24,16 @@ const EXTENDED_CAPABILITIES = Object.freeze([
     cap('plan.create', 'Create an AI execution plan', 'R0', 'never', ['plan_task'], 'plan-management-v1'),
     cap('plan.update', 'Update AI plan state', 'R1', 'always', ['plan_update'], 'plan-management-v1'),
     cap('plan.delete', 'Delete an AI plan', 'R3', 'always', ['plan_delete'], 'plan-management-v1'),
+    /* Standard todo list — the user/AI shared CRUD surface. todo.delete is
+     * context-sensitive: the tool itself deletes self-authored todos without
+     * a confirmation round (status transitions and self-cleanup are the
+     * model's own bookkeeping) and raises a pending confirmation for
+     * user-authored rows. 'auto' keeps the canonical wrapper out of the way
+     * so the case-level logic is the single decision point. */
+    cap('todo.read', 'List account todo items', 'R0', 'never', ['todo_list'], 'todo-management-v1'),
+    cap('todo.create', 'Create an account todo item', 'R0', 'never', ['todo_create'], 'todo-management-v1'),
+    cap('todo.update', 'Update account todo state', 'R1', 'auto', ['todo_update'], 'todo-management-v1'),
+    cap('todo.delete', 'Delete an account todo item', 'R2', 'auto', ['todo_delete'], 'todo-management-v1'),
     cap('ssh.execute', 'Execute a command on authorized SSH connections', 'R2', 'always', ['remote_execute'], 'ssh-operations-v1'),
     cap('ssh.file_read', 'Read a file from an authorized SSH connection', 'R0', 'never', ['remote_read_file'], 'ssh-file-operations-v1'),
     cap('ssh.file_write', 'Write a file on an authorized SSH connection', 'R3', 'always', ['remote_write_file'], 'ssh-file-operations-v1'),

@@ -205,6 +205,23 @@ object EntityRegistry {
             status = "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection",
         ),
         SyncEntitySpec(
+            type = "aiTodo",
+            source = "AiKnowledgeService/ai_knowledge_entities",
+            idField = "id",
+            ownerField = "ownerUserId",
+            revisionField = "revision",
+            deleteMode = "tombstone",
+            dependencyOrder = 50,
+            minimumClientVersion = 1,
+            editableFields = listOf("title", "description", "status", "priority", "dueAt", "steps", "note", "source"),
+            secretFields = emptyList(),
+            serverAuthorityFields = listOf("ownerUserId", "revision", "createdAt", "updatedAt"),
+            opaquePreserveFields = emptyList(),
+            deviceLocalFields = emptyList(),
+            capabilities = emptyList(),
+            status = "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection",
+        ),
+        SyncEntitySpec(
             type = "aiConversation",
             source = "AiHistoryService/ai_conversations",
             idField = "id",
@@ -379,7 +396,7 @@ object EntityRegistry {
     val byType: Map<String, SyncEntitySpec> = entities.associateBy { it.type }
 
     /** Push topology order: dependencies first, ties broken by type name. */
-    val pushOrder: List<String> = listOf("clientToken", "fileSyncConfig", "aiProvider", "proxy", "sshKey", "aiEnv", "jumpHost", "resourceAcl", "connection", "aiConversation", "aiMemory", "aiSkill", "note", "oneUserSettings", "serverSettings", "snippet", "aiMessage", "backupMetadata", "activityEvent", "workspaceState")
+    val pushOrder: List<String> = listOf("clientToken", "fileSyncConfig", "aiProvider", "proxy", "sshKey", "aiEnv", "jumpHost", "resourceAcl", "connection", "aiConversation", "aiMemory", "aiSkill", "aiTodo", "note", "oneUserSettings", "serverSettings", "snippet", "aiMessage", "backupMetadata", "activityEvent", "workspaceState")
 
     fun require(type: String): SyncEntitySpec =
         byType[type] ?: throw IllegalArgumentException("unknown entityType " + type)
