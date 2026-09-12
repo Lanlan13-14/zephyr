@@ -10,8 +10,8 @@
     {
       "path": "contracts/registries/entity-registry.json",
       "freezePath": "FREEZE/zephyr one/contracts/entity-registry.json",
-      "sha256": "576d20bb23c5606dd8099061b44410ba5c1d92ae90f152cfc06ab6c773acc0af",
-      "bytes": 19520
+      "sha256": "77ab35aa40532407ba0422f6647b1ccf57c4c0dbca330e6b6df49eddfeb27b13",
+      "bytes": 20360
     },
     {
       "path": "contracts/registries/error-registry.json",

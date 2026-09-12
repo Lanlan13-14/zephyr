@@ -396,6 +396,39 @@
       "status": "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
     },
     {
+      "type": "aiTodo",
+      "source": "AiKnowledgeService/ai_knowledge_entities",
+      "idField": "id",
+      "ownerField": "ownerUserId",
+      "revisionField": "revision",
+      "deleteMode": "tombstone",
+      "dependencyOrder": 50,
+      "minimumClientVersion": 1,
+      "editableFields": [
+        "title",
+        "description",
+        "status",
+        "priority",
+        "dueAt",
+        "steps",
+        "note",
+        "source"
+      ],
+      "secretFields": [],
+      "serverAuthorityFields": [
+        "ownerUserId",
+        "revision",
+        "createdAt",
+        "updatedAt"
+      ],
+      "opaquePreserveFields": [],
+      "deviceLocalFields": [],
+      "limits": {
+        "count": 2000
+      },
+      "status": "implemented-canonical-service-revision-tombstone-atomic-change-feed-secret-safe-projection"
+    },
+    {
       "type": "aiConversation",
       "source": "AiHistoryService/ai_conversations",
       "idField": "id",

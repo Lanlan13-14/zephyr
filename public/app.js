@@ -8050,7 +8050,7 @@ function renderAiSettingsForm() {
     renderAiProviderList();
     renderAiEnvList();
     renderAiMemoryList();
-    renderAiPlanList();
+    loadAiTodos();
     renderAiSkillList();
     renderAiMcpList();
     applyAiVisibility();
@@ -8786,15 +8786,128 @@ async function deleteAiMemoryConfirmed(id) {
     settings = await savePlatformSettings('ai', { ai });
     renderAiSettingsForm(); toast(t('Memory 已删除'));
 }
-function renderAiPlanList() {
-    const list = $('#aiPlanList');
+/* ── Standard todo list (account-scoped /api/ai/todos) ──────────────────
+ * Replaces the old planner panel. One CRUD surface shared by the user and
+ * the model: the web side talks to /api/ai/todos, the model uses todo_*
+ * tools, both hit AiKnowledgeService 'aiTodo' rows (sync + tombstone ready).
+ * `aiTodos` is loaded from the server, not from settings.ai, so nothing here
+ * writes the legacy process-wide bag. */
+let aiTodos = [];
+const AI_TODO_STATUS_LABELS = { pending: '待办', in_progress: '进行中', completed: '已完成', cancelled: '已取消' };
+const AI_TODO_PRIORITY_LABELS = { low: '低', medium: '中', high: '高', urgent: '紧急' };
+
+async function loadAiTodos() {
+    try {
+        const data = await api('/api/ai/todos');
+        aiTodos = Array.isArray(data.todos) ? data.todos : [];
+    } catch (err) {
+        console.warn('[ai-todo] load failed', err);
+        aiTodos = [];
+    }
+    renderAiTodoList();
+}
+
+function renderAiTodoList() {
+    const list = $('#aiTodoList');
     if (!list) return;
-    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    list.innerHTML = ai.plans.length ? ai.plans.slice(0, 30).map((plan) => {
-        const steps = Array.isArray(plan.steps) ? plan.steps : [];
-        const actions = `<div class="ai-plan-actions"><button class="tool-btn" data-ai-plan-pause="${escapeHtml(plan.id)}">${t('暂停')}</button><button class="tool-btn" data-ai-plan-resume="${escapeHtml(plan.id)}">${t('继续')}</button><button class="tool-btn" data-ai-plan-retry="${escapeHtml(plan.id)}">${t('重试失败')}</button><button class="tool-btn danger" data-ai-plan-delete="${escapeHtml(plan.id)}">${t('删除')}</button></div>`;
-        return `<div class="ai-plan-item" data-plan-id="${escapeHtml(plan.id)}"><div><strong>${escapeHtml(plan.title || t('任务计划'))}</strong><span><b class="ai-status ai-status-${escapeHtml(plan.status || 'planned')}">${escapeHtml(plan.status || 'planned')}</b> · ${fmtTime(plan.updatedAt || plan.createdAt)}</span>${plan.risk ? `<p>${escapeHtml(plan.risk)}</p>` : ''}<ol>${steps.map((s, index) => `<li><em class="ai-status ai-status-${escapeHtml(s.status || 'pending')}">${escapeHtml(s.status || 'pending')}</em> ${escapeHtml(s.text || '')}${s.note ? `<small>${escapeHtml(s.note)}</small>` : ''}${s.error ? `<small class="error-text">${escapeHtml(s.error)}</small>` : ''}<div class="ai-step-actions"><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="running">${t('执行中')}</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="completed">${t('完成')}</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="failed">${t('失败')}</button></div></li>`).join('')}</ol>${actions}</div></div>`;
-    }).join('') : `<p class="empty-state">${t('暂无任务计划。AI 可通过 plan_task 工具为复杂任务创建计划，并持续更新步骤状态。')}</p>`;
+    if (!aiTodos.length) {
+        list.innerHTML = `<p class="empty-state">${t('暂无待办事项。AI 会通过 todo 工具自动创建并推进任务；你也可以手动添加。')}</p>`;
+        return;
+    }
+    const open = aiTodos.filter((x) => x.status === 'pending' || x.status === 'in_progress');
+    const done = aiTodos.filter((x) => x.status === 'completed' || x.status === 'cancelled');
+    const row = (todo) => {
+        const steps = Array.isArray(todo.steps) ? todo.steps : [];
+        const checked = todo.status === 'completed' ? 'checked' : '';
+        const cancelled = todo.status === 'cancelled';
+        const sourceBadge = todo.source === 'ai' ? `<span class="ai-todo-source" data-i18n="AI">AI</span>` : '';
+        const statusLabel = t(AI_TODO_STATUS_LABELS[todo.status] || todo.status || 'pending');
+        const priorityLabel = t(AI_TODO_PRIORITY_LABELS[todo.priority] || todo.priority || 'medium');
+        return `<div class="ai-todo-item${todo.status === 'completed' ? ' done' : ''}${cancelled ? ' cancelled' : ''}" data-todo-id="${escapeHtml(todo.todoId)}">
+            <label class="ai-todo-main">
+                <input type="checkbox" data-ai-todo-toggle="${escapeHtml(todo.todoId)}" ${checked} ${cancelled ? 'disabled' : ''}>
+                <span class="ai-todo-title">${escapeHtml(todo.title || '')}</span>
+                <span class="ai-todo-meta"><b class="ai-status ai-status-${escapeHtml(todo.status || 'pending')}">${escapeHtml(statusLabel)}</b> · ${escapeHtml(priorityLabel)}${todo.dueAt ? ` · ${t('截止')} ${fmtTime(todo.dueAt)}` : ''} · ${fmtTime(todo.updatedAt || todo.createdAt)}${sourceBadge}</span>
+            </label>
+            ${todo.description ? `<p class="ai-todo-desc">${escapeHtml(todo.description)}</p>` : ''}
+            ${steps.length ? `<ul class="ai-todo-steps">${steps.map((s) => `<li><input type="checkbox" data-ai-todo-step="${escapeHtml(todo.todoId)}" data-step-id="${escapeHtml(s.id)}" ${s.done ? 'checked' : ''}><span class="${s.done ? 'done' : ''}">${escapeHtml(s.title || '')}</span></li>`).join('')}</ul>` : ''}
+            ${todo.note ? `<p class="ai-todo-note">${escapeHtml(todo.note)}</p>` : ''}
+            <div class="ai-plan-actions">
+                ${todo.status !== 'in_progress' && !cancelled && todo.status !== 'completed' ? `<button class="tool-btn" data-ai-todo-start="${escapeHtml(todo.todoId)}">${t('开始')}</button>` : ''}
+                ${todo.status === 'in_progress' ? `<button class="tool-btn" data-ai-todo-hold="${escapeHtml(todo.todoId)}">${t('暂停')}</button>` : ''}
+                ${todo.status === 'completed' || cancelled ? `<button class="tool-btn" data-ai-todo-reopen="${escapeHtml(todo.todoId)}">${t('重新打开')}</button>` : ''}
+                <button class="tool-btn danger" data-ai-todo-delete="${escapeHtml(todo.todoId)}">${t('删除')}</button>
+            </div>
+        </div>`;
+    };
+    list.innerHTML = open.map(row).join('') + (done.length ? `<details class="ai-todo-done-group"><summary>${t('已完成')} / ${t('已取消')}（${done.length}）</summary>${done.map(row).join('')}</details>` : '');
+}
+
+async function patchAiTodo(todoId, patch) {
+    try {
+        const data = await api(`/api/ai/todos/${encodeURIComponent(todoId)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+        const idx = aiTodos.findIndex((x) => x.todoId === todoId);
+        if (idx >= 0 && data.todo) aiTodos[idx] = data.todo;
+        renderAiTodoList();
+        return true;
+    } catch (err) {
+        toast(err.message || t('待办更新失败'));
+        return false;
+    }
+}
+
+function bindAiTodoPanel() {
+    const form = $('#aiTodoForm');
+    form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const title = $('#aiTodoTitle').value.trim();
+        if (!title) return;
+        const priority = $('#aiTodoPriority').value || 'medium';
+        try {
+            const data = await api('/api/ai/todos', { method: 'POST', body: JSON.stringify({ title, priority }) });
+            if (data.todo) aiTodos.unshift(data.todo);
+            $('#aiTodoTitle').value = '';
+            renderAiTodoList();
+        } catch (err) {
+            toast(err.message || t('待办创建失败'));
+        }
+    });
+    $('#aiTodoList')?.addEventListener('click', async (e) => {
+        const start = e.target.dataset.aiTodoStart, hold = e.target.dataset.aiTodoHold, reopen = e.target.dataset.aiTodoReopen, del = e.target.dataset.aiTodoDelete;
+        if (start) await patchAiTodo(start, { status: 'in_progress' });
+        else if (hold) await patchAiTodo(hold, { status: 'pending' });
+        else if (reopen) await patchAiTodo(reopen, { status: 'pending' });
+        else if (del) {
+            if (!confirm(t('删除这条待办？删除后不可恢复。'))) return;
+            try {
+                await api(`/api/ai/todos/${encodeURIComponent(del)}`, { method: 'DELETE' });
+                aiTodos = aiTodos.filter((x) => x.todoId !== del);
+                renderAiTodoList();
+            } catch (err) {
+                toast(err.message || t('待办删除失败'));
+            }
+        }
+    });
+    $('#aiTodoList')?.addEventListener('change', async (e) => {
+        const toggle = e.target.dataset.aiTodoToggle, stepTodo = e.target.dataset.aiTodoStep, stepId = e.target.dataset.stepId;
+        if (toggle) {
+            const todo = aiTodos.find((x) => x.todoId === toggle);
+            const next = e.target.checked ? 'completed' : 'pending';
+            await patchAiTodo(toggle, { status: next });
+            /* When the box is ticked, mark unfinished steps done too — the
+             * checkbox is the user's "this is finished" gesture. */
+            if (e.target.checked && todo && Array.isArray(todo.steps) && todo.steps.some((s) => !s.done)) {
+                await patchAiTodo(toggle, { steps: todo.steps.map((s) => ({ id: s.id, title: s.title, done: true })) });
+            }
+        } else if (stepTodo && stepId) {
+            const todo = aiTodos.find((x) => x.todoId === stepTodo);
+            if (todo && Array.isArray(todo.steps)) {
+                await patchAiTodo(stepTodo, {
+                    steps: todo.steps.map((s) => ({ id: s.id, title: s.title, done: s.id === stepId ? e.target.checked : s.done })),
+                });
+            }
+        }
+    });
 }
 
 function resetAiSkillForm() {
@@ -9553,7 +9666,7 @@ function mergeAiPlan(plan) {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const idx = ai.plans.findIndex((p) => p.id === plan.id);
     if (idx >= 0) ai.plans[idx] = plan; else ai.plans.unshift(plan);
-    settings.ai = ai; aiSettingsState = ai; renderAiPlanList();
+    settings.ai = ai; aiSettingsState = ai;
 }
 function mergeAiMemory(memory) {
     if (!memory?.id) return;
@@ -10024,6 +10137,7 @@ async function syncAiToolSideEffects(toolResults = [], { sessionId = '' } = {}) 
             } catch (err) { toast(err.message || t('AI UI 操作失败')); toolData.clientError = err.message || t('AI UI 操作失败'); }
         }
         if (r.tool === 'plan_task' || r.tool === 'plan_update') mergeAiPlan(r.result?.plan);
+        if (/^todo_/.test(String(r.tool || ''))) loadAiTodos();
         if (r.tool === 'memory_save') mergeAiMemory(r.result?.memory);
         if (/^(connection_|proxy_|ssh_key_|jump_host_)/.test(String(r.tool || ''))) {
             await Promise.all([loadConnections().catch(() => {}), loadNetwork().catch(() => {})]);
@@ -10170,6 +10284,8 @@ function formatAiToolResult(r = {}) {
     </div>`;
 }
 async function deleteAiPlan(planId) {
+    /* Legacy planner rows (settings.ai.plans) kept readable for old data;
+     * deletion goes through the same canonical tool as before. */
     if (!planId) return;
     openAiInlineConfirm({
         title: t('删除任务计划'),
@@ -10201,7 +10317,7 @@ async function deleteAiPlanConfirmed(planId) {
         const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
         const serverPlans = result.data?.plans || result.plans;
         ai.plans = Array.isArray(serverPlans) ? serverPlans : (ai.plans || []).filter((p) => p.id !== planId);
-        settings.ai = ai; aiSettingsState = ai; renderAiPlanList();
+        settings.ai = ai; aiSettingsState = ai;
         toast(t('计划已删除'));
     } catch (err) { toast(err.message || t('计划删除失败')); }
 }
@@ -11776,14 +11892,7 @@ function setupAiAssistant() {
     $('#aiMemoryForm')?.addEventListener('submit', saveAiMemory);
     $('#aiMemoryResetBtn')?.addEventListener('click', resetAiMemoryForm);
     $('#aiMemoryList')?.addEventListener('click', (e) => { const edit = e.target.dataset.aiEditMemory, del = e.target.dataset.aiDeleteMemory; const ai = normalizeAiSettings(settings.ai || {}); if (edit) { const item = ai.memories.find((x) => x.id === edit); if (!item) return; $('#aiMemoryId').value = item.id; $('#aiMemoryTitle').value = item.title || ''; $('#aiMemoryScope').value = item.scope || item.project || ''; $('#aiMemoryConnectionIds').value = (Array.isArray(item.connectionIds) ? item.connectionIds : splitCsv(item.connectionIds)).join(', '); $('#aiMemoryTags').value = (Array.isArray(item.tags) ? item.tags : splitCsv(item.tags)).join(', '); $('#aiMemoryContent').value = item.content || ''; $('#aiMemoryItemEnabled').checked = item.enabled !== false; } if (del) deleteAiMemory(del); });
-    $('#aiPlanList')?.addEventListener('click', (e) => {
-        const pause = e.target.dataset.aiPlanPause, resume = e.target.dataset.aiPlanResume, retry = e.target.dataset.aiPlanRetry, delPlan = e.target.dataset.aiPlanDelete, stepPlan = e.target.dataset.aiPlanStep;
-        if (pause) updateAiPlan(pause, { pause: true, note: '用户在设置页暂停计划' });
-        if (resume) updateAiPlan(resume, { resume: true, note: '用户在设置页继续计划' });
-        if (retry) updateAiPlan(retry, { retryFailed: true, note: '用户在设置页重试失败步骤' });
-        if (delPlan) deleteAiPlan(delPlan);
-        if (stepPlan) updateAiPlan(stepPlan, { steps: [{ index: Number(e.target.dataset.stepIndex), status: e.target.dataset.stepStatus }] });
-    });
+    bindAiTodoPanel();
     $('#aiSkillForm')?.addEventListener('submit', saveAiSkill);
     $('#aiMcpForm')?.addEventListener('submit', saveAiMcpFromForm);
     $('#aiMcpResetBtn')?.addEventListener('click', resetAiMcpForm);
@@ -14452,7 +14561,7 @@ function rerenderLocaleSensitiveContent() {
         renderAiProviderList,
         renderAiEnvList,
         renderAiMemoryList,
-        renderAiPlanList,
+        renderAiTodoList,
         renderAiSkillList,
         renderSnippetSettings,
         renderNetwork,

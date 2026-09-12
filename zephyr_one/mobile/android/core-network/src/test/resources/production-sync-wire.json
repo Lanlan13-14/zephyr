@@ -4,7 +4,7 @@
     "protocolVersions": [
       1
     ],
-    "registryHash": "520ccddf6f8a626842bb80e57b1d6f6bfd1afd94695a175a1ce9b4275adae28f",
+    "registryHash": "3d3bf3fe0e9c1bd3b2a5ef20881c50bcb7a15f5df98bb112cda25e8662a646ab",
     "minimumAppVersions": {
       "android": "0.1.0",
       "ios": "0.1.0"

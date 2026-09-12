@@ -21,7 +21,7 @@ function getMobileV1ChangeBridge(db, options) {
     return require('./mobile-v1-change-bridge').getMobileV1ChangeBridge(db, options);
 }
 
-const ENTITY_TYPES = Object.freeze(['aiMemory', 'aiSkill', 'aiEnv']);
+const ENTITY_TYPES = Object.freeze(['aiMemory', 'aiSkill', 'aiEnv', 'aiTodo']);
 const REQUIRED_CAPABILITIES = Object.freeze([
     'stableIds',
     'revisions',
@@ -33,13 +33,21 @@ const REQUIRED_CAPABILITIES = Object.freeze([
     'secretEnvelopeOnly',
 ]);
 const MAX_ID_CHARS = 120;
-const LIMITS = Object.freeze({ aiMemory: 2000, aiSkill: 200, aiEnv: 200 });
+const LIMITS = Object.freeze({ aiMemory: 2000, aiSkill: 200, aiEnv: 200, aiTodo: 2000 });
+const AI_TODO_STATUSES = Object.freeze(['pending', 'in_progress', 'completed', 'cancelled']);
+const AI_TODO_PRIORITIES = Object.freeze(['low', 'medium', 'high', 'urgent']);
 const FIELD_NAMES = Object.freeze({
     aiMemory: Object.freeze(['title', 'content', 'scope', 'project', 'projects', 'tags', 'connectionIds']),
     aiSkill: Object.freeze(['name', 'description', 'prompt', 'enabled']),
     // Do not add value, description, valueVisibleToAi, apiKey, or tool config.
     // This is intentionally narrower than the Web form's private env record.
     aiEnv: Object.freeze(['name', 'enabled', 'visibleToAi']),
+    /* Standard todo list: AI and the user share one CRUD surface. `logs` is
+     * deliberately not syncable — it is a per-execution trace, not todo state,
+     * and keeping it out stops a todo row from growing without bound on the
+     * sync wire. `source` records who last wrote the row (web|ai) so the UI
+     * can badge provenance without exposing session internals. */
+    aiTodo: Object.freeze(['title', 'description', 'status', 'priority', 'dueAt', 'steps', 'note', 'source']),
 });
 
 function asUser(userOrId) {
@@ -93,6 +101,35 @@ function bool(value, field) {
     if (value === undefined) return undefined;
     if (typeof value !== 'boolean') throw invalid(`${field} must be a boolean.`);
     return value;
+}
+
+/* Todo steps: [{id, title, done}] — capped, id-normalized, de-duplicated.
+ * Step ids are stable strings so status updates and One sync stay idempotent. */
+function todoSteps(value) {
+    if (!Array.isArray(value) || value.length > 100) throw invalid('steps must be an array of at most 100 items.');
+    const seen = new Set();
+    const out = [];
+    for (const item of value) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) throw invalid('each step must be an object.');
+        const title = String(item.title || '').slice(0, 200);
+        const done = item.done === true;
+        let id = String(item.id || '').trim().slice(0, 64);
+        if (!id) id = `step-${out.length + 1}`;
+        if (seen.has(id)) continue;
+        if (!title.trim()) continue;
+        seen.add(id);
+        out.push({ id, title, done });
+    }
+    return out;
+}
+
+/* Timestamp-or-null: a todo with no deadline must survive a sync round trip,
+ * so `null` is a valid value while `undefined` still means "leave unchanged". */
+function optionalTimestamp(value, field) {
+    if (value === null) return null;
+    if (value === undefined) return undefined;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw invalid(`${field} must be a timestamp or null.`);
+    return Math.floor(value);
 }
 
 function assertKnownPatch(type, patch) {
@@ -165,6 +202,40 @@ function normalizePayload(type, patch, previous = null, { creating = false } = {
             if (!next.name) throw invalid('name is required.');
             next.enabled = next.enabled !== false;
             next.visibleToAi = next.visibleToAi === true;
+        }
+    } else if (type === 'aiTodo') {
+        const title = boundedString(patch.title, 200, 'title');
+        const description = boundedString(patch.description, 2000, 'description');
+        const note = boundedString(patch.note, 2000, 'note');
+        const status = boundedString(patch.status, 24, 'status');
+        const priority = boundedString(patch.priority, 16, 'priority');
+        const source = boundedString(patch.source, 16, 'source');
+        const dueAt = patch.dueAt === undefined ? undefined : optionalTimestamp(patch.dueAt, 'dueAt');
+        const steps = patch.steps === undefined ? undefined : todoSteps(patch.steps);
+        if (title !== undefined) next.title = title;
+        if (description !== undefined) next.description = description;
+        if (note !== undefined) next.note = note;
+        if (status !== undefined) {
+            if (!AI_TODO_STATUSES.includes(status)) throw invalid('status must be one of pending|in_progress|completed|cancelled.');
+            next.status = status;
+        }
+        if (priority !== undefined) {
+            if (!AI_TODO_PRIORITIES.includes(priority)) throw invalid('priority must be one of low|medium|high|urgent.');
+            next.priority = priority;
+        }
+        if (dueAt !== undefined) next.dueAt = dueAt;
+        if (steps !== undefined) next.steps = steps;
+        if (source !== undefined) {
+            if (source !== '' && source !== 'web' && source !== 'ai') throw invalid('source must be web or ai.');
+            next.source = source;
+        }
+        if (creating) {
+            if (!next.title || !next.title.trim()) throw invalid('title is required.');
+            next.status = next.status || 'pending';
+            next.priority = next.priority || 'medium';
+            next.dueAt = next.dueAt ?? null;
+            next.steps = next.steps || [];
+            next.source = next.source || '';
         }
     } else {
         throw invalid('Unknown AI knowledge entity type.');
