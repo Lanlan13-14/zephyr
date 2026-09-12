@@ -35,6 +35,7 @@ import one.zephyr.mobile.data.repository.ConnectionRepository
 import one.zephyr.mobile.data.repository.LocalAiRepository
 import one.zephyr.mobile.data.repository.NoteRepository
 import one.zephyr.mobile.data.repository.OwnedAiRepository
+import one.zephyr.mobile.app.AiTodoSyncCoordinator
 import one.zephyr.mobile.data.repository.ResourceRepository
 import one.zephyr.mobile.data.repository.SettingsRepository
 import one.zephyr.mobile.data.repository.SharedResourceStore
@@ -286,6 +287,17 @@ class AccountContainer(
 
     /** Bound-account AI entities that ride the owned-sync change feed. */
     val ownedAi: OwnedAiRepository = OwnedAiRepository(database, writeGateway)
+
+    /** Local ⇄ mirror todo wiring: merge after each sync round, push on
+     * local writes. No-op while unbound; push additionally requires
+     * syncFromMainEnabled. */
+    val aiTodoSync: AiTodoSyncCoordinator = AiTodoSyncCoordinator(
+        scope = accountScope,
+        localAi = localAi,
+        ownedAi = ownedAi,
+        ownerUserId = { binding.userId },
+        syncEnabled = { binding.userId.isNotBlank() && localAi.load().syncFromMainEnabled },
+    )
 
     internal val localAiWorkspace: LocalAiWorkspace = LocalAiWorkspace(
         File(context.noBackupFilesDir, "ai-workspaces/$generation"),
@@ -678,8 +690,12 @@ class AccountContainer(
                 if (isDeviceRevocationError(round?.error?.code)) {
                     appContainer.onDeviceRevoked(bindingKey, generation)
                 }
+                // Any completed round may have refreshed aiTodo rows; merge
+                // them (and flush pending local pushes) into the mirror.
+                if (round?.error == null) aiTodoSync.reconcile()
             }
         }
+        aiTodoSync.start()
         wakeCoordinator.start(wakeScope)
         wakeCoordinator.onHoldAliveChanged(holdAlive.get())
         wakeCoordinator.onForegroundChanged(appContainer.isProcessForeground())

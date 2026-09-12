@@ -90,8 +90,8 @@ class LocalAiRepository(
     suspend fun deleteSkill(id: String) { val c = load(); save(c.copy(skills = c.skills.filterNot { it.id == id })) }
     suspend fun deletePlan(id: String) { val c = load(); save(c.copy(plans = c.plans.filterNot { it.id == id })) }
 
-    /* Standard todo CRUD — same storage channel as plans so sync, when it
-     * lands, only has to project rows onto the aiTodo entity. */
+    /* Standard todo CRUD — the sync coordinator (AiTodoSyncCoordinator) owns
+     * the merge policy; this repository only stores the catalog. */
     suspend fun upsertTodo(item: LocalAiTodo) = updateList(item.id, { it.todos }, { c, list -> c.copy(todos = list) }, item)
     suspend fun deleteTodo(id: String) { val c = load(); save(c.copy(todos = c.todos.filterNot { it.id == id })) }
 
@@ -219,6 +219,8 @@ data class LocalAiCatalog(
     val steps: List<LocalAiTodoStep> = emptyList(),
     val note: String = "",
     val source: String = "",
+    val revision: Long = 0,
+    val deletedAt: Long? = null,
     val updatedAt: Long = System.currentTimeMillis(),
 )
 @Serializable data class LocalAiSandbox(val enabled: Boolean = true, val workspaceQuotaMb: Int = 256, val timeoutSeconds: Int = 60, val networkDefault: Boolean = false, val allowedCommands: List<String> = listOf("cat", "grep", "sed", "awk", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "sha256sum"))
