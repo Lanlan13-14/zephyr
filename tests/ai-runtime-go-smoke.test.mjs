@@ -111,12 +111,12 @@ describe('zephyr-ai Go runtime smoke', {
     test('session create list messages empty', async () => {
         const created = await admin('/admin/sessions', {
             method: 'POST',
-            body: { userId: 'u-smoke', title: 't1' },
+            body: { userId: 'u-smoke', databaseGeneration: 'gen-smoke-1', title: 't1' },
         });
         assert.ok(created.session?.id);
-        const list = await admin(`/admin/sessions?userId=u-smoke`);
+        const list = await admin(`/admin/sessions?userId=u-smoke&databaseGeneration=gen-smoke-1`);
         assert.ok(list.sessions.some((s) => s.id === created.session.id));
-        const msgs = await admin(`/admin/sessions/${created.session.id}/messages?userId=u-smoke`);
+        const msgs = await admin(`/admin/sessions/${created.session.id}/messages?userId=u-smoke&databaseGeneration=gen-smoke-1`);
         assert.deepEqual(msgs.messages || [], []);
     });
 });

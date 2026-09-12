@@ -721,7 +721,15 @@ function currentLocalCleanupLease(layout) {
         const current = readCleanupLease(layout);
         if (sameCleanupLease(current, lease) && isHeldByCurrentProcess(lease)) return lease;
     } catch {
-        /* A local cache is never authority. Disk is checked again below. */
+        /* A local cache is never authority — but an UNREADABLE marker (e.g.
+         * unsafe permissions) must not evict the holder either. The cache
+         * exists to remember that THIS process already owns the lease; the
+         * disk re-check only needs to catch a marker replaced by someone
+         * else. If the marker cannot be read at all, keep the cache and let
+         * assertCleanupLease re-verify once it becomes readable again —
+         * evicting here locked the live holder out of its own lease forever
+         * ("a database import cleanup lease is already active"). */
+        return lease;
     }
     activeCleanupLeases.delete(layout.dataDir);
     return null;

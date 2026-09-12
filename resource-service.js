@@ -125,6 +125,11 @@ class ResourceService {
     createConnection(user, data, mutationContext = {}) {
         return this._runMobileMutation({
             entityType: 'connection', entityId: data.id, action: 'upsert', user, before: null,
+            /* Same masked-after trap: _createConnection returns the public
+             * projection, so without this the create stamps no secret at all
+             * (masked '******' diffs as absent) and One would never receive
+             * the initial secret envelope. */
+            after: () => this.storage.getConnectionById(data.id),
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
             forceChange: mutationContext.forceMobileChange === true,
@@ -166,6 +171,12 @@ class ResourceService {
         const before = this.storage.getConnectionById(id);
         return this._runMobileMutation({
             entityType: 'connection', entityId: id, action: 'upsert', user, before,
+            /* The bridge's secret ledger diffs stored values (post-#112), but
+             * _updateConnection returns the public projection where password/
+             * privateKey are '******'. Diffing raw-before against masked-after
+             * made every update stamp every stored secret as changed. Feed the
+             * bridge the saved raw row; callers still get the public shape. */
+            after: () => this.storage.getConnectionById(id),
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
             forceChange: mutationContext.forceMobileChange === true,
@@ -557,6 +568,8 @@ class ResourceService {
     createOwned(user, resourceType, data, mutationContext = {}) {
         return this._runMobileMutation({
             entityType: resourceType, entityId: data.id, action: 'upsert', user, before: null,
+            /* Same masked-after trap as createConnection. */
+            after: () => this._rawResource(resourceType, data.id),
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
             forceChange: mutationContext.forceMobileChange === true,
@@ -579,6 +592,11 @@ class ResourceService {
         const before = this.getRawAuthorized(user, resourceType, id, CAP.EDIT);
         return this._runMobileMutation({
             entityType: resourceType, entityId: id, action: 'upsert', user, before,
+            /* Same masked-after trap as updateConnection: the write returns
+             * rowToProxy/rowToSshKey projections where secrets are '******'.
+             * Feed the bridge the stored raw row so the secret ledger only
+             * stamps fields whose stored value actually changed. */
+            after: () => this._rawResource(resourceType, id),
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
             forceChange: mutationContext.forceMobileChange === true,
