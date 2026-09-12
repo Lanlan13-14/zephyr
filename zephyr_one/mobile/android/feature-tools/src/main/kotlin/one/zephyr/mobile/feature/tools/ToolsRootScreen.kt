@@ -51,7 +51,7 @@ data class ToolsRootSummaries(
     val sshKey: String = "secret 三态编辑",
     val jumpHost: String = "多跳路由依赖",
     val ai: String = "已启用 · Claude Opus · 协作模式",
-    val fileSync: String = "已开启 · 每 5 分钟 · 3 项待同步",
+    val fileSync: String = "未绑定",
     val serverSettings: String = "设置 · 备份与恢复",
     val backup: String = "加密导出 · 校验 · 恢复",
     val runtimeStatus: String = "版本 · capability · runtime",

@@ -778,18 +778,6 @@ private fun BoundRoot(
             RootRoute.Diagnostics -> DiagnosticsLiveDestination(
                 account = account,
                 onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
-                onCheckUpdate = {
-                    appContainer.aboutActions.open(AboutDestination.CHECK_UPDATE)
-                        .onFailure { notice("无法打开更新页面") }
-                },
-                onOpenGitHub = {
-                    appContainer.aboutActions.open(AboutDestination.GITHUB)
-                        .onFailure { notice("无法打开 GitHub") }
-                },
-                onOpenLicenses = {
-                    appContainer.aboutActions.open(AboutDestination.OPEN_SOURCE_LICENSES)
-                        .onFailure { notice("无法打开开源许可证") }
-                },
                 onExport = { notice(diagnosticExport(account)) },
             )
             RootRoute.FileSync -> FileSyncDestination(
@@ -1349,11 +1337,22 @@ private fun ToolsDestination(
         executableSshCount = connections.count { it.protocol == Protocol.SSH && it.capabilities.canExecute },
         observableSshCount = connections.count { it.protocol == Protocol.SSH && it.capabilities.canObserve },
     )
+    val syncStatus by account.syncEngine.status.collectAsState(initial = one.zephyr.mobile.model.SyncStatus.unbound())
+    val intervalMin = (syncStatus.targetIntervalSec / 60).coerceAtLeast(1)
+    val autoLabel = if (syncStatus.automaticEnabled) "已开启 · 每 ${intervalMin} 分钟" else "手动同步"
+    val pendingLabel = when {
+        account.isLocalMode -> "未绑定"
+        syncStatus.pendingCount <= 0 -> "无待同步"
+        else -> "${syncStatus.pendingCount} 项待同步"
+    }
+    val diagnosticsLabel = syncStatus.lastError?.let { "最近失败 · ${it.code}" } ?: "版本 · 日志导出"
     ToolsRootRoute(
         inventory = inventory,
         summaries = ToolsRootSummaries(
             language = languageLabel,
             ai = AiWorkspaceBinding.settingsSummary(prefs, localAiCatalog.enabled),
+            fileSync = "$autoLabel · $pendingLabel",
+            diagnostics = diagnosticsLabel,
         ),
         onOpenBatchExecution = onOpenBatch,
         onOpenDocker = { onOpenTool(ToolEntry.DOCKER) },

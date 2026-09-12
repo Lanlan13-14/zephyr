@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
@@ -120,3 +121,86 @@ func TestEmbeddedPushFrameReturnsJSONEncodableAck(t *testing.T) {
 		t.Fatalf("nested payload lost: %s", string(out.Ack))
 	}
 }
+
+func TestEmbeddedPushFramePreservesIntegerCursors(t *testing.T) {
+	var seen map[string]any
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var envelope struct {
+			Kind int             `json:"kind"`
+			Body json.RawMessage `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+			t.Errorf("bridge decode: %v", err)
+			http.Error(w, "bad", 400)
+			return
+		}
+		if err := json.Unmarshal(envelope.Body, &seen); err != nil {
+			t.Errorf("body decode: %v", err)
+			http.Error(w, "bad", 400)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":   true,
+			"kind": codec.KindSyncAck,
+			"body": map[string]any{"ok": true, "changes": []any{}, "nextCursor": 59, "hasMore": false},
+		})
+	}))
+	defer bridge.Close()
+
+	server := NewNode()
+	server.RegisterDevice("dev-push")
+	server.RegisterSyncBridge(SyncBridgeConfig{URL: bridge.URL, AdminToken: "tok-1234567890abcdef"})
+	serverSrv := httptest.NewServer(server.Handler())
+	defer serverSrv.Close()
+
+	device := NewNode()
+	deviceSrv := httptest.NewServer(device.Handler())
+	defer deviceSrv.Close()
+
+	dialBody, _ := json.Marshal(map[string]any{
+		"serverUrl": serverSrv.URL, "deviceId": "dev-push",
+	})
+	dialResp, err := http.Post(deviceSrv.URL+"/link/dial", "application/json", bytes.NewReader(dialBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dialResp.Body.Close()
+	var dial struct {
+		OK        bool   `json:"ok"`
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(dialResp.Body).Decode(&dial); err != nil {
+		t.Fatal(err)
+	}
+
+	pushBody := []byte(`{"sessionId":"` + dial.SessionID + `","peerUrl":"` + serverSrv.URL + `","kind":` + strconv.Itoa(codec.KindSyncOp) + `,"body":{"op":"changes","sinceCursor":59,"limit":100},"secret":false}`)
+	pushResp, err := http.Post(deviceSrv.URL+"/link/push", "application/json", bytes.NewReader(pushBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pushResp.Body.Close()
+	if pushResp.StatusCode != http.StatusOK {
+		raw := new(bytes.Buffer)
+		_, _ = raw.ReadFrom(pushResp.Body)
+		t.Fatalf("push status %d body %s", pushResp.StatusCode, raw.String())
+	}
+	if seen["op"] != "changes" {
+		t.Fatalf("op lost: %#v", seen)
+	}
+	switch v := seen["sinceCursor"].(type) {
+	case float64:
+		if v != 59 {
+			t.Fatalf("sinceCursor=%v", v)
+		}
+	case json.Number:
+		n, _ := v.Int64()
+		if n != 59 {
+			t.Fatalf("sinceCursor=%v", v)
+		}
+	default:
+		t.Fatalf("sinceCursor type %T: %v", v, v)
+	}
+}
+
+
