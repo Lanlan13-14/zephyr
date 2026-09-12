@@ -26,32 +26,32 @@ PALETTES = {
         "mid": "#a8b5c3",
         "dark": "#6e7b88",
         "dotA": "#0a84ff",
-        "dotB": "#8e99a6",
         "midOffset": "58%",
+        "bgDark": ["#1e242c", "#101419"],
     },
     "lava": {
         "main": "#f1e8df",
         "mid": "#c79672",
         "dark": "#8d5a3a",
         "dotA": "#bf5a1f",
-        "dotB": "#a58a78",
         "midOffset": "58%",
+        "bgDark": ["#241c17", "#15100c"],
     },
     "asagi": {
         "main": "#edf4f2",
         "mid": "#9bbdb5",
         "dark": "#5e8f83",
         "dotA": "#4d9c8a",
-        "dotB": "#829b96",
         "midOffset": "58%",
+        "bgDark": ["#17221f", "#0e1614"],
     },
     "cyber": {
         "main": "#eef3f5",
         "mid": "#9eb7bd",
         "dark": "#5d858d",
         "dotA": "#4f9da6",
-        "dotB": "#7f9298",
         "midOffset": "58%",
+        "bgDark": ["#152024", "#0d1417"],
     },
 }
 
@@ -76,22 +76,31 @@ APPLE_SIZES = [
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
 
 
-def svg_for(theme: str) -> str:
+def svg_for(theme: str, dark_mode: bool = False) -> str:
     p = PALETTES[theme]
+    bg_top = p["bgDark"][0] if dark_mode else "#ffffff"
+    bg_bot = p["bgDark"][1] if dark_mode else "#ffffff"
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
   <defs>
+    <linearGradient id="bg_{theme}_{dark_mode}" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="{bg_top}"/>
+      <stop offset="100%" stop-color="{bg_bot}"/>
+    </linearGradient>
     <linearGradient id="g" x1="15%" y1="15%" x2="85%" y2="85%">
       <stop offset="0%" stop-color="{p["main"]}"/>
       <stop offset="{p["midOffset"]}" stop-color="{p["mid"]}"/>
       <stop offset="100%" stop-color="{p["dark"]}"/>
     </linearGradient>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+      <rect width="200" height="200" fill="#ffffff"/>
+      <circle cx="145" cy="115" r="6.2" fill="#000000"/>
+    </mask>
   </defs>
-  <rect width="200" height="200" rx="44" fill="#ffffff"/>
-  <path d="M 45 65 C 85 45, 135 55, 160 80 C 130 80, 95 95, 75 125" stroke="url(#g)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 50 75 C 90 75, 125 90, 145 115 C 115 135, 75 155, 40 135" stroke="url(#g)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
-  <path d="M 85 95 C 110 110, 135 135, 155 130" stroke="url(#g)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+  <rect width="200" height="200" rx="44" fill="url(#bg_{theme}_{dark_mode})"/>
+  <path d="M 43 64 C 84 44, 138 52, 160 77 C 148 94, 108 104, 76 123" stroke="url(#g)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 49 76 C 89 74, 126 89, 145 115 C 120 134, 76 153, 40 135" stroke="url(#g)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.88" mask="url(#cut)"/>
+  <path d="M 80 92 C 108 108, 137 135, 162 129" stroke="url(#g)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.65"/>
   <circle cx="145" cy="115" r="4.5" fill="{p["dotA"]}" opacity="0.9"/>
-  <circle cx="75" cy="125" r="3" fill="{p["dotB"]}" opacity="0.8"/>
 </svg>
 '''
 
@@ -162,12 +171,15 @@ def main() -> None:
       <stop offset="{p["midOffset"]}" stop-color="{p["mid"]}"/>
       <stop offset="100%" stop-color="{p["dark"]}"/>
     </linearGradient>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+      <rect width="200" height="200" fill="#ffffff"/>
+      <circle cx="145" cy="115" r="6.2" fill="#000000"/>
+    </mask>
   </defs>
-  <path d="M 45 65 C 85 45, 135 55, 160 80 C 130 80, 95 95, 75 125" stroke="url(#g)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M 50 75 C 90 75, 125 90, 145 115 C 115 135, 75 155, 40 135" stroke="url(#g)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
-  <path d="M 85 95 C 110 110, 135 135, 155 130" stroke="url(#g)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+  <path d="M 43 64 C 84 44, 138 52, 160 77 C 148 94, 108 104, 76 123" stroke="url(#g)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 49 76 C 89 74, 126 89, 145 115 C 120 134, 76 153, 40 135" stroke="url(#g)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.88" mask="url(#cut)"/>
+  <path d="M 80 92 C 108 108, 137 135, 162 129" stroke="url(#g)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.65"/>
   <circle cx="145" cy="115" r="4.5" fill="{p["dotA"]}" opacity="0.9"/>
-  <circle cx="75" cy="125" r="3" fill="{p["dotB"]}" opacity="0.8"/>
 </svg>
 ''',
         encoding="utf-8",
@@ -191,9 +203,14 @@ def main() -> None:
 
         apple_dir = APPLE_SETS.get(theme)
         if apple_dir and apple_dir.exists():
+            # Apple HIG: also generate Dark Mode variants for iOS 18 / macOS 15 (Appearance: Any, Dark)
             for name, size in APPLE_SIZES:
-                render_png(svg, apple_dir / name, size)
-            print(f"  apple set {apple_dir.name}")
+                # Light / Default variant
+                render_png(svg_for(theme, dark_mode=False), apple_dir / name, size)
+                # Dark variant (suffix -Dark)
+                dark_name = name.replace('.png', '-Dark.png')
+                render_png(svg_for(theme, dark_mode=True), apple_dir / dark_name, size)
+            print(f"  apple set {apple_dir.name} (Light + Dark variants)")
 
     # Default launchers
     frost_png = ICONS / "zephyr-agent-frost.png"

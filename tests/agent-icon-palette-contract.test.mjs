@@ -24,7 +24,6 @@ function extractIconPalettes(jsSource) {
     dark: get('dark'),
     title: get('title'),
     dotA: get('dotA'),
-    dotB: get('dotB'),
   };
 }
 
@@ -40,13 +39,12 @@ test('agent frost palette matches web ICON_PALETTES', () => {
   assert.match(dart, new RegExp(toDart(palette.mid).replace(/[()]/g, '\\$&')));
   assert.match(dart, new RegExp(toDart(palette.dark).replace(/[()]/g, '\\$&')));
   assert.match(dart, new RegExp(toDart(palette.dotA).replace(/[()]/g, '\\$&')));
-  assert.match(dart, new RegExp(toDart(palette.dotB).replace(/[()]/g, '\\$&')));
 
   assert.match(logo, new RegExp(palette.main, 'i'));
   assert.match(logo, new RegExp(palette.mid, 'i'));
   assert.match(logo, new RegExp(palette.dark, 'i'));
   assert.match(logo, new RegExp(palette.dotA, 'i'));
-  assert.match(logo, new RegExp(palette.dotB, 'i'));
+  assert.doesNotMatch(logo, /circle cx="75" cy="125"/, 'ghost dot eradicated');
 
   // Guard against the old Tailwind sky palette regressing into agent frost.
   assert.doesNotMatch(logo, /#e0f2fe/i);

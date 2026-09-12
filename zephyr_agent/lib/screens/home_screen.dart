@@ -676,16 +676,16 @@ class _ZephyrMarkPainter extends CustomPainter {
     ).createShader(rect);
 
     final main = Path()
-      ..moveTo(p(45, 65).dx, p(45, 65).dy)
-      ..cubicTo(p(85, 45).dx, p(85, 45).dy, p(135, 55).dx, p(135, 55).dy, p(160, 80).dx, p(160, 80).dy)
-      ..cubicTo(p(130, 80).dx, p(130, 80).dy, p(95, 95).dx, p(95, 95).dy, p(75, 125).dx, p(75, 125).dy);
+      ..moveTo(p(43, 64).dx, p(43, 64).dy)
+      ..cubicTo(p(84, 44).dx, p(84, 44).dy, p(138, 52).dx, p(138, 52).dy, p(160, 77).dx, p(160, 77).dy)
+      ..cubicTo(p(148, 94).dx, p(148, 94).dy, p(108, 104).dx, p(108, 104).dy, p(76, 123).dx, p(76, 123).dy);
     final mid = Path()
-      ..moveTo(p(50, 75).dx, p(50, 75).dy)
-      ..cubicTo(p(90, 75).dx, p(90, 75).dy, p(125, 90).dx, p(125, 90).dy, p(145, 115).dx, p(145, 115).dy)
-      ..cubicTo(p(115, 135).dx, p(115, 135).dy, p(75, 155).dx, p(75, 155).dy, p(40, 135).dx, p(40, 135).dy);
+      ..moveTo(p(49, 76).dx, p(49, 76).dy)
+      ..cubicTo(p(89, 74).dx, p(89, 74).dy, p(126, 89).dx, p(126, 89).dy, p(145, 115).dx, p(145, 115).dy)
+      ..cubicTo(p(120, 134).dx, p(120, 134).dy, p(76, 153).dx, p(76, 153).dy, p(40, 135).dx, p(40, 135).dy);
     final tail = Path()
-      ..moveTo(p(85, 95).dx, p(85, 95).dy)
-      ..cubicTo(p(110, 110).dx, p(110, 110).dy, p(135, 135).dx, p(135, 135).dy, p(155, 130).dx, p(155, 130).dy);
+      ..moveTo(p(80, 92).dx, p(80, 92).dy)
+      ..cubicTo(p(108, 108).dx, p(108, 108).dy, p(137, 135).dx, p(137, 135).dy, p(162, 129).dx, p(162, 129).dy);
 
     void stroke(Path path, double width, double opacity) {
       canvas.drawPath(
@@ -704,7 +704,6 @@ class _ZephyrMarkPainter extends CustomPainter {
     stroke(mid, 6, .86);
     stroke(tail, 3.5, .62);
     canvas.drawCircle(p(145, 115), 4.5 * size.width / 200, Paint()..color = palette.iconDotA.withValues(alpha: .9));
-    canvas.drawCircle(p(75, 125), 3 * size.width / 200, Paint()..color = palette.iconDotB.withValues(alpha: .8));
   }
 
   @override

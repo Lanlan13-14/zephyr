@@ -87,7 +87,7 @@ function iconPalettes() {
         };
         out[palette] = {
             main: field('main'), mid: field('mid'), dark: field('dark'),
-            title: field('title'), dotB: field('dotB'), midOffset: field('midOffset'),
+            title: field('title'), dotA: field('dotA'), midOffset: field('midOffset'),
         };
     }
     return out;
@@ -155,7 +155,7 @@ test('inline One mark reproduces the shipped artwork geometry exactly', async ()
         assert.match(html, /<ellipse cx="145" cy="115" rx="5" ry="4\.8"/);
         assert.match(html, /class="wind-path-mid"[^>]*mask="url\(#zephyr-one-cut-\d+\)"/);
         assert.doesNotMatch(html, /zephyr-icon-dot-a/, 'the "O" replaces dot-a');
-        assert.match(html, /zephyr-icon-dot-b/, 'dot-b at (75,125) is kept');
+        assert.doesNotMatch(html, /zephyr-icon-dot-b/, 'dot-b at (75,125) is eradicated under Apple HIG');
 
         // Wordmark, split so the "O" can be centred in the masked gap.
         assert.match(html, /<text x="145" y="120\.7" text-anchor="middle">O<\/text>/);
@@ -186,7 +186,7 @@ test('the product marker is what selects the One mark', async () => {
         assert.doesNotMatch(html, />ne</, 'Zephyr mark must not carry the wordmark');
         assert.doesNotMatch(html, /zephyr-one-cut/, 'Zephyr mark must not be masked');
         assert.match(html, /zephyr-icon-dot-a/, 'Zephyr mark keeps its dot-a');
-        assert.match(html, /M 85 95 C 110 110, 135 135, 155 130/, 'Zephyr keeps its own tail');
+        assert.match(html, /M 80 92 C 108 108, 137 135, 162 129/, 'Zephyr keeps its own tail');
     } finally {
         clearDom();
     }
@@ -268,8 +268,9 @@ test('Zephyr favicon is unchanged when the marker is absent', async () => {
         const { zephyrFaviconHref } = await loadThemeRuntime();
         const svg = decodeURIComponent(zephyrFaviconHref().slice('data:image/svg+xml,'.length));
         assert.doesNotMatch(svg, />ne</);
-        assert.doesNotMatch(svg, /<mask/);
+        assert.match(svg, /<mask id="core_cut"/, 'Zephyr core has the focal clearance mask');
         assert.match(svg, /circle cx="145" cy="115" r="4\.5"/, 'Zephyr keeps dot-a');
+        assert.doesNotMatch(svg, /circle cx="75" cy="125"/, 'Zephyr no longer keeps the ghost dot');
     } finally {
         clearDom();
     }

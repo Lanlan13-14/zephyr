@@ -135,7 +135,8 @@ def outline_wordmark(svg: str) -> str:
 
 
 def simplify_for_small_size(svg: str) -> str:
-    """Drop the wordmark (and the gap cut for it) from an outlined master.
+    """Drop the wordmark from an outlined master and promote the mark to
+    Zephyr Core geometry.
 
     Why the small frames must not carry the wordmark at all:
 
@@ -154,15 +155,9 @@ def simplify_for_small_size(svg: str) -> str:
         sizing -- show fewer elements when there are fewer pixels, which is
         what every platform icon guideline asks for.
 
-    The mask must go with it. The mid stroke carries mask="url(#gcut)",
-    whose only purpose is to punch an ellipse out of the stroke so the "O"
-    has somewhere to sit. Removing the wordmark but keeping the mask would
-    leave a bite taken out of the stroke for no visible reason -- worse than
-    the smear, because it corrupts the mark itself.
-
-    The wind strokes, the plate and the trailing dot are untouched, so the
-    small frames are the same artwork with one element fewer, not a
-    different logo.
+    The wordmark's gcut ellipse is swapped for the core focal clearance mask.
+    Without it, the focal point (dotA) would mud-merge with the mid stroke.
+    The ghost dotB is eradicated everywhere.
     """
     # The outlined wordmark, as emitted by outline_wordmark().
     wordmark = re.compile(r'<path d="M144\.95[^"]*"[^/]*/>')
@@ -173,10 +168,29 @@ def simplify_for_small_size(svg: str) -> str:
         )
     svg = wordmark.sub("", svg, count=1)
 
-    # The gap that existed only for the wordmark.
-    svg = svg.replace(' mask="url(#gcut)"', "")
-    mask_def = re.compile(r'<mask id="gcut".*?</mask>', re.S)
-    svg = mask_def.sub("", svg, count=1)
+    # Replace the wordmark's ellipse mask with the core focal clearance circle.
+    svg = svg.replace('id="gcut"', 'id="core_cut"')
+    svg = svg.replace('mask="url(#gcut)"', 'mask="url(#core_cut)"')
+    mask_def = re.compile(
+        r'<mask id="core_cut"[^>]*>\s*<rect[^>]*/>\s*<ellipse[^>]*/>\s*</mask>',
+        re.S
+    )
+    svg = mask_def.sub(
+        '<mask id="core_cut" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200"><rect width="200" height="200" fill="#ffffff"/><circle cx="145" cy="115" r="6.2" fill="#000000"/></mask>',
+        svg,
+        count=1
+    )
+
+    # Promote the small icon's tail to the core tail path
+    svg = svg.replace('M 78 88 C 108 106, 137 137, 170 128', 'M 80 92 C 108 108, 137 135, 162 129')
+
+    # Insert the core focal dot before the closing svg tag
+    focal_dot = '<circle cx="145" cy="115" r="4.5" fill="{p_dotA}" opacity="0.9"/>'
+    # Use regex to extract title/dotA color from the existing gradient/wordmark context
+    m_color = re.search(r'fill="(#[0-9a-f]{6})"', svg)
+    dotA_color = m_color.group(1) if m_color else '#0a84ff'
+    focal_dot = focal_dot.replace('{p_dotA}', dotA_color)
+    svg = svg.replace('</svg>', f'{focal_dot}</svg>')
 
     if "gcut" in svg:
         sys.exit("ERROR: gcut mask survived simplification; small frames would be cut")
