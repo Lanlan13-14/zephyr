@@ -167,6 +167,7 @@ const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
 const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-enrollment');
 const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go } = require('./link-v2-go-proxy');
 const { createLinkSyncBridge } = require('./link-v2-sync-bridge');
+const { createLinkFileBridge } = require('./link-v2-file-bridge');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 const { MobileV1OutboxDispatcher } = require('./mobile-v1-outbox-dispatcher');
 const { AppChangeWakeHub, registerAppChangeWakeRoute } = require('./app-change-wake-hub');
@@ -9003,6 +9004,13 @@ try {
         });
         linkInternalApp.use('/internal/link', express.json({ limit: '4mb' }));
         linkInternalApp.post('/internal/link/sync', (req, res) => linkSyncBridge.handle(req, res));
+        const linkFileBridge = createLinkFileBridge({
+            fileAgentManager,
+            storage,
+            adminToken: linkSyncAdminToken,
+            log: (...args) => console.log('[link-file]', ...args),
+        });
+        linkInternalApp.post('/internal/link/file', (req, res) => linkFileBridge.handle(req, res));
         linkInternalServer = http.createServer(linkInternalApp);
         const requestedInternalPort = Number(process.env.ZEPHYR_LINK_INTERNAL_PORT);
         const linkInternalPort = Number.isInteger(requestedInternalPort) && requestedInternalPort >= 0
@@ -9030,6 +9038,8 @@ try {
             adminToken: linkSyncAdminToken,
             syncBridgeUrlReady: linkInternalReady,
             syncBridgeToken: linkSyncAdminToken,
+            fileBridgeUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/file')),
+            fileBridgeToken: linkSyncAdminToken,
             log: (...args) => console.log('[link-v2]', ...args),
         });
         linkV2EnrollmentApi = createLinkV2EnrollmentApi({

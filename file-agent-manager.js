@@ -293,7 +293,7 @@ function validateHelloMessage(hello) {
         if (!isPlainObject(hello.capabilities)) return false;
         const booleanCapabilities = new Set([
             'read', 'write', 'delete', 'rename', 'mkdir', 'truncate', 'binary',
-            'binaryRead', 'binaryWrite', 'cancel', 'creditFlow', 'bastion',
+            'binaryRead', 'binaryWrite', 'cancel', 'creditFlow', 'bastion', 'linkFileBridge',
         ]);
         for (const [key, value] of Object.entries(hello.capabilities)) {
             if (booleanCapabilities.has(key)) {

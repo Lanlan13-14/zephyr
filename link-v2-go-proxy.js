@@ -41,7 +41,7 @@ function resolveBin() {
 }
 
 class GoLinkProcess {
-    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeUrlReady = null, syncBridgeToken = '' } = {}) {
+    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeUrlReady = null, syncBridgeToken = '', fileBridgeUrl = '', fileBridgeUrlReady = null, fileBridgeToken = '' } = {}) {
         this.log = log || (() => {});
         this.proc = null;
         this.addr = null;
@@ -52,7 +52,9 @@ class GoLinkProcess {
         this.syncBridgeUrl = syncBridgeUrl;
         this.syncBridgeUrlReady = syncBridgeUrlReady;
         this.syncBridgeToken = syncBridgeToken;
-        this.starting = null;
+        this.fileBridgeUrl = fileBridgeUrl;
+        this.fileBridgeUrlReady = fileBridgeUrlReady;
+        this.fileBridgeToken = fileBridgeToken;
     }
 
     async ensureStarted() {
@@ -66,6 +68,9 @@ class GoLinkProcess {
         if (this.syncBridgeUrlReady) {
             this.syncBridgeUrl = await this.syncBridgeUrlReady;
         }
+        if (this.fileBridgeUrlReady) {
+            this.fileBridgeUrl = await this.fileBridgeUrlReady;
+        }
         const bin = resolveBin();
         if (!bin) throw Object.assign(new Error('link-go-binary-missing'), { code: 'link_go_missing' });
         const proc = spawn(bin, [], {
@@ -78,6 +83,8 @@ class GoLinkProcess {
                  * which makes a SYNC_OP a clean dispatch error rather than a hang. */
                 ZEPHYR_LINK_SYNC_BRIDGE: this.syncBridgeUrl,
                 ZEPHYR_LINK_SYNC_TOKEN: this.syncBridgeToken,
+                ZEPHYR_LINK_FILE_BRIDGE: this.fileBridgeUrl,
+                ZEPHYR_LINK_FILE_TOKEN: this.fileBridgeToken,
             },
             stdio: ['ignore', 'pipe', 'inherit'],
         });
@@ -123,8 +130,8 @@ function stopLinkV2Go() {
     if (shared.proc) { shared.proc.stop(); shared.proc = null; }
 }
 
-function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken } = {}) {
-    const proc = sharedProcess(log, { adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken });
+function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken, fileBridgeUrl, fileBridgeUrlReady, fileBridgeToken } = {}) {
+    const proc = sharedProcess(log, { adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken, fileBridgeUrl, fileBridgeUrlReady, fileBridgeToken });
     // Devices the Go service is known to hold this process lifetime, so we only
     // re-register once per device per restart instead of on every handshake.
     // Value is true once the ES256 JWK has been pushed; an id-only registration

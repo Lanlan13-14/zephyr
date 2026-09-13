@@ -26,6 +26,8 @@ const envAdminToken = "ZEPHYR_LINK_ADMIN_TOKEN"
 const envDevices = "ZEPHYR_LINK_DEVICES"        // path to a JSON list of enrolled device IDs
 const envSyncBridge = "ZEPHYR_LINK_SYNC_BRIDGE" // loopback Node sync-core bridge URL
 const envSyncToken = "ZEPHYR_LINK_SYNC_TOKEN"   // loopback shared secret for the bridge
+const envFileBridge = "ZEPHYR_LINK_FILE_BRIDGE" // loopback Node file bridge URL
+const envFileToken = "ZEPHYR_LINK_FILE_TOKEN"   // loopback shared secret for file bridge
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -55,6 +57,10 @@ func main() {
 	if url := os.Getenv(envSyncBridge); url != "" {
 		node.RegisterSyncBridge(link.SyncBridgeConfig{URL: url, AdminToken: os.Getenv(envSyncToken)})
 		log.Info("owned-sync lane bridged to the Node sync core", "url", url)
+	}
+	if url := os.Getenv(envFileBridge); url != "" {
+		node.RegisterFileBridge(link.FileBridgeConfig{URL: url, AdminToken: os.Getenv(envFileToken)})
+		log.Info("file-bridge lane bridged to the Node file core", "url", url)
 	}
 
 	mux := http.NewServeMux()
