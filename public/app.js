@@ -3105,6 +3105,7 @@ function switchView(name, options = {}) {
 }
 
 
+window.switchView = switchView;
 
 function parseTags(v) { return String(v || '').split(',').map((x) => x.trim()).filter(Boolean); }
 function base64urlToBuffer(value) { const s = String(value).replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(s + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0)); }

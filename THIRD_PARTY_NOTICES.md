@@ -27,6 +27,7 @@ The Zephyr-SSH project itself is licensed under the GNU General Public License v
 | noVNC | MPL-2.0 | Browser-side VNC client | <https://novnc.com/> |
 | AndroidLiquidGlass (vendored port under `zephyr_one/mobile/android/core-ui/.../ui/glass`) | Apache-2.0 | Liquid Glass backdrop rendering: layer backdrops, AGSL refraction/dispersion shaders, highlights, shadows | <https://github.com/Kyant0/AndroidLiquidGlass> |
 | kyant0/shapes (vendored port under `zephyr_one/mobile/android/core-ui/.../ui/glass/shape`) | Apache-2.0 | Continuous-curvature rounded-rectangle / capsule shapes | <https://github.com/Kyant0/AndroidLiquidGlass> (shapes artifact `io.github.kyant0:shapes`) |
+| liquid-glass-webgl (WebGL port used by the main-nav top bar: `public/liquid-glass-renderer.js`, `public/liquid-glass-nav.js`, `public/liquid-glass-tab-layout.js`) | Apache-2.0 | Browser Liquid Glass: rounded-rect SDF, negative refraction, Gaussian blur, chromatic dispersion, Bottom Tabs drag/press (78/56), CombinedBackdrop accent | <https://github.com/martin65536/liquid-glass-webgl> |
 
 ## Editor and frontend dependencies
 

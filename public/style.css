@@ -634,7 +634,8 @@ body.app-body.terminal-mode {
     --nav-fusion-bg: color-mix(in srgb, var(--surface) 88%, transparent);
     position: sticky; top: 0; z-index: 50;
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
-    padding: 12px 18px; border-bottom: 1px solid var(--border);
+    padding: 12px 18px;
+    padding-bottom: var(--terminal-shelf-rest-padding); border-bottom: 1px solid var(--border);
     background: var(--nav-fusion-bg);
     backdrop-filter: blur(16px) saturate(1.08);
     -webkit-backdrop-filter: blur(16px) saturate(1.08);
@@ -649,7 +650,7 @@ body.app-body.terminal-mode {
 body.terminal-mode .main-nav {
     position: sticky;
     top: 0;
-    padding-bottom: 27px;
+    padding-bottom: var(--terminal-shelf-open-padding);
     transform: none;
     opacity: 1;
     box-shadow: 0 12px 30px rgba(0,0,0,.10);
@@ -16465,4 +16466,114 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
     .terminal-workspace.compact.custom-fullscreen .terminal-window.active .terminal-window-titlebar > .mobile-fullscreen-dock-toggle.is-pressing {
         transform: translateY(-50%) scale(.92) !important;
     }
+}
+
+/* Liquid Glass top bar (martin65536/liquid-glass-webgl). See THIRD_PARTY_NOTICES.md. */
+.main-nav.liquid-glass-on {
+    isolation: isolate;
+    overflow: visible;
+    border-bottom-color: transparent;
+    box-shadow: none;
+    background: var(--nav-fusion-bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    transition:
+        padding-bottom var(--terminal-shelf-duration) var(--terminal-shelf-ease),
+        background .30s ease,
+        box-shadow .42s ease,
+        border-radius .42s ease;
+}
+.main-nav.liquid-glass-on #liquidGlassCanvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: auto;
+    width: 100%;
+    /* 高度走 JS inline：navH + 78/56 溢出。height:100%/inset:0 会裁掉放大后的玻璃。 */
+    height: auto;
+    pointer-events: none;
+    z-index: 0;
+    display: block;
+    overflow: visible;
+    flex: none;
+}
+.main-nav.liquid-glass-on > *:not(#liquidGlassCanvas) {
+    position: relative;
+    z-index: 1;
+}
+.main-nav.liquid-glass-on .nav-tabs {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    justify-content: flex-start;
+    flex: 0 0 auto;
+    width: max-content;
+    max-width: 100%;
+    --lg-island: hug;
+    --lg-tab-min: min-content;
+}
+.main-nav.liquid-glass-on .nav-tab,
+.main-nav.liquid-glass-on .nav-tab:hover,
+.main-nav.liquid-glass-on .nav-tab.active {
+    background: transparent !important;
+    box-shadow: none !important;
+    color: transparent !important;
+    text-shadow: none !important;
+    -webkit-text-fill-color: transparent !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    flex: 0 0 var(--lg-tab-w, auto);
+    width: var(--lg-tab-w, auto);
+    min-width: var(--lg-tab-min, min-content);
+    max-width: none;
+    box-sizing: border-box;
+    font-weight: 500;
+    white-space: nowrap;
+}
+.main-nav.liquid-glass-on .nav-tab:active {
+    transform: none;
+}
+.main-nav.no-liquid-glass #liquidGlassCanvas { display: none; }
+
+@media (max-width: 760px) and (hover: none) and (pointer: coarse) {
+    .main-nav.liquid-glass-on .nav-tabs {
+        width: 100%;
+        max-width: 100%;
+        flex: 1 1 100%;
+        --lg-island: fill;
+        --lg-tab-min: 0px;
+    }
+}
+
+.nav-actions #appThemeToggle {
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+    padding: 0;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    line-height: 1;
+}
+
+.nav-actions .ai-floating-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    min-height: 30px;
+    max-width: 30px;
+    padding: 0;
+    overflow: hidden;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1;
 }
