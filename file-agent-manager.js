@@ -281,7 +281,7 @@ function validateHelloMessage(hello) {
     if (!isPlainObject(hello)) return false;
     const allowed = new Set([
         'type', 'protocolVersion', 'token', 'deviceId', 'deviceName',
-        'platform', 'appVersion', 'capabilities', 'share', 'linkSessionId',
+        'platform', 'appVersion', 'capabilities', 'share', 'linkSessionId', 'linkSigningJwk',
     ]);
     if (Object.keys(hello).some((key) => !allowed.has(key))) return false;
     if (hello.type !== 'hello' || ![1, 2].includes(hello.protocolVersion)) return false;
@@ -293,6 +293,7 @@ function validateHelloMessage(hello) {
     // The ZSL/2 session id the Agent established through its embedded Link
     // runtime; optional but must be a sane string when present.
     if (hello.linkSessionId != null && !validateBoundedString(hello.linkSessionId, 128)) return false;
+    if (hello.linkSigningJwk != null && !validateBoundedString(hello.linkSigningJwk, 4096)) return false;
     if (hello.capabilities != null) {
         if (!isPlainObject(hello.capabilities)) return false;
         const booleanCapabilities = new Set([
@@ -329,6 +330,8 @@ class FileAgentConnection {
         this.capabilities = hello.capabilities || { read: true };
         this.share = hello.share || { name: 'Agent', readOnly: true };
         this.linkSessionId = typeof hello.linkSessionId === 'string' ? hello.linkSessionId : null;
+        this.linkSigningJwk = typeof hello.linkSigningJwk === 'string' ? hello.linkSigningJwk : null;
+        this.linkRegistered = false;
         this.ownerId = null; // set after token validation
         this.ownerUsername = '';
         this.tokenId = null;
@@ -691,8 +694,39 @@ class FileAgentManager {
         /** Encrypted Link lane transport hooks (injected by server.js). */
         this.linkTunnelDial = typeof options.linkTunnelDial === 'function' ? options.linkTunnelDial : null;
         this.linkTunnelAttach = typeof options.linkTunnelAttach === 'function' ? options.linkTunnelAttach : null;
+        this.linkRegisterAgentKey = typeof options.linkRegisterAgentKey === 'function' ? options.linkRegisterAgentKey : null;
 
         this._loadTokens();
+        this._restoreLinkIdentities();
+    }
+
+    async restoreLinkIdentities() {
+        return this._restoreLinkIdentities();
+    }
+
+    async _restoreLinkIdentities() {
+        if (!this.linkRegisterAgentKey) return;
+        try {
+            for (const row of this.tokenStore.listLinkIdentities()) {
+                let jwk;
+                try { jwk = JSON.parse(String(row.link_signing_jwk)); } catch { continue; }
+                await this.linkRegisterAgentKey(String(row.link_device_id), jwk);
+            }
+        } catch (error) {
+            this.log('[file-agent] Link identity restore failed:', error?.message || error);
+        }
+    }
+
+    async registerLinkIdentity({ ownerId, tokenId, deviceId, signingJwk } = {}) {
+        const identity = this.tokenStore.bindLinkIdentity(ownerId, tokenId, deviceId, signingJwk);
+        if (this.linkRegisterAgentKey) {
+            await this.linkRegisterAgentKey(identity.deviceId, JSON.parse(identity.signingJwk));
+        }
+        return identity;
+    }
+
+    listLinkIdentities() {
+        return this.tokenStore.listLinkIdentities();
     }
 
     // ─── Token Management ────────────────────────────────────────────
@@ -1303,6 +1337,12 @@ class FileAgentManager {
                 case 'agent_auto_shutdown':
                     this._handleAutoShutdown(agentId, msg);
                     break;
+                case 'link_register':
+                    this._registerAgentLinkKey(agentId, ws);
+                    break;
+                case 'link_ready':
+                    this._handleAgentLinkReady(agentId, ws, msg);
+                    break;
                 default:
                     break;
             }
@@ -1440,6 +1480,35 @@ class FileAgentManager {
             agentId,
             reason,
         }, ownerId);
+    }
+
+    _registerAgentLinkKey(agentId, ws) {
+        const conn = this.agents.get(agentId);
+        if (!conn || conn.ws !== ws) return;
+        if (!conn.deviceId || !conn.linkSigningJwk || !this.linkRegisterAgentKey) {
+            try { ws.send(JSON.stringify({ type: 'link_register_ack', ok: false, error: 'Link 公钥未提供' })); } catch {}
+            return;
+        }
+        let jwk;
+        try { jwk = JSON.parse(conn.linkSigningJwk); } catch { jwk = null; }
+        Promise.resolve(this.registerLinkIdentity({
+            ownerId: conn.ownerId, tokenId: conn.tokenId, deviceId: conn.deviceId, signingJwk: jwk,
+        })).then(() => {
+            conn.linkRegistered = true;
+            try { ws.send(JSON.stringify({ type: 'link_register_ack', ok: true })); } catch {}
+        }).catch((error) => {
+            try { ws.send(JSON.stringify({ type: 'link_register_ack', ok: false, error: error?.message || 'Link 公钥注册失败' })); } catch {}
+        });
+    }
+
+    _handleAgentLinkReady(agentId, ws, msg) {
+        const conn = this.agents.get(agentId);
+        const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId : '';
+        if (!conn || conn.ws !== ws || !sessionId || !conn.linkSigningJwk || !conn.linkRegistered) return;
+        conn.linkSessionId = sessionId;
+        this._attachAgentLinkLane(conn).catch((error) => {
+            this.log('[file-agent] Link lane attach failed:', error?.code || error?.message || error);
+        });
     }
 
     _handleAgentResponse(agentId, msg) {

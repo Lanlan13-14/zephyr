@@ -520,6 +520,7 @@ const MEDIA_CACHE_DIR = path.join(os.tmpdir(), 'zephyr-media-cache');
 
 /* ─── File Agent Manager ─── */
 let fileAgentManager = null;
+let linkGoForAgents = null;
 
 function createFileAgentManager() {
     return new FileAgentManager({
@@ -540,6 +541,10 @@ function createFileAgentManager() {
         },
         linkTunnelDial: (host, port, timeoutMs, lane) => linkTunnelDial(host, port, timeoutMs, lane),
         linkTunnelAttach: (sessionId) => linkTunnelAttach(sessionId),
+        linkRegisterAgentKey: (deviceId, jwk) => {
+            if (!linkGoForAgents) return Promise.reject(new Error('Link 服务未就绪'));
+            return linkGoForAgents.registerDevice(deviceId, jwk);
+        },
     });
 }
 let fileTransferGateway = null;
@@ -9173,6 +9178,10 @@ try {
             fileBridgeUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/file')),
             fileBridgeToken: linkSyncAdminToken,
             log: (...args) => console.log('[link-v2]', ...args),
+        });
+        linkGoForAgents = linkGo;
+        Promise.resolve(fileAgentManager?.restoreLinkIdentities?.()).catch((error) => {
+            console.error('[link-v2] Agent Link identity restore failed', error && error.message);
         });
         linkV2EnrollmentApi = createLinkV2EnrollmentApi({
             enrollments,

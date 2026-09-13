@@ -58,6 +58,10 @@ class MainActivity : FlutterActivity() {
                             }
                         }.start()
                     }
+                    "linkSigningJwk" -> {
+                        val deviceId = call.argument<String>("deviceId") ?: error("deviceId required")
+                        result.success(linkApi.signingJwk(deviceId))
+                    }
                     "linkFileRequest" -> {
                         val op = call.argument<String>("op") ?: error("op required")
                         @Suppress("UNCHECKED_CAST")

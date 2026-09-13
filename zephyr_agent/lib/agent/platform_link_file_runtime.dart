@@ -12,6 +12,9 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
   static const _channel = MethodChannel('com.zephyr.agent/link');
   String? _serverUrl;
 
+  Future<String?> signingJwk(String deviceId) async =>
+      await _channel.invokeMethod<String>('linkSigningJwk', {'deviceId': deviceId});
+
   @override
   Future<bool> connect({required String serverUrl, required String deviceId}) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('linkConnect', {

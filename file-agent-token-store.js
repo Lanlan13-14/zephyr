@@ -34,6 +34,12 @@ function safeName(value, fallback = 'Zephyr Agent Token') {
     return String(value || '').trim().slice(0, 80) || fallback;
 }
 
+function canonicalLinkJwk(value) {
+    if (!value || value.kty !== 'EC' || value.crv !== 'P-256'
+        || typeof value.x !== 'string' || typeof value.y !== 'string') return null;
+    return JSON.stringify({ kty: 'EC', crv: 'P-256', x: value.x, y: value.y });
+}
+
 function aadFor(ownerUserId, tokenId, revision) {
     return `zephyr-client-token:v1:${ownerUserId}:${tokenId}:${positiveRevision(revision)}`;
 }
@@ -108,6 +114,8 @@ class AgentTokenStore {
                 updated_at INTEGER NOT NULL,
                 last_used_at INTEGER,
                 deleted_at INTEGER,
+                link_device_id TEXT,
+                link_signing_jwk TEXT,
                 CHECK (revision >= 1),
                 CHECK (length(name) BETWEEN 1 AND 80)
             );
@@ -116,6 +124,13 @@ class AgentTokenStore {
             CREATE UNIQUE INDEX IF NOT EXISTS idx_encrypted_client_tokens_active_digest
                 ON encrypted_client_tokens(secret_digest) WHERE deleted_at IS NULL;
         `);
+        for (const column of ['link_device_id', 'link_signing_jwk']) {
+            try { database.exec(`ALTER TABLE encrypted_client_tokens ADD COLUMN ${column} TEXT`); } catch (error) {
+                if (!String(error?.message || '').includes('duplicate column')) throw error;
+            }
+        }
+        database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_encrypted_client_tokens_link_device
+            ON encrypted_client_tokens(link_device_id) WHERE link_device_id IS NOT NULL AND deleted_at IS NULL`);
     }
 
     _wrap(error, code = 'token_store_unavailable') {
@@ -410,6 +425,8 @@ class AgentTokenStore {
             updatedAt: Number(row.updated_at),
             lastUsedAt: row.last_used_at == null ? null : Number(row.last_used_at),
             deletedAt: row.deleted_at == null ? null : Number(row.deleted_at),
+            linkDeviceId: row.link_device_id == null ? null : String(row.link_device_id),
+            linkSigningJwk: row.link_signing_jwk == null ? null : String(row.link_signing_jwk),
         };
         if (includeSecret && !record.deletedAt) record.token = this._decrypt(row);
         return record;
@@ -455,6 +472,40 @@ class AgentTokenStore {
             encrypted.digest.fill(0);
         }
         return this.read(owner, tokenId, { includeSecret: true });
+    }
+
+    bindLinkIdentity(ownerUserId, tokenId, deviceId, signingJwk) {
+        this.ensureReady();
+        const jwk = canonicalLinkJwk(signingJwk);
+        const device = String(deviceId || '').trim();
+        if (!jwk || device.length < 16 || device.length > 128) {
+            throw new TokenStoreError('invalid_link_identity', 'Link device identity is invalid');
+        }
+        const owner = String(ownerUserId || '');
+        const id = String(tokenId || '');
+        const row = this.db.prepare(`SELECT link_device_id, link_signing_jwk FROM encrypted_client_tokens
+            WHERE owner_user_id = ? AND id = ? AND deleted_at IS NULL`).get(owner, id);
+        if (!row) throw new TokenStoreError('token_not_found', 'Client Token not found');
+        if (row.link_device_id && (String(row.link_device_id) !== device || String(row.link_signing_jwk || '') !== jwk)) {
+            throw new TokenStoreError('link_identity_conflict', 'Link identity is already bound to this token');
+        }
+        this.db.prepare(`UPDATE encrypted_client_tokens SET link_device_id = ?, link_signing_jwk = ?, updated_at = ?
+            WHERE owner_user_id = ? AND id = ? AND deleted_at IS NULL`).run(device, jwk, this.now(), owner, id);
+        return { deviceId: device, signingJwk: jwk };
+    }
+
+    getLinkIdentity(ownerUserId, tokenId) {
+        this.ensureReady();
+        const row = this.db.prepare(`SELECT link_device_id, link_signing_jwk FROM encrypted_client_tokens
+            WHERE owner_user_id = ? AND id = ? AND deleted_at IS NULL`).get(String(ownerUserId || ''), String(tokenId || ''));
+        return row?.link_device_id && row?.link_signing_jwk
+            ? { deviceId: String(row.link_device_id), signingJwk: String(row.link_signing_jwk) } : null;
+    }
+
+    listLinkIdentities() {
+        this.ensureReady();
+        return this.db.prepare(`SELECT owner_user_id, id, link_device_id, link_signing_jwk
+            FROM encrypted_client_tokens WHERE deleted_at IS NULL AND link_device_id IS NOT NULL`).all();
     }
 
     rename(ownerUserId, tokenId, name, { expectedRevision } = {}) {
