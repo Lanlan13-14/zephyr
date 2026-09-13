@@ -717,14 +717,20 @@
                             <h2 data-i18n="待办事项">待办事项</h2>
                             <p class="muted" data-i18n="标准任务清单：你与 AI 共用同一份数据。AI 通过 todo 工具创建和推进，你也可以在这里手动勾选、编辑、删除。">标准任务清单：你与 AI 共用同一份数据。AI 通过 todo 工具创建和推进，你也可以在这里手动勾选、编辑、删除。</p>
                             <form id="aiTodoForm" class="settings-form ai-todo-form">
-                                <input id="aiTodoTitle" placeholder="新待办：例如 检查生产服务器磁盘" data-i18n-placeholder="新待办：例如 检查生产服务器磁盘" maxlength="200">
-                                <select id="aiTodoPriority">
-                                    <option value="low" data-i18n="低">低</option>
-                                    <option value="medium" selected data-i18n="中">中</option>
-                                    <option value="high" data-i18n="高">高</option>
-                                    <option value="urgent" data-i18n="紧急">紧急</option>
-                                </select>
-                                <button class="btn btn-primary" type="submit" data-i18n="添加">添加</button>
+                                <div class="ai-todo-title-field">
+                                    <label class="sr-only" for="aiTodoTitle" data-i18n="待办标题">待办标题</label>
+                                    <input id="aiTodoTitle" placeholder="新待办：例如 检查生产服务器磁盘" data-i18n-placeholder="新待办：例如 检查生产服务器磁盘" maxlength="200">
+                                </div>
+                                <div class="ai-todo-priority-field">
+                                    <label class="sr-only" for="aiTodoPriority" data-i18n="优先级">优先级</label>
+                                    <select id="aiTodoPriority">
+                                        <option value="low" data-i18n="低">低</option>
+                                        <option value="medium" selected data-i18n="中">中</option>
+                                        <option value="high" data-i18n="高">高</option>
+                                        <option value="urgent" data-i18n="紧急">紧急</option>
+                                    </select>
+                                </div>
+                                <button class="btn btn-primary ai-todo-add-btn" type="submit" data-i18n="添加">添加</button>
                             </form>
                             <div class="ai-todo-list" id="aiTodoList"></div>
                             </section>
