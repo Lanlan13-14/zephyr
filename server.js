@@ -1081,7 +1081,7 @@ setInterval(() => { try { sessionStore.gc(); } catch {} }, 10 * 60 * 1000).unref
  * these services; no route may re-implement role or ownership checks. */
 const authz = new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserBrief(id) });
 const resolveAgentBastion = (user, agentId) => {
-    const agent = fileAgentManager?.getAgent(String(agentId || ''));
+    const agent = fileAgentManager?.getAgentInfo(String(agentId || ''));
     if (!agent || !agent.online || agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) return null;
     if (!fileAgentManager.isAgentOwnedByUser(String(agentId), user)) return null;
     return {
@@ -2719,7 +2719,7 @@ function openProxyConnection(proxy, targetHost, targetPort, timeout = 10000, sig
 async function openAgentBastionConnection(proxy, targetHost, targetPort, timeout = 10000, signal = null) {
     const agentId = String(proxy?.agentId || proxy?.host || '');
     if (!agentId) throw new Error('Agent 跳板配置缺少 agentId');
-    const agent = fileAgentManager ? fileAgentManager.getAgent(agentId) : null;
+    const agent = fileAgentManager ? fileAgentManager.getAgentInfo(agentId) : null;
     if (!agent || !agent.online) throw new Error(`Agent 跳板不在线：${agent?.deviceName || agentId}`);
     if (agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) {
         throw new Error(`Agent 未启用跳板能力：${agent.deviceName || agentId}`);
@@ -2876,7 +2876,7 @@ function resolveRoutePlan(conn) {
             if (agentBastion) throw new Error('每条跳板链最多包含一个 Agent 跳板');
             if (sshJumpIds.length > 0) throw new Error('Agent 跳板必须置于首级跳板位置');
             const agentId = rawId.slice(6);
-            const agent = fileAgentManager ? fileAgentManager.getAgent(agentId) : null;
+            const agent = fileAgentManager ? fileAgentManager.getAgentInfo(agentId) : null;
             if (!agent || !agent.online) throw new Error(`Agent 跳板不在线：${agentId}`);
             if (!fileAgentManager?.isAgentOwnedByUser(agentId, { userId: conn.ownerUserId, username: conn.ownerUsername })) {
                 throw new Error(`Agent 跳板无权使用：${agentId}`);

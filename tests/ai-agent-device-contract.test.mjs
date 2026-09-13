@@ -29,6 +29,11 @@ test('Agent manager is injected into both legacy and Go host paths', () => {
   assert.match(manager, /isAgentOwnedByUser/);
 });
 
+test('Agent bastion routes use the manager public lookup API', () => {
+  assert.equal((server.match(/fileAgentManager(?:\?\.)?getAgent\(/g) || []).length, 0);
+  assert.equal((server.match(/fileAgentManager(?:\?\.)?getAgentInfo\(/g) || []).length >= 3, true);
+  assert.match(manager, /getAgentInfo\(agentId\)/);
+});
 test('Agent capability inventory preserves token human-only boundary', () => {
   for (const id of ['agent.list', 'agent.get', 'agent.files_read', 'agent.files_write']) {
     assert.ok(capabilities.CAPABILITIES.some((item) => item.id === id && item.state === 'implemented'));
