@@ -16,10 +16,11 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
       await _channel.invokeMethod<String>('linkSigningJwk', {'deviceId': deviceId});
 
   @override
-  Future<bool> connect({required String serverUrl, required String deviceId}) async {
+  Future<bool> connect({required String serverUrl, required String deviceId, bool allowBadCertificates = false}) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('linkConnect', {
       'serverUrl': serverUrl,
       'deviceId': deviceId,
+      'insecure': allowBadCertificates,
     });
     final sessionId = result?['sessionId'] as String?;
     if (sessionId != null && sessionId.isNotEmpty) {
