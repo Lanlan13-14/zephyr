@@ -1057,7 +1057,7 @@ class SyncActorTest {
         assertEquals("invalid_ai_provider", result.error?.code)
         assertEquals(SyncPhase.PUSH_PENDING, result.stoppedAt)
         assertEquals(
-            listOf(SyncPhase.PUSH_PENDING),
+            listOf(SyncPhase.VALIDATE_BINDING, SyncPhase.PUSH_PENDING),
             result.phasesRun,
         )
         assertEquals(1, transport.pushedBatches.size)
