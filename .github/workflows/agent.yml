@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'zephyr_agent/**'
+      - 'tests/agent-**'
       - '.github/workflows/agent.yml'
   pull_request:
     branches: [main]
     paths:
       - 'zephyr_agent/**'
+      - 'tests/agent-**'
       - '.github/workflows/agent.yml'
   workflow_dispatch:
     inputs:
@@ -53,6 +55,8 @@ jobs:
         run: |
           flutter create --org com.zephyr --project-name zephyr_agent --platforms android .
           sh tool/prepare_android.sh
+          python3 tool/validate_android_manifest.py
+          node ../tests/agent-android-launcher-icons.test.mjs
           flutter build apk --debug
 
   # ───────────── Release builds: only on workflow_dispatch with tag ──

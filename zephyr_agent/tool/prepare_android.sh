@@ -23,30 +23,9 @@ cp assets/icons/zephyr-agent-asagi.png android/app/src/main/res/drawable-nodpi/z
 cp assets/icons/zephyr-agent-cyber.png android/app/src/main/res/drawable-nodpi/zephyr_agent_icon_cyber.png
 cp platform_assets/android/signing/zephyr-agent-release.jks android/app/zephyr-agent-release.jks
 
-# Adaptive icon resources and values-night dark background support.
-mkdir -p android/app/src/main/res/values android/app/src/main/res/values-night android/app/src/main/res/mipmap-anydpi-v26
-cat > android/app/src/main/res/values/ic_launcher_background.xml <<'EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="ic_launcher_background">#FFFFFFFF</color>
-</resources>
-EOF
-cat > android/app/src/main/res/values-night/colors.xml <<'EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="ic_launcher_background">#FF10151C</color>
-</resources>
-EOF
-
-for theme in frost lava asagi cyber; do
-    cat > "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_${theme}.xml" <<EOF
-<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background" />
-    <foreground android:drawable="@drawable/zephyr_agent_icon_${theme}" />
-</adaptive-icon>
-EOF
-done
+# Install Adaptive Icon resources (VectorDrawables, values, mipmap v26 & v33).
+mkdir -p android/app/src/main/res
+cp -r platform_assets/android/res/* android/app/src/main/res/
 
 # Android SAF needs androidx.documentfile. Multiple dependencies blocks are OK
 # in Gradle Kotlin DSL.
@@ -96,6 +75,8 @@ for line in reversed(permissions):
     if f'android:name="{name}"' not in m:
         m = m.replace(marker, marker + '\n    ' + line, 1)
 m=m.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/ic_launcher_frost"')
+if 'android:roundIcon=' in m:
+    m=re.sub(r'android:roundIcon="[^"]+"', 'android:roundIcon="@mipmap/ic_launcher_frost_round"', m)
 # MainActivity must not be a launcher entry. Launcher icon switching is implemented
 # exclusively through activity-alias entries below; leaving Flutter's default
 # MAIN/LAUNCHER intent-filter in place creates a second, non-switchable icon.
@@ -123,6 +104,7 @@ aliases='''
             android:enabled="true"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_frost"
+            android:roundIcon="@mipmap/ic_launcher_frost_round"
             android:label="Zephyr Agent"
             android:targetActivity=".MainActivity">
             <intent-filter>
@@ -135,6 +117,7 @@ aliases='''
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_lava"
+            android:roundIcon="@mipmap/ic_launcher_lava_round"
             android:label="Zephyr Agent"
             android:targetActivity=".MainActivity">
             <intent-filter>
@@ -147,6 +130,7 @@ aliases='''
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_asagi"
+            android:roundIcon="@mipmap/ic_launcher_asagi_round"
             android:label="Zephyr Agent"
             android:targetActivity=".MainActivity">
             <intent-filter>
@@ -159,6 +143,7 @@ aliases='''
             android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_cyber"
+            android:roundIcon="@mipmap/ic_launcher_cyber_round"
             android:label="Zephyr Agent"
             android:targetActivity=".MainActivity">
             <intent-filter>
