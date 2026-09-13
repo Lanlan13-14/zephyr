@@ -7,6 +7,14 @@ set -eu
 
 mkdir -p android/app/src/main/kotlin/com/zephyr/agent
 cp android_host/MainActivity.kt android/app/src/main/kotlin/com/zephyr/agent/MainActivity.kt
+cp android_host/EmbeddedLinkProcess.kt android/app/src/main/kotlin/com/zephyr/agent/EmbeddedLinkProcess.kt
+cp android_host/EmbeddedLinkApi.kt android/app/src/main/kotlin/com/zephyr/agent/EmbeddedLinkApi.kt
+mkdir -p android/app/src/main/jniLibs/arm64-v8a
+if [ -f ../zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_link.so ]; then
+  cp ../zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_link.so android/app/src/main/jniLibs/arm64-v8a/libzephyr_link.so
+else
+  echo "warning: libzephyr_link.so is not present; Link capability remains unavailable until the shared runtime is staged"
+fi
 mkdir -p android/app/src/main/res/drawable-nodpi
 cp platform_assets/android/ic_launcher.png android/app/src/main/res/drawable-nodpi/zephyr_agent_icon.png
 cp assets/icons/zephyr-agent-frost.png android/app/src/main/res/drawable-nodpi/zephyr_agent_icon_frost.png

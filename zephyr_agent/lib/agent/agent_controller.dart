@@ -12,6 +12,8 @@ import 'package:uuid/uuid.dart';
 import 'agent_state.dart';
 import '../fs/file_provider.dart';
 import 'file_transfer_protocol.dart';
+import 'link_file_runtime.dart';
+import 'platform_link_file_runtime.dart';
 import '../app/agent_version.dart';
 
 class AgentController extends ChangeNotifier {
@@ -42,6 +44,8 @@ class AgentController extends ChangeNotifier {
 
   // File provider
   ZephyrFileProvider? _fileProvider;
+  final PlatformLinkFileRuntime _linkRuntime = PlatformLinkFileRuntime();
+  bool get linkFileBridgeReady => _linkRuntime.ready;
   final Map<int, Future<void>> _zft2Tasks = {};
   /// Per-path serial queues for mutating ops. Write/close/truncate/open on the
   /// same file must not race — Explorer issues FileEndOfFileInformation
@@ -149,8 +153,17 @@ class AgentController extends ChangeNotifier {
     try {
       final normalizedServerUrl = normalizeServerUrl(_config.serverUrl);
       if (normalizedServerUrl.isEmpty) throw const FormatException('主端地址为空');
-      final uri = agentWebSocketUriForServerUrl(normalizedServerUrl);
       _config.serverUrl = normalizedServerUrl;
+      final deviceId = const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
+      // Establish the existing ZSL/2 session before advertising FileBridge.
+      // Enrollment/proof failures keep the legacy share alive but fail closed
+      // for Link file operations.
+      try {
+        await _linkRuntime.connect(serverUrl: normalizedServerUrl, deviceId: deviceId);
+      } catch (_) {
+        await _linkRuntime.close();
+      }
+      final uri = agentWebSocketUriForServerUrl(normalizedServerUrl);
       final customClient = _config.allowBadCertificates && uri.scheme == 'wss'
           ? (HttpClient()..badCertificateCallback = (_, __, ___) => true)
           : null;
@@ -180,6 +193,7 @@ class AgentController extends ChangeNotifier {
   Future<void> _disconnect() async {
     _channelSub?.cancel();
     _channelSub = null;
+    await _linkRuntime.close();
     try {
       await _channel?.sink.close();
     } catch (_) {}
@@ -213,6 +227,7 @@ class AgentController extends ChangeNotifier {
         // Explicit opt-in. The server only advertises this Agent as a bastion
         // when the operator enables it in settings.
         'bastion': _config.bastionEnabled,
+        'linkFileBridge': _linkRuntime.ready,
         // ZFT2 travels over a plain WebSocket — not through Android's
         // MethodChannel/Binder.  The old Android=4 cap was protecting against
         // Binder TransactionTooLargeException, but that path is never taken

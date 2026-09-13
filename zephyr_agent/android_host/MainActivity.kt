@@ -20,9 +20,13 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     private val channelName = "com.zephyr.agent/saf"
+    private val linkChannelName = "com.zephyr.agent/link"
+    private val linkProcess by lazy { EmbeddedLinkProcess(this) }
+    private val linkApi by lazy { EmbeddedLinkApi(linkProcess) }
     private val requestOpenTree = 0x5A13
     private var pendingSelectResult: MethodChannel.Result? = null
     private val handles = ConcurrentHashMap<String, SafHandle>()
@@ -38,6 +42,40 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, linkChannelName).setMethodCallHandler { call, result ->
+            try {
+                when (call.method) {
+                    "linkConnect" -> {
+                        val serverUrl = call.argument<String>("serverUrl") ?: error("serverUrl required")
+                        val deviceId = call.argument<String>("deviceId") ?: error("deviceId required")
+                        Thread {
+                            try {
+                                val session = linkApi.dial(serverUrl, deviceId)
+                                runOnUiThread { result.success(mapOf("sessionId" to session.id)) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("link_error", e.message ?: "Link 拨号失败", null) }
+                            }
+                        }.start()
+                    }
+                    "linkFileRequest" -> {
+                        val op = call.argument<String>("op") ?: error("op required")
+                        val params = JSONObject(call.argument<Map<String, Any?>>("params") ?: emptyMap())
+                        Thread {
+                            try {
+                                val ack = linkApi.push(10, JSONObject().apply { put("op", op); put("params", params) })
+                                // /link/push returns {ok, ackKind, ack}; ack is already the decoded business result.
+                                runOnUiThread { result.success(mapOf("body" to ack.asMap())) }
+                            } catch (e: Exception) { runOnUiThread { result.error("link_error", e.message ?: "Link 文件请求失败", null) } }
+                        }.start()
+                    }
+                    "linkClose" -> { linkApi.close(); result.success(null) }
+                    else -> result.notImplemented()
+                }
+            } catch (e: Exception) {
+                result.error("link_error", e.message ?: "Link 请求失败", null)
+            }
+        }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
             try {
                 when (call.method) {
@@ -409,4 +447,17 @@ class MainActivity : FlutterActivity() {
     }
 
     class SafException(val code: String, override val message: String) : Exception(message)
+}
+
+private fun JSONObject.asMap(): Map<String, Any?> {
+    val out = linkedMapOf<String, Any?>()
+    keys().forEach { key ->
+        val value = get(key)
+        out[key] = when (value) {
+            JSONObject.NULL -> null
+            is JSONObject -> value.asMap()
+            else -> value
+        }
+    }
+    return out
 }

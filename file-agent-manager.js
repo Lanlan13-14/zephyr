@@ -1556,6 +1556,26 @@ class FileAgentManager {
         return this._connectionOwnedBy(conn, user);
     }
 
+    /**
+     * Send a file operation to an Agent selected by the encrypted Link lane.
+     * This deliberately shares only the ZFT2 wire implementation with the
+     * regular file API; callers cannot silently fall back to legacy JSON RPC.
+     */
+    callLinkFileBridge(agentId, method, params = {}, timeoutMs = RPC_READ_TIMEOUT_MS) {
+        const conn = this.agents.get(agentId);
+        if (!conn || !conn.online) {
+            return { promise: Promise.reject(new AgentError('agent_offline', `Agent ${agentId} is not connected`)), cancel() {} };
+        }
+        if (conn.capabilities?.linkFileBridge !== true || conn.capabilities?.binary !== true) {
+            return { promise: Promise.reject(new AgentError('agent_link_required', 'Agent Link file bridge is not available')), cancel() {} };
+        }
+        const operation = this.callAgentV2(agentId, method, params, timeoutMs);
+        // Keep this as a distinct API even though the wire operation is ZFT2:
+        // Link dispatchers must opt into this capability explicitly and may not
+        // accidentally fall back to legacy JSON RPC.
+        return operation;
+    }
+
     /** Protocol-v2 operation with explicit cancellation. */
     callAgentV2(agentId, method, params = {}, timeoutMs = RPC_READ_TIMEOUT_MS) {
         const conn = this.agents.get(agentId);
@@ -1573,6 +1593,7 @@ class FileAgentManager {
             open: ZFT2_OP.OPEN, readBinary: ZFT2_OP.READ, writeBinary: ZFT2_OP.WRITE,
             close: ZFT2_OP.CLOSE, stat: ZFT2_OP.STAT, list: ZFT2_OP.LIST,
             mkdir: ZFT2_OP.MKDIR, delete: ZFT2_OP.DELETE, rename: ZFT2_OP.RENAME,
+            ping: ZFT2_OP.PING,
             truncate: ZFT2_OP.TRUNCATE,
         };
         const type = map[method];

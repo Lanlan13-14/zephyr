@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
-import { FileAgentConnection } from '../file-agent-manager.js';
-import { OP, FLAG_RESPONSE, encodeFrame } from '../file-transfer-protocol.js';
+import { FileAgentConnection, FileAgentManager, AgentError } from '../file-agent-manager.js';
+import { OP, FLAG_RESPONSE, encodeFrame, decodeFrame } from '../file-transfer-protocol.js';
 
 class MockAgentSocket extends EventEmitter {
   constructor() {
@@ -37,6 +37,33 @@ test('Agent v2 resolves binary reads and structured writes', async () => {
   const writeId = conn.nextRequestId - 1;
   conn.handleBinaryResponse(encodeFrame({ type: OP.WRITE, requestId: writeId, flags: FLAG_RESPONSE, meta: { bytesWritten: 1 } }));
   assert.deepEqual(await write.promise, { bytesWritten: 1 });
+});
+
+test('Link file bridge uses ZFT2 and rejects non-Link agents', async () => {
+  const manager = new FileAgentManager({ tokenFile: '/tmp/zephyr-agent-link-test-missing.json' });
+  const linked = new FileAgentConnection(new MockAgentSocket(), 'linked', {
+    protocolVersion: 2,
+    capabilities: { binary: true, linkFileBridge: true, maxInflight: 2 },
+    share: { readOnly: false },
+  });
+  const legacy = new FileAgentConnection(new MockAgentSocket(), 'legacy', {
+    protocolVersion: 2,
+    capabilities: { binary: true, maxInflight: 2 },
+    share: { readOnly: false },
+  });
+  manager.agents.set('linked', linked);
+  manager.agents.set('legacy', legacy);
+
+  const linkedCall = manager.callLinkFileBridge('linked', 'stat', { path: '/' }, 1000);
+  assert.equal(linked.ws.sent.length, 1);
+  const frame = decodeFrame(linked.ws.sent[0].frame);
+  assert.equal(frame.type, OP.STAT);
+  linked.handleBinaryResponse(encodeFrame({ type: OP.STAT, requestId: frame.requestId, flags: FLAG_RESPONSE, meta: { isDir: true } }));
+  assert.deepEqual(await linkedCall.promise, { isDir: true });
+
+  const legacyCall = manager.callLinkFileBridge('legacy', 'stat', { path: '/' }, 1000);
+  await assert.rejects(legacyCall.promise, (error) => error instanceof AgentError && error.code === 'agent_link_required');
+  manager.shutdown();
 });
 
 test('Agent v2 cancellation rejects immediately and emits CANCEL', async () => {

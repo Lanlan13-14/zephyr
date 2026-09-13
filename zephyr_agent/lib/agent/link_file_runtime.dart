@@ -1,0 +1,49 @@
+// Agent-side Link runtime contract.
+//
+// Cryptography is intentionally not implemented in Dart. Platform hosts must
+// expose the shared zephyr-link Go runtime and return true only after the
+// existing ZSL/2 enrollment handshake has completed.
+import 'dart:async';
+
+class LinkFileRuntime {
+  bool _ready = false;
+  String? _sessionId;
+
+  bool get ready => _ready && _sessionId != null;
+  String? get sessionId => _sessionId;
+
+  void markConnected(String sessionId) {
+    _ready = true;
+    _sessionId = sessionId;
+  }
+
+  void markDisconnected() {
+    _ready = false;
+    _sessionId = null;
+  }
+
+  Future<bool> connect({required String serverUrl, required String deviceId}) async {
+    // The native host owns the Go runtime and must override this method through
+    // the platform adapter before enabling the capability advertisement.
+    _ready = false;
+    _sessionId = null;
+    return false;
+  }
+
+  Future<LinkFileReply> request(String op, Map<String, dynamic> params) async {
+    if (!ready) throw StateError('Agent Link runtime is not connected');
+    throw UnimplementedError('Platform Link runtime adapter is unavailable');
+  }
+
+  Future<void> close() async {
+    _ready = false;
+    _sessionId = null;
+  }
+}
+
+class LinkFileReply {
+  final Map<String, dynamic> body;
+  final List<int>? binary;
+
+  const LinkFileReply(this.body, {this.binary});
+}
