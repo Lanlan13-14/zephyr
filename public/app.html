@@ -7,15 +7,18 @@
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
     <link rel="modulepreload" href="i18n/runtime.js?v=20260902-monitor-docker1">
-    <link rel="modulepreload" href="app.js?v=20260902-monitor-docker1">
+    <link rel="modulepreload" href="app.js?v=20260913-liquid-glass29">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
-    <link rel="stylesheet" href="style.css?v=20260902-monitor-docker1">
+    <link rel="stylesheet" href="style.css?v=20260913-liquid-glass29">
+    <script src="liquid-glass-renderer.js?v=20260913-liquid-glass29" defer></script>
+    <script src="liquid-glass-tab-layout.js?v=20260913-liquid-glass29" defer></script>
+    <script src="liquid-glass-nav.js?v=20260913-liquid-glass29" defer></script>
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
 </head>
 <body class="app-body">
     <div class="app-shell">
         <header class="main-nav">
-            <a class="brand" href="#dashboard"><span id="brandIcon">🌬️</span><strong id="brandName">Zephyr</strong></a>
+            <a class="brand" href="#dashboard"><span id="brandIcon"></span><strong id="brandName">Zephyr</strong></a>
             <nav class="nav-tabs" aria-label="主导航" data-i18n-aria-label="主导航">
                 <button class="nav-tab active" data-view="dashboard" data-i18n="仪表盘">仪表盘</button>
                 <button class="nav-tab" data-view="activity" data-i18n="活动">活动</button>
@@ -418,7 +421,7 @@
                                 <input id="brandNameInput" maxlength="40" placeholder="Zephyr">
                                 <label data-i18n="左上角图标">左上角图标</label>
                                 <div class="brand-upload-row">
-                                    <div class="brand-icon-preview" id="brandIconPreview" aria-label="当前图标" data-i18n-aria-label="当前图标">🌬️</div>
+                                    <div class="brand-icon-preview" id="brandIconPreview" aria-label="当前图标" data-i18n-aria-label="当前图标"></div>
                                     <input id="brandIconFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml">
                                 </div>
                                 <p class="field-hint" data-i18n="图标支持上传常见图片格式，建议使用正方形 PNG/SVG；保存后会同步到页面标题、favicon 与登录页。">图标支持上传常见图片格式，建议使用正方形 PNG/SVG；保存后会同步到页面标题、favicon 与登录页。</p>
@@ -1358,7 +1361,7 @@
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
 <script src="preview-mock.js?v=20260902-monitor-docker1" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260902-monitor-docker1" type="module"></script>
+<script src="app.js?v=20260913-liquid-glass29" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
