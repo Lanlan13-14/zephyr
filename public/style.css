@@ -9302,8 +9302,24 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 .ai-todo-steps .done { text-decoration: line-through; }
 .ai-todo-done-group { margin-top: 4px; }
 .ai-todo-done-group summary { color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-.ai-todo-form { display: flex; gap: 8px; margin: 10px 0; }
-.ai-todo-form input[type="text"], .ai-todo-form input:not([type]) { flex: 1; min-width: 0; }
+.ai-todo-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 170px) auto;
+    gap: 10px;
+    align-items: end;
+    margin: 14px 0 20px;
+}
+.ai-todo-title-field, .ai-todo-priority-field { min-width: 0; }
+.ai-todo-form .ui-toggle-select { width: 100%; }
+.ai-todo-form .ui-toggle-select-trigger,
+.ai-todo-form .ai-todo-add-btn { min-height: 44px; }
+.ai-todo-form .ai-todo-add-btn { min-width: 88px; margin: 0; }
+@media (max-width: 620px) {
+    .ai-todo-form { grid-template-columns: minmax(0, 1fr) minmax(112px, 132px); gap: 8px; }
+    .ai-todo-title-field { grid-column: 1 / -1; }
+    .ai-todo-add-btn { grid-column: 1 / -1; width: 100%; }
+}
+
 .ai-skill-item strong, .ai-env-item strong, .ai-memory-item strong, .ai-plan-item strong { display: block; color: var(--text); }
 .ai-skill-item span, .ai-env-item span, .ai-memory-item span, .ai-plan-item span { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
 .ai-skill-item code, .ai-memory-item code { display: block; margin-top: 6px; max-height: 58px; overflow: hidden; color: var(--text-secondary); white-space: pre-wrap; }

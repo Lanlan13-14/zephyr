@@ -3132,6 +3132,8 @@ const TOGGLE_SELECT_IDS = [
     'languageSelect',
     // AI 助理设置 / 供应商弹窗（与 CAPTCHA 同源 toggle-select）
     'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
+    // AI 页面待办优先级（与首页筛选同源 toggle-select）
+    'aiTodoPriority',
     // Proxy modal
     'proxyType',
     // Connection modal / RDP (when opened)
@@ -3160,6 +3162,8 @@ const MOTION_FILTER_SELECT_IDS = [
     'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
     // AI 助理 / 供应商弹窗（与 CAPTCHA 完全同一套 open/close 动画）
     'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
+    // AI 页面待办优先级：图一控件复用图二下拉的 Motion FLIP 动画
+    'aiTodoPriority',
     // 设置 → 语言 与 代理弹窗 → 类型（与首页筛选同一套 FLIP 展开/收起）
     'languageSelect', 'proxyType',
     // 多用户 → 添加用户 → 角色：与「全部协议」同一套 Motion.morph(mac) / macClose
