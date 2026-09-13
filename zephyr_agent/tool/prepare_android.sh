@@ -28,6 +28,22 @@ cp platform_assets/android/signing/zephyr-agent-release.jks android/app/zephyr-a
 mkdir -p android/app/src/main/res
 cp -r platform_assets/android/res/* android/app/src/main/res/
 
+# The embedded Link runtime binds 127.0.0.1 on an ephemeral port and the host
+# code talks to it over plain HTTP. Android 9+ blocks cleartext by default and
+# does not special-case loopback, so allow it only for 127.0.0.1/localhost —
+# everything else still requires TLS (same policy as the One app).
+mkdir -p android/app/src/main/res/xml
+cat > android/app/src/main/res/xml/network_security_config.xml <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
+EOF
+
 # Android SAF needs androidx.documentfile. Multiple dependencies blocks are OK
 # in Gradle Kotlin DSL.
 cat >> android/app/build.gradle.kts <<'EOF'
@@ -86,6 +102,10 @@ for line in reversed(permissions):
     if f'android:name="{name}"' not in m:
         m = m.replace(marker, marker + '\n    ' + line, 1)
 m=m.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/ic_launcher_frost"')
+# Loopback cleartext for the embedded Link runtime (config above scopes it to
+# 127.0.0.1/localhost only; remote cleartext stays blocked).
+if 'android:networkSecurityConfig=' not in m:
+    m=m.replace('<application', '<application\n        android:networkSecurityConfig="@xml/network_security_config"', 1)
 if 'android:roundIcon=' in m:
     m=re.sub(r'android:roundIcon="[^"]+"', 'android:roundIcon="@mipmap/ic_launcher_frost_round"', m)
 # MainActivity must not be a launcher entry. Launcher icon switching is implemented
