@@ -47,7 +47,6 @@ class AgentController extends ChangeNotifier {
   bool get linkFileBridgeReady => _linkRuntime.ready;
   bool _bastionTunnelStarted = false;
   Zft2LinkLaneClient? _zft2Lane;
-  int? _activeZft2LaneId;
   final Map<int, Future<void>> _zft2Tasks = {};
   /// Per-path serial queues for mutating ops. Write/close/truncate/open on the
   /// same file must not race — Explorer issues FileEndOfFileInformation
@@ -500,7 +499,7 @@ class AgentController extends ChangeNotifier {
     if (!_linkRuntime.ready) return;
     if (_bastionTunnelStarted) return;
     _bastionTunnelStarted = true;
-    () async {
+    unawaited(() async {
       try {
         await _linkRuntime.startTunnel();
         _linkRuntime.markTunnelUp();
@@ -510,7 +509,7 @@ class AgentController extends ChangeNotifier {
           print('[agent-bastion] tunnel start failed: $e');
         }
       }
-    }();
+    }());
   }
 
   /// Connects the ZFT2 lane mirror so the file dispatcher serves the main
@@ -522,9 +521,13 @@ class AgentController extends ChangeNotifier {
       onLost: () { _zft2Lane = null; _connectZft2Lane(); },
     );
     _zft2Lane = lane;
-    () async {
-      try { await lane.connect(); } catch (_) { _zft2Lane = null; }
-    }();
+    unawaited(() async {
+      try {
+        await lane.connect();
+      } catch (_) {
+        _zft2Lane = null;
+      }
+    }());
   }
 
   void _onZft2LaneFrame(int laneId, Uint8List frameBytes) {

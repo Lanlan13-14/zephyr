@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
-import 'file_transfer_protocol.dart';
 
 /// Pumps the Agent's ZFT2 file dispatcher onto the encrypted Link zft2 lane.
 ///
