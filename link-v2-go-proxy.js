@@ -224,12 +224,14 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
     // a restart. An unenrolled device is left to fail closed at the Go side.
     async function ensureDevice(deviceId) {
         if (!deviceId) return;
-        const row = enrollments?.deviceById?.(deviceId) || null;
-        const signingJwk = row?.signingJwk || registeredJwks.get(deviceId) || null;
-        if (!signingJwk || typeof signingJwk !== 'object') return;
+        const storedRow = enrollments?.deviceById?.(deviceId) || null;
+        const row = storedRow || { signingJwk: registeredJwks.get(deviceId) || null };
+        const signingJwk = row.signingJwk;
+        const haveJwk = !!(signingJwk && typeof signingJwk === 'object');
+        if (!haveJwk) return;
         if (registered.get(deviceId) === true && registeredJwks.has(deviceId)) return;
-        await registerDevice(deviceId, signingJwk);
-        registered.set(deviceId, true);
+        await registerDevice(deviceId, row.signingJwk);
+        registered.set(deviceId, haveJwk);
     }
 
     function router() {
