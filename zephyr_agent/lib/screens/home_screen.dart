@@ -356,6 +356,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildBastionCard(ctrl, isActive, accent),
                 const SizedBox(height: 16),
 
+                // Encrypted lane status / failure reason
+                if (isActive) _buildLinkStatusCard(ctrl, accent),
+                if (isActive) const SizedBox(height: 16),
+
                 // Auto-shutdown
                 _buildShutdownCard(ctrl, accent),
                 const SizedBox(height: 16),
@@ -643,6 +647,36 @@ class _HomeScreenState extends State<HomeScreen> {
                 setState(() => ctrl.config.bastionEnabled = v);
                 _saveConfig(ctrl);
               },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLinkStatusCard(AgentController ctrl, Color accent) {
+    final error = ctrl.linkError;
+    final tunnelUp = ctrl.linkTunnelUp;
+    if (error.isEmpty && tunnelUp) return const SizedBox.shrink();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(error.isEmpty ? Icons.check_circle : Icons.error_outline,
+                color: error.isEmpty ? accent : _palette.danger, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(error.isEmpty ? '加密通道已建立' : '加密通道未建立', style: const TextStyle(fontSize: 14)),
+                  if (error.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(error, style: TextStyle(fontSize: 11, color: _palette.danger)),
+                  ],
+                ],
+              ),
             ),
           ],
         ),

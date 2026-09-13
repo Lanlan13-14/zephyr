@@ -28,6 +28,31 @@ test('bastion candidate listing remains owner-scoped and online-only', () => {
   assert.match(manager, /agent\.bastionEnabled === true/);
 });
 
+test('Link dial forwards the agent certificate-trust setting', () => {
+  const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
+  const runtime = read('zephyr_agent/lib/agent/platform_link_file_runtime.dart');
+  const host = read('zephyr_agent/android_host/MainActivity.kt');
+  const api = read('zephyr_agent/android_host/EmbeddedLinkApi.kt');
+  // Self-signed deployments (allowBadCertificates=true) must let the Go
+  // runtime's Link dial skip CA verification, mirroring the file WebSocket's
+  // badCertificateCallback; otherwise dial always fails and bastion never
+  // reports a session.
+  assert.match(controller, /allowBadCertificates: _config\.allowBadCertificates/);
+  assert.match(runtime, /'insecure': allowBadCertificates/);
+  assert.match(host, /call\.argument<Boolean>\("insecure"\)/);
+  assert.match(api, /fun dial\(serverUrl: String, deviceId: String, insecure: Boolean\)/);
+  assert.match(api, /put\("insecure", insecure\)/);
+});
+
+test('Link failures surface to the agent UI instead of being swallowed', () => {
+  const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
+  const ui = read('zephyr_agent/lib/screens/home_screen.dart');
+  assert.match(controller, /String get linkError/);
+  assert.match(controller, /_linkError = error\.toString\(\)/);
+  assert.match(ui, /加密通道未建立/);
+  assert.match(ui, /ctrl\.linkError/);
+});
+
 test('server resolveRoutePlan accepts agent bastion prefix in jump chain', () => {
   const server = read('server.js');
   assert.match(server, /rawId\.startsWith\('agent:'\)/);

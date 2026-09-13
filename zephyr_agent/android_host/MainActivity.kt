@@ -49,9 +49,10 @@ class MainActivity : FlutterActivity() {
                     "linkConnect" -> {
                         val serverUrl = call.argument<String>("serverUrl") ?: error("serverUrl required")
                         val deviceId = call.argument<String>("deviceId") ?: error("deviceId required")
+                        val insecure = call.argument<Boolean>("insecure") ?: false
                         Thread {
                             try {
-                                val session = linkApi.dial(serverUrl, deviceId)
+                                val session = linkApi.dial(serverUrl, deviceId, insecure)
                                 runOnUiThread { result.success(mapOf("sessionId" to session.id)) }
                             } catch (e: Exception) {
                                 runOnUiThread { result.error("link_error", e.message ?: "Link 拨号失败", null) }

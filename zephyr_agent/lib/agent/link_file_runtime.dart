@@ -29,7 +29,7 @@ class LinkFileRuntime {
     _tunnelUp = false;
   }
 
-  Future<bool> connect({required String serverUrl, required String deviceId}) async {
+  Future<bool> connect({required String serverUrl, required String deviceId, bool allowBadCertificates = false}) async {
     // The native host owns the Go runtime and must override this method through
     // the platform adapter before enabling the capability advertisement.
     _ready = false;

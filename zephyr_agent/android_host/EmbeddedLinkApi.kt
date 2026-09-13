@@ -40,10 +40,11 @@ internal class EmbeddedLinkApi(private val process: EmbeddedLinkProcess) {
         return JSONObject().apply { put("kty", "EC"); put("crv", "P-256"); put("x", coord(pub.w.affineX)); put("y", coord(pub.w.affineY)) }.toString()
     }
 
-    fun dial(serverUrl: String, deviceId: String): Session {
+    fun dial(serverUrl: String, deviceId: String, insecure: Boolean): Session {
         val response = JSONObject(process.post("/link/dial", JSONObject().apply {
             put("serverUrl", serverUrl.trimEnd('/') + "/api/link/v2")
             put("deviceId", deviceId)
+            put("insecure", insecure)
         }.toString()))
         if (response.optBoolean("pending", false)) {
             val sessionId = response.getString("sessionId")

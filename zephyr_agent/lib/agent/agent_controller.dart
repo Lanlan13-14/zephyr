@@ -21,6 +21,7 @@ class AgentController extends ChangeNotifier {
   AgentStatus _status = AgentStatus.idle;
   String? _agentId;
   String _errorMessage = '';
+  String _linkError = '';
   int _transferCount = 0;
   int _transferBytes = 0;
 
@@ -46,6 +47,7 @@ class AgentController extends ChangeNotifier {
   ZephyrFileProvider? _fileProvider;
   final PlatformLinkFileRuntime _linkRuntime = PlatformLinkFileRuntime();
   bool get linkFileBridgeReady => _linkRuntime.ready;
+  bool get linkTunnelUp => _linkRuntime.tunnelUp;
   bool _bastionTunnelStarted = false;
   Zft2LinkLaneClient? _zft2Lane;
   final Map<int, Future<void>> _zft2Tasks = {};
@@ -66,6 +68,8 @@ class AgentController extends ChangeNotifier {
   AgentStatus get status => _status;
   String? get agentId => _agentId;
   String get errorMessage => _errorMessage;
+  /// Last Link/bastion failure reason; empty when the encrypted lane is healthy.
+  String get linkError => _linkError;
   int get transferCount => _transferCount;
   int get transferBytes => _transferBytes;
   DateTime? get shutdownAt => _shutdownAt;
@@ -498,16 +502,33 @@ class AgentController extends ChangeNotifier {
   }
 
   void _handleLinkRegisterAck(Map<String, dynamic> msg) {
-    if (msg['ok'] != true) return;
+    if (msg['ok'] != true) {
+      _linkError = (msg['error'] as String?) ?? 'Link 注册被主端拒绝';
+      if (kDebugMode) print('[agent-link] register rejected: $_linkError');
+      notifyListeners();
+      return;
+    }
+    _linkError = '';
     final deviceId = _config.linkDeviceId ?? const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
     unawaited(() async {
       try {
-        await _linkRuntime.connect(serverUrl: _config.serverUrl, deviceId: deviceId);
+        final ok = await _linkRuntime.connect(
+          serverUrl: _config.serverUrl,
+          deviceId: deviceId,
+          allowBadCertificates: _config.allowBadCertificates,
+        );
+        if (!ok || _linkRuntime.sessionId == null) {
+          _linkError = 'Link 拨号未建立会话';
+          notifyListeners();
+          return;
+        }
         _send({'type': 'link_ready', 'sessionId': _linkRuntime.sessionId});
         _maybeStartBastionTunnel();
         _connectZft2Lane();
       } catch (error) {
+        _linkError = error.toString();
         if (kDebugMode) print('[agent-link] dial failed: $error');
+        notifyListeners();
       }
     }());
   }
