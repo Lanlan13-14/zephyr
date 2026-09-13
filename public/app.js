@@ -273,7 +273,7 @@ const BROWSER_CHANGE_ENTITY_GROUPS = Object.freeze({
     fileSyncConfig: 'oneClients',
 });
 
-let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], settings = {}, personalSettingsOverrides = {};
+let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], agentBastions = [], settings = {}, personalSettingsOverrides = {};
 let connectionsLoadGeneration = 0;
 let activitiesLoadGeneration = 0;
 let networkLoadGeneration = 0;
@@ -3668,7 +3668,20 @@ function jumpConnectionOptions(selected = '') {
     const selectedId = String(selected || '');
     const currentEditingId = String(editingId || '');
     const list = connections.filter((c) => String(c.protocol || 'SSH').toUpperCase() === 'SSH' && String(c.id) !== currentEditingId);
-    return `<option value="">${t('请选择跳板机')}</option>` + list.map((c) => `<option value="${c.id}" ${selectedId === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.host)}:${escapeHtml(c.port)})</option>`).join('');
+    let html = `<option value="">${t('请选择跳板机')}</option>`;
+    if (Array.isArray(agentBastions) && agentBastions.length) {
+        html += `<optgroup label="${t('在线 Agent 跳板机')}">` + agentBastions.map((a) => {
+            const val = `agent:${a.agentId}`;
+            const label = a.tokenName ? `${escapeHtml(a.tokenName)} (${escapeHtml(a.deviceName || a.agentId)})` : escapeHtml(a.deviceName || a.agentId);
+            return `<option value="${val}" ${selectedId === val ? 'selected' : ''}>${label}</option>`;
+        }).join('') + '</optgroup>';
+    }
+    if (list.length) {
+        const groupLabel = Array.isArray(agentBastions) && agentBastions.length ? `<optgroup label="${t('SSH 跳板机连接')}">` : '';
+        const groupClose = Array.isArray(agentBastions) && agentBastions.length ? '</optgroup>' : '';
+        html += groupLabel + list.map((c) => `<option value="${c.id}" ${selectedId === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.host)}:${escapeHtml(c.port)})</option>`).join('') + groupClose;
+    }
+    return html;
 }
 function renderJumpRouteRows(selectedIds = []) {
     const list = normalizeRouteRowIds(selectedIds);
@@ -12595,19 +12608,21 @@ async function setupTotp() { if (!$('#totpEnableForm')) return; const r = await 
 async function registerPasskey() { try { if (!window.PublicKeyCredential) return toast(t('当前浏览器不支持 Passkey')); const options = await api('/api/passkeys/register/options', { method: 'POST', body: '{}' }); options.challenge = base64urlToBuffer(options.challenge); options.user.id = base64urlToBuffer(options.user.id); (options.excludeCredentials || []).forEach((c) => { c.id = base64urlToBuffer(c.id); }); const cred = await navigator.credentials.create({ publicKey: options }); if (!cred) return toast(t('Passkey 创建被取消')); const payload = { id: cred.id, rawId: bufferToBase64url(cred.rawId), type: cred.type, response: { clientDataJSON: bufferToBase64url(cred.response.clientDataJSON), attestationObject: bufferToBase64url(cred.response.attestationObject), transports: cred.response.getTransports ? cred.response.getTransports() : [] } }; await api('/api/passkeys/register/verify', { method: 'POST', body: JSON.stringify(payload) }); toast(t('Passkey 已绑定')); await loadSecurityStatus(); } catch (err) { toast(t('Passkey 注册失败：') + err.message); } }
 async function loadNetwork() {
     const generation = ++networkLoadGeneration;
-    const [proxyData, keyData, jumpData] = await Promise.all([
+    const [proxyData, keyData, jumpData, bastionData] = await Promise.all([
         api('/api/proxies'),
         api('/api/ssh-keys').catch(() => ({ sshKeys: [] })),
         api('/api/jump-hosts').catch(() => ({ jumpHosts: [] })),
+        api('/api/rdp/agent-bastions').catch(() => ({ agents: [] })),
     ]);
-    if (generation !== networkLoadGeneration) return { proxies, sshKeys, jumpHosts };
+    if (generation !== networkLoadGeneration) return { proxies, sshKeys, jumpHosts, agentBastions };
     proxies = proxyData.proxies || [];
     sshKeys = keyData.sshKeys || [];
     jumpHosts = jumpData.jumpHosts || [];
+    agentBastions = bastionData.agents || [];
     renderNetwork();
     updateRouteOptions();
     renderSshKeyOptions($('#connSshKey')?.value || '');
-    return { proxies, sshKeys, jumpHosts };
+    return { proxies, sshKeys, jumpHosts, agentBastions };
 }
 function renderNetwork() {
     $('#proxyList').innerHTML = proxies.map((p) => `<div class="mini-item proxy-item"><span class="resource-tag resource-tag-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml((p.type || 'socks5').toUpperCase())}</span><span class="resource-tag resource-tag-host" title="${escapeHtml(p.host)}">${escapeHtml(p.host)}</span><span class="resource-tag resource-tag-port">${Number(p.port) || 1080}</span>${p.username ? `<span class="resource-tag resource-tag-auth">${escapeHtml(p.username)}</span>` : ''}${p.hasPassword ? `<span class="resource-tag resource-tag-secret">${t('有密码')}</span>` : ''}</div><button data-edit-proxy="${p.id}">${t('编辑')}</button><button data-open-proxy="${p.id}">${t('查看')}</button><button data-del-proxy="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无代理')}</p>`;

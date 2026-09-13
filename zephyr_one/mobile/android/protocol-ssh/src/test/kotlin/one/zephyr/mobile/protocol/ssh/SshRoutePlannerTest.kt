@@ -288,4 +288,13 @@ class SshRoutePlannerTest {
         assertEquals(RouteHop.Target("10.0.0.5", 22), jumped.target)
         assertEquals(RouteHop.Target("10.0.0.5", 22), proxied.target)
     }
+
+    @Test
+    fun `an agent bastion jump id is rejected with a clear message on mobile`() {
+        val rejected = plan(
+            connection(mode = ConnectionMode.JUMP, jumpHostIds = listOf("agent:agent-123")),
+        ) as RoutePlanResult.Rejected
+
+        assertEquals("agent_bastion_mobile_unsupported", rejected.code)
+    }
 }

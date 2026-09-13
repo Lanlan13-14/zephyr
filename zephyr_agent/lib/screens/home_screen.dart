@@ -352,12 +352,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildDirectoryCard(ctrl, isActive, accent),
                 const SizedBox(height: 16),
 
-                // Auto-shutdown
-                _buildShutdownCard(ctrl, accent),
-                const SizedBox(height: 16),
-
                 // Optional bastion advertisement
                 _buildBastionCard(ctrl, isActive, accent),
+                const SizedBox(height: 16),
+
+                // Auto-shutdown
+                _buildShutdownCard(ctrl, accent),
                 const SizedBox(height: 16),
 
                 // Transfer stats
@@ -602,7 +602,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                '${ctrl.config.autoShutdownMinutes} 分钟后自动关闭共享',
+                '${ctrl.config.autoShutdownMinutes} 分钟后自动关闭共享和跳板机',
                 style: const TextStyle(fontSize: 14),
               ),
             ),
@@ -633,7 +633,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Text('作为跳板机', style: TextStyle(fontSize: 14)),
                   SizedBox(height: 3),
-                  Text('允许主端和 Zephyr One 选择此在线 Agent 建立跳板链路', style: TextStyle(fontSize: 11)),
+                  Text('供主端和 One 经此 Agent 中转 SSH', style: TextStyle(fontSize: 11)),
                 ],
               ),
             ),

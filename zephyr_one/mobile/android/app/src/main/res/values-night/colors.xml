@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="zephyr_splash">#FF0A0C0F</color>
+    <color name="ic_launcher_background">#FF10151C</color>
 </resources>

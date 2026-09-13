@@ -102,6 +102,12 @@ object SshRoutePlanner {
                 // socket budget is gone, so the whole chain is checked for repeats up front.
                 val seen = mutableSetOf(connection.id)
                 for (jumpId in connection.jumpHostIds) {
+                    if (jumpId.startsWith("agent:")) {
+                        return RoutePlanResult.Rejected(
+                            "agent_bastion_mobile_unsupported",
+                            "One 移动端暂不支持经由 Agent 跳板中转，请使用 SSH 跳板机",
+                        )
+                    }
                     /* Main-end resolveRoutePlan semantics: a stored jump id names a jumpHost
                      * resource whose connectionId is the hop; when no such resource exists the
                      * id *is* the connection id. Rejecting a bare connection id here is what made

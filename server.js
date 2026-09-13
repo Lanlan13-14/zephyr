@@ -2860,7 +2860,28 @@ function resolveRoutePlan(conn) {
     if (!jumpHostIds.length) throw new Error('未配置跳板机路径');
     if (jumpHostIds.length > 8) throw new Error('跳板机层级过多（最多 8 级）');
     const jumpHostConfigs = storage.listJumpHosts();
-    const hops = jumpHostIds.map((rawJumpHostId) => {
+    let agentBastion = null;
+    const sshJumpIds = [];
+    for (const rawId of jumpHostIds) {
+        if (typeof rawId === 'string' && rawId.startsWith('agent:')) {
+            if (agentBastion) throw new Error('每条跳板链最多包含一个 Agent 跳板');
+            if (sshJumpIds.length > 0) throw new Error('Agent 跳板必须置于首级跳板位置');
+            const agentId = rawId.slice(6);
+            const agent = fileAgentManager ? fileAgentManager.getAgent(agentId) : null;
+            if (!agent || !agent.online) throw new Error(`Agent 跳板不在线：${agentId}`);
+            if (agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) {
+                throw new Error(`Agent 未启用跳板能力：${agent.deviceName || agentId}`);
+            }
+            agentBastion = {
+                type: 'agent',
+                agentId,
+                name: agent.tokenName ? `${agent.tokenName} (${agent.deviceName})` : agent.deviceName,
+            };
+            continue;
+        }
+        sshJumpIds.push(rawId);
+    }
+    const hops = sshJumpIds.map((rawJumpHostId) => {
         const jumpHostConfig = jumpHostConfigs.find((j) => j.id === rawJumpHostId);
         const jumpConnectionId = jumpHostConfig?.connectionId || rawJumpHostId;
         const hop = connections.find((c) => c.id === jumpConnectionId);
@@ -2872,9 +2893,10 @@ function resolveRoutePlan(conn) {
     console.debug('[route-plan]', 'resolved jump route', {
         target: conn.name || conn.host,
         jumpHostIds,
+        agentBastion: agentBastion ? agentBastion.name : null,
         hops: hops.map((hop) => ({ jumpHostConfigId: hop.jumpHostConfigId, connectionId: hop.id, name: hop.routeName || hop.name, host: hop.host }))
     });
-    const firstProxy = hops[0]?.connectionMode === 'proxy' && hops[0].proxyId ? storage.getProxyRaw(hops[0].proxyId) : null;
+    const firstProxy = agentBastion || (hops[0]?.connectionMode === 'proxy' && hops[0].proxyId ? storage.getProxyRaw(hops[0].proxyId) : null);
     if (hops[0]?.connectionMode === 'proxy' && !firstProxy) throw new Error(`首级跳板机代理配置不存在：${hops[0].name}`);
     return { target: conn, hops, firstProxy };
 }
@@ -2887,7 +2909,10 @@ async function createRoutedSSHConnection(conn, timeout = 10000) {
             const sock = plan.firstProxy ? await openProxyConnection(plan.firstProxy, conn.host, conn.port, timeout) : undefined;
             const client = await connectSSHClient(conn, { timeout, sock });
             clients.push(client);
-            return { client, clients, route: plan.firstProxy ? `代理 ${plan.firstProxy.name || plan.firstProxy.host} -> ${conn.name || conn.host}` : conn.name || conn.host };
+            const prefix = plan.firstProxy?.type === 'agent'
+                ? `Agent 跳板 ${plan.firstProxy.name || plan.firstProxy.agentId}`
+                : `代理 ${plan.firstProxy.name || plan.firstProxy.host}`;
+            return { client, clients, route: plan.firstProxy ? `${prefix} -> ${conn.name || conn.host}` : conn.name || conn.host };
         }
 
         let firstSock = plan.firstProxy ? await openProxyConnection(plan.firstProxy, plan.hops[0].host, plan.hops[0].port, timeout) : undefined;
@@ -2898,7 +2923,11 @@ async function createRoutedSSHConnection(conn, timeout = 10000) {
             currentClient = await connectSSHClient(next, { timeout, sock: tunnel });
             clients.push(currentClient);
         }
-        const route = [...plan.hops.map((h) => h.routeName || h.name || h.host), plan.target.name || plan.target.host].join(' -> ');
+        const hopLabels = plan.hops.map((h) => h.routeName || h.name || h.host);
+        if (plan.firstProxy?.type === 'agent') {
+            hopLabels.unshift(`Agent ${plan.firstProxy.name || plan.firstProxy.agentId}`);
+        }
+        const route = [...hopLabels, plan.target.name || plan.target.host].join(' -> ');
         return { client: currentClient, clients, route };
     } catch (err) {
         clients.reverse().forEach((client) => { try { client.end(); } catch {} });
