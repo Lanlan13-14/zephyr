@@ -13,7 +13,7 @@ import 'package:flutter/services.dart';
 class Zft2LinkLaneClient {
   static const _channel = MethodChannel('com.zephyr.agent/link');
   final void Function(int laneId, Uint8List frame) onFrame;
-  final Future<void> Function() onLost;
+  final void Function() onLost;
   WebSocket? _socket;
   bool _connecting = false;
   bool _closed = false;
