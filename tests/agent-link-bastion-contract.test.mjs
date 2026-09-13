@@ -27,3 +27,16 @@ test('bastion candidate listing remains owner-scoped and online-only', () => {
   assert.match(manager, /agent\.capabilities\?\.bastion === true/);
   assert.match(manager, /agent\.bastionEnabled === true/);
 });
+
+test('server resolveRoutePlan accepts agent bastion prefix in jump chain', () => {
+  const server = read('server.js');
+  assert.match(server, /rawId\.startsWith\('agent:'\)/);
+  assert.match(server, /每条跳板链最多包含一个 Agent 跳板/);
+  assert.match(server, /Agent 跳板必须置于首级跳板位置/);
+  assert.match(server, /firstProxy \= agentBastion/);
+
+  const app = read('public/app.js');
+  assert.match(app, /api\('\/api\/rdp\/agent-bastions'\)/);
+  assert.match(app, /agent:\$\{a\.agentId\}/);
+  assert.match(app, /在线 Agent 跳板机/);
+});

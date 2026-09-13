@@ -656,7 +656,7 @@ class AgentController extends ChangeNotifier {
         'reason': 'timeout_${_config.autoShutdownMinutes}min',
       });
       stop();
-      _errorMessage = '已因 ${_config.autoShutdownMinutes} 分钟超时自动关闭';
+      _errorMessage = '已因 ${_config.autoShutdownMinutes} 分钟超时自动关闭共享和跳板机';
       _setStatus(AgentStatus.stopped);
     });
     notifyListeners();
