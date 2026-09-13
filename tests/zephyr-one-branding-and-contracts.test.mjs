@@ -263,10 +263,11 @@ test('compact is a no-op for browser Zephyr, which has no wordmark', async () =>
     installDom({});
     try {
         const { zephyrBrandIconHtml } = await loadThemeRuntime();
-        /* Compared with the gradient sequence normalised: theme-runtime.js
-         * numbers each gradient id so two marks on one page cannot collide,
-         * so successive calls differ by that counter alone. */
-        const normalise = (html) => html.replace(/-gradient-\d+/g, '-gradient-N');
+        /* Compared with the gradient AND mask sequences normalised:
+         * theme-runtime.js numbers each gradient/mask id so two marks on one
+         * page cannot collide, so successive calls differ by those counters
+         * alone. */
+        const normalise = (html) => html.replace(/-gradient-\d+/g, '-gradient-N').replace(/-cut-\d+/g, '-cut-N');
         assert.equal(
             normalise(zephyrBrandIconHtml(undefined, { compact: true })),
             normalise(zephyrBrandIconHtml(undefined, {})),

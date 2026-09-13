@@ -167,6 +167,10 @@ data class LocalAiCatalog(
     val todos: List<LocalAiTodo> = emptyList(),
     val sandbox: LocalAiSandbox = LocalAiSandbox(),
     val syncFromMainEnabled: Boolean = false,
+    /** Where AI inference requests egress. DIRECT = One's own network (loopback
+     * runtime → provider), MAIN = relayed through the bound Zephyr server.
+     * Shared-to-me providers always relay regardless of this setting. */
+    val requestRouting: String = "direct",
 ) {
     fun normalized(): LocalAiCatalog = copy(
         assistantName = assistantName.trim().take(40).ifBlank { "Zephyr AI" },
@@ -191,9 +195,9 @@ data class LocalAiCatalog(
 @Serializable data class LocalAiModel(val id: String, val label: String = id, val hidden: Boolean = false, val contextWindowTokens: Int? = null, val maxOutputTokens: Int? = null, val temperature: Double? = null, val topP: Double? = null, val reasoning: Boolean = false, val reasoningEffort: String? = null, val inputImage: Boolean = true, val inputPdf: Boolean = false, val inputAudio: Boolean = false, val inputVideo: Boolean = false, val outputImage: Boolean = false, val outputAudio: Boolean = false, val tools: Boolean = true, val parallelToolCalls: Boolean = true, val promptCache: String = "auto", val maxImagesPerRequest: Int? = null, val maxImageBytes: Long? = null, val apiMode: String? = null, val userAgent: String? = null, val extraJson: String = "{}")
 @Serializable data class LocalAiProvider(val id: String = "", val name: String = "", val type: String = "openai-compatible", val baseUrl: String = "", val apiMode: String = "auto", val defaultModel: String = "", val models: List<LocalAiModel> = emptyList(), val organization: String = "", val extraHeadersJson: String = "{}", val modelUserAgents: String = "", val temperature: Double? = null, val topP: Double? = null, val maxTokens: Int = 4096, val contextWindowTokens: Int? = null, val reasoningEffort: String? = null, val visionDefault: Boolean = true, val usePreviousResponse: Boolean = false, val presencePenalty: Double = 0.0, val frequencyPenalty: Double = 0.0, val extraJson: String = "{}", val enabled: Boolean = true, val source: String = "local", val revision: Long = 0)
 @Serializable data class LocalAiMcpServer(val id: String = "", val name: String = "", val type: String = "http", val command: String = "", val args: List<String> = emptyList(), val env: Map<String, String> = emptyMap(), val url: String = "", val trustedReadOnly: List<String> = emptyList(), val timeoutSeconds: Int = 300, val enabled: Boolean = true)
-@Serializable data class LocalAiEnvironment(val id: String = "", val name: String = "", val description: String = "", val enabled: Boolean = true, val visibleToAi: Boolean = false, val valueVisibleToAi: Boolean = false)
-@Serializable data class LocalAiMemory(val id: String = "", val title: String = "", val scope: String = "global", val project: String = "", val connectionIds: List<String> = emptyList(), val tags: List<String> = emptyList(), val content: String = "", val enabled: Boolean = true, val updatedAt: Long = System.currentTimeMillis())
-@Serializable data class LocalAiSkill(val id: String = "", val name: String = "", val description: String = "", val prompt: String = "", val enabled: Boolean = true, val updatedAt: Long = System.currentTimeMillis())
+@Serializable data class LocalAiEnvironment(val id: String = "", val name: String = "", val description: String = "", val enabled: Boolean = true, val visibleToAi: Boolean = false, val valueVisibleToAi: Boolean = false, val revision: Long = 0)
+@Serializable data class LocalAiMemory(val id: String = "", val title: String = "", val scope: String = "global", val project: String = "", val connectionIds: List<String> = emptyList(), val tags: List<String> = emptyList(), val content: String = "", val enabled: Boolean = true, val updatedAt: Long = System.currentTimeMillis(), val revision: Long = 0)
+@Serializable data class LocalAiSkill(val id: String = "", val name: String = "", val description: String = "", val prompt: String = "", val enabled: Boolean = true, val updatedAt: Long = System.currentTimeMillis(), val revision: Long = 0)
 @Serializable data class LocalAiPlanStep(val id: String = "", val title: String = "", val status: String = "pending", val note: String = "", val error: String = "")
 @Serializable data class LocalAiPlan(
     val id: String = "",
