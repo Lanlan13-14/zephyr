@@ -49,6 +49,10 @@ object ErrorRegistry {
         MobileErrorSpec("invalid_credentials", 401, false, "correct_credentials"),
         MobileErrorSpec("invalid_dependency", 400, false, "repair_route"),
         MobileErrorSpec("invalid_request", 400, false, "fix_input"),
+        // Main-side AI provider validation is a permanent input failure, not a network failure.
+        // Register it so One stops treating the server code as an unknown error and exposes the
+        // actionable provider-repair state in the sync UI.
+        MobileErrorSpec("invalid_ai_provider", 400, false, "fix_input"),
         MobileErrorSpec("login_guard_blocked", 403, false, "show_server_policy"),
         MobileErrorSpec("metadata_too_large", 413, false, "split_payload"),
         MobileErrorSpec("must_change_password", 403, false, "open_system_browser"),

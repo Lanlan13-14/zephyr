@@ -1345,7 +1345,7 @@ private fun ToolsDestination(
         syncStatus.pendingCount <= 0 -> "无待同步"
         else -> "${syncStatus.pendingCount} 项待同步"
     }
-    val diagnosticsLabel = syncStatus.lastError?.let { "最近失败 · ${it.code}" } ?: "版本 · 日志导出"
+    val diagnosticsLabel = syncStatus.lastError?.let { "最近失败 · ${it.message}" } ?: "版本 · 日志导出"
     ToolsRootRoute(
         inventory = inventory,
         summaries = ToolsRootSummaries(

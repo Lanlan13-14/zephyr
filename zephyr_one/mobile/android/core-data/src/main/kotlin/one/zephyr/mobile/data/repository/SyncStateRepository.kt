@@ -11,6 +11,12 @@ import one.zephyr.mobile.model.NetworkPolicy
 import one.zephyr.mobile.model.SyncProgress
 import one.zephyr.mobile.model.SyncStatus
 
+/** Translate persisted wire codes into actionable local sync copy. */
+private fun syncErrorMessage(code: String, persisted: String?): String = when (code) {
+    "invalid_ai_provider" -> "AI 供应商配置无效，请在 Zephyr 或 Zephyr One 修正后重新同步"
+    else -> persisted ?: code
+}
+
 /** Cursors, failure counters and the status the 文件同步 card renders. */
 class SyncStateRepository(private val db: ZephyrDatabase) {
 
@@ -76,7 +82,7 @@ class SyncStateRepository(private val db: ZephyrDatabase) {
             lastAttemptAt = row?.lastAttemptAt,
             lastSuccessAt = row?.lastSuccessAt,
             lastError = row?.lastErrorCode?.let { code ->
-                MobileError.local(code, row.lastErrorMessage ?: code)
+                MobileError.local(code, syncErrorMessage(code, row.lastErrorMessage))
             },
             progress = currentProgress,
         )
