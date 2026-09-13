@@ -280,7 +280,7 @@ function validateHelloMessage(hello) {
     if (!isPlainObject(hello)) return false;
     const allowed = new Set([
         'type', 'protocolVersion', 'token', 'deviceId', 'deviceName',
-        'platform', 'appVersion', 'capabilities', 'share',
+        'platform', 'appVersion', 'capabilities', 'share', 'linkSessionId',
     ]);
     if (Object.keys(hello).some((key) => !allowed.has(key))) return false;
     if (hello.type !== 'hello' || ![1, 2].includes(hello.protocolVersion)) return false;
@@ -289,6 +289,9 @@ function validateHelloMessage(hello) {
     if (!validateBoundedString(hello.deviceName, 256)) return false;
     if (!validateBoundedString(hello.platform, 64)) return false;
     if (!validateBoundedString(hello.appVersion, 64)) return false;
+    // The ZSL/2 session id the Agent established through its embedded Link
+    // runtime; optional but must be a sane string when present.
+    if (hello.linkSessionId != null && !validateBoundedString(hello.linkSessionId, 128)) return false;
     if (hello.capabilities != null) {
         if (!isPlainObject(hello.capabilities)) return false;
         const booleanCapabilities = new Set([
@@ -324,6 +327,7 @@ class FileAgentConnection {
         this.appVersion = hello.appVersion || '0.0.0';
         this.capabilities = hello.capabilities || { read: true };
         this.share = hello.share || { name: 'Agent', readOnly: true };
+        this.linkSessionId = typeof hello.linkSessionId === 'string' ? hello.linkSessionId : null;
         this.ownerId = null; // set after token validation
         this.ownerUsername = '';
         this.tokenId = null;
@@ -362,6 +366,7 @@ class FileAgentConnection {
             tokenId: this.tokenId,
             tokenName: this.tokenName,
             bastionEnabled: this.capabilities.bastion === true,
+            linkSessionId: this.linkSessionId || undefined,
         };
     }
 

@@ -38,4 +38,14 @@ internal class EmbeddedLinkApi(private val process: EmbeddedLinkProcess) {
     }
 
     fun close() { session = null; peerUrl = null }
+
+    /** Boots the bastion tunnel hub inside the Go runtime. Blocking; call off the UI thread. */
+    fun tunnelStart(sessionId: String, peerUrl: String) {
+        val s = session ?: error("Link 会话未建立")
+        val response = JSONObject(process.post("/link/tunnel/start", JSONObject().apply {
+            put("sessionId", sessionId.ifEmpty { s.id })
+            put("peerUrl", peerUrl.ifEmpty { this@EmbeddedLinkApi.peerUrl ?: (peerUrl) })
+        }.toString()))
+        if (!response.optBoolean("ok", false)) error(response.optJSONObject("error")?.optString("message") ?: "Link 隧道启动失败")
+    }
 }

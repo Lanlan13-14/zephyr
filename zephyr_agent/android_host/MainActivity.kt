@@ -68,6 +68,18 @@ class MainActivity : FlutterActivity() {
                             } catch (e: Exception) { runOnUiThread { result.error("link_error", e.message ?: "Link 文件请求失败", null) } }
                         }.start()
                     }
+                    "linkTunnelStart" -> {
+                        val sessionId = call.argument<String>("sessionId") ?: error("sessionId required")
+                        val peerUrl = call.argument<String>("peerUrl") ?: error("peerUrl required")
+                        Thread {
+                            try {
+                                linkApi.tunnelStart(sessionId, peerUrl)
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("link_error", e.message ?: "Link 隧道启动失败", null) }
+                            }
+                        }.start()
+                    }
                     "linkClose" -> { linkApi.close(); result.success(null) }
                     else -> result.notImplemented()
                 }

@@ -10,6 +10,7 @@ import 'link_file_runtime.dart';
 /// only carries structured business data.
 class PlatformLinkFileRuntime extends LinkFileRuntime {
   static const _channel = MethodChannel('com.zephyr.agent/link');
+  String? _serverUrl;
 
   @override
   Future<bool> connect({required String serverUrl, required String deviceId}) async {
@@ -20,6 +21,7 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
     final sessionId = result?['sessionId'] as String?;
     if (sessionId != null && sessionId.isNotEmpty) {
       markConnected(sessionId);
+      _serverUrl = serverUrl;
       return true;
     }
     markDisconnected();
@@ -50,5 +52,16 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
   Future<void> close() async {
     await _channel.invokeMethod<void>('linkClose');
     await super.close();
+  }
+
+  /// Boots the bastion tunnel hub inside the embedded Go runtime: it connects
+  /// the encrypted /link/stream channel and pumps TCP bytes under ZSL/2.
+  Future<void> startTunnel() async {
+    final sessionId = this.sessionId;
+    if (sessionId == null) throw StateError('Agent Link runtime is not connected');
+    await _channel.invokeMethod<void>('linkTunnelStart', {
+      'sessionId': sessionId,
+      'peerUrl': _serverUrl,
+    });
   }
 }

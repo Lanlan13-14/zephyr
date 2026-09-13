@@ -7,10 +7,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
 )
@@ -72,7 +74,16 @@ func (n *Node) handleStream(w http.ResponseWriter, r *http.Request) {
 // loop owns the connection; any protocol or crypto error closes it.
 func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep *Endpoint) {
 	defer conn.Close()
-	defer func() { n.mu.Lock(); delete(n.sessions, sessionID); n.mu.Unlock() }()
+	defer func() { n.mu.Lock(); delete(n.sessions, sessionID); delete(n.streamWriters, sessionID); n.mu.Unlock() }()
+	// Register the server-push path so the main end can originate sealed frames
+	// on this stream (Agent bastion tunnels need server-initiated data).
+	push := &streamPushWriter{conn: conn}
+	n.mu.Lock()
+	if n.streamWriters == nil {
+		n.streamWriters = make(map[string]*streamPushWriter)
+	}
+	n.streamWriters[sessionID] = push
+	n.mu.Unlock()
 	for {
 		op, payload, err := readFrame(br)
 		if err != nil {
@@ -115,6 +126,43 @@ func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep
 			return
 		}
 	}
+}
+
+// streamPushWriter lets the owning host push server-originated sealed envelopes
+// onto a live stream connection. Tunnels are the first user; the request-reply
+// lanes above are untouched.
+type streamPushWriter struct {
+	mu   sync.Mutex
+	conn net.Conn
+}
+
+func (w *streamPushWriter) write(env []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return writeFrame(w.conn, 0x1, env)
+}
+
+// PushStreamFrame seals body under the named session and writes it to that
+// session's live stream, if any. It returns an error when the session has no
+// attached stream (the /link/push HTTP lane or a fresh dial is then the only
+// way to reach the peer).
+func (n *Node) PushStreamFrame(sessionID string, kind int, body any, secret bool) error {
+	n.mu.Lock()
+	ep := n.sessions[sessionID]
+	w := n.streamWriters[sessionID]
+	n.mu.Unlock()
+	if ep == nil || w == nil {
+		return fmt.Errorf("link: session %s has no live stream", sessionID)
+	}
+	env, err := ep.Send(kind, body, secret)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	return w.write(raw)
 }
 
 // readFrame parses one RFC 6455 frame. Client frames must be masked; this server

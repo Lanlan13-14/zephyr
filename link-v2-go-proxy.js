@@ -295,4 +295,70 @@ function proxyLinkV2Stream(ws, req) {
     })().catch(() => { try { ws.close(1011, 'link-unavailable'); } catch {} });
 }
 
-module.exports = { createLinkV2GoProxy, proxyLinkV2Stream, GoLinkProcess, stopLinkV2Go };
+/* Agent bastion tunnel management: the Node front end asks the Go service to
+ * attach an Agent stream session and dial through it. Bytes returning from
+ * the hijacked loopback socket are tunnel plaintext only between Node and the
+ * Go process on 127.0.0.1; over the network every tunnel byte is sealed under
+ * ZSL/2 inside AGENT_TUNNEL frames. */
+async function linkTunnelAttach(sessionId) {
+    const proc = sharedProcess();
+    const addr = await proc.ensureStarted();
+    const [host, port] = addr.split(':');
+    const body = JSON.stringify({ sessionId });
+    return new Promise((resolve, reject) => {
+        const req = http.request({
+            host, port: Number(port), path: '/internal/tunnel/attach', method: 'POST',
+            headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-link-admin': proc.adminToken },
+        }, (res) => {
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => {
+                const text = Buffer.concat(chunks).toString('utf8');
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    try { resolve(JSON.parse(text)); } catch { resolve({ ok: true }); }
+                } else {
+                    let message = text;
+                    try { message = JSON.parse(text).error?.message || text; } catch {}
+                    reject(Object.assign(new Error(message), { code: 'tunnel_attach_failed' }));
+                }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(5000, () => req.destroy(new Error('tunnel attach timeout')));
+        req.write(body); req.end();
+    });
+}
+
+/* Dial a tunnel through an attached Agent session; resolves a net.Socket whose
+ * bytes are piped through the Go tunnel hub to the Agent's TCP dial. */
+async function linkTunnelDial(host_, port_, timeoutMs = 12000) {
+    const proc = sharedProcess();
+    const addr = await proc.ensureStarted();
+    const [host, port] = addr.split(':');
+    const body = JSON.stringify({ host: host_, port: port_ });
+    return new Promise((resolve, reject) => {
+        const req = http.request({
+            host, port: Number(port), path: '/internal/tunnel/dial', method: 'POST',
+            headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-link-admin': proc.adminToken },
+        });
+        req.on('upgrade', (res, socket) => {
+            socket.setTimeout(0);
+            resolve(socket);
+        });
+        req.on('response', (res) => {
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => {
+                const text = Buffer.concat(chunks).toString('utf8');
+                let message = text;
+                try { message = JSON.parse(text).error?.message || text; } catch {}
+                reject(Object.assign(new Error(message), { code: 'tunnel_dial_failed' }));
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(timeoutMs, () => req.destroy(new Error('tunnel dial timeout')));
+        req.write(body); req.end();
+    });
+}
+
+module.exports = { createLinkV2GoProxy, proxyLinkV2Stream, GoLinkProcess, stopLinkV2Go, linkTunnelAttach, linkTunnelDial };

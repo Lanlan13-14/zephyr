@@ -4,7 +4,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
@@ -12,7 +11,6 @@ import 'package:uuid/uuid.dart';
 import 'agent_state.dart';
 import '../fs/file_provider.dart';
 import 'file_transfer_protocol.dart';
-import 'link_file_runtime.dart';
 import 'platform_link_file_runtime.dart';
 import '../app/agent_version.dart';
 
@@ -46,6 +44,7 @@ class AgentController extends ChangeNotifier {
   ZephyrFileProvider? _fileProvider;
   final PlatformLinkFileRuntime _linkRuntime = PlatformLinkFileRuntime();
   bool get linkFileBridgeReady => _linkRuntime.ready;
+  bool _bastionTunnelStarted = false;
   final Map<int, Future<void>> _zft2Tasks = {};
   /// Per-path serial queues for mutating ops. Write/close/truncate/open on the
   /// same file must not race — Explorer issues FileEndOfFileInformation
@@ -212,6 +211,10 @@ class AgentController extends ChangeNotifier {
       'deviceName': _config.deviceName,
       'platform': _platformName(),
       'appVersion': AgentVersion.version,
+      // The ZSL/2 session id the Agent's embedded Go runtime established with
+      // this server. The bastion lane keys the encrypted tunnel off it; absent
+      // when enrollment/proof failed — the server must then refuse bastion use.
+      'linkSessionId': _linkRuntime.sessionId,
       'capabilities': {
         'read': true,
         'write': !_config.readOnly,
@@ -227,8 +230,7 @@ class AgentController extends ChangeNotifier {
         // Explicit opt-in. The server only advertises this Agent as a bastion
         // when the operator enables it in settings.
         'bastion': _config.bastionEnabled,
-        'linkFileBridge': _linkRuntime.ready,
-        // ZFT2 travels over a plain WebSocket — not through Android's
+        'linkFileBridge': _linkRuntime.ready,        // ZFT2 travels over a plain WebSocket — not through Android's
         // MethodChannel/Binder.  The old Android=4 cap was protecting against
         // Binder TransactionTooLargeException, but that path is never taken
         // for ZFT2 traffic.  Raising to 8 matches desktop Agents and lets the
@@ -461,12 +463,35 @@ class AgentController extends ChangeNotifier {
       _reconnectAttempts = 0;
       _startHeartbeat();
       _startShutdownTimer();
+      _maybeStartBastionTunnel();
     } else {
       final error = msg['error'] as Map<String, dynamic>?;
       _errorMessage = error?['message'] as String? ?? 'Authentication failed';
       _setStatus(AgentStatus.error);
       // Don't reconnect on auth failure
     }
+  }
+
+  /// Boots the encrypted bastion tunnel once both channels are up: the Agent
+  /// WebSocket (auth + capability) and the ZSL/2 Link session (crypto). All
+  /// bastion bytes thereafter ride sealed AGENT_TUNNEL frames on the Link
+  /// stream — never the legacy file WebSocket.
+  void _maybeStartBastionTunnel() {
+    if (!_config.bastionEnabled) return;
+    if (!_linkRuntime.ready) return;
+    if (_bastionTunnelStarted) return;
+    _bastionTunnelStarted = true;
+    () async {
+      try {
+        await _linkRuntime.startTunnel();
+        _linkRuntime.markTunnelUp();
+      } catch (e) {
+        _bastionTunnelStarted = false;
+        if (kDebugMode) {
+          print('[agent-bastion] tunnel start failed: $e');
+        }
+      }
+    }();
   }
 
   void _handleRequest(Map<String, dynamic> msg) async {

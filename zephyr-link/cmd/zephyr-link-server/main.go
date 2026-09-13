@@ -9,7 +9,9 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -96,6 +98,73 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// Agent bastion tunnels: the Node front end attaches an Agent's stream
+	// session and dials TCP through it. Loopback + admin token only, same as
+	// the other internal lanes.
+	tunnelHub := link.NewMainEndTunnelHub(node)
+	mux.HandleFunc("/internal/tunnel/attach", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if adminToken == "" || !tokenEqual(r.Header.Get("X-Link-Admin"), adminToken) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			SessionID string `json:"sessionId"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil || body.SessionID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if err := tunnelHub.Attach(body.SessionID); err != nil {
+			writeJSONError(w, http.StatusConflict, "tunnel_attach_failed", err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"deviceId":` + jsonString(tunnelHub.DeviceID()) + `}`))
+	})
+	mux.HandleFunc("/internal/tunnel/dial", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if adminToken == "" || !tokenEqual(r.Header.Get("X-Link-Admin"), adminToken) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Host string `json:"host"`
+			Port int    `json:"port"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil || body.Host == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		conn, err := tunnelHub.DialTunnel(body.Host, body.Port)
+		if err != nil {
+			writeJSONError(w, http.StatusBadGateway, "tunnel_dial_failed", err.Error())
+			return
+		}
+		// Hijack and hand the raw tunnel to the Node caller: bytes from here on
+		// are tunnel plaintext at the loopback boundary only; the Agent side
+		// keeps sealing everything under ZSL/2.
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			conn.Close()
+			writeJSONError(w, http.StatusInternalServerError, "hijack_unsupported", "loopback hijack unsupported")
+			return
+		}
+		netConn, buf, err := hj.Hijack()
+		if err != nil {
+			conn.Close()
+			writeJSONError(w, http.StatusInternalServerError, "hijack_failed", err.Error())
+			return
+		}
+		go pipeTunnel(netConn, buf, conn)
+	})
+
 	listener, err := net.Listen("tcp4", listen)
 	if err != nil {
 		log.Error("listen failed", "err", err)
@@ -140,4 +209,43 @@ func tokenEqual(got, want string) bool {
 		v |= got[i] ^ want[i]
 	}
 	return v == 0
+}
+
+func writeJSONError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	payload, _ := json.Marshal(map[string]any{"ok": false, "error": map[string]any{"code": code, "message": message}})
+	_, _ = w.Write(payload)
+}
+
+func jsonString(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
+// pipeTunnel bridges the hijacked loopback TCP conn and the sealed Agent tunnel.
+// The Node process speaks plaintext on its side of loopback; the Agent side of
+// the tunnel only ever sees ciphertext under ZSL/2.
+func pipeTunnel(netConn net.Conn, buf *bufio.ReadWriter, tunnel net.Conn) {
+	defer netConn.Close()
+	defer tunnel.Close()
+	// Forward anything the client pipelined before the hijack landed.
+	if buf.Reader.Buffered() > 0 {
+		buffered := make([]byte, buf.Reader.Buffered())
+		if _, err := io.ReadFull(buf.Reader, buffered); err == nil {
+			if _, err := tunnel.Write(buffered); err != nil {
+				return
+			}
+		}
+	}
+	done := make(chan struct{}, 2)
+	go func() {
+		io.Copy(tunnel, netConn)
+		done <- struct{}{}
+	}()
+	go func() {
+		io.Copy(netConn, tunnel)
+		done <- struct{}{}
+	}()
+	<-done
 }

@@ -34,6 +34,7 @@ const KIND = Object.freeze({
     SHARED_NOTE: 13,
     SHARED_FILE: 14,
     AI: 15,
+    AGENT_TUNNEL: 16,
 });
 
 // The §15 isolated capability lanes. Each kind maps onto exactly one channel;
@@ -50,6 +51,7 @@ const CHANNEL = Object.freeze({
     SHARED_NOTE: 'shared-note',
     SHARED_FILE: 'shared-file',
     AI: 'ai',
+    AGENT_TUNNEL: 'agent-tunnel',
 });
 
 // Single source of truth for kind→channel; must match the Go kindChannel map.
@@ -69,6 +71,7 @@ const KIND_CHANNEL = Object.freeze({
     [KIND.SHARED_NOTE]: CHANNEL.SHARED_NOTE,
     [KIND.SHARED_FILE]: CHANNEL.SHARED_FILE,
     [KIND.AI]: CHANNEL.AI,
+    [KIND.AGENT_TUNNEL]: CHANNEL.AGENT_TUNNEL,
 });
 
 function hasKind(kind) {

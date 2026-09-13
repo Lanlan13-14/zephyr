@@ -8,18 +8,25 @@ import 'dart:async';
 class LinkFileRuntime {
   bool _ready = false;
   String? _sessionId;
+  bool _tunnelUp = false;
 
   bool get ready => _ready && _sessionId != null;
   String? get sessionId => _sessionId;
+  /// Whether the bastion tunnel hub is pumping on the encrypted Link stream.
+  bool get tunnelUp => _tunnelUp;
 
   void markConnected(String sessionId) {
     _ready = true;
     _sessionId = sessionId;
   }
 
+  void markTunnelUp() { _tunnelUp = true; }
+  void markTunnelDown() { _tunnelUp = false; }
+
   void markDisconnected() {
     _ready = false;
     _sessionId = null;
+    _tunnelUp = false;
   }
 
   Future<bool> connect({required String serverUrl, required String deviceId}) async {

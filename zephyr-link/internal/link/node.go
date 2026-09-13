@@ -88,6 +88,12 @@ type Node struct {
 	// dispatch routes unsealed business frames to per-kind handlers. It is what
 	// turns the node from a pipe into the Link channel.
 	dispatch *Dispatcher
+	// streamWriters holds the live server-push path per stream session, so a
+	// host can originate sealed frames (Agent bastion tunnels) on a stream the
+	// peer dialed in with.
+	streamWriters map[string]*streamPushWriter
+	// agentHub is the embedded Agent tunnel hub, created on /link/tunnel/start.
+	agentHub *AgentTunnelHub
 }
 
 // RequireEnrollment makes the handshake reject unregistered devices and require
@@ -112,6 +118,7 @@ func NewNode() *Node {
 		pendingDial:   make(map[string]*pendingDial),
 		signers:       make(map[string]*ecdsa.PrivateKey),
 		dispatch:      NewDispatcher(),
+		streamWriters: make(map[string]*streamPushWriter),
 		// Generous enough for a slow LAN server, hard enough to never hang the host.
 		dialClient: &http.Client{Timeout: 15 * time.Second},
 	}
@@ -133,8 +140,11 @@ func NewNode() *Node {
 	// unseal the reply. The host never sees key material.
 	n.mux.HandleFunc("/link/push", n.handlePushFrame)
 	// Real-time full-duplex channel: the server upgrades to a WebSocket and relays
-	// sealed frames; the proxy shuttles bytes without ever decrypting.
+	// sealed frames; the proxy shuttles bytes without ever decrypting. The bare
+	// /stream leaf mirrors the /handshake + /push dual naming so a dialer can
+	// point at either the bare Go root or a mounted sub-path root.
 	n.mux.HandleFunc("/link/stream", n.handleStream)
+	n.mux.HandleFunc("/stream", n.handleStream)
 	// Session liveness/state probe for a device; sealed so it rides the channel.
 	n.mux.HandleFunc("/link/state", n.handleState)
 	// Embedded hosts use these for device-identity ML-KEM-768. Kotlin never
@@ -143,6 +153,10 @@ func NewNode() *Node {
 	n.mux.HandleFunc("/link/mlkem/generate", n.handleMlkemGenerate)
 	n.mux.HandleFunc("/link/mlkem/encapsulate", n.handleMlkemEncapsulate)
 	n.mux.HandleFunc("/link/mlkem/decapsulate", n.handleMlkemDecapsulate)
+	// Embedded Agent hosts start the bastion tunnel hub here: the Go core
+	// connects /link/stream and pumps TCP bytes under the session keys. The
+	// host only names the peer and session; no key material ever leaves.
+	n.mux.HandleFunc("/link/tunnel/start", n.handleTunnelStart)
 	n.registerBuiltinHandlers()
 	return n
 }
@@ -197,6 +211,49 @@ func (n *Node) registerBuiltinHandlers() {
 			"channel": string(codec.ChannelAI),
 		}, false, nil
 	})
+}
+
+// handleTunnelStart boots the Agent-side tunnel hub on an established dial
+// session. It answers once the stream is attached; the pump itself runs in the
+// background until the stream dies or the process exits.
+func (n *Node) handleTunnelStart(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+		PeerURL   string `json:"peerUrl"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" || req.PeerURL == "" {
+		http.Error(w, "sessionId and peerUrl required", http.StatusBadRequest)
+		return
+	}
+	n.mu.Lock()
+	hub := n.agentHub
+	n.mu.Unlock()
+	if hub == nil {
+		hub = NewAgentTunnelHub(n)
+		n.mu.Lock()
+		if n.agentHub == nil {
+			n.agentHub = hub
+		} else {
+			hub = n.agentHub
+		}
+		n.mu.Unlock()
+	}
+	if err := hub.Start(req.PeerURL, req.SessionID); err != nil {
+		errJSON(w, http.StatusBadGateway, "tunnel_start_failed", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// AgentHub exposes the embedded Agent tunnel hub, when started.
+func (n *Node) AgentHub() *AgentTunnelHub {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.agentHub
 }
 
 // handleState answers a session liveness probe. The reply is sealed under the
@@ -604,6 +661,11 @@ func (n *Node) Dial(baseURL, deviceID string) (*Endpoint, string, error) {
 	if result.pending {
 		return nil, "", errors.New("link: handshake requires a device proof this process cannot produce")
 	}
+	// Record the session locally so a later stream/tunnel attach on this node
+	// finds it, mirroring what the handleDial HTTP path does for embedded hosts.
+	n.mu.Lock()
+	n.sessions[result.sessionID] = NewEndpoint(result.session)
+	n.mu.Unlock()
 	return NewEndpoint(result.session), result.sessionID, nil
 }
 
