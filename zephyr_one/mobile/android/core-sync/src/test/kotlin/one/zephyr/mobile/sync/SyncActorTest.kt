@@ -1055,8 +1055,14 @@ class SyncActorTest {
         val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
 
         assertEquals("invalid_ai_provider", result.error?.code)
+        assertEquals(SyncPhase.PUSH_PENDING, result.stoppedAt)
+        assertEquals(
+            listOf(SyncPhase.PUSH_PENDING),
+            result.phasesRun,
+        )
         assertEquals(1, transport.pushedBatches.size)
         assertTrue(transport.ackedOpIds.isEmpty())
+        assertEquals(0L, result.ackedCursor)
         assertTrue(store.completed.isEmpty())
         assertEquals("invalid_ai_provider", store.queue.single { it.opId == "op-provider" }.lastError)
         assertTrue(store.queue.any { it.opId == "op-other" })
@@ -1094,6 +1100,9 @@ class SyncActorTest {
         val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
 
         assertEquals("invalid_ai_provider", result.error?.code)
+        assertEquals(SyncPhase.PUSH_PENDING, result.stoppedAt)
+        assertFalse(result.phasesRun.contains(SyncPhase.PULL_CHANGES))
+        assertFalse(result.phasesRun.contains(SyncPhase.ACK_CURSOR))
         assertEquals(2, store.failures.size)
         assertEquals(2, store.queue.size)
         assertEquals(
