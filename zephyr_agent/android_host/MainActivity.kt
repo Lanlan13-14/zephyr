@@ -20,6 +20,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import org.json.JSONArray
 import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
@@ -59,7 +60,8 @@ class MainActivity : FlutterActivity() {
                     }
                     "linkFileRequest" -> {
                         val op = call.argument<String>("op") ?: error("op required")
-                        val params = JSONObject(call.argument<Map<String, Any?>>("params") ?: emptyMap())
+                        @Suppress("UNCHECKED_CAST")
+                        val params = JSONObject(call.argument<Map<String, Any?>>("params") ?: emptyMap<String, Any?>())
                         Thread {
                             try {
                                 val ack = linkApi.push(10, JSONObject().apply { put("op", op); put("params", params) })
@@ -468,6 +470,7 @@ private fun JSONObject.asMap(): Map<String, Any?> {
         out[key] = when (value) {
             JSONObject.NULL -> null
             is JSONObject -> value.asMap()
+            is JSONArray -> (0 until value.length()).map { value.get(it) }
             else -> value
         }
     }
