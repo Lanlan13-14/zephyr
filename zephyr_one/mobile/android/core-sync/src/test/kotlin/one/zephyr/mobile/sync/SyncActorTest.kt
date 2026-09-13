@@ -1094,7 +1094,7 @@ class SyncActorTest {
         val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
 
         assertEquals("invalid_ai_provider", result.error?.code)
-        assertEquals(2, result.rejected)
+        assertEquals(2, store.failures.size)
         assertEquals(2, store.queue.size)
         assertEquals(
             setOf("op-provider-1", "op-provider-2"),
