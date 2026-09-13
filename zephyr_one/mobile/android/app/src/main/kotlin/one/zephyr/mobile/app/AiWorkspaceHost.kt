@@ -47,11 +47,11 @@ internal fun BoundAiWorkspace(
     val serverSettings by account.settings.observeSection("serverSettings", "default")
         .collectAsState(initial = JsonObject(emptyMap()))
     val serverAiEnabled = account.isLocalMode || dottedBoolCompat(serverSettings, "ai.enabled", fallback = true)
+    if (!account.isLocalMode && !serverAiEnabled) return
     val chrome = AiWorkspaceBinding.chrome(
         prefs = prefs,
         catalogEnabled = catalog.enabled,
         localMode = account.isLocalMode,
-        serverEnabled = serverAiEnabled,
     )
     // Disabled means absent, not merely a closed sheet. Returning before controller construction
     // removes the FAB immediately and disposes any live local runtime/loopback host when toggled.
@@ -101,7 +101,6 @@ internal object AiWorkspaceBinding {
         prefs: Map<String, JsonObject>,
         catalogEnabled: Boolean = true,
         localMode: Boolean = true,
-        serverEnabled: Boolean = true,
     ): AiWorkspaceChrome = AiPreferenceMapping.chrome(
         // Local mode obeys the device catalog switch. A bound account uses the server runtime and
         // must not disappear merely because the unrelated local catalog is disabled.
