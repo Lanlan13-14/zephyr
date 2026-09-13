@@ -210,6 +210,9 @@ class AgentController extends ChangeNotifier {
         'binaryWrite': true,
         'cancel': true,
         'creditFlow': true,
+        // Explicit opt-in. The server only advertises this Agent as a bastion
+        // when the operator enables it in settings.
+        'bastion': _config.bastionEnabled,
         // ZFT2 travels over a plain WebSocket — not through Android's
         // MethodChannel/Binder.  The old Android=4 cap was protecting against
         // Binder TransactionTooLargeException, but that path is never taken

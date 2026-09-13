@@ -293,7 +293,7 @@ function validateHelloMessage(hello) {
         if (!isPlainObject(hello.capabilities)) return false;
         const booleanCapabilities = new Set([
             'read', 'write', 'delete', 'rename', 'mkdir', 'truncate', 'binary',
-            'binaryRead', 'binaryWrite', 'cancel', 'creditFlow',
+            'binaryRead', 'binaryWrite', 'cancel', 'creditFlow', 'bastion',
         ]);
         for (const [key, value] of Object.entries(hello.capabilities)) {
             if (booleanCapabilities.has(key)) {
@@ -361,6 +361,7 @@ class FileAgentConnection {
             lastSeenAt: this.lastSeenAt,
             tokenId: this.tokenId,
             tokenName: this.tokenName,
+            bastionEnabled: this.capabilities.bastion === true,
         };
     }
 
@@ -1526,6 +1527,16 @@ class FileAgentManager {
         return result;
     }
 
+    /**
+     * Return online Agents explicitly opted in as bastion candidates.
+     * This is deliberately separate from file-agent discovery so callers
+     * cannot accidentally treat every online file share as a network hop.
+     */
+    listBastionAgentsForUser(ownerId) {
+        return this.listAgentsForUser(ownerId).filter((agent) =>
+            agent.capabilities?.bastion === true && agent.bastionEnabled === true);
+    }
+
     /** Get a specific agent's info. */
     getAgentInfo(agentId) {
         const conn = this.agents.get(agentId);
@@ -1633,6 +1644,13 @@ class FileAgentManager {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             res.json({ ok: true, agents: this.listAgentsForUser(user) });
+        });
+
+        // GET /api/rdp/agent-bastions — explicitly opted-in online Agent hops
+        app.get('/api/rdp/agent-bastions', requireUser, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            res.json({ ok: true, agents: this.listBastionAgentsForUser(user) });
         });
 
         // GET /api/rdp/file-agent-tokens — list named agent tokens
