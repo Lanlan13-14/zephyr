@@ -508,42 +508,51 @@ class AccountContainer(
 
     private val linkChannel = object : LinkChannel {
         private val sessionMutex = Mutex()
+        /* ZSL/2 frames carry an ordered sequence number. SyncActor serializes
+         * rounds, but wake/manual and lifecycle callbacks can still enter this
+         * channel from different coroutines. Keep one push in flight per
+         * binding so the embedded Link runtime cannot race its send state. */
+        private val pushMutex = Mutex()
         private var session: one.zephyr.mobile.app.EmbeddedLinkApi.LinkSession? = null
 
         override val isEstablished: Boolean get() = session != null
 
         override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
-            var attemptedRedial = false
-            while (true) {
-                val sess = sessionMutex.withLock {
-                    session ?: appContainer.embeddedLink.dial(
-                        endpoint.baseUrl, binding.deviceId, linkSpkiPins, linkInsecure,
-                        signer = one.zephyr.mobile.app.EmbeddedLinkApi.HandshakeSigner { transcript ->
-                            deviceIdentity.signHandshakeTranscript(transcript)
-                        },
-                    ).also { session = it }
-                }
-                try {
-                    return appContainer.embeddedLink.push(
-                        endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP,
-                        body = body, spkiPins = linkSpkiPins, insecure = linkInsecure,
-                    ).ack
-                } catch (e: one.zephyr.mobile.app.EmbeddedLinkApi.LinkRequestException) {
-                    /* A server restart forgets only the ephemeral session. The operation is safe to
-                     * resend once: opId makes push idempotent; bootstrap/changes/ack are reads or
-                     * monotonic receipts. Business failures keep their exact state-machine code. */
-                    if (e.sessionInvalid && !attemptedRedial) {
-                        sessionMutex.withLock { if (session == sess) session = null }
-                        attemptedRedial = true
-                        continue
+            var result: kotlinx.serialization.json.JsonObject? = null
+            pushMutex.withLock {
+                var attemptedRedial = false
+                while (result == null) {
+                    val sess = sessionMutex.withLock {
+                        session ?: appContainer.embeddedLink.dial(
+                            endpoint.baseUrl, binding.deviceId, linkSpkiPins, linkInsecure,
+                            signer = one.zephyr.mobile.app.EmbeddedLinkApi.HandshakeSigner { transcript ->
+                                deviceIdentity.signHandshakeTranscript(transcript)
+                            },
+                        ).also { session = it }
                     }
-                    if (e.sessionInvalid) sessionMutex.withLock { if (session == sess) session = null }
-                    throw LinkChannelException(e.message, e.code, e.retryable, e.details)
-                } catch (e: Exception) {
-                    sessionMutex.withLock { if (session == sess) session = null }
-                    throw LinkChannelException(e.message ?: "Link 推送失败")
+                    try {
+                        result = appContainer.embeddedLink.push(
+                            endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP,
+                            body = body, spkiPins = linkSpkiPins, insecure = linkInsecure,
+                        ).ack
+                    } catch (e: one.zephyr.mobile.app.EmbeddedLinkApi.LinkRequestException) {
+                        /* A server restart forgets only the ephemeral session. The operation is safe to
+                         * resend once: opId makes push idempotent; bootstrap/changes/ack are reads or
+                         * monotonic receipts. Business failures keep their exact state-machine code. */
+                        if (e.sessionInvalid && !attemptedRedial) {
+                            sessionMutex.withLock { if (session == sess) session = null }
+                            attemptedRedial = true
+                            continue
+                        }
+                        if (e.sessionInvalid) sessionMutex.withLock { if (session == sess) session = null }
+                        throw LinkChannelException(e.message, e.code, e.retryable, e.details)
+                    } catch (e: Exception) {
+                        sessionMutex.withLock { if (session == sess) session = null }
+                        throw LinkChannelException(e.message ?: "Link 推送失败")
+                    }
                 }
             }
+            return checkNotNull(result)
         }
     }
 
