@@ -13,7 +13,8 @@ mkdir -p android/app/src/main/jniLibs/arm64-v8a
 if [ -f ../zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_link.so ]; then
   cp ../zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_link.so android/app/src/main/jniLibs/arm64-v8a/libzephyr_link.so
 else
-  echo "warning: libzephyr_link.so is not present; Link capability remains unavailable until the shared runtime is staged"
+  echo "error: libzephyr_link.so is missing — the Link/bastion lane cannot ship without it" >&2
+  exit 1
 fi
 mkdir -p android/app/src/main/res/drawable-nodpi
 cp platform_assets/android/ic_launcher.png android/app/src/main/res/drawable-nodpi/zephyr_agent_icon.png
@@ -43,6 +44,16 @@ import re
 p=Path('android/app/build.gradle.kts')
 s=p.read_text()
 s=s.replace('compileSdk = flutter.compileSdkVersion', 'compileSdk = 36')
+# The Link runtime is exec()d as a child process, not loadLibrary()d, so it
+# must exist as a real file: keep legacy packaging so the installer unpacks
+# .so files into nativeLibraryDir (mirrors the One app's setting).
+if 'useLegacyPackaging' not in s:
+    if 'packagingOptions {' in s:
+        s=s.replace('packagingOptions {', 'packagingOptions {\n        jniLibs.useLegacyPackaging = true', 1)
+    elif 'packaging {' in s:
+        s=s.replace('packaging {', 'packaging {\n        jniLibs.useLegacyPackaging = true', 1)
+    else:
+        s=s.replace('android {', 'android {\n    packagingOptions {\n        jniLibs.useLegacyPackaging = true\n    }', 1)
 s=s.replace('namespace = "com.zephyr.zephyr_agent"', 'namespace = "com.zephyr.agent"')
 s=s.replace('applicationId = "com.zephyr.zephyr_agent"', 'applicationId = "com.zephyr.agent"')
 s=s.replace('versionCode = flutter.versionCode', 'versionCode = (project.findProperty("ZEPHYR_AGENT_VERSION_CODE") as String?)?.toInt() ?: flutter.versionCode')

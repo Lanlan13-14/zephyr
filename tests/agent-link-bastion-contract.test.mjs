@@ -44,6 +44,20 @@ test('Link dial forwards the agent certificate-trust setting', () => {
   assert.match(api, /put\("insecure", insecure\)/);
 });
 
+test('Link runtime .so must be exec-able despite extractNativeLibs=false APKs', () => {
+  const host = read('zephyr_agent/android_host/EmbeddedLinkProcess.kt');
+  const script = read('zephyr_agent/tool/prepare_android.sh');
+  // Modern APKs keep .so files page-aligned inside the APK; only an on-disk
+  // file can be exec()d as the Link child process.
+  assert.match(host, /resolveBinary/);
+  assert.match(host, /ZipFile/);
+  assert.match(host, /lib\/\$abi\/libzephyr_link\.so|entryName/);
+  assert.match(script, /useLegacyPackaging = true/);
+  // A missing .so must fail the build, not silently ship a crippled APK.
+  assert.doesNotMatch(script, /warning: libzephyr_link\.so is not present/);
+  assert.match(script, /exit 1/);
+});
+
 test('Link failures surface to the agent UI instead of being swallowed', () => {
   const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
   const ui = read('zephyr_agent/lib/screens/home_screen.dart');
