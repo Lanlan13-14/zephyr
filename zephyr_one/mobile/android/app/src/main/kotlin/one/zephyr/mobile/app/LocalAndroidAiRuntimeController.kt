@@ -150,7 +150,7 @@ internal class LocalAndroidAiRuntimeController(
     override suspend fun send(text: String) {
         val prompt = text.trim(); if (prompt.isEmpty() || mutable.value.running) return
         catalog = account.localAi.load()
-        val shared = account.sharedAiProviders.value.firstOrNull { it.id == providerId }
+        val shared = account.sharedAiProviders.providers.value.firstOrNull { it.id == providerId }
         val localProvider = catalog.providers.firstOrNull { it.id == providerId && it.enabled }
         if (shared == null && localProvider == null) return error("没有可用的本机 AI Provider")
         /* Routing: shared-to-me ALWAYS relays (the key never leaves the owner's
