@@ -192,9 +192,9 @@ internal class ProviderBinding(
     )
 
     private fun LocalAiProvider.toModel(owner: String) = AiProvider(
-        id = id, ownerUserId = owner, name = name, type = type, baseUrl = baseUrl,
-        defaultModel = defaultModel,
-        models = models.map { m -> AiModel(
+        id = id, ownerUserId = owner, name = name, type = type,
+        baseUrl = baseUrl.trim(), defaultModel = defaultModel.trim(),
+        models = models.filter { it.id.trim().isNotEmpty() }.distinctBy { it.id.trim() }.map { m -> AiModel(
             id = m.id, label = m.label, hidden = m.hidden, contextWindowTokens = m.contextWindowTokens,
             maxOutputTokens = m.maxOutputTokens, temperature = m.temperature, topP = m.topP,
             reasoning = m.reasoning, reasoningEffort = m.reasoningEffort, inputImage = m.inputImage,
@@ -205,10 +205,13 @@ internal class ProviderBinding(
             apiMode = m.apiMode,
         ) },
         config = AiProviderConfig(
-            apiMode = apiMode, temperature = temperature, topP = topP, maxTokens = maxTokens,
-            maxOutputTokens = maxOutputTokens, presencePenalty = presencePenalty, frequencyPenalty = frequencyPenalty,
+            apiMode = apiMode.takeIf { it in setOf("auto", "chat", "responses", "native") } ?: "auto",
+            temperature = temperature?.takeIf { it.isFinite() }, topP = topP?.takeIf { it.isFinite() },
+            maxTokens = maxTokens.takeIf { it > 0 }, maxOutputTokens = maxOutputTokens?.takeIf { it > 0 },
+            presencePenalty = presencePenalty.takeIf { it.isFinite() }, frequencyPenalty = frequencyPenalty.takeIf { it.isFinite() },
             vision = visionDefault, usePreviousResponseId = usePreviousResponse,
-            reasoningEffort = reasoningEffort, windowTokens = contextWindowTokens,
+            reasoningEffort = reasoningEffort?.takeIf { it in setOf("none", "minimal", "low", "medium", "high", "xhigh", "max") },
+            windowTokens = contextWindowTokens?.takeIf { it > 0 },
         ),
         visibility = visibility, shareWithUsers = shareWithUsers, shareWithAdmins = shareWithAdmins,
         sharedUserIds = sharedUserIds, enabled = enabled,

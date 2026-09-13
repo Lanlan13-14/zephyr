@@ -226,9 +226,17 @@ private fun ProviderEditor(initial: LocalAiProvider, save: (LocalAiProvider, Cha
                         // Merge by id: a discovered model keeps the capabilities the user already
                         // set; only new ids are appended. An empty discovery leaves the list intact,
                         // which is what a custom Anthropic endpoint returns by design.
-                        val existing=p.models.associateBy{it.id}
-                        val merged=result.models.map{(id,label)->existing[id]?:LocalAiModel(id=id,label=label.ifBlank{id},inputImage=p.visionDefault)}
-                        applyDiscovered(p,merged)
+                        val existing = p.models.associateBy { it.id.trim() }
+                        val discovered = result.models
+                            .map { (id, label) -> id.trim() to label.trim() }
+                            .filter { (id, _) -> id.isNotEmpty() }
+                            .distinctBy { it.first }
+                        if (discovered.isNotEmpty()) {
+                            val merged = discovered.map { (id, label) ->
+                                existing[id] ?: LocalAiModel(id = id, label = label.ifBlank { id }, inputImage = p.visionDefault)
+                            }
+                            applyDiscovered(p, merged)
+                        }
                     }
                 }
             },Modifier.fillMaxWidth(),!fetching){Text(if(fetching)"正在获取…" else "获取模型")}
