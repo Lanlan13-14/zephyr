@@ -28,6 +28,12 @@ type fileBridgeResponse struct {
 }
 
 func (n *Node) RegisterFileBridge(cfg FileBridgeConfig) {
+	if n.dispatch == nil {
+		panic("link: node dispatcher is not initialized")
+	}
+	if cfg.URL == "" || cfg.AdminToken == "" {
+		panic("link: file bridge requires loopback URL and token")
+	}
 	client := &http.Client{Timeout: 65 * time.Second}
 	n.dispatch.Register(codec.KindFileBridge, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
 		deviceID := n.sessionDeviceGet(ctx.SessionID)

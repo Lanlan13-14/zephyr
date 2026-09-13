@@ -49,7 +49,13 @@ function createLinkFileBridge({ fileAgentManager, storage, adminToken, log = con
             const agent = findAgent(deviceId);
             const params = { ...(body.params || {}) };
             if (op === 'writeBinary' && typeof params.data === 'string') params.data = Buffer.from(params.data, 'base64');
-            const result = await fileAgentManager.callAgentV2(agent.agentId, op, params, 60000).promise;
+            if (typeof fileAgentManager.callLinkFileBridge !== 'function') {
+                const error = new Error('Agent Link runtime is not available');
+                error.code = 'agent_link_required';
+                error.status = 503;
+                throw error;
+            }
+            const result = await fileAgentManager.callLinkFileBridge(agent.agentId, op, params, 60000).promise;
             const payload = result instanceof Uint8Array || Buffer.isBuffer(result)
                 ? Buffer.from(result).toString('base64') : null;
             res.json({ ok: true, result: payload == null ? (result || {}) : { encoding: 'base64', data: payload } });
