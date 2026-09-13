@@ -489,8 +489,26 @@ class AgentTokenStore {
         if (row.link_device_id && (String(row.link_device_id) !== device || String(row.link_signing_jwk || '') !== jwk)) {
             throw new TokenStoreError('link_identity_conflict', 'Link identity is already bound to this token');
         }
-        this.db.prepare(`UPDATE encrypted_client_tokens SET link_device_id = ?, link_signing_jwk = ?, updated_at = ?
-            WHERE owner_user_id = ? AND id = ? AND deleted_at IS NULL`).run(device, jwk, this.now(), owner, id);
+        // A device id may migrate between this owner's tokens (reissued token,
+        // agent reinstall): clear the stale claim first. A device id owned by a
+        // different account is a hard rejection — the unique index is the last
+        // line of defense, not the primary check.
+        const holder = this.db.prepare(`SELECT owner_user_id FROM encrypted_client_tokens
+            WHERE link_device_id = ? AND deleted_at IS NULL AND id != ?`).get(device, id);
+        if (holder && String(holder.owner_user_id) !== owner) {
+            throw new TokenStoreError('link_device_owned_by_other', 'Link 设备已被其他账号绑定');
+        }
+        const takeover = this.db.prepare(`UPDATE encrypted_client_tokens SET link_device_id = NULL, link_signing_jwk = NULL, updated_at = ?
+            WHERE link_device_id = ? AND deleted_at IS NULL AND id != ? AND owner_user_id = ?`).run(this.now(), device, id, owner);
+        try {
+            this.db.prepare(`UPDATE encrypted_client_tokens SET link_device_id = ?, link_signing_jwk = ?, updated_at = ?
+                WHERE owner_user_id = ? AND id = ? AND deleted_at IS NULL`).run(device, jwk, this.now(), owner, id);
+        } catch (error) {
+            if (/UNIQUE constraint failed: encrypted_client_tokens\.link_device_id/i.test(String(error?.message || ''))) {
+                throw new TokenStoreError('link_device_owned_by_other', 'Link 设备已被其他账号绑定');
+            }
+            throw this._wrap(error, 'token_store_write_failed');
+        }
         return { deviceId: device, signingJwk: jwk };
     }
 

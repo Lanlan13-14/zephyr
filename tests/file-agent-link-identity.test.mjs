@@ -29,8 +29,22 @@ test('Link identity is token-scoped, idempotent, and persistent', () => {
   assert.deepEqual(identity, { deviceId: 'agent-device-a-0001', signingJwk: JSON.stringify(jwk) });
   assert.deepEqual(store.bindLinkIdentity('owner-a', a.id, 'agent-device-a-0001', jwk), identity);
   assert.throws(() => store.bindLinkIdentity('owner-a', a.id, 'agent-device-a-0001', { ...jwk, x: 'z'.repeat(43) }), /already bound/);
-  assert.throws(() => store.bindLinkIdentity('owner-b', b.id, 'agent-device-a-0001', jwk), /UNIQUE|constraint/i);
+  assert.throws(() => store.bindLinkIdentity('owner-b', b.id, 'agent-device-a-0001', jwk), /Link 设备已被其他账号绑定/);
   assert.deepEqual(store.getLinkIdentity('owner-a', a.id), identity);
+  assert.equal(store.getLinkIdentity('owner-b', b.id), null);
+  store.close();
+  db.close();
+});
+
+test('Link device id migrates between tokens of the same owner', () => {
+  const { db, store } = setup();
+  const first = store.create({ ownerUserId: 'owner-a', name: 'first', secret: 'a'.repeat(32) });
+  const second = store.create({ ownerUserId: 'owner-a', name: 'second', secret: 'c'.repeat(32) });
+  const jwk = { kty: 'EC', crv: 'P-256', x: 'x'.repeat(43), y: 'y'.repeat(43) };
+  store.bindLinkIdentity('owner-a', first.id, 'agent-device-migrate-1', jwk);
+  store.bindLinkIdentity('owner-a', second.id, 'agent-device-migrate-1', jwk);
+  assert.equal(store.getLinkIdentity('owner-a', first.id), null);
+  assert.deepEqual(store.getLinkIdentity('owner-a', second.id), { deviceId: 'agent-device-migrate-1', signingJwk: JSON.stringify(jwk) });
   store.close();
   db.close();
 });
