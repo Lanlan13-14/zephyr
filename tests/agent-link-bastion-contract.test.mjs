@@ -58,6 +58,17 @@ test('Link runtime .so must be exec-able despite extractNativeLibs=false APKs', 
   assert.match(script, /exit 1/);
 });
 
+test('loopback cleartext is whitelisted for the embedded runtime only', () => {
+  const script = read('zephyr_agent/tool/prepare_android.sh');
+  // Android 9+ blocks cleartext even to 127.0.0.1; the app talks plain HTTP
+  // to its own Go child process on loopback, so that one host must be
+  // permitted while remote cleartext stays blocked.
+  assert.match(script, /network_security_config\.xml/);
+  assert.match(script, /cleartextTrafficPermitted="false"/);
+  assert.match(script, /127\.0\.0\.1/);
+  assert.match(script, /android:networkSecurityConfig="@xml\/network_security_config"/);
+});
+
 test('Link failures surface to the agent UI instead of being swallowed', () => {
   const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
   const ui = read('zephyr_agent/lib/screens/home_screen.dart');
