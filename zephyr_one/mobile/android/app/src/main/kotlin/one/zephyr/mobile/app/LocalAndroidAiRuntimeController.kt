@@ -151,26 +151,28 @@ internal class LocalAndroidAiRuntimeController(
         val prompt = text.trim(); if (prompt.isEmpty() || mutable.value.running) return
         catalog = account.localAi.load()
         val shared = account.sharedAiProviders.value.firstOrNull { it.id == providerId }
-        val local = catalog.providers.firstOrNull { it.id == providerId && it.enabled }
-        if (shared == null && local == null) return error("没有可用的本机 AI Provider")
+        val localProvider = catalog.providers.firstOrNull { it.id == providerId && it.enabled }
+        if (shared == null && localProvider == null) return error("没有可用的本机 AI Provider")
         /* Routing: shared-to-me ALWAYS relays (the key never leaves the owner's
          * server, SHARED_RESOURCE_RESIDENCY §22); own providers follow the
          * per-device requestRouting switch (default direct). */
         val relay = shared != null || catalog.requestRouting == "main"
-        val provider = local ?: (catalog.defaultProviderId.takeIf { it.isNotBlank() }?.let { id -> catalog.providers.firstOrNull { it.id == id && it.enabled } }
-            ?: catalog.providers.firstOrNull { it.enabled })
+        val provider: LocalAiProvider = localProvider
+            ?: catalog.providers.firstOrNull { it.id == catalog.defaultProviderId && it.enabled }
+            ?: catalog.providers.firstOrNull { it.enabled }
             ?: return error("没有可用的本机 AI Provider")
-        val relayProviderId = shared?.id ?: provider.id
+        val relayProviderId: String = shared?.id ?: provider.id
         /* Model: local providers use the catalog model row; a shared provider
          * only carries model ids, so a synthetic row is composed here. */
-        val modelRow = provider.models.firstOrNull { it.id == modelId && !it.hidden }
+        val modelRow: LocalAiModel = provider.models.firstOrNull { it.id == modelId && !it.hidden }
             ?: provider.models.firstOrNull { !it.hidden }
-            ?: shared?.models?.firstOrNull()?.let { LocalAiModel(id = it) }
+            ?: shared?.models?.firstOrNull()?.let { id -> LocalAiModel(id = id) }
             ?: return error("没有可用模型")
-        val model = modelRow.id
-        val apiKey = if (relay) null else account.localAi.providerApiKey(provider.id)
+        val model: String = modelRow.id
+        val apiKey: CharArray? = if (relay) null else account.localAi.providerApiKey(provider.id)
         val envValues = linkedMapOf<String, CharArray>()
         try {
+            catalog.environment.filter { it.enabled && it.visibleToAi }.forEach { e -> account.localAi.environmentValue(e.id)?.let { v -> envValues[e.id] = v } }
             val sessionId = mutable.value.runtimeSessionId ?: when (val created = api.createSession(account.binding.userId, account.generation, "Zephyr One")) {
                 is ApiResult.Success -> created.value.id
                 is ApiResult.Failure -> return fail(created)

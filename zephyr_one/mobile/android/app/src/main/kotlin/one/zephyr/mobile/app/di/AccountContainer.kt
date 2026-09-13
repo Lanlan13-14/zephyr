@@ -302,7 +302,7 @@ class AccountContainer(
     /** Local ⇄ mirror AI-entity wiring (provider/memory/skill/env/todo):
      * merge after each sync round, push on local writes. No-op while
      * unbound; push additionally requires syncFromMainEnabled. */
-    val aiEntitySync: AiEntitySyncCoordinator = AiEntitySyncCoordinator(
+    internal val aiEntitySync: AiEntitySyncCoordinator = AiEntitySyncCoordinator(
         scope = accountScope,
         localAi = localAi,
         ownedAi = ownedAi,

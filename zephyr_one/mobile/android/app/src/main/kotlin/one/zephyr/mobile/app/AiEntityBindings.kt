@@ -16,6 +16,7 @@ import one.zephyr.mobile.model.AiSkill
 import one.zephyr.mobile.model.AiTodo
 import one.zephyr.mobile.model.AiModel
 import one.zephyr.mobile.model.AiProviderConfig
+import one.zephyr.mobile.model.SecretState
 import one.zephyr.mobile.model.SecretState.Replace
 
 /**
