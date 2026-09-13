@@ -79,6 +79,7 @@ func TestKindChannelMappingCoversRegistry(t *testing.T) {
 		codec.KindSharedNote:     codec.ChannelSharedNote,
 		codec.KindSharedFile:     codec.ChannelSharedFile,
 		codec.KindAI:             codec.ChannelAI,
+		codec.KindAgentTunnel:    codec.ChannelAgentTunnel,
 	}
 	for kind, want := range cases {
 		if !codec.HasKind(kind) {
@@ -89,7 +90,7 @@ func TestKindChannelMappingCoversRegistry(t *testing.T) {
 			t.Fatalf("kind %d channel=%v want %v", kind, got, want)
 		}
 	}
-	if codec.HasKind(16) || codec.HasKind(0) {
+	if codec.HasKind(17) || codec.HasKind(0) {
 		t.Fatal("unallocated kind reported as registered")
 	}
 }

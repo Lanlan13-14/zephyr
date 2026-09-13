@@ -22,6 +22,7 @@ const {
     FLAG_RESPONSE: ZFT2_FLAG_RESPONSE,
     encodeFrame: encodeZft2Frame,
     decodeFrame: decodeZft2Frame,
+    HEADER_BYTES: ZFT2_HEADER_BYTES,
 } = require('./file-transfer-protocol');
 
 const HEARTBEAT_INTERVAL_MS = 15000;
@@ -280,7 +281,7 @@ function validateHelloMessage(hello) {
     if (!isPlainObject(hello)) return false;
     const allowed = new Set([
         'type', 'protocolVersion', 'token', 'deviceId', 'deviceName',
-        'platform', 'appVersion', 'capabilities', 'share',
+        'platform', 'appVersion', 'capabilities', 'share', 'linkSessionId',
     ]);
     if (Object.keys(hello).some((key) => !allowed.has(key))) return false;
     if (hello.type !== 'hello' || ![1, 2].includes(hello.protocolVersion)) return false;
@@ -289,11 +290,14 @@ function validateHelloMessage(hello) {
     if (!validateBoundedString(hello.deviceName, 256)) return false;
     if (!validateBoundedString(hello.platform, 64)) return false;
     if (!validateBoundedString(hello.appVersion, 64)) return false;
+    // The ZSL/2 session id the Agent established through its embedded Link
+    // runtime; optional but must be a sane string when present.
+    if (hello.linkSessionId != null && !validateBoundedString(hello.linkSessionId, 128)) return false;
     if (hello.capabilities != null) {
         if (!isPlainObject(hello.capabilities)) return false;
         const booleanCapabilities = new Set([
             'read', 'write', 'delete', 'rename', 'mkdir', 'truncate', 'binary',
-            'binaryRead', 'binaryWrite', 'cancel', 'creditFlow',
+            'binaryRead', 'binaryWrite', 'cancel', 'creditFlow', 'bastion', 'linkFileBridge', 'zft2Lane',
         ]);
         for (const [key, value] of Object.entries(hello.capabilities)) {
             if (booleanCapabilities.has(key)) {
@@ -324,6 +328,7 @@ class FileAgentConnection {
         this.appVersion = hello.appVersion || '0.0.0';
         this.capabilities = hello.capabilities || { read: true };
         this.share = hello.share || { name: 'Agent', readOnly: true };
+        this.linkSessionId = typeof hello.linkSessionId === 'string' ? hello.linkSessionId : null;
         this.ownerId = null; // set after token validation
         this.ownerUsername = '';
         this.tokenId = null;
@@ -337,6 +342,11 @@ class FileAgentConnection {
         this.maxChunkSize = Math.max(64 * 1024, Math.min(1024 * 1024, Number(this.capabilities.maxChunkSize || 1024 * 1024)));
         this.heartbeatTimer = null;
         this.heartbeatMissCount = 0;
+        /* Link-lane transport: when set, all ZFT2 frames ride the encrypted
+         * Link tunnel (zft2 lane) instead of the public WebSocket. The WS then
+         * carries hello/heartbeat/online state only. */
+        this.linkLane = null;
+        this.linkLaneBuf = Buffer.alloc(0);
     }
 
     get online() {
@@ -361,6 +371,8 @@ class FileAgentConnection {
             lastSeenAt: this.lastSeenAt,
             tokenId: this.tokenId,
             tokenName: this.tokenName,
+            bastionEnabled: this.capabilities.bastion === true,
+            linkSessionId: this.linkSessionId || undefined,
         };
     }
 
@@ -422,6 +434,59 @@ class FileAgentConnection {
         });
     }
 
+    /**
+     * Move one Agent's ZFT2 data plane onto the encrypted Link zft2 lane.
+     * Falls back to the legacy WebSocket only when the lane cannot be opened
+     * (Agent without the embedded runtime, Go service down); the attach is
+     * retried on the next reconnect.
+     */
+    /** Send one ZFT2 frame: over the encrypted Link lane when attached, else
+     * the legacy WebSocket. One switch, no dual-path data flow. */
+    _sendZft2(frame, wsCallback = null) {
+        if (this.linkLane) {
+            this.linkLane.write(frame);
+            return;
+        }
+        if (wsCallback) this.ws.send(frame, { binary: true }, wsCallback);
+        else this.ws.send(frame, { binary: true });
+    }
+
+    /** Attach the encrypted Link lane; all ZFT2 bytes switch to it. */
+    attachLinkLane(socket) {
+        this.detachLinkLane();
+        this.linkLane = socket;
+        this.linkLaneBuf = Buffer.alloc(0);
+        socket.on('data', (chunk) => this._onLinkLaneData(chunk));
+        socket.on('error', () => this.detachLinkLane());
+        socket.on('close', () => this.detachLinkLane());
+    }
+
+    /** Drop the Link lane; caller may retry attaching a fresh one. */
+    detachLinkLane() {
+        if (this.linkLane) {
+            try { this.linkLane.destroy(); } catch {}
+            this.linkLane = null;
+        }
+        this.linkLaneBuf = Buffer.alloc(0);
+    }
+
+    /** Feed tunnel bytes into the ZFT2 framer; frames are self-delimiting
+     * (magic + meta/payload lengths), so stream boundaries are exact. */
+    _onLinkLaneData(chunk) {
+        this.linkLaneBuf = this.linkLaneBuf.length ? Buffer.concat([this.linkLaneBuf, chunk]) : chunk;
+        for (;;) {
+            if (this.linkLaneBuf.length < ZFT2_HEADER_BYTES) return;
+            const metaLength = this.linkLaneBuf.readUInt32BE(12);
+            const payloadLength = this.linkLaneBuf.readUInt32BE(16);
+            const total = HEADER_BYTES + metaLength + payloadLength;
+            if (total > 33 * 1024 * 1024) { this.detachLinkLane(); return; }
+            if (this.linkLaneBuf.length < total) return;
+            const frame = this.linkLaneBuf.subarray(0, total);
+            this.linkLaneBuf = this.linkLaneBuf.subarray(total);
+            try { this.handleBinaryV2(frame); } catch {}
+        }
+    }
+
     /** Send a protocol-v2 binary request to the Agent. */
     callBinaryV2(type, meta, payload, timeoutMs) {
         // Wait for a free in-flight slot instead of immediately rejecting with
@@ -465,12 +530,14 @@ class FileAgentConnection {
                         if (settled) return;
                         clearTimeout(timer);
                         this.pendingRequests.delete(id);
-                        try { this.ws.send(encodeZft2Frame({ type: ZFT2_OP.CANCEL, requestId: this.nextRequestId++ >>> 0, meta: { targetRequestId: id } })); } catch {}
+                        try {
+                            this._sendZft2(encodeZft2Frame({ type: ZFT2_OP.CANCEL, requestId: this.nextRequestId++ >>> 0, meta: { targetRequestId: id } }));
+                        } catch {}
                         finishReject(new AgentError('cancelled', 'File request cancelled'));
                     };
 
                     try {
-                        this.ws.send(frame, { binary: true }, (err) => {
+                        this._sendZft2(frame, (err) => {
                             if (!err || settled) return;
                             clearTimeout(timer);
                             this.pendingRequests.delete(id);
@@ -621,11 +688,33 @@ class FileAgentManager {
         this.boundTokenDb = null;
         this.teardownTimeoutMs = Math.max(10, Number(options.teardownTimeoutMs || 2000));
         this.blockedOwnerIds = new Set();
+        /** Encrypted Link lane transport hooks (injected by server.js). */
+        this.linkTunnelDial = typeof options.linkTunnelDial === 'function' ? options.linkTunnelDial : null;
+        this.linkTunnelAttach = typeof options.linkTunnelAttach === 'function' ? options.linkTunnelAttach : null;
 
         this._loadTokens();
     }
 
     // ─── Token Management ────────────────────────────────────────────
+
+    /**
+     * Move one Agent's ZFT2 data plane onto the encrypted Link zft2 lane.
+     * Falls back to the legacy WebSocket only when the lane cannot be opened
+     * (Agent without the embedded runtime, Go service down); the attach is
+     * retried on the next reconnect.
+     */
+    async _attachAgentLinkLane(conn) {
+        if (!this.linkTunnelDial || !this.linkTunnelAttach) throw new Error('link tunnel unavailable');
+        try {
+            await this.linkTunnelAttach(conn.linkSessionId);
+        } catch (err) {
+            if (!/already attached/.test(String(err?.message || ''))) throw err;
+        }
+        const socket = await this.linkTunnelDial('', 0, 12000, 'zft2');
+        if (!socket || socket.destroyed) throw new Error('link lane socket dead on arrival');
+        conn.attachLinkLane(socket);
+        this.log('[file-agent] ZFT2 moved to encrypted Link lane:', conn.agentId);
+    }
 
     _loadTokens() {
         try {
@@ -1297,6 +1386,15 @@ class FileAgentManager {
         }
         this.ownerAgents.get(ownerId).add(agentId);
 
+        // Single-channel migration: an Agent with an attested Link session
+        // moves its entire ZFT2 data plane onto the encrypted zft2 lane. The
+        // public WebSocket keeps hello/heartbeat/online state only.
+        if (conn.linkSessionId && conn.capabilities?.linkFileBridge === true) {
+            this._attachAgentLinkLane(conn).catch((err) => {
+                this.log('[file-agent] link lane attach failed:', err.code || err.message);
+            });
+        }
+
         // Start heartbeat monitor
         conn.heartbeatTimer = setInterval(() => {
             conn.heartbeatMissCount++;
@@ -1526,6 +1624,16 @@ class FileAgentManager {
         return result;
     }
 
+    /**
+     * Return online Agents explicitly opted in as bastion candidates.
+     * This is deliberately separate from file-agent discovery so callers
+     * cannot accidentally treat every online file share as a network hop.
+     */
+    listBastionAgentsForUser(ownerId) {
+        return this.listAgentsForUser(ownerId).filter((agent) =>
+            agent.capabilities?.bastion === true && agent.bastionEnabled === true);
+    }
+
     /** Get a specific agent's info. */
     getAgentInfo(agentId) {
         const conn = this.agents.get(agentId);
@@ -1545,6 +1653,26 @@ class FileAgentManager {
         return this._connectionOwnedBy(conn, user);
     }
 
+    /**
+     * Send a file operation to an Agent selected by the encrypted Link lane.
+     * This deliberately shares only the ZFT2 wire implementation with the
+     * regular file API; callers cannot silently fall back to legacy JSON RPC.
+     */
+    callLinkFileBridge(agentId, method, params = {}, timeoutMs = RPC_READ_TIMEOUT_MS) {
+        const conn = this.agents.get(agentId);
+        if (!conn || !conn.online) {
+            return { promise: Promise.reject(new AgentError('agent_offline', `Agent ${agentId} is not connected`)), cancel() {} };
+        }
+        if (conn.capabilities?.linkFileBridge !== true || conn.capabilities?.binary !== true) {
+            return { promise: Promise.reject(new AgentError('agent_link_required', 'Agent Link file bridge is not available')), cancel() {} };
+        }
+        const operation = this.callAgentV2(agentId, method, params, timeoutMs);
+        // Keep this as a distinct API even though the wire operation is ZFT2:
+        // Link dispatchers must opt into this capability explicitly and may not
+        // accidentally fall back to legacy JSON RPC.
+        return operation;
+    }
+
     /** Protocol-v2 operation with explicit cancellation. */
     callAgentV2(agentId, method, params = {}, timeoutMs = RPC_READ_TIMEOUT_MS) {
         const conn = this.agents.get(agentId);
@@ -1562,6 +1690,7 @@ class FileAgentManager {
             open: ZFT2_OP.OPEN, readBinary: ZFT2_OP.READ, writeBinary: ZFT2_OP.WRITE,
             close: ZFT2_OP.CLOSE, stat: ZFT2_OP.STAT, list: ZFT2_OP.LIST,
             mkdir: ZFT2_OP.MKDIR, delete: ZFT2_OP.DELETE, rename: ZFT2_OP.RENAME,
+            ping: ZFT2_OP.PING,
             truncate: ZFT2_OP.TRUNCATE,
         };
         const type = map[method];
@@ -1633,6 +1762,13 @@ class FileAgentManager {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             res.json({ ok: true, agents: this.listAgentsForUser(user) });
+        });
+
+        // GET /api/rdp/agent-bastions — explicitly opted-in online Agent hops
+        app.get('/api/rdp/agent-bastions', requireUser, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            res.json({ ok: true, agents: this.listBastionAgentsForUser(user) });
         });
 
         // GET /api/rdp/file-agent-tokens — list named agent tokens

@@ -41,7 +41,7 @@ function resolveBin() {
 }
 
 class GoLinkProcess {
-    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeUrlReady = null, syncBridgeToken = '' } = {}) {
+    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeUrlReady = null, syncBridgeToken = '', fileBridgeUrl = '', fileBridgeUrlReady = null, fileBridgeToken = '' } = {}) {
         this.log = log || (() => {});
         this.proc = null;
         this.addr = null;
@@ -52,7 +52,9 @@ class GoLinkProcess {
         this.syncBridgeUrl = syncBridgeUrl;
         this.syncBridgeUrlReady = syncBridgeUrlReady;
         this.syncBridgeToken = syncBridgeToken;
-        this.starting = null;
+        this.fileBridgeUrl = fileBridgeUrl;
+        this.fileBridgeUrlReady = fileBridgeUrlReady;
+        this.fileBridgeToken = fileBridgeToken;
     }
 
     async ensureStarted() {
@@ -66,6 +68,9 @@ class GoLinkProcess {
         if (this.syncBridgeUrlReady) {
             this.syncBridgeUrl = await this.syncBridgeUrlReady;
         }
+        if (this.fileBridgeUrlReady) {
+            this.fileBridgeUrl = await this.fileBridgeUrlReady;
+        }
         const bin = resolveBin();
         if (!bin) throw Object.assign(new Error('link-go-binary-missing'), { code: 'link_go_missing' });
         const proc = spawn(bin, [], {
@@ -78,6 +83,8 @@ class GoLinkProcess {
                  * which makes a SYNC_OP a clean dispatch error rather than a hang. */
                 ZEPHYR_LINK_SYNC_BRIDGE: this.syncBridgeUrl,
                 ZEPHYR_LINK_SYNC_TOKEN: this.syncBridgeToken,
+                ZEPHYR_LINK_FILE_BRIDGE: this.fileBridgeUrl,
+                ZEPHYR_LINK_FILE_TOKEN: this.fileBridgeToken,
             },
             stdio: ['ignore', 'pipe', 'inherit'],
         });
@@ -123,8 +130,8 @@ function stopLinkV2Go() {
     if (shared.proc) { shared.proc.stop(); shared.proc = null; }
 }
 
-function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken } = {}) {
-    const proc = sharedProcess(log, { adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken });
+function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken, fileBridgeUrl, fileBridgeUrlReady, fileBridgeToken } = {}) {
+    const proc = sharedProcess(log, { adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken, fileBridgeUrl, fileBridgeUrlReady, fileBridgeToken });
     // Devices the Go service is known to hold this process lifetime, so we only
     // re-register once per device per restart instead of on every handshake.
     // Value is true once the ES256 JWK has been pushed; an id-only registration
@@ -288,4 +295,70 @@ function proxyLinkV2Stream(ws, req) {
     })().catch(() => { try { ws.close(1011, 'link-unavailable'); } catch {} });
 }
 
-module.exports = { createLinkV2GoProxy, proxyLinkV2Stream, GoLinkProcess, stopLinkV2Go };
+/* Agent bastion tunnel management: the Node front end asks the Go service to
+ * attach an Agent stream session and dial through it. Bytes returning from
+ * the hijacked loopback socket are tunnel plaintext only between Node and the
+ * Go process on 127.0.0.1; over the network every tunnel byte is sealed under
+ * ZSL/2 inside AGENT_TUNNEL frames. */
+async function linkTunnelAttach(sessionId) {
+    const proc = sharedProcess();
+    const addr = await proc.ensureStarted();
+    const [host, port] = addr.split(':');
+    const body = JSON.stringify({ sessionId });
+    return new Promise((resolve, reject) => {
+        const req = http.request({
+            host, port: Number(port), path: '/internal/tunnel/attach', method: 'POST',
+            headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-link-admin': proc.adminToken },
+        }, (res) => {
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => {
+                const text = Buffer.concat(chunks).toString('utf8');
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    try { resolve(JSON.parse(text)); } catch { resolve({ ok: true }); }
+                } else {
+                    let message = text;
+                    try { message = JSON.parse(text).error?.message || text; } catch {}
+                    reject(Object.assign(new Error(message), { code: 'tunnel_attach_failed' }));
+                }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(5000, () => req.destroy(new Error('tunnel attach timeout')));
+        req.write(body); req.end();
+    });
+}
+
+/* Dial a tunnel through an attached Agent session; resolves a net.Socket whose
+ * bytes are piped through the Go tunnel hub to the Agent's TCP dial. */
+async function linkTunnelDial(host_, port_, timeoutMs = 12000, lane = '') {
+    const proc = sharedProcess();
+    const addr = await proc.ensureStarted();
+    const [host, port] = addr.split(':');
+    const body = JSON.stringify({ host: host_, port: port_, lane });
+    return new Promise((resolve, reject) => {
+        const req = http.request({
+            host, port: Number(port), path: '/internal/tunnel/dial', method: 'POST',
+            headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-link-admin': proc.adminToken },
+        });
+        req.on('upgrade', (res, socket) => {
+            socket.setTimeout(0);
+            resolve(socket);
+        });
+        req.on('response', (res) => {
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => {
+                const text = Buffer.concat(chunks).toString('utf8');
+                let message = text;
+                try { message = JSON.parse(text).error?.message || text; } catch {}
+                reject(Object.assign(new Error(message), { code: 'tunnel_dial_failed' }));
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(timeoutMs, () => req.destroy(new Error('tunnel dial timeout')));
+        req.write(body); req.end();
+    });
+}
+
+module.exports = { createLinkV2GoProxy, proxyLinkV2Stream, GoLinkProcess, stopLinkV2Go, linkTunnelAttach, linkTunnelDial };

@@ -55,6 +55,10 @@ const (
 	// KindAI carries a shared-AI event/trace/confirmation frame. The provider key
 	// and resolved credential stay on the broker.
 	KindAI = 15
+	// KindAgentTunnel carries an Agent bastion tunnel byte stream: TCP segments
+	// between the main end and an enrolled Agent, sealed end-to-end by ZSL/2.
+	// The tunnel data plane rides the Link stream channel exclusively.
+	KindAgentTunnel = 16
 )
 
 const (
@@ -79,6 +83,7 @@ const (
 	ChannelSharedNote     Channel = "shared-note"
 	ChannelSharedFile     Channel = "shared-file"
 	ChannelAI             Channel = "ai"
+	ChannelAgentTunnel    Channel = "agent-tunnel"
 )
 
 // kindChannel is the single source of truth for kind→channel. A kind absent
@@ -99,6 +104,7 @@ var kindChannel = map[int]Channel{
 	KindSharedNote:     ChannelSharedNote,
 	KindSharedFile:     ChannelSharedFile,
 	KindAI:             ChannelAI,
+	KindAgentTunnel:    ChannelAgentTunnel,
 }
 
 // HasKind reports whether kind is a registered business frame kind.

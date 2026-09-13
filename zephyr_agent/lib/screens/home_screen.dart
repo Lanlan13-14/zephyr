@@ -356,6 +356,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildShutdownCard(ctrl, accent),
                 const SizedBox(height: 16),
 
+                // Optional bastion advertisement
+                _buildBastionCard(ctrl, isActive, accent),
+                const SizedBox(height: 16),
+
                 // Transfer stats
                 if (ctrl.transferCount > 0)
                   _buildStatsCard(ctrl, accent),
@@ -606,6 +610,37 @@ class _HomeScreenState extends State<HomeScreen> {
               value: ctrl.config.autoShutdown,
               onChanged: ctrl.status.isActive ? null : (v) {
                 setState(() => ctrl.config.autoShutdown = v);
+                _saveConfig(ctrl);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBastionCard(AgentController ctrl, bool isActive, Color accent) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(Icons.alt_route, color: accent, size: 20),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('作为跳板机', style: TextStyle(fontSize: 14)),
+                  SizedBox(height: 3),
+                  Text('允许主端和 Zephyr One 选择此在线 Agent 建立跳板链路', style: TextStyle(fontSize: 11)),
+                ],
+              ),
+            ),
+            Switch(
+              value: ctrl.config.bastionEnabled,
+              onChanged: isActive ? null : (v) {
+                setState(() => ctrl.config.bastionEnabled = v);
                 _saveConfig(ctrl);
               },
             ),

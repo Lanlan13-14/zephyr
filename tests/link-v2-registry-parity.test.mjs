@@ -42,6 +42,7 @@ test('Node KIND registry matches the Go codec registry', () => {
         KindSharedNote: codec.KIND.SHARED_NOTE,
         KindSharedFile: codec.KIND.SHARED_FILE,
         KindAI: codec.KIND.AI,
+        KindAgentTunnel: codec.KIND.AGENT_TUNNEL,
     };
     for (const [name, nodeVal] of Object.entries(expect)) {
         assert.ok(name in goKinds, `Go registry missing ${name}`);
@@ -70,7 +71,7 @@ test('Node kind→channel mapping matches the Go kindChannel table', () => {
         RELAY: 'KindRelay', CONTROL: 'KindControl', SECRET: 'KindSecret',
         FILE_BRIDGE: 'KindFileBridge', SHARED_TERMINAL: 'KindSharedTerminal',
         SHARED_REMOTE: 'KindSharedRemote', SHARED_NOTE: 'KindSharedNote',
-        SHARED_FILE: 'KindSharedFile', AI: 'KindAI',
+        SHARED_FILE: 'KindSharedFile', AI: 'KindAI', AGENT_TUNNEL: 'KindAgentTunnel',
     };
     for (const [nodeName, goName] of Object.entries(nodeToGo)) {
         const nodeChan = codec.channelOf(codec.KIND[nodeName]);

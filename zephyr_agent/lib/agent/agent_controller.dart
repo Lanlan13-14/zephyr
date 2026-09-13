@@ -4,7 +4,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
@@ -12,6 +11,8 @@ import 'package:uuid/uuid.dart';
 import 'agent_state.dart';
 import '../fs/file_provider.dart';
 import 'file_transfer_protocol.dart';
+import 'platform_link_file_runtime.dart';
+import 'zft2_link_lane.dart';
 import '../app/agent_version.dart';
 
 class AgentController extends ChangeNotifier {
@@ -42,6 +43,10 @@ class AgentController extends ChangeNotifier {
 
   // File provider
   ZephyrFileProvider? _fileProvider;
+  final PlatformLinkFileRuntime _linkRuntime = PlatformLinkFileRuntime();
+  bool get linkFileBridgeReady => _linkRuntime.ready;
+  bool _bastionTunnelStarted = false;
+  Zft2LinkLaneClient? _zft2Lane;
   final Map<int, Future<void>> _zft2Tasks = {};
   /// Per-path serial queues for mutating ops. Write/close/truncate/open on the
   /// same file must not race — Explorer issues FileEndOfFileInformation
@@ -149,8 +154,17 @@ class AgentController extends ChangeNotifier {
     try {
       final normalizedServerUrl = normalizeServerUrl(_config.serverUrl);
       if (normalizedServerUrl.isEmpty) throw const FormatException('主端地址为空');
-      final uri = agentWebSocketUriForServerUrl(normalizedServerUrl);
       _config.serverUrl = normalizedServerUrl;
+      final deviceId = const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
+      // Establish the existing ZSL/2 session before advertising FileBridge.
+      // Enrollment/proof failures keep the legacy share alive but fail closed
+      // for Link file operations.
+      try {
+        await _linkRuntime.connect(serverUrl: normalizedServerUrl, deviceId: deviceId);
+      } catch (_) {
+        await _linkRuntime.close();
+      }
+      final uri = agentWebSocketUriForServerUrl(normalizedServerUrl);
       final customClient = _config.allowBadCertificates && uri.scheme == 'wss'
           ? (HttpClient()..badCertificateCallback = (_, __, ___) => true)
           : null;
@@ -180,6 +194,9 @@ class AgentController extends ChangeNotifier {
   Future<void> _disconnect() async {
     _channelSub?.cancel();
     _channelSub = null;
+    await _zft2Lane?.close();
+    _zft2Lane = null;
+    await _linkRuntime.close();
     try {
       await _channel?.sink.close();
     } catch (_) {}
@@ -198,6 +215,10 @@ class AgentController extends ChangeNotifier {
       'deviceName': _config.deviceName,
       'platform': _platformName(),
       'appVersion': AgentVersion.version,
+      // The ZSL/2 session id the Agent's embedded Go runtime established with
+      // this server. The bastion lane keys the encrypted tunnel off it; absent
+      // when enrollment/proof failed — the server must then refuse bastion use.
+      'linkSessionId': _linkRuntime.sessionId,
       'capabilities': {
         'read': true,
         'write': !_config.readOnly,
@@ -210,7 +231,13 @@ class AgentController extends ChangeNotifier {
         'binaryWrite': true,
         'cancel': true,
         'creditFlow': true,
-        // ZFT2 travels over a plain WebSocket — not through Android's
+        // Explicit opt-in. The server only advertises this Agent as a bastion
+        // when the operator enables it in settings.
+        'bastion': _config.bastionEnabled,
+        'linkFileBridge': _linkRuntime.ready,
+        // This Agent's file frames ride the encrypted Link zft2 lane; the
+        // server may then treat the WebSocket as control-only.
+        'zft2Lane': _linkRuntime.ready,        // ZFT2 travels over a plain WebSocket — not through Android's
         // MethodChannel/Binder.  The old Android=4 cap was protecting against
         // Binder TransactionTooLargeException, but that path is never taken
         // for ZFT2 traffic.  Raising to 8 matches desktop Agents and lets the
@@ -263,7 +290,15 @@ class AgentController extends ChangeNotifier {
     }
   }
 
-  void _handleZft2Frame(Zft2Frame frame) {
+  void _handleZft2Frame(Zft2Frame frame, {int? laneId}) {
+    void respond(Uint8List bytes) {
+      if (laneId != null) {
+        _zft2Lane?.reply(laneId, bytes);
+      } else {
+        _sendBytes(bytes);
+      }
+    }
+
     if (frame.isResponse) return;
     if (frame.type == Zft2Op.cancel) {
       final target = (frame.meta['targetRequestId'] as num?)?.toInt() ?? -1;
@@ -271,17 +306,17 @@ class AgentController extends ChangeNotifier {
       return;
     }
     if (_zft2Tasks.length >= 8) {
-      _sendBytes(encodeZft2Error(frame, 'busy', 'Agent request window is full', retryable: true));
+      respond(encodeZft2Error(frame, 'busy', 'Agent request window is full', retryable: true));
       return;
     }
     Future<void> run() async {
       try {
         final response = await _dispatchZft2(frame);
-        if (!_zft2Cancelled.contains(frame.requestId)) _sendBytes(response);
+        if (!_zft2Cancelled.contains(frame.requestId)) respond(response);
       } catch (e) {
         final code = e is FileProviderException ? e.code : 'internal_error';
         if (!_zft2Cancelled.contains(frame.requestId)) {
-          _sendBytes(encodeZft2Error(frame, code, e.toString()));
+          respond(encodeZft2Error(frame, code, e.toString()));
         }
       } finally {
         _zft2Tasks.remove(frame.requestId);
@@ -443,12 +478,66 @@ class AgentController extends ChangeNotifier {
       _reconnectAttempts = 0;
       _startHeartbeat();
       _startShutdownTimer();
+      _maybeStartBastionTunnel();
+      // Single Link channel: the ZFT2 file plane rides the encrypted lane as
+      // soon as the session exists; the public WebSocket stays control-only.
+      _connectZft2Lane();
     } else {
       final error = msg['error'] as Map<String, dynamic>?;
       _errorMessage = error?['message'] as String? ?? 'Authentication failed';
       _setStatus(AgentStatus.error);
       // Don't reconnect on auth failure
     }
+  }
+
+  /// Boots the encrypted bastion tunnel once both channels are up: the Agent
+  /// WebSocket (auth + capability) and the ZSL/2 Link session (crypto). All
+  /// bastion bytes thereafter ride sealed AGENT_TUNNEL frames on the Link
+  /// stream — never the legacy file WebSocket.
+  void _maybeStartBastionTunnel() {
+    if (!_config.bastionEnabled) return;
+    if (!_linkRuntime.ready) return;
+    if (_bastionTunnelStarted) return;
+    _bastionTunnelStarted = true;
+    unawaited(() async {
+      try {
+        await _linkRuntime.startTunnel();
+        _linkRuntime.markTunnelUp();
+      } catch (e) {
+        _bastionTunnelStarted = false;
+        if (kDebugMode) {
+          print('[agent-bastion] tunnel start failed: $e');
+        }
+      }
+    }());
+  }
+
+  /// Connects the ZFT2 lane mirror so the file dispatcher serves the main
+  /// end's requests over the encrypted Link instead of the public WebSocket.
+  void _connectZft2Lane() {
+    if (_zft2Lane != null) return;
+    final lane = Zft2LinkLaneClient(
+      onFrame: _onZft2LaneFrame,
+      onLost: () { _zft2Lane = null; _connectZft2Lane(); },
+    );
+    _zft2Lane = lane;
+    unawaited(() async {
+      try {
+        await lane.connect();
+      } catch (_) {
+        _zft2Lane = null;
+      }
+    }());
+  }
+
+  void _onZft2LaneFrame(int laneId, Uint8List frameBytes) {
+    Zft2Frame frame;
+    try {
+      frame = decodeZft2Frame(frameBytes);
+    } catch (_) {
+      return;
+    }
+    _handleZft2Frame(frame, laneId: laneId);
   }
 
   void _handleRequest(Map<String, dynamic> msg) async {

@@ -32,6 +32,9 @@ class AgentConfig {
   bool autoShutdown;
   int autoShutdownMinutes;
   bool allowBadCertificates;
+  /// Advertise this Agent as an optional SSH/SFTP bastion candidate.
+  /// Disabled by default; enabling never changes the file-share ACL.
+  bool bastionEnabled;
 
   AgentConfig({
     this.serverUrl = '',
@@ -43,6 +46,7 @@ class AgentConfig {
     this.autoShutdown = true,
     this.autoShutdownMinutes = 10,
     this.allowBadCertificates = true,
+    this.bastionEnabled = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -55,6 +59,7 @@ class AgentConfig {
     'autoShutdown': autoShutdown,
     'autoShutdownMinutes': autoShutdownMinutes,
     'allowBadCertificates': allowBadCertificates,
+    'bastionEnabled': bastionEnabled,
   };
 
   factory AgentConfig.fromJson(Map<String, dynamic> json) => AgentConfig(
@@ -67,5 +72,6 @@ class AgentConfig {
     autoShutdown: json['autoShutdown'] as bool? ?? true,
     autoShutdownMinutes: json['autoShutdownMinutes'] as int? ?? 10,
     allowBadCertificates: json['allowBadCertificates'] as bool? ?? true,
+    bastionEnabled: json['bastionEnabled'] as bool? ?? false,
   );
 }

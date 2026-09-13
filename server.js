@@ -165,8 +165,9 @@ const {
 const { OneClientManager } = require('./one-client-manager');
 const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
 const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-enrollment');
-const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go } = require('./link-v2-go-proxy');
+const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go, linkTunnelDial, linkTunnelAttach } = require('./link-v2-go-proxy');
 const { createLinkSyncBridge } = require('./link-v2-sync-bridge');
+const { createLinkFileBridge } = require('./link-v2-file-bridge');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 const { MobileV1OutboxDispatcher } = require('./mobile-v1-outbox-dispatcher');
 const { AppChangeWakeHub, registerAppChangeWakeRoute } = require('./app-change-wake-hub');
@@ -537,6 +538,8 @@ function createFileAgentManager() {
             ));
             return { ...candidate, legacyOwnerAllowed: !usernameWasRecycled };
         },
+        linkTunnelDial: (host, port, timeoutMs, lane) => linkTunnelDial(host, port, timeoutMs, lane),
+        linkTunnelAttach: (sessionId) => linkTunnelAttach(sessionId),
     });
 }
 let fileTransferGateway = null;
@@ -2608,7 +2611,7 @@ function createSocketHandshakeReader(socket, timeout, signal = null, maxBuffered
 
 function normalizeProxyType(type) {
     const value = String(type || 'socks5').toLowerCase();
-    return ['socks5', 'http'].includes(value) ? value : 'socks5';
+    return ['socks5', 'http', 'agent'].includes(value) ? value : 'socks5';
 }
 
 async function openSocks5Connection(proxy, targetHost, targetPort, timeout = 10000, signal = null) {
@@ -2696,7 +2699,37 @@ async function openHttpProxyConnection(proxy, targetHost, targetPort, timeout = 
 function openProxyConnection(proxy, targetHost, targetPort, timeout = 10000, signal = null) {
     const type = normalizeProxyType(proxy?.type);
     if (type === 'http') return openHttpProxyConnection(proxy, targetHost, targetPort, timeout, signal);
+    if (type === 'agent') return openAgentBastionConnection(proxy, targetHost, targetPort, timeout, signal);
     return openSocks5Connection(proxy, targetHost, targetPort, timeout, signal);
+}
+
+/* Agent bastion lane: the tunnel rides the encrypted Link stream all the way
+ * to the Agent, which performs the TCP dial inside the user's own network.
+ * Unlike SOCKS/HTTP proxies, no bastion credential ever reaches the Node
+ * surface; the Agent's Link enrollment is the only identity involved. */
+async function openAgentBastionConnection(proxy, targetHost, targetPort, timeout = 10000, signal = null) {
+    const agentId = String(proxy?.agentId || proxy?.host || '');
+    if (!agentId) throw new Error('Agent 跳板配置缺少 agentId');
+    const agent = fileAgentManager ? fileAgentManager.getAgent(agentId) : null;
+    if (!agent || !agent.online) throw new Error(`Agent 跳板不在线：${agent?.deviceName || agentId}`);
+    if (agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) {
+        throw new Error(`Agent 未启用跳板能力：${agent.deviceName || agentId}`);
+    }
+    const linkSessionId = agent.linkSessionId;
+    if (!linkSessionId) throw new Error('Agent Link 会话未建立，无法建立加密隧道');
+    console.debug('[agent-bastion]', 'open Link tunnel', { agentId, targetHost, targetPort });
+
+    const { linkTunnelAttach, linkTunnelDial } = require('./link-v2-go-proxy');
+    try {
+        await linkTunnelAttach(linkSessionId);
+    } catch (err) {
+        if (!/already attached/.test(String(err?.message || ''))) throw err;
+    }
+    const socket = await linkTunnelDial(String(targetHost || ''), Number(targetPort) || 22, Math.max(timeout, 12000));
+    const onAbort = () => { try { socket.destroy(); } catch {} };
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+    socket.once('close', () => signal?.removeEventListener?.('abort', onAbort));
+    return socket;
 }
 
 async function dialLiveTelnet(conn, { timeout = 10000, cols = 80, rows = 24, signal = null } = {}) {
@@ -6746,8 +6779,23 @@ app.post('/api/remote-execute', requireUser, async (req, res) => {
 app.get('/api/proxies', requireUser, (req, res) => res.json({ proxies: resourceService.listOwned(req.user, 'proxy') }));
 app.post('/api/proxies', requireUser, (req, res) => {
     const b = req.body || {};
+    const type = normalizeProxyType(b.type);
+    // Agent bastion entries reference an online opted-in Agent instead of a
+    // host:port; the target dial happens inside the Agent's network over the
+    // encrypted Link tunnel.
+    if (type === 'agent') {
+        if (!b.name || !b.agentId) return res.status(400).json({ error: '名称和 Agent 不能为空' });
+        const agent = fileAgentManager ? fileAgentManager.getAgent(String(b.agentId)) : null;
+        if (!agent || !agent.online) return res.status(400).json({ error: 'Agent 不在线' });
+        if (agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) {
+            return res.status(400).json({ error: '该 Agent 未启用跳板能力' });
+        }
+        const proxy = resourceService.createOwned(req.user, 'proxy', { id: crypto.randomUUID(), name: String(b.name), host: String(b.agentId), port: 0, type: 'agent', agentId: String(b.agentId), username: '', password: '', createdAt: Date.now(), updatedAt: Date.now() }, { changedSecretFields: [] });
+        addActivity(`新增 Agent 跳板：${proxy.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: 'agent', target: agent.deviceName || String(b.agentId) }));
+        return res.json({ proxy });
+    }
     if (!b.name || !b.host || !b.port) return res.status(400).json({ error: '名称、IP、端口不能为空' });
-    const proxy = resourceService.createOwned(req.user, 'proxy', { id: crypto.randomUUID(), name: String(b.name), host: String(b.host), port: Number(b.port) || 1080, type: normalizeProxyType(b.type), username: String(b.username || ''), password: String(b.password || ''), createdAt: Date.now(), updatedAt: Date.now() }, {
+    const proxy = resourceService.createOwned(req.user, 'proxy', { id: crypto.randomUUID(), name: String(b.name), host: String(b.host), port: Number(b.port) || 1080, type, username: String(b.username || ''), password: String(b.password || ''), createdAt: Date.now(), updatedAt: Date.now() }, {
         changedSecretFields: Object.prototype.hasOwnProperty.call(b, 'password') ? ['password'] : [],
     });
     addActivity(`新增代理：${proxy.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: proxy.type, target: `${proxy.host}:${proxy.port}` }));
@@ -9047,6 +9095,13 @@ try {
         });
         linkInternalApp.use('/internal/link', express.json({ limit: '4mb' }));
         linkInternalApp.post('/internal/link/sync', (req, res) => linkSyncBridge.handle(req, res));
+        const linkFileBridge = createLinkFileBridge({
+            fileAgentManager,
+            storage,
+            adminToken: linkSyncAdminToken,
+            log: (...args) => console.log('[link-file]', ...args),
+        });
+        linkInternalApp.post('/internal/link/file', (req, res) => linkFileBridge.handle(req, res));
         linkInternalServer = http.createServer(linkInternalApp);
         const requestedInternalPort = Number(process.env.ZEPHYR_LINK_INTERNAL_PORT);
         const linkInternalPort = Number.isInteger(requestedInternalPort) && requestedInternalPort >= 0
@@ -9074,6 +9129,8 @@ try {
             adminToken: linkSyncAdminToken,
             syncBridgeUrlReady: linkInternalReady,
             syncBridgeToken: linkSyncAdminToken,
+            fileBridgeUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/file')),
+            fileBridgeToken: linkSyncAdminToken,
             log: (...args) => console.log('[link-v2]', ...args),
         });
         linkV2EnrollmentApi = createLinkV2EnrollmentApi({
