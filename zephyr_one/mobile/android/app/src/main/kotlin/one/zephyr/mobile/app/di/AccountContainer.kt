@@ -517,11 +517,11 @@ class AccountContainer(
 
         override val isEstablished: Boolean get() = session != null
 
-        override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject =
+        override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
+            var result: kotlinx.serialization.json.JsonObject? = null
             pushMutex.withLock {
-                run pushLock@{
-                    var attemptedRedial = false
-                    while (true) {
+                var attemptedRedial = false
+                while (result == null) {
                     val sess = sessionMutex.withLock {
                         session ?: appContainer.embeddedLink.dial(
                             endpoint.baseUrl, binding.deviceId, linkSpkiPins, linkInsecure,
@@ -531,7 +531,7 @@ class AccountContainer(
                         ).also { session = it }
                     }
                     try {
-                        return@pushLock appContainer.embeddedLink.push(
+                        result = appContainer.embeddedLink.push(
                             endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP,
                             body = body, spkiPins = linkSpkiPins, insecure = linkInsecure,
                         ).ack
@@ -552,6 +552,7 @@ class AccountContainer(
                     }
                 }
             }
+            return checkNotNull(result)
         }
     }
 
