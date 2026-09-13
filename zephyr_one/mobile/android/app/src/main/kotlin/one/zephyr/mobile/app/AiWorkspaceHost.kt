@@ -104,8 +104,7 @@ internal object AiWorkspaceBinding {
     ): AiWorkspaceChrome = AiPreferenceMapping.chrome(
         // Local mode obeys the device catalog switch. A bound account uses the server runtime and
         // must not disappear merely because the unrelated local catalog is disabled.
-        enabled = (!localMode || catalogEnabled) && serverEnabled &&
-            flag(prefs, SettingsRepository.PREF_AI_ENABLED, true),
+        enabled = (!localMode || catalogEnabled) && flag(prefs, SettingsRepository.PREF_AI_ENABLED, true),
         provider = text(prefs, SettingsRepository.PREF_AI_PROVIDER),
         model = text(prefs, SettingsRepository.PREF_AI_MODEL),
         collaboration = text(prefs, SettingsRepository.PREF_AI_COLLAB),
