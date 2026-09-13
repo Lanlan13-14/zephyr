@@ -164,6 +164,7 @@ fun FullAiSettingsRoute(
     }
     Section("可选同步"); Card {
         Toggle("从主端同步 AI 数据",if(bound)"开启后把主端 Provider / Memory / Skill / 会话写入本机镜像，本机配置始终可编辑" else "绑定主端后可选；未绑定不影响任何 AI 功能",c.syncFromMainEnabled){save(c.copy(syncFromMainEnabled=it))}
+        Toggle("AI 请求走主端","开启后 AI 请求经主端转发（密钥留在主端）；关闭则本机直连 Provider。共享给我的 Provider 始终走主端",c.requestRouting=="main"){save(c.copy(requestRouting=if(it)"main" else "direct"))}
         if (bound) Nav("主端 AI 数据","Provider / Memory / Skill / 会话镜像状态",AiSettingsPage.MAIN_SYNC,open,false)
     }
 } }

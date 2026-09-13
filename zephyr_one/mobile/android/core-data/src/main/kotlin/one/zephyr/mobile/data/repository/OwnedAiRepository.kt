@@ -84,6 +84,19 @@ class OwnedAiRepository(
     suspend fun listTodosWithTombstones(ownerUserId: String): List<AiTodo> =
         db.mirrorDao().listByTypeWithTombstones(AiTodo.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiTodo)
 
+    /** Tombstone-including variants for the entity-family coordinator. */
+    suspend fun listProvidersWithTombstones(ownerUserId: String): List<AiProvider> =
+        db.mirrorDao().listByTypeWithTombstones(AiProvider.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiProvider)
+
+    suspend fun listMemoriesWithTombstones(ownerUserId: String): List<AiMemory> =
+        db.mirrorDao().listByTypeWithTombstones(AiMemory.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiMemory)
+
+    suspend fun listSkillsWithTombstones(ownerUserId: String): List<AiSkill> =
+        db.mirrorDao().listByTypeWithTombstones(AiSkill.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiSkill)
+
+    suspend fun listEnvWithTombstones(ownerUserId: String): List<AiEnv> =
+        db.mirrorDao().listByTypeWithTombstones(AiEnv.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiEnv)
+
     suspend fun listEnv(ownerUserId: String): List<AiEnv> =
         db.mirrorDao().listByType(AiEnv.ENTITY_TYPE, ownerUserId).map(ResourceMappers::aiEnv)
 

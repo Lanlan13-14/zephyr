@@ -149,9 +149,25 @@ internal class LocalAndroidAiRuntimeController(
     override suspend fun send(text: String) {
         val prompt = text.trim(); if (prompt.isEmpty() || mutable.value.running) return
         catalog = account.localAi.load()
-        val provider = catalog.providers.firstOrNull { it.id == providerId && it.enabled } ?: return error("没有可用的本机 AI Provider")
-        val model = provider.models.firstOrNull { it.id == modelId && !it.hidden } ?: return error("没有可用模型")
-        val apiKey = account.localAi.providerApiKey(provider.id)
+        val shared = account.sharedAiProviders.value.firstOrNull { it.id == providerId }
+        val local = catalog.providers.firstOrNull { it.id == providerId && it.enabled }
+        if (shared == null && local == null) return error("没有可用的本机 AI Provider")
+        /* Routing: shared-to-me ALWAYS relays (the key never leaves the owner's
+         * server, SHARED_RESOURCE_RESIDENCY §22); own providers follow the
+         * per-device requestRouting switch (default direct). */
+        val relay = shared != null || catalog.requestRouting == "main"
+        val provider = local ?: (catalog.defaultProviderId.takeIf { it.isNotBlank() }?.let { id -> catalog.providers.firstOrNull { it.id == id && it.enabled } }
+            ?: catalog.providers.firstOrNull { it.enabled })
+            ?: return error("没有可用的本机 AI Provider")
+        val relayProviderId = shared?.id ?: provider.id
+        /* Model: local providers use the catalog model row; a shared provider
+         * only carries model ids, so a synthetic row is composed here. */
+        val modelRow = provider.models.firstOrNull { it.id == modelId && !it.hidden }
+            ?: provider.models.firstOrNull { !it.hidden }
+            ?: shared?.models?.firstOrNull()?.let { LocalAiModel(id = it) }
+            ?: return error("没有可用模型")
+        val model = modelRow.id
+        val apiKey = if (relay) null else account.localAi.providerApiKey(provider.id)
         val envValues = linkedMapOf<String, CharArray>()
         try {
             val sessionId = mutable.value.runtimeSessionId ?: when (val created = api.createSession(account.binding.userId, account.generation, "Zephyr One")) {
@@ -159,16 +175,22 @@ internal class LocalAndroidAiRuntimeController(
                 is ApiResult.Failure -> return fail(created)
             }
             catalog.environment.filter { it.enabled && it.visibleToAi }.forEach { e -> account.localAi.environmentValue(e.id)?.let { envValues[e.id] = it } }
-            val p = provider.wire(apiKey?.concatToString().orEmpty())
+            val p = if (relay) {
+                /* Relay hop: the wire never carries a credential. The server
+                 * resolves the provider (own row or a shared grant) by id. */
+                provider.wire("").copy(id = relayProviderId)
+            } else {
+                provider.wire(apiKey?.concatToString().orEmpty())
+            }
             val selectedMode = if (plan || catalog.planner.requirePlanBeforeTools) "plan" else if (mode == "standard") profile else mode
             val options = buildJsonObject {
-                model.temperature?.let { put("temperature", it) }; model.topP?.let { put("top_p", it) }
-                put("max_tokens", model.maxOutputTokens ?: provider.maxTokens)
-                if (model.reasoning && thinking != "none") put("reasoning_effort", thinking)
+                modelRow.temperature?.let { put("temperature", it) }; modelRow.topP?.let { put("top_p", it) }
+                put("max_tokens", modelRow.maxOutputTokens ?: provider.maxTokens)
+                if (modelRow.reasoning && thinking != "none") put("reasoning_effort", thinking)
             }
             val rules = catalog.permissionRules
             val request = EmbeddedStartRun(
-                userId = account.binding.userId, sessionId = sessionId, provider = p, model = model.id,
+                userId = account.binding.userId, sessionId = sessionId, provider = p, model = model,
                 message = prompt, options = options, maxSteps = catalog.context.maxToolRounds,
                 permission = EmbeddedPermission(permission.ifBlank { rules.mode }, rules.deny, rules.ask, rules.allow),
                 autoConfirm = catalog.sensitive.autoConfirm, autoConfirmDelayMs = catalog.sensitive.autoConfirmDelayMs,
@@ -182,11 +204,11 @@ internal class LocalAndroidAiRuntimeController(
                     val headers = account.localAi.mcpHeaders(s.id)?.let { chars -> try { parseHeaders(chars.concatToString()) } finally { chars.fill('\u0000') } }.orEmpty()
                     EmbeddedMcpServer(s.name,s.type,s.command,s.args,s.env,s.url,headers,s.timeoutSeconds,s.trustedReadOnly)
                 }, databaseGeneration = account.generation, runNonce = UUID.randomUUID().toString(),
-                contextWindowTokens = model.contextWindowTokens ?: provider.contextWindowTokens ?: catalog.context.windowTokens,
-                outputReserveTokens = model.maxOutputTokens ?: provider.maxTokens,
+                contextWindowTokens = modelRow.contextWindowTokens ?: provider.contextWindowTokens ?: catalog.context.windowTokens,
+                outputReserveTokens = modelRow.maxOutputTokens ?: provider.maxTokens,
             )
             append(AiTranscriptItem.User(prompt)); mutable.update { it.copy(running = true, runtimeSessionId = sessionId, conversationId = sessionId, error = null) }
-            when (val started = api.start(request)) { is ApiResult.Failure -> failRun(started); is ApiResult.Success -> begin(started.value) }
+            when (val started = if (relay) api.startRelayed(account.aiRuntime, request) else api.start(request)) { is ApiResult.Failure -> failRun(started); is ApiResult.Success -> begin(started.value) }
         } finally { apiKey?.fill('\u0000'); envValues.values.forEach { it.fill('\u0000') } }
     }
 

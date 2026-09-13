@@ -38,6 +38,7 @@ import one.zephyr.mobile.data.repository.OwnedAiRepository
 import one.zephyr.mobile.app.AiTodoSyncCoordinator
 import one.zephyr.mobile.data.repository.ResourceRepository
 import one.zephyr.mobile.data.repository.SettingsRepository
+import one.zephyr.mobile.data.repository.SharedAiProviderStore
 import one.zephyr.mobile.data.repository.SharedResourceStore
 import one.zephyr.mobile.data.repository.SyncStateRepository
 import one.zephyr.mobile.data.session.SessionRegistry
@@ -288,15 +289,27 @@ class AccountContainer(
     /** Bound-account AI entities that ride the owned-sync change feed. */
     val ownedAi: OwnedAiRepository = OwnedAiRepository(database, writeGateway)
 
-    /** Local ⇄ mirror todo wiring: merge after each sync round, push on
-     * local writes. No-op while unbound; push additionally requires
-     * syncFromMainEnabled. */
-    val aiTodoSync: AiTodoSyncCoordinator = AiTodoSyncCoordinator(
+    /** Shared-to-me AI providers (in-memory only, SHARED_RESOURCE_RESIDENCY
+     * §3: never persisted). Refreshed from the main side after each sync
+     * round while bound. */
+    val sharedAiProviders: SharedAiProviderStore = SharedAiProviderStore()
+
+    /** Local ⇄ mirror AI-entity wiring (provider/memory/skill/env/todo):
+     * merge after each sync round, push on local writes. No-op while
+     * unbound; push additionally requires syncFromMainEnabled. */
+    val aiEntitySync: AiEntitySyncCoordinator = AiEntitySyncCoordinator(
         scope = accountScope,
         localAi = localAi,
         ownedAi = ownedAi,
         ownerUserId = { binding.userId },
         syncEnabled = { binding.userId.isNotBlank() && localAi.load().syncFromMainEnabled },
+        bindings = listOf(
+            ProviderBinding(localAi, ownedAi),
+            MemoryBinding(localAi, ownedAi),
+            SkillBinding(localAi, ownedAi),
+            EnvBinding(localAi, ownedAi),
+            TodoBinding(localAi, ownedAi),
+        ),
     )
 
     internal val localAiWorkspace: LocalAiWorkspace = LocalAiWorkspace(
@@ -690,12 +703,15 @@ class AccountContainer(
                 if (isDeviceRevocationError(round?.error?.code)) {
                     appContainer.onDeviceRevoked(bindingKey, generation)
                 }
-                // Any completed round may have refreshed aiTodo rows; merge
+                // Any completed round may have refreshed AI entity rows; merge
                 // them (and flush pending local pushes) into the mirror.
-                if (round?.error == null) aiTodoSync.reconcile()
+                if (round?.error == null) {
+                    aiEntitySync.reconcile()
+                    refreshSharedAiProviders()
+                }
             }
         }
-        aiTodoSync.start()
+        aiEntitySync.start()
         wakeCoordinator.start(wakeScope)
         wakeCoordinator.onHoldAliveChanged(holdAlive.get())
         wakeCoordinator.onForegroundChanged(appContainer.isProcessForeground())
@@ -703,6 +719,43 @@ class AccountContainer(
             network.collect { state ->
                 wakeCoordinator.onNetworkChanged(state.connected)
                 if (state.connected) runCatching { sharedResourceCoordinator.refresh() }
+            }
+        }
+    }
+
+    /**
+     * Pulls the shared-to-me provider list into the in-memory store. The
+     * server strips every credential for a bound device, so nothing secret
+     * can arrive here; failures are non-fatal (next round retries).
+     */
+    private fun refreshSharedAiProviders() {
+        if (localMode || binding.userId.isBlank()) return
+        syncScope.launch {
+            try {
+                when (val result = aiRuntime.providers()) {
+                    is one.zephyr.mobile.network.ApiResult.Success -> {
+                        sharedAiProviders.replace(
+                            result.value
+                                .filter { !it.owned }
+                                .map {
+                                    SharedAiProviderStore.SharedProvider(
+                                        id = it.id,
+                                        name = it.name,
+                                        type = it.type,
+                                        defaultModel = it.defaultModel,
+                                        models = it.models.map { model -> model.id },
+                                        ownerUserId = "",
+                                        ownerUsername = it.owner,
+                                    )
+                                },
+                        )
+                    }
+                    is one.zephyr.mobile.network.ApiResult.Failure -> Unit
+                }
+            } catch (err: kotlinx.coroutines.CancellationException) {
+                throw err
+            } catch (err: Exception) {
+                android.util.Log.w("AccountContainer", "shared AI provider refresh failed", err)
             }
         }
     }

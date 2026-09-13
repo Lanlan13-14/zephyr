@@ -76,6 +76,15 @@ class AiRuntimeApi(
     suspend fun startRun(request: AiRunRequestDto): ApiResult<AiRunStartDto> =
         post(PATH_RUNTIME_RUNS, request, AiRunRequestDto.serializer(), AiRunStartDto.serializer())
 
+    /**
+     * Embedded-shaped relay start (device requestRouting=main or a shared
+     * provider). The body is One's embedded /admin/runs JSON verbatim plus a
+     * `providerId`; the server resolves the credential server-side, so the
+     * wire carries no secret.
+     */
+    suspend fun startEmbeddedRun(bodyJson: String): ApiResult<AiRunStartDto> =
+        postRaw(PATH_AI_EMBEDDED_RUNS, bodyJson, AiRunStartDto.serializer())
+
     suspend fun abort(runId: String): ApiResult<AiAbortResponseDto> =
         post(runtimeRun(runId) + "/abort", AiEmptyRequestDto(), AiEmptyRequestDto.serializer(), AiAbortResponseDto.serializer())
 
@@ -191,6 +200,19 @@ class AiRuntimeApi(
         Request.Builder()
             .url(url(path))
             .post(MobileJson.instance.encodeToString(bodySerializer, body).toRequestBody(JSON_MEDIA))
+            .build(),
+        responseSerializer,
+    )
+
+    /** Raw-JSON POST for shapes owned by another layer (embedded relay body). */
+    private suspend fun <R> postRaw(
+        path: String,
+        bodyJson: String,
+        responseSerializer: DeserializationStrategy<R>,
+    ): ApiResult<R> = execute(
+        Request.Builder()
+            .url(url(path))
+            .post(bodyJson.toRequestBody(JSON_MEDIA))
             .build(),
         responseSerializer,
     )
@@ -381,6 +403,7 @@ class AiRuntimeApi(
         const val PATH_RUNTIME_STATUS = "/api/ai/runtime/status"
         const val PATH_RUNTIME_SESSIONS = "/api/ai/runtime/sessions"
         const val PATH_RUNTIME_RUNS = "/api/ai/runtime/runs"
+        const val PATH_AI_EMBEDDED_RUNS = "/api/ai/embedded/runs"
         const val PATH_PROVIDERS = "/api/ai/providers"
         const val PATH_HISTORY = "/api/ai/history/conversations"
         const val PATH_ATTACHMENTS = "/api/ai/attachments"

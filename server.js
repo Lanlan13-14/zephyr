@@ -6041,6 +6041,50 @@ app.post('/api/ai/runtime/runs/:id/abort', requireAiUser, async (req, res) => {
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
+/* One's embedded-runtime relay (SHARED_RESOURCE_RESIDENCY §22: shared AI runs
+ * server-side, the key never leaves the owner's server; own providers may opt
+ * into the same path per-device via requestRouting=main). One sends its
+ * embedded /admin/runs body verbatim except `providerId`; the server swaps in
+ * a resolved ProviderConfig (secret included, response-boundary) and forwards
+ * to the same Go runtime the web chat uses. Everything else — sessions,
+ * composition, MCP, permissions — rides One's own embedded shapes untouched. */
+app.post('/api/ai/embedded/runs', requireAiUser, async (req, res) => {
+    try {
+        if (!aiRuntimeBridge.enabled) throw Object.assign(new Error('Go AI 运行时未启用'), { status: 503, code: 'ai_runtime_unavailable' });
+        const ai = userSettingsService.runtimeAi(req.user);
+        if (!ai.enabled) return res.status(403).json({ error: 'AI 助理未启用', code: 'ai_disabled' });
+        const body = req.body || {};
+        const providerId = String(body.providerId || '').trim();
+        if (!providerId) throw Object.assign(new Error('providerId is required'), { status: 400, code: 'invalid_request' });
+        const model = String(body.model || '');
+        if (!aiProviderService) throw Object.assign(new Error('AI Provider 服务不可用'), { status: 503 });
+        const resolved = aiProviderService.resolveForUse(req.user, providerId, model || null);
+        const provider = resolved.provider;
+        if (!provider) throw Object.assign(new Error('Provider 不存在或不可用'), { status: 404, code: 'provider_not_found' });
+        const { runtimeModelIds } = require('./ai-model-catalog');
+        const providerPayload = {
+            id: provider.id,
+            name: provider.name,
+            kind: provider.type || 'openai-compatible',
+            baseUrl: provider.baseUrl || '',
+            apiKey: provider.apiKey || '',
+            defaultModel: provider.defaultModel || resolved.model || model,
+            models: runtimeModelIds(provider.models),
+            apiMode: provider.config?.apiMode || provider.apiMode || 'auto',
+            organization: provider.config?.organization || provider.organization || '',
+            options: provider.config?.options || provider.options || {},
+            timeoutMs: Number(provider.config?.timeoutMs || 120000),
+            retries: Number(provider.config?.retries || 1),
+        };
+        const data = await aiRuntimeBridge.startRun(req.user, {
+            ...body,
+            provider: providerPayload,
+            model: model || resolved.model,
+        });
+        res.json(data);
+    } catch (err) { handleAiRuntimeError(res, err); }
+});
+
 app.post('/api/ai/runtime/runs/:id/permission', requireAiUser, async (req, res) => {
     try {
         // Re-inject provider secret for mid-run resume (never stored in Go resume_json).

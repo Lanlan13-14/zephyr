@@ -57,6 +57,25 @@ internal class EmbeddedAiRuntimeApi(
     suspend fun start(body: EmbeddedStartRun): ApiResult<AiRunStartDto> =
         post("/admin/runs", body, EmbeddedStartRun.serializer(), AiRunStartDto.serializer())
 
+    /**
+     * Main-side relay start (SHARED_RESOURCE_RESIDENCY §22 + per-device
+     * requestRouting=main): the full embedded body forwarded verbatim with
+     * `providerId` set — the server resolves the real credential with
+     * resolveForUse and forwards to its own Go runtime. The key never
+     * crosses this hop, so a shared provider is usable without the device
+     * ever seeing it. systemCompose / mcpServers / permission ride untouched.
+     */
+    suspend fun startRelayed(
+        main: one.zephyr.mobile.network.AiRuntimeApi,
+        body: EmbeddedStartRun,
+    ): ApiResult<one.zephyr.mobile.network.AiRunStartDto> =
+        main.startEmbeddedRun(
+            MobileJson.instance.encodeToString(
+                EmbeddedStartRun.serializer(),
+                body.copy(providerId = body.provider.id),
+            ),
+        )
+
     suspend fun abort(runId: String): ApiResult<AiAbortResponseDto> =
         post("/admin/runs/${encode(runId)}/abort", JsonObject(emptyMap()), JsonObject.serializer(), AiAbortResponseDto.serializer())
 
@@ -188,6 +207,6 @@ internal class EmbeddedAiRuntimeApi(
 @kotlinx.serialization.Serializable internal data class EmbeddedMemory(val title: String, val content: String, val scope: String, val project: String, val tags: List<String>)
 @kotlinx.serialization.Serializable internal data class EmbeddedEnv(val name: String, val description: String, val value: String, val valueVisibleToAi: Boolean)
 @kotlinx.serialization.Serializable internal data class EmbeddedMcpServer(val name: String, val type: String, val command: String = "", val args: List<String> = emptyList(), val env: Map<String,String> = emptyMap(), val url: String = "", val headers: Map<String,String> = emptyMap(), val callTimeoutSeconds: Int = 300, val trustedReadOnlyTools: List<String> = emptyList())
-@kotlinx.serialization.Serializable internal data class EmbeddedStartRun(val userId: String, val sessionId: String, val provider: EmbeddedProvider, val model: String, val message: String, val options: JsonObject, val maxSteps: Int, val permission: EmbeddedPermission, val autoConfirm: Boolean, val autoConfirmDelayMs: Int, val mode: String, val systemCompose: EmbeddedCompose, val context: JsonObject, val mcpServers: List<EmbeddedMcpServer> = emptyList(), val databaseGeneration: String, val runNonce: String, val contextWindowTokens: Int, val outputReserveTokens: Int)
+@kotlinx.serialization.Serializable internal data class EmbeddedStartRun(val userId: String, val sessionId: String, val provider: EmbeddedProvider, val model: String, val message: String, val options: JsonObject, val maxSteps: Int, val permission: EmbeddedPermission, val autoConfirm: Boolean, val autoConfirmDelayMs: Int, val mode: String, val systemCompose: EmbeddedCompose, val context: JsonObject, val mcpServers: List<EmbeddedMcpServer> = emptyList(), val databaseGeneration: String, val runNonce: String, val contextWindowTokens: Int, val outputReserveTokens: Int, val providerId: String = "")
 @kotlinx.serialization.Serializable internal data class EmbeddedPermissionDecision(val userId: String, val sessionId: String, val callId: String, val tool: String, val approve: Boolean, val scope: String = "once", val provider: EmbeddedProvider)
 @kotlinx.serialization.Serializable internal data class EmbeddedPermissionResponse(val ok: Boolean = true, val approved: Boolean = false, val resumed: Boolean = false, val runId: String = "", val callId: String = "", val ticket: String = "")
