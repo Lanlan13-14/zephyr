@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260902-monitor-docker1';
+import { t } from './i18n/runtime.js?v=20260913-liquid-glass29';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 

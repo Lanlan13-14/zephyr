@@ -9,7 +9,7 @@ const terminalSrc = fs.readFileSync(path.join(root, 'public/terminal.js'), 'utf8
 const telnetSrc = fs.readFileSync(path.join(root, 'public/telnet-terminal.js'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const swSrc = fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const CACHE = '20260902-monitor-docker1';
+const CACHE = '20260913-liquid-glass29';
 
 function extractHelpers(src) {
     const start = src.indexOf('function isMobileViewport()');
