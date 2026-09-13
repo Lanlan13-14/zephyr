@@ -1019,6 +1019,50 @@ class SyncActorTest {
     }
 
     @Test
+    fun `AI provider rejection fails mixed batch without acknowledging accepted work`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.queue.add(pendingOp("op-provider", entityType = "aiProvider", entityId = "provider-1"))
+        store.queue.add(pendingOp("op-other", entityType = "connection", entityId = "connection-1"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 4,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-provider",
+                            status = PushStatus.REJECTED,
+                            error = MobileError.local(
+                                "invalid_ai_provider",
+                                "AI provider models must be an array.",
+                            ),
+                        ),
+                        PushResult(
+                            opId = "op-other",
+                            status = PushStatus.ACCEPTED,
+                            entityId = "connection-1",
+                            revision = 2,
+                            changeSeq = 4,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
+
+        assertEquals("invalid_ai_provider", result.error?.code)
+        assertEquals(1, transport.pushedBatches.size)
+        assertTrue(transport.ackedOpIds.isEmpty())
+        assertTrue(store.completed.isEmpty())
+        assertEquals("invalid_ai_provider", store.queue.single { it.opId == "op-provider" }.lastError)
+        assertTrue(store.queue.any { it.opId == "op-other" })
+    }
+
+    @Test
     fun `an operation the registry says to drop is dropped`() = runTest {
         val transport = FakeSyncTransport()
         val store = FakeSyncLocalStore(BindingState.IDLE)
