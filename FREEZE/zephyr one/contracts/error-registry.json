@@ -255,6 +255,13 @@
       "source": "新 mobile v1"
     },
     {
+      "code": "invalid_ai_provider",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "fix_input",
+      "source": "mobile-v1-ai-provider-entities.js"
+    },
+    {
       "code": "login_guard_blocked",
       "httpStatus": 403,
       "retryable": false,

@@ -54,6 +54,14 @@ class SyncErrorMappingTest {
     }
 
     @Test
+    fun `invalid AI provider is a permanent repair error`() {
+        val error = MobileError.local("invalid_ai_provider", "invalid_ai_provider")
+        assertNull(SyncErrorMapping.eventFor(error.code))
+        assertTrue(SyncErrorMapping.abortsRound(error))
+        assertFalse(SyncErrorMapping.isRetryable(error))
+    }
+
+    @Test
     fun `unknown codes map to no transition`() {
         assertNull(SyncErrorMapping.eventFor("something_new_from_a_future_server"))
     }

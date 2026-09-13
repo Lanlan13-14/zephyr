@@ -631,6 +631,7 @@ class SyncActor(
         val dropped = mutableListOf<String>()
         val bootstrapErrors = linkedMapOf<String, String>()
         var bootstrapError: MobileError? = null
+        var rejectedError: MobileError? = null
         val now = clock()
 
         // Validate every conflict before processing any result. Otherwise an accepted result earlier
@@ -704,8 +705,9 @@ class SyncActor(
                 }
 
                 PushStatus.REJECTED -> {
-                    val code = result.error?.code ?: "invalid_request"
-                    if (result.error?.requiresBootstrapSignal() == true) {
+                    val error = result.error ?: MobileError.local("invalid_request", "server rejected the operation")
+                    val code = error.code
+                    if (error.requiresBootstrapSignal()) {
                         // The server withheld a conflict payload it could not prove safe for this
                         // account. Keep the edit, but make bootstrap durable before it can replay.
                         bootstrapErrors[op.opId] = code
@@ -720,6 +722,7 @@ class SyncActor(
                             store.markFailed(op.opId, code)
                         }
                     }
+                    if (rejectedError == null) rejectedError = error
                     acc.rejected += 1
                 }
 
@@ -738,7 +741,7 @@ class SyncActor(
             store.enterBootstrapRequiredAfterPush(accepted, bootstrapErrors)
         }
         if (dropped.isNotEmpty()) store.dropOperations(dropped)
-        return bootstrapError
+        return bootstrapError ?: rejectedError
     }
 
     /** Validate untrusted page metadata before handing any row to the local transaction. */

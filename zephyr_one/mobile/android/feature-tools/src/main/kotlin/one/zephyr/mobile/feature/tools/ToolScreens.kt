@@ -391,7 +391,7 @@ fun FileSyncScreen(
     val lastError = status.lastError
     val phase = when {
         status.isRunning -> "正在同步"
-        lastError != null -> "同步失败 · ${lastError.code}"
+        lastError != null -> "同步失败 · ${lastError.message}"
         status.conflictCount > 0 -> "需要处理冲突"
         status.lastSuccessAt != null -> "镜像已同步"
         else -> "镜像待同步"
