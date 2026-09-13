@@ -518,7 +518,7 @@ class AccountContainer(
         override val isEstablished: Boolean get() = session != null
 
         override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject =
-            pushMutex.withLock {
+            pushMutex.withLock pushLock@{
                 var attemptedRedial = false
                 while (true) {
                     val sess = sessionMutex.withLock {
@@ -530,7 +530,7 @@ class AccountContainer(
                         ).also { session = it }
                     }
                     try {
-                        return@withLock appContainer.embeddedLink.push(
+                        return@pushLock appContainer.embeddedLink.push(
                             endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP,
                             body = body, spkiPins = linkSpkiPins, insecure = linkInsecure,
                         ).ack
