@@ -51,7 +51,8 @@ class LocalAiRepository(
         ))
     }
 
-    fun providerApiKey(id: String): CharArray? = secret(PROVIDER_ENTITY, id, "apiKey")
+    fun providerApiKey(id: String): CharArray? =
+        secret(PROVIDER_ENTITY, id, "apiKey") ?: secret("aiProvider", id, "apiKey")
 
     suspend fun upsertEnvironment(item: LocalAiEnvironment, value: CharArray?) {
         val current = load()
@@ -136,7 +137,7 @@ class LocalAiRepository(
 
     companion object {
         const val PREF_CATALOG = "one.ai.catalog.v2"
-        const val PROVIDER_ENTITY = "oneAiProvider"
+        const val PROVIDER_ENTITY = "aiProvider"
         const val ENV_ENTITY = "oneAiEnvironment"
         const val MCP_ENTITY = "oneAiMcp"
     }
@@ -193,7 +194,7 @@ data class LocalAiCatalog(
 @Serializable data class LocalAiPermissionRules(val mode: String = "ask", val deny: List<String> = emptyList(), val ask: List<String> = emptyList(), val allow: List<String> = emptyList())
 @Serializable data class LocalAiPlanner(val enabled: Boolean = true, val requirePlanBeforeTools: Boolean = false)
 @Serializable data class LocalAiModel(val id: String, val label: String = id, val hidden: Boolean = false, val contextWindowTokens: Int? = null, val maxOutputTokens: Int? = null, val temperature: Double? = null, val topP: Double? = null, val reasoning: Boolean = false, val reasoningEffort: String? = null, val inputImage: Boolean = true, val inputPdf: Boolean = false, val inputAudio: Boolean = false, val inputVideo: Boolean = false, val outputImage: Boolean = false, val outputAudio: Boolean = false, val tools: Boolean = true, val parallelToolCalls: Boolean = true, val promptCache: String = "auto", val maxImagesPerRequest: Int? = null, val maxImageBytes: Long? = null, val apiMode: String? = null, val userAgent: String? = null, val extraJson: String = "{}")
-@Serializable data class LocalAiProvider(val id: String = "", val name: String = "", val type: String = "openai-compatible", val baseUrl: String = "", val apiMode: String = "auto", val defaultModel: String = "", val models: List<LocalAiModel> = emptyList(), val organization: String = "", val extraHeadersJson: String = "{}", val modelUserAgents: String = "", val temperature: Double? = null, val topP: Double? = null, val maxTokens: Int = 4096, val contextWindowTokens: Int? = null, val reasoningEffort: String? = null, val visionDefault: Boolean = true, val usePreviousResponse: Boolean = false, val presencePenalty: Double = 0.0, val frequencyPenalty: Double = 0.0, val extraJson: String = "{}", val enabled: Boolean = true, val source: String = "local", val revision: Long = 0)
+@Serializable data class LocalAiProvider(val id: String = "", val name: String = "", val type: String = "openai-compatible", val baseUrl: String = "", val apiMode: String = "auto", val defaultModel: String = "", val models: List<LocalAiModel> = emptyList(), val organization: String = "", val extraHeadersJson: String = "{}", val modelUserAgents: String = "", val temperature: Double? = null, val topP: Double? = null, val maxTokens: Int = 4096, val maxOutputTokens: Int? = null, val contextWindowTokens: Int? = null, val reasoningEffort: String? = null, val visionDefault: Boolean = true, val usePreviousResponse: Boolean = false, val presencePenalty: Double = 0.0, val frequencyPenalty: Double = 0.0, val extraJson: String = "{}", val visibility: String = "private", val shareWithUsers: Boolean = false, val shareWithAdmins: Boolean = false, val sharedUserIds: List<String> = emptyList(), val enabled: Boolean = true, val source: String = "local", val revision: Long = 0)
 @Serializable data class LocalAiMcpServer(val id: String = "", val name: String = "", val type: String = "http", val command: String = "", val args: List<String> = emptyList(), val env: Map<String, String> = emptyMap(), val url: String = "", val trustedReadOnly: List<String> = emptyList(), val timeoutSeconds: Int = 300, val enabled: Boolean = true)
 @Serializable data class LocalAiEnvironment(val id: String = "", val name: String = "", val description: String = "", val enabled: Boolean = true, val visibleToAi: Boolean = false, val valueVisibleToAi: Boolean = false, val revision: Long = 0)
 @Serializable data class LocalAiMemory(val id: String = "", val title: String = "", val scope: String = "global", val project: String = "", val connectionIds: List<String> = emptyList(), val tags: List<String> = emptyList(), val content: String = "", val enabled: Boolean = true, val updatedAt: Long = System.currentTimeMillis(), val revision: Long = 0)

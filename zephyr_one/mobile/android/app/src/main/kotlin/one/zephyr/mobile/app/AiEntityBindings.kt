@@ -143,7 +143,7 @@ internal class ProviderBinding(
             provider = provider.toModel(owner),
             mask = listOf(
                 "name", "type", "baseUrl", "defaultModel", "models", "config",
-                "enabled",
+                "visibility", "shareWithUsers", "shareWithAdmins", "sharedUserIds", "enabled",
             ),
             apiKey = if (apiKey != null) SecretState.Replace(apiKey.concatToString()) else SecretState.Unchanged,
             ownerUserId = owner,
@@ -158,22 +158,60 @@ internal class ProviderBinding(
         val y = b.unpackLocal<LocalAiProvider>() ?: b.unpackMirror<AiProvider>()?.toLocal()
         if (x == null || y == null) return false
         return x.name == y.name && x.type == y.type && x.baseUrl == y.baseUrl &&
-            x.defaultModel == y.defaultModel && x.models == y.models && x.enabled == y.enabled
+            x.defaultModel == y.defaultModel && x.models == y.models &&
+            x.apiMode == y.apiMode && x.temperature == y.temperature && x.topP == y.topP &&
+            x.maxTokens == y.maxTokens && x.maxOutputTokens == y.maxOutputTokens &&
+            x.contextWindowTokens == y.contextWindowTokens &&
+            x.reasoningEffort == y.reasoningEffort && x.visionDefault == y.visionDefault &&
+            x.usePreviousResponse == y.usePreviousResponse &&
+            x.presencePenalty == y.presencePenalty && x.frequencyPenalty == y.frequencyPenalty &&
+            x.visibility == y.visibility && x.shareWithUsers == y.shareWithUsers &&
+            x.shareWithAdmins == y.shareWithAdmins && x.sharedUserIds == y.sharedUserIds &&
+            x.enabled == y.enabled
     }
 
     private fun AiProvider.toLocal() = LocalAiProvider(
         id = id, name = name, type = type, baseUrl = baseUrl, apiMode = config.apiMode,
         defaultModel = defaultModel,
-        models = models.map { m -> LocalAiModel(id = m.id, label = m.label, contextWindowTokens = m.contextWindowTokens) },
-        enabled = enabled, source = "main", revision = revision,
+        models = models.map { m -> LocalAiModel(
+            id = m.id, label = m.label, hidden = m.hidden, contextWindowTokens = m.contextWindowTokens,
+            maxOutputTokens = m.maxOutputTokens, temperature = m.temperature, topP = m.topP,
+            reasoning = m.reasoning, reasoningEffort = m.reasoningEffort, inputImage = m.inputImage,
+            inputPdf = m.inputPdf, inputAudio = m.inputAudio, inputVideo = m.inputVideo,
+            outputImage = m.outputImage, outputAudio = m.outputAudio, tools = m.tools,
+            parallelToolCalls = m.parallelToolCalls, promptCache = m.promptCache,
+            maxImagesPerRequest = m.maxImagesPerRequest, maxImageBytes = m.maxImageBytes,
+            apiMode = m.apiMode,
+        ) },
+        temperature = config.temperature, topP = config.topP, maxTokens = config.maxTokens ?: 4096,
+        contextWindowTokens = config.windowTokens, reasoningEffort = config.reasoningEffort,
+        visionDefault = config.vision, usePreviousResponse = config.usePreviousResponseId,
+        presencePenalty = config.presencePenalty ?: 0.0, frequencyPenalty = config.frequencyPenalty ?: 0.0,
+        visibility = visibility, shareWithUsers = shareWithUsers, shareWithAdmins = shareWithAdmins,
+        sharedUserIds = sharedUserIds, enabled = enabled, source = "main", revision = revision,
     )
 
     private fun LocalAiProvider.toModel(owner: String) = AiProvider(
         id = id, ownerUserId = owner, name = name, type = type, baseUrl = baseUrl,
         defaultModel = defaultModel,
-        models = models.map { m -> AiModel(id = m.id, label = m.label, contextWindowTokens = m.contextWindowTokens) },
-        config = AiProviderConfig(apiMode = apiMode),
-        enabled = enabled,
+        models = models.map { m -> AiModel(
+            id = m.id, label = m.label, hidden = m.hidden, contextWindowTokens = m.contextWindowTokens,
+            maxOutputTokens = m.maxOutputTokens, temperature = m.temperature, topP = m.topP,
+            reasoning = m.reasoning, reasoningEffort = m.reasoningEffort, inputImage = m.inputImage,
+            inputPdf = m.inputPdf, inputAudio = m.inputAudio, inputVideo = m.inputVideo,
+            outputImage = m.outputImage, outputAudio = m.outputAudio, tools = m.tools,
+            parallelToolCalls = m.parallelToolCalls, promptCache = m.promptCache,
+            maxImagesPerRequest = m.maxImagesPerRequest, maxImageBytes = m.maxImageBytes,
+            apiMode = m.apiMode,
+        ) },
+        config = AiProviderConfig(
+            apiMode = apiMode, temperature = temperature, topP = topP, maxTokens = maxTokens,
+            maxOutputTokens = maxOutputTokens, presencePenalty = presencePenalty, frequencyPenalty = frequencyPenalty,
+            vision = visionDefault, usePreviousResponseId = usePreviousResponse,
+            reasoningEffort = reasoningEffort, windowTokens = contextWindowTokens,
+        ),
+        visibility = visibility, shareWithUsers = shareWithUsers, shareWithAdmins = shareWithAdmins,
+        sharedUserIds = sharedUserIds, enabled = enabled,
     )
 }
 

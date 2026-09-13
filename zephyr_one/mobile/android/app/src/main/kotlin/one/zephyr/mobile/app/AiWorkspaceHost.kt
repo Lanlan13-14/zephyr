@@ -22,6 +22,16 @@ import one.zephyr.mobile.feature.ai.AiWorkspaceCopy
 import one.zephyr.mobile.feature.ai.AiWorkspaceOverlay
 import one.zephyr.mobile.ui.island.IslandDestination
 
+internal fun dottedBoolCompat(payload: JsonObject, path: String, fallback: Boolean): Boolean {
+    val direct = payload[path]
+    if (direct is JsonPrimitive) return direct.content.equals("true", ignoreCase = true)
+    var current: kotlinx.serialization.json.JsonElement = payload
+    for (part in path.split('.')) {
+        current = (current as? JsonObject)?.get(part) ?: return fallback
+    }
+    return (current as? JsonPrimitive)?.content?.equals("true", ignoreCase = true) ?: fallback
+}
+
 @Composable
 internal fun BoundAiWorkspace(
     account: AccountContainer,
@@ -34,6 +44,10 @@ internal fun BoundAiWorkspace(
     val catalog by account.localAi.observe().collectAsState(
         initial = one.zephyr.mobile.data.repository.LocalAiCatalog(enabled = false),
     )
+    val serverSettings by account.settings.observeSection("serverSettings", "default")
+        .collectAsState(initial = JsonObject(emptyMap()))
+    val serverAiEnabled = account.isLocalMode || dottedBoolCompat(serverSettings, "ai.enabled", fallback = true)
+    if (!account.isLocalMode && !serverAiEnabled) return
     val chrome = AiWorkspaceBinding.chrome(
         prefs = prefs,
         catalogEnabled = catalog.enabled,

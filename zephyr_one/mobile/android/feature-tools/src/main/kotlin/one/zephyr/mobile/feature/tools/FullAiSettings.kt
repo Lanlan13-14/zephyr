@@ -171,7 +171,44 @@ fun FullAiSettingsRoute(
 
 @Composable private fun AiProviders(c:LocalAiCatalog,edit:(LocalAiProvider)->Unit,models:(LocalAiProvider)->Unit,delete:(String)->Unit){ AiScroll { PrimaryButton({edit(LocalAiProvider())},Modifier.fillMaxWidth()){Text("添加模型供应商")}; c.providers.forEach{p->Card{SettingsRow(p.name.ifBlank{"未命名"},subtitle="${p.type} · ${p.models.size} 模型 · ${p.source}",value=if(p.enabled)"启用" else "停用",showChevron=true,onClick={edit(p)});SettingsRow("模型列表",value="${p.models.size}",showChevron=true,onClick={models(p)});SettingsRow("删除供应商",titleColor=ZephyrTheme.palette.status.error,showDivider=false,onClick={delete(p.id)})}} } }
 
-@Composable private fun ProviderEditor(initial:LocalAiProvider,save:(LocalAiProvider,CharArray?)->Unit){var d by remember(initial){mutableStateOf(initial)};var key by remember{mutableStateOf("")};AiScroll{Card{Field("名称",d.name){d=d.copy(name=it)};Choice("类型",d.type,listOf("openai-compatible","openai","anthropic","gemini","ollama")){d=d.copy(type=it)};Field("API Base URL",d.baseUrl){d=d.copy(baseUrl=it)};SecretField("API Key",key){key=it};Choice("接口模式",d.apiMode,listOf("auto","chat","responses")){d=d.copy(apiMode=it)};Field("默认模型",d.defaultModel){d=d.copy(defaultModel=it)};Field("Organization / Project",d.organization){d=d.copy(organization=it)};Field("额外请求头 JSON",d.extraHeadersJson,false,3){d=d.copy(extraHeadersJson=it)};Field("逐模型 User-Agent",d.modelUserAgents,false,3){d=d.copy(modelUserAgents=it)};NumberField("max_tokens",d.maxTokens){d=d.copy(maxTokens=it)};Field("供应商原生额外参数 JSON",d.extraJson,false,4){d=d.copy(extraJson=it)};Toggle("新模型默认支持图片",null,d.visionDefault){d=d.copy(visionDefault=it)};Toggle("Responses 使用 previous_response_id",null,d.usePreviousResponse){d=d.copy(usePreviousResponse=it)};Toggle("启用此供应商",null,d.enabled){d=d.copy(enabled=it)}};PrimaryButton({save(d,key.takeIf{it.isNotBlank()}?.toCharArray());key=""},Modifier.fillMaxWidth(),d.name.isNotBlank()){Text("保存供应商")}}}
+@Composable
+private fun ProviderEditor(initial: LocalAiProvider, save: (LocalAiProvider, CharArray?) -> Unit) {
+    var d by remember(initial) { mutableStateOf(initial) }
+    var key by remember { mutableStateOf("") }
+    AiScroll {
+        Card {
+            Field("名称", d.name) { value -> d = d.copy(name = value) }
+            Choice("类型", d.type, listOf("openai-compatible", "openai", "anthropic", "gemini", "ollama")) { value -> d = d.copy(type = value) }
+            Field("API Base URL", d.baseUrl) { value -> d = d.copy(baseUrl = value) }
+            SecretField("API Key", key) { value -> key = value }
+            Choice("接口模式", d.apiMode, listOf("auto", "chat", "responses")) { value -> d = d.copy(apiMode = value) }
+            Field("默认模型", d.defaultModel) { value -> d = d.copy(defaultModel = value) }
+            Field("Organization / Project", d.organization) { value -> d = d.copy(organization = value) }
+            Field("额外请求头 JSON", d.extraHeadersJson, false, 3) { value -> d = d.copy(extraHeadersJson = value) }
+            Field("逐模型 User-Agent", d.modelUserAgents, false, 3) { value -> d = d.copy(modelUserAgents = value) }
+            DecimalField("temperature", d.temperature ?: 0.0) { value -> d = d.copy(temperature = value) }
+            DecimalField("top_p", d.topP ?: 1.0) { value -> d = d.copy(topP = value) }
+            NumberField("max_tokens", d.maxTokens) { value -> d = d.copy(maxTokens = value) }
+            NumberFieldNullable("max_output_tokens", d.maxOutputTokens) { value -> d = d.copy(maxOutputTokens = value) }
+            NumberFieldNullable("上下文窗口", d.contextWindowTokens) { value -> d = d.copy(contextWindowTokens = value) }
+            DecimalField("presence_penalty", d.presencePenalty) { value -> d = d.copy(presencePenalty = value) }
+            DecimalField("frequency_penalty", d.frequencyPenalty) { value -> d = d.copy(frequencyPenalty = value) }
+            Choice("reasoning effort", d.reasoningEffort ?: "none", listOf("none", "minimal", "low", "medium", "high", "xhigh", "max")) { value -> d = d.copy(reasoningEffort = value) }
+            Field("供应商原生额外参数 JSON", d.extraJson, false, 4) { value -> d = d.copy(extraJson = value) }
+            Toggle("新模型默认支持图片", null, d.visionDefault) { value -> d = d.copy(visionDefault = value) }
+            Toggle("Responses 使用 previous_response_id", null, d.usePreviousResponse) { value -> d = d.copy(usePreviousResponse = value) }
+            Toggle("启用此供应商", null, d.enabled) { value -> d = d.copy(enabled = value) }
+        }
+        PrimaryButton(
+            onClick = {
+                save(d, key.takeIf { it.isNotBlank() }?.toCharArray())
+                key = ""
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = d.name.isNotBlank(),
+        ) { Text("保存供应商") }
+    }
+}
 
 @Composable private fun ModelList(p:LocalAiProvider?,edit:(LocalAiModel)->Unit,discover:ModelDiscovery?,applyDiscovered:(LocalAiProvider,List<LocalAiModel>)->Unit){
     val scope=rememberCoroutineScope()
@@ -262,6 +299,7 @@ fun FullAiSettingsRoute(
 @Composable private fun Field(label:String,value:String,single:Boolean=true,lines:Int=1,set:(String)->Unit){Column(Modifier.padding(horizontal=14.dp,vertical=8.dp)){Text(label,fontSize=12.sp,color=ZephyrTheme.palette.onFloatingMuted);OutlinedTextField(value,set,Modifier.fillMaxWidth(),singleLine=single,minLines=lines,maxLines=lines)}}
 @Composable private fun SecretField(label:String,value:String,set:(String)->Unit)=Column(Modifier.padding(horizontal=14.dp,vertical=8.dp)){Text(label,fontSize=12.sp,color=ZephyrTheme.palette.onFloatingMuted);OutlinedTextField(value,set,Modifier.fillMaxWidth(),visualTransformation=PasswordVisualTransformation(),singleLine=true,placeholder={Text("留空保持原值")})}
 @Composable private fun NumberField(label:String,v:Int,set:(Int)->Unit)=Field(label,"$v"){it.toIntOrNull()?.let(set)}
+@Composable private fun DecimalField(label:String,v:Double,set:(Double)->Unit)=Field(label,"$v"){it.toDoubleOrNull()?.let(set)}
 @Composable private fun NumberFieldNullable(label:String,v:Int?,set:(Int?)->Unit)=Field(label,v?.toString().orEmpty()){set(it.toIntOrNull())}
 @Composable private fun Lines(label:String,v:List<String>,set:(List<String>)->Unit)=Field(label,v.joinToString("\n"),false,4){set(it.lineSequence().map(String::trim).filter(String::isNotEmpty).toList())}
 @Composable private fun Choice(label:String,v:String,options:List<String>,set:(String)->Unit){var open by remember{mutableStateOf(false)};SettingsRow(label,value=v,showChevron=true,onClick={open=true});ActionSheet(visible=open,onDismiss={open=false},groups=listOf(ActionSheetGroup(items=options.map{option->ActionSheetItem(label=option,onClick={set(option)})})))}
