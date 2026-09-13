@@ -24,6 +24,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const RUNTIME_PORT = 18920 + (process.pid % 60);
 
 let serverChild; let cookie = ''; let dataFixture = null;
+const OWNER_PWD = 'Relay-Owner-12345';
 const runtimeCaptured = { runs: [] };
 
 /* Fake Go runtime: accepts /admin/runs, captures the forwarded body. */
@@ -51,10 +52,15 @@ before(async () => {
 
     dataFixture = createSecureTestDataDir('ai-embedded-relay-');
     serverChild = spawn(process.execPath, [join(ROOT, 'server.js')], {
+        cwd: ROOT,
         env: {
             ...process.env,
-            PORT: String(PORT),
-            DATA_DIR: dataFixture.dataDir,
+            ZEPHYR_ONE_USE_BUILTIN_SQLITE: '1',
+            ZEPHYR_DATA_DIR: dataFixture.dataDir,
+            ZEPHYR_DATA_MLKEM768_KEY_FILE: join(dataFixture.dataDir, 'crypto', 'key.json'),
+            HTTP_ENABLED: 'true', HTTPS_ENABLED: 'false',
+            PORT: String(PORT), ZEPHYR_BIND_HOST: '127.0.0.1',
+            NODE_ENV: 'production',
             ZEPHYR_AI_URL: `http://127.0.0.1:${RUNTIME_PORT}`,
             ZEPHYR_AI_ADMIN_TOKEN: 'test-admin-token',
         },
@@ -88,10 +94,58 @@ async function call(path, { method = 'GET', body, cookie: forced } = {}) {
 }
 
 async function login() {
-    await call('/api/auth/register', { method: 'POST', body: { username: 'relayowner', password: 'relay-owner-pass-1', email: '' } });
-    await call('/api/auth/login', { method: 'POST', body: { username: 'relayowner', password: 'relay-owner-pass-1' } });
-    /* AI must be enabled for the account boundary the endpoint checks. */
-    await call('/api/settings', { method: 'PUT', body: { ai: { enabled: true } } });
+    const session = await freshOwnerSession();
+    cookie = session;
+}
+
+/** A login that returns its own cookie without touching the shared one. */
+async function freshSession(username, password) {
+    const r = await fetch(`${BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+    });
+    const setCookie = r.headers.get('set-cookie');
+    if (!setCookie) throw new Error(`login ${username} failed: ${r.status}`);
+    return setCookie.split(';')[0];
+}
+
+async function freshOwnerSession() {
+    try {
+        return await freshSession('admin', OWNER_PWD);
+    } catch {
+        /* first run: rotate the seeded admin password */
+        const boot = await freshSession('admin', 'admin').catch(() => null);
+        if (boot) {
+            await fetch(`${BASE}/api/auth/change-password`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', cookie: boot },
+                body: JSON.stringify({ currentPassword: 'admin', newPassword: OWNER_PWD }),
+            });
+        }
+        const session = await freshSession('admin', OWNER_PWD);
+        await fetch(`${BASE}/api/settings`, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json', cookie: session },
+            body: JSON.stringify({ ai: { enabled: true } }),
+        });
+        return session;
+    }
+}
+
+async function freshUserSession(username, password) {
+    /* No open registration in this product: the seeded admin creates users
+     * through the admin API (server.js:5082). */
+    const admin = await freshOwnerSession();
+    const r = await fetch(`${BASE}/api/admin/users`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: admin },
+        body: JSON.stringify({ username, password, email: '', role: 'user' }),
+    });
+    if (!r.ok && r.status !== 409) {
+        throw new Error(`create user ${username} failed: ${r.status}`);
+    }
+    return freshSession(username, password);
 }
 
 async function createProvider() {
@@ -159,19 +213,14 @@ test('missing providerId is a 400', async () => {
 });
 
 test("another user's private provider is not resolvable", async () => {
-    await login();
-    await call('/api/auth/register', { method: 'POST', body: { username: 'relayother', password: 'relay-other-pass-1', email: '' } });
-    await call('/api/auth/login', { method: 'POST', body: { username: 'relayother', password: 'relay-other-pass-1' } });
-    /* 'relayother' tries to relay through relayowner's provider id. */
-    const ownerCookie = cookie;
-    await call('/api/auth/login', { method: 'POST', body: { username: 'relayowner', password: 'relay-owner-pass-1' } });
-    const providers = await call('/api/ai/providers');
+    /* Independent session per test — no cross-test cookie residue. */
+    const ownerSession = await freshOwnerSession();
+    const providers = await call('/api/ai/providers', { cookie: ownerSession });
     const target = (providers.data.providers || []).find((p) => p.name === 'RelayGPT');
     if (!target) return; /* provider list shape差异时跳过，不制造假失败 */
-    await call('/api/auth/login', { method: 'POST', body: { username: 'relayother', password: 'relay-other-pass-1' } });
+    const otherSession = await freshUserSession('relayother', 'relay-other-pass-1');
     const before = runtimeCaptured.runs.length;
-    const { status } = await call('/api/ai/embedded/runs', { method: 'POST', body: { providerId: target.id, model: 'gpt-relay' } });
+    const { status } = await call('/api/ai/embedded/runs', { method: 'POST', cookie: otherSession, body: { providerId: target.id, model: 'gpt-relay' } });
     assert.ok(status === 403 || status === 404, `expected denial, got ${status}`);
     assert.equal(runtimeCaptured.runs.length, before, 'denied run must not reach the runtime');
-    cookie = ownerCookie;
 });
