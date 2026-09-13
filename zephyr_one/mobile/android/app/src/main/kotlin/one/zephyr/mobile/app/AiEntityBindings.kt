@@ -50,6 +50,18 @@ internal data class MirrorRow<T>(
     override val syncDeletedAt: Long?,
 ) : SyncedRow
 
+/**
+ * Typed unpacking for a binding's rows. The wrapper pair is closed
+ * (LocalRow/MirrorRow are the only SyncedRow implementations), so each cast
+ * is sound by construction; suppressing it in one place keeps the five
+ * bindings free of thirty @Suppress sites.
+ */
+@Suppress("UNCHECKED_CAST")
+internal fun <T> SyncedRow.unpackLocal(): T? = (this as? LocalRow<*>)?.row as? T
+
+@Suppress("UNCHECKED_CAST")
+internal fun <T> SyncedRow.unpackMirror(): T? = (this as? MirrorRow<*>)?.row as? T
+
 internal class TodoBinding(
     private val localAi: LocalAiRepository,
     private val ownedAi: OwnedAiRepository,
@@ -64,12 +76,12 @@ internal class TodoBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val merged = rows.mapNotNull { (it as? LocalRow<LocalAiTodo>)?.row }
+        val merged = rows.mapNotNull { it.unpackLocal<LocalAiTodo>() }
         localAi.save(catalog.copy(todos = merged))
     }
 
     override suspend fun pushUpsert(row: SyncedRow, owner: String) {
-        val todo = (row as LocalRow<LocalAiTodo>).row
+        val todo = row.unpackLocal<LocalAiTodo>()!!
         ownedAi.saveTodo(
             AiTodo(
                 id = todo.id, ownerUserId = owner, title = todo.title,
@@ -85,8 +97,8 @@ internal class TodoBinding(
     override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
-        val x = (a as? LocalRow<LocalAiTodo>)?.row ?: (a as? MirrorRow<AiTodo>)?.row?.toLocal()
-        val y = (b as? LocalRow<LocalAiTodo>)?.row ?: (b as? MirrorRow<AiTodo>)?.row?.toLocal()
+        val x = a.unpackLocal<LocalAiTodo>() ?: a.unpackMirror<AiTodo>()?.toLocal()
+        val y = b.unpackLocal<LocalAiTodo>() ?: b.unpackMirror<AiTodo>()?.toLocal()
         if (x == null || y == null) return false
         return x.title == y.title && x.description == y.description && x.status == y.status &&
             x.priority == y.priority && x.dueAt == y.dueAt && x.steps == y.steps &&
@@ -114,7 +126,7 @@ internal class ProviderBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val localRows = rows.mapNotNull { (it as? LocalRow<LocalAiProvider>)?.row }
+        val localRows = rows.mapNotNull { it.unpackLocal<LocalAiProvider>() }
         /* Merge into the catalog by id: a mirrored row replaces config fields
          * but NEVER the local secret (key stays in the SecretStore untouched). */
         val merged = catalog.providers.map { existing ->
@@ -125,7 +137,7 @@ internal class ProviderBinding(
     }
 
     override suspend fun pushUpsert(row: SyncedRow, owner: String) {
-        val provider = (row as LocalRow<LocalAiProvider>).row
+        val provider = row.unpackLocal<LocalAiProvider>()!!
         val apiKey = localAi.providerApiKey(provider.id)
         ownedAi.saveProvider(
             provider = provider.toModel(owner),
@@ -142,8 +154,8 @@ internal class ProviderBinding(
     override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
-        val x = (a as? LocalRow<LocalAiProvider>)?.row ?: (a as? MirrorRow<AiProvider>)?.row?.toLocal()
-        val y = (b as? LocalRow<LocalAiProvider>)?.row ?: (b as? MirrorRow<AiProvider>)?.row?.toLocal()
+        val x = a.unpackLocal<LocalAiProvider>() ?: a.unpackMirror<AiProvider>()?.toLocal()
+        val y = b.unpackLocal<LocalAiProvider>() ?: b.unpackMirror<AiProvider>()?.toLocal()
         if (x == null || y == null) return false
         return x.name == y.name && x.type == y.type && x.baseUrl == y.baseUrl &&
             x.defaultModel == y.defaultModel && x.models == y.models && x.enabled == y.enabled
@@ -179,12 +191,12 @@ internal class MemoryBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val merged = rows.mapNotNull { (it as? LocalRow<LocalAiMemory>)?.row }
+        val merged = rows.mapNotNull { it.unpackLocal<LocalAiMemory>() }
         localAi.save(catalog.copy(memories = merged))
     }
 
     override suspend fun pushUpsert(row: SyncedRow, owner: String) {
-        val memory = (row as LocalRow<LocalAiMemory>).row
+        val memory = row.unpackLocal<LocalAiMemory>()!!
         ownedAi.saveMemory(
             AiMemory(id = memory.id, ownerUserId = owner, title = memory.title, content = memory.content),
             mask = listOf("title", "content"),
@@ -195,8 +207,8 @@ internal class MemoryBinding(
     override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
-        val x = (a as? LocalRow<LocalAiMemory>)?.row ?: (a as? MirrorRow<AiMemory>)?.row?.toLocal()
-        val y = (b as? LocalRow<LocalAiMemory>)?.row ?: (b as? MirrorRow<AiMemory>)?.row?.toLocal()
+        val x = a.unpackLocal<LocalAiMemory>() ?: a.unpackMirror<AiMemory>()?.toLocal()
+        val y = b.unpackLocal<LocalAiMemory>() ?: b.unpackMirror<AiMemory>()?.toLocal()
         if (x == null || y == null) return false
         return x.title == y.title && x.content == y.content && x.scope == y.scope && x.tags == y.tags
     }
@@ -221,12 +233,12 @@ internal class SkillBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val merged = rows.mapNotNull { (it as? LocalRow<LocalAiSkill>)?.row }
+        val merged = rows.mapNotNull { it.unpackLocal<LocalAiSkill>() }
         localAi.save(catalog.copy(skills = merged))
     }
 
     override suspend fun pushUpsert(row: SyncedRow, owner: String) {
-        val skill = (row as LocalRow<LocalAiSkill>).row
+        val skill = row.unpackLocal<LocalAiSkill>()!!
         ownedAi.saveSkill(
             AiSkill(id = skill.id, ownerUserId = owner, name = skill.name, description = skill.description, prompt = skill.prompt),
             mask = listOf("name", "description", "prompt"),
@@ -237,8 +249,8 @@ internal class SkillBinding(
     override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
-        val x = (a as? LocalRow<LocalAiSkill>)?.row ?: (a as? MirrorRow<AiSkill>)?.row?.toLocal()
-        val y = (b as? LocalRow<LocalAiSkill>)?.row ?: (b as? MirrorRow<AiSkill>)?.row?.toLocal()
+        val x = a.unpackLocal<LocalAiSkill>() ?: a.unpackMirror<AiSkill>()?.toLocal()
+        val y = b.unpackLocal<LocalAiSkill>() ?: b.unpackMirror<AiSkill>()?.toLocal()
         if (x == null || y == null) return false
         return x.name == y.name && x.description == y.description && x.prompt == y.prompt
     }
@@ -262,12 +274,12 @@ internal class EnvBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val merged = rows.mapNotNull { (it as? LocalRow<LocalAiEnvironment>)?.row }
+        val merged = rows.mapNotNull { it.unpackLocal<LocalAiEnvironment>() }
         localAi.save(catalog.copy(environment = merged))
     }
 
     override suspend fun pushUpsert(row: SyncedRow, owner: String) {
-        val env = (row as LocalRow<LocalAiEnvironment>).row
+        val env = row.unpackLocal<LocalAiEnvironment>()!!
         val value = localAi.environmentValue(env.id)
         ownedAi.saveEnv(
             AiEnv(id = env.id, ownerUserId = owner, name = env.name),
@@ -281,8 +293,8 @@ internal class EnvBinding(
     override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
-        val x = (a as? LocalRow<LocalAiEnvironment>)?.row ?: (a as? MirrorRow<AiEnv>)?.row?.toLocal()
-        val y = (b as? LocalRow<LocalAiEnvironment>)?.row ?: (b as? MirrorRow<AiEnv>)?.row?.toLocal()
+        val x = a.unpackLocal<LocalAiEnvironment>() ?: a.unpackMirror<AiEnv>()?.toLocal()
+        val y = b.unpackLocal<LocalAiEnvironment>() ?: b.unpackMirror<AiEnv>()?.toLocal()
         if (x == null || y == null) return false
         return x.name == y.name && x.enabled == y.enabled && x.visibleToAi == y.visibleToAi
     }
