@@ -452,6 +452,12 @@ test('second-round Android provider patches accept nested config paths and flatt
 
     assert.throws(
       () => context.adapter.update(alice, 'provider-second-round', {
+        config: { apiMode: 'native' },
+      }),
+      (error) => error.code === 'invalid_ai_provider',
+    );
+    assert.throws(
+      () => context.adapter.update(alice, 'provider-second-round', {
         config: { options: { context: 0 } },
       }),
       (error) => error.code === 'invalid_ai_provider',

@@ -205,7 +205,7 @@ internal class ProviderBinding(
             apiMode = m.apiMode,
         ) },
         config = AiProviderConfig(
-            apiMode = apiMode.takeIf { it in setOf("auto", "chat", "responses", "native") } ?: "auto",
+            apiMode = apiMode.takeIf { it in setOf("auto", "chat", "responses") } ?: "auto",
             temperature = temperature?.takeIf { it.isFinite() }, topP = topP?.takeIf { it.isFinite() },
             maxTokens = maxTokens.takeIf { it > 0 }, maxOutputTokens = maxOutputTokens?.takeIf { it > 0 },
             presencePenalty = presencePenalty.takeIf { it.isFinite() }, frequencyPenalty = frequencyPenalty.takeIf { it.isFinite() },
