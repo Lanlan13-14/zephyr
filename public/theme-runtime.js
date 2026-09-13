@@ -306,8 +306,13 @@ export function zephyrResolveBrandName(stored) {
  * small frames, the mark falls back to the exact pristine single-focal-point
  * wind geometry used by Zephyr Core, keeping the brand spark (dot-a) crisp.
  */
-function zephyrOneCompactSvg({ gradientId = 'zephyr-one-gradient', maskId = 'zephyr-one-cut', title = 'Zephyr One' } = {}) {
-    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #eef2f7)"/><stop offset="var(--zephyr-icon-grad-mid-offset, 58%)" stop-color="var(--zephyr-icon-grad-mid, #a8b5c3)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #6e7b88)"/></linearGradient>${coreCutMask(maskId)}</defs><path class="wind-path-main" d="${ONE_PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${ONE_PATH_MID}" stroke="url(#${gradientId})" mask="url(#${maskId})"/><path class="wind-path-tail" d="${ONE_PATH_TAIL}" stroke="url(#${gradientId})"/><circle cx="145" cy="115" r="4.5" fill="var(--zephyr-icon-dot-a, #0a84ff)" opacity="0.9"/></svg>`;
+function zephyrOneCompactSvg({ gradientId = 'zephyr-one-gradient', title = 'Zephyr One' } = {}) {
+    /* Optical sizing (Apple HIG): below the size the wordmark can be read at,
+     * strip it AND the mask that punches its hole — a bare bite out of the
+     * mid stroke reads worse than the smudge the mask was meant to fix. The
+     * focus dot (dot-a) sits on top of the crossing, restoring the pristine
+     * single-focal-point geometry of Zephyr Core. */
+    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #eef2f7)"/><stop offset="var(--zephyr-icon-grad-mid-offset, 58%)" stop-color="var(--zephyr-icon-grad-mid, #a8b5c3)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #6e7b88)"/></linearGradient></defs><path class="wind-path-main" d="${ONE_PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${ONE_PATH_MID}" stroke="url(#${gradientId})"/><path class="wind-path-tail" d="${ONE_PATH_TAIL}" stroke="url(#${gradientId})"/><circle cx="145" cy="115" r="4.5" fill="var(--zephyr-icon-dot-a, #0a84ff)" opacity="0.9"/></svg>`;
 }
 
 /**
@@ -324,7 +329,7 @@ export function zephyrBrandIconHtml(icon = DEFAULT_BRAND_ICON, opts = {}) {
         if (!isOneProduct()) {
             svg = zephyrWindSvg({ gradientId: `zephyr-brand-gradient-${seq}`, maskId: `zephyr-core-cut-${seq}` });
         } else if (opts.compact) {
-            svg = zephyrOneCompactSvg({ gradientId: `zephyr-one-gradient-${seq}`, maskId: `zephyr-one-cut-${seq}` });
+            svg = zephyrOneCompactSvg({ gradientId: `zephyr-one-gradient-${seq}` });
         } else {
             svg = zephyrOneWindSvg({ gradientId: `zephyr-one-gradient-${seq}`, maskId: `zephyr-one-cut-${seq}` });
         }
