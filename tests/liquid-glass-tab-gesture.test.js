@@ -305,6 +305,31 @@ test('nav.js drag width uses the same measured rects as hit testing', function (
   assert.ok(current.indexOf('bar.width - 8') === -1);
 });
 
+test('nav.js pointermove preventDefault is the other half of horizontal drag', function () {
+  var src = fs.readFileSync(
+    path.join(__dirname, '../public/liquid-glass-nav.js'),
+    'utf8'
+  );
+  var move = src.slice(
+    src.indexOf("navTabs.addEventListener('pointermove'"),
+    src.indexOf('function endPointer')
+  );
+  assert.ok(move.indexOf('e.preventDefault()') !== -1, 'must cancel the browser pan once the drag starts');
+  assert.ok(move.indexOf('{ passive: false }') !== -1, 'passive:true would ignore preventDefault');
+  assert.ok(move.indexOf('setPointerCapture') !== -1);
+});
+
+test('css: glass tabs must not be a horizontal scroller', function () {
+  var css = fs.readFileSync(
+    path.join(__dirname, '../public/style.css'),
+    'utf8'
+  );
+  assert.ok(
+    css.indexOf('.main-nav.liquid-glass-on .nav-tabs,\n.main-nav.liquid-glass-on .nav-tab {\n    touch-action: none;\n}') !== -1
+  );
+  assert.ok(!/\.nav-tabs\s*\{[^}]*overflow-x:\s*auto/.test(css));
+});
+
 test('SIM: visual 活动 click must activate 1, not packed 远程执行', function () {
   var labels = ['仪表盘', '活动', '终端', '远程执行', '笔记', '设置'];
   var hug = L.pickEqualTabWidth([78, 58, 58, 96, 58, 58]);

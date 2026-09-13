@@ -232,6 +232,35 @@ test('css locks glass tabs to --lg-tab-w', function () {
   assert.ok(lgOn !== -1);
   var lgChunk = css.slice(lgOn, lgOn + 700);
   assert.ok(lgChunk.indexOf('padding-bottom var(--terminal-shelf-duration)') !== -1, 'glass overlay must keep shelf padding transition');
+  assert.ok(
+    css.indexOf('--nav-fusion-bg: color-mix(in srgb, var(--surface) 75%, transparent);') !== -1,
+    'test-machine glass material is 75% surface, not the old 88%'
+  );
+  assert.ok(
+    css.indexOf('--nav-fusion-bg: color-mix(in srgb, var(--surface) 88%, transparent);') === -1,
+    '88% fusion is the GitHub-only dull bar'
+  );
+  assert.ok(
+    css.indexOf('backdrop-filter: blur(20px) saturate(180%);') !== -1,
+    'test-machine bar uses Apple blur 20 / sat 180'
+  );
+  assert.ok(
+    css.indexOf('.main-nav.liquid-glass-on .nav-tabs,\n.main-nav.liquid-glass-on .nav-tab {\n    touch-action: none;\n}') !== -1,
+    'glass tabs must disable pan so horizontal drag is a tab gesture, not a scroll'
+  );
+  assert.ok(
+    !/\.nav-tabs\s*\{[^}]*overflow-x:\s*auto/.test(css),
+    'overflow-x:auto on .nav-tabs steals the horizontal drag'
+  );
+  assert.ok(css.indexOf('Apple-style Segmented Capsule Navigation') !== -1);
+  assert.ok(css.indexOf('Apple-style Right Actions') !== -1);
+  assert.ok(css.indexOf('.nav-actions #logoutBtn {') !== -1, 'logout pill lives next to the 30px circles');
+  var appleAt = css.indexOf('/* Apple-style Segmented Capsule Navigation */');
+  assert.ok(appleAt !== -1);
+  var apple = css.slice(appleAt, css.indexOf('/* Settings tab maintains existing styling */'));
+  assert.ok(apple.indexOf('display: inline-flex') !== -1, 'capsule is hug, not flex:1 overflow-x');
+  assert.ok(apple.indexOf('overflow-x') === -1);
+  assert.ok(apple.indexOf('border-radius: 9999px') !== -1);
 });
 
 test('THIRD_PARTY_NOTICES lists liquid-glass-webgl next to Kyant AndroidLiquidGlass', function () {
