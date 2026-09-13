@@ -125,6 +125,12 @@ class AgentController extends ChangeNotifier {
     ).toString().replaceAll(RegExp(r'/+$'), '');
   }
 
+  /// Deterministic pre-persistence device id (<= v1.0.19). Kept only so an
+  /// upgraded install that already registered that id keeps a stable hello;
+  /// fresh installs mint a random v4 id instead.
+  String _legacyDeterministicDeviceId() =>
+      const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
+
   static Uri agentWebSocketUriForServerUrl(String serverUrl) {
     final normalized = normalizeServerUrl(serverUrl);
     final uri = Uri.parse(normalized);
@@ -161,7 +167,10 @@ class AgentController extends ChangeNotifier {
       if (normalizedServerUrl.isEmpty) throw const FormatException('主端地址为空');
       _config.serverUrl = normalizedServerUrl;
       final hadDeviceId = _config.linkDeviceId != null;
-      final deviceId = _config.linkDeviceId ??= const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
+      // Random, not deterministic: two agents with the default device name
+      // would otherwise collide on the same server-side link_device_id.
+      // Upgraded installs keep their persisted (previously v5) id untouched.
+      final deviceId = _config.linkDeviceId ??= const Uuid().v4();
       if (!hadDeviceId) await LocalSettings.saveConfig(_config);
       if (Platform.isAndroid && _config.linkSigningJwk == null) {
         try {
@@ -211,7 +220,9 @@ class AgentController extends ChangeNotifier {
   // ─── Protocol ────────────────────────────────────────────────
 
   void _sendHello() {
-    final deviceId = _config.linkDeviceId ?? const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
+    // hello echoes the persisted link device id; the legacy deterministic id
+    // is only a display fallback and never re-binds a different identity.
+    final deviceId = _config.linkDeviceId ?? _legacyDeterministicDeviceId();
     _send({
       'type': 'hello',
       'protocolVersion': 2,
@@ -509,7 +520,7 @@ class AgentController extends ChangeNotifier {
       return;
     }
     _linkError = '';
-    final deviceId = _config.linkDeviceId ?? const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
+    final deviceId = _config.linkDeviceId ?? _legacyDeterministicDeviceId();
     unawaited(() async {
       try {
         final ok = await _linkRuntime.connect(
