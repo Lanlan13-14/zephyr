@@ -137,6 +137,7 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
     // Value is true once the ES256 JWK has been pushed; an id-only registration
     // is upgraded the first time a JWK is available.
     const registered = new Map();
+    const registeredJwks = new Map();
 
     async function registerDevice(deviceId, signingJwk) {
         if (!deviceId) return;
@@ -165,7 +166,10 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
                     req.setTimeout(5000, () => { req.destroy(new Error('register-device timeout')); });
                     req.write(body); req.end();
                 });
-                if (ok) return;
+                if (ok) {
+                    registeredJwks.set(deviceId, signingJwk || null);
+                    return;
+                }
                 log('[link-v2] register-device attempt ' + (attempt + 1) + ' failed, retrying');
             } catch (e) {
                 log('[link-v2] register-device attempt ' + (attempt + 1) + ' error: ' + (e && e.message));
@@ -220,13 +224,12 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
     // a restart. An unenrolled device is left to fail closed at the Go side.
     async function ensureDevice(deviceId) {
         if (!deviceId) return;
-        if (!enrollments || typeof enrollments.deviceById !== 'function') return;
-        const row = enrollments.deviceById(deviceId);
-        if (!row) return; // not consumed -> Go will reject; do not register unknowns
-        const haveJwk = !!(row.signingJwk && typeof row.signingJwk === 'object');
-        if (registered.get(deviceId) === true || (registered.has(deviceId) && !haveJwk)) return;
-        await registerDevice(deviceId, row.signingJwk);
-        registered.set(deviceId, haveJwk);
+        const row = enrollments?.deviceById?.(deviceId) || null;
+        const signingJwk = row?.signingJwk || registeredJwks.get(deviceId) || null;
+        if (!signingJwk || typeof signingJwk !== 'object') return;
+        if (registered.get(deviceId) === true && registeredJwks.has(deviceId)) return;
+        await registerDevice(deviceId, signingJwk);
+        registered.set(deviceId, true);
     }
 
     function router() {

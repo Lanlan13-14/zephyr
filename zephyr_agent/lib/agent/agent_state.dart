@@ -35,6 +35,9 @@ class AgentConfig {
   /// Advertise this Agent as an optional SSH/SFTP bastion candidate.
   /// Disabled by default; enabling never changes the file-share ACL.
   bool bastionEnabled;
+  /// Android Keystore public signing JWK, persisted after first generation.
+  String? linkSigningJwk;
+  String? linkDeviceId;
 
   AgentConfig({
     this.serverUrl = '',
@@ -47,6 +50,8 @@ class AgentConfig {
     this.autoShutdownMinutes = 10,
     this.allowBadCertificates = true,
     this.bastionEnabled = false,
+    this.linkSigningJwk,
+    this.linkDeviceId,
   });
 
   Map<String, dynamic> toJson() => {
@@ -60,6 +65,8 @@ class AgentConfig {
     'autoShutdownMinutes': autoShutdownMinutes,
     'allowBadCertificates': allowBadCertificates,
     'bastionEnabled': bastionEnabled,
+    'linkSigningJwk': linkSigningJwk,
+    'linkDeviceId': linkDeviceId,
   };
 
   factory AgentConfig.fromJson(Map<String, dynamic> json) => AgentConfig(
@@ -73,5 +80,7 @@ class AgentConfig {
     autoShutdownMinutes: json['autoShutdownMinutes'] as int? ?? 10,
     allowBadCertificates: json['allowBadCertificates'] as bool? ?? true,
     bastionEnabled: json['bastionEnabled'] as bool? ?? false,
+    linkSigningJwk: json['linkSigningJwk'] as String?,
+    linkDeviceId: json['linkDeviceId'] as String?,
   );
 }

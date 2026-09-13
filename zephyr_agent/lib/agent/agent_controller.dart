@@ -14,6 +14,7 @@ import 'file_transfer_protocol.dart';
 import 'platform_link_file_runtime.dart';
 import 'zft2_link_lane.dart';
 import '../app/agent_version.dart';
+import '../storage/local_settings.dart';
 
 class AgentController extends ChangeNotifier {
   AgentConfig _config;
@@ -155,14 +156,14 @@ class AgentController extends ChangeNotifier {
       final normalizedServerUrl = normalizeServerUrl(_config.serverUrl);
       if (normalizedServerUrl.isEmpty) throw const FormatException('主端地址为空');
       _config.serverUrl = normalizedServerUrl;
-      final deviceId = const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
-      // Establish the existing ZSL/2 session before advertising FileBridge.
-      // Enrollment/proof failures keep the legacy share alive but fail closed
-      // for Link file operations.
-      try {
-        await _linkRuntime.connect(serverUrl: normalizedServerUrl, deviceId: deviceId);
-      } catch (_) {
-        await _linkRuntime.close();
+      final hadDeviceId = _config.linkDeviceId != null;
+      final deviceId = _config.linkDeviceId ??= const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
+      if (!hadDeviceId) await LocalSettings.saveConfig(_config);
+      if (Platform.isAndroid && _config.linkSigningJwk == null) {
+        try {
+          _config.linkSigningJwk = await _linkRuntime.signingJwk(deviceId);
+          await LocalSettings.saveConfig(_config);
+        } catch (_) {}
       }
       final uri = agentWebSocketUriForServerUrl(normalizedServerUrl);
       final customClient = _config.allowBadCertificates && uri.scheme == 'wss'
@@ -206,7 +207,7 @@ class AgentController extends ChangeNotifier {
   // ─── Protocol ────────────────────────────────────────────────
 
   void _sendHello() {
-    final deviceId = const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
+    final deviceId = _config.linkDeviceId ?? const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
     _send({
       'type': 'hello',
       'protocolVersion': 2,
@@ -219,6 +220,7 @@ class AgentController extends ChangeNotifier {
       // this server. The bastion lane keys the encrypted tunnel off it; absent
       // when enrollment/proof failed — the server must then refuse bastion use.
       'linkSessionId': _linkRuntime.sessionId,
+      'linkSigningJwk': _config.linkSigningJwk,
       'capabilities': {
         'read': true,
         'write': !_config.readOnly,
@@ -278,6 +280,9 @@ class AgentController extends ChangeNotifier {
     switch (msg['type']) {
       case 'hello_ack':
         _handleHelloAck(msg);
+        break;
+      case 'link_register_ack':
+        _handleLinkRegisterAck(msg);
         break;
       case 'request':
         _handleRequest(msg);
@@ -478,16 +483,33 @@ class AgentController extends ChangeNotifier {
       _reconnectAttempts = 0;
       _startHeartbeat();
       _startShutdownTimer();
-      _maybeStartBastionTunnel();
-      // Single Link channel: the ZFT2 file plane rides the encrypted lane as
-      // soon as the session exists; the public WebSocket stays control-only.
-      _connectZft2Lane();
+      if (_config.linkSigningJwk != null) {
+        _send({'type': 'link_register'});
+      } else {
+        _maybeStartBastionTunnel();
+        _connectZft2Lane();
+      }
     } else {
       final error = msg['error'] as Map<String, dynamic>?;
       _errorMessage = error?['message'] as String? ?? 'Authentication failed';
       _setStatus(AgentStatus.error);
       // Don't reconnect on auth failure
     }
+  }
+
+  void _handleLinkRegisterAck(Map<String, dynamic> msg) {
+    if (msg['ok'] != true) return;
+    final deviceId = _config.linkDeviceId ?? const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
+    unawaited(() async {
+      try {
+        await _linkRuntime.connect(serverUrl: _config.serverUrl, deviceId: deviceId);
+        _send({'type': 'link_ready', 'sessionId': _linkRuntime.sessionId});
+        _maybeStartBastionTunnel();
+        _connectZft2Lane();
+      } catch (error) {
+        if (kDebugMode) print('[agent-link] dial failed: $error');
+      }
+    }());
   }
 
   /// Boots the encrypted bastion tunnel once both channels are up: the Agent
