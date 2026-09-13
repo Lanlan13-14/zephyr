@@ -29,6 +29,9 @@ class ResourceService {
     constructor(storage, authz, options = {}) {
         this.storage = storage;
         this.authz = authz;
+        // Agent bastions are live connections, not rows in jump_hosts. Keep
+        // their ownership check injectable so this service stays testable.
+        this.agentBastionResolver = options.agentBastionResolver || null;
         this.mobileChangeBridge = options.mobileChangeBridge === false
             ? null
             : (options.mobileChangeBridge || getMobileV1ChangeBridge(storage.rawDb()));
@@ -419,6 +422,13 @@ class ResourceService {
                     resolved.jumpHostId = jumpIds[0] || null;
                     const hopConnectionIds = new Set();
                     for (const jumpId of jumpIds) {
+                        if (String(jumpId).startsWith('agent:')) {
+                            const agentId = String(jumpId).slice('agent:'.length);
+                            const agent = this.agentBastionResolver?.(user, agentId) || null;
+                            if (!agent || jumpIds.indexOf(jumpId) !== 0) throw this._connectionTestDependencyUnavailable();
+                            resolved.agentBastion = agent;
+                            continue;
+                        }
                         const jump = jumpHosts.get(jumpId) || null;
                         if (jump) this._assertConnectionTestDependency(user, 'jumpHost', jump, boundOwnerUserId);
                         const hopConnectionId = String(jump?.connectionId || jumpId);
@@ -446,9 +456,11 @@ class ResourceService {
         const top = resolveConnection(candidate, candidate?.id || 'draft');
         const firstProxy = top.connection.connectionMode === 'proxy'
             ? top.proxy
-            : (top.hops[0]?.connectionMode === 'proxy'
-                ? resolveConnection(connections.get(String(top.hops[0].id)), String(top.hops[0].id), 1).proxy
-                : null);
+            : (top.connection.agentBastion
+                ? { type: 'agent', agentId: top.connection.agentBastion.agentId, name: top.connection.agentBastion.name }
+                : (top.hops[0]?.connectionMode === 'proxy'
+                    ? resolveConnection(connections.get(String(top.hops[0].id)), String(top.hops[0].id), 1).proxy
+                    : null));
         return { target: top.connection, hops: top.hops, firstProxy };
     }
 
@@ -485,6 +497,13 @@ class ResourceService {
         if (resolved.connectionMode === 'jump') {
             const jumpIds = Array.isArray(resolved.jumpHostIds) ? resolved.jumpHostIds : [];
             for (const jumpId of jumpIds) {
+                if (String(jumpId).startsWith('agent:')) {
+                    const agentId = String(jumpId).slice('agent:'.length);
+                    if (!this.agentBastionResolver?.(user, agentId)) {
+                        throw new HttpError(403, 'forbidden_dependency_jumpHost', 'Agent 跳板无权使用或已不可用', false);
+                    }
+                    continue;
+                }
                 const jump = this.storage.listJumpHosts().find((j) => j.id === jumpId);
                 if (!jump) continue;
                 if (jump.ownerUserId && jump.ownerUserId === conn.ownerUserId) continue;
@@ -523,6 +542,13 @@ class ResourceService {
         }
         if (conn.connectionMode === 'jump') {
             for (const jumpId of (Array.isArray(conn.jumpHostIds) ? conn.jumpHostIds : [])) {
+                if (String(jumpId).startsWith('agent:')) {
+                    const agentId = String(jumpId).slice('agent:'.length);
+                    if (!this.agentBastionResolver?.(user, agentId)) {
+                        throw new HttpError(400, 'invalid_dependency', '选择的 Agent 跳板不存在、已离线或未授权', false);
+                    }
+                    continue;
+                }
                 const jump = this._ownerOf('jumpHost', jumpId);
                 if (!jump) throw new HttpError(400, 'invalid_dependency', '选择的跳板机不存在', false);
                 const owned = jump.ownerUserId === user.userId;

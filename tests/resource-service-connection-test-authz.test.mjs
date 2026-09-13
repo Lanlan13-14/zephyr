@@ -67,7 +67,11 @@ function fixture() {
         shared,
         foreign,
         connections,
-        service: new ResourceService(storage, authz, { mobileChangeBridge: false }),
+        service: new ResourceService(storage, authz, {
+            mobileChangeBridge: false,
+            agentBastionResolver: (user, agentId) => user.userId === 'owner' && agentId === 'agent-1'
+                ? { agentId, name: 'test agent' } : null,
+        }),
     };
 }
 
@@ -160,6 +164,19 @@ test('owner preview authorizes an own jump graph and rejects dependency cycles',
             && error.status === 400
             && error.code === 'connection_test_invalid_route',
     );
+});
+
+test('Agent bastion route is accepted without a jump_hosts row', () => {
+    const { service, owner, connections } = fixture();
+    const target = connections.find((item) => item.id === 'target');
+    const result = service.resolveForConnectionTest(owner, {
+        ...target,
+        connectionMode: 'jump', proxyId: null,
+        jumpHostId: 'agent:agent-1', jumpHostIds: ['agent:agent-1'],
+    });
+    assert.equal(result.routePlan.firstProxy.type, 'agent');
+    assert.equal(result.routePlan.firstProxy.agentId, 'agent-1');
+    assert.equal(result.routePlan.hops.length, 0);
 });
 
 test('route graph bounds reject deep acyclic graphs and memoize shared subgraphs', () => {

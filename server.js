@@ -1080,7 +1080,16 @@ setInterval(() => { try { sessionStore.gc(); } catch {} }, 10 * 60 * 1000).unref
 /* Unified authorization (FREEZE plan §19.1) — every route/WS/tool goes through
  * these services; no route may re-implement role or ownership checks. */
 const authz = new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserBrief(id) });
-const resourceService = new ResourceService(storage, authz);
+const resolveAgentBastion = (user, agentId) => {
+    const agent = fileAgentManager?.getAgent(String(agentId || ''));
+    if (!agent || !agent.online || agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) return null;
+    if (!fileAgentManager.isAgentOwnedByUser(String(agentId), user)) return null;
+    return {
+        agentId: String(agentId),
+        name: agent.tokenName ? `${agent.tokenName} (${agent.deviceName || agentId})` : (agent.deviceName || agentId),
+    };
+};
+const resourceService = new ResourceService(storage, authz, { agentBastionResolver: resolveAgentBastion });
 const sharingService = new SharingService(authz, storage, resourceService);
 let resourceAclMetadataService = new ResourceAclMetadataService({
     db: storage.rawDb(),
@@ -1303,7 +1312,7 @@ function rebuildAuthServices() {
     aiHistoryRuntime.reset();
     resourceAclMetadataService?.uninstall();
     Object.assign(authz, new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserBrief(id) }));
-    Object.assign(resourceService, new ResourceService(storage, authz));
+    Object.assign(resourceService, new ResourceService(storage, authz, { agentBastionResolver: resolveAgentBastion }));
     Object.assign(sharingService, new SharingService(authz, storage, resourceService));
     resourceAclMetadataService = new ResourceAclMetadataService({
         db: storage.rawDb(),
@@ -2869,6 +2878,9 @@ function resolveRoutePlan(conn) {
             const agentId = rawId.slice(6);
             const agent = fileAgentManager ? fileAgentManager.getAgent(agentId) : null;
             if (!agent || !agent.online) throw new Error(`Agent 跳板不在线：${agentId}`);
+            if (!fileAgentManager?.isAgentOwnedByUser(agentId, { userId: conn.ownerUserId, username: conn.ownerUsername })) {
+                throw new Error(`Agent 跳板无权使用：${agentId}`);
+            }
             if (agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) {
                 throw new Error(`Agent 未启用跳板能力：${agent.deviceName || agentId}`);
             }
