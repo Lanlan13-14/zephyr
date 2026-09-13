@@ -13,7 +13,7 @@ import one.zephyr.mobile.model.AiMemory
 import one.zephyr.mobile.model.AiProvider
 import one.zephyr.mobile.model.AiSkill
 import one.zephyr.mobile.model.AiTodo
-import one.zephyr.mobile.model.SecretState
+import one.zephyr.mobile.model.SecretState.Set as SecretSet
 
 /**
  * Entity bindings for the One AI catalog. Each binding adapts one catalog
@@ -78,7 +78,7 @@ internal class TodoBinding(
         )
     }
 
-    override suspend fun pushDelete(id: String, owner: String) = ownedAi.delete(entityType, id, owner)
+    override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
         val x = (a as? LocalRow<LocalAiTodo>)?.row ?: (a as? MirrorRow<AiTodo>)?.row?.toLocal()
@@ -129,13 +129,13 @@ internal class ProviderBinding(
                 "name", "type", "baseUrl", "defaultModel", "models", "config",
                 "enabled",
             ),
-            apiKey = if (apiKey != null) SecretState.Set(apiKey.concatToString()) else SecretState.None,
+            apiKey = if (apiKey != null) SecretSet(apiKey.concatToString()) else SecretState.None,
             ownerUserId = owner,
         )
         if (apiKey != null) apiKey.fill(' ')
     }
 
-    override suspend fun pushDelete(id: String, owner: String) = ownedAi.delete(entityType, id, owner)
+    override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
         val x = (a as? LocalRow<LocalAiProvider>)?.row ?: (a as? MirrorRow<AiProvider>)?.row?.toLocal()
@@ -188,7 +188,7 @@ internal class MemoryBinding(
         )
     }
 
-    override suspend fun pushDelete(id: String, owner: String) = ownedAi.delete(entityType, id, owner)
+    override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
         val x = (a as? LocalRow<LocalAiMemory>)?.row ?: (a as? MirrorRow<AiMemory>)?.row?.toLocal()
@@ -230,7 +230,7 @@ internal class SkillBinding(
         )
     }
 
-    override suspend fun pushDelete(id: String, owner: String) = ownedAi.delete(entityType, id, owner)
+    override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
         val x = (a as? LocalRow<LocalAiSkill>)?.row ?: (a as? MirrorRow<AiSkill>)?.row?.toLocal()
@@ -268,13 +268,13 @@ internal class EnvBinding(
         ownedAi.saveEnv(
             AiEnv(id = env.id, ownerUserId = owner, name = env.name),
             mask = listOf("name"),
-            value = if (value != null) SecretState.Set(value.concatToString()) else SecretState.None,
+            value = if (value != null) SecretSet(value.concatToString()) else SecretState.None,
             ownerUserId = owner,
         )
         if (value != null) value.fill(' ')
     }
 
-    override suspend fun pushDelete(id: String, owner: String) = ownedAi.delete(entityType, id, owner)
+    override suspend fun pushDelete(id: String, owner: String) { ownedAi.delete(entityType, id, owner) }
 
     override fun contentEquals(a: SyncedRow, b: SyncedRow): Boolean {
         val x = (a as? LocalRow<LocalAiEnvironment>)?.row ?: (a as? MirrorRow<AiEnv>)?.row?.toLocal()
