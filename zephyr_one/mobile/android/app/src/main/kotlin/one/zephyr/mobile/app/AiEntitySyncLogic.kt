@@ -23,7 +23,7 @@ import one.zephyr.mobile.data.repository.OwnedAiRepository
  * non-secret content only, and secrets ride the LocalWriteGateway envelope
  * (SecretState) rather than the content payload.
  */
-interface SyncedRow {
+internal interface SyncedRow {
     val syncId: String
     val syncRevision: Long
     val syncDeletedAt: Long?

@@ -2,6 +2,7 @@ package one.zephyr.mobile.app
 
 import one.zephyr.mobile.contracts.SyncAction
 import one.zephyr.mobile.data.repository.LocalAiEnvironment
+import one.zephyr.mobile.data.repository.LocalAiModel
 import one.zephyr.mobile.data.repository.LocalAiMemory
 import one.zephyr.mobile.data.repository.LocalAiProvider
 import one.zephyr.mobile.data.repository.LocalAiRepository
@@ -13,7 +14,9 @@ import one.zephyr.mobile.model.AiMemory
 import one.zephyr.mobile.model.AiProvider
 import one.zephyr.mobile.model.AiSkill
 import one.zephyr.mobile.model.AiTodo
-import one.zephyr.mobile.model.SecretState.Set as SecretSet
+import one.zephyr.mobile.model.AiModel
+import one.zephyr.mobile.model.AiProviderConfig
+import one.zephyr.mobile.model.SecretState.Replace
 
 /**
  * Entity bindings for the One AI catalog. Each binding adapts one catalog
@@ -129,7 +132,7 @@ internal class ProviderBinding(
                 "name", "type", "baseUrl", "defaultModel", "models", "config",
                 "enabled",
             ),
-            apiKey = if (apiKey != null) SecretSet(apiKey.concatToString()) else SecretState.None,
+            apiKey = if (apiKey != null) SecretState.Replace(apiKey.concatToString()) else SecretState.Unchanged,
             ownerUserId = owner,
         )
         if (apiKey != null) apiKey.fill(' ')
@@ -268,7 +271,7 @@ internal class EnvBinding(
         ownedAi.saveEnv(
             AiEnv(id = env.id, ownerUserId = owner, name = env.name),
             mask = listOf("name"),
-            value = if (value != null) SecretSet(value.concatToString()) else SecretState.None,
+            value = if (value != null) SecretState.Replace(value.concatToString()) else SecretState.Unchanged,
             ownerUserId = owner,
         )
         if (value != null) value.fill(' ')
@@ -284,6 +287,6 @@ internal class EnvBinding(
     }
 
     private fun AiEnv.toLocal() = LocalAiEnvironment(
-        id = id, name = name, description = description, enabled = enabled, revision = revision,
+        id = id, name = name, enabled = enabled, revision = revision,
     )
 }

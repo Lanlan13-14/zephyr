@@ -23,7 +23,7 @@ import one.zephyr.mobile.data.repository.OwnedAiRepository
  * equal either way (presence is bookkeeping, not content). Pull-merging a
  * mirror provider row into the catalog keeps the local key untouched.
  */
-class AiEntitySyncCoordinator(
+internal class AiEntitySyncCoordinator(
     private val scope: CoroutineScope,
     private val localAi: LocalAiRepository,
     private val ownedAi: OwnedAiRepository,

@@ -19,6 +19,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import one.zephyr.mobile.app.di.AccountContainer
 import one.zephyr.mobile.data.repository.LocalAiCatalog
+import one.zephyr.mobile.data.repository.LocalAiModel
 import one.zephyr.mobile.data.repository.LocalAiProvider
 import one.zephyr.mobile.feature.ai.*
 import one.zephyr.mobile.network.ApiResult

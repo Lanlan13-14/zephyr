@@ -35,7 +35,12 @@ import one.zephyr.mobile.data.repository.ConnectionRepository
 import one.zephyr.mobile.data.repository.LocalAiRepository
 import one.zephyr.mobile.data.repository.NoteRepository
 import one.zephyr.mobile.data.repository.OwnedAiRepository
-import one.zephyr.mobile.app.AiTodoSyncCoordinator
+import one.zephyr.mobile.app.AiEntitySyncCoordinator
+import one.zephyr.mobile.app.EnvBinding
+import one.zephyr.mobile.app.MemoryBinding
+import one.zephyr.mobile.app.ProviderBinding
+import one.zephyr.mobile.app.SkillBinding
+import one.zephyr.mobile.app.TodoBinding
 import one.zephyr.mobile.data.repository.ResourceRepository
 import one.zephyr.mobile.data.repository.SettingsRepository
 import one.zephyr.mobile.data.repository.SharedAiProviderStore
