@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,6 +51,11 @@ type tunnelFrame struct {
 	Seq  int64  `json:"seq,omitempty"`
 	Data string `json:"data,omitempty"`
 	Err  string `json:"err,omitempty"`
+	// Lane names the traffic class. Empty means a plain TCP tunnel; "zft2"
+	// routes the bytes to the Agent host's ZFT2 dispatcher instead of a TCP
+	// dial, so the file protocol can ride the encrypted stream without any
+	// plaintext hop.
+	Lane string `json:"lane,omitempty"`
 }
 
 // tunnelStreamConn is the raw client side of /link/stream: it POSTs nothing,
@@ -176,6 +182,8 @@ type agentTunnel struct {
 	conn   net.Conn
 	seqIn  int64
 	closed bool
+	// zft2 marks a lane tunnel whose conn is a Zft2Lane pipe, not TCP.
+	zft2 bool
 }
 
 type AgentTunnelHub struct {
@@ -189,8 +197,83 @@ type AgentTunnelHub struct {
 	out     chan tunnelFrame
 	ctx     context.Context
 	cancel  context.CancelFunc
+	readyCh chan struct{}
+	// zft2Conn/zft2WriteMu serialize writes onto the local zft2 socket.
+	zft2Conn    net.Conn
+	zft2WriteMu *sync.Mutex
 	// OnLinkLost fires when the stream dies so the host can re-dial.
 	OnLinkLost func()
+	// OnZft2Open hands a zft2-lane tunnel's byte pipe to the host (Dart via
+	// MethodChannel on Android). When nil, a zft2 open is refused.
+	OnZft2Open func(t *Zft2Lane)
+}
+
+// Zft2Lane is one zft2-lane tunnel: bytes the main end sealed into the stream
+// arrive here; the host writes replies back through the returned writer.
+type Zft2Lane struct {
+	hub  *AgentTunnelHub
+	id   int
+	in   chan []byte
+	dead chan struct{}
+	once sync.Once
+}
+
+// LocalAddr reports a synthetic address for the zft2 lane.
+func (l *Zft2Lane) LocalAddr() net.Addr { return laneAddr("zft2-local") }
+
+// RemoteAddr reports a synthetic address for the zft2 lane.
+func (l *Zft2Lane) RemoteAddr() net.Addr { return laneAddr("zft2-peer") }
+
+// SetDeadline is a no-op; lane pacing is governed by the stream, not timers.
+func (l *Zft2Lane) SetDeadline(time.Time) error { return nil }
+
+// SetReadDeadline is a no-op; the lane blocks until data or close.
+func (l *Zft2Lane) SetReadDeadline(time.Time) error { return nil }
+
+// SetWriteDeadline is a no-op; writes queue under the stream's own backpressure.
+func (l *Zft2Lane) SetWriteDeadline(time.Time) error { return nil }
+
+type laneAddr string
+
+func (a laneAddr) Network() string { return "zft2-lane" }
+func (a laneAddr) String() string  { return string(a) }
+
+func (l *Zft2Lane) Read(p []byte) (int, error) {
+	select {
+	case data, ok := <-l.in:
+		if !ok || len(data) == 0 {
+			return 0, io.EOF
+		}
+		n := copy(p, data)
+		return n, nil
+	case <-l.dead:
+		return 0, io.EOF
+	}
+}
+
+func (l *Zft2Lane) Write(p []byte) (int, error) {
+	select {
+	case <-l.dead:
+		return 0, io.ErrClosedPipe
+	default:
+	}
+	chunk := tunnelMaxDataBytes
+	for offset := 0; offset < len(p); offset += chunk {
+		end := offset + chunk
+		if end > len(p) {
+			end = len(p)
+		}
+		l.hub.out <- tunnelFrame{Tun: l.id, Op: "data", Data: base64.StdEncoding.EncodeToString(p[offset:end]), Lane: "zft2"}
+	}
+	return len(p), nil
+}
+
+func (l *Zft2Lane) Close() error {
+	l.once.Do(func() {
+		close(l.dead)
+		l.hub.out <- tunnelFrame{Tun: l.id, Op: "close", Lane: "zft2"}
+	})
+	return nil
 }
 
 func NewAgentTunnelHub(node *Node) *AgentTunnelHub {
@@ -210,13 +293,127 @@ func (h *AgentTunnelHub) Start(peerURL, sessionID string) error {
 	h.peerURL = peerURL
 	h.ctx, h.cancel = context.WithCancel(context.Background())
 	h.mu.Unlock()
+	ready := make(chan struct{})
+	close(ready)
+	h.mu.Lock()
+	h.readyCh = ready
+	h.mu.Unlock()
 	go h.writeLoop()
-	h.readLoop()
-	h.closeAll("link stream closed")
-	if h.OnLinkLost != nil {
-		h.OnLinkLost()
-	}
+	go h.readLoop()
 	return nil
+}
+
+// ServeZft2Local bridges every zft2 lane onto one loopback WebSocket for the
+// host (Dart). Wire per binary message: [lane id u32 BE][ZFT2 frame bytes].
+// Host→main-end: socket frames write into the lane (sealed onto the stream).
+// Main-end→host: a per-lane goroutine forwards lane bytes onto the socket.
+func (h *AgentTunnelHub) ServeZft2Local(conn net.Conn, br *bufio.Reader) {
+	defer conn.Close()
+	writeMu := new(sync.Mutex)
+	h.mu.Lock()
+	h.zft2Conn = conn
+	h.zft2WriteMu = writeMu
+	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		h.zft2Conn = nil
+		h.zft2WriteMu = nil
+		h.mu.Unlock()
+	}()
+	for {
+		op, payload, err := readFrame(br)
+		if err != nil {
+			return
+		}
+		switch op {
+		case 0x8:
+			writeFrame(conn, 0x8, nil)
+			return
+		case 0x9:
+			writeFrame(conn, 0xA, payload)
+			continue
+		case 0x1, 0x2, 0x0:
+		default:
+			return
+		}
+		if len(payload) < 4 {
+			return
+		}
+		laneID := int(binary.BigEndian.Uint32(payload[:4]))
+		h.mu.Lock()
+		t := h.tunnels[laneID]
+		h.mu.Unlock()
+		if t == nil || !t.zft2 {
+			continue
+		}
+		if _, err := t.conn.Write(payload[4:]); err != nil {
+			h.closeTunnel(laneID, "zft2 local write failed")
+		}
+	}
+}
+
+// pumpZft2LaneToSocket forwards one lane's main-end bytes onto the local
+// zft2 socket with the [id][bytes] prefix.
+func (h *AgentTunnelHub) pumpZft2LaneToSocket(l *Zft2Lane) {
+	header := make([]byte, 4)
+	binary.BigEndian.PutUint32(header, uint32(l.id))
+	for {
+		buf := make([]byte, tunnelMaxDataBytes)
+		n, err := l.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		h.mu.Lock()
+		conn := h.zft2Conn
+		mu := h.zft2WriteMu
+		h.mu.Unlock()
+		if conn == nil || mu == nil {
+			return
+		}
+		out := make([]byte, 4+n)
+		copy(out, header)
+		copy(out[4:], buf[:n])
+		mu.Lock()
+		err = writeFrame(conn, 0x2, out)
+		mu.Unlock()
+		if err != nil {
+			return
+		}
+	}
+}
+
+// Ready resolves once the stream is attached and loops are running. Calling
+// before Start returns a channel that resolves on the next successful Start.
+func (h *AgentTunnelHub) Ready() <-chan struct{} {
+	h.mu.Lock()
+	if h.readyCh != nil {
+		defer h.mu.Unlock()
+		return h.readyCh
+	}
+	h.mu.Unlock()
+	// No Start yet (or a fresh hub): poll until one lands. Bounded by the
+	// caller's own select deadline.
+	late := make(chan struct{})
+	go func() {
+		for {
+			h.mu.Lock()
+			ch := h.readyCh
+			h.mu.Unlock()
+			if ch != nil {
+				select {
+				case <-ch:
+					close(late)
+				case <-time.After(50 * time.Millisecond):
+				}
+				if ch != h.readyCh {
+					continue
+				}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	return late
 }
 
 func (h *AgentTunnelHub) closeAll(reason string) {
@@ -232,6 +429,12 @@ func (h *AgentTunnelHub) closeAll(reason string) {
 }
 
 func (h *AgentTunnelHub) readLoop() {
+	defer func() {
+		h.closeAll("link stream closed")
+		if h.OnLinkLost != nil {
+			h.OnLinkLost()
+		}
+	}()
 	for {
 		h.mu.Lock()
 		stream, ep := h.stream, h.ep
@@ -289,6 +492,10 @@ func (h *AgentTunnelHub) writeLoop() {
 func (h *AgentTunnelHub) handleFrame(tf *tunnelFrame) {
 	switch tf.Op {
 	case "open":
+		if tf.Lane == "zft2" {
+			go h.openZft2Lane(tf)
+			return
+		}
 		go h.openTunnel(tf)
 	case "data":
 		h.mu.Lock()
@@ -336,6 +543,24 @@ func (h *AgentTunnelHub) openTunnel(tf *tunnelFrame) {
 	h.mu.Unlock()
 	h.out <- tunnelFrame{Tun: tf.Tun, Op: "open", Seq: 0}
 	go h.pumpTCP(tf.Tun, conn)
+}
+
+func (h *AgentTunnelHub) openZft2Lane(tf *tunnelFrame) {
+	h.mu.Lock()
+	cb := h.OnZft2Open
+	h.mu.Unlock()
+	if cb == nil {
+		h.out <- tunnelFrame{Tun: tf.Tun, Op: "err", Err: "zft2 lane unavailable", Lane: "zft2"}
+		return
+	}
+	lane := &Zft2Lane{hub: h, id: tf.Tun, in: make(chan []byte, tunnelChannelBufSize), dead: make(chan struct{})}
+	t := &agentTunnel{id: tf.Tun, conn: lane, zft2: true}
+	h.mu.Lock()
+	h.tunnels[tf.Tun] = t
+	h.mu.Unlock()
+	h.out <- tunnelFrame{Tun: tf.Tun, Op: "open", Seq: 0, Lane: "zft2"}
+	cb(lane)
+	go h.pumpZft2LaneToSocket(lane)
 }
 
 func (h *AgentTunnelHub) pumpTCP(id int, conn net.Conn) {
@@ -581,7 +806,19 @@ func (h *MainEndTunnelHub) dropBySend(c *MainEndTunnel) { h.drop(c) }
 
 // DialTunnel opens a tunnel to host:port through the Agent behind the hub's
 // session and returns it as a net.Conn once the Agent acknowledges.
+// DialTunnel opens a plain TCP tunnel to host:port through the Agent.
 func (h *MainEndTunnelHub) DialTunnel(host string, port int) (net.Conn, error) {
+	return h.dial(tunnelFrame{Op: "open", Host: host, Port: port})
+}
+
+// DialZft2Lane opens a zft2-lane tunnel: bytes written to the returned conn
+// reach the Agent host's ZFT2 dispatcher instead of a TCP dial. This is the
+// file-protocol lane on the single encrypted Link channel.
+func (h *MainEndTunnelHub) DialZft2Lane() (net.Conn, error) {
+	return h.dial(tunnelFrame{Op: "open", Lane: "zft2"})
+}
+
+func (h *MainEndTunnelHub) dial(open tunnelFrame) (net.Conn, error) {
 	h.mu.Lock()
 	if h.session == "" {
 		h.mu.Unlock()
@@ -589,10 +826,11 @@ func (h *MainEndTunnelHub) DialTunnel(host string, port int) (net.Conn, error) {
 	}
 	h.nextID++
 	id := h.nextID
+	open.Tun = id
 	c := &MainEndTunnel{hub: h, id: id, in: make(chan tunnelFrame, tunnelChannelBufSize), dead: make(chan struct{})}
 	h.tunnels[id] = c
 	h.mu.Unlock()
-	if err := h.send(tunnelFrame{Tun: id, Op: "open", Host: host, Port: port}); err != nil {
+	if err := h.send(open); err != nil {
 		h.drop(c)
 		return nil, err
 	}

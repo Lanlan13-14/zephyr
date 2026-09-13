@@ -74,7 +74,15 @@ func (n *Node) handleStream(w http.ResponseWriter, r *http.Request) {
 // loop owns the connection; any protocol or crypto error closes it.
 func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep *Endpoint) {
 	defer conn.Close()
-	defer func() { n.mu.Lock(); delete(n.sessions, sessionID); delete(n.streamWriters, sessionID); n.mu.Unlock() }()
+	defer func() {
+		// Dropping the stream must not kill the session itself: the session
+		// belongs to the dial; the stream is only one carrier for it. A peer
+		// may re-attach a fresh stream (tunnel reconnect) — killing the
+		// session here would force a full re-handshake on every blip.
+		n.mu.Lock()
+		delete(n.streamWriters, sessionID)
+		n.mu.Unlock()
+	}()
 	// Register the server-push path so the main end can originate sealed frames
 	// on this stream (Agent bastion tunnels need server-initiated data).
 	push := &streamPushWriter{conn: conn}

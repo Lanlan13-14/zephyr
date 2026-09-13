@@ -157,6 +157,9 @@ func NewNode() *Node {
 	// connects /link/stream and pumps TCP bytes under the session keys. The
 	// host only names the peer and session; no key material ever leaves.
 	n.mux.HandleFunc("/link/tunnel/start", n.handleTunnelStart)
+	// Loopback mirror of every zft2 lane for the host process (Dart). One
+	// local WebSocket carries all lanes; messages prefix the lane id.
+	n.mux.HandleFunc("/link/zft2/stream", n.handleZft2Local)
 	n.registerBuiltinHandlers()
 	return n
 }
@@ -247,6 +250,46 @@ func (n *Node) handleTunnelStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleZft2Local upgrades a loopback WebSocket that mirrors every zft2 lane:
+// inbound binary = main-end frames to feed the Dart dispatcher; outbound
+// binary = Dart replies sealed back onto the Link stream. One socket carries
+// all lanes; frames carry the tunnel id in a tiny prefix.
+func (n *Node) handleZft2Local(w http.ResponseWriter, r *http.Request) {
+	n.mu.Lock()
+	hub := n.agentHub
+	n.mu.Unlock()
+	if hub == nil {
+		errJSON(w, http.StatusPreconditionFailed, "zft2_unavailable", "tunnel hub not started")
+		return
+	}
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "upgrade required", http.StatusUpgradeRequired)
+		return
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+		return
+	}
+	key := r.Header.Get("Sec-WebSocket-Key")
+	if key == "" {
+		return
+	}
+	conn, rw, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
+	rw.WriteString("Upgrade: websocket\r\n")
+	rw.WriteString("Connection: Upgrade\r\n")
+	rw.WriteString("Sec-WebSocket-Accept: " + wsAccept(key) + "\r\n\r\n")
+	if err := rw.Flush(); err != nil {
+		conn.Close()
+		return
+	}
+	hub.ServeZft2Local(conn, rw.Reader)
 }
 
 // AgentHub exposes the embedded Agent tunnel hub, when started.

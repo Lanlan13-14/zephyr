@@ -82,6 +82,30 @@ class MainActivity : FlutterActivity() {
                             }
                         }.start()
                     }
+                    "linkZft2Port" -> {
+                        // Local WS port of the embedded runtime's zft2 mirror;
+                        // Dart connects and pumps file frames through it.
+                        Thread {
+                            try {
+                                val port = linkProcess.zft2LocalPort()
+                                runOnUiThread { result.success(port) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("link_error", e.message ?: "zft2 端口不可用", null) }
+                            }
+                        }.start()
+                    }
+                    "linkZft2Open" -> {
+                        Thread {
+                            try {
+                                // Dart owns the mirror socket; this only
+                                // guarantees the runtime is up and reachable.
+                                linkProcess.zft2LocalPort()
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("link_error", e.message ?: "zft2 镜像未连接", null) }
+                            }
+                        }.start()
+                    }
                     "linkClose" -> { linkApi.close(); result.success(null) }
                     else -> result.notImplemented()
                 }

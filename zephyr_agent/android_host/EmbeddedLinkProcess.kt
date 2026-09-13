@@ -70,6 +70,13 @@ internal class EmbeddedLinkProcess(private val context: Context) : Closeable {
         return text
     }
 
+    /** Port of the embedded runtime's loopback listener; the zft2 mirror WS
+     *  rides the same mux at /link/zft2/stream. */
+    fun zft2LocalPort(): Int {
+        val base = ensureStarted().baseUrl
+        return base.substringAfterLast(':').toInt()
+    }
+
     override fun close() = synchronized(lock) { stopLocked() }
     private fun stopLocked() {
         process?.let { child -> runCatching { child.outputStream.close() }; if (!child.waitFor(2, TimeUnit.SECONDS)) child.destroyForcibly() }

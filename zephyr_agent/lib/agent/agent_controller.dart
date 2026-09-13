@@ -12,6 +12,7 @@ import 'agent_state.dart';
 import '../fs/file_provider.dart';
 import 'file_transfer_protocol.dart';
 import 'platform_link_file_runtime.dart';
+import 'zft2_link_lane.dart';
 import '../app/agent_version.dart';
 
 class AgentController extends ChangeNotifier {
@@ -45,6 +46,8 @@ class AgentController extends ChangeNotifier {
   final PlatformLinkFileRuntime _linkRuntime = PlatformLinkFileRuntime();
   bool get linkFileBridgeReady => _linkRuntime.ready;
   bool _bastionTunnelStarted = false;
+  Zft2LinkLaneClient? _zft2Lane;
+  int? _activeZft2LaneId;
   final Map<int, Future<void>> _zft2Tasks = {};
   /// Per-path serial queues for mutating ops. Write/close/truncate/open on the
   /// same file must not race — Explorer issues FileEndOfFileInformation
@@ -192,6 +195,8 @@ class AgentController extends ChangeNotifier {
   Future<void> _disconnect() async {
     _channelSub?.cancel();
     _channelSub = null;
+    await _zft2Lane?.close();
+    _zft2Lane = null;
     await _linkRuntime.close();
     try {
       await _channel?.sink.close();
@@ -230,7 +235,10 @@ class AgentController extends ChangeNotifier {
         // Explicit opt-in. The server only advertises this Agent as a bastion
         // when the operator enables it in settings.
         'bastion': _config.bastionEnabled,
-        'linkFileBridge': _linkRuntime.ready,        // ZFT2 travels over a plain WebSocket — not through Android's
+        'linkFileBridge': _linkRuntime.ready,
+        // This Agent's file frames ride the encrypted Link zft2 lane; the
+        // server may then treat the WebSocket as control-only.
+        'zft2Lane': _linkRuntime.ready,        // ZFT2 travels over a plain WebSocket — not through Android's
         // MethodChannel/Binder.  The old Android=4 cap was protecting against
         // Binder TransactionTooLargeException, but that path is never taken
         // for ZFT2 traffic.  Raising to 8 matches desktop Agents and lets the
@@ -283,7 +291,15 @@ class AgentController extends ChangeNotifier {
     }
   }
 
-  void _handleZft2Frame(Zft2Frame frame) {
+  void _handleZft2Frame(Zft2Frame frame, {int? laneId}) {
+    void respond(Uint8List bytes) {
+      if (laneId != null) {
+        _zft2Lane?.reply(laneId, bytes);
+      } else {
+        _sendBytes(bytes);
+      }
+    }
+
     if (frame.isResponse) return;
     if (frame.type == Zft2Op.cancel) {
       final target = (frame.meta['targetRequestId'] as num?)?.toInt() ?? -1;
@@ -291,17 +307,17 @@ class AgentController extends ChangeNotifier {
       return;
     }
     if (_zft2Tasks.length >= 8) {
-      _sendBytes(encodeZft2Error(frame, 'busy', 'Agent request window is full', retryable: true));
+      respond(encodeZft2Error(frame, 'busy', 'Agent request window is full', retryable: true));
       return;
     }
     Future<void> run() async {
       try {
         final response = await _dispatchZft2(frame);
-        if (!_zft2Cancelled.contains(frame.requestId)) _sendBytes(response);
+        if (!_zft2Cancelled.contains(frame.requestId)) respond(response);
       } catch (e) {
         final code = e is FileProviderException ? e.code : 'internal_error';
         if (!_zft2Cancelled.contains(frame.requestId)) {
-          _sendBytes(encodeZft2Error(frame, code, e.toString()));
+          respond(encodeZft2Error(frame, code, e.toString()));
         }
       } finally {
         _zft2Tasks.remove(frame.requestId);
@@ -464,6 +480,9 @@ class AgentController extends ChangeNotifier {
       _startHeartbeat();
       _startShutdownTimer();
       _maybeStartBastionTunnel();
+      // Single Link channel: the ZFT2 file plane rides the encrypted lane as
+      // soon as the session exists; the public WebSocket stays control-only.
+      _connectZft2Lane();
     } else {
       final error = msg['error'] as Map<String, dynamic>?;
       _errorMessage = error?['message'] as String? ?? 'Authentication failed';
@@ -492,6 +511,30 @@ class AgentController extends ChangeNotifier {
         }
       }
     }();
+  }
+
+  /// Connects the ZFT2 lane mirror so the file dispatcher serves the main
+  /// end's requests over the encrypted Link instead of the public WebSocket.
+  void _connectZft2Lane() {
+    if (_zft2Lane != null) return;
+    final lane = Zft2LinkLaneClient(
+      onFrame: _onZft2LaneFrame,
+      onLost: () { _zft2Lane = null; _connectZft2Lane(); },
+    );
+    _zft2Lane = lane;
+    () async {
+      try { await lane.connect(); } catch (_) { _zft2Lane = null; }
+    }();
+  }
+
+  void _onZft2LaneFrame(int laneId, Uint8List frameBytes) {
+    Zft2Frame frame;
+    try {
+      frame = decodeZft2Frame(frameBytes);
+    } catch (_) {
+      return;
+    }
+    _handleZft2Frame(frame, laneId: laneId);
   }
 
   void _handleRequest(Map<String, dynamic> msg) async {

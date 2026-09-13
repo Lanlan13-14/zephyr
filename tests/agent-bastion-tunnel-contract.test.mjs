@@ -43,3 +43,25 @@ test('hello carries linkSessionId for the bastion lane', () => {
     assert.match(mgr, /linkSessionId/);
     assert.match(mgr, /validateBoundedString\(hello\.linkSessionId, 128\)/);
 });
+
+test('ZFT2 data plane migrates onto the encrypted Link lane', () => {
+    const mgr = read('file-agent-manager.js');
+    // Registration moves the Agent's file frames onto the lane automatically.
+    assert.match(mgr, /_attachAgentLinkLane/);
+    assert.match(mgr, /callBinaryV2|linkTunnelDial/, 'lane transport present');
+    // One send path: lane when attached, legacy WS otherwise — never both.
+    assert.match(mgr, /_sendZft2\(frame/);
+    // The connection exposes the lane state for gating and diagnostics.
+    assert.match(mgr, /attachLinkLane\(socket\)/);
+    const go = read('zephyr-link/internal/link/tunnel.go');
+    assert.match(go, /Lane string `json:"lane,omitempty"`/);
+    assert.match(go, /DialZft2Lane/);
+    // The Agent host bridges lanes onto a loopback socket for the dispatcher.
+    assert.match(go, /ServeZft2Local/);
+    const dart = read('zephyr_agent/lib/agent/zft2_link_lane.dart');
+    assert.match(dart, /link\/zft2\/stream/);
+    // Replies from the dispatcher keep the lane id prefix.
+    const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
+    assert.match(controller, /_handleZft2Frame\(frame, laneId: laneId\)/);
+    assert.match(controller, /'zft2Lane': _linkRuntime\.ready/);
+});

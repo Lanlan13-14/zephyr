@@ -165,7 +165,7 @@ const {
 const { OneClientManager } = require('./one-client-manager');
 const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
 const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-enrollment');
-const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go } = require('./link-v2-go-proxy');
+const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go, linkTunnelDial, linkTunnelAttach } = require('./link-v2-go-proxy');
 const { createLinkSyncBridge } = require('./link-v2-sync-bridge');
 const { createLinkFileBridge } = require('./link-v2-file-bridge');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
@@ -538,6 +538,8 @@ function createFileAgentManager() {
             ));
             return { ...candidate, legacyOwnerAllowed: !usernameWasRecycled };
         },
+        linkTunnelDial: (host, port, timeoutMs, lane) => linkTunnelDial(host, port, timeoutMs, lane),
+        linkTunnelAttach: (sessionId) => linkTunnelAttach(sessionId),
     });
 }
 let fileTransferGateway = null;

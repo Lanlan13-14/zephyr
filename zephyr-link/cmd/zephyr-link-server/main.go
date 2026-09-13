@@ -137,12 +137,19 @@ func main() {
 		var body struct {
 			Host string `json:"host"`
 			Port int    `json:"port"`
+			Lane string `json:"lane"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil || body.Host == "" {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil || body.Host == "" && body.Lane == "" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		conn, err := tunnelHub.DialTunnel(body.Host, body.Port)
+		var conn net.Conn
+		var err error
+		if body.Lane == "zft2" {
+			conn, err = tunnelHub.DialZft2Lane()
+		} else {
+			conn, err = tunnelHub.DialTunnel(body.Host, body.Port)
+		}
 		if err != nil {
 			writeJSONError(w, http.StatusBadGateway, "tunnel_dial_failed", err.Error())
 			return

@@ -331,11 +331,11 @@ async function linkTunnelAttach(sessionId) {
 
 /* Dial a tunnel through an attached Agent session; resolves a net.Socket whose
  * bytes are piped through the Go tunnel hub to the Agent's TCP dial. */
-async function linkTunnelDial(host_, port_, timeoutMs = 12000) {
+async function linkTunnelDial(host_, port_, timeoutMs = 12000, lane = '') {
     const proc = sharedProcess();
     const addr = await proc.ensureStarted();
     const [host, port] = addr.split(':');
-    const body = JSON.stringify({ host: host_, port: port_ });
+    const body = JSON.stringify({ host: host_, port: port_, lane });
     return new Promise((resolve, reject) => {
         const req = http.request({
             host, port: Number(port), path: '/internal/tunnel/dial', method: 'POST',

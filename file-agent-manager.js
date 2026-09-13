@@ -22,6 +22,7 @@ const {
     FLAG_RESPONSE: ZFT2_FLAG_RESPONSE,
     encodeFrame: encodeZft2Frame,
     decodeFrame: decodeZft2Frame,
+    HEADER_BYTES: ZFT2_HEADER_BYTES,
 } = require('./file-transfer-protocol');
 
 const HEARTBEAT_INTERVAL_MS = 15000;
@@ -296,7 +297,7 @@ function validateHelloMessage(hello) {
         if (!isPlainObject(hello.capabilities)) return false;
         const booleanCapabilities = new Set([
             'read', 'write', 'delete', 'rename', 'mkdir', 'truncate', 'binary',
-            'binaryRead', 'binaryWrite', 'cancel', 'creditFlow', 'bastion', 'linkFileBridge',
+            'binaryRead', 'binaryWrite', 'cancel', 'creditFlow', 'bastion', 'linkFileBridge', 'zft2Lane',
         ]);
         for (const [key, value] of Object.entries(hello.capabilities)) {
             if (booleanCapabilities.has(key)) {
@@ -341,6 +342,11 @@ class FileAgentConnection {
         this.maxChunkSize = Math.max(64 * 1024, Math.min(1024 * 1024, Number(this.capabilities.maxChunkSize || 1024 * 1024)));
         this.heartbeatTimer = null;
         this.heartbeatMissCount = 0;
+        /* Link-lane transport: when set, all ZFT2 frames ride the encrypted
+         * Link tunnel (zft2 lane) instead of the public WebSocket. The WS then
+         * carries hello/heartbeat/online state only. */
+        this.linkLane = null;
+        this.linkLaneBuf = Buffer.alloc(0);
     }
 
     get online() {
@@ -428,6 +434,59 @@ class FileAgentConnection {
         });
     }
 
+    /**
+     * Move one Agent's ZFT2 data plane onto the encrypted Link zft2 lane.
+     * Falls back to the legacy WebSocket only when the lane cannot be opened
+     * (Agent without the embedded runtime, Go service down); the attach is
+     * retried on the next reconnect.
+     */
+    /** Send one ZFT2 frame: over the encrypted Link lane when attached, else
+     * the legacy WebSocket. One switch, no dual-path data flow. */
+    _sendZft2(frame, wsCallback = null) {
+        if (this.linkLane) {
+            this.linkLane.write(frame);
+            return;
+        }
+        if (wsCallback) this.ws.send(frame, { binary: true }, wsCallback);
+        else this.ws.send(frame, { binary: true });
+    }
+
+    /** Attach the encrypted Link lane; all ZFT2 bytes switch to it. */
+    attachLinkLane(socket) {
+        this.detachLinkLane();
+        this.linkLane = socket;
+        this.linkLaneBuf = Buffer.alloc(0);
+        socket.on('data', (chunk) => this._onLinkLaneData(chunk));
+        socket.on('error', () => this.detachLinkLane());
+        socket.on('close', () => this.detachLinkLane());
+    }
+
+    /** Drop the Link lane; caller may retry attaching a fresh one. */
+    detachLinkLane() {
+        if (this.linkLane) {
+            try { this.linkLane.destroy(); } catch {}
+            this.linkLane = null;
+        }
+        this.linkLaneBuf = Buffer.alloc(0);
+    }
+
+    /** Feed tunnel bytes into the ZFT2 framer; frames are self-delimiting
+     * (magic + meta/payload lengths), so stream boundaries are exact. */
+    _onLinkLaneData(chunk) {
+        this.linkLaneBuf = this.linkLaneBuf.length ? Buffer.concat([this.linkLaneBuf, chunk]) : chunk;
+        for (;;) {
+            if (this.linkLaneBuf.length < ZFT2_HEADER_BYTES) return;
+            const metaLength = this.linkLaneBuf.readUInt32BE(12);
+            const payloadLength = this.linkLaneBuf.readUInt32BE(16);
+            const total = HEADER_BYTES + metaLength + payloadLength;
+            if (total > 33 * 1024 * 1024) { this.detachLinkLane(); return; }
+            if (this.linkLaneBuf.length < total) return;
+            const frame = this.linkLaneBuf.subarray(0, total);
+            this.linkLaneBuf = this.linkLaneBuf.subarray(total);
+            try { this.handleBinaryV2(frame); } catch {}
+        }
+    }
+
     /** Send a protocol-v2 binary request to the Agent. */
     callBinaryV2(type, meta, payload, timeoutMs) {
         // Wait for a free in-flight slot instead of immediately rejecting with
@@ -471,12 +530,14 @@ class FileAgentConnection {
                         if (settled) return;
                         clearTimeout(timer);
                         this.pendingRequests.delete(id);
-                        try { this.ws.send(encodeZft2Frame({ type: ZFT2_OP.CANCEL, requestId: this.nextRequestId++ >>> 0, meta: { targetRequestId: id } })); } catch {}
+                        try {
+                            this._sendZft2(encodeZft2Frame({ type: ZFT2_OP.CANCEL, requestId: this.nextRequestId++ >>> 0, meta: { targetRequestId: id } }));
+                        } catch {}
                         finishReject(new AgentError('cancelled', 'File request cancelled'));
                     };
 
                     try {
-                        this.ws.send(frame, { binary: true }, (err) => {
+                        this._sendZft2(frame, (err) => {
                             if (!err || settled) return;
                             clearTimeout(timer);
                             this.pendingRequests.delete(id);
@@ -627,11 +688,33 @@ class FileAgentManager {
         this.boundTokenDb = null;
         this.teardownTimeoutMs = Math.max(10, Number(options.teardownTimeoutMs || 2000));
         this.blockedOwnerIds = new Set();
+        /** Encrypted Link lane transport hooks (injected by server.js). */
+        this.linkTunnelDial = typeof options.linkTunnelDial === 'function' ? options.linkTunnelDial : null;
+        this.linkTunnelAttach = typeof options.linkTunnelAttach === 'function' ? options.linkTunnelAttach : null;
 
         this._loadTokens();
     }
 
     // ─── Token Management ────────────────────────────────────────────
+
+    /**
+     * Move one Agent's ZFT2 data plane onto the encrypted Link zft2 lane.
+     * Falls back to the legacy WebSocket only when the lane cannot be opened
+     * (Agent without the embedded runtime, Go service down); the attach is
+     * retried on the next reconnect.
+     */
+    async _attachAgentLinkLane(conn) {
+        if (!this.linkTunnelDial || !this.linkTunnelAttach) throw new Error('link tunnel unavailable');
+        try {
+            await this.linkTunnelAttach(conn.linkSessionId);
+        } catch (err) {
+            if (!/already attached/.test(String(err?.message || ''))) throw err;
+        }
+        const socket = await this.linkTunnelDial('', 0, 12000, 'zft2');
+        if (!socket || socket.destroyed) throw new Error('link lane socket dead on arrival');
+        conn.attachLinkLane(socket);
+        this.log('[file-agent] ZFT2 moved to encrypted Link lane:', conn.agentId);
+    }
 
     _loadTokens() {
         try {
@@ -1302,6 +1385,15 @@ class FileAgentManager {
             this.ownerAgents.set(ownerId, new Set());
         }
         this.ownerAgents.get(ownerId).add(agentId);
+
+        // Single-channel migration: an Agent with an attested Link session
+        // moves its entire ZFT2 data plane onto the encrypted zft2 lane. The
+        // public WebSocket keeps hello/heartbeat/online state only.
+        if (conn.linkSessionId && conn.capabilities?.linkFileBridge === true) {
+            this._attachAgentLinkLane(conn).catch((err) => {
+                this.log('[file-agent] link lane attach failed:', err.code || err.message);
+            });
+        }
 
         // Start heartbeat monitor
         conn.heartbeatTimer = setInterval(() => {
