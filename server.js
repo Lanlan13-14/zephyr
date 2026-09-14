@@ -530,7 +530,7 @@ function createFileAgentManager() {
         resolveDeviceAccess: (credential) => {
             const row = mobileV1Api?.store?.resolveAccess?.(credential);
             if (!row) return null;
-            return { ...row, ownerUserId: row.owner_user_id, ownerUsername: storage.getUserBrief(row.owner_user_id)?.username };
+            return { ...row, ownerUserId: row.owner_user_id, ownerUsername: row.owner_username || row.username || '' };
         },
         resolveOwner: ({ userId, username, legacy }) => {
             const immutable = storage.getUserById(userId);
