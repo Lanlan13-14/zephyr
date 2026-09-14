@@ -10,6 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * The provider sync round-trip contract.
@@ -229,5 +230,62 @@ class AiProviderRoundTripTest {
         assertEquals(true, EntityCodec.bool(out, "shareWithAdmins", false))
         assertEquals(listOf("u2", "u3"), EntityCodec.stringList(out, "sharedUserIds"))
         assertEquals(false, EntityCodec.bool(out, "enabled", true))
+    }
+
+    @Test
+    fun `pushed payloads are exported for the Node wire contract`() {
+        val cases = linkedMapOf<String, JsonObject>()
+        for (mode in listOf("auto", "chat", "responses")) {
+            cases["apiMode-$mode"] = JsonObject(
+                mapOf(
+                    "name" to JsonPrimitive("p-$mode"),
+                    "type" to JsonPrimitive("openai-compatible"),
+                    "baseUrl" to JsonPrimitive("https://api.openai.com/v1"),
+                    "config" to JsonObject(mapOf("apiMode" to JsonPrimitive(mode), "options" to JsonObject(emptyMap()))),
+                ),
+            )
+        }
+        cases["numeric-options"] = JsonObject(
+            mapOf(
+                "name" to JsonPrimitive("numbers"),
+                "type" to JsonPrimitive("openai-compatible"),
+                "baseUrl" to JsonPrimitive("https://api.openai.com/v1"),
+                "config" to JsonObject(
+                    mapOf(
+                        "apiMode" to JsonPrimitive("chat"),
+                        "options" to JsonObject(
+                            mapOf(
+                                "temperature" to JsonPrimitive(0.7),
+                                "top_p" to JsonPrimitive(0.9),
+                                "max_tokens" to JsonPrimitive(4096),
+                                "max_output_tokens" to JsonPrimitive(16384),
+                                "presence_penalty" to JsonPrimitive(0.2),
+                                "frequency_penalty" to JsonPrimitive(0.1),
+                                "reasoning_effort" to JsonPrimitive("high"),
+                                "context" to JsonObject(mapOf("windowTokens" to JsonPrimitive(128000))),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        cases["anthropic"] = JsonObject(
+            mapOf(
+                "name" to JsonPrimitive("claude"),
+                "type" to JsonPrimitive("anthropic"),
+                "baseUrl" to JsonPrimitive("https://api.anthropic.com/v1"),
+                "defaultModel" to JsonPrimitive("claude-sonnet-4-5"),
+                "config" to JsonObject(mapOf("apiMode" to JsonPrimitive("auto"), "options" to JsonObject(emptyMap()))),
+            ),
+        )
+        val exported = JsonObject(
+            mapOf(
+                "cases" to JsonObject(cases.mapValues { (_, payload) -> roundTrip(payload) }),
+            ),
+        )
+        val dir = File(System.getProperty("user.dir"), "src/test/resources/roundtrip")
+        dir.mkdirs()
+        File(dir, "ai-provider-pushes.json").writeText(exported.toString())
+        assertTrue(exported.toString().contains("apiMode"))
     }
 }
