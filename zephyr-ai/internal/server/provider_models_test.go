@@ -45,7 +45,7 @@ func TestListOpenAIModelsAcceptsModelsArray(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"models": []map[string]any{{"name": "llama3"}}})
 	}))
 	defer srv.Close()
-	models, err := listProviderModels(context.Background(), provider.Config{Kind: provider.KindOllama, BaseURL: srv.URL}, nil)
+	models, err := listProviderModels(context.Background(), provider.Config{Kind: provider.KindOllama, BaseURL: srv.URL}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestListAnthropicCustomBaseYieldsEmpty(t *testing.T) {
 }
 
 func TestListAnthropicOfficialFallbackWithoutKey(t *testing.T) {
-	models, err := listAnthropicModels(context.Background(), provider.Config{Kind: provider.KindAnthropic}, nil)
+	models, err := listAnthropicModels(context.Background(), provider.Config{Kind: provider.KindAnthropic}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
