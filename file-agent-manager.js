@@ -723,6 +723,12 @@ class FileAgentManager {
     }
 
     async registerLinkIdentity({ ownerId, tokenId, deviceId, signingJwk } = {}) {
+        if (!tokenId) {
+            const identity = { deviceId: String(deviceId || ''), signingJwk: canonicalLinkJwk(signingJwk) };
+            if (!identity.deviceId || !identity.signingJwk) throw new TokenStoreError('invalid_link_identity', 'Link device identity is invalid');
+            if (this.linkRegisterAgentKey) await this.linkRegisterAgentKey(identity.deviceId, JSON.parse(identity.signingJwk));
+            return identity;
+        }
         const identity = this.tokenStore.bindLinkIdentity(ownerId, tokenId, deviceId, signingJwk);
         if (this.linkRegisterAgentKey) {
             await this.linkRegisterAgentKey(identity.deviceId, JSON.parse(identity.signingJwk));
@@ -1390,7 +1396,10 @@ class FileAgentManager {
         if (!deviceRecord && !tokenRecord) {
             throw new AgentError('unauthorized', 'Invalid device credential');
         }
-        const ownerId = deviceRecord?.ownerUserId || deviceRecord?.owner_user_id || tokenRecord.ownerId;
+        const ownerId = deviceRecord?.ownerUserId || deviceRecord?.owner_user_id || tokenRecord?.ownerId;
+        if (deviceRecord && hello.deviceId && String(hello.deviceId) !== String(deviceRecord.device_id || deviceRecord.deviceId || '')) {
+            throw new AgentError('unauthorized', 'Device credential does not match deviceId');
+        }
         if (!authorizeRegistration()) {
             throw new AgentError('resource_exhausted', 'Authenticated connection limit exceeded');
         }
