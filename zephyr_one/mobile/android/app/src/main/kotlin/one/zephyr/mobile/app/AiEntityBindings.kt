@@ -1,8 +1,8 @@
 package one.zephyr.mobile.app
 
 import one.zephyr.mobile.contracts.SyncAction
+import one.zephyr.mobile.data.mapper.AiProviderSyncMappers
 import one.zephyr.mobile.data.repository.LocalAiEnvironment
-import one.zephyr.mobile.data.repository.LocalAiModel
 import one.zephyr.mobile.data.repository.LocalAiMemory
 import one.zephyr.mobile.data.repository.LocalAiProvider
 import one.zephyr.mobile.data.repository.LocalAiRepository
@@ -14,8 +14,6 @@ import one.zephyr.mobile.model.AiMemory
 import one.zephyr.mobile.model.AiProvider
 import one.zephyr.mobile.model.AiSkill
 import one.zephyr.mobile.model.AiTodo
-import one.zephyr.mobile.model.AiModel
-import one.zephyr.mobile.model.AiProviderConfig
 import one.zephyr.mobile.model.SecretState
 import one.zephyr.mobile.model.SecretState.Replace
 
@@ -170,52 +168,9 @@ internal class ProviderBinding(
             x.enabled == y.enabled
     }
 
-    private fun AiProvider.toLocal() = LocalAiProvider(
-        id = id, name = name, type = type, baseUrl = baseUrl, apiMode = config.apiMode,
-        defaultModel = defaultModel,
-        models = models.map { m -> LocalAiModel(
-            id = m.id, label = m.label, hidden = m.hidden, contextWindowTokens = m.contextWindowTokens,
-            maxOutputTokens = m.maxOutputTokens, temperature = m.temperature, topP = m.topP,
-            reasoning = m.reasoning, reasoningEffort = m.reasoningEffort, inputImage = m.inputImage,
-            inputPdf = m.inputPdf, inputAudio = m.inputAudio, inputVideo = m.inputVideo,
-            outputImage = m.outputImage, outputAudio = m.outputAudio, tools = m.tools,
-            parallelToolCalls = m.parallelToolCalls, promptCache = m.promptCache,
-            maxImagesPerRequest = m.maxImagesPerRequest, maxImageBytes = m.maxImageBytes,
-            apiMode = m.apiMode,
-        ) },
-        temperature = config.temperature, topP = config.topP, maxTokens = config.maxTokens ?: 4096,
-        contextWindowTokens = config.windowTokens, reasoningEffort = config.reasoningEffort,
-        visionDefault = config.vision, usePreviousResponse = config.usePreviousResponseId,
-        presencePenalty = config.presencePenalty ?: 0.0, frequencyPenalty = config.frequencyPenalty ?: 0.0,
-        visibility = visibility, shareWithUsers = shareWithUsers, shareWithAdmins = shareWithAdmins,
-        sharedUserIds = sharedUserIds, enabled = enabled, source = "main", revision = revision,
-    )
+    private fun AiProvider.toLocal(): LocalAiProvider = AiProviderSyncMappers.toLocal(this, "main")
 
-    private fun LocalAiProvider.toModel(owner: String) = AiProvider(
-        id = id, ownerUserId = owner, name = name, type = type,
-        baseUrl = baseUrl.trim(), defaultModel = defaultModel.trim(),
-        models = models.filter { it.id.trim().isNotEmpty() }.distinctBy { it.id.trim() }.map { m -> AiModel(
-            id = m.id, label = m.label, hidden = m.hidden, contextWindowTokens = m.contextWindowTokens,
-            maxOutputTokens = m.maxOutputTokens, temperature = m.temperature, topP = m.topP,
-            reasoning = m.reasoning, reasoningEffort = m.reasoningEffort, inputImage = m.inputImage,
-            inputPdf = m.inputPdf, inputAudio = m.inputAudio, inputVideo = m.inputVideo,
-            outputImage = m.outputImage, outputAudio = m.outputAudio, tools = m.tools,
-            parallelToolCalls = m.parallelToolCalls, promptCache = m.promptCache,
-            maxImagesPerRequest = m.maxImagesPerRequest, maxImageBytes = m.maxImageBytes,
-            apiMode = m.apiMode,
-        ) },
-        config = AiProviderConfig(
-            apiMode = apiMode.takeIf { it in setOf("auto", "chat", "responses") } ?: "auto",
-            temperature = temperature?.takeIf { it.isFinite() }, topP = topP?.takeIf { it.isFinite() },
-            maxTokens = maxTokens.takeIf { it > 0 }, maxOutputTokens = maxOutputTokens?.takeIf { it > 0 },
-            presencePenalty = presencePenalty.takeIf { it.isFinite() }, frequencyPenalty = frequencyPenalty.takeIf { it.isFinite() },
-            vision = visionDefault, usePreviousResponseId = usePreviousResponse,
-            reasoningEffort = reasoningEffort?.takeIf { it in setOf("none", "minimal", "low", "medium", "high", "xhigh", "max") },
-            windowTokens = contextWindowTokens?.takeIf { it > 0 },
-        ),
-        visibility = visibility, shareWithUsers = shareWithUsers, shareWithAdmins = shareWithAdmins,
-        sharedUserIds = sharedUserIds, enabled = enabled,
-    )
+    private fun LocalAiProvider.toModel(owner: String): AiProvider = AiProviderSyncMappers.toModel(this, owner)
 }
 
 internal class MemoryBinding(
