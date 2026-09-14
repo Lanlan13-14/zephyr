@@ -37,6 +37,10 @@ class LinkFileRuntime {
     return false;
   }
 
+  Future<Map<String, dynamic>> mlkemGenerate(String deviceId) async => throw UnimplementedError('ML-KEM unavailable');
+  Future<String> mlkemPublic(String deviceId) async => throw UnimplementedError('ML-KEM unavailable');
+  Future<String> enrollmentProof(String bindId, {required String deviceId, required String userCode, required String sas, required String enrollmentSecret, required String serverId}) async => throw UnimplementedError('enrollment proof unavailable');
+
   Future<LinkFileReply> request(String op, Map<String, dynamic> params) async {
     if (!ready) throw StateError('Agent Link runtime is not connected');
     throw UnimplementedError('Platform Link runtime adapter is unavailable');
