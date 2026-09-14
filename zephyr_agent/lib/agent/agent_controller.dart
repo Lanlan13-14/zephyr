@@ -190,6 +190,12 @@ class AgentController extends ChangeNotifier {
       final normalizedServerUrl = normalizeServerUrl(_config.serverUrl);
       if (normalizedServerUrl.isEmpty) throw const FormatException('主端地址为空');
       _config.serverUrl = normalizedServerUrl;
+      if (_config.accessCredential != null &&
+          _config.refreshCredential != null &&
+          _config.accessExpiresAt != null &&
+          _config.accessExpiresAt! <= DateTime.now().millisecondsSinceEpoch + 30000) {
+        await refreshAccessCredential();
+      }
       final hadDeviceId = _config.linkDeviceId != null;
       // Random, not deterministic: two agents with the default device name
       // would otherwise collide on the same server-side link_device_id.
