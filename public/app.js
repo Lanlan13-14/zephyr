@@ -8471,7 +8471,7 @@ async function saveAiProvider(e) {
         type: providerTypeValue,
         enabled: $('#aiProviderEnabled').checked,
         baseUrl: $('#aiProviderBaseUrl').value.trim(),
-        apiMode: ['openai-compatible', 'openai'].includes(providerTypeValue) ? ($('#aiProviderApiMode').value || 'auto') : 'native',
+        apiMode: ($('#aiProviderApiMode').value || 'auto'),
         models: mergeAiModelEntries(aiProviderModelEntriesDraft, $('#aiProviderModels').value, {
             providerVisionDefault: !!$('#aiProviderVision')?.checked,
         }),
