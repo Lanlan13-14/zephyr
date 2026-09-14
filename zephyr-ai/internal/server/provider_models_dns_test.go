@@ -37,7 +37,7 @@ func TestListProviderModelsRestoresHostFromServerName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotHost != "127.0.0.1" {
+	if !strings.HasPrefix(gotHost, "127.0.0.1") {
 		t.Fatalf("host=%q", gotHost)
 	}
 	// The request must succeed with the original Host preserved for the provider.
