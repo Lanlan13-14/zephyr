@@ -81,7 +81,7 @@ func TestListGeminiModelsFiltersGenerateContent(t *testing.T) {
 func TestListAnthropicCustomBaseYieldsEmpty(t *testing.T) {
 	models, err := listAnthropicModels(context.Background(), provider.Config{
 		Kind: provider.KindAnthropic, BaseURL: "https://gateway.internal/v1", APIKey: "x",
-	}, "")
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestListAnthropicCustomBaseYieldsEmpty(t *testing.T) {
 }
 
 func TestListAnthropicOfficialFallbackWithoutKey(t *testing.T) {
-	models, err := listAnthropicModels(context.Background(), provider.Config{Kind: provider.KindAnthropic}, "")
+	models, err := listAnthropicModels(context.Background(), provider.Config{Kind: provider.KindAnthropic}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
