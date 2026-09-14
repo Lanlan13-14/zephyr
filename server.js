@@ -527,6 +527,11 @@ function createFileAgentManager() {
         log: console.log,
         tokenFile: path.join(DATA_DIR, 'agent-tokens.json'),
         getDb: () => storage.rawDb(),
+        resolveDeviceAccess: (credential) => {
+            const row = mobileV1Api?.store?.resolveAccess?.(credential);
+            if (!row) return null;
+            return { ...row, ownerUserId: row.owner_user_id, ownerUsername: storage.getUserBrief(row.owner_user_id)?.username };
+        },
         resolveOwner: ({ userId, username, legacy }) => {
             const immutable = storage.getUserById(userId);
             if (immutable) return immutable;

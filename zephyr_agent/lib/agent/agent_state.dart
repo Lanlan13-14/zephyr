@@ -24,7 +24,12 @@ enum AgentStatus {
 
 class AgentConfig {
   String serverUrl;
+  /// Legacy client token. Kept only for migration of old installations.
   String token;
+  /// One enrollment-issued short-lived device access credential.
+  String? accessCredential;
+  String? refreshCredential;
+  int? accessExpiresAt;
   String deviceName;
   String? sharedDirectoryPath;
   String? sharedDirectoryName;
@@ -42,6 +47,9 @@ class AgentConfig {
   AgentConfig({
     this.serverUrl = '',
     this.token = '',
+    this.accessCredential,
+    this.refreshCredential,
+    this.accessExpiresAt,
     this.deviceName = 'My Device',
     this.sharedDirectoryPath,
     this.sharedDirectoryName,
@@ -57,6 +65,9 @@ class AgentConfig {
   Map<String, dynamic> toJson() => {
     'serverUrl': serverUrl,
     'token': token,
+    'accessCredential': accessCredential,
+    'refreshCredential': refreshCredential,
+    'accessExpiresAt': accessExpiresAt,
     'deviceName': deviceName,
     'sharedDirectoryPath': sharedDirectoryPath,
     'sharedDirectoryName': sharedDirectoryName,
@@ -72,6 +83,9 @@ class AgentConfig {
   factory AgentConfig.fromJson(Map<String, dynamic> json) => AgentConfig(
     serverUrl: json['serverUrl'] as String? ?? '',
     token: json['token'] as String? ?? '',
+    accessCredential: json['accessCredential'] as String?,
+    refreshCredential: json['refreshCredential'] as String?,
+    accessExpiresAt: (json['accessExpiresAt'] as num?)?.toInt(),
     deviceName: json['deviceName'] as String? ?? 'My Device',
     sharedDirectoryPath: json['sharedDirectoryPath'] as String?,
     sharedDirectoryName: json['sharedDirectoryName'] as String?,

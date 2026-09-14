@@ -227,6 +227,8 @@ class AgentController extends ChangeNotifier {
       'type': 'hello',
       'protocolVersion': 2,
       'token': _config.token,
+      if (_config.accessCredential != null && _config.accessCredential!.isNotEmpty)
+        'accessCredential': _config.accessCredential,
       'deviceId': deviceId,
       'deviceName': _config.deviceName,
       'platform': _platformName(),
