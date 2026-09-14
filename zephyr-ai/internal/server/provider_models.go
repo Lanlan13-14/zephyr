@@ -55,6 +55,9 @@ func (s *Server) handleProviderModels(w http.ResponseWriter, r *http.Request) {
 
 // clientProxyHost returns the original hostname a modelsHTTPClient restores for SNI/Host.
 func clientProxyHost(client *http.Client) (string, bool) {
+	if client == nil || client.Transport == nil {
+		return "", false
+	}
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok || transport == nil || transport.TLSClientConfig == nil {
 		return "", false
