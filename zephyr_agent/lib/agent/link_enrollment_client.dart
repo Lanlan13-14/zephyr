@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:uuid/uuid.dart';
 import 'platform_link_file_runtime.dart';
 import '../storage/local_settings.dart';
+import 'agent_state.dart';
 
 class EnrollmentInfo {
   final String bindId, userCode, enrollmentSecret, verificationUri, sas, serverId;
