@@ -1,11 +1,15 @@
 'use strict';
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
-const { safePatch } = require('../mobile-v1-ai-provider-entities');
+const require = createRequire(import.meta.url);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const { safePatch } = require(path.join(root, 'mobile-v1-ai-provider-entities.js'));
 
 /**
  * The closing half of the AI provider round-trip contract.
@@ -21,9 +25,9 @@ const { safePatch } = require('../mobile-v1-ai-provider-entities');
  * device surfacing invalid_ai_provider on a push.
  */
 
-const FIXTURE = path.resolve(
-    __dirname,
-    '../zephyr_one/mobile/android/core-data/src/test/resources/roundtrip/ai-provider-pushes.json',
+const FIXTURE = path.join(
+    root,
+    'zephyr_one', 'mobile', 'android', 'core-data', 'src', 'test', 'resources', 'roundtrip', 'ai-provider-pushes.json',
 );
 
 test('round-trip wire fixture exists and is committed', () => {
@@ -54,8 +58,9 @@ test('every pushed One payload passes the main end canonical validator', () => {
                 `case ${name}: context window lost through validation`,
             );
         }
+        const pushedOptions = pushed.config.options || {};
         for (const field of ['temperature', 'top_p', 'max_tokens', 'max_output_tokens', 'presence_penalty', 'frequency_penalty']) {
-            if (pushed.config.options && Object.prototype.hasOwnProperty.call(pushed.config.options, field)) {
+            if (Object.prototype.hasOwnProperty.call(pushedOptions, field)) {
                 assert.ok(
                     Object.prototype.hasOwnProperty.call(accepted.config.options, field) &&
                         Number.isFinite(accepted.config.options[field]),
