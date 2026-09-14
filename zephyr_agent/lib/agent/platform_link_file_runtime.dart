@@ -16,6 +16,18 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
       await _channel.invokeMethod<String>('linkSigningJwk', {'deviceId': deviceId});
 
   @override
+  Future<Map<String, dynamic>> mlkemGenerate(String deviceId) async =>
+      Map<String, dynamic>.from(await _channel.invokeMethod<Map<dynamic, dynamic>>('mlkemGenerate', {'deviceId': deviceId}) ?? const {});
+
+  @override
+  Future<String> mlkemPublic(String deviceId) async =>
+      (await _channel.invokeMethod<String>('mlkemPublic', {'deviceId': deviceId}))!;
+
+  @override
+  Future<String> enrollmentProof(String bindId, {required String deviceId, required String userCode, required String sas, required String enrollmentSecret, required String serverId}) async =>
+      (await _channel.invokeMethod<String>('enrollmentProof', {'bindId': bindId, 'deviceId': deviceId, 'userCode': userCode, 'sas': sas, 'enrollmentSecret': enrollmentSecret, 'serverId': serverId}))!;
+
+  @override
   Future<bool> connect({required String serverUrl, required String deviceId, bool allowBadCertificates = false}) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('linkConnect', {
       'serverUrl': serverUrl,

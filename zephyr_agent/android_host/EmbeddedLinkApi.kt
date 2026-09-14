@@ -40,6 +40,25 @@ internal class EmbeddedLinkApi(private val process: EmbeddedLinkProcess) {
         return JSONObject().apply { put("kty", "EC"); put("crv", "P-256"); put("x", coord(pub.w.affineX)); put("y", coord(pub.w.affineY)) }.toString()
     }
 
+    fun mlkemGenerate(deviceId: String): JSONObject {
+        // The Go runtime owns ML-KEM-768 and returns a raw public key plus seed.
+        // The seed is persisted by the Flutter settings layer for this device.
+        return JSONObject(process.post("/link/mlkem/generate", "{}"))
+    }
+
+    fun mlkemPublic(deviceId: String): String = mlkemGenerate(deviceId).getString("publicKey")
+
+    fun enrollmentProof(bindId: String, deviceId: String, userCode: String, sas: String, enrollmentSecret: String, serverId: String): String {
+        val secretHash = java.security.MessageDigest.getInstance("SHA-256").digest(enrollmentSecret.toByteArray(Charsets.UTF_8)).joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+        val normalized = userCode.uppercase().replace(Regex("[^A-Z0-9]"), "")
+        val payload = listOf("zephyr-link-enrollment-v2", bindId, deviceId, normalized, sas, secretHash, serverId).joinToString("\u0000").toByteArray(Charsets.UTF_8)
+        val alias = "zephyr-agent-link-" + deviceId.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val key = ks.getKey(alias, null) as java.security.PrivateKey
+        val der = Signature.getInstance("SHA256withECDSA").apply { initSign(key); update(payload) }.sign()
+        return Base64.encodeToString(derToP1363(der), Base64.NO_WRAP)
+    }
+
     fun dial(serverUrl: String, deviceId: String, insecure: Boolean): Session {
         val response = JSONObject(process.post("/link/dial", JSONObject().apply {
             put("serverUrl", serverUrl.trimEnd('/') + "/api/link/v2")
