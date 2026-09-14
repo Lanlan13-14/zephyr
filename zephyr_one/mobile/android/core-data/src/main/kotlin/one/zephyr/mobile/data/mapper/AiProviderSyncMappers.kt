@@ -35,6 +35,7 @@ object AiProviderSyncMappers {
         ) },
         temperature = provider.config.temperature, topP = provider.config.topP,
         maxTokens = provider.config.maxTokens ?: 4096,
+        maxOutputTokens = provider.config.maxOutputTokens,
         contextWindowTokens = provider.config.windowTokens, reasoningEffort = provider.config.reasoningEffort,
         visionDefault = provider.config.vision, usePreviousResponse = provider.config.usePreviousResponseId,
         presencePenalty = provider.config.presencePenalty ?: 0.0, frequencyPenalty = provider.config.frequencyPenalty ?: 0.0,
