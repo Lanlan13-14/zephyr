@@ -162,7 +162,7 @@ function safeConfig(value, { patch = false } = {}) {
     const output = {};
     if (Object.prototype.hasOwnProperty.call(input, 'apiMode')) {
         const mode = String(input.apiMode || 'auto');
-        if (!['auto', 'chat', 'responses', 'native'].includes(mode)) {
+        if (!['auto', 'chat', 'responses'].includes(mode)) {
             throw invalid('invalid_ai_provider', 'AI provider apiMode is invalid.');
         }
         output.apiMode = mode;
