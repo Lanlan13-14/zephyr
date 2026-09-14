@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,7 +17,8 @@ import (
 // providerModelsReq is the model-discovery payload. It carries a full provider config so the
 // caller can list models for an unsaved form draft exactly as the main end's /api/ai/models does.
 type providerModelsReq struct {
-	Provider provider.Config `json:"provider"`
+	Provider   provider.Config `json:"provider"`
+	ServerName string          `json:"serverName"`
 }
 
 type providerModel struct {
@@ -43,7 +45,7 @@ func (s *Server) handleProviderModels(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	models, err := listProviderModels(ctx, req.Provider)
+	models, err := listProviderModels(ctx, req.Provider, req.ServerName)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"ok": false, "code": "models_unavailable", "error": err.Error()})
 		return
@@ -51,20 +53,58 @@ func (s *Server) handleProviderModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "models": models})
 }
 
+// clientProxyHost returns the original hostname a modelsHTTPClient restores for SNI/Host.
+func clientProxyHost(client *http.Client) (string, bool) {
+	if client == nil || client.Transport == nil {
+		return "", false
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport == nil || transport.TLSClientConfig == nil {
+		return "", false
+	}
+	name := strings.TrimSpace(transport.TLSClientConfig.ServerName)
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+
 // listProviderModels mirrors the main end's listProviderModels: same URL rules per vendor, same
 // response shapes, and the same "custom Anthropic endpoint owns its catalog" boundary.
-func listProviderModels(ctx context.Context, cfg provider.Config) ([]providerModel, error) {
+//
+// serverName carries the original hostname when the caller pre-resolved DNS for the CGO-less
+// Android build: the BaseURL then dials an IP literal while TLS SNI and the HTTP Host header
+// must keep the real name (same pattern as the Link core's dial route).
+func listProviderModels(ctx context.Context, cfg provider.Config, serverName string) ([]providerModel, error) {
+	client := modelsHTTPClient(serverName)
 	switch provider.NormalizeKind(cfg.Kind) {
 	case provider.KindAnthropic:
-		return listAnthropicModels(ctx, cfg)
+		return listAnthropicModels(ctx, cfg, client)
 	case provider.KindGemini:
-		return listGeminiModels(ctx, cfg)
+		return listGeminiModels(ctx, cfg, client)
 	default:
-		return listOpenAIModels(ctx, cfg)
+		return listOpenAIModels(ctx, cfg, client)
 	}
 }
 
-func listOpenAIModels(ctx context.Context, cfg provider.Config) ([]providerModel, error) {
+// modelsHTTPClient returns a client that restores the original Host header and TLS SNI when the
+// URL host is an IP literal rewritten by the caller's DNS pre-resolution.
+func modelsHTTPClient(serverName string) *http.Client {
+	name := strings.TrimSpace(serverName)
+	if name == "" {
+		return &http.Client{Timeout: 30 * time.Second}
+	}
+	transport := &http.Transport{
+		ForceAttemptHTTP2: false,
+		TLSClientConfig:   &tls.Config{ServerName: name, MinVersion: tls.VersionTLS12},
+	}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+	}
+}
+
+func listOpenAIModels(ctx context.Context, cfg provider.Config, client *http.Client) ([]providerModel, error) {
 	base := strings.TrimRight(cfg.BaseURL, "/")
 	if base == "" {
 		base = "https://api.openai.com/v1"
@@ -92,7 +132,7 @@ func listOpenAIModels(ctx context.Context, cfg provider.Config) ([]providerModel
 			req.Header.Set(k, v)
 		}
 	}
-	body, err := doModelsRequest(ctx, req)
+	body, err := doModelsRequest(ctx, client, req)
 	if err != nil {
 		return nil, err
 	}
@@ -122,8 +162,14 @@ func listOpenAIModels(ctx context.Context, cfg provider.Config) ([]providerModel
 	return out, nil
 }
 
-func listAnthropicModels(ctx context.Context, cfg provider.Config) ([]providerModel, error) {
-	if !isOfficialAnthropicBase(cfg.BaseURL) {
+func listAnthropicModels(ctx context.Context, cfg provider.Config, client *http.Client) ([]providerModel, error) {
+	// The Android caller may pre-resolve DNS and dial an IP literal; serverName keeps the real
+	// host, so official-endpoint detection must consult it before the (rewritten) BaseURL.
+	officialHost := cfg.BaseURL
+	if target, ok := clientProxyHost(client); ok {
+		officialHost = "https://" + target + "/v1"
+	}
+	if !isOfficialAnthropicBase(officialHost) {
 		return []providerModel{}, nil
 	}
 	if cfg.APIKey == "" {
@@ -140,7 +186,7 @@ func listAnthropicModels(ctx context.Context, cfg provider.Config) ([]providerMo
 			req.Header.Set(k, v)
 		}
 	}
-	body, err := doModelsRequest(ctx, req)
+	body, err := doModelsRequest(ctx, client, req)
 	if err != nil {
 		return anthropicOfficialModels, nil
 	}
@@ -170,7 +216,7 @@ func listAnthropicModels(ctx context.Context, cfg provider.Config) ([]providerMo
 	return out, nil
 }
 
-func listGeminiModels(ctx context.Context, cfg provider.Config) ([]providerModel, error) {
+func listGeminiModels(ctx context.Context, cfg provider.Config, client *http.Client) ([]providerModel, error) {
 	base := strings.TrimRight(cfg.BaseURL, "/")
 	if base == "" {
 		base = "https://generativelanguage.googleapis.com/v1beta"
@@ -188,7 +234,7 @@ func listGeminiModels(ctx context.Context, cfg provider.Config) ([]providerModel
 			req.Header.Set(k, v)
 		}
 	}
-	body, err := doModelsRequest(ctx, req)
+	body, err := doModelsRequest(ctx, client, req)
 	if err != nil {
 		return nil, err
 	}
@@ -236,8 +282,10 @@ func isOfficialAnthropicBase(baseURL string) bool {
 	return strings.EqualFold(u.Hostname(), "api.anthropic.com")
 }
 
-func doModelsRequest(ctx context.Context, req *http.Request) ([]byte, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+func doModelsRequest(ctx context.Context, client *http.Client, req *http.Request) ([]byte, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

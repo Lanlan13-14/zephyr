@@ -25,7 +25,7 @@ func TestListOpenAIModelsStripsCompletionSuffix(t *testing.T) {
 	models, err := listProviderModels(context.Background(), provider.Config{
 		Kind: provider.KindOpenAIComp, BaseURL: srv.URL + "/v1/chat/completions",
 		APIKey: "sk-test", Organization: "org-1",
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestListOpenAIModelsAcceptsModelsArray(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"models": []map[string]any{{"name": "llama3"}}})
 	}))
 	defer srv.Close()
-	models, err := listProviderModels(context.Background(), provider.Config{Kind: provider.KindOllama, BaseURL: srv.URL})
+	models, err := listProviderModels(context.Background(), provider.Config{Kind: provider.KindOllama, BaseURL: srv.URL}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestListGeminiModelsFiltersGenerateContent(t *testing.T) {
 	defer srv.Close()
 	models, err := listProviderModels(context.Background(), provider.Config{
 		Kind: provider.KindGemini, BaseURL: srv.URL, APIKey: "gk",
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestListGeminiModelsFiltersGenerateContent(t *testing.T) {
 func TestListAnthropicCustomBaseYieldsEmpty(t *testing.T) {
 	models, err := listAnthropicModels(context.Background(), provider.Config{
 		Kind: provider.KindAnthropic, BaseURL: "https://gateway.internal/v1", APIKey: "x",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestListAnthropicCustomBaseYieldsEmpty(t *testing.T) {
 }
 
 func TestListAnthropicOfficialFallbackWithoutKey(t *testing.T) {
-	models, err := listAnthropicModels(context.Background(), provider.Config{Kind: provider.KindAnthropic})
+	models, err := listAnthropicModels(context.Background(), provider.Config{Kind: provider.KindAnthropic}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

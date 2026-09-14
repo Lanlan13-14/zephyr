@@ -79,15 +79,35 @@ internal class EmbeddedAiRuntimeApi(
     suspend fun abort(runId: String): ApiResult<AiAbortResponseDto> =
         post("/admin/runs/${encode(runId)}/abort", JsonObject(emptyMap()), JsonObject.serializer(), AiAbortResponseDto.serializer())
 
-    /**
-     * Model discovery against the provider's own /models, served by the embedded runtime so the
-     * feature works with no main end attached. The provider config may be an unsaved form draft.
-     */
-    suspend fun providerModels(provider: EmbeddedProvider): ApiResult<List<EmbeddedDiscoveredModel>> =
-        when (val result = post("/admin/providers/models", EmbeddedProviderModelsRequest(provider), EmbeddedProviderModelsRequest.serializer(), EmbeddedProviderModelsResponse.serializer())) {
+    suspend fun providerModels(provider: EmbeddedProvider): ApiResult<List<EmbeddedDiscoveredModel>> {
+        val (rewritten, serverName) = rewriteProviderEndpoint(provider.baseUrl)
+        val request = EmbeddedProviderModelsRequest(
+            provider = provider.copy(baseUrl = rewritten, serverName = serverName),
+            serverName = serverName,
+        )
+        return when (val result = post("/admin/providers/models", request, EmbeddedProviderModelsRequest.serializer(), EmbeddedProviderModelsResponse.serializer())) {
             is ApiResult.Success -> ApiResult.Success(result.value.models, result.requestId)
             is ApiResult.Failure -> result
         }
+    }
+
+    companion object {
+        private val JSON = "application/json; charset=utf-8".toMediaType(); private const val MAX_LINE = 1024L * 1024L
+
+        /**
+         * Pre-resolves the provider host with the JVM resolver, because the embedded Go runtime
+         * is built CGO_ENABLED=0 and has no DNS on Android. Returns the IP-literal URL plus the
+         * original hostname (for TLS SNI and Host); on resolution failure the URL passes through
+         * untouched so the runtime surfaces the original error.
+         */
+        internal fun rewriteProviderEndpoint(
+            baseUrl: String,
+            resolver: (String) -> Array<java.net.InetAddress> = { java.net.InetAddress.getAllByName(it) },
+        ): Pair<String, String> = runCatching { LinkPeerResolver.resolveAll(baseUrl, resolver).first() }
+            .getOrNull()
+            ?.let { it.url to it.serverName }
+            ?: (baseUrl to "")
+    }
 
     suspend fun decide(runId: String, body: EmbeddedPermissionDecision): ApiResult<EmbeddedPermissionResponse> =
         post("/admin/runs/${encode(runId)}/permission", body, EmbeddedPermissionDecision.serializer(), EmbeddedPermissionResponse.serializer())
@@ -188,7 +208,6 @@ internal class EmbeddedAiRuntimeApi(
         suspend fun finish() = flush()
         private suspend fun flush() { if (data.isEmpty()) return; val raw = data.toString(); data = StringBuilder(); val e = MobileJson.instance.decodeFromString(AiRuntimeEventEnvelope.serializer(), raw); emit(AiRuntimeEvent(e.type, e.runId, e.seq, e.timestamp, e.data as? JsonObject ?: JsonObject(emptyMap()))) }
     }
-    companion object { private val JSON = "application/json; charset=utf-8".toMediaType(); private const val MAX_LINE = 1024L * 1024L }
 }
 
 @kotlinx.serialization.Serializable internal data class EmbeddedCreateSession(val userId: String, val databaseGeneration: String, val title: String, val metadata: JsonObject = JsonObject(emptyMap()))
@@ -197,8 +216,8 @@ internal class EmbeddedAiRuntimeApi(
 @kotlinx.serialization.Serializable internal data class EmbeddedSessionsResponse(val ok: Boolean = true, val sessions: List<EmbeddedSession> = emptyList())
 @kotlinx.serialization.Serializable internal data class EmbeddedMessage(val id: Long, val role: String, val content: String = "", val createdAt: Long = 0)
 @kotlinx.serialization.Serializable internal data class EmbeddedMessagesResponse(val ok: Boolean = true, val messages: List<EmbeddedMessage> = emptyList())
-@kotlinx.serialization.Serializable internal data class EmbeddedProvider(val id: String, val name: String, val kind: String, val baseUrl: String, val apiKey: String, val defaultModel: String, val models: List<String>, val apiMode: String = "auto", val organization: String = "", val extraHeaders: Map<String,String> = emptyMap(), val options: JsonObject = JsonObject(emptyMap()))
-@kotlinx.serialization.Serializable internal data class EmbeddedProviderModelsRequest(val provider: EmbeddedProvider)
+@kotlinx.serialization.Serializable internal data class EmbeddedProvider(val id: String, val name: String, val kind: String, val baseUrl: String, val apiKey: String, val defaultModel: String, val models: List<String>, val apiMode: String = "auto", val organization: String = "", val extraHeaders: Map<String,String> = emptyMap(), val options: JsonObject = JsonObject(emptyMap()), val serverName: String = "")
+@kotlinx.serialization.Serializable internal data class EmbeddedProviderModelsRequest(val provider: EmbeddedProvider, val serverName: String = "")
 @kotlinx.serialization.Serializable internal data class EmbeddedDiscoveredModel(val id: String, val label: String = "")
 @kotlinx.serialization.Serializable internal data class EmbeddedProviderModelsResponse(val ok: Boolean = true, val models: List<EmbeddedDiscoveredModel> = emptyList())
 @kotlinx.serialization.Serializable internal data class EmbeddedPermission(val mode: String = "ask", val deny: List<String> = emptyList(), val ask: List<String> = emptyList(), val allow: List<String> = emptyList())
