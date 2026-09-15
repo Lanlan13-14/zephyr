@@ -960,6 +960,17 @@ if (importStartupRecovery.recovered) {
 
 storage.init({ hashPassword });
 fileAgentManager = createFileAgentManager();
+/* Late-bound: the mobile API is constructed further below, so the device
+ * credential resolver reads it at request time, not at manager creation. */
+fileAgentManager.resolveDeviceAccess = (credential) => {
+    const store = mobileV1Api?.store;
+    if (!store) return null;
+    try {
+        return store.resolveAccess(credential);
+    } catch {
+        return null;
+    }
+};
 fileAgentManager.rebindTokenDatabase();
 
 /* Unique per-process identifier; lets clients distinguish "service restarted"

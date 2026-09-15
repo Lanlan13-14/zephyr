@@ -40,6 +40,26 @@ internal class EmbeddedLinkApi(private val process: EmbeddedLinkProcess) {
         return JSONObject().apply { put("kty", "EC"); put("crv", "P-256"); put("x", coord(pub.w.affineX)); put("y", coord(pub.w.affineY)) }.toString()
     }
 
+    /** One-style enrollment proof: ES256 over prefix\0bindId\0deviceId\0
+     * userCode\0sas\0sha256hex(secret)\0serverId, base64(P1363). */
+    fun enrollmentProof(bindId: String, deviceId: String, userCode: String, sas: String, enrollmentSecret: String, serverId: String): String {
+        val secretHash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(enrollmentSecret.toByteArray(Charsets.UTF_8))
+            .joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+        val normalized = userCode.uppercase().replace(Regex("[^A-Z0-9]"), "")
+        val payload = listOf("zephyr-link-enrollment-v2", bindId, deviceId, normalized, sas, secretHash, serverId)
+            .joinToString("\u0000").toByteArray(Charsets.UTF_8)
+        val alias = "zephyr-agent-link-" + deviceId.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val key = ks.getKey(alias, null) as java.security.PrivateKey
+        val der = java.security.Signature.getInstance("SHA256withECDSA").apply { initSign(key); update(payload) }.sign()
+        return Base64.encodeToString(derToP1363(der), Base64.NO_WRAP)
+    }
+
+    /** Generates an ML-KEM-768 keypair in the Go runtime (loopback, no network). */
+    fun mlkemGenerate(deviceId: String): JSONObject =
+        JSONObject(process.post("/link/mlkem/generate", "{}"))
+
     fun dial(serverUrl: String, deviceId: String, insecure: Boolean): Session {
         val response = JSONObject(process.post("/link/dial", JSONObject().apply {
             put("serverUrl", serverUrl.trimEnd('/') + "/api/link/v2")

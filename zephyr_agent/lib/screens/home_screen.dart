@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../agent/agent_controller.dart';
 import '../agent/agent_state.dart';
+import '../agent/link_enrollment_client.dart';
 import '../app/agent_version.dart';
 import '../fs/file_provider.dart';
 import '../storage/local_settings.dart';
@@ -23,9 +24,67 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+class _BindSheetBody extends StatelessWidget {
+  final EnrollmentInfo info;
+  const _BindSheetBody({required this.info});
+
+  String get _expiresLabel {
+    final ms = info.expiresAt;
+    if (ms <= 0) return '';
+    final remaining = DateTime.fromMillisecondsSinceEpoch(ms).difference(DateTime.now());
+    if (remaining.isNegative) return '即将过期';
+    return '${remaining.inMinutes} 分钟内有效';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = Theme.of(context).brightness == Brightness.dark
+        ? ZephyrColors.palette(ZephyrTheme.frost, Brightness.dark)
+        : ZephyrColors.palette(ZephyrTheme.frost, Brightness.light);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('在主端「设备绑定」页面输入以下验证码批准：',
+            style: TextStyle(fontSize: 13, color: palette.textSecondary)),
+        const SizedBox(height: 12),
+        // Large monospaced user code — the single thing the human must read.
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            info.userCode,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, letterSpacing: 2, fontFamily: 'monospace'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text('确认安全码一致（防中间人）：', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+        const SizedBox(height: 4),
+        Text(info.sas,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, fontFamily: 'monospace', color: palette.accent)),
+        const SizedBox(height: 12),
+        Text('或打开链接批准：', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+        const SizedBox(height: 4),
+        SelectableText(info.verificationUri,
+            style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+        if (_expiresLabel.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(_expiresLabel, textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+          ),
+      ],
+    );
+  }
+}
+
 class _HomeScreenState extends State<HomeScreen> {
   late TextEditingController _urlCtrl;
-  late TextEditingController _tokenCtrl;
   late TextEditingController _nameCtrl;
   Timer? _countdownTimer;
 
@@ -35,7 +94,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final config = context.read<AgentController>().config;
     _applyDefaultSharePath(config);
     _urlCtrl = TextEditingController(text: config.serverUrl);
-    _tokenCtrl = TextEditingController(text: config.token);
     _nameCtrl = TextEditingController(text: config.deviceName);
 
     // Update countdown display
@@ -47,7 +105,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _urlCtrl.dispose();
-    _tokenCtrl.dispose();
     _nameCtrl.dispose();
     _countdownTimer?.cancel();
     super.dispose();
@@ -59,7 +116,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final url = AgentController.normalizeServerUrl(_urlCtrl.text);
     if (_urlCtrl.text.trim() != url) _urlCtrl.text = url;
     ctrl.config.serverUrl = url;
-    ctrl.config.token = _tokenCtrl.text.trim();
     ctrl.config.deviceName = _nameCtrl.text.trim();
     ctrl.updateConfig(ctrl.config);
     LocalSettings.saveConfig(ctrl.config);
@@ -76,7 +132,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final fresh = AgentConfig();
     _applyDefaultSharePath(fresh);
     _urlCtrl.text = fresh.serverUrl;
-    _tokenCtrl.text = fresh.token;
     _nameCtrl.text = fresh.deviceName;
     ctrl.updateConfig(fresh);
     widget.onThemeChanged(ZephyrTheme.frost);
@@ -227,8 +282,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _startConnection(AgentController ctrl) async {
     _saveConfig(ctrl);
 
-    if (ctrl.config.serverUrl.isEmpty || ctrl.config.token.isEmpty) {
-      _showSnack('请填写主端地址和 Token');
+    if (ctrl.config.serverUrl.isEmpty) {
+      _showSnack('请填写主端地址');
+      return;
+    }
+    final bound = ctrl.config.accessCredential != null && ctrl.config.accessCredential!.isNotEmpty;
+    if (!bound && ctrl.config.token.isEmpty) {
+      _showSnack('请先绑定设备，或填写旧版 Token 迁移');
       return;
     }
     if (ctrl.config.sharedDirectoryPath == null) {
@@ -505,16 +565,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: _tokenCtrl,
-              enabled: !isActive,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Token',
-                prefixIcon: Icon(Icons.key, size: 20),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
               controller: _nameCtrl,
               enabled: !isActive,
               decoration: const InputDecoration(
@@ -522,10 +572,121 @@ class _HomeScreenState extends State<HomeScreen> {
                 prefixIcon: Icon(Icons.devices, size: 20),
               ),
             ),
+            const SizedBox(height: 16),
+            _buildBindingRow(ctrl, isActive, accent),
           ],
         ),
       ),
     );
+  }
+
+  /// Device binding row — the Apple-style replacement for the token field.
+  /// Three states: bound / unbound / failed, each with one clear action.
+  Widget _buildBindingRow(AgentController ctrl, bool isActive, Color accent) {
+    final bound = ctrl.config.accessCredential != null && ctrl.config.accessCredential!.isNotEmpty;
+    final failed = ctrl.enrollmentError != null && !bound;
+    final label = bound
+        ? '已绑定此设备'
+        : failed
+            ? '绑定失败'
+            : ctrl.enrollmentBusy
+                ? '等待主端批准…'
+                : '未绑定';
+    final icon = bound
+        ? Icons.check_circle
+        : failed
+            ? Icons.error_outline
+            : Icons.qr_code_2;
+    final color = bound
+        ? _palette.success
+        : failed
+            ? _palette.danger
+            : accent;
+
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color)),
+              Text(
+                bound ? '使用 Zephyr One 设备身份，无需 Token' : '在主端批准后完成加密绑定',
+                style: TextStyle(fontSize: 11, color: _palette.textSecondary),
+              ),
+            ],
+          ),
+        ),
+        if (bound)
+          TextButton(
+            onPressed: isActive ? null : () async { await ctrl.unbind(); },
+            child: const Text('解绑'),
+          )
+        else
+          _buildBindButton(ctrl, isActive, accent),
+      ],
+    );
+  }
+
+  Widget _buildBindButton(AgentController ctrl, bool isActive, Color accent) {
+    return FilledButton.tonal(
+      onPressed: isActive || ctrl.enrollmentBusy ? null : () => _startEnrollment(ctrl),
+      style: FilledButton.styleFrom(
+        foregroundColor: accent,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+      ),
+      child: ctrl.enrollmentBusy
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Text('绑定设备'),
+    );
+  }
+
+  Future<void> _startEnrollment(AgentController ctrl) async {
+    _saveConfig(ctrl);
+    ctrl.enroll();
+    // Show the bind sheet as soon as the pending enrollment exists; it
+    // refreshes on every controller notification.
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => ListenableBuilder(
+        listenable: ctrl,
+        builder: (dialogContext, _) {
+          final info = ctrl.enrollment;
+          final busy = ctrl.enrollmentBusy;
+          final error = ctrl.enrollmentError;
+          return AlertDialog(
+            title: Text(info != null ? '等待批准' : (busy ? '创建绑定…' : '绑定结果')),
+            content: SizedBox(
+              width: 320,
+              child: info != null
+                  ? _BindSheetBody(info: info)
+                  : (error != null
+                      ? Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Icon(Icons.error_outline, color: _palette.danger, size: 32),
+                          const SizedBox(height: 8),
+                          Text(error, style: TextStyle(fontSize: 13, color: _palette.danger)),
+                        ])
+                      : (busy
+                          ? const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+                          : const Text('绑定完成'))),
+            ),
+            actions: [
+              if (info != null)
+                TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('后台等待')),
+              if (error != null || !busy)
+                FilledButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('好')),
+            ],
+          );
+        },
+      ),
+    );
+    if (ctrl.config.accessCredential != null && ctrl.enrollmentError == null) {
+      _showSnack('设备绑定成功');
+    }
   }
 
   Widget _buildDirectoryCard(AgentController ctrl, bool isActive, Color accent) {

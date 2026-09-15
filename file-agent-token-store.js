@@ -742,4 +742,5 @@ module.exports = {
     METADATA_SYNC_CONTRACT,
     TokenStoreError,
     aadFor,
+    canonicalLinkJwk,
 };

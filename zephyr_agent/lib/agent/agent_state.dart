@@ -26,6 +26,13 @@ class AgentConfig {
   String serverUrl;
   String token;
   String deviceName;
+  /// One enrollment-issued device access credential (preferred auth path).
+  String? accessCredential;
+  String? refreshCredential;
+  int? accessExpiresAt;
+  /// ML-KEM-768 public key + seed from the embedded Go runtime.
+  String? mlkemPublicKey;
+  String? mlkemSeed;
   String? sharedDirectoryPath;
   String? sharedDirectoryName;
   bool readOnly;
@@ -43,6 +50,11 @@ class AgentConfig {
     this.serverUrl = '',
     this.token = '',
     this.deviceName = 'My Device',
+    this.accessCredential,
+    this.refreshCredential,
+    this.accessExpiresAt,
+    this.mlkemPublicKey,
+    this.mlkemSeed,
     this.sharedDirectoryPath,
     this.sharedDirectoryName,
     this.readOnly = true,
@@ -58,6 +70,11 @@ class AgentConfig {
     'serverUrl': serverUrl,
     'token': token,
     'deviceName': deviceName,
+    'accessCredential': accessCredential,
+    'refreshCredential': refreshCredential,
+    'accessExpiresAt': accessExpiresAt,
+    'mlkemPublicKey': mlkemPublicKey,
+    'mlkemSeed': mlkemSeed,
     'sharedDirectoryPath': sharedDirectoryPath,
     'sharedDirectoryName': sharedDirectoryName,
     'readOnly': readOnly,
@@ -73,6 +90,11 @@ class AgentConfig {
     serverUrl: json['serverUrl'] as String? ?? '',
     token: json['token'] as String? ?? '',
     deviceName: json['deviceName'] as String? ?? 'My Device',
+    accessCredential: json['accessCredential'] as String?,
+    refreshCredential: json['refreshCredential'] as String?,
+    accessExpiresAt: (json['accessExpiresAt'] as num?)?.toInt(),
+    mlkemPublicKey: json['mlkemPublicKey'] as String?,
+    mlkemSeed: json['mlkemSeed'] as String?,
     sharedDirectoryPath: json['sharedDirectoryPath'] as String?,
     sharedDirectoryName: json['sharedDirectoryName'] as String?,
     readOnly: json['readOnly'] as bool? ?? true,
