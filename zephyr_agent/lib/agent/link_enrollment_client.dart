@@ -15,10 +15,12 @@ class EnrollmentInfo {
 
 class EnrollmentClient {
   final PlatformLinkFileRuntime runtime;
+  bool allowBadCertificates = false;
   const EnrollmentClient(this.runtime);
 
   Future<Map<String, dynamic>> _request(String method, Uri uri, [Map<String, dynamic>? body]) async {
-    final client = HttpClient();
+    final client = HttpClient()
+      ..badCertificateCallback = allowBadCertificates ? (_, __, ___) => true : null;
     try {
       final req = await client.openUrl(method, uri);
       req.headers.contentType = ContentType.json;
@@ -43,6 +45,7 @@ class EnrollmentClient {
   }
 
   Future<EnrollmentInfo> create(AgentConfig config) async {
+    allowBadCertificates = config.allowBadCertificates;
     final deviceId = config.linkDeviceId ??= const Uuid().v4();
     final signing = config.linkSigningJwk ??= await runtime.signingJwk(deviceId);
     if (signing == null) throw StateError('signing key unavailable');
@@ -60,6 +63,7 @@ class EnrollmentClient {
   }
 
   Future<String> waitUntilApproved(AgentConfig config, EnrollmentInfo info, {Duration timeout = const Duration(minutes: 5)}) async {
+    allowBadCertificates = config.allowBadCertificates;
     final end = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(end)) {
       final r = await _request('GET', _api(config.serverUrl, '/api/link/v2/enrollments/${Uri.encodeComponent(info.bindId)}?userCode=${Uri.encodeComponent(info.userCode)}'));
@@ -72,6 +76,7 @@ class EnrollmentClient {
   }
 
   Future<void> consume(AgentConfig config, EnrollmentInfo info) async {
+    allowBadCertificates = config.allowBadCertificates;
     final proof = await runtime.enrollmentProof(info.bindId, deviceId: config.linkDeviceId!, userCode: info.userCode, sas: info.sas, enrollmentSecret: info.enrollmentSecret, serverId: info.serverId);
     final kem = config.mlkemPublicKey ?? await runtime.mlkemPublic(config.linkDeviceId!);
     final signing = config.linkSigningJwk;
@@ -86,6 +91,7 @@ class EnrollmentClient {
   }
 
   Future<void> refresh(AgentConfig config) async {
+    allowBadCertificates = config.allowBadCertificates;
     final deviceId = config.linkDeviceId, refresh = config.refreshCredential;
     if (deviceId == null || refresh == null || refresh.isEmpty) throw StateError('device is not enrolled');
     final r = await _request('POST', _api(config.serverUrl, '/api/mobile/v1/devices/refresh'), {'deviceId': deviceId, 'refreshCredential': refresh});
