@@ -50,11 +50,8 @@ class AgentController extends ChangeNotifier {
   late final EnrollmentClient _enrollmentClient = EnrollmentClient(_linkRuntime);
   EnrollmentInfo? _enrollment;
   bool _enrollmentBusy = false;
-  String? get enrollmentError => _enrollmentError;
-  String? _enrollmentError;
-  String get enrollmentStatus => _enrollment == null
-      ? (_enrollmentError == null ? '未绑定' : '绑定失败')
-      : '等待主端批准';
+  String get enrollmentStatus => _enrollment == null ? '未绑定' : '等待主端批准';
+  EnrollmentInfo? get enrollment => _enrollment;
   bool get enrollmentBusy => _enrollmentBusy;
   bool get linkFileBridgeReady => _linkRuntime.ready;
   bool get linkTunnelUp => _linkRuntime.tunnelUp;
@@ -99,15 +96,12 @@ class AgentController extends ChangeNotifier {
 
   Future<void> enroll() async {
     if (_enrollmentBusy) return;
-    _enrollmentBusy = true; _enrollmentError = null; notifyListeners();
+    _enrollmentBusy = true; notifyListeners();
     try {
       _enrollment = await _enrollmentClient.create(_config); notifyListeners();
       await _enrollmentClient.waitUntilApproved(_config, _enrollment!);
       await _enrollmentClient.consume(_config, _enrollment!);
       _enrollment = null; notifyListeners();
-    } catch (e) {
-      _enrollmentError = e.toString();
-      rethrow;
     } finally { _enrollmentBusy = false; notifyListeners(); }
   }
 
