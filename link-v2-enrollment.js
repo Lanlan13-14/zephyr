@@ -198,8 +198,10 @@ class LinkV2EnrollmentStore {
         if (id.length < 16 || id.length > 80) {
             throw new MobileStoreError('invalid_request', 'deviceId 长度必须在 16..80 字符之间', 400);
         }
-        if (platform !== 'android' && platform !== 'ios') {
-            throw new MobileStoreError('invalid_request', 'platform 必须为 android 或 ios', 400);
+        const platformTag = String(platform || '');
+        if (platformTag !== 'android' && platformTag !== 'ios'
+            && !/^agent(-[a-z0-9]+)?$/.test(platformTag)) {
+            throw new MobileStoreError('invalid_request', 'platform 必须为 android、ios 或 agent', 400);
         }
         const encryption = Buffer.from(String(keys?.encryption?.publicKey || ''), 'base64');
         if (encryption.length !== 1184) {

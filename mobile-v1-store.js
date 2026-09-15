@@ -124,6 +124,57 @@ class MobileV1Store {
         this.registryHash = sha256(canonicalJson(this.entityRegistry));
     }
 
+    /** One-shot migration: mobile_devices.platform gains agent platforms.
+     * Idempotent — the widened CHECK on a fresh table makes the guard false. */
+    _widenPlatformCheck() {
+        const sql = this.db.prepare(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='mobile_devices'"
+        ).get();
+        if (!sql || !/platform IN \('android','ios'\)/i.test(String(sql.sql || ''))) return;
+        this.db.exec('BEGIN');
+        try {
+            this.db.exec(`
+                CREATE TABLE mobile_devices_migrated AS SELECT * FROM mobile_devices;
+                DROP TABLE mobile_devices;
+                CREATE TABLE mobile_devices (
+                    device_id TEXT PRIMARY KEY,
+                    owner_user_id TEXT NOT NULL,
+                    owner_username_compat TEXT NOT NULL,
+                    token_id TEXT NOT NULL,
+                    device_name TEXT NOT NULL,
+                    platform TEXT NOT NULL CHECK(platform IN ('android','ios') OR platform LIKE 'agent%'),
+                    app_version TEXT NOT NULL,
+                    encryption_public_key BLOB NOT NULL,
+                    signing_public_jwk TEXT NOT NULL,
+                    refresh_token_hash TEXT,
+                    refresh_generation INTEGER NOT NULL DEFAULT 1,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    automatic_enabled INTEGER NOT NULL DEFAULT 1,
+                    sync_interval_sec INTEGER NOT NULL DEFAULT 300,
+                    config_revision INTEGER NOT NULL DEFAULT 1,
+                    binding_revision INTEGER NOT NULL DEFAULT 1,
+                    registry_hash TEXT NOT NULL,
+                    last_acked_cursor INTEGER NOT NULL DEFAULT 0,
+                    last_sync_at INTEGER,
+                    last_seen_at INTEGER,
+                    created_at INTEGER NOT NULL,
+                    revoked_at INTEGER,
+                    revoke_reason TEXT
+                );
+                INSERT INTO mobile_devices SELECT * FROM mobile_devices_migrated;
+                DROP TABLE mobile_devices_migrated;
+                CREATE INDEX IF NOT EXISTS idx_mobile_devices_owner
+                    ON mobile_devices(owner_user_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_mobile_devices_token
+                    ON mobile_devices(token_id, revoked_at);
+            `);
+            this.db.exec('COMMIT');
+        } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
     /**
      * Creates the tables from DATA_AND_MIGRATION.md section 2 verbatim.
      *
@@ -134,6 +185,9 @@ class MobileV1Store {
      * idempotent and there is nothing to alter.
      */
     _ensureSchema() {
+        // Platform CHECK was widened for Agent enrollment (agent, agent-<os>);
+        // SQLite cannot ALTER a CHECK in place, so rebuild the table once.
+        this._widenPlatformCheck();
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS mobile_devices (
                 device_id TEXT PRIMARY KEY,
@@ -141,7 +195,7 @@ class MobileV1Store {
                 owner_username_compat TEXT NOT NULL,
                 token_id TEXT NOT NULL,
                 device_name TEXT NOT NULL,
-                platform TEXT NOT NULL CHECK(platform IN ('android','ios')),
+                platform TEXT NOT NULL CHECK(platform IN ('android','ios') OR platform LIKE 'agent%'),
                 app_version TEXT NOT NULL,
                 encryption_public_key BLOB NOT NULL,
                 signing_public_jwk TEXT NOT NULL,
@@ -725,8 +779,10 @@ class MobileV1Store {
         if (id.length < 16 || id.length > 80) {
             throw new MobileStoreError('invalid_request', 'deviceId 长度必须在 16..80 字符之间', 400);
         }
-        if (platform !== 'android' && platform !== 'ios') {
-            throw new MobileStoreError('invalid_request', 'platform 必须为 android 或 ios', 400);
+        const platformTag = String(platform || '');
+        if (platformTag !== 'android' && platformTag !== 'ios'
+            && !/^agent(-[a-z0-9]+)?$/.test(platformTag)) {
+            throw new MobileStoreError('invalid_request', 'platform 必须为 android、ios 或 agent', 400);
         }
         const encryption = Buffer.from(String(keys?.encryption?.publicKey || ''), 'base64');
         if (encryption.length !== 1184) {

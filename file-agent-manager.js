@@ -15,7 +15,7 @@ const crypto = require('crypto');
 const path = require('path');
 const WebSocket = require('ws');
 const ipaddr = require('ipaddr.js');
-const { AgentTokenStore } = require('./file-agent-token-store');
+const { AgentTokenStore, TokenStoreError, canonicalLinkJwk } = require('./file-agent-token-store');
 const {
     OP: ZFT2_OP,
     FLAG_ERROR: ZFT2_FLAG_ERROR,
@@ -280,12 +280,14 @@ function validateBoundedString(value, maxLength, { required = false } = {}) {
 function validateHelloMessage(hello) {
     if (!isPlainObject(hello)) return false;
     const allowed = new Set([
-        'type', 'protocolVersion', 'token', 'deviceId', 'deviceName',
+        'type', 'protocolVersion', 'token', 'accessCredential', 'deviceId', 'deviceName',
         'platform', 'appVersion', 'capabilities', 'share', 'linkSessionId', 'linkSigningJwk',
     ]);
     if (Object.keys(hello).some((key) => !allowed.has(key))) return false;
     if (hello.type !== 'hello' || ![1, 2].includes(hello.protocolVersion)) return false;
-    if (!validateBoundedString(hello.token, 512, { required: true })) return false;
+    // Either the One enrollment-issued access credential or a legacy token
+    // authenticates the session; at least one must be present and bounded.
+    if (!validateBoundedString(hello.token, 512) && !validateBoundedString(hello.accessCredential, 512)) return false;
     if (!validateBoundedString(hello.deviceId, 256)) return false;
     if (!validateBoundedString(hello.deviceName, 256)) return false;
     if (!validateBoundedString(hello.platform, 64)) return false;
@@ -695,6 +697,8 @@ class FileAgentManager {
         this.linkTunnelDial = typeof options.linkTunnelDial === 'function' ? options.linkTunnelDial : null;
         this.linkTunnelAttach = typeof options.linkTunnelAttach === 'function' ? options.linkTunnelAttach : null;
         this.linkRegisterAgentKey = typeof options.linkRegisterAgentKey === 'function' ? options.linkRegisterAgentKey : null;
+        /** Resolves a One enrollment access credential to its device row. */
+        this.resolveDeviceAccess = typeof options.resolveDeviceAccess === 'function' ? options.resolveDeviceAccess : null;
 
         this._loadTokens();
         this._restoreLinkIdentities();
@@ -718,6 +722,22 @@ class FileAgentManager {
     }
 
     async registerLinkIdentity({ ownerId, tokenId, deviceId, signingJwk } = {}) {
+        // Enrollment-issued device identities register without any Client
+        // Token binding: the Go Link transport trusts the enrollment proof.
+        if (!tokenId) {
+            let parsed = signingJwk;
+            if (typeof parsed === 'string') {
+                try { parsed = JSON.parse(parsed); } catch { parsed = null; }
+            }
+            const jwk = canonicalLinkJwk(parsed);
+            if (!deviceId || !jwk) {
+                throw new TokenStoreError('invalid_link_identity', 'Link device identity is invalid');
+            }
+            if (this.linkRegisterAgentKey) {
+                await this.linkRegisterAgentKey(String(deviceId), JSON.parse(jwk));
+            }
+            return { deviceId: String(deviceId), signingJwk: jwk };
+        }
         const identity = this.tokenStore.bindLinkIdentity(ownerId, tokenId, deviceId, signingJwk);
         if (this.linkRegisterAgentKey) {
             await this.linkRegisterAgentKey(identity.deviceId, JSON.parse(identity.signingJwk));
@@ -1374,12 +1394,21 @@ class FileAgentManager {
             throw new AgentError('unsupported', `Unsupported protocol version: ${hello.protocolVersion}`);
         }
 
-        // Validate token
-        const tokenRecord = this.validateTokenRecord(hello.token);
-        if (!tokenRecord) {
+        // One enrollment-issued device access credential first; legacy Client
+        // Token authenticates only when no credential was presented.
+        let deviceRecord = null;
+        if (hello.accessCredential && this.resolveDeviceAccess) {
+            try { deviceRecord = this.resolveDeviceAccess(hello.accessCredential); } catch (_) { deviceRecord = null; }
+        }
+        const deviceId = String(hello.deviceId || '').trim();
+        if (deviceRecord && deviceId && String(deviceRecord.device_id || '') !== deviceId) {
+            throw new AgentError('unauthorized', 'Device credential does not match this device');
+        }
+        const tokenRecord = deviceRecord ? null : this.validateTokenRecord(hello.token);
+        if (!deviceRecord && !tokenRecord) {
             throw new AgentError('unauthorized', 'Invalid token');
         }
-        const ownerId = tokenRecord.ownerId;
+        const ownerId = deviceRecord ? deviceRecord.owner_user_id : tokenRecord.ownerId;
         if (!authorizeRegistration()) {
             throw new AgentError('resource_exhausted', 'Authenticated connection limit exceeded');
         }
@@ -1391,9 +1420,9 @@ class FileAgentManager {
 
         const conn = new FileAgentConnection(ws, agentId, hello);
         conn.ownerId = ownerId;
-        conn.ownerUsername = tokenRecord.ownerUsername || '';
-        conn.tokenId = tokenRecord.id;
-        conn.tokenName = tokenRecord.name;
+        conn.ownerUsername = deviceRecord ? (deviceRecord.owner_username || '') : (tokenRecord.ownerUsername || '');
+        conn.tokenId = deviceRecord ? deviceRecord.token_id : tokenRecord.id;
+        conn.tokenName = deviceRecord ? (deviceRecord.device_name || 'Agent Device') : tokenRecord.name;
 
         // Send hello_ack
         try {

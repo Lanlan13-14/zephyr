@@ -63,6 +63,29 @@ class MainActivity : FlutterActivity() {
                         val deviceId = call.argument<String>("deviceId") ?: error("deviceId required")
                         result.success(linkApi.signingJwk(deviceId))
                     }
+                    "mlkemGenerate" -> {
+                        val deviceId = call.argument<String>("deviceId") ?: error("deviceId required")
+                        Thread {
+                            try {
+                                val kem = linkApi.mlkemGenerate(deviceId)
+                                runOnUiThread { result.success(mapOf("publicKey" to kem.getString("publicKey"), "seed" to kem.getString("seed"))) }
+                            } catch (e: Exception) { runOnUiThread { result.error("link_error", e.message ?: "ML-KEM 生成失败", null) } }
+                        }.start()
+                    }
+                    "enrollmentProof" -> {
+                        val bindId = call.argument<String>("bindId") ?: error("bindId required")
+                        val deviceId = call.argument<String>("deviceId") ?: error("deviceId required")
+                        val userCode = call.argument<String>("userCode") ?: error("userCode required")
+                        val sas = call.argument<String>("sas") ?: error("sas required")
+                        val enrollmentSecret = call.argument<String>("enrollmentSecret") ?: error("enrollmentSecret required")
+                        val serverId = call.argument<String>("serverId") ?: ""
+                        Thread {
+                            try {
+                                val proof = linkApi.enrollmentProof(bindId, deviceId, userCode, sas, enrollmentSecret, serverId)
+                                runOnUiThread { result.success(proof) }
+                            } catch (e: Exception) { runOnUiThread { result.error("link_error", e.message ?: "签名失败", null) } }
+                        }.start()
+                    }
                     "linkFileRequest" -> {
                         val op = call.argument<String>("op") ?: error("op required")
                         @Suppress("UNCHECKED_CAST")

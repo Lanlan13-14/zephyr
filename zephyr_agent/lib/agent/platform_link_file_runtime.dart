@@ -15,6 +15,32 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
   Future<String?> signingJwk(String deviceId) async =>
       await _channel.invokeMethod<String>('linkSigningJwk', {'deviceId': deviceId});
 
+  /// Generates (once per device) an ML-KEM-768 keypair inside the embedded Go
+  /// runtime. Returns { publicKey, seed }; the seed stays on the host side.
+  Future<Map<String, String>> mlkemGenerate(String deviceId) async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('mlkemGenerate', {'deviceId': deviceId});
+    return (result ?? const {}).map((k, v) => MapEntry(String.valueOf(k), String.valueOf(v ?? '')));
+  }
+
+  /// Signs the One enrollment proof with the device's ES256 key and returns
+  /// base64(P1363) exactly as the main end's verifyP1363 expects.
+  Future<String> enrollmentProof({
+    required String bindId,
+    required String deviceId,
+    required String userCode,
+    required String sas,
+    required String enrollmentSecret,
+    required String serverId,
+  }) async =>
+      (await _channel.invokeMethod<String>('enrollmentProof', {
+        'bindId': bindId,
+        'deviceId': deviceId,
+        'userCode': userCode,
+        'sas': sas,
+        'enrollmentSecret': enrollmentSecret,
+        'serverId': serverId,
+      }))!;
+
   @override
   Future<bool> connect({required String serverUrl, required String deviceId, bool allowBadCertificates = false}) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('linkConnect', {

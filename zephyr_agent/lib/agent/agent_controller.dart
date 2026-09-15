@@ -12,6 +12,7 @@ import 'agent_state.dart';
 import '../fs/file_provider.dart';
 import 'file_transfer_protocol.dart';
 import 'platform_link_file_runtime.dart';
+import 'link_enrollment_client.dart';
 import 'zft2_link_lane.dart';
 import '../app/agent_version.dart';
 import '../storage/local_settings.dart';
@@ -46,6 +47,19 @@ class AgentController extends ChangeNotifier {
   // File provider
   ZephyrFileProvider? _fileProvider;
   final PlatformLinkFileRuntime _linkRuntime = PlatformLinkFileRuntime();
+  late final EnrollmentClient _enrollmentClient = EnrollmentClient(_linkRuntime);
+  EnrollmentInfo? _enrollment;
+  bool _enrollmentBusy = false;
+  String? _enrollmentError;
+  EnrollmentInfo? get enrollment => _enrollment;
+  bool get enrollmentBusy => _enrollmentBusy;
+  String? get enrollmentError => _enrollmentError;
+  String get enrollmentStatus {
+    if (_enrollment != null) return '等待主端批准';
+    if (_config.accessCredential != null && _config.accessCredential!.isNotEmpty) return '已绑定';
+    if (_enrollmentError != null) return '绑定失败';
+    return '未绑定';
+  }
   bool get linkFileBridgeReady => _linkRuntime.ready;
   bool get linkTunnelUp => _linkRuntime.tunnelUp;
   bool _bastionTunnelStarted = false;
@@ -84,6 +98,62 @@ class AgentController extends ChangeNotifier {
 
   void updateConfig(AgentConfig newConfig) {
     _config = newConfig;
+    notifyListeners();
+  }
+
+  // ─── Device enrollment ────────────────────────────────────────
+
+  /// Starts a bind: creates the pending enrollment and surfaces bindId /
+  /// userCode / SAS / verification URI for the UI. The completion future is
+  /// exposed so the screen can keep polling independent of widget rebuilds.
+  Future<void> enroll() async {
+    if (_enrollmentBusy) return;
+    if (_config.serverUrl.isEmpty) throw EnrollmentException('invalid_request', '请先填写主端地址');
+    _enrollmentBusy = true;
+    _enrollmentError = null;
+    notifyListeners();
+    try {
+      _config.linkDeviceId ??= const Uuid().v4();
+      await LocalSettings.saveConfig(_config);
+      final info = await _enrollmentClient.create(_config);
+      await LocalSettings.saveConfig(_config);
+      _enrollment = info;
+      notifyListeners();
+      await _enrollmentClient.waitUntilApproved(_config, info);
+      await _enrollmentClient.consume(_config, info);
+      _enrollment = null;
+      await LocalSettings.saveConfig(_config);
+      notifyListeners();
+    } on EnrollmentException catch (e) {
+      _enrollmentError = e.toString();
+      _enrollment = null;
+      notifyListeners();
+      rethrow;
+    } catch (e) {
+      _enrollmentError = e.toString();
+      _enrollment = null;
+      notifyListeners();
+      rethrow;
+    } finally {
+      _enrollmentBusy = false;
+      notifyListeners();
+    }
+  }
+
+  /// Cancels an in-flight enrollment display (the server bind still expires
+  /// on its own TTL; nothing sensitive is kept).
+  void cancelEnrollmentDisplay() {
+    _enrollment = null;
+    _enrollmentError = null;
+    notifyListeners();
+  }
+
+  /// Drops stored credentials after the operator unbinds on the main end.
+  Future<void> unbind() async {
+    _config.accessCredential = null;
+    _config.refreshCredential = null;
+    _config.accessExpiresAt = null;
+    await LocalSettings.saveConfig(_config);
     notifyListeners();
   }
 
@@ -172,11 +242,28 @@ class AgentController extends ChangeNotifier {
       // Upgraded installs keep their persisted (previously v5) id untouched.
       final deviceId = _config.linkDeviceId ??= const Uuid().v4();
       if (!hadDeviceId) await LocalSettings.saveConfig(_config);
-      if (Platform.isAndroid && _config.linkSigningJwk == null) {
+      if (_config.linkSigningJwk == null) {
         try {
           _config.linkSigningJwk = await _linkRuntime.signingJwk(deviceId);
           await LocalSettings.saveConfig(_config);
         } catch (_) {}
+      }
+      // Enrollment identity first: rotate the access credential when it is
+      // missing or about to expire. Rebind is required only when the refresh
+      // credential itself was rejected (replayed/rotated).
+      if (_config.accessCredential != null && EnrollmentClient.needsRefresh(_config)) {
+        try {
+          await _enrollmentClient.refresh(_config);
+          await LocalSettings.saveConfig(_config);
+        } on EnrollmentException catch (e) {
+          if (e.code == 'refresh_replayed' || e.code == 'client_not_found' || e.code == 'client_revoked') {
+            _errorMessage = '设备绑定已失效，请重新绑定设备';
+            _setStatus(AgentStatus.error);
+            return;
+          }
+          // Transient refresh failures fall through: the current (possibly
+          // still-valid) credential authenticates this attempt.
+        }
       }
       final uri = agentWebSocketUriForServerUrl(normalizedServerUrl);
       final customClient = _config.allowBadCertificates && uri.scheme == 'wss'
@@ -227,6 +314,8 @@ class AgentController extends ChangeNotifier {
       'type': 'hello',
       'protocolVersion': 2,
       'token': _config.token,
+      if (_config.accessCredential != null && _config.accessCredential!.isNotEmpty)
+        'accessCredential': _config.accessCredential,
       'deviceId': deviceId,
       'deviceName': _config.deviceName,
       'platform': _platformName(),
