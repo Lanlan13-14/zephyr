@@ -15,7 +15,6 @@ import 'platform_link_file_runtime.dart';
 import 'zft2_link_lane.dart';
 import '../app/agent_version.dart';
 import '../storage/local_settings.dart';
-import 'link_enrollment_client.dart';
 
 class AgentController extends ChangeNotifier {
   AgentConfig _config;
@@ -47,12 +46,6 @@ class AgentController extends ChangeNotifier {
   // File provider
   ZephyrFileProvider? _fileProvider;
   final PlatformLinkFileRuntime _linkRuntime = PlatformLinkFileRuntime();
-  late final EnrollmentClient _enrollmentClient = EnrollmentClient(_linkRuntime);
-  EnrollmentInfo? _enrollment;
-  bool _enrollmentBusy = false;
-  String get enrollmentStatus => _enrollment == null ? '未绑定' : '等待主端批准';
-  EnrollmentInfo? get enrollment => _enrollment;
-  bool get enrollmentBusy => _enrollmentBusy;
   bool get linkFileBridgeReady => _linkRuntime.ready;
   bool get linkTunnelUp => _linkRuntime.tunnelUp;
   bool _bastionTunnelStarted = false;
@@ -94,24 +87,7 @@ class AgentController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> enroll() async {
-    if (_enrollmentBusy) return;
-    _enrollmentBusy = true; notifyListeners();
-    try {
-      _enrollment = await _enrollmentClient.create(_config); notifyListeners();
-      await _enrollmentClient.waitUntilApproved(_config, _enrollment!);
-      await _enrollmentClient.consume(_config, _enrollment!);
-      _enrollment = null; notifyListeners();
-    } finally { _enrollmentBusy = false; notifyListeners(); }
-  }
-
-  Future<void> refreshAccessCredential() async {
-    await _enrollmentClient.refresh(_config);
-    notifyListeners();
-  }
-
   // ─── File provider ───────────────────────────────────────────
-
 
   void setFileProvider(ZephyrFileProvider provider) {
     _fileProvider = provider;
@@ -190,12 +166,6 @@ class AgentController extends ChangeNotifier {
       final normalizedServerUrl = normalizeServerUrl(_config.serverUrl);
       if (normalizedServerUrl.isEmpty) throw const FormatException('主端地址为空');
       _config.serverUrl = normalizedServerUrl;
-      if (_config.accessCredential != null &&
-          _config.refreshCredential != null &&
-          _config.accessExpiresAt != null &&
-          _config.accessExpiresAt! <= DateTime.now().millisecondsSinceEpoch + 30000) {
-        await refreshAccessCredential();
-      }
       final hadDeviceId = _config.linkDeviceId != null;
       // Random, not deterministic: two agents with the default device name
       // would otherwise collide on the same server-side link_device_id.
@@ -257,8 +227,6 @@ class AgentController extends ChangeNotifier {
       'type': 'hello',
       'protocolVersion': 2,
       'token': _config.token,
-      if (_config.accessCredential != null && _config.accessCredential!.isNotEmpty)
-        'accessCredential': _config.accessCredential,
       'deviceId': deviceId,
       'deviceName': _config.deviceName,
       'platform': _platformName(),

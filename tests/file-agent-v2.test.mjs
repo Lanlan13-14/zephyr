@@ -26,31 +26,6 @@ function connection() {
   });
 }
 
-test('One device access credentials authenticate without legacy tokens', () => {
-  const manager = new FileAgentManager({
-    tokenFile: '/tmp/zephyr-agent-device-credential-test-missing.json',
-    resolveDeviceAccess: (credential) => credential === 'device-access'
-      ? { owner_user_id: 'user-1', device_id: 'device-1', device_name: 'One phone' }
-      : null,
-  });
-  const ws = new MockAgentSocket();
-  const agentId = manager._handleHello(ws, {
-    type: 'hello', protocolVersion: 2, accessCredential: 'device-access',
-    deviceId: 'device-1', deviceName: 'One phone', platform: 'android', appVersion: '1',
-    capabilities: {}, share: { readOnly: true },
-  });
-  assert.match(agentId, /^agent_/);
-  assert.equal(manager.agents.get(agentId).ownerId, 'user-1');
-  assert.equal(manager.agents.get(agentId).accessCredential, 'device-access');
-  assert.equal(JSON.parse(ws.sent[0].frame.toString()).ok, true);
-  assert.throws(() => manager._handleHello(new MockAgentSocket(), {
-    type: 'hello', protocolVersion: 2, accessCredential: 'invalid',
-    deviceId: 'device-1', deviceName: 'One phone', platform: 'android', appVersion: '1',
-    capabilities: {}, share: { readOnly: true },
-  }), (error) => error.code === 'unauthorized');
-  manager.shutdown();
-});
-
 test('Agent v2 resolves binary reads and structured writes', async () => {
   const conn = connection();
   const read = conn.callBinaryV2(OP.READ, { handle: 'h', offset: 0, length: 3 }, null, 1000);

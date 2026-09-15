@@ -65,16 +65,6 @@ class _HomeScreenState extends State<HomeScreen> {
     LocalSettings.saveConfig(ctrl.config);
   }
 
-  Future<void> _enroll(AgentController ctrl) async {
-    try {
-      final future = ctrl.enroll();
-      await future;
-      if (mounted) _showSnack('设备绑定成功');
-    } catch (e) {
-      if (mounted) _showSnack('设备绑定失败：$e');
-    }
-  }
-
   void _saveAndNotify(AgentController ctrl) {
     _saveConfig(ctrl);
     _showSnack('连接信息已保存');
@@ -356,10 +346,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 // Connection form
                 _buildFormCard(ctrl, isActive, accent),
-                if (ctrl.enrollment != null) ...[
-                  _buildEnrollmentCard(ctrl, accent),
-                  const SizedBox(height: 16),
-                ],
                 const SizedBox(height: 16),
 
                 // Directory & permissions
@@ -518,16 +504,16 @@ class _HomeScreenState extends State<HomeScreen> {
               keyboardType: TextInputType.url,
             ),
             const SizedBox(height: 12),
-            if (ctrl.config.accessCredential == null || ctrl.config.accessCredential!.isEmpty) ...[
-              Text('设备绑定：${ctrl.enrollmentStatus}', style: TextStyle(color: _palette.textSecondary)),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: isActive || ctrl.enrollmentBusy ? null : () => _enroll(ctrl),
-                icon: const Icon(Icons.qr_code_2),
-                label: Text(ctrl.enrollmentBusy ? '等待主端批准…' : '绑定此设备'),
+            TextField(
+              controller: _tokenCtrl,
+              enabled: !isActive,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Token',
+                prefixIcon: Icon(Icons.key, size: 20),
               ),
-              const SizedBox(height: 12),
-            ],
+            ),
+            const SizedBox(height: 12),
             TextField(
               controller: _nameCtrl,
               enabled: !isActive,
@@ -540,19 +526,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
-  }
-
-  Widget _buildEnrollmentCard(AgentController ctrl, Color accent) {
-    final e = ctrl.enrollment!;
-    return Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('等待主端批准', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-      const SizedBox(height: 8),
-      Text('验证码：${e.userCode}', style: TextStyle(fontSize: 22, color: accent, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 4),
-      Text('在主端打开绑定页面并确认以下安全码：${e.sas}', style: TextStyle(color: _palette.textSecondary)),
-      const SizedBox(height: 8),
-      SelectableText(e.verificationUri, style: TextStyle(fontSize: 12, color: _palette.textSecondary)),
-    ])));
   }
 
   Widget _buildDirectoryCard(AgentController ctrl, bool isActive, Color accent) {

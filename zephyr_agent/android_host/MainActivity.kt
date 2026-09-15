@@ -23,8 +23,6 @@ import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
 import org.json.JSONObject
 
-private fun JSONObject.toMap(): Map<String, Any?> = keys().asSequence().associateWith { key -> opt(key) }
-
 class MainActivity : FlutterActivity() {
     private val channelName = "com.zephyr.agent/saf"
     private val linkChannelName = "com.zephyr.agent/link"
@@ -64,24 +62,6 @@ class MainActivity : FlutterActivity() {
                     "linkSigningJwk" -> {
                         val deviceId = call.argument<String>("deviceId") ?: error("deviceId required")
                         result.success(linkApi.signingJwk(deviceId))
-                    }
-                    "mlkemGenerate" -> {
-                        val deviceId = call.argument<String>("deviceId") ?: error("deviceId required")
-                        result.success(linkApi.mlkemGenerate(deviceId).toMap())
-                    }
-                    "mlkemPublic" -> {
-                        val deviceId = call.argument<String>("deviceId") ?: error("deviceId required")
-                        result.success(linkApi.mlkemPublic(deviceId))
-                    }
-                    "enrollmentProof" -> {
-                        result.success(linkApi.enrollmentProof(
-                            call.argument<String>("bindId") ?: error("bindId required"),
-                            call.argument<String>("deviceId") ?: error("deviceId required"),
-                            call.argument<String>("userCode") ?: error("userCode required"),
-                            call.argument<String>("sas") ?: error("sas required"),
-                            call.argument<String>("enrollmentSecret") ?: error("enrollmentSecret required"),
-                            call.argument<String>("serverId") ?: error("serverId required"),
-                        ))
                     }
                     "linkFileRequest" -> {
                         val op = call.argument<String>("op") ?: error("op required")

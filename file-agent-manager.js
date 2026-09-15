@@ -280,13 +280,12 @@ function validateBoundedString(value, maxLength, { required = false } = {}) {
 function validateHelloMessage(hello) {
     if (!isPlainObject(hello)) return false;
     const allowed = new Set([
-        'type', 'protocolVersion', 'token', 'accessCredential', 'deviceId', 'deviceName',
+        'type', 'protocolVersion', 'token', 'deviceId', 'deviceName',
         'platform', 'appVersion', 'capabilities', 'share', 'linkSessionId', 'linkSigningJwk',
     ]);
     if (Object.keys(hello).some((key) => !allowed.has(key))) return false;
     if (hello.type !== 'hello' || ![1, 2].includes(hello.protocolVersion)) return false;
-    if (!validateBoundedString(hello.token, 512) && !validateBoundedString(hello.accessCredential, 512)) return false;
-    if (!hello.token && !hello.accessCredential) return false;
+    if (!validateBoundedString(hello.token, 512, { required: true })) return false;
     if (!validateBoundedString(hello.deviceId, 256)) return false;
     if (!validateBoundedString(hello.deviceName, 256)) return false;
     if (!validateBoundedString(hello.platform, 64)) return false;
@@ -679,10 +678,6 @@ class FileAgentManager {
         );
         this.preAuthCloseGraceMs = positiveLimit(options.preAuthCloseGraceMs, 250);
         this.resolveOwner = typeof options.resolveOwner === 'function' ? options.resolveOwner : null;
-        // Device access credentials are the One enrollment identity. Legacy
-        // client tokens remain supported only as a migration fallback.
-        this.resolveDeviceAccess = typeof options.resolveDeviceAccess === 'function'
-            ? options.resolveDeviceAccess : null;
         this.tokenFile = path.resolve(options.tokenFile || DEFAULT_TOKEN_FILE);
         this.tokenStore = options.tokenStore || new AgentTokenStore(this.tokenFile, {
             db: options.db,
@@ -1379,18 +1374,12 @@ class FileAgentManager {
             throw new AgentError('unsupported', `Unsupported protocol version: ${hello.protocolVersion}`);
         }
 
-        // Prefer the One enrollment-issued device credential. Legacy token auth is
-        // retained only for existing installations during migration.
-        let tokenRecord = null;
-        let deviceRecord = null;
-        if (hello.accessCredential && this.resolveDeviceAccess) {
-            try { deviceRecord = this.resolveDeviceAccess(hello.accessCredential); } catch (_) { deviceRecord = null; }
+        // Validate token
+        const tokenRecord = this.validateTokenRecord(hello.token);
+        if (!tokenRecord) {
+            throw new AgentError('unauthorized', 'Invalid token');
         }
-        if (!deviceRecord && hello.token) tokenRecord = this.validateTokenRecord(hello.token);
-        if (!deviceRecord && !tokenRecord) {
-            throw new AgentError('unauthorized', 'Invalid device credential');
-        }
-        const ownerId = deviceRecord?.ownerUserId || deviceRecord?.owner_user_id || tokenRecord.ownerId;
+        const ownerId = tokenRecord.ownerId;
         if (!authorizeRegistration()) {
             throw new AgentError('resource_exhausted', 'Authenticated connection limit exceeded');
         }
@@ -1402,11 +1391,9 @@ class FileAgentManager {
 
         const conn = new FileAgentConnection(ws, agentId, hello);
         conn.ownerId = ownerId;
-        conn.ownerUsername = deviceRecord?.ownerUsername || deviceRecord?.owner_username || tokenRecord?.ownerUsername || '';
-        conn.tokenId = deviceRecord?.tokenId || deviceRecord?.token_id || tokenRecord?.id || null;
-        conn.tokenName = deviceRecord?.deviceName || deviceRecord?.device_name || tokenRecord?.name || '';
-        conn.accessCredential = deviceRecord ? hello.accessCredential : null;
-        conn.deviceCredential = deviceRecord || null;
+        conn.ownerUsername = tokenRecord.ownerUsername || '';
+        conn.tokenId = tokenRecord.id;
+        conn.tokenName = tokenRecord.name;
 
         // Send hello_ack
         try {
