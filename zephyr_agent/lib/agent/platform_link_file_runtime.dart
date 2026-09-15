@@ -19,7 +19,7 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
   /// runtime. Returns { publicKey, seed }; the seed stays on the host side.
   Future<Map<String, String>> mlkemGenerate(String deviceId) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('mlkemGenerate', {'deviceId': deviceId});
-    return (result ?? const {}).map((k, v) => MapEntry(String.valueOf(k), String.valueOf(v ?? '')));
+    return (result ?? const {}).map((k, v) => MapEntry(k.toString(), (v ?? '').toString()));
   }
 
   /// Signs the One enrollment proof with the device's ES256 key and returns

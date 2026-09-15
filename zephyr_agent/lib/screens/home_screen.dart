@@ -29,7 +29,7 @@ class _BindSheetBody extends StatelessWidget {
   const _BindSheetBody({required this.info});
 
   String get _expiresLabel {
-    final ms = (info.expiresAt as int?) ?? 0;
+    final ms = info.expiresAt;
     if (ms <= 0) return '';
     final remaining = DateTime.fromMillisecondsSinceEpoch(ms).difference(DateTime.now());
     if (remaining.isNegative) return '即将过期';
@@ -56,7 +56,7 @@ class _BindSheetBody extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(
-            info.userCode as String,
+            info.userCode,
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, letterSpacing: 2, fontFamily: 'monospace'),
           ),
@@ -64,13 +64,13 @@ class _BindSheetBody extends StatelessWidget {
         const SizedBox(height: 12),
         Text('确认安全码一致（防中间人）：', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
         const SizedBox(height: 4),
-        Text(info.sas as String,
+        Text(info.sas,
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, fontFamily: 'monospace', color: palette.accent)),
         const SizedBox(height: 12),
         Text('或打开链接批准：', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
         const SizedBox(height: 4),
-        SelectableText(info.verificationUri as String? ?? '',
+        SelectableText(info.verificationUri,
             style: TextStyle(fontSize: 11, color: palette.textSecondary)),
         if (_expiresLabel.isNotEmpty)
           Padding(
@@ -645,7 +645,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _startEnrollment(AgentController ctrl) async {
     _saveConfig(ctrl);
-    final future = ctrl.enroll();
+    ctrl.enroll();
     // Show the bind sheet as soon as the pending enrollment exists; it
     // refreshes on every controller notification.
     if (!mounted) return;

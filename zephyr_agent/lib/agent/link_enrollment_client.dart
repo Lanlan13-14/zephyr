@@ -12,7 +12,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' as io;
 
 import 'agent_state.dart';
 import 'platform_link_file_runtime.dart';
@@ -66,8 +66,8 @@ class EnrollmentClient {
     return 'agent';
   }
 
-  HttpClient _client() {
-    final client = HttpClient();
+  io.HttpClient _client() {
+    final client = io.HttpClient();
     if (_allowBadCertificates) {
       client.badCertificateCallback = (_, __, ___) => true;
     }
@@ -123,13 +123,11 @@ class EnrollmentClient {
     if (config.linkDeviceId == null || config.linkDeviceId!.length < 16) {
       throw EnrollmentException('missing_identity', '设备身份未初始化');
     }
-    if (config.linkSigningJwk == null) {
-      config.linkSigningJwk = await _runtime.signingJwk(config.linkDeviceId!);
-    }
+    config.linkSigningJwk ??= await _runtime.signingJwk(config.linkDeviceId!);
     if (config.mlkemPublicKey == null || config.mlkemPublicKey!.isEmpty) {
       final kem = await _runtime.mlkemGenerate(config.linkDeviceId!);
-      config.mlkemPublicKey = kem['publicKey'] as String?;
-      config.mlkemSeed = kem['seed'] as String?;
+      config.mlkemPublicKey = kem['publicKey'];
+      config.mlkemSeed = kem['seed'];
     }
     final r = await _request('POST', _base(config.serverUrl).replace(path: '/api/link/v2/enrollments'), body: {
       'deviceId': config.linkDeviceId,
