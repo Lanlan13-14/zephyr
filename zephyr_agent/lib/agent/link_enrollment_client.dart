@@ -16,7 +16,7 @@ class EnrollmentInfo {
 class EnrollmentClient {
   final PlatformLinkFileRuntime runtime;
   bool allowBadCertificates = false;
-  EnrollmentClient(this.runtime);
+  const EnrollmentClient(this.runtime);
 
   Future<Map<String, dynamic>> _request(String method, Uri uri, [Map<String, dynamic>? body]) async {
     final client = HttpClient()
