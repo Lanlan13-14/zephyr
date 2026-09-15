@@ -55,6 +55,7 @@ class AgentController extends ChangeNotifier {
   String get enrollmentStatus => _enrollment == null
       ? (_enrollmentError == null ? '未绑定' : '绑定失败')
       : '等待主端批准';
+  EnrollmentInfo? get enrollment => _enrollment;
   bool get enrollmentBusy => _enrollmentBusy;
   bool get linkFileBridgeReady => _linkRuntime.ready;
   bool get linkTunnelUp => _linkRuntime.tunnelUp;
