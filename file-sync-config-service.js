@@ -138,28 +138,37 @@ class FileSyncConfigService {
         return this._project(authority);
     }
 
-    list(ownerUserId) {
+    list(ownerUserId, { platforms = null } = {}) {
         const owner = String(ownerUserId || '');
         const byId = new Map();
         const mobileIds = new Set();
+        const keep = (row) => platforms == null
+            || platforms.includes(String(row.platform || ''));
         if (tableExists(this.db, 'mobile_devices')) {
             for (const row of this.db.prepare(`SELECT * FROM mobile_devices
                 WHERE owner_user_id = ? ORDER BY created_at DESC`).all(owner)) {
                 const id = String(row.device_id);
                 mobileIds.add(id);
-                if (row.revoked_at == null) byId.set(id, this._project({ source: 'mobile', row }));
+                if (row.revoked_at == null && keep(row)) byId.set(id, this._project({ source: 'mobile', row }));
             }
         }
         if (tableExists(this.db, 'one_clients')) {
             for (const row of this.db.prepare(`SELECT * FROM one_clients
                 WHERE owner_user_id = ? ORDER BY created_at DESC`).all(owner)) {
                 const id = String(row.client_id);
-                if (!mobileIds.has(id) && row.revoked_at == null) {
+                if (!mobileIds.has(id) && row.revoked_at == null && keep(row)) {
                     byId.set(id, this._project({ source: 'legacy', row }));
                 }
             }
         }
         return [...byId.values()];
+    }
+
+    /** One clients are phone/tablet sync devices only (android / ios).
+     * Agent-enrolled devices (platform agent*) are managed under the Agent
+     * token screen and must not appear here. */
+    static isAgentPlatform(platform) {
+        return /^agent(-[a-z0-9]+)?$/.test(String(platform || ''));
     }
 
     residency(ownerUserId, clientId) {
