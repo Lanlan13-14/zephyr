@@ -750,10 +750,10 @@
                         </div>
                         <div class="settings-panel" id="settings-agent">
                             <h2 data-i18n="Zephyr Client">Zephyr Client</h2>
-                            <p class="muted" data-i18n="统一管理 Zephyr Agent 磁盘映射 Token 与 Zephyr One 客户端数据同步。保留原有 Agent 能力；One 需登录绑定后按用户同步数据。">统一管理 Zephyr Agent 磁盘映射 Token 与 Zephyr One 客户端数据同步。保留原有 Agent 能力；One 需登录绑定后按用户同步数据。</p>
+                            <p class="muted" data-i18n="Zephyr Agent 使用设备绑定（enrollment）连接主端，不再使用 Token；Zephyr One 客户端登录绑定仍需要 Client Token。">Zephyr Agent 使用设备绑定（enrollment）连接主端，不再使用 Token；Zephyr One 客户端登录绑定仍需要 Client Token。</p>
 
-                            <h2 data-i18n="Client Token">Client Token</h2>
-                            <p class="muted" data-i18n="Token 用于 Zephyr Agent / Zephyr One 连接主端。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。">Token 用于 Zephyr Agent / Zephyr One 连接主端。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。</p>
+                            <h2 data-i18n="Client Token（Zephyr One 绑定用）">Client Token（Zephyr One 绑定用）</h2>
+                            <p class="muted" data-i18n="Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。">Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。</p>
                             <div class="agent-token-actions"><button class="btn btn-primary" type="button" id="agentCreateTokenBtn" data-i18n="新增 Token">新增 Token</button><button class="btn" type="button" id="agentRefreshTokenBtn" data-i18n="刷新">刷新</button><button class="btn danger" type="button" id="agentResetAllTokenBtn" data-i18n="重置全部 Token">重置全部 Token</button><label class="inline-field"><span data-i18n="长度">长度</span> <input id="agentTokenLengthInput" type="number" min="16" max="256" value="50"></label></div>
                             <div class="agent-token-list" id="agentTokenList"><p class="empty-state" data-i18n="正在加载...">正在加载...</p></div>
 

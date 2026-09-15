@@ -124,9 +124,9 @@ class OneClientManager {
         };
     }
 
-    listForUser(userId) {
+    listForUser(userId, { platforms = null } = {}) {
         const owner = String(userId || '');
-        const configs = this.fileSyncConfigService.list(owner);
+        const configs = this.fileSyncConfigService.list(owner, { platforms });
         const legacyById = new Map(
             this.stmtListByUser.all(owner).map((row) => [String(row.client_id), row]),
         );
@@ -493,7 +493,14 @@ class OneClientManager {
 
         // GET /api/one/clients — list bound One devices for current user (web settings)
         app.get('/api/one/clients', requireUser, (req, res) => {
-            res.json({ ok: true, clients: this.listForUser(req.user.userId) });
+            /* Zephyr One devices only: Agent-enrolled rows (platform agent*)
+             * are listed and managed under the Agent screen. */
+            const isAgent = FileSyncConfigService.isAgentPlatform;
+            res.json({
+                ok: true,
+                clients: this.listForUser(req.user.userId)
+                    .filter((client) => !isAgent(client.platform)),
+            });
         });
 
         // POST /api/one/clients/bind — login session required

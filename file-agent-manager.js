@@ -1423,6 +1423,9 @@ class FileAgentManager {
         conn.ownerUsername = deviceRecord ? (deviceRecord.owner_username || '') : (tokenRecord.ownerUsername || '');
         conn.tokenId = deviceRecord ? deviceRecord.token_id : tokenRecord.id;
         conn.tokenName = deviceRecord ? (deviceRecord.device_name || 'Agent Device') : tokenRecord.name;
+        /** Non-null when the session authenticated via an enrollment device
+         * credential; drives the tokenless Link identity path. */
+        conn.deviceCredential = deviceRecord || null;
 
         // Send hello_ack
         try {
@@ -1520,8 +1523,12 @@ class FileAgentManager {
         }
         let jwk;
         try { jwk = JSON.parse(conn.linkSigningJwk); } catch { jwk = null; }
+        // Enrolled device connections carry the enrollment sentinel token id
+        // ('link-v2-enrollment'), not an encrypted_client_tokens row: their
+        // Link identity registers straight through the Go bridge.
+        const tokenId = conn.deviceCredential ? null : conn.tokenId;
         Promise.resolve(this.registerLinkIdentity({
-            ownerId: conn.ownerId, tokenId: conn.tokenId, deviceId: conn.deviceId, signingJwk: jwk,
+            ownerId: conn.ownerId, tokenId, deviceId: conn.deviceId, signingJwk: jwk,
         })).then(() => {
             conn.linkRegistered = true;
             try { ws.send(JSON.stringify({ type: 'link_register_ack', ok: true })); } catch {}

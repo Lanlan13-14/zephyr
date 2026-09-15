@@ -87,6 +87,38 @@ test('invalid credential without token fallback is rejected', () => {
     manager.shutdown();
 });
 
+test('enrolled device connection registers Link identity without the token store', async () => {
+    let registered = null;
+    const manager = new FileAgentManager({
+        tokenFile: '/tmp/zephyr-agent-device-access-test-missing.json',
+        resolveDeviceAccess: (c) => (c === 'cred-ok' ? DEVICE_ROW : null),
+        linkRegisterAgentKey: async (deviceId, jwk) => { registered = { deviceId, jwk }; },
+    });
+    const jwk = JSON.stringify({
+        kty: 'EC', crv: 'P-256',
+        x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        y: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+    });
+    const ws = new MockAgentSocket();
+    const agentId = manager._handleHello(ws, hello({
+        accessCredential: 'cred-ok', token: '', linkSigningJwk: jwk,
+    }));
+    // hello only records the signing JWK; registration runs when the Agent
+    // sends link_register. Simulate that frame.
+    manager._registerAgentLinkKey(agentId, ws);
+    for (let i = 0; i < 20 && !registered; i += 1) {
+        await new Promise((r) => setImmediate(r));
+    }
+    assert.ok(registered, 'Go bridge registration must run');
+    assert.equal(registered.deviceId, DEVICE_ROW.device_id);
+    assert.equal(registered.jwk.kty, 'EC');
+    // The sentinel enrollment tokenId must never reach the token store:
+    // with no tokens loaded, bindLinkIdentity would have thrown
+    // token_not_found ("Token 未绑定" symptom) — it did not.
+    assert.equal(manager.agents.get(agentId).deviceCredential, DEVICE_ROW);
+    manager.shutdown();
+});
+
 test('legacy token still authenticates when no credential is present', () => {
     // Resolver only accepts 'cred-ok'; anything else falls to the token path.
     const manager = managerWith((credential) => credential === 'cred-ok' ? DEVICE_ROW : null);
