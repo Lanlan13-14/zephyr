@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -109,6 +110,28 @@ func (t *tunnelStreamConn) Close() error {
 	return t.conn.Close()
 }
 
+// streamPeerIdentity restores the original hostname when the peer URL was
+// rewritten to an IP literal at dial time. TLS SNI and the HTTP Host header
+// must be the hostname; connecting to the IP with SNI=IP fails certificate
+// verification and vhost routing, which surfaces as "session has no live stream"
+// on the main end because the Agent never attached /link/stream.
+func streamPeerIdentity(parsed *url.URL, rememberedSNI string) (sni, httpHost string) {
+	sni = strings.TrimSpace(rememberedSNI)
+	if sni == "" {
+		sni = parsed.Hostname()
+	}
+	httpHost = parsed.Host
+	if net.ParseIP(parsed.Hostname()) != nil && sni != "" && net.ParseIP(sni) == nil {
+		port := parsed.Port()
+		if port == "" || (parsed.Scheme == "https" && port == "443") || (parsed.Scheme == "http" && port == "80") {
+			httpHost = sni
+		} else {
+			httpHost = net.JoinHostPort(sni, port)
+		}
+	}
+	return sni, httpHost
+}
+
 // dialTunnelStream upgrades to /link/stream on the peer for an established
 // session, using the TLS profile remembered at dial time.
 func (n *Node) dialTunnelStream(peerURL, sessionID string) (*tunnelStreamConn, *Endpoint, error) {
@@ -132,22 +155,33 @@ func (n *Node) dialTunnelStream(peerURL, sessionID string) (*tunnelStreamConn, *
 			hostPort = net.JoinHostPort(parsed.Hostname(), "80")
 		}
 	}
+	sni, httpHost := streamPeerIdentity(parsed, tlsProfile.serverName)
 	var d net.Dialer
 	raw, err := d.DialContext(context.Background(), "tcp", hostPort)
 	if err != nil {
 		return nil, nil, err
 	}
 	if parsed.Scheme == "https" {
-		tc := &tls.Config{ServerName: parsed.Hostname(), MinVersion: tls.VersionTLS12}
+		tc := &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12}
 		if tlsProfile.insecure {
 			tc.InsecureSkipVerify = true
+		} else if net.ParseIP(parsed.Hostname()) != nil && net.ParseIP(sni) == nil {
+			roots, err := x509.SystemCertPool()
+			if err != nil {
+				raw.Close()
+				return nil, nil, fmt.Errorf("link: system CA pool: %w", err)
+			}
+			if roots == nil {
+				roots = x509.NewCertPool()
+			}
+			tc.RootCAs = roots
 		}
 		raw = tls.Client(raw, tc)
 	}
 	key := fmt.Sprintf("zephyr-link-%d", time.Now().UnixNano())
 	var hdr bytes.Buffer
 	hdr.WriteString("GET " + parsed.RequestURI() + " HTTP/1.1\r\n")
-	hdr.WriteString("Host: " + parsed.Host + "\r\n")
+	hdr.WriteString("Host: " + httpHost + "\r\n")
 	hdr.WriteString("Upgrade: websocket\r\nConnection: Upgrade\r\n")
 	hdr.WriteString("Sec-WebSocket-Key: " + key + "\r\n")
 	hdr.WriteString("Sec-WebSocket-Version: 13\r\n\r\n")

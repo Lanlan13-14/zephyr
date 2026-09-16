@@ -190,6 +190,7 @@ test('Agent devices are split from One clients by platform, appVersion, or senti
   assert.equal(FileSyncConfigService.isAgentPlatform('agent-android'), true);
   assert.equal(FileSyncConfigService.isAgentPlatform('android'), false);
   assert.equal(FileSyncConfigService.isAgentPlatform('android', { appVersion: 'agent-1.0.25' }), true);
-  assert.equal(FileSyncConfigService.isAgentPlatform('android', { tokenId: 'link-v2-enrollment' }), true);
-  assert.equal(FileSyncConfigService.isAgentPlatform('ios', { appVersion: '1.0.0pre86' }), false);
+  assert.equal(FileSyncConfigService.isAgentPlatform('android', { appVersion: 'agent' }), true);
+  assert.equal(FileSyncConfigService.isAgentPlatform('android', { tokenId: 'link-v2-enrollment' }), false);
+  assert.equal(FileSyncConfigService.isAgentPlatform('ios', { appVersion: '1.0.0pre86', tokenId: 'link-v2-enrollment' }), false);
 });
