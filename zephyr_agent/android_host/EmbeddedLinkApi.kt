@@ -61,10 +61,31 @@ internal class EmbeddedLinkApi(private val process: EmbeddedLinkProcess) {
         JSONObject(process.post("/link/mlkem/generate", "{}"))
 
     fun dial(serverUrl: String, deviceId: String, insecure: Boolean): Session {
+        // Go runtime is CGO_ENABLED=0: no Android DNS. Pre-resolve with
+        // InetAddress and pass IP + original hostname for SNI/Host.
+        val peerRoot = serverUrl.trimEnd('/') + "/api/link/v2"
+        val targets = try {
+            LinkPeerResolver.resolveAll(peerRoot)
+        } catch (_: Exception) {
+            listOf(LinkPeerTarget(peerRoot, java.net.URI(peerRoot).host ?: ""))
+        }
+        var lastError: Exception? = null
+        for (target in targets) {
+            try {
+                return dialOnce(target.url, target.serverName, deviceId, insecure, peerRoot)
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw lastError ?: IllegalStateException("Link 拨号失败")
+    }
+
+    private fun dialOnce(dialUrl: String, serverName: String, deviceId: String, insecure: Boolean, peerRoot: String): Session {
         val response = JSONObject(process.post("/link/dial", JSONObject().apply {
-            put("serverUrl", serverUrl.trimEnd('/') + "/api/link/v2")
+            put("serverUrl", dialUrl)
             put("deviceId", deviceId)
             put("insecure", insecure)
+            put("serverName", serverName)
         }.toString()))
         if (response.optBoolean("pending", false)) {
             val sessionId = response.getString("sessionId")
@@ -80,13 +101,16 @@ internal class EmbeddedLinkApi(private val process: EmbeddedLinkProcess) {
             }.toString()))
             if (!finished.optBoolean("ok", false)) error(finished.optJSONObject("error")?.optString("message") ?: "Link 握手证明失败")
             return Session(finished.getString("sessionId"), finished.optString("exporter")).also {
-                session = it; peerUrl = serverUrl.trimEnd('/') + "/api/link/v2"
+                session = it
+                // Subsequent /link/push must reuse the IP form; SNI lives in
+                // the Go sessionTLS recorded at dial time.
+                peerUrl = dialUrl
             }
         }
         if (!response.optBoolean("ok", false)) error(response.optJSONObject("error")?.optString("message") ?: "Link 拨号失败")
         return Session(response.getString("sessionId"), response.optString("exporter")).also {
             session = it
-            peerUrl = serverUrl.trimEnd('/') + "/api/link/v2"
+            peerUrl = dialUrl
         }
     }
 

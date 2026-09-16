@@ -5,7 +5,7 @@
  */
 
 import { renderMarkdown as renderMarkdownFull, escapeHtml as mdEscapeHtml } from './markdown.js?v=20260720-notes-md1';
-import { t } from './i18n/runtime.js?v=20260913-liquid-glass30';
+import { t } from './i18n/runtime.js?v=20260916-agent-devices1';
 
 const NOTES_DEBOUNCE_MS = 800;
 const NOTES_SEARCH_MS = 180;

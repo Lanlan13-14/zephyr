@@ -14,6 +14,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
+import '../app/agent_version.dart';
 import 'agent_state.dart';
 import 'platform_link_file_runtime.dart';
 
@@ -58,8 +59,8 @@ class EnrollmentClient {
   static Uri _base(String serverUrl) => Uri.parse(serverUrl);
 
   static String _hostPlatform() {
-    if (io.Platform.isAndroid) return 'android';
-    if (io.Platform.isIOS) return 'ios';
+    if (io.Platform.isAndroid) return 'agent-android';
+    if (io.Platform.isIOS) return 'agent-ios';
     if (io.Platform.isMacOS) return 'agent-macos';
     if (io.Platform.isWindows) return 'agent-windows';
     if (io.Platform.isLinux) return 'agent-linux';
@@ -133,7 +134,7 @@ class EnrollmentClient {
       'deviceId': config.linkDeviceId,
       'deviceName': config.deviceName,
       'platform': _hostPlatform(),
-      'appVersion': 'agent',
+      'appVersion': 'agent-${AgentVersion.version}',
       'keys': {
         'encryption': {'alg': 'ML-KEM-768', 'publicKey': config.mlkemPublicKey},
         'signing': {'alg': 'ES256', 'jwk': jsonDecode(config.linkSigningJwk!)},

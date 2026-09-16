@@ -166,7 +166,8 @@ class OneClientManager {
 
     /**
      * Bind / re-bind a Zephyr One device after successful user login.
-     * Requires an existing File Agent token owned by the user.
+     * Client Token is optional: enrollment-issued devices bind without one.
+     * A supplied tokenId/token is still accepted for legacy One clients.
      */
     bind(user, {
         clientId,
@@ -183,14 +184,6 @@ class OneClientManager {
         if (!id) throw new OneClientError('invalid_client', 'clientId 不能为空');
 
         const tokens = this.fileAgentManager.listTokens(user.username, { includeToken: true });
-        if (!tokens.length) {
-            throw new OneClientError(
-                'token_required',
-                '请先在主端设置 → Zephyr Client 中新增 Token，再绑定 Zephyr One',
-                400,
-            );
-        }
-
         let tokenRecord = null;
         if (tokenId) {
             tokenRecord = tokens.find((t) => t.id === tokenId) || null;
@@ -198,13 +191,15 @@ class OneClientManager {
         if (!tokenRecord && token) {
             tokenRecord = tokens.find((t) => t.token === String(token).trim()) || null;
         }
-        if (!tokenRecord) {
-            // Allow binding by token id without includeToken if only id known from list endpoint
+        if (!tokenRecord && tokenId) {
             const listed = this.fileAgentManager.listTokens(user.username);
-            if (tokenId) tokenRecord = listed.find((t) => t.id === tokenId) || null;
+            tokenRecord = listed.find((t) => t.id === tokenId) || null;
+        }
+        if ((tokenId || token) && !tokenRecord) {
+            throw new OneClientError('token_not_found', 'Token 不存在或不属于当前用户', 404);
         }
         if (!tokenRecord) {
-            throw new OneClientError('token_not_found', 'Token 不存在或不属于当前用户', 404);
+            tokenRecord = { id: 'link-v2-enrollment' };
         }
 
         const interval = clampInterval(syncIntervalSec);
@@ -274,7 +269,7 @@ class OneClientManager {
             // Convenience: return token metadata (not secret unless just created flow)
             token: {
                 id: tokenRecord.id,
-                name: tokenRecord.name,
+                name: tokenRecord.name || 'enrollment',
             },
         };
     }
@@ -291,10 +286,13 @@ class OneClientManager {
         if (!row) throw new OneClientError('client_not_found', '客户端不存在', 404);
         if (row.revoked_at) throw new OneClientError('client_revoked', '客户端已被主端删除/吊销', 403);
         if (!row.enabled) throw new OneClientError('client_disabled', '客户端同步已禁用', 403);
-        // Token must still exist on main server
-        const tokens = this.fileAgentManager.listTokens(row.owner_username);
-        if (!tokens.some((t) => t.id === row.token_id)) {
-            throw new OneClientError('token_missing', '关联 Token 已删除，请重新绑定', 403);
+        // Enrollment-issued devices use the sentinel token id and have no
+        // Client Token row. Legacy One clients still require a live token.
+        if (row.token_id && row.token_id !== 'link-v2-enrollment') {
+            const tokens = this.fileAgentManager.listTokens(row.owner_username);
+            if (!tokens.some((t) => t.id === row.token_id)) {
+                throw new OneClientError('token_missing', '关联 Token 已删除，请重新绑定', 403);
+            }
         }
         return row;
     }
@@ -493,13 +491,26 @@ class OneClientManager {
 
         // GET /api/one/clients — list bound One devices for current user (web settings)
         app.get('/api/one/clients', requireUser, (req, res) => {
-            /* Zephyr One devices only: Agent-enrolled rows (platform agent*)
-             * are listed and managed under the Agent screen. */
-            const isAgent = FileSyncConfigService.isAgentPlatform;
+            /* Zephyr One devices only. Agent-enrolled rows are listed under
+             * /api/one/agents so the two products never share a settings list. */
             res.json({
                 ok: true,
                 clients: this.listForUser(req.user.userId)
-                    .filter((client) => !isAgent(client.platform)),
+                    .filter((client) => !FileSyncConfigService.isAgentPlatform(client.platform, {
+                        appVersion: client.appVersion,
+                        tokenId: client.tokenId,
+                    })),
+            });
+        });
+
+        app.get('/api/one/agents', requireUser, (req, res) => {
+            res.json({
+                ok: true,
+                agents: this.listForUser(req.user.userId)
+                    .filter((client) => FileSyncConfigService.isAgentPlatform(client.platform, {
+                        appVersion: client.appVersion,
+                        tokenId: client.tokenId,
+                    })),
             });
         });
 

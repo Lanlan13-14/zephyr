@@ -319,7 +319,7 @@ class AgentController extends ChangeNotifier {
       'deviceId': deviceId,
       'deviceName': _config.deviceName,
       'platform': _platformName(),
-      'appVersion': AgentVersion.version,
+      'appVersion': 'agent-${AgentVersion.version}',
       // The ZSL/2 session id the Agent's embedded Go runtime established with
       // this server. The bastion lane keys the encrypted tunnel off it; absent
       // when enrollment/proof failed — the server must then refuse bastion use.
@@ -903,11 +903,11 @@ class AgentController extends ChangeNotifier {
 
   String _platformName() {
     if (kIsWeb) return 'web';
-    if (Platform.isAndroid) return 'android';
-    if (Platform.isIOS) return 'ios';
-    if (Platform.isMacOS) return 'macos';
-    if (Platform.isWindows) return 'windows';
-    if (Platform.isLinux) return 'linux';
+    if (Platform.isAndroid) return 'agent-android';
+    if (Platform.isIOS) return 'agent-ios';
+    if (Platform.isMacOS) return 'agent-macos';
+    if (Platform.isWindows) return 'agent-windows';
+    if (Platform.isLinux) return 'agent-linux';
     return 'unknown';
   }
 

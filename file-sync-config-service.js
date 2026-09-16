@@ -167,8 +167,13 @@ class FileSyncConfigService {
     /** One clients are phone/tablet sync devices only (android / ios).
      * Agent-enrolled devices (platform agent*) are managed under the Agent
      * token screen and must not appear here. */
-    static isAgentPlatform(platform) {
-        return /^agent(-[a-z0-9]+)?$/.test(String(platform || ''));
+    static isAgentPlatform(platform, { appVersion = '', tokenId = '' } = {}) {
+        if (/^agent(-[a-z0-9]+)?$/.test(String(platform || ''))) return true;
+        // Already-enrolled Android Agents reported platform=android; identify
+        // them by enrollment appVersion prefix or the enrollment sentinel token.
+        if (String(appVersion || '').startsWith('agent')) return true;
+        if (String(tokenId || '') === 'link-v2-enrollment') return true;
+        return false;
     }
 
     residency(ownerUserId, clientId) {

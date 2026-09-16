@@ -6,13 +6,13 @@
     <title>Zephyr</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260913-liquid-glass30">
-    <link rel="modulepreload" href="app.js?v=20260913-liquid-glass30">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260916-agent-devices1">
+    <link rel="modulepreload" href="app.js?v=20260916-agent-devices1">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
-    <link rel="stylesheet" href="style.css?v=20260913-liquid-glass30">
-    <script src="liquid-glass-renderer.js?v=20260913-liquid-glass30" defer></script>
-    <script src="liquid-glass-tab-layout.js?v=20260913-liquid-glass30" defer></script>
-    <script src="liquid-glass-nav.js?v=20260913-liquid-glass30" defer></script>
+    <link rel="stylesheet" href="style.css?v=20260916-agent-devices1">
+    <script src="liquid-glass-renderer.js?v=20260916-agent-devices1" defer></script>
+    <script src="liquid-glass-tab-layout.js?v=20260916-agent-devices1" defer></script>
+    <script src="liquid-glass-nav.js?v=20260916-agent-devices1" defer></script>
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
 </head>
 <body class="app-body">
@@ -750,12 +750,12 @@
                         </div>
                         <div class="settings-panel" id="settings-agent">
                             <h2 data-i18n="Zephyr Client">Zephyr Client</h2>
-                            <p class="muted" data-i18n="Zephyr Agent 使用设备绑定（enrollment）连接主端，不再使用 Token；Zephyr One 客户端登录绑定仍需要 Client Token。">Zephyr Agent 使用设备绑定（enrollment）连接主端，不再使用 Token；Zephyr One 客户端登录绑定仍需要 Client Token。</p>
+                            <p class="muted" data-i18n="Zephyr Agent 与 Zephyr One 都通过设备绑定（enrollment）连接主端，不再需要 Client Token。">Zephyr Agent 与 Zephyr One 都通过设备绑定（enrollment）连接主端，不再需要 Client Token。</p>
 
-                            <h2 data-i18n="Client Token（Zephyr One 绑定用）">Client Token（Zephyr One 绑定用）</h2>
-                            <p class="muted" data-i18n="Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。">Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。</p>
-                            <div class="agent-token-actions"><button class="btn btn-primary" type="button" id="agentCreateTokenBtn" data-i18n="新增 Token">新增 Token</button><button class="btn" type="button" id="agentRefreshTokenBtn" data-i18n="刷新">刷新</button><button class="btn danger" type="button" id="agentResetAllTokenBtn" data-i18n="重置全部 Token">重置全部 Token</button><label class="inline-field"><span data-i18n="长度">长度</span> <input id="agentTokenLengthInput" type="number" min="16" max="256" value="50"></label></div>
-                            <div class="agent-token-list" id="agentTokenList"><p class="empty-state" data-i18n="正在加载...">正在加载...</p></div>
+                            <h2 data-i18n="已绑定的 Zephyr Agent">已绑定的 Zephyr Agent</h2>
+                            <p class="muted" data-i18n="Agent 在手机上点「绑定设备」并在主端批准后显示在此。删除后需重新绑定。">Agent 在手机上点「绑定设备」并在主端批准后显示在此。删除后需重新绑定。</p>
+                            <div class="agent-token-actions"><button class="btn" type="button" id="agentDeviceRefreshBtn" data-i18n="刷新设备">刷新设备</button></div>
+                            <div class="one-client-list" id="agentDeviceList"><p class="empty-state" data-i18n="尚无绑定的 Zephyr Agent">尚无绑定的 Zephyr Agent</p></div>
 
                             <h2 data-i18n="已绑定的 Zephyr One">已绑定的 Zephyr One</h2>
                             <p class="muted" data-i18n="One 客户端登录 Zephyr 账号并绑定设备后显示在此。删除客户端需密码或两步验证。">One 客户端登录 Zephyr 账号并绑定设备后显示在此。删除客户端需密码或两步验证。</p>
@@ -1365,9 +1365,9 @@
     </div>
 
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
-<script src="preview-mock.js?v=20260913-liquid-glass30" type="module"></script>
+<script src="preview-mock.js?v=20260916-agent-devices1" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260913-liquid-glass30" type="module"></script>
+<script src="app.js?v=20260916-agent-devices1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
