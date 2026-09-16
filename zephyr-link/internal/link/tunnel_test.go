@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -238,4 +239,36 @@ func TestPushStreamFrameRequiresLiveStream(t *testing.T) {
 	_ = strings.TrimSpace
 	_ = json.Marshal
 	_ = http.MethodPost
+}
+
+func TestStreamPeerIdentityRestoresHostnameForIPLiteral(t *testing.T) {
+	parsed, err := url.Parse("https://203.0.113.10:8443/api/link/v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sni, host := streamPeerIdentity(parsed, "ssh.example.com")
+	if sni != "ssh.example.com" {
+		t.Fatalf("sni=%q", sni)
+	}
+	if host != "ssh.example.com:8443" {
+		t.Fatalf("host=%q", host)
+	}
+
+	parsed443, err := url.Parse("https://203.0.113.10/api/link/v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sni, host = streamPeerIdentity(parsed443, "ssh.example.com")
+	if sni != "ssh.example.com" || host != "ssh.example.com" {
+		t.Fatalf("default-port sni=%q host=%q", sni, host)
+	}
+
+	named, err := url.Parse("https://ssh.example.com/api/link/v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sni, host = streamPeerIdentity(named, "")
+	if sni != "ssh.example.com" || host != "ssh.example.com" {
+		t.Fatalf("named sni=%q host=%q", sni, host)
+	}
 }

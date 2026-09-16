@@ -498,7 +498,6 @@ class OneClientManager {
                 clients: this.listForUser(req.user.userId)
                     .filter((client) => !FileSyncConfigService.isAgentPlatform(client.platform, {
                         appVersion: client.appVersion,
-                        tokenId: client.tokenId,
                     })),
             });
         });
@@ -509,7 +508,6 @@ class OneClientManager {
                 agents: this.listForUser(req.user.userId)
                     .filter((client) => FileSyncConfigService.isAgentPlatform(client.platform, {
                         appVersion: client.appVersion,
-                        tokenId: client.tokenId,
                     })),
             });
         });
