@@ -2459,5 +2459,11 @@
   "待办删除失败": "Failed to delete todo",
   "AI": "AI",
   "Zephyr Agent 使用设备绑定（enrollment）连接主端，不再使用 Token；Zephyr One 客户端登录绑定仍需要 Client Token。": "Zephyr Agent connects to the host with device enrollment and no longer uses tokens; Zephyr One client login binding still requires a Client Token.",
-  "Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。": "Tokens are only used for Zephyr One client login binding; Zephyr Agent has moved to device enrollment and no longer needs tokens. Before enabling Zephyr One data sync, create at least one token here. Deleting, regenerating, or resetting tokens, and deleting One clients, requires your sign-in password or two-step verification."
+  "Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。": "Tokens are only used for Zephyr One client login binding; Zephyr Agent has moved to device enrollment and no longer needs tokens. Before enabling Zephyr One data sync, create at least one token here. Deleting, regenerating, or resetting tokens, and deleting One clients, requires your sign-in password or two-step verification.",
+  "Zephyr Agent 与 Zephyr One 都通过设备绑定（enrollment）连接主端，不再需要 Client Token。": "Zephyr Agent and Zephyr One both connect with device enrollment; Client Tokens are no longer required.",
+  "已绑定的 Zephyr Agent": "Bound Zephyr Agents",
+  "Agent 在手机上点「绑定设备」并在主端批准后显示在此。删除后需重新绑定。": "Agents appear here after binding on the phone and being approved on the host. Deleting requires rebinding.",
+  "刷新设备": "Refresh devices",
+  "尚无绑定的 Zephyr Agent": "No bound Zephyr Agents",
+  "删除设备": "Delete device"
 }

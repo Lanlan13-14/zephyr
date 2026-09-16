@@ -2459,5 +2459,11 @@
   "待办删除失败": "待办删除失败",
   "AI": "AI",
   "Zephyr Agent 使用设备绑定（enrollment）连接主端，不再使用 Token；Zephyr One 客户端登录绑定仍需要 Client Token。": "Zephyr Agent 使用设备绑定（enrollment）连接主端，不再使用 Token；Zephyr One 客户端登录绑定仍需要 Client Token。",
-  "Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。": "Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。"
+  "Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。": "Token 仅用于 Zephyr One 客户端登录绑定；Zephyr Agent 已改用设备绑定（enrollment），不再需要 Token。Zephyr One 开启数据同步前，必须先在此新增至少一个 Token。删除、重新生成、重置全部 Token 以及删除 One 客户端均需输入登录密码或两步验证码。",
+  "Zephyr Agent 与 Zephyr One 都通过设备绑定（enrollment）连接主端，不再需要 Client Token。": "Zephyr Agent 与 Zephyr One 都通过设备绑定（enrollment）连接主端，不再需要 Client Token。",
+  "已绑定的 Zephyr Agent": "已绑定的 Zephyr Agent",
+  "Agent 在手机上点「绑定设备」并在主端批准后显示在此。删除后需重新绑定。": "Agent 在手机上点「绑定设备」并在主端批准后显示在此。删除后需重新绑定。",
+  "刷新设备": "刷新设备",
+  "尚无绑定的 Zephyr Agent": "尚无绑定的 Zephyr Agent",
+  "删除设备": "删除设备"
 }

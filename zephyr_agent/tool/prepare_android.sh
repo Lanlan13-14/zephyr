@@ -9,6 +9,7 @@ mkdir -p android/app/src/main/kotlin/com/zephyr/agent
 cp android_host/MainActivity.kt android/app/src/main/kotlin/com/zephyr/agent/MainActivity.kt
 cp android_host/EmbeddedLinkProcess.kt android/app/src/main/kotlin/com/zephyr/agent/EmbeddedLinkProcess.kt
 cp android_host/EmbeddedLinkApi.kt android/app/src/main/kotlin/com/zephyr/agent/EmbeddedLinkApi.kt
+cp android_host/LinkPeerResolver.kt android/app/src/main/kotlin/com/zephyr/agent/LinkPeerResolver.kt
 mkdir -p android/app/src/main/jniLibs/arm64-v8a
 if [ -f ../zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_link.so ]; then
   cp ../zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_link.so android/app/src/main/jniLibs/arm64-v8a/libzephyr_link.so

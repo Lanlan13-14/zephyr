@@ -155,6 +155,17 @@ test('tokenless link identity registers through the Go bridge only', async () =>
     manager.shutdown();
 });
 
+test('enrollment platform whitelist accepts agent-android', () => {
+    const manager = managerWith(() => DEVICE_ROW);
+    const ws = new MockAgentSocket();
+    const agentId = manager._handleHello(ws, hello({
+        platform: 'agent-android',
+        accessCredential: 'cred-ok',
+    }));
+    assert.match(agentId, /^agent_/);
+    manager.shutdown();
+});
+
 test('enrollment platform whitelist accepts agent platforms', () => {
     const manager = managerWith(() => DEVICE_ROW);
     const ws = new MockAgentSocket();

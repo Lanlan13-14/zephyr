@@ -23,7 +23,7 @@ function makeFileAgent(tmpDir) {
   return new FileAgentManager({ tokenFile, log: () => {} });
 }
 
-test('bind requires existing file agent token', () => {
+test('bind does not require a file agent token', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'one-client-'));
   const db = makeDb();
   const fam = makeFileAgent(tmp);
@@ -37,27 +37,44 @@ test('bind requires existing file agent token', () => {
     log: () => {},
   });
   const user = { userId: 'u1', username: 'admin' };
-  assert.throws(
-    () => mgr.bind(user, { clientId: 'c1', deviceName: 'phone' }),
-    (err) => err instanceof OneClientError && err.code === 'token_required',
-  );
-
-  const tok = fam.createToken('admin', 'phone-token');
   const bound = mgr.bind(user, {
     clientId: 'c1',
     deviceName: 'phone',
     platform: 'android',
-    tokenId: tok.id,
     syncIntervalSec: 120,
   });
   assert.ok(bound.deviceToken);
   assert.equal(bound.client.clientId, 'c1');
   assert.equal(bound.client.syncIntervalSec, 120);
-  assert.equal(bound.token.id, tok.id);
+  assert.equal(bound.token.id, 'link-v2-enrollment');
 
   const listed = mgr.listForUser('u1');
   assert.equal(listed.length, 1);
-  assert.equal(listed[0].tokenId, tok.id);
+  assert.equal(listed[0].tokenId, 'link-v2-enrollment');
+});
+
+test('legacy token still binds when supplied', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'one-client-'));
+  const db = makeDb();
+  const fam = makeFileAgent(tmp);
+  const mgr = new OneClientManager({
+    db,
+    fileAgentManager: fam,
+    resourceService: { listConnections: () => [], listOwned: () => [] },
+    notesService: { list: () => ({ notes: [], total: 0 }) },
+    userSettingsService: { effective: () => ({}) },
+    storage: {},
+    log: () => {},
+  });
+  const user = { userId: 'u1', username: 'admin' };
+  const tok = fam.createToken('admin', 'phone-token');
+  const bound = mgr.bind(user, {
+    clientId: 'c-legacy',
+    deviceName: 'phone',
+    platform: 'android',
+    tokenId: tok.id,
+  });
+  assert.equal(bound.token.id, tok.id);
 });
 
 test('revoke removes client and device token stops working', () => {
@@ -166,4 +183,13 @@ test('interval is clamped', () => {
   mgr.bind(user, { clientId: 'c2', tokenId: tok.id, syncIntervalSec: 5 });
   const c = mgr.updateInterval('u1', 'c2', 999999);
   assert.equal(c.syncIntervalSec, 86400);
+});
+
+test('Agent devices are split from One clients by platform, appVersion, or sentinel token', () => {
+  const { FileSyncConfigService } = require('../file-sync-config-service.js');
+  assert.equal(FileSyncConfigService.isAgentPlatform('agent-android'), true);
+  assert.equal(FileSyncConfigService.isAgentPlatform('android'), false);
+  assert.equal(FileSyncConfigService.isAgentPlatform('android', { appVersion: 'agent-1.0.25' }), true);
+  assert.equal(FileSyncConfigService.isAgentPlatform('android', { tokenId: 'link-v2-enrollment' }), true);
+  assert.equal(FileSyncConfigService.isAgentPlatform('ios', { appVersion: '1.0.0pre86' }), false);
 });

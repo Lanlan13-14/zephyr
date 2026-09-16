@@ -1,9 +1,9 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
-import { createNotesController } from './notes.js?v=20260913-liquid-glass30';
+import { createNotesController } from './notes.js?v=20260916-agent-devices1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260913-liquid-glass30';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260913-liquid-glass30';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260916-agent-devices1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260916-agent-devices1';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 const $ = (sel) => document.querySelector(sel);
@@ -5091,8 +5091,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20260804-terminal-shell3&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260913-liquid-glass30`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260913-liquid-glass30`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260916-agent-devices1`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260916-agent-devices1`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -14631,7 +14631,7 @@ function startBrowserChangeWake() {
             workspace: () => markWorkspaceRemoteUpdate(),
             activities: () => loadActivities(),
             backup: () => loadWebDavSettings(),
-            agentTokens: () => loadAgentTokens(),
+            agentTokens: () => { loadAgentDevices().catch(() => {}); loadOneClients().catch(() => {}); },
             oneClients: () => loadOneClients(),
         },
     });
@@ -14915,6 +14915,42 @@ function formatOneClientTime(ms) {
     try { return new Date(Number(ms)).toLocaleString(); } catch { return t('未知'); }
 }
 
+async function loadAgentDevices() {
+    const list = $('#agentDeviceList');
+    if (!list) return;
+    list.innerHTML = `<p class="empty-state">${t('正在加载...')}</p>`;
+    try {
+        const data = await api('/api/one/agents');
+        renderBoundDevices(list, data.agents || [], {
+            empty: t('尚无绑定的 Zephyr Agent'),
+            kind: 'agent',
+            fallbackName: 'Zephyr Agent',
+            deleteLabel: t('删除设备'),
+        });
+    } catch (err) {
+        list.innerHTML = `<p class="empty-state">${t('加载失败：')}${escapeHtml(err.message || 'unknown')}</p>`;
+    }
+}
+
+function renderBoundDevices(list, clients, { empty, kind, fallbackName, deleteLabel }) {
+    if (!clients.length) {
+        list.innerHTML = `<p class="empty-state">${empty}</p>`;
+        return;
+    }
+    const attr = kind === 'agent' ? 'data-agent-delete-device' : 'data-one-delete-client';
+    list.innerHTML = clients.map((c) => `
+        <div class="agent-token-item" data-${kind}-id="${escapeHtml(c.clientId)}">
+            <div class="agent-token-main">
+                <div class="agent-token-title"><strong>${escapeHtml(c.deviceName || fallbackName)}</strong><span>${escapeHtml(c.clientId || '')}</span></div>
+                <div class="agent-token-meta">${escapeHtml(c.platform || '—')} · ${c.enabled ? t('已启用') : t('已禁用')} · ${escapeHtml(c.appVersion || '')}</div>
+                <div class="agent-token-meta">${t('最近同步：')}${escapeHtml(formatOneClientTime(c.lastSyncAt))} · ${t('创建：')}${escapeHtml(formatOneClientTime(c.createdAt))}</div>
+            </div>
+            <div class="agent-token-buttons">
+                <button class="tool-btn danger" type="button" ${attr}="${escapeHtml(c.clientId)}">${deleteLabel}</button>
+            </div>
+        </div>`).join('');
+}
+
 async function loadOneClients() {
     const list = $('#oneClientList');
     if (!list) return;
@@ -14930,21 +14966,12 @@ async function loadOneClients() {
 function renderOneClients(clients) {
     const list = $('#oneClientList');
     if (!list) return;
-    if (!clients.length) {
-        list.innerHTML = `<p class="empty-state">${t('尚无绑定的 Zephyr One 客户端')}</p>`;
-        return;
-    }
-    list.innerHTML = clients.map((c) => `
-        <div class="agent-token-item" data-one-client-id="${escapeHtml(c.clientId)}">
-            <div class="agent-token-main">
-                <div class="agent-token-title"><strong>${escapeHtml(c.deviceName || 'Zephyr One')}</strong><span>${escapeHtml(c.clientId || '')}</span></div>
-                <div class="agent-token-meta">${escapeHtml(c.platform || '—')} · ${c.enabled ? t('同步已启用') : t('已禁用')} · Token ${escapeHtml(c.tokenId || '—')}</div>
-                <div class="agent-token-meta">${t('最近同步：')}${escapeHtml(formatOneClientTime(c.lastSyncAt))} · ${t('间隔：')}${escapeHtml(String(c.syncIntervalSec || 300))}s · ${t('创建：')}${escapeHtml(formatOneClientTime(c.createdAt))}</div>
-            </div>
-            <div class="agent-token-buttons">
-                <button class="tool-btn danger" type="button" data-one-delete-client="${escapeHtml(c.clientId)}">${t('删除客户端')}</button>
-            </div>
-        </div>`).join('');
+    renderBoundDevices(list, clients, {
+        empty: t('尚无绑定的 Zephyr One 客户端'),
+        kind: 'one',
+        fallbackName: 'Zephyr One',
+        deleteLabel: t('删除客户端'),
+    });
 }
 
 async function deleteOneClient(clientId) {
@@ -14960,9 +14987,7 @@ async function deleteOneClient(clientId) {
 }
 
 function setupAgentTokenSettings() {
-    $('#agentCreateTokenBtn')?.addEventListener('click', () => createAgentToken().catch((err) => toast(err.message || t('创建失败'))));
-    $('#agentRefreshTokenBtn')?.addEventListener('click', () => loadAgentTokens());
-    $('#agentResetAllTokenBtn')?.addEventListener('click', () => resetAllAgentTokens().catch((err) => toast(err.message || t('重置失败'))));
+    $('#agentDeviceRefreshBtn')?.addEventListener('click', () => loadAgentDevices().catch(() => {}));
     $('#oneClientRefreshBtn')?.addEventListener('click', () => loadOneClients().catch(() => {}));
     $('#agentCopyServerUrlBtn')?.addEventListener('click', async () => {
         try {
@@ -14971,23 +14996,15 @@ function setupAgentTokenSettings() {
             toast(err.message || t('复制失败'));
         }
     });
-    $('#agentTokenList')?.addEventListener('click', (e) => {
-        const reveal = e.target.dataset.agentRevealToken;
-        const copy = e.target.dataset.agentCopyToken;
-        const rename = e.target.dataset.agentRenameToken;
-        const regen = e.target.dataset.agentRegenToken;
-        const del = e.target.dataset.agentDeleteToken;
-        if (reveal) revealAgentToken(reveal).catch((err) => toast(err.message || t('查看失败')));
-        if (copy) copyAgentToken(copy).catch((err) => toast(err.message || t('复制失败')));
-        if (rename) renameAgentToken(rename).catch((err) => toast(err.message || t('重命名失败')));
-        if (regen) regenerateAgentToken(regen).catch((err) => toast(err.message || t('重新生成失败')));
-        if (del) deleteAgentToken(del).catch((err) => toast(err.message || t('删除失败')));
+    $('#agentDeviceList')?.addEventListener('click', (e) => {
+        const del = e.target.dataset.agentDeleteDevice;
+        if (del) deleteOneClient(del).catch((err) => toast(err.message || t('删除失败')));
     });
     $('#oneClientList')?.addEventListener('click', (e) => {
         const del = e.target.dataset.oneDeleteClient;
         if (del) deleteOneClient(del).catch((err) => toast(err.message || t('删除失败')));
     });
     updateAgentServerInfo();
-    loadAgentTokens().catch(() => {});
+    loadAgentDevices().catch(() => {});
     loadOneClients().catch(() => {});
 }

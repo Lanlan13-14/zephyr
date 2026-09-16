@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260913-liquid-glass30';
+import { t } from './i18n/runtime.js?v=20260916-agent-devices1';
 
 const exact = new Set([
     '修改登录密码', '通过邮箱重置令牌重置密码', '开启 TOTP 两步验证', '关闭 TOTP 两步验证',
