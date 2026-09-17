@@ -2465,5 +2465,9 @@
   "Agent 在手机上点「绑定设备」并在主端批准后显示在此。删除后需重新绑定。": "Agents appear here after binding on the phone and being approved on the host. Deleting requires rebinding.",
   "刷新设备": "Refresh devices",
   "尚无绑定的 Zephyr Agent": "No bound Zephyr Agents",
-  "删除设备": "Delete device"
+  "删除设备": "Delete device",
+  "在线 Agent 跳板机": "Online Agent bastions",
+  "SSH 跳板机连接": "SSH jump host connections",
+  "优先级": "Priority",
+  "待办标题": "Todo title"
 }

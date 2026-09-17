@@ -30,8 +30,13 @@ test('Agent manager is injected into both legacy and Go host paths', () => {
 });
 
 test('Agent bastion routes use the manager public lookup API', () => {
-  assert.equal((server.match(/fileAgentManager(?:\?\.)?getAgent\(/g) || []).length, 0);
-  assert.equal((server.match(/fileAgentManager(?:\?\.)?getAgentInfo\(/g) || []).length >= 3, true);
+  /* The separator must be part of the pattern. `(?:\?\.)?` made the dot
+   * optional *and* never matched the plain `fileAgentManager.getAgent(`
+   * form, so this guard was vacuous: a real call to the non-existent
+   * getAgent() sat in the Agent bastion proxy route and turned every save
+   * into a 500 TypeError without ever tripping this test. */
+  assert.equal((server.match(/fileAgentManager(?:\?\.|\.)getAgent\(/g) || []).length, 0);
+  assert.equal((server.match(/fileAgentManager(?:\?\.|\.)getAgentInfo\(/g) || []).length >= 3, true);
   assert.match(manager, /getAgentInfo\(agentId\)/);
 });
 test('Agent capability inventory preserves token human-only boundary', () => {

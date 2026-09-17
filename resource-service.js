@@ -542,20 +542,69 @@ class ResourceService {
         }
         if (conn.connectionMode === 'jump') {
             for (const jumpId of (Array.isArray(conn.jumpHostIds) ? conn.jumpHostIds : [])) {
-                if (String(jumpId).startsWith('agent:')) {
-                    const agentId = String(jumpId).slice('agent:'.length);
-                    if (!this.agentBastionResolver?.(user, agentId)) {
-                        throw new HttpError(400, 'invalid_dependency', '选择的 Agent 跳板不存在、已离线或未授权', false);
-                    }
-                    continue;
-                }
-                const jump = this._ownerOf('jumpHost', jumpId);
-                if (!jump) throw new HttpError(400, 'invalid_dependency', '选择的跳板机不存在', false);
-                const owned = jump.ownerUserId === user.userId;
-                if (!owned && !this.authz.can(user, CAP.USE, 'jumpHost', jumpId, jump)) {
-                    throw new HttpError(403, 'forbidden_dependency_jumpHost', '无权使用该跳板机', false);
-                }
+                this._assertJumpHopUsable(user, jumpId, conn);
             }
+        }
+    }
+
+    /**
+     * Validate one hop of a jump chain.
+     *
+     * A hop id is one of three things, and all three must be accepted here
+     * because all three are what the rest of the system already resolves:
+     *
+     *   - "agent:<agentId>" — an online, opted-in Agent bastion.
+     *   - a jump_hosts record id — the named hop, which points at a connection.
+     *   - a bare SSH connection id — what the connection editor actually emits,
+     *     since it offers every SSH connection as a hop.
+     *
+     * This used to accept only the jump_hosts record, so saving any route built
+     * in the editor failed with "选择的跳板机不存在" even though the runtime
+     * (resolveConnectionRoute) and the test lane (_resolveConnectionTestRoute)
+     * both resolve a bare connection id happily. The three resolvers have to
+     * agree on the id space or the UI can only ever build routes that cannot
+     * be saved.
+     */
+    _assertJumpHopUsable(user, jumpId, conn) {
+        const id = String(jumpId || '').trim();
+        if (!id) throw new HttpError(400, 'invalid_dependency', '跳板机不能为空', false);
+        if (id.startsWith('agent:')) {
+            const agentId = id.slice('agent:'.length);
+            if (!this.agentBastionResolver?.(user, agentId)) {
+                throw new HttpError(400, 'invalid_dependency', '选择的 Agent 跳板不存在、已离线或未授权', false);
+            }
+            return;
+        }
+        const jump = this._ownerOf('jumpHost', id);
+        if (jump) {
+            const owned = jump.ownerUserId === user.userId;
+            if (!owned && !this.authz.can(user, CAP.USE, 'jumpHost', id, jump)) {
+                throw new HttpError(403, 'forbidden_dependency_jumpHost', '无权使用该跳板机', false);
+            }
+            /* The named hop is a pointer; the credential lives on the
+             * connection it references, so that is what must be usable. */
+            const record = this._rawResource('jumpHost', id);
+            const hopId = record?.connectionId ? String(record.connectionId) : '';
+            if (hopId) this._assertJumpConnectionUsable(user, hopId, conn);
+            return;
+        }
+        this._assertJumpConnectionUsable(user, id, conn);
+    }
+
+    /** A jump hop that resolves to a connection: it must exist, be SSH, not be
+     *  the connection being edited, and be usable by the editor. */
+    _assertJumpConnectionUsable(user, connectionId, conn) {
+        const hop = this.storage.getConnectionById(connectionId);
+        if (!hop) throw new HttpError(400, 'invalid_dependency', '选择的跳板机不存在', false);
+        if (String(hop.protocol || 'SSH').toUpperCase() !== 'SSH') {
+            throw new HttpError(400, 'invalid_dependency', '跳板机只能是 SSH 连接', false);
+        }
+        if (conn?.id && String(hop.id) === String(conn.id)) {
+            throw new HttpError(400, 'invalid_dependency', '跳板机不能引用当前连接自身', false);
+        }
+        const owned = hop.ownerUserId === user.userId;
+        if (!owned && !this.authz.can(user, CAP.USE, 'connection', hop.id, hop)) {
+            throw new HttpError(403, 'forbidden_dependency_jumpConnection', '无权使用该跳板机连接', false);
         }
     }
 

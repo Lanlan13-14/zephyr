@@ -335,12 +335,18 @@ async function linkTunnelAttach(sessionId) {
 }
 
 /* Dial a tunnel through an attached Agent session; resolves a net.Socket whose
- * bytes are piped through the Go tunnel hub to the Agent's TCP dial. */
-async function linkTunnelDial(host_, port_, timeoutMs = 12000, lane = '') {
+ * bytes are piped through the Go tunnel hub to the Agent's TCP dial.
+ *
+ * sessionId names which Agent to dial through. It is mandatory: the hub
+ * multiplexes every attached Agent, and an unnamed dial used to land on
+ * whichever session attached first — the stale one after any reconnect. */
+async function linkTunnelDial(sessionId, host_, port_, timeoutMs = 12000, lane = '') {
+    const session = String(sessionId || '');
+    if (!session) throw Object.assign(new Error('Agent Link 会话未建立'), { code: 'tunnel_session_required' });
     const proc = sharedProcess();
     const addr = await proc.ensureStarted();
     const [host, port] = addr.split(':');
-    const body = JSON.stringify({ host: host_, port: port_, lane });
+    const body = JSON.stringify({ sessionId: session, host: host_, port: port_, lane });
     return new Promise((resolve, reject) => {
         const req = http.request({
             host, port: Number(port), path: '/internal/tunnel/dial', method: 'POST',

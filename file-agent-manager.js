@@ -759,12 +759,12 @@ class FileAgentManager {
      */
     async _attachAgentLinkLane(conn) {
         if (!this.linkTunnelDial || !this.linkTunnelAttach) throw new Error('link tunnel unavailable');
-        try {
-            await this.linkTunnelAttach(conn.linkSessionId);
-        } catch (err) {
-            if (!/already attached/.test(String(err?.message || ''))) throw err;
-        }
-        const socket = await this.linkTunnelDial('', 0, 12000, 'zft2');
+        const sessionId = String(conn?.linkSessionId || '');
+        if (!sessionId) throw new Error('Agent Link 会话未建立');
+        /* Attach is idempotent per session, so a reconnect re-attaches its new
+         * session instead of being rejected against the previous one. */
+        await this.linkTunnelAttach(sessionId);
+        const socket = await this.linkTunnelDial(sessionId, '', 0, 12000, 'zft2');
         if (!socket || socket.destroyed) throw new Error('link lane socket dead on arrival');
         conn.attachLinkLane(socket);
         this.log('[file-agent] ZFT2 moved to encrypted Link lane:', conn.agentId);
