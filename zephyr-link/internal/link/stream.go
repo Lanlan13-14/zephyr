@@ -2,6 +2,7 @@ package link
 
 import (
 	"bufio"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -17,16 +18,45 @@ import (
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
 )
 
-// Minimal RFC 6455 WebSocket server over the standard library, sufficient for the
-// Link stream channel (text frames carrying sealed envelopes, plus control frames).
+// Minimal RFC 6455 WebSocket over the standard library, sufficient for the
+// Link stream channel (text frames carrying sealed envelopes, plus control
+// frames). Production traffic always hops through Node's `ws` library, so the
+// handshake and the client MASK bit have to match what `ws` actually accepts
+// — Go-to-Go tests cannot see that hop.
 
 const wsMagic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 var errNotWebSocket = errors.New("not a websocket upgrade")
 
+// wsAccept is the RFC 6455 Sec-WebSocket-Accept value: standard base64
+// (with padding) of SHA-1(key + magic). RawURLEncoding here made Node's `ws`
+// client — the hop that proxies /api/link/v2/stream onto this handler —
+// reject the upgrade with "Invalid Sec-WebSocket-Accept header", so the Agent
+// never attached a stream and every bastion dial died as "no live stream".
 func wsAccept(key string) string {
 	h := sha1.Sum([]byte(key + wsMagic))
-	return base64.RawURLEncoding.EncodeToString(h[:])
+	return base64.StdEncoding.EncodeToString(h[:])
+}
+
+// newWSClientKey returns a RFC 6455 Sec-WebSocket-Key: 16 random bytes,
+// standard base64 (24 characters, ending in "=="). Node's `ws` library
+// (keyRegex = /^[+/0-9A-Za-z]{22}==$/) is the public upgrade gate; a
+// printable "zephyr-link-<ts>" key is rejected with 400 and the Agent never
+// attaches /link/stream.
+func newWSClientKey() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
+func validSecWebSocketKey(key string) bool {
+	if len(key) != 24 || !strings.HasSuffix(key, "==") {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(key)
+	return err == nil && len(decoded) == 16
 }
 
 // handleStream upgrades to WebSocket and relays sealed frames for an established
@@ -55,7 +85,7 @@ func (n *Node) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.Header.Get("Sec-WebSocket-Key")
-	if key == "" {
+	if !validSecWebSocketKey(key) {
 		conn.Close()
 		return
 	}
@@ -99,10 +129,10 @@ func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep
 		}
 		switch op {
 		case 0x8: // close
-			writeFrame(conn, 0x8, nil)
+			_ = writeServerFrame(conn, 0x8, nil)
 			return
 		case 0x9: // ping -> pong
-			writeFrame(conn, 0xA, payload)
+			_ = writeServerFrame(conn, 0xA, payload)
 			continue
 		case 0x1, 0x2, 0x0: // text/binary/continuation
 		default:
@@ -130,7 +160,7 @@ func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep
 			return
 		}
 		out, _ := json.Marshal(ack)
-		if err := writeFrame(conn, 0x1, out); err != nil {
+		if err := writeServerFrame(conn, 0x1, out); err != nil {
 			return
 		}
 	}
@@ -147,7 +177,7 @@ type streamPushWriter struct {
 func (w *streamPushWriter) write(env []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return writeFrame(w.conn, 0x1, env)
+	return writeServerFrame(w.conn, 0x1, env)
 }
 
 // PushStreamFrame seals body under the named session and writes it to that
@@ -173,8 +203,10 @@ func (n *Node) PushStreamFrame(sessionID string, kind int, body any, secret bool
 	return w.write(raw)
 }
 
-// readFrame parses one RFC 6455 frame. Client frames must be masked; this server
-// enforces that (an unmasked client frame is a protocol violation).
+// readFrame parses one RFC 6455 frame. Client frames must be masked; this
+// server still accepts both so a Go-to-Go unit test (unmasked, because it
+// never hops through Node) keeps working. Production always hops through
+// Node's `ws`, which requires the MASK bit on every client frame.
 func readFrame(br *bufio.Reader) (opcode byte, payload []byte, err error) {
 	var hdr [2]byte
 	if _, err = io.ReadFull(br, hdr[:]); err != nil {
@@ -217,24 +249,70 @@ func readFrame(br *bufio.Reader) (opcode byte, payload []byte, err error) {
 	return opcode, payload, nil
 }
 
-// writeFrame emits a server (unmasked) frame.
-func writeFrame(conn net.Conn, opcode byte, payload []byte) error {
-	var hdr []byte
-	b0 := 0x80 | opcode
-	switch {
-	case len(payload) < 126:
-		hdr = []byte{b0, byte(len(payload))}
-	case len(payload) < 65536:
-		hdr = []byte{b0, 126, byte(len(payload) >> 8), byte(len(payload))}
-	default:
-		hdr = make([]byte, 10)
-		hdr[0] = b0
-		hdr[1] = 127
-		binary.BigEndian.PutUint64(hdr[2:], uint64(len(payload)))
+func frameHeader(opcode byte, payloadLen int, masked bool) []byte {
+	b0 := byte(0x80 | opcode)
+	maskBit := byte(0)
+	if masked {
+		maskBit = 0x80
 	}
+	switch {
+	case payloadLen < 126:
+		return []byte{b0, maskBit | byte(payloadLen)}
+	case payloadLen < 65536:
+		return []byte{b0, maskBit | 126, byte(payloadLen >> 8), byte(payloadLen)}
+	default:
+		hdr := make([]byte, 10)
+		hdr[0] = b0
+		hdr[1] = maskBit | 127
+		binary.BigEndian.PutUint64(hdr[2:], uint64(payloadLen))
+		return hdr
+	}
+}
+
+// writeServerFrame emits a server (unmasked) frame. RFC 6455 §5.1: a server
+// MUST NOT mask frames it sends to a client.
+func writeServerFrame(conn net.Conn, opcode byte, payload []byte) error {
+	if payload == nil {
+		payload = []byte{}
+	}
+	hdr := frameHeader(opcode, len(payload), false)
 	if _, err := conn.Write(hdr); err != nil {
 		return err
 	}
 	_, err := conn.Write(payload)
 	return err
+}
+
+// writeClientFrame emits a client (masked) frame. RFC 6455 §5.1: a client
+// MUST mask every frame it sends to a server. Node's `ws` as a server
+// drops unmasked frames with 1002 WS_ERR_EXPECTED_MASK, which is what
+// killed the Agent's stream after a successful-looking 101: the first
+// envelope never arrived, so the main end never saw a live streamWriter.
+func writeClientFrame(conn net.Conn, opcode byte, payload []byte) error {
+	if payload == nil {
+		payload = []byte{}
+	}
+	mask := make([]byte, 4)
+	if _, err := rand.Read(mask); err != nil {
+		return err
+	}
+	masked := make([]byte, len(payload))
+	for i := range payload {
+		masked[i] = payload[i] ^ mask[i%4]
+	}
+	hdr := frameHeader(opcode, len(payload), true)
+	if _, err := conn.Write(hdr); err != nil {
+		return err
+	}
+	if _, err := conn.Write(mask); err != nil {
+		return err
+	}
+	_, err := conn.Write(masked)
+	return err
+}
+
+// writeFrame is the historical name used by the loopback zft2 socket, which
+// is a server talking to a Dart WebSocket client and so must stay unmasked.
+func writeFrame(conn net.Conn, opcode byte, payload []byte) error {
+	return writeServerFrame(conn, opcode, payload)
 }

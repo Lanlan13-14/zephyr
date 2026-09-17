@@ -74,7 +74,10 @@ func (t *tunnelStreamConn) writeEnvelope(env []byte) error {
 	if t.closed {
 		return errors.New("tunnel: stream closed")
 	}
-	return writeFrame(t.conn, 0x1, env)
+	// Client-to-server: MASK is mandatory. Node's ws (the public hop)
+	// drops unmasked frames, which is why a 101 upgrade still left the
+	// main end with "session has no live stream".
+	return writeClientFrame(t.conn, 0x1, env)
 }
 
 func (t *tunnelStreamConn) readEnvelope() ([]byte, error) {
@@ -88,7 +91,7 @@ func (t *tunnelStreamConn) readEnvelope() ([]byte, error) {
 			return nil, io.EOF
 		case 0x9: // ping -> pong keeps middleboxes from idling the stream
 			t.wmu.Lock()
-			writeFrame(t.conn, 0xA, payload)
+			_ = writeClientFrame(t.conn, 0xA, payload)
 			t.wmu.Unlock()
 			continue
 		case 0x1, 0x2, 0x0:
@@ -106,7 +109,7 @@ func (t *tunnelStreamConn) Close() error {
 		return nil
 	}
 	t.closed = true
-	writeFrame(t.conn, 0x8, nil)
+	_ = writeClientFrame(t.conn, 0x8, nil)
 	return t.conn.Close()
 }
 
@@ -178,7 +181,11 @@ func (n *Node) dialTunnelStream(peerURL, sessionID string) (*tunnelStreamConn, *
 		}
 		raw = tls.Client(raw, tc)
 	}
-	key := fmt.Sprintf("zephyr-link-%d", time.Now().UnixNano())
+	key, err := newWSClientKey()
+	if err != nil {
+		raw.Close()
+		return nil, nil, err
+	}
 	var hdr bytes.Buffer
 	hdr.WriteString("GET " + parsed.RequestURI() + " HTTP/1.1\r\n")
 	hdr.WriteString("Host: " + httpHost + "\r\n")
@@ -199,6 +206,13 @@ func (n *Node) dialTunnelStream(peerURL, sessionID string) (*tunnelStreamConn, *
 		resp.Body.Close()
 		raw.Close()
 		return nil, nil, fmt.Errorf("tunnel: stream upgrade failed: %s", resp.Status)
+	}
+	wantAccept := wsAccept(key)
+	gotAccept := strings.TrimSpace(resp.Header.Get("Sec-WebSocket-Accept"))
+	if gotAccept != wantAccept {
+		resp.Body.Close()
+		raw.Close()
+		return nil, nil, fmt.Errorf("tunnel: bad Sec-WebSocket-Accept")
 	}
 	// Do NOT close resp.Body here: for a 101 the body is the hijacked raw
 	// connection; closing it would tear down the stream we just upgraded.
