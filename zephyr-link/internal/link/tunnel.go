@@ -224,14 +224,21 @@ type AgentTunnelHub struct {
 	mu      sync.Mutex
 	node    *Node
 	peerURL string
-	tunnels map[int]*agentTunnel
-	nextID  int
-	stream  *tunnelStreamConn
-	ep      *Endpoint
-	out     chan tunnelFrame
-	ctx     context.Context
-	cancel  context.CancelFunc
-	readyCh chan struct{}
+	// sessionID is the Link session the current stream runs on. It changes
+	// on every reconnect.
+	sessionID string
+	// generation counts Start calls. The pump goroutines carry the stamp they
+	// were launched with, so a stale loop that dies after a restart cannot
+	// tear down its successor's stream.
+	generation uint64
+	tunnels    map[int]*agentTunnel
+	nextID     int
+	stream     *tunnelStreamConn
+	ep         *Endpoint
+	out        chan tunnelFrame
+	ctx        context.Context
+	cancel     context.CancelFunc
+	readyCh    chan struct{}
 	// zft2Conn/zft2WriteMu serialize writes onto the local zft2 socket.
 	zft2Conn    net.Conn
 	zft2WriteMu *sync.Mutex
@@ -316,25 +323,48 @@ func NewAgentTunnelHub(node *Node) *AgentTunnelHub {
 
 // Start connects the stream channel and serves tunnel frames until the stream
 // dies. It blocks; the host runs it on a worker thread.
+//
+// Start is restartable. An Agent that reconnects calls it again with the new
+// session id, so any previous stream and its pump goroutines are retired here
+// first. Each run carries a generation stamp: a late-dying old read loop can
+// then recognise that it no longer owns the hub and must not tear down the
+// stream its successor just installed.
 func (h *AgentTunnelHub) Start(peerURL, sessionID string) error {
 	stream, ep, err := h.node.dialTunnelStream(peerURL, sessionID)
 	if err != nil {
 		return err
 	}
 	h.mu.Lock()
+	prevStream, prevCancel := h.stream, h.cancel
+	h.generation++
+	generation := h.generation
 	h.stream = stream
 	h.ep = ep
 	h.peerURL = peerURL
+	h.sessionID = sessionID
 	h.ctx, h.cancel = context.WithCancel(context.Background())
-	h.mu.Unlock()
 	ready := make(chan struct{})
 	close(ready)
-	h.mu.Lock()
 	h.readyCh = ready
 	h.mu.Unlock()
-	go h.writeLoop()
-	go h.readLoop()
+	// Retire the previous run outside the lock: its goroutines take the same
+	// mutex on their way out.
+	if prevCancel != nil {
+		prevCancel()
+	}
+	if prevStream != nil {
+		prevStream.Close()
+	}
+	go h.writeLoop(generation)
+	go h.readLoop(generation)
 	return nil
+}
+
+// SessionID reports the Link session the hub's stream is running on.
+func (h *AgentTunnelHub) SessionID() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sessionID
 }
 
 // ServeZft2Local bridges every zft2 lane onto one loopback WebSocket for the
@@ -450,30 +480,41 @@ func (h *AgentTunnelHub) Ready() <-chan struct{} {
 	return late
 }
 
-func (h *AgentTunnelHub) closeAll(reason string) {
+// closeAll tears down the run identified by generation. A stale caller (the
+// read loop of a stream that died after Start already installed a successor)
+// is ignored, so a reconnect is never torn down by its predecessor.
+func (h *AgentTunnelHub) closeAll(generation uint64, reason string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.cancel()
+	if generation != h.generation {
+		return false
+	}
+	if h.cancel != nil {
+		h.cancel()
+	}
 	for id, t := range h.tunnels {
 		t.conn.Close()
 		delete(h.tunnels, id)
 	}
 	h.stream = nil
 	h.ep = nil
+	return true
 }
 
-func (h *AgentTunnelHub) readLoop() {
+func (h *AgentTunnelHub) readLoop(generation uint64) {
 	defer func() {
-		h.closeAll("link stream closed")
-		if h.OnLinkLost != nil {
+		// Only the current run may report the link as lost: a stale loop
+		// firing OnLinkLost would make the host re-dial a healthy stream.
+		if h.closeAll(generation, "link stream closed") && h.OnLinkLost != nil {
 			h.OnLinkLost()
 		}
 	}()
 	for {
 		h.mu.Lock()
 		stream, ep := h.stream, h.ep
+		current := h.generation
 		h.mu.Unlock()
-		if stream == nil || ep == nil {
+		if stream == nil || ep == nil || current != generation {
 			return
 		}
 		payload, err := stream.readEnvelope()
@@ -499,12 +540,13 @@ func (h *AgentTunnelHub) readLoop() {
 	}
 }
 
-func (h *AgentTunnelHub) writeLoop() {
+func (h *AgentTunnelHub) writeLoop(generation uint64) {
 	for {
 		h.mu.Lock()
 		ctx, stream, ep := h.ctx, h.stream, h.ep
+		current := h.generation
 		h.mu.Unlock()
-		if ctx == nil || stream == nil || ep == nil {
+		if ctx == nil || stream == nil || ep == nil || current != generation {
 			return
 		}
 		select {
@@ -638,14 +680,17 @@ func (h *AgentTunnelHub) closeTunnel(id int, reason string) {
 // frames coming back. Nothing here touches the agent's file or legacy lanes.
 
 type MainEndTunnel struct {
-	hub  *MainEndTunnelHub
-	id   int
-	rbuf bytes.Buffer
-	rmu  sync.Mutex
-	in   chan tunnelFrame
-	dead chan struct{}
-	once sync.Once
-	seq  int64
+	hub *MainEndTunnelHub
+	// session names the Agent stream this tunnel rides on. Tunnel ids are
+	// only unique within one Agent, so every routing decision needs the pair.
+	session string
+	id      int
+	rbuf    bytes.Buffer
+	rmu     sync.Mutex
+	in      chan tunnelFrame
+	dead    chan struct{}
+	once    sync.Once
+	seq     int64
 }
 
 func (c *MainEndTunnel) Read(p []byte) (int, error) {
@@ -691,7 +736,7 @@ func (c *MainEndTunnel) Write(p []byte) (int, error) {
 			chunk = chunk[:tunnelMaxDataBytes]
 		}
 		c.seq++
-		if err := c.hub.send(tunnelFrame{Tun: c.id, Op: "data", Seq: c.seq, Data: base64.StdEncoding.EncodeToString(chunk)}); err != nil {
+		if err := c.hub.send(c.session, tunnelFrame{Tun: c.id, Op: "data", Seq: c.seq, Data: base64.StdEncoding.EncodeToString(chunk)}); err != nil {
 			return total - len(p), err
 		}
 		p = p[len(chunk):]
@@ -702,7 +747,7 @@ func (c *MainEndTunnel) Write(p []byte) (int, error) {
 func (c *MainEndTunnel) Close() error {
 	c.once.Do(func() {
 		close(c.dead)
-		_ = c.hub.send(tunnelFrame{Tun: c.id, Op: "close"})
+		_ = c.hub.send(c.session, tunnelFrame{Tun: c.id, Op: "close"})
 		c.hub.drop(c)
 	})
 	return nil
@@ -719,27 +764,50 @@ type tunnelAddr string
 func (tunnelAddr) Network() string { return "zephyr-link-tunnel" }
 func (a tunnelAddr) String() string { return string(a) }
 
-// MainEndTunnelHub is embedded in zephyr-link-server. The Node front end opens
-// a hub per Agent stream session; DialTunnel returns a connected net.Conn.
+// MainEndTunnelHub is embedded in zephyr-link-server. It multiplexes every
+// attached Agent stream session; DialTunnel returns a connected net.Conn on
+// the session the caller names.
+//
+// Keying by session is load-bearing. An Agent that reconnects comes back on a
+// brand-new ZSL/2 session id, and a second bastion Agent is simply a second
+// session. The hub used to hold one session id for the whole process and
+// rejected every later attach with "hub already attached"; the Node front end
+// swallowed that error and dialed anyway, which pushed onto the dead session
+// and surfaced to the user as "session has no live stream".
 type MainEndTunnelHub struct {
-	mu       sync.Mutex
-	node     *Node
+	mu   sync.Mutex
+	node *Node
+	// agents holds one lane table per attached Agent session. Tunnel ids are
+	// only unique within a session, so every lookup takes the pair.
+	agents map[string]*mainEndAgent
+	// routed records that the AGENT_TUNNEL dispatch handler is installed.
+	// Registering it twice would overwrite the first handler.
+	routed bool
+}
+
+// mainEndAgent is one attached Agent: its live tunnels and the device the
+// session was attested to at handshake.
+type mainEndAgent struct {
+	deviceID string
 	tunnels  map[int]*MainEndTunnel
 	nextID   int
-	session  string
-	deviceID string
-	// OnAgentFrame routes Agent→main tunnel frames into the hub.
-	deliverFn func(*tunnelFrame)
 }
 
 func NewMainEndTunnelHub(node *Node) *MainEndTunnelHub {
-	return &MainEndTunnelHub{node: node, tunnels: make(map[int]*MainEndTunnel)}
+	return &MainEndTunnelHub{node: node, agents: make(map[string]*mainEndAgent)}
 }
 
-// Attach registers the AGENT_TUNNEL dispatch handler for one agent session.
-// The Agent dials /link/stream in; its frames arrive through Dispatch, and the
-// hub answers them through PushStreamFrame on the same live stream.
+// Attach registers one Agent stream session on the hub and installs the shared
+// AGENT_TUNNEL dispatch handler on first use. The Agent dials /link/stream in;
+// its frames arrive through Dispatch carrying the session they arrived on, and
+// the hub answers them through PushStreamFrame on that same live stream.
+//
+// Re-attaching a session that is already registered is a no-op, so the Node
+// front end can call it before every dial without tracking state.
 func (h *MainEndTunnelHub) Attach(sessionID string) error {
+	if sessionID == "" {
+		return errors.New("tunnel: attach needs a session id")
+	}
 	n := h.node
 	n.mu.Lock()
 	_, hasSession := n.sessions[sessionID]
@@ -750,19 +818,21 @@ func (h *MainEndTunnelHub) Attach(sessionID string) error {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.session != "" && h.session != sessionID {
-		return fmt.Errorf("tunnel: hub already attached to session %s", h.session)
+	if existing := h.agents[sessionID]; existing != nil {
+		existing.deviceID = device
+	} else {
+		h.agents[sessionID] = &mainEndAgent{deviceID: device, tunnels: make(map[int]*MainEndTunnel)}
 	}
-	h.session = sessionID
-	h.deviceID = device
-	if h.deliverFn == nil {
-		h.deliverFn = h.deliver
+	if !h.routed {
+		h.routed = true
 		n.Dispatcher().Register(codec.KindAgentTunnel, func(ctx *FrameContext, fr *codec.Frame) (int, any, bool, error) {
 			var tf tunnelFrame
 			if err := codec.Decode(fr.Body, &tf); err != nil {
 				return 0, nil, false, err
 			}
-			h.deliverFn(&tf)
+			// ctx.SessionID is the attested session the frame arrived on, so
+			// one Agent can never address another Agent's tunnel ids.
+			h.deliver(ctx.SessionID, &tf)
 			// Tunnels are fire-and-forget per frame; the ack carries nothing.
 			return codec.KindAgentTunnel, map[string]any{"tun": tf.Tun, "ok": true}, false, nil
 		})
@@ -770,23 +840,54 @@ func (h *MainEndTunnelHub) Attach(sessionID string) error {
 	return nil
 }
 
-// SessionID reports the attached agent session.
-func (h *MainEndTunnelHub) SessionID() string {
+// Detach drops one Agent session and kills the tunnels riding it. Other
+// sessions keep running.
+func (h *MainEndTunnelHub) Detach(sessionID string) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.session
+	agent := h.agents[sessionID]
+	delete(h.agents, sessionID)
+	h.mu.Unlock()
+	if agent == nil {
+		return
+	}
+	h.killAgent(agent)
 }
 
-// DeviceID reports the attested device behind the attached session.
-func (h *MainEndTunnelHub) DeviceID() string {
+// Attached reports whether a session is registered on the hub.
+func (h *MainEndTunnelHub) Attached(sessionID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.deviceID
+	return h.agents[sessionID] != nil
 }
 
-func (h *MainEndTunnelHub) deliver(tf *tunnelFrame) {
+// Sessions lists the attached Agent sessions.
+func (h *MainEndTunnelHub) Sessions() []string {
 	h.mu.Lock()
-	c := h.tunnels[tf.Tun]
+	defer h.mu.Unlock()
+	out := make([]string, 0, len(h.agents))
+	for id := range h.agents {
+		out = append(out, id)
+	}
+	return out
+}
+
+// DeviceID reports the attested device behind one attached session.
+func (h *MainEndTunnelHub) DeviceID(sessionID string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if agent := h.agents[sessionID]; agent != nil {
+		return agent.deviceID
+	}
+	return ""
+}
+
+func (h *MainEndTunnelHub) deliver(sessionID string, tf *tunnelFrame) {
+	h.mu.Lock()
+	agent := h.agents[sessionID]
+	var c *MainEndTunnel
+	if agent != nil {
+		c = agent.tunnels[tf.Tun]
+	}
 	h.mu.Unlock()
 	if c == nil {
 		return
@@ -807,64 +908,74 @@ func (h *MainEndTunnelHub) deliver(tf *tunnelFrame) {
 
 func (h *MainEndTunnelHub) drop(c *MainEndTunnel) {
 	h.mu.Lock()
-	if h.tunnels[c.id] == c {
-		delete(h.tunnels, c.id)
+	if agent := h.agents[c.session]; agent != nil && agent.tunnels[c.id] == c {
+		delete(agent.tunnels, c.id)
 	}
 	h.mu.Unlock()
 }
 
-func (h *MainEndTunnelHub) killAll() {
+// killSession tears down every tunnel on one Agent session without touching
+// the others. The session stays attached: the Agent may re-dial its stream.
+func (h *MainEndTunnelHub) killSession(sessionID string) {
+	h.mu.Lock()
+	agent := h.agents[sessionID]
+	h.mu.Unlock()
+	if agent == nil {
+		return
+	}
+	h.killAgent(agent)
+}
+
+func (h *MainEndTunnelHub) killAgent(agent *mainEndAgent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for id, c := range h.tunnels {
+	for id, c := range agent.tunnels {
 		c.once.Do(func() { close(c.dead) })
-		delete(h.tunnels, id)
+		delete(agent.tunnels, id)
 	}
 }
 
-func (h *MainEndTunnelHub) send(tf tunnelFrame) error {
+func (h *MainEndTunnelHub) send(sessionID string, tf tunnelFrame) error {
 	h.mu.Lock()
-	session := h.session
+	attached := h.agents[sessionID] != nil
 	h.mu.Unlock()
-	if session == "" {
-		return errors.New("tunnel: hub has no agent session")
+	if !attached {
+		return fmt.Errorf("tunnel: session %s is not attached", sessionID)
 	}
-	if err := h.node.PushStreamFrame(session, codec.KindAgentTunnel, tf, false); err != nil {
-		h.killAll()
+	if err := h.node.PushStreamFrame(sessionID, codec.KindAgentTunnel, tf, false); err != nil {
+		h.killSession(sessionID)
 		return err
 	}
 	return nil
 }
 
-func (h *MainEndTunnelHub) dropBySend(c *MainEndTunnel) { h.drop(c) }
-
-// DialTunnel opens a tunnel to host:port through the Agent behind the hub's
-// session and returns it as a net.Conn once the Agent acknowledges.
-// DialTunnel opens a plain TCP tunnel to host:port through the Agent.
-func (h *MainEndTunnelHub) DialTunnel(host string, port int) (net.Conn, error) {
-	return h.dial(tunnelFrame{Op: "open", Host: host, Port: port})
+// DialTunnel opens a plain TCP tunnel to host:port through the Agent behind
+// the named session and returns it as a net.Conn once the Agent acknowledges.
+func (h *MainEndTunnelHub) DialTunnel(sessionID, host string, port int) (net.Conn, error) {
+	return h.dial(sessionID, tunnelFrame{Op: "open", Host: host, Port: port})
 }
 
 // DialZft2Lane opens a zft2-lane tunnel: bytes written to the returned conn
 // reach the Agent host's ZFT2 dispatcher instead of a TCP dial. This is the
 // file-protocol lane on the single encrypted Link channel.
-func (h *MainEndTunnelHub) DialZft2Lane() (net.Conn, error) {
-	return h.dial(tunnelFrame{Op: "open", Lane: "zft2"})
+func (h *MainEndTunnelHub) DialZft2Lane(sessionID string) (net.Conn, error) {
+	return h.dial(sessionID, tunnelFrame{Op: "open", Lane: "zft2"})
 }
 
-func (h *MainEndTunnelHub) dial(open tunnelFrame) (net.Conn, error) {
+func (h *MainEndTunnelHub) dial(sessionID string, open tunnelFrame) (net.Conn, error) {
 	h.mu.Lock()
-	if h.session == "" {
+	agent := h.agents[sessionID]
+	if agent == nil {
 		h.mu.Unlock()
-		return nil, errors.New("tunnel: hub not attached")
+		return nil, fmt.Errorf("tunnel: session %s is not attached", sessionID)
 	}
-	h.nextID++
-	id := h.nextID
+	agent.nextID++
+	id := agent.nextID
 	open.Tun = id
-	c := &MainEndTunnel{hub: h, id: id, in: make(chan tunnelFrame, tunnelChannelBufSize), dead: make(chan struct{})}
-	h.tunnels[id] = c
+	c := &MainEndTunnel{hub: h, session: sessionID, id: id, in: make(chan tunnelFrame, tunnelChannelBufSize), dead: make(chan struct{})}
+	agent.tunnels[id] = c
 	h.mu.Unlock()
-	if err := h.send(open); err != nil {
+	if err := h.send(sessionID, open); err != nil {
 		h.drop(c)
 		return nil, err
 	}

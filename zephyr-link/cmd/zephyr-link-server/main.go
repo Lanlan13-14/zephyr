@@ -123,7 +123,7 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"deviceId":` + jsonString(tunnelHub.DeviceID()) + `}`))
+		_, _ = w.Write([]byte(`{"ok":true,"deviceId":` + jsonString(tunnelHub.DeviceID(body.SessionID)) + `}`))
 	})
 	mux.HandleFunc("/internal/tunnel/dial", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -135,20 +135,28 @@ func main() {
 			return
 		}
 		var body struct {
-			Host string `json:"host"`
-			Port int    `json:"port"`
-			Lane string `json:"lane"`
+			SessionID string `json:"sessionId"`
+			Host      string `json:"host"`
+			Port      int    `json:"port"`
+			Lane      string `json:"lane"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil || body.Host == "" && body.Lane == "" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		// The session names which Agent to dial through. Without it the hub
+		// would have to guess, which is exactly the process-wide pinning that
+		// broke bastion use after an Agent reconnect.
+		if body.SessionID == "" {
+			writeJSONError(w, http.StatusBadRequest, "tunnel_session_required", "sessionId is required")
+			return
+		}
 		var conn net.Conn
 		var err error
 		if body.Lane == "zft2" {
-			conn, err = tunnelHub.DialZft2Lane()
+			conn, err = tunnelHub.DialZft2Lane(body.SessionID)
 		} else {
-			conn, err = tunnelHub.DialTunnel(body.Host, body.Port)
+			conn, err = tunnelHub.DialTunnel(body.SessionID, body.Host, body.Port)
 		}
 		if err != nil {
 			writeJSONError(w, http.StatusBadGateway, "tunnel_dial_failed", err.Error())

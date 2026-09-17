@@ -4171,8 +4171,18 @@ async function saveConnection(e) {
         return;
     }
     const payload = connectionPayload();
-    if (editingId) await api(`/api/connections/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) });
-    else await api('/api/connections', { method: 'POST', body: JSON.stringify(payload) });
+    /* A rejected save is an expected outcome (an offline Agent bastion, a hop
+     * the user may not use), not a crash. Without this catch the rejection
+     * reached window.onunhandledrejection, which reports every failure as
+     * "前端异步错误" and hides the reason the server actually gave. */
+    try {
+        if (editingId) await api(`/api/connections/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) });
+        else await api('/api/connections', { method: 'POST', body: JSON.stringify(payload) });
+    } catch (err) {
+        console.warn('[route-ui]', 'connection save failed', { editingId, mode: payload.connectionMode, code: err?.code || '', status: err?.status || 0 });
+        toast(err?.message || t('保存失败'));
+        return;
+    }
     closeModal();
     toast(t('连接已保存'));
     await loadConnections();
@@ -12818,7 +12828,31 @@ function closeProxyModal() {
         finish();
     });
 }
-async function saveProxy(e) { e.preventDefault(); const id = $('#proxyId').value, payload = { name: $('#proxyName').value, type: $('#proxyType').value, host: $('#proxyHost').value, port: Number($('#proxyPort').value), username: $('#proxyUsername').value, password: $('#proxyPassword').value }; console.debug('[route-ui]', 'save proxy payload', { id, ...payload, password: payload.password ? '******' : '' }); await api(id ? `/api/proxies/${id}` : '/api/proxies', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); closeProxyModal(); await loadNetwork(); toast(t('代理已保存')); }
+async function saveProxy(e) {
+    e.preventDefault();
+    const id = $('#proxyId').value;
+    const type = $('#proxyType').value;
+    const payload = { name: $('#proxyName').value, type, host: $('#proxyHost').value, port: Number($('#proxyPort').value), username: $('#proxyUsername').value, password: $('#proxyPassword').value };
+    /* An Agent bastion addresses an Agent id, not a host:port: the server
+     * reads agentId and stores it as the host with port 0. The proxy form has
+     * no Agent picker (those are chosen in the jump chain), so an agent-typed
+     * row being edited here carries its id in the host field. */
+    if (type === 'agent') payload.agentId = String($('#proxyHost').value || '').trim();
+    console.debug('[route-ui]', 'save proxy payload', { id, ...payload, password: payload.password ? '******' : '' });
+    /* Same contract as saveConnection: a refused save is a normal outcome and
+     * must surface the server's reason, not the global unhandledrejection
+     * toast. */
+    try {
+        await api(id ? `/api/proxies/${id}` : '/api/proxies', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    } catch (err) {
+        console.warn('[route-ui]', 'proxy save failed', { id, type, code: err?.code || '', status: err?.status || 0 });
+        toast(err?.message || t('保存失败'));
+        return;
+    }
+    closeProxyModal();
+    await loadNetwork();
+    toast(t('代理已保存'));
+}
 async function openProxySecret(id, trigger = null) {
     const secret = await requestSensitiveSecret('查看已保存代理密码');
     const data = await api(`/api/proxies/${id}/open`, { method: 'POST', body: JSON.stringify({ secret }) });

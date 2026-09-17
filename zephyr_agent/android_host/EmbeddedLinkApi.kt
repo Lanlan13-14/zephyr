@@ -60,10 +60,20 @@ internal class EmbeddedLinkApi(private val process: EmbeddedLinkProcess) {
     fun mlkemGenerate(deviceId: String): JSONObject =
         JSONObject(process.post("/link/mlkem/generate", "{}"))
 
+    /** Normalizes any server URL to the Link peer root the Go core appends
+     *  its leaf paths to. Accepts a bare server URL or an already-normalized
+     *  root, so a caller can never hand the core a peer that resolves the
+     *  stream upgrade to an unrouted path. */
+    private fun linkPeerRoot(serverUrl: String): String {
+        val trimmed = serverUrl.trim().trimEnd('/')
+        if (trimmed.isEmpty()) return ""
+        return if (trimmed.endsWith("/api/link/v2")) trimmed else "$trimmed/api/link/v2"
+    }
+
     fun dial(serverUrl: String, deviceId: String, insecure: Boolean): Session {
         // Go runtime is CGO_ENABLED=0: no Android DNS. Pre-resolve with
         // InetAddress and pass IP + original hostname for SNI/Host.
-        val peerRoot = serverUrl.trimEnd('/') + "/api/link/v2"
+        val peerRoot = linkPeerRoot(serverUrl)
         val targets = try {
             LinkPeerResolver.resolveAll(peerRoot)
         } catch (_: Exception) {
@@ -150,11 +160,22 @@ internal class EmbeddedLinkApi(private val process: EmbeddedLinkProcess) {
 
     fun close() { session = null; peerUrl = null }
 
-    /** Boots the bastion tunnel hub inside the Go runtime. Blocking; call off the UI thread. */
+    /** Boots the bastion tunnel hub inside the Go runtime. Blocking; call off the UI thread.
+     *
+     * The peer is the URL recorded at dial time, never a caller-supplied one.
+     * Two things depend on that: it is the /api/link/v2 root (the Go core
+     * appends "/stream", and the main end only routes the WebSocket upgrade at
+     * /api/link/v2/stream), and it is the pre-resolved IP form whose SNI the Go
+     * sessionTLS table remembers. Passing the bare server URL here dialed
+     * https://host/stream, which the main end 404s, so the Agent never attached
+     * its stream and every bastion connect failed with "session has no live
+     * stream". The argument is kept only as a fallback for a host that has no
+     * recorded peer yet, and is normalized to the same root.
+     */
     fun tunnelStart(sessionId: String, peerUrl: String) {
         val s = session ?: error("Link 会话未建立")
         val resolvedSession = if (sessionId.isNotEmpty()) sessionId else s.id
-        val resolvedPeer = if (peerUrl.isNotEmpty()) peerUrl else (this.peerUrl ?: "")
+        val resolvedPeer = this.peerUrl ?: linkPeerRoot(peerUrl)
         check(resolvedPeer.isNotEmpty()) { "Link 对端未设置" }
         val response = JSONObject(process.post("/link/tunnel/start", JSONObject().apply {
             put("sessionId", resolvedSession)

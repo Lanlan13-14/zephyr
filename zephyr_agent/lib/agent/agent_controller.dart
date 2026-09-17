@@ -62,7 +62,10 @@ class AgentController extends ChangeNotifier {
   }
   bool get linkFileBridgeReady => _linkRuntime.ready;
   bool get linkTunnelUp => _linkRuntime.tunnelUp;
-  bool _bastionTunnelStarted = false;
+  /// Link session id the bastion tunnel was last started on. A reconnect
+  /// mints a new session, which is exactly when the tunnel must be started
+  /// again, so the guard tracks the session instead of a one-shot flag.
+  String? _bastionTunnelSessionId;
   Zft2LinkLaneClient? _zft2Lane;
   final Map<int, Future<void>> _zft2Tasks = {};
   /// Per-path serial queues for mutating ops. Write/close/truncate/open on the
@@ -297,6 +300,11 @@ class AgentController extends ChangeNotifier {
     _channelSub = null;
     await _zft2Lane?.close();
     _zft2Lane = null;
+    // The Link session dies with the connection, so the bastion tunnel that
+    // rode it is gone too. Clearing the latch here is what lets the next
+    // connect start a tunnel on the new session.
+    _bastionTunnelSessionId = null;
+    _linkRuntime.markTunnelDown();
     await _linkRuntime.close();
     try {
       await _channel?.sink.close();
@@ -637,17 +645,28 @@ class AgentController extends ChangeNotifier {
   /// WebSocket (auth + capability) and the ZSL/2 Link session (crypto). All
   /// bastion bytes thereafter ride sealed AGENT_TUNNEL frames on the Link
   /// stream — never the legacy file WebSocket.
+  ///
+  /// The guard is the session id, not a plain "already started" flag. Every
+  /// reconnect produces a new ZSL/2 session, and the tunnel has to be started
+  /// again on it; a boolean latch stayed true for the life of the process, so
+  /// after the first reconnect the Agent never re-dialed its stream and the
+  /// main end reported that the bastion session had no live stream.
   void _maybeStartBastionTunnel() {
     if (!_config.bastionEnabled) return;
     if (!_linkRuntime.ready) return;
-    if (_bastionTunnelStarted) return;
-    _bastionTunnelStarted = true;
+    final sessionId = _linkRuntime.sessionId;
+    if (sessionId == null || sessionId.isEmpty) return;
+    if (_bastionTunnelSessionId == sessionId) return;
+    _bastionTunnelSessionId = sessionId;
     unawaited(() async {
       try {
         await _linkRuntime.startTunnel();
         _linkRuntime.markTunnelUp();
       } catch (e) {
-        _bastionTunnelStarted = false;
+        // Only clear the latch when it still refers to this attempt, so a
+        // failure here cannot cancel a newer session's tunnel.
+        if (_bastionTunnelSessionId == sessionId) _bastionTunnelSessionId = null;
+        _linkRuntime.markTunnelDown();
         if (kDebugMode) {
           print('[agent-bastion] tunnel start failed: $e');
         }

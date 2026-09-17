@@ -539,7 +539,7 @@ function createFileAgentManager() {
             ));
             return { ...candidate, legacyOwnerAllowed: !usernameWasRecycled };
         },
-        linkTunnelDial: (host, port, timeoutMs, lane) => linkTunnelDial(host, port, timeoutMs, lane),
+        linkTunnelDial: (sessionId, host, port, timeoutMs, lane) => linkTunnelDial(sessionId, host, port, timeoutMs, lane),
         linkTunnelAttach: (sessionId) => linkTunnelAttach(sessionId),
         linkRegisterAgentKey: (deviceId, jwk) => {
             if (!linkGoForAgents) return Promise.reject(new Error('Link 服务未就绪'));
@@ -2745,12 +2745,12 @@ async function openAgentBastionConnection(proxy, targetHost, targetPort, timeout
     console.debug('[agent-bastion]', 'open Link tunnel', { agentId, targetHost, targetPort });
 
     const { linkTunnelAttach, linkTunnelDial } = require('./link-v2-go-proxy');
-    try {
-        await linkTunnelAttach(linkSessionId);
-    } catch (err) {
-        if (!/already attached/.test(String(err?.message || ''))) throw err;
-    }
-    const socket = await linkTunnelDial(String(targetHost || ''), Number(targetPort) || 22, Math.max(timeout, 12000));
+    /* Attach is per session and idempotent. The old code swallowed an
+     * "already attached" conflict and dialed anyway, which pushed onto the
+     * session the hub had pinned at first use — after any Agent reconnect
+     * that is the dead one, and the user saw "session has no live stream". */
+    await linkTunnelAttach(linkSessionId);
+    const socket = await linkTunnelDial(linkSessionId, String(targetHost || ''), Number(targetPort) || 22, Math.max(timeout, 12000));
     const onAbort = () => { try { socket.destroy(); } catch {} };
     signal?.addEventListener?.('abort', onAbort, { once: true });
     socket.once('close', () => signal?.removeEventListener?.('abort', onAbort));
@@ -6842,8 +6842,15 @@ app.post('/api/proxies', requireUser, (req, res) => {
     // encrypted Link tunnel.
     if (type === 'agent') {
         if (!b.name || !b.agentId) return res.status(400).json({ error: '名称和 Agent 不能为空' });
-        const agent = fileAgentManager ? fileAgentManager.getAgent(String(b.agentId)) : null;
+        /* getAgentInfo, not getAgent: the latter has never existed, so every
+         * Agent bastion save died as a 500 TypeError before any validation
+         * ran. Ownership is checked here too — an Agent belongs to the user
+         * who enrolled it, and a proxy must not reference someone else's. */
+        const agent = fileAgentManager ? fileAgentManager.getAgentInfo(String(b.agentId)) : null;
         if (!agent || !agent.online) return res.status(400).json({ error: 'Agent 不在线' });
+        if (!fileAgentManager.isAgentOwnedByUser(String(b.agentId), req.user)) {
+            return res.status(403).json({ error: '无权使用该 Agent' });
+        }
         if (agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) {
             return res.status(400).json({ error: '该 Agent 未启用跳板能力' });
         }
@@ -6862,7 +6869,31 @@ app.put('/api/proxies/:id', requireUser, (req, res) => {
     try {
         const old = resourceService.getRawAuthorized(req.user, 'proxy', req.params.id, CAP.EDIT);
         const b = req.body || {};
-        const proxy = resourceService.updateOwned(req.user, 'proxy', req.params.id, { name: String(b.name ?? old.name), host: String(b.host ?? old.host), port: Number(b.port ?? old.port) || 1080, type: normalizeProxyType(b.type ?? old.type), username: String(b.username ?? old.username ?? ''), password: b.password === '******' ? old.password : String(b.password ?? old.password ?? ''), updatedAt: Date.now() }, {
+        const nextType = normalizeProxyType(b.type ?? old.type);
+        /* An Agent bastion has no host:port — it addresses an Agent id and
+         * dials inside that Agent's network. Running it through the SOCKS/HTTP
+         * branch rewrote port 0 to 1080 (`Number(0) || 1080`) and skipped the
+         * Agent revalidation, so an edit silently produced a proxy that could
+         * never connect. */
+        if (nextType === 'agent') {
+            const agentId = String(b.agentId ?? old.agentId ?? '');
+            if (!agentId) return res.status(400).json({ error: 'Agent 跳板缺少 agentId' });
+            const agent = fileAgentManager ? fileAgentManager.getAgentInfo(agentId) : null;
+            if (!agent || !agent.online) return res.status(400).json({ error: 'Agent 不在线' });
+            if (!fileAgentManager.isAgentOwnedByUser(agentId, req.user)) {
+                return res.status(403).json({ error: '无权使用该 Agent' });
+            }
+            if (agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) {
+                return res.status(400).json({ error: '该 Agent 未启用跳板能力' });
+            }
+            const saved = resourceService.updateOwned(req.user, 'proxy', req.params.id, {
+                name: String(b.name ?? old.name), host: agentId, port: 0, type: 'agent',
+                agentId, username: '', password: '', updatedAt: Date.now(),
+            }, { changedSecretFields: [] });
+            addActivity(`编辑 Agent 跳板：${saved.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: 'agent', target: agent.deviceName || agentId }));
+            return res.json({ proxy: saved });
+        }
+        const proxy = resourceService.updateOwned(req.user, 'proxy', req.params.id, { name: String(b.name ?? old.name), host: String(b.host ?? old.host), port: Number(b.port ?? old.port) || 1080, type: nextType, username: String(b.username ?? old.username ?? ''), password: b.password === '******' ? old.password : String(b.password ?? old.password ?? ''), updatedAt: Date.now() }, {
             changedSecretFields: Object.prototype.hasOwnProperty.call(b, 'password') && b.password !== '******'
                 ? ['password'] : [],
         });

@@ -70,14 +70,14 @@ func TestAgentTunnelEndToEnd(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if mainHub == nil || mainHub.SessionID() == "" {
+	if mainHub == nil || !mainHub.Attached(sessionID) {
 		t.Fatal("main-end hub never attached")
 	}
 
 	// Wait for the Agent stream to be live server-side before dialing.
 	time.Sleep(150 * time.Millisecond)
 
-	conn, err := mainHub.DialTunnel("127.0.0.1", echoAddr.Port)
+	conn, err := mainHub.DialTunnel(sessionID, "127.0.0.1", echoAddr.Port)
 	if err != nil {
 		t.Fatalf("dial tunnel: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestTunnelClosePropagates(t *testing.T) {
 	}
 	time.Sleep(150 * time.Millisecond)
 
-	conn, err := mainHub.DialTunnel("127.0.0.1", port)
+	conn, err := mainHub.DialTunnel(sessionID, "127.0.0.1", port)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -202,10 +202,10 @@ func TestTunnelRefusesInvalidTarget(t *testing.T) {
 	}
 	time.Sleep(150 * time.Millisecond)
 
-	if _, err := mainHub.DialTunnel("", 0); err == nil {
+	if _, err := mainHub.DialTunnel(sessionID, "", 0); err == nil {
 		t.Fatal("expected refusal for empty target")
 	}
-	if _, err := mainHub.DialTunnel("127.0.0.1", -1); err == nil {
+	if _, err := mainHub.DialTunnel(sessionID, "127.0.0.1", -1); err == nil {
 		t.Fatal("expected refusal for negative port")
 	}
 }

@@ -49,7 +49,7 @@ func TestZft2LaneEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	conn, err := mainHub.DialZft2Lane()
+	conn, err := mainHub.DialZft2Lane(sessionID)
 	if err != nil {
 		t.Fatal("dial zft2 lane:", err)
 	}
@@ -127,7 +127,7 @@ func TestZft2LaneRefusedWithoutDispatcher(t *testing.T) {
 	if err := mainHub.Attach(sessionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mainHub.DialZft2Lane(); err == nil {
+	if _, err := mainHub.DialZft2Lane(sessionID); err == nil {
 		t.Fatal("expected refusal without a dispatcher")
 	}
 }
