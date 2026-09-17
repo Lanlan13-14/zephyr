@@ -117,3 +117,19 @@ test('the Go tunnel stream dials the peer leaf the main end actually routes', ()
     const server = read('server.js');
     assert.match(server, /pathname === '\/api\/link\/v2\/stream'/);
 });
+
+test('the Agent stream handshake is RFC 6455 so Node ws will accept it', () => {
+    const stream = read('zephyr-link/internal/link/stream.go');
+    const tunnel = read('zephyr-link/internal/link/tunnel.go');
+    // Node's `ws` keyRegex is /^[+/0-9A-Za-z]{22}==$/. The old printable
+    // "zephyr-link-<ts>" key never matched, so the public upgrade 400'd and
+    // the Agent never attached — "session has no live stream".
+    assert.match(tunnel, /key, err := newWSClientKey\(\)/);
+    assert.doesNotMatch(tunnel, /zephyr-link-%d/);
+    // Accept must be standard base64; RawURLEncoding is what Node's ws
+    // client (the reverse-proxy hop onto handleStream) rejects.
+    assert.match(stream, /base64\.StdEncoding\.EncodeToString\(h\[:\]\)/);
+    assert.doesNotMatch(stream, /RawURLEncoding\.EncodeToString\(h\[:\]\)/);
+    // Client frames on the public hop must be masked.
+    assert.match(tunnel, /writeClientFrame\(t\.conn, 0x1, env\)/);
+});
