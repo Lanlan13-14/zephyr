@@ -13,6 +13,7 @@ import '../theme/zephyr_colors.dart';
 import '../ui/apple_spinner.dart';
 import '../ui/glass_button.dart';
 import '../ui/glass_sheet.dart';
+import '../ui/liquid_glass.dart';
 import '../ui/settings_group.dart';
 import '../ui/settings_palette.dart';
 
@@ -196,6 +197,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (io.Platform.isAndroid) {
       final choice = await showGlassSheet<String>(
         context: context,
+        palette: _palette,
         builder: (ctx) => Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
           child: Column(
@@ -203,7 +205,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Text(s.sheetShareLocation, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
               const SizedBox(height: 12),
-              SettingsGroup(children: [
+              SettingsGroup(glass: false, children: [
                 SettingsRow(icon: Icons.storage, iconColor: _palette.accent, title: s.shareEntireStorage, showChevron: true, onTap: () => Navigator.pop(ctx, 'all')),
                 SettingsRow(icon: Icons.folder_open, iconColor: _palette.accent, title: s.sharePickDirectory, showChevron: true, onTap: () => Navigator.pop(ctx, 'saf')),
                 SettingsRow(icon: Icons.edit, iconColor: _palette.textSecondary, title: s.shareEnterPath, showChevron: true, onTap: () => Navigator.pop(ctx, 'path')),
@@ -250,6 +252,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final pathCtrl = TextEditingController(text: ctrl.config.sharedDirectoryPath ?? '');
     final result = await showGlassSheet<String>(
       context: context,
+      palette: _palette,
       isScrollControlled: true,
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(left: 16, right: 16, top: 4, bottom: MediaQuery.viewInsetsOf(ctx).bottom + 24),
@@ -258,7 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Text(s.sheetSharedDirectory, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
-            SettingsGroup(children: [
+            SettingsGroup(glass: false, children: [
               SettingsFieldRow(label: s.fieldPath, controller: pathCtrl, enabled: true, placeholder: '/Users/name/Downloads'),
             ]),
             const SizedBox(height: 8),
@@ -330,30 +333,35 @@ class _HomeScreenState extends State<HomeScreen> {
         final accent = _palette.accent;
         return SettingsPalette(
           palette: _palette,
-          child: Scaffold(
-            appBar: AppBar(
-              leadingWidth: 96,
-              leading: Row(mainAxisSize: MainAxisSize.min, children: [
-                IconButton(tooltip: s.tooltipReset, icon: const Icon(Icons.restart_alt), onPressed: () => _resetSettings(ctrl)),
-                IconButton(tooltip: s.tooltipSave, icon: const Icon(Icons.save_outlined), onPressed: () => _saveAndNotify(ctrl)),
-              ]),
-              title: Row(mainAxisSize: MainAxisSize.min, children: [
-                ZephyrMark(palette: _palette, size: 26),
-                const SizedBox(width: 8),
-                Text(s.appTitle),
-              ]),
-            ),
-            bottomNavigationBar: SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 10, top: 4),
-                child: Text(AgentVersion.tag, textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 11, letterSpacing: 0.2, color: _palette.textSecondary.withValues(alpha: 0.72))),
+          child: LiquidGlassBackdrop(
+            palette: _palette,
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              appBar: AppBar(
+                backgroundColor: Colors.transparent,
+                surfaceTintColor: Colors.transparent,
+                leadingWidth: 96,
+                leading: Row(mainAxisSize: MainAxisSize.min, children: [
+                  IconButton(tooltip: s.tooltipReset, icon: const Icon(Icons.restart_alt), onPressed: () => _resetSettings(ctrl)),
+                  IconButton(tooltip: s.tooltipSave, icon: const Icon(Icons.save_outlined), onPressed: () => _saveAndNotify(ctrl)),
+                ]),
+                title: Row(mainAxisSize: MainAxisSize.min, children: [
+                  ZephyrMark(palette: _palette, size: 26),
+                  const SizedBox(width: 8),
+                  Text(s.appTitle),
+                ]),
               ),
-            ),
-            body: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-              children: [
+              bottomNavigationBar: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 10, top: 4),
+                  child: Text(AgentVersion.tag, textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, letterSpacing: 0.2, color: _palette.textSecondary.withValues(alpha: 0.72))),
+                ),
+              ),
+              body: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                children: [
                 _statusGroup(ctrl, s),
                 _connectionGroup(ctrl, isActive, s),
                 _shareGroup(ctrl, isActive, accent, s),
@@ -373,6 +381,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ],
             ),
+          ),
           ),
         );
       },
@@ -425,6 +434,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (ctrl.enrollmentStatus == s.enrollmentBound) {
       final unbind = await showGlassSheet<bool>(
         context: context,
+        palette: _palette,
         builder: (ctx) => Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -482,6 +492,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onTap: () async {
           final picked = await showGlassSheet<ZephyrTheme>(
             context: context,
+            palette: _palette,
             builder: (ctx) => Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
               child: Column(
@@ -489,7 +500,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Text(s.groupAppearance, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 12),
-                  SettingsGroup(children: [
+                  SettingsGroup(glass: false, children: [
                     for (final t in ZephyrTheme.values)
                       SettingsRow(
                         icon: Icons.circle,
@@ -536,6 +547,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     await showGlassSheet<void>(
       context: context,
+      palette: _palette,
       isScrollControlled: true,
       builder: (sheetContext) => ListenableBuilder(
         listenable: ctrl,

@@ -1,10 +1,11 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Full-width capsule glass button. Press scales 0.97 with a spring; the
-/// fill is a translucent tint over a blur, not a flat Material color.
+import 'liquid_glass.dart';
+
+/// Full-width capsule glass button. Press scales 0.97; the fill is a
+/// translucent tint over the liquid-glass surface (blur + specular rim),
+/// not a flat Material color.
 class GlassPrimaryButton extends StatefulWidget {
   final String label;
   final IconData icon;
@@ -33,34 +34,29 @@ class _GlassPrimaryButtonState extends State<GlassPrimaryButton> {
       scale: _pressed && _enabled ? 0.97 : 1,
       duration: const Duration(milliseconds: 140),
       curve: Curves.easeOutCubic,
-      child: ClipRRect(
+      child: LiquidGlass(
         borderRadius: BorderRadius.circular(14),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            height: 50,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              color: widget.color.withValues(alpha: _pressed ? 0.78 : 0.88),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.28), width: 0.6),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(widget.icon, color: Colors.white, size: 22),
-                const SizedBox(width: 8),
-                Text(
-                  widget.label,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.4,
-                  ),
+        blur: 18,
+        thickness: 18,
+        lightIntensity: 0.7,
+        tint: widget.color.withValues(alpha: _pressed ? 0.72 : 0.86),
+        child: SizedBox(
+          height: 50,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(widget.icon, color: Colors.white, size: 22),
+              const SizedBox(width: 8),
+              Text(
+                widget.label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.4,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

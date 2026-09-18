@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr_agent/theme/zephyr_colors.dart';
@@ -30,7 +31,7 @@ void main() {
     await tester.pumpWidget(wrap(SettingsGroup(header: 'Server', children: [
       SettingsFieldRow(
         label: 'Address',
-        controller: TextEditingController(),
+        controller: TextEditingController(text: 'https://zephyr.example.com'),
         enabled: true,
         placeholder: 'https://zephyr.example.com',
       ),
@@ -48,24 +49,27 @@ void main() {
     expect(fieldSize.height, 44);
 
     final groupSize = tester.getSize(find.byType(SettingsGroup));
-    // Header + 44pt field + divider + 44pt toggle + bottom padding 28.
-    // Must stay well under a phone viewport — the 1.0.31 bug filled ~700pt.
     expect(groupSize.height, lessThan(200));
     expect(groupSize.height, greaterThan(90));
 
-    // The toggle row after the field is still on screen, not pushed off.
     expect(find.text('Allow Self-Signed'), findsOneWidget);
     expect(tester.getTopLeft(find.text('Allow Self-Signed')).dy, lessThan(200));
+
+    // The saved URL must actually paint — 1.0.32 hid it behind a gray Material fill.
+    expect(find.text('https://zephyr.example.com'), findsOneWidget);
+    expect(find.byType(CupertinoTextField), findsOneWidget);
   });
 
-  testWidgets('TextField inside SettingsFieldRow does not expand', (tester) async {
+  testWidgets('address field does not expand and uses CupertinoTextField', (tester) async {
     await tester.pumpWidget(wrap(SettingsFieldRow(
       label: 'Address',
       controller: TextEditingController(text: 'https://example.com'),
       enabled: true,
     )));
     await tester.pumpAndSettle();
-    final tf = tester.getSize(find.byType(TextField));
+    expect(find.byType(TextField), findsNothing);
+    final tf = tester.getSize(find.byType(CupertinoTextField));
     expect(tf.height, lessThanOrEqualTo(44));
+    expect(find.text('https://example.com'), findsOneWidget);
   });
 }

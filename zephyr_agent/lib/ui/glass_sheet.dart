@@ -1,81 +1,106 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
+import '../theme/zephyr_colors.dart';
+import 'liquid_glass.dart';
 import 'settings_palette.dart';
 
-/// Presents a modal sheet in the iOS card style: it floats over the dimmed
-/// previous context, the top corners are continuously rounded, the surface is
-/// blurred glass, and a grabber pill sits on top.
+/// Presents a modal sheet in the iOS card style after
+/// sdegenaar/liquid_glass_widgets `GlassSheet.show`:
+/// floating over a dimmed context, continuously rounded, liquid-glass
+/// surface, grabber pill, ease-out-cubic slide.
 ///
-/// Every secondary surface in the Agent goes through here — no MD3 dialogs,
-/// no Material popup menus.
+/// [palette] is required because the caller is often a State whose
+/// `context` sits *above* [SettingsPalette] — looking it up there
+/// asserts and the tap appears to do nothing (the 1.0.32 bug).
 Future<T?> showGlassSheet<T>({
   required BuildContext context,
   required WidgetBuilder builder,
+  required ZephyrPalette palette,
   bool isScrollControlled = false,
 }) {
-  final palette = SettingsPalette.of(context);
-  return showModalBottomSheet<T>(
+  return showGeneralDialog<T>(
     context: context,
-    isScrollControlled: isScrollControlled,
-    backgroundColor: Colors.transparent,
-    barrierColor: Colors.black.withValues(alpha: 0.32),
-    builder: (ctx) => SettingsPalette(
-      palette: palette,
-      child: _GlassSheetFrame(
-        child: Builder(builder: builder),
-      ),
-    ),
+    barrierDismissible: true,
+    barrierLabel: 'Dismiss',
+    barrierColor: Colors.black.withValues(alpha: 0.38),
+    transitionDuration: const Duration(milliseconds: 280),
+    pageBuilder: (ctx, animation, secondary) {
+      return SettingsPalette(
+        palette: palette,
+        child: _GlassSheetHost(
+          animation: animation,
+          isScrollControlled: isScrollControlled,
+          child: Builder(builder: builder),
+        ),
+      );
+    },
   );
 }
 
-class _GlassSheetFrame extends StatelessWidget {
+class _GlassSheetHost extends StatelessWidget {
+  final Animation<double> animation;
+  final bool isScrollControlled;
   final Widget child;
-  const _GlassSheetFrame({required this.child});
+  const _GlassSheetHost({
+    required this.animation,
+    required this.isScrollControlled,
+    required this.child,
+  });
 
   @override
   Widget build(BuildContext context) {
     final palette = SettingsPalette.of(context);
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    const radius = Radius.circular(16);
-    return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: const BorderRadius.vertical(top: radius),
-            color: (dark ? const Color(0xFF1C1C1E) : const Color(0xFFF7F7F9))
-                .withValues(alpha: dark ? 0.82 : 0.88),
-            border: Border(
-              top: BorderSide(
-                color: Colors.white.withValues(alpha: dark ? 0.14 : 0.6),
-                width: 0.5,
-              ),
-            ),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 6, bottom: 2),
-                  child: Container(
-                    width: 36,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: palette.textSecondary.withValues(alpha: 0.45),
-                      borderRadius: BorderRadius.circular(2.5),
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: const Cubic(0.23, 1, 0.32, 1),
+      reverseCurve: const Cubic(0.55, 0, 1, 0.45),
+    );
+    return SafeArea(
+      top: false,
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: SlideTransition(
+          position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero).animate(curved),
+          child: FadeTransition(
+            opacity: curved,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: Material(
+                type: MaterialType.transparency,
+                child: LiquidGlass(
+                  borderRadius: BorderRadius.circular(28),
+                  blur: 28,
+                  thickness: 22,
+                  lightIntensity: 0.6,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(context).height * (isScrollControlled ? 0.92 : 0.72),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8, bottom: 4),
+                          child: Container(
+                            width: 36,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: palette.textSecondary.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(2.5),
+                            ),
+                          ),
+                        ),
+                        DefaultTextStyle(
+                          style: TextStyle(color: palette.text),
+                          child: isScrollControlled
+                              ? SingleChildScrollView(child: child)
+                              : child,
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                DefaultTextStyle(
-                  style: TextStyle(color: palette.text),
-                  child: child,
-                ),
-              ],
+              ),
             ),
           ),
         ),
