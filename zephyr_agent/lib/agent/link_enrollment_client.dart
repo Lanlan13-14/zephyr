@@ -15,6 +15,7 @@ import 'dart:convert';
 import 'dart:io' as io;
 
 import '../app/agent_version.dart';
+import '../i18n/agent_strings.dart';
 import 'agent_state.dart';
 import 'link_file_runtime.dart';
 
@@ -99,7 +100,7 @@ class EnrollmentClient {
       try {
         decoded = jsonDecode(text) is Map<String, dynamic> ? jsonDecode(text) : <String, dynamic>{};
       } catch (_) {
-        throw EnrollmentException('bad_response', '主端返回了无法解析的数据 (HTTP ${response.statusCode})');
+        throw EnrollmentException('bad_response', AgentStrings.system.enrollmentBadResponse(response.statusCode));
       }
       if (response.statusCode >= 200 && response.statusCode < 300 && decoded['ok'] == true) {
         return decoded;
@@ -107,11 +108,11 @@ class EnrollmentClient {
       final err = _errorFrom(decoded, 'HTTP ${response.statusCode}');
       throw EnrollmentException(err['code'] as String, err['message'] as String);
     } on io.SocketException catch (e) {
-      throw EnrollmentException('network', '无法连接主端：${e.message}');
+      throw EnrollmentException('network', AgentStrings.system.enrollmentNetwork(e.message));
     } on io.HandshakeException catch (e) {
-      throw EnrollmentException('network', 'TLS 握手失败：${e.message}');
+      throw EnrollmentException('network', AgentStrings.system.enrollmentTls(e.message));
     } on io.HttpException catch (e) {
-      throw EnrollmentException('network', 'HTTP 异常：${e.message}');
+      throw EnrollmentException('network', AgentStrings.system.enrollmentHttp(e.message));
     } finally {
       client.close(force: true);
     }
@@ -122,7 +123,7 @@ class EnrollmentClient {
   Future<EnrollmentInfo> create(AgentConfig config) async {
     _allowBadCertificates = config.allowBadCertificates;
     if (config.linkDeviceId == null || config.linkDeviceId!.length < 16) {
-      throw EnrollmentException('missing_identity', '设备身份未初始化');
+      throw EnrollmentException('missing_identity', AgentStrings.system.enrollmentMissingIdentity);
     }
     config.linkSigningJwk ??= await _runtime.signingJwk(config.linkDeviceId!);
     if (config.mlkemPublicKey == null || config.mlkemPublicKey!.isEmpty) {
@@ -168,14 +169,14 @@ class EnrollmentClient {
       final status = r['status'] as String? ?? '';
       if (status == 'approved') return 'approved';
       if (status == 'denied') {
-        throw EnrollmentException('enrollment_denied', '绑定请求被拒绝');
+        throw EnrollmentException('enrollment_denied', AgentStrings.system.enrollmentDenied);
       }
       if (status == 'expired' || status == 'consumed') {
-        throw EnrollmentException('enrollment_$status', '绑定请求已$status');
+        throw EnrollmentException('enrollment_$status', AgentStrings.system.enrollmentFailedWithStatus(status));
       }
       await Future<void>.delayed(const Duration(seconds: 2));
     }
-    throw EnrollmentException('enrollment_timeout', '等待批准超时，请重试');
+    throw EnrollmentException('enrollment_timeout', AgentStrings.system.enrollmentTimeout);
   }
 
   /// Consumes the approved enrollment: proves device ownership and stores
@@ -207,7 +208,7 @@ class EnrollmentClient {
     config.accessExpiresAt = (r['accessExpiresAt'] as num?)?.toInt();
     config.refreshCredential = r['refreshCredential'] as String?;
     if (config.accessCredential == null || config.refreshCredential == null) {
-      throw EnrollmentException('bad_response', '主端未返回完整凭证');
+      throw EnrollmentException('bad_response', AgentStrings.system.enrollmentIncompleteCredentials);
     }
   }
 
@@ -215,7 +216,7 @@ class EnrollmentClient {
   Future<void> refresh(AgentConfig config) async {
     _allowBadCertificates = config.allowBadCertificates;
     if (config.refreshCredential == null || config.linkDeviceId == null) {
-      throw EnrollmentException('missing_credential', '没有可用的刷新凭据，请重新绑定');
+      throw EnrollmentException('missing_credential', AgentStrings.system.enrollmentMissingRefresh);
     }
     final r = await _request('POST', _base(config.serverUrl).replace(path: '/api/mobile/v1/devices/refresh'), body: {
       'deviceId': config.linkDeviceId,
@@ -225,7 +226,7 @@ class EnrollmentClient {
     config.accessExpiresAt = (r['accessExpiresAt'] as num?)?.toInt();
     config.refreshCredential = r['refreshCredential'] as String?;
     if (config.accessCredential == null || config.refreshCredential == null) {
-      throw EnrollmentException('bad_response', '主端未返回完整凭证');
+      throw EnrollmentException('bad_response', AgentStrings.system.enrollmentIncompleteCredentials);
     }
   }
 

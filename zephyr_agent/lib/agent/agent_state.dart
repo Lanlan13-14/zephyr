@@ -1,5 +1,7 @@
 // Agent state machine and configuration models.
 
+import '../i18n/agent_strings.dart';
+
 enum AgentStatus {
   idle,
   connecting,
@@ -9,15 +11,7 @@ enum AgentStatus {
   stopped,
   error;
 
-  String get label => switch (this) {
-    idle => '未连接',
-    connecting => '连接中...',
-    authenticating => '认证中...',
-    online => '已连接',
-    reconnecting => '重连中...',
-    stopped => '已停止',
-    error => '连接错误',
-  };
+  String get label => AgentStrings.system.statusLabel(name);
 
   bool get isActive => this == online || this == connecting || this == authenticating || this == reconnecting;
 }

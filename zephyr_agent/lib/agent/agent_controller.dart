@@ -10,6 +10,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:uuid/uuid.dart';
 import 'agent_state.dart';
 import '../fs/file_provider.dart';
+import '../i18n/agent_strings.dart';
 import 'file_transfer_protocol.dart';
 import 'link_file_runtime.dart';
 import 'link_runtime_factory.dart';
@@ -56,10 +57,11 @@ class AgentController extends ChangeNotifier {
   bool get enrollmentBusy => _enrollmentBusy;
   String? get enrollmentError => _enrollmentError;
   String get enrollmentStatus {
-    if (_enrollment != null) return '等待主端批准';
-    if (_config.accessCredential != null && _config.accessCredential!.isNotEmpty) return '已绑定';
-    if (_enrollmentError != null) return '绑定失败';
-    return '未绑定';
+    final s = AgentStrings.system;
+    if (_enrollment != null) return s.enrollmentWaiting;
+    if (_config.accessCredential != null && _config.accessCredential!.isNotEmpty) return s.enrollmentBound;
+    if (_enrollmentError != null) return s.enrollmentFailed;
+    return s.enrollmentNotBound;
   }
   bool get linkFileBridgeReady => _linkRuntime.ready;
   bool get linkTunnelUp => _linkRuntime.tunnelUp;
@@ -112,7 +114,7 @@ class AgentController extends ChangeNotifier {
   /// exposed so the screen can keep polling independent of widget rebuilds.
   Future<void> enroll() async {
     if (_enrollmentBusy) return;
-    if (_config.serverUrl.isEmpty) throw EnrollmentException('invalid_request', '请先填写主端地址');
+    if (_config.serverUrl.isEmpty) throw EnrollmentException('invalid_request', AgentStrings.system.errorFillServerFirst);
     _enrollmentBusy = true;
     _enrollmentError = null;
     notifyListeners();
@@ -220,15 +222,16 @@ class AgentController extends ChangeNotifier {
 
   String _friendlyConnectionError(Object error) {
     final raw = error.toString();
+    final s = AgentStrings.system;
     if (raw.contains('Operation not permitted')) {
-      return '网络连接被系统拒绝：Android 构建缺 INTERNET 权限或系统网络策略阻止。请安装修复后的新版 Zephyr Agent。';
+      return s.errorAndroidInternet;
     }
     if (raw.contains('CERTIFICATE_VERIFY_FAILED') || raw.contains('HandshakeException')) {
-      return 'TLS/证书验证失败：请使用受信任 HTTPS 证书，或在主端地址填写正确域名。';
+      return s.errorTls;
     }
-    if (raw.contains('Connection refused')) return '主端拒绝连接：请确认地址、端口和 Zephyr 服务正在运行。';
-    if (raw.contains('Failed host lookup')) return '域名解析失败：请检查主端地址或 DNS/网络。';
-    if (raw.contains('timed out') || raw.contains('TimeoutException')) return '连接超时：请检查网络、防火墙、反向代理 WebSocket 转发。';
+    if (raw.contains('Connection refused')) return s.errorRefused;
+    if (raw.contains('Failed host lookup')) return s.errorDns;
+    if (raw.contains('timed out') || raw.contains('TimeoutException')) return s.errorTimeout;
     return raw;
   }
 
@@ -238,7 +241,7 @@ class AgentController extends ChangeNotifier {
 
     try {
       final normalizedServerUrl = normalizeServerUrl(_config.serverUrl);
-      if (normalizedServerUrl.isEmpty) throw const FormatException('主端地址为空');
+      if (normalizedServerUrl.isEmpty) throw FormatException(AgentStrings.system.errorEmptyServerUrl);
       _config.serverUrl = normalizedServerUrl;
       final hadDeviceId = _config.linkDeviceId != null;
       // Random, not deterministic: two agents with the default device name
@@ -261,7 +264,7 @@ class AgentController extends ChangeNotifier {
           await LocalSettings.saveConfig(_config);
         } on EnrollmentException catch (e) {
           if (e.code == 'refresh_replayed' || e.code == 'client_not_found' || e.code == 'client_revoked') {
-            _errorMessage = '设备绑定已失效，请重新绑定设备';
+            _errorMessage = AgentStrings.system.errorCredentialExpired;
             _setStatus(AgentStatus.error);
             return;
           }
@@ -612,7 +615,7 @@ class AgentController extends ChangeNotifier {
 
   void _handleLinkRegisterAck(Map<String, dynamic> msg) {
     if (msg['ok'] != true) {
-      _linkError = (msg['error'] as String?) ?? 'Link 注册被主端拒绝';
+      _linkError = (msg['error'] as String?) ?? AgentStrings.system.errorLinkRejected;
       if (kDebugMode) print('[agent-link] register rejected: $_linkError');
       notifyListeners();
       return;
@@ -627,7 +630,7 @@ class AgentController extends ChangeNotifier {
           allowBadCertificates: _config.allowBadCertificates,
         );
         if (!ok || _linkRuntime.sessionId == null) {
-          _linkError = 'Link 拨号未建立会话';
+          _linkError = AgentStrings.system.errorLinkDial;
           notifyListeners();
           return;
         }
@@ -820,7 +823,7 @@ class AgentController extends ChangeNotifier {
         'reason': 'timeout_${_config.autoShutdownMinutes}min',
       });
       stop();
-      _errorMessage = '已因 ${_config.autoShutdownMinutes} 分钟超时自动关闭共享和跳板机';
+      _errorMessage = AgentStrings.system.autoShutdownNotice(_config.autoShutdownMinutes);
       _setStatus(AgentStatus.stopped);
     });
     notifyListeners();
