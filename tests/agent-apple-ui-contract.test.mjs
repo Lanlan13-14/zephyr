@@ -84,7 +84,7 @@ test('the toggle thumb refracts the backdrop with a Kyant-style lens', () => {
 
 test('primary actions are glass capsules, not Material elevated buttons', () => {
   const button = read('zephyr_agent/lib/ui/glass_button.dart');
-  assert.match(button, /BackdropFilter/);
+  assert.match(button, /LiquidGlass\(/);
   assert.match(button, /BorderRadius\.circular\(14\)/);
   assert.match(button, /HapticFeedback\.lightImpact/);
 });
@@ -92,9 +92,14 @@ test('primary actions are glass capsules, not Material elevated buttons', () => 
 test('secondary surfaces are glass sheets — no MD3 dialogs or popup menus', () => {
   const home = read('zephyr_agent/lib/screens/home_screen.dart');
   const sheet = read('zephyr_agent/lib/ui/glass_sheet.dart');
-  assert.match(sheet, /class SettingsPalette|SettingsPalette/);
-  assert.match(sheet, /BackdropFilter/);
   assert.match(sheet, /showGlassSheet/);
+  assert.match(sheet, /required ZephyrPalette palette/);
+  assert.match(sheet, /showGeneralDialog/);
+  assert.match(sheet, /LiquidGlass/);
+  // 1.0.32: looking up SettingsPalette on the caller context (HomeScreen
+  // State sits *above* the InheritedWidget) asserted and the tap vanished.
+  assert.doesNotMatch(sheet, /final palette = SettingsPalette\.of\(context\);\s*return show/);
+  assert.match(home, /palette: _palette/);
   // All modal flows go through the glass sheet helper; raw Material sheets,
   // popup menus, and dialogs are banned outside glass_sheet.dart itself.
   assert.doesNotMatch(home, /showModalBottomSheet</);
@@ -186,12 +191,23 @@ test('settings field rows are a 44pt iOS row, never an expanding TextField', () 
   const group = read('zephyr_agent/lib/ui/settings_group.dart');
   assert.match(group, /class SettingsFieldRow/);
   assert.match(group, /return SizedBox\(\s*height: 44,/);
-  assert.match(group, /maxLines: 1/);
-  assert.match(group, /expands: false/);
-  assert.match(group, /isCollapsed: true/);
-  // The 1.0.31 regression: ConstrainedBox(minHeight: 44) around a TextField
-  // inside a ListView Column, with no maxHeight, filled the viewport.
-  assert.doesNotMatch(group, /ConstrainedBox\(\s*constraints: const BoxConstraints\(minHeight: 44\),\s*child: Padding\(\s*padding: const EdgeInsets\.symmetric\(horizontal: 16\),\s*child: Row\(/);
-  const colors = read('zephyr_agent/lib/theme/zephyr_colors.dart');
-  assert.match(colors, /constraints: const BoxConstraints\(minHeight: 22, maxHeight: 44\)/);
+  assert.match(group, /CupertinoTextField\(/);
+  assert.match(group, /decoration: const BoxDecoration\(\)/);
+  // Material TextField's InputDecorator is what painted the gray slab.
+  assert.doesNotMatch(group, /child: TextField\(/);
+  assert.doesNotMatch(group, /isCollapsed: true/);
+});
+
+test('grouped cards, sheets, and the primary button are liquid glass over a refracting backdrop', () => {
+  const group = read('zephyr_agent/lib/ui/settings_group.dart');
+  assert.match(group, /LiquidGlass\(/);
+  const button = read('zephyr_agent/lib/ui/glass_button.dart');
+  assert.match(button, /LiquidGlass\(/);
+  const home = read('zephyr_agent/lib/screens/home_screen.dart');
+  assert.match(home, /LiquidGlassBackdrop\(/);
+  const glass = read('zephyr_agent/lib/ui/liquid_glass.dart');
+  assert.match(glass, /class LiquidGlass/);
+  assert.match(glass, /BackdropFilter/);
+  assert.match(glass, /sdegenaar\/liquid_glass_widgets/);
+  assert.match(glass, /PATH B/);
 });

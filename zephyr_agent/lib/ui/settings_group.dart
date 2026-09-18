@@ -1,6 +1,8 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'liquid_glass.dart';
 import 'liquid_toggle.dart';
 import 'settings_palette.dart';
 
@@ -8,12 +10,17 @@ class SettingsGroup extends StatelessWidget {
   final String? header;
   final String? footer;
   final List<Widget> children;
+  /// When false, skip the liquid-glass plate — used inside an already-glass
+  /// sheet so we don't stack BackdropFilters (the glass-in-glass anti-pattern
+  /// called out by liquid_glass_widgets).
+  final bool glass;
 
   const SettingsGroup({
     super.key,
     this.header,
     this.footer,
     required this.children,
+    this.glass = true,
   });
 
   @override
@@ -38,11 +45,8 @@ class SettingsGroup extends StatelessWidget {
                 ),
               ),
             ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(12),
-            ),
+          _groupPlate(
+            glass: glass,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -50,7 +54,7 @@ class SettingsGroup extends StatelessWidget {
                   if (i > 0)
                     Padding(
                       padding: const EdgeInsets.only(left: 54),
-                      child: Divider(height: 0.5, thickness: 0.5, color: palette.border.withValues(alpha: 0.7)),
+                      child: Divider(height: 0.5, thickness: 0.5, color: palette.border.withValues(alpha: 0.45)),
                     ),
                   children[i],
                 ],
@@ -67,6 +71,17 @@ class SettingsGroup extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _groupPlate({required bool glass, required Widget child}) {
+    if (!glass) return child;
+    return LiquidGlass(
+      borderRadius: BorderRadius.circular(12),
+      blur: 18,
+      thickness: 16,
+      lightIntensity: 0.55,
+      child: child,
     );
   }
 }
@@ -238,22 +253,17 @@ class SettingsFieldRow extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: TextField(
+              // CupertinoTextField with an empty BoxDecoration paints no
+              // Material fill — the gray slab in 1.0.32 was InputDecorator.
+              child: CupertinoTextField(
                 controller: controller,
                 enabled: enabled,
                 keyboardType: keyboardType,
-                maxLines: 1,
-                minLines: 1,
-                expands: false,
-                textAlignVertical: TextAlignVertical.center,
+                placeholder: placeholder,
+                padding: EdgeInsets.zero,
+                decoration: const BoxDecoration(),
                 style: TextStyle(fontSize: 17, height: 1.2, letterSpacing: -0.41, color: palette.text),
-                decoration: InputDecoration(
-                  isDense: true,
-                  isCollapsed: true,
-                  border: InputBorder.none,
-                  hintText: placeholder,
-                  hintStyle: TextStyle(fontSize: 17, height: 1.2, color: palette.textSecondary.withValues(alpha: 0.7)),
-                ),
+                placeholderStyle: TextStyle(fontSize: 17, height: 1.2, color: palette.textSecondary.withValues(alpha: 0.7)),
               ),
             ),
           ],
