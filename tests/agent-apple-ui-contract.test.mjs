@@ -181,3 +181,17 @@ test('theme labels are localized too', () => {
   for (const zh of ['凝霜蓝', '熔岩流', '浅葱影', '极夜青']) assert.ok(strings.includes(zh), `missing zh theme label ${zh}`);
   for (const en of ['Frost Blue', 'Lava Flow', 'Asagi Shade', 'Cyber Night']) assert.ok(strings.includes(en), `missing en theme label ${en}`);
 });
+
+test('settings field rows are a 44pt iOS row, never an expanding TextField', () => {
+  const group = read('zephyr_agent/lib/ui/settings_group.dart');
+  assert.match(group, /class SettingsFieldRow/);
+  assert.match(group, /return SizedBox\(\s*height: 44,/);
+  assert.match(group, /maxLines: 1/);
+  assert.match(group, /expands: false/);
+  assert.match(group, /isCollapsed: true/);
+  // The 1.0.31 regression: ConstrainedBox(minHeight: 44) around a TextField
+  // inside a ListView Column, with no maxHeight, filled the viewport.
+  assert.doesNotMatch(group, /ConstrainedBox\(\s*constraints: const BoxConstraints\(minHeight: 44\),\s*child: Padding\(\s*padding: const EdgeInsets\.symmetric\(horizontal: 16\),\s*child: Row\(/);
+  const colors = read('zephyr_agent/lib/theme/zephyr_colors.dart');
+  assert.match(colors, /constraints: const BoxConstraints\(minHeight: 22, maxHeight: 44\)/);
+});

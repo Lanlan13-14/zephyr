@@ -22,6 +22,7 @@ class SettingsGroup extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 28),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (header != null)
@@ -43,6 +44,7 @@ class SettingsGroup extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 for (var i = 0; i < children.length; i++) ...[
                   if (i > 0)
@@ -215,16 +217,23 @@ class SettingsFieldRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = SettingsPalette.of(context);
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 44),
+    // Tight height is load-bearing. A TextField inside a ListView-hosted
+    // Column receives unbounded max height; Material 3's InputDecorator then
+    // expands to fill the viewport (the gray slab in 1.0.31). A 44pt iOS
+    // settings row never grows past that.
+    return SizedBox(
+      height: 44,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             SizedBox(
               width: 88,
               child: Text(
                 label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 17, letterSpacing: -0.41, color: palette.text),
               ),
             ),
@@ -233,10 +242,17 @@ class SettingsFieldRow extends StatelessWidget {
                 controller: controller,
                 enabled: enabled,
                 keyboardType: keyboardType,
-                style: TextStyle(fontSize: 17, letterSpacing: -0.41, color: palette.text),
+                maxLines: 1,
+                minLines: 1,
+                expands: false,
+                textAlignVertical: TextAlignVertical.center,
+                style: TextStyle(fontSize: 17, height: 1.2, letterSpacing: -0.41, color: palette.text),
                 decoration: InputDecoration(
+                  isDense: true,
+                  isCollapsed: true,
+                  border: InputBorder.none,
                   hintText: placeholder,
-                  hintStyle: TextStyle(fontSize: 17, color: palette.textSecondary.withValues(alpha: 0.7)),
+                  hintStyle: TextStyle(fontSize: 17, height: 1.2, color: palette.textSecondary.withValues(alpha: 0.7)),
                 ),
               ),
             ),
