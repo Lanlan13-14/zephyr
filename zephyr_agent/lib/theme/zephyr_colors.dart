@@ -177,11 +177,13 @@ class ZephyrColors {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: false,
+        isDense: true,
         border: InputBorder.none,
         enabledBorder: InputBorder.none,
         focusedBorder: InputBorder.none,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
         hintStyle: TextStyle(fontSize: 17, color: p.textSecondary.withValues(alpha: 0.7)),
+        constraints: const BoxConstraints(minHeight: 22, maxHeight: 44),
       ),
       // Deliberately no elevatedButtonTheme / outlinedButtonTheme /
       // switchTheme / chipTheme: the UI must not fall back to MD3 controls.
