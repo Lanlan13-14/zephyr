@@ -76,8 +76,8 @@ class SettingsGroup extends StatelessWidget {
 
   Widget _groupPlate({required bool glass, required Widget child}) {
     if (!glass) return child;
-    return const LiquidGlass(
-      borderRadius: BorderRadius.all(Radius.circular(12)),
+    return LiquidGlass(
+      borderRadius: BorderRadius.circular(12),
       child: child,
     );
   }

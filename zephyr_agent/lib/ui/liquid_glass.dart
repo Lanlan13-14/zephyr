@@ -98,10 +98,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
           ..setFloat(3, widget.refractionHeight)
           ..setFloat(4, widget.refractionAmount)
           ..setFloat(5, 1.0);
-        filter = ImageFilter.shader(
-          shader,
-          tileMode: TileMode.mirror,
-        );
+        filter = ImageFilter.shader(shader);
       } else {
         filter = ImageFilter.blur(sigmaX: widget.blur, sigmaY: widget.blur);
       }

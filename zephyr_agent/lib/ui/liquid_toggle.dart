@@ -328,7 +328,7 @@ class _GlassThumbState extends State<_GlassThumb> {
         ..setFloat(3, 5 * press)
         ..setFloat(4, 10 * press)
         ..setFloat(5, 1.0);
-      backdrop = ImageFilter.shader(lens, tileMode: TileMode.mirror);
+      backdrop = ImageFilter.shader(lens);
     } else {
       backdrop = ImageFilter.blur(
         sigmaX: 8 * (1 - press),
