@@ -144,40 +144,36 @@ class ZephyrColors {
         error: p.danger,
       ),
       scaffoldBackgroundColor: p.bg,
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
       cardTheme: CardThemeData(
         color: p.surface,
         elevation: 0,
+        margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: const BorderRadius.all(Radius.circular(14)),
-          side: BorderSide(color: p.border),
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          side: BorderSide.none,
         ),
       ),
       appBarTheme: AppBarTheme(
-        backgroundColor: p.bg,
+        backgroundColor: p.bg.withValues(alpha: 0.72),
         foregroundColor: p.text,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: true,
+        titleTextStyle: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, letterSpacing: -0.4, color: p.text),
       ),
       textTheme: (isDark ? ThemeData.dark() : ThemeData.light()).textTheme.apply(
         bodyColor: p.text,
         displayColor: p.text,
       ),
       inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: isDark ? p.surface : Colors.white,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: p.border),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: p.border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: p.accent, width: 1.4),
-        ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        filled: false,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        hintStyle: TextStyle(fontSize: 17, color: p.textSecondary.withValues(alpha: 0.7)),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
