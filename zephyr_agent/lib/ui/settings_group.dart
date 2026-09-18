@@ -78,9 +78,6 @@ class SettingsGroup extends StatelessWidget {
     if (!glass) return child;
     return LiquidGlass(
       borderRadius: BorderRadius.circular(12),
-      blur: 28,
-      thickness: 14,
-      lightIntensity: 0.65,
       child: child,
     );
   }

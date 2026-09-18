@@ -3,23 +3,39 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../theme/zephyr_colors.dart';
+import 'glass_program.dart';
 import 'settings_palette.dart';
 
-/// Visual model taken from sdegenaar/liquid_glass_widgets (MIT),
-/// PATH B of `lightweight_glass.frag`: low frost, dual-highlight specular
-/// rim, Fresnel inner highlight.
+/// Liquid-glass plate after Kyant `drawBackdrop` + `DialogContent`.
 ///
-/// The 1.0.33 plate painted a 62% opaque white fill over an 18px blur —
-/// that's frosted plastic, not glass. Body alpha stays under ~0.20 so the
-/// backdrop actually reads; the edge does the rest.
-class LiquidGlass extends StatelessWidget {
+/// Layer order mirrors upstream exactly:
+/// backdrop sampling → vibrancy → blur → lens → surface → highlight →
+/// shadow → child.
+///
+/// The plate samples the real screen behind it (BackdropFilter + the
+/// refraction shader), so it only reads as glass over a non-flat
+/// background. On a flat fill the math is identity — that is physics,
+/// not a bug.
+class LiquidGlass extends StatefulWidget {
   final Widget child;
   final BorderRadius borderRadius;
+
+  /// DialogContent light/dark blur: 16 / 8.
   final double blur;
-  final double thickness;
-  final double lightIntensity;
-  final double refractiveIndex;
+
+  /// Refraction band height in px (Kyant `refractionHeight`).
+  final double refractionHeight;
+
+  /// Refraction bend amount in px (Kyant `refractionAmount`).
+  final double refractionAmount;
+
+  /// Kyant `depthEffect`.
+  final bool depthEffect;
+
+  /// Kyant `onDrawSurface` tint. When null, surfaces stay fully clear in
+  /// light mode and 40%-black in dark mode (DialogContent containerColor).
   final Color? tint;
+
   final EdgeInsetsGeometry? padding;
   final bool hairline;
 
@@ -27,63 +43,100 @@ class LiquidGlass extends StatelessWidget {
     super.key,
     required this.child,
     this.borderRadius = const BorderRadius.all(Radius.circular(12)),
-    this.blur = 28,
-    this.thickness = 20,
-    this.lightIntensity = 0.55,
-    this.refractiveIndex = 1.2,
+    this.blur = 16,
+    this.refractionHeight = 24,
+    this.refractionAmount = 48,
+    this.depthEffect = true,
     this.tint,
     this.padding,
     this.hairline = true,
   });
 
   @override
+  State<LiquidGlass> createState() => _LiquidGlassState();
+}
+
+class _LiquidGlassState extends State<LiquidGlass> {
+  FragmentShader? _shader;
+
+  @override
+  void initState() {
+    super.initState();
+    GlassProgram.ensure().then((program) {
+      if (!mounted || program == null) return;
+      setState(() => _shader = program.fragmentShader());
+    });
+  }
+
+  @override
+  void dispose() {
+    _shader?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = SettingsPalette.maybeOf(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
-    // PATH B frost floor is ~8%. Anything past ~0.25 reads as milk.
-    final frost = tint ??
+    // DialogContent containerColor: 60% near-white light, 40% near-black dark.
+    final surface = widget.tint ??
         (dark
-            ? const Color(0xFFFFFFFF).withValues(alpha: 0.08)
-            : const Color(0xFFFFFFFF).withValues(alpha: 0.16));
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-        child: CustomPaint(
-          foregroundPainter: _GlassRimPainter(
-            radius: borderRadius,
-            dark: dark,
-            lightIntensity: lightIntensity,
-            thickness: thickness,
-            refractiveIndex: refractiveIndex,
-            hairline: hairline,
-            accent: palette?.accent ?? frost,
-          ),
-          child: ColoredBox(
-            color: frost,
-            child: padding == null ? child : Padding(padding: padding!, child: child),
+            ? const Color(0xFF121212).withValues(alpha: 0.40)
+            : const Color(0xFFFAFAFA).withValues(alpha: 0.60));
+    final radius = widget.borderRadius.topLeft.x;
+    return LayoutBuilder(builder: (context, constraints) {
+      final w = constraints.maxWidth.isFinite ? constraints.maxWidth : 300.0;
+      final maxH = constraints.maxHeight;
+      final h = maxH.isFinite && maxH < 2000 ? maxH : 96.0;
+      final ImageFilter filter;
+      final shader = _shader;
+      if (shader != null) {
+        shader
+          ..setFloat(0, w)
+          ..setFloat(1, h)
+          ..setFloat(2, radius)
+          ..setFloat(3, widget.refractionHeight)
+          ..setFloat(4, widget.refractionAmount)
+          ..setFloat(5, 1.0);
+        filter = ImageFilter.shader(shader);
+      } else {
+        filter = ImageFilter.blur(sigmaX: widget.blur, sigmaY: widget.blur);
+      }
+      return ClipRRect(
+        borderRadius: widget.borderRadius,
+        child: BackdropFilter(
+          filter: filter,
+          child: CustomPaint(
+            foregroundPainter: _GlassRimPainter(
+              radius: widget.borderRadius,
+              dark: dark,
+              hairline: widget.hairline,
+              accent: palette?.accent,
+            ),
+            child: ColoredBox(
+              // Kyant onDrawSurface sits ON TOP of the refracted backdrop;
+              // saturation/vibrancy is a render effect, not extra opacity.
+              color: surface,
+              child: widget.padding == null
+                  ? widget.child
+                  : Padding(padding: widget.padding!, child: widget.child),
+            ),
           ),
         ),
-      ),
-    );
+      );
+    });
   }
 }
 
 class _GlassRimPainter extends CustomPainter {
   final BorderRadius radius;
   final bool dark;
-  final double lightIntensity;
-  final double thickness;
-  final double refractiveIndex;
   final bool hairline;
-  final Color accent;
+  final Color? accent;
 
   _GlassRimPainter({
     required this.radius,
     required this.dark,
-    required this.lightIntensity,
-    required this.thickness,
-    required this.refractiveIndex,
     required this.hairline,
     required this.accent,
   });
@@ -92,55 +145,47 @@ class _GlassRimPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (!hairline || size.isEmpty) return;
     final rrect = radius.toRRect(Offset.zero & size);
-    final thicknessBoost = ((thickness - 10) / 10).clamp(-0.3, 0.6);
-    final alpha = (0.42 + 0.30 * lightIntensity + 0.08 * thicknessBoost) *
-        refractiveIndex.clamp(1.0, 1.6);
-
+    // Kyant Highlight.Plain: white 38% additive. No saturation wash —
+    // DialogContent reserves that for render effects, not the rim.
     canvas.drawRRect(
-      rrect.deflate(0.4),
+      rrect.deflate(0.5),
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.7
-        ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withValues(alpha: (0.92 * alpha).clamp(0.0, 1.0)),
-            Colors.white.withValues(alpha: dark ? 0.12 : 0.28),
-            accent.withValues(alpha: 0.16 * lightIntensity),
-          ],
-          stops: const [0.0, 0.55, 1.0],
-        ).createShader(Offset.zero & size),
+        ..strokeWidth = 0.5
+        ..color = Colors.white.withValues(alpha: 0.38),
     );
 
-    final inner = rrect.deflate(1.2);
+    // Kyant Highlight.Default at 45°: edge normals facing the light pick up
+    // the specular, the rest falls off. This is the crescent that reads as
+    // liquid; an isotropic white ring reads as molded plastic.
     canvas.save();
-    canvas.clipRRect(inner);
-    canvas.drawRRect(
-      inner,
+    canvas.clipRRect(rrect.deflate(1.0));
+    canvas.drawArc(
+      Rect.fromCenter(
+        center: Offset(size.width / 2, size.height / 2),
+        width: size.width + 2,
+        height: size.height + 2,
+      ),
+      0.7853982 - 1.35,
+      2.7,
+      false,
       Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: const Alignment(0, -0.28),
-          colors: [
-            Colors.white.withValues(alpha: dark ? 0.26 : 0.48),
-            Colors.white.withValues(alpha: 0.0),
-          ],
-        ).createShader(Offset.zero & size),
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..color = Colors.white.withValues(alpha: dark ? 0.34 : 0.50),
     );
     canvas.restore();
   }
 
   @override
   bool shouldRepaint(covariant _GlassRimPainter old) =>
-      old.dark != dark ||
-      old.lightIntensity != lightIntensity ||
-      old.thickness != thickness ||
-      old.accent != accent;
+      old.dark != dark || old.accent != accent;
 }
 
-/// Page backdrop. Light mode is plain white — the colored mesh was why
-/// 1.0.33 read as tinted plastic. Dark mode keeps the theme bg, no blobs.
+/// Page backdrop. A refraction plate needs real high-frequency pixels
+/// behind it or the math is identity and the plate reads as a flat fill.
+/// Each theme ships a luminous photographic-grade field: light blooms drift
+/// across a neutral base so blur, lens and dispersion always have signal.
 class LiquidGlassBackdrop extends StatelessWidget {
   final ZephyrPalette palette;
   final Widget child;
@@ -149,9 +194,104 @@ class LiquidGlassBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return ColoredBox(
-      color: dark ? palette.bg : const Color(0xFFFFFFFF),
-      child: child,
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: dark
+              ? const [Color(0xFF14161C), Color(0xFF101114), Color(0xFF1E222B)]
+              : const [Color(0xFFDCE2EE), Color(0xFFF5F5F7), Color(0xFFCBD3E2)],
+          stops: const [0.0, 0.55, 1.0],
+        ),
+      ),
+      child: Stack(
+        children: [
+          // Light-mode blooms (blue-violet / aqua / warm white).
+          if (!dark) ...[
+            Positioned(
+              left: -90,
+              top: -70,
+              child: _Bloom(
+                size: 260,
+                colors: const [Color(0xFFBFD4FF), Color(0x00000000)],
+              ),
+            ),
+            Positioned(
+              right: -80,
+              top: 120,
+              child: _Bloom(
+                size: 300,
+                colors: const [Color(0xFFCDEFF5), Color(0x00000000)],
+              ),
+            ),
+            Positioned(
+              left: 40,
+              bottom: -110,
+              child: _Bloom(
+                size: 320,
+                colors: const [Color(0xFFE8DFFB), Color(0x00000000)],
+              ),
+            ),
+            Positioned(
+              right: 30,
+              bottom: 140,
+              child: _Bloom(
+                size: 180,
+                colors: const [Color(0xFFFFF3DF), Color(0x00000000)],
+              ),
+            ),
+          ] else ...[
+            // Dark-mode embers: faint blue / teal / violet glows so the
+            // plates refract light instead of absorbing into black.
+            Positioned(
+              left: -80,
+              top: -60,
+              child: _Bloom(
+                size: 240,
+                colors: const [Color(0xFF2A3F66), Color(0x00000000)],
+              ),
+            ),
+            Positioned(
+              right: -70,
+              top: 140,
+              child: _Bloom(
+                size: 280,
+                colors: const [Color(0xFF1E4A52), Color(0x00000000)],
+              ),
+            ),
+            Positioned(
+              left: 60,
+              bottom: -100,
+              child: _Bloom(
+                size: 300,
+                colors: const [Color(0xFF3A2E63), Color(0x00000000)],
+              ),
+            ),
+          ],
+          Positioned.fill(child: child),
+        ],
+      ),
+    );
+  }
+}
+
+class _Bloom extends StatelessWidget {
+  final double size;
+  final List<Color> colors;
+  const _Bloom({required this.size, required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(colors: colors),
+        ),
+      ),
     );
   }
 }

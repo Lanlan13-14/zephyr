@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
+import 'glass_program.dart';
 import 'settings_palette.dart';
 
 /// Capsule liquid-glass switch, 1:1 after Kyant0/AndroidLiquidGlass
@@ -276,7 +277,7 @@ class _LiquidToggleState extends State<LiquidToggle>
   }
 }
 
-class _GlassThumb extends StatelessWidget {
+class _GlassThumb extends StatefulWidget {
   final double width;
   final double height;
   final double press;
@@ -288,16 +289,55 @@ class _GlassThumb extends StatelessWidget {
   });
 
   @override
+  State<_GlassThumb> createState() => _GlassThumbState();
+}
+
+class _GlassThumbState extends State<_GlassThumb> {
+  FragmentShader? _lens;
+
+  @override
+  void initState() {
+    super.initState();
+    GlassProgram.ensure().then((program) {
+      if (!mounted || program == null) return;
+      setState(() => _lens = program.fragmentShader());
+    });
+  }
+
+  @override
+  void dispose() {
+    _lens?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(height / 2);
-    // Kyant onDrawSurface: solid white fading out on press (alpha 1→0).
-    final surfaceOpacity = (1 - press).clamp(0.0, 1.0);
-    final blurSigma = 8 * (1 - press);
-    final refrHeight = 5 * press;
-    final refrAmount = 10 * press;
+    final press = widget.press.clamp(0.0, 1.0);
+    final radius = BorderRadius.circular(widget.height / 2);
+    final lens = _lens;
+    final ImageFilter backdrop;
+    if (lens != null) {
+      // Kyant thumb stack, 1:1: blur(8·(1−p)) then lens(5p, 10p,
+      // chromatic). The combined backdrop runs on the real screen behind
+      // the thumb; the same-shader multi-effect chain equals upstream
+      // effects = { blur(...); lens(...) } without a second layer.
+      lens
+        ..setFloat(0, widget.width)
+        ..setFloat(1, widget.height)
+        ..setFloat(2, widget.height / 2)
+        ..setFloat(3, 5 * press)
+        ..setFloat(4, 10 * press)
+        ..setFloat(5, 1.0);
+      backdrop = ImageFilter.shader(lens);
+    } else {
+      backdrop = ImageFilter.blur(
+        sigmaX: 8 * (1 - press),
+        sigmaY: 8 * (1 - press),
+      );
+    }
     return SizedBox(
-      width: width,
-      height: height,
+      width: widget.width,
+      height: widget.height,
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: radius,
@@ -313,14 +353,9 @@ class _GlassThumb extends StatelessWidget {
         child: ClipRRect(
           borderRadius: radius,
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+            filter: backdrop,
             child: CustomPaint(
-              painter: _ThumbGlassPainter(
-                press: press,
-                surfaceOpacity: surfaceOpacity,
-                refrHeight: refrHeight,
-                refrAmount: refrAmount,
-              ),
+              painter: _ThumbGlassPainter(press: press),
             ),
           ),
         ),
@@ -331,96 +366,57 @@ class _GlassThumb extends StatelessWidget {
 
 class _ThumbGlassPainter extends CustomPainter {
   final double press;
-  final double surfaceOpacity;
-  final double refrHeight;
-  final double refrAmount;
 
-  _ThumbGlassPainter({
-    required this.press,
-    required this.surfaceOpacity,
-    required this.refrHeight,
-    required this.refrAmount,
-  });
+  _ThumbGlassPainter({required this.press});
 
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
     final rrect =
         RRect.fromRectAndRadius(rect, Radius.circular(size.height / 2));
-    // Hollow shell: the see-through center is the glass. Surface white
-    // fades with press; on press the thumb is almost pure refraction.
+    // Kyant onDrawSurface: white 100% resting, gone on full press. Resting
+    // alpha is 0.20–0.40 so the backdrop shows through even at rest; press
+    // thins it toward the ~0.08 edge hiss of a pure refraction shell.
+    final surface = 0.32 * (1 - press) + 0.08 * press;
     canvas.drawRRect(
       rrect,
-      Paint()..color = Colors.white.withValues(alpha: surfaceOpacity),
+      Paint()..color = Colors.white.withValues(alpha: surface),
     );
 
-    // Ambient highlight that grows with press (upstream scales 2/3→0.75 at
-    // half width, 0→0.75 blur radius; painter approximation here).
-    final ambientAlpha = (0.35 + 0.65 * press).clamp(0.0, 1.0);
-    canvas.drawRRect(
-      rrect.deflate(0.4),
+    // Kyant Highlight.Ambient at alpha = press: light-side crescent whose
+    // size tracks press, not a uniform ring. Draw only the facing arc.
+    final ambient = (0.30 + 0.70 * press).clamp(0.0, 1.0);
+    canvas.save();
+    canvas.clipRRect(rrect.deflate(0.9));
+    canvas.drawArc(
+      Rect.fromCenter(
+        center: Offset(size.width / 2, size.height / 2),
+        width: size.width + 1.5,
+        height: size.height + 1.5,
+      ),
+      0.7853982 - 1.15,
+      2.3,
+      false,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.75
-        ..color = Colors.white.withValues(alpha: 0.75 * ambientAlpha),
-    );
-
-    // Inner shadow gated by press.
-    if (press > 0.02) {
-      canvas.drawRRect(
-        rrect.deflate(1.2),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.2 * press.clamp(0.0, 1.0)
-          ..color = Colors.black.withValues(alpha: 0.10 * press),
-      );
-    }
-
-    // Liquid refraction tongue: a thin bent band hugging the rim.
-    // Full refraction field lives in the lens shader; the painter draws the
-    // visible chromatic edge so the non-shader path still bends light.
-    if (refrAmount > 0.05) {
-      final band = (refrHeight + 1.5).clamp(0.0, size.height / 2);
-      canvas.drawRRect(
-        rrect.deflate(size.height / 2 - band),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2
-          ..shader = LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              const Color(0xFF5AC8FA).withValues(alpha: 0.30 * press),
-              Colors.white.withValues(alpha: 0.10 * press),
-              const Color(0xFFFF375F).withValues(alpha: 0.24 * press),
-            ],
-            stops: const [0.0, 0.5, 1.0],
-          ).createShader(rect),
-      );
-    }
-
-    // Top inner highlight.
-    canvas.save();
-    canvas.clipRRect(rrect.deflate(0.8));
-    canvas.drawRRect(
-      rrect,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: const Alignment(0, -0.1),
-          colors: [
-            Colors.white.withValues(alpha: 0.55 + 0.20 * press),
-            Colors.white.withValues(alpha: 0.0),
-          ],
-        ).createShader(rect),
+        ..strokeWidth = 1.1
+        ..color = Colors.white.withValues(alpha: 0.75 * ambient),
     );
     canvas.restore();
+
+    // Kyant InnerShadow(radius 4·p, alpha p): press-controlled depth cue.
+    if (press > 0.02) {
+      canvas.drawRRect(
+        rrect.deflate(1.1),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4 * press
+          ..color = Colors.black.withValues(alpha: press),
+      );
+    }
   }
 
   @override
   bool shouldRepaint(covariant _ThumbGlassPainter old) =>
-      old.press != press ||
-      old.surfaceOpacity != surfaceOpacity ||
-      old.refrHeight != refrHeight ||
-      old.refrAmount != refrAmount;
+      old.press != press;
 }

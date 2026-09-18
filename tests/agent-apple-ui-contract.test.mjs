@@ -33,7 +33,7 @@ test('every toggle is the liquid-glass switch, not MD3 Switch', () => {
   assert.match(toggle, /class LiquidToggle/);
   assert.match(toggle, /Kyant0\/AndroidLiquidGlass/);
   assert.match(toggle, /BackdropFilter/);
-  assert.match(toggle, /0xFF5AC8FA/);
+  assert.match(toggle, /glass_lens\.frag|GlassProgram/);
   assert.match(toggle, /disableAnimations/);
   const group = read('zephyr_agent/lib/ui/settings_group.dart');
   assert.match(group, /LiquidToggle\(/);
@@ -70,16 +70,18 @@ test('the toggle track is the single theme accent, never a fixed green', () => {
   assert.doesNotMatch(group, /activeColor: iconColor/);
 });
 
-test('the toggle thumb is a hollow refractive shell, not a milk-white knob', () => {
+test('the toggle thumb bends the backdrop through the lens shader, not a knob', () => {
   const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
-  // Kyant onDrawSurface: white fades out on press, blur/lens scale with press.
-  assert.match(toggle, /surfaceOpacity = \(1 - press\)/);
-  assert.match(toggle, /blurSigma = 8 \* \(1 - press\)/);
-  assert.match(toggle, /refrHeight = 5 \* press/);
-  assert.match(toggle, /refrAmount = 10 \* press/);
+  // Kyant thumb stack: blur + lens shader on the real backdrop, press-driven.
+  assert.match(toggle, /GlassProgram\.ensure\(\)/);
+  assert.match(toggle, /setFloat\(3, 5 \* press\)/);
+  assert.match(toggle, /setFloat\(4, 10 \* press\)/);
   assert.match(toggle, /BackdropFilter/);
   assert.match(toggle, /0x0D000000/);
-  // The sdegenaar milk fill (0.94 white) and bloom core are gone.
+  // Resting surface is translucent (Kyant 1.0 -> 0 by press); static chalk
+  // white and the sdegenaar leftovers are gone.
+  assert.match(toggle, /0\.32 \* \(1 - press\) \+ 0\.08 \* press/);
+  assert.doesNotMatch(toggle, /surfaceOpacity = \(1 - press\)/);
   assert.doesNotMatch(toggle, /0\.94/);
   assert.doesNotMatch(toggle, /coreOpacity/);
 });
@@ -210,12 +212,18 @@ test('grouped cards, sheets, and the primary button are liquid glass over a refr
   const glass = read('zephyr_agent/lib/ui/liquid_glass.dart');
   assert.match(glass, /class LiquidGlass/);
   assert.match(glass, /BackdropFilter/);
-  assert.match(glass, /sdegenaar\/liquid_glass_widgets/);
-  assert.match(glass, /PATH B/);
-  // Light-mode page is plain white — the tinted mesh was plastic, not glass.
-  assert.match(glass, /dark \? palette\.bg : const Color\(0xFFFFFFFF\)/);
-  assert.doesNotMatch(glass, /palette\.accent\.withValues\(alpha: dark \? 0\.22/);
-  // Body frost stays under 0.20 so the backdrop reads through.
-  assert.match(glass, /alpha: 0\.16\)/);
-  assert.doesNotMatch(glass, /alpha: 0\.62/);
+  assert.match(glass, /Kyant/);
+  // Kyant wire-up: refraction shader over the real backdrop, not a bare blur.
+  assert.match(glass, /GlassProgram\.ensure\(\)/);
+  assert.match(glass, /ImageFilter\.shader\(/);
+  assert.match(glass, /setFloat\(3, widget\.refractionHeight\)/);
+  assert.match(glass, /setFloat\(4, widget\.refractionAmount\)/);
+  // Kyant surface: 60% near-white light, 40% near-black dark.
+  assert.match(glass, /0xFFFAFAFA/);
+  assert.match(glass, /0xFF121212/);
+  // Rim is a 45° crescent (Default) over a Plain hairline — never a uniform ring.
+  assert.match(glass, /0\.7853982 - 1\.35/);
+  // The backdrop must carry light for refraction: blooms, not a dead fill.
+  assert.match(glass, /_Bloom\(/);
+  assert.doesNotMatch(glass, /0xFFFFFFFF\)/);
 });
