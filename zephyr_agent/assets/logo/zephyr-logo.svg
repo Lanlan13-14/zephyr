@@ -7,11 +7,13 @@
     </linearGradient>
     <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
       <rect width="200" height="200" fill="#ffffff"/>
-      <circle cx="145" cy="115" r="6.2" fill="#000000"/>
+      <circle cx="145" cy="115" r="7.0" fill="#000000"/>
     </mask>
   </defs>
   <path d="M 43 64 C 84 44, 138 52, 160 77 C 148 94, 108 104, 76 123" stroke="url(#g)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M 49 76 C 89 74, 126 89, 145 115 C 120 134, 76 153, 40 135" stroke="url(#g)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.88" mask="url(#cut)"/>
   <path d="M 80 92 C 108 108, 137 135, 162 129" stroke="url(#g)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.65"/>
-  <circle cx="145" cy="115" r="4.5" fill="#0a84ff" opacity="0.9"/>
+  <circle cx="145" cy="115" r="8.8" stroke="#0a84ff" stroke-width="1.8" opacity="0.45"/>
+  <circle cx="145" cy="115" r="4.8" fill="#0a84ff" opacity="0.95"/>
+  <circle cx="145" cy="115" r="1.8" fill="#ffffff" opacity="0.95"/>
 </svg>
