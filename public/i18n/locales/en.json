@@ -2325,6 +2325,7 @@
   "帧率设置已保存": "Frame-rate setting saved",
   "无法打开笔记，请重试": "Unable to open notes. Try again.",
   "最近同步：": "Last sync: ",
+  "最近连接：": "Last connected: ",
   "查看 Zephyr Client Token": "View Zephyr Client token",
   "查看 Zephyr Client 发布页": "View the Zephyr Client release page",
   "正在应用新的远程桌面尺寸...": "Applying the new remote desktop size...",

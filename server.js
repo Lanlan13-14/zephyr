@@ -971,6 +971,13 @@ fileAgentManager.resolveDeviceAccess = (credential) => {
         return null;
     }
 };
+fileAgentManager.onAgentSeen = ({ deviceId, appVersion } = {}) => {
+    const store = mobileV1Api?.store;
+    if (!store || !deviceId) return;
+    try {
+        store.touchDevice(deviceId, { appVersion });
+    } catch (_) {}
+};
 fileAgentManager.rebindTokenDatabase();
 
 /* Unique per-process identifier; lets clients distinguish "service restarted"

@@ -503,12 +503,23 @@ class OneClientManager {
         });
 
         app.get('/api/one/agents', requireUser, (req, res) => {
+            const enrolled = this.listForUser(req.user.userId)
+                .filter((client) => FileSyncConfigService.isAgentPlatform(client.platform, {
+                    appVersion: client.appVersion,
+                }));
+            const live = this.fileAgentManager && typeof this.fileAgentManager.listAgentsForUser === 'function'
+                ? this.fileAgentManager.listAgentsForUser(req.user.userId)
+                : [];
+            const liveByDevice = new Map(live.map((agent) => [String(agent.deviceId || ''), agent]));
             res.json({
                 ok: true,
-                agents: this.listForUser(req.user.userId)
-                    .filter((client) => FileSyncConfigService.isAgentPlatform(client.platform, {
-                        appVersion: client.appVersion,
-                    })),
+                agents: enrolled.map((client) => {
+                    const online = liveByDevice.get(String(client.clientId));
+                    return {
+                        ...client,
+                        lastSeenAt: online?.lastSeenAt || client.lastSeenAt,
+                    };
+                }),
             });
         });
 

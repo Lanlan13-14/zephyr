@@ -3168,6 +3168,8 @@ const MOTION_FILTER_SELECT_IDS = [
     'languageSelect', 'proxyType',
     // 多用户 → 添加用户 → 角色：与「全部协议」同一套 Motion.morph(mac) / macClose
     'adminUserRole',
+    // 连接编辑器 → 跳板机链：每行下拉与首页「全部协议」同一套 FLIP
+    'jumpRouteSelect',
 ];
 function isMotionFilterShell(shell) {
     return !!shell && MOTION_FILTER_SELECT_IDS.includes(shell.dataset?.selectId || '');
@@ -3268,12 +3270,20 @@ function enhanceToggleSelect(select) {
     // Already wrapped
     if (select.parentElement?.classList?.contains('ui-toggle-select')) {
         select.dataset.toggleSelect = '1';
+        const nativeId = String(select.id || '');
+        if (nativeId.startsWith('jumpRouteSelect-')) {
+            select.parentElement.dataset.selectId = 'jumpRouteSelect';
+        }
         syncToggleSelectFace(select);
         return select.parentElement;
     }
     const shell = document.createElement('div');
     shell.className = 'ui-toggle-select';
-    shell.dataset.selectId = select.id || '';
+    // Jump-chain rows share one motion id. Per-row native ids are
+    // `jumpRouteSelect-0`, `jumpRouteSelect-1`, … — collapse them so the
+    // FLIP opt-in list can name the control once.
+    const nativeId = String(select.id || '');
+    shell.dataset.selectId = nativeId.startsWith('jumpRouteSelect-') ? 'jumpRouteSelect' : nativeId;
     select.parentNode.insertBefore(shell, select);
     shell.appendChild(select);
     select.classList.add('ui-toggle-select-native');
@@ -3692,9 +3702,14 @@ function renderJumpRouteRows(selectedIds = []) {
     $('#jumpRouteList').innerHTML = list.map((id, index) => `
         <div class="jump-route-row" data-jump-route-row>
             <label>${t('跳板机 {index}:', { index: index + 1 })}</label>
-            <select data-jump-route-select>${jumpConnectionOptions(id)}</select>
+            <select id="jumpRouteSelect-${index}" data-jump-route-select>${jumpConnectionOptions(id)}</select>
             <button type="button" class="jump-route-remove" data-remove-jump-route title="${t('移除跳板机')}">×</button>
         </div>`).join('');
+    $$('#jumpRouteList [data-jump-route-select]').forEach((el) => {
+        el.dataset.toggleSelect = '';
+        const shell = enhanceToggleSelect(el);
+        if (shell) shell.dataset.selectId = 'jumpRouteSelect';
+    });
     console.debug('[route-ui]', 'render jump rows', { selectedIds: list, availableSshConnections: connections.filter((c) => String(c.protocol || 'SSH').toUpperCase() === 'SSH' && String(c.id) !== String(editingId || '')).length });
 }
 function setRouteMode(mode = 'direct', selected = '') {
@@ -14977,7 +14992,7 @@ function renderBoundDevices(list, clients, { empty, kind, fallbackName, deleteLa
             <div class="agent-token-main">
                 <div class="agent-token-title"><strong>${escapeHtml(c.deviceName || fallbackName)}</strong><span>${escapeHtml(c.clientId || '')}</span></div>
                 <div class="agent-token-meta">${escapeHtml(c.platform || '—')} · ${c.enabled ? t('已启用') : t('已禁用')} · ${escapeHtml(c.appVersion || '')}</div>
-                <div class="agent-token-meta">${t('最近同步：')}${escapeHtml(formatOneClientTime(c.lastSyncAt))} · ${t('创建：')}${escapeHtml(formatOneClientTime(c.createdAt))}</div>
+                <div class="agent-token-meta">${t(kind === 'agent' ? '最近连接：' : '最近同步：')}${escapeHtml(formatOneClientTime(kind === 'agent' ? (c.lastSeenAt || c.lastSyncAt) : c.lastSyncAt))} · ${t('创建：')}${escapeHtml(formatOneClientTime(c.createdAt))}</div>
             </div>
             <div class="agent-token-buttons">
                 <button class="tool-btn danger" type="button" ${attr}="${escapeHtml(c.clientId)}">${deleteLabel}</button>
