@@ -3682,17 +3682,26 @@ function jumpConnectionOptions(selected = '') {
     const selectedId = String(selected || '');
     const currentEditingId = String(editingId || '');
     const list = connections.filter((c) => String(c.protocol || 'SSH').toUpperCase() === 'SSH' && String(c.id) !== currentEditingId);
+    // Agent bastions arrive as toPublicInfo() rows; caller may hand us raw
+    // WebSocket conns instead. Accept both shapes.
+    const bastions = (Array.isArray(agentBastions) ? agentBastions : [])
+        .map((a) => {
+            const id = String(a?.agentId || a?.id || '');
+            if (!id) return null;
+            const name = String(a?.tokenName || a?.deviceName || id);
+            return { id, label: `${escapeHtml(name)} (${escapeHtml(a?.deviceName || id)})`, value: `agent:${id}` };
+        })
+        .filter(Boolean)
+        .filter((b, i, all) => all.findIndex((x) => x.value === b.value) === i);
     let html = `<option value="">${t('请选择跳板机')}</option>`;
-    if (Array.isArray(agentBastions) && agentBastions.length) {
-        html += `<optgroup label="${t('在线 Agent 跳板机')}">` + agentBastions.map((a) => {
-            const val = `agent:${a.agentId}`;
-            const label = a.tokenName ? `${escapeHtml(a.tokenName)} (${escapeHtml(a.deviceName || a.agentId)})` : escapeHtml(a.deviceName || a.agentId);
-            return `<option value="${val}" ${selectedId === val ? 'selected' : ''}>${label}</option>`;
-        }).join('') + '</optgroup>';
+    if (bastions.length) {
+        html += `<optgroup label="${t('在线 Agent 跳板机')}">` + bastions.map((b) =>
+            `<option value="${b.value}" ${selectedId === b.value ? 'selected' : ''}>${b.label}</option>`
+        ).join('') + '</optgroup>';
     }
     if (list.length) {
-        const groupLabel = Array.isArray(agentBastions) && agentBastions.length ? `<optgroup label="${t('SSH 跳板机连接')}">` : '';
-        const groupClose = Array.isArray(agentBastions) && agentBastions.length ? '</optgroup>' : '';
+        const groupLabel = bastions.length ? `<optgroup label="${t('SSH 跳板机连接')}">` : '';
+        const groupClose = bastions.length ? '</optgroup>' : '';
         html += groupLabel + list.map((c) => `<option value="${c.id}" ${selectedId === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.host)}:${escapeHtml(c.port)})</option>`).join('') + groupClose;
     }
     return html;
@@ -12657,7 +12666,26 @@ function renderNetwork() {
     $('#proxyList').innerHTML = proxies.map((p) => `<div class="mini-item proxy-item"><span class="resource-tag resource-tag-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml((p.type || 'socks5').toUpperCase())}</span><span class="resource-tag resource-tag-host" title="${escapeHtml(p.host)}">${escapeHtml(p.host)}</span><span class="resource-tag resource-tag-port">${Number(p.port) || 1080}</span>${p.username ? `<span class="resource-tag resource-tag-auth">${escapeHtml(p.username)}</span>` : ''}${p.hasPassword ? `<span class="resource-tag resource-tag-secret">${t('有密码')}</span>` : ''}</div><button data-edit-proxy="${p.id}">${t('编辑')}</button><button data-open-proxy="${p.id}">${t('查看')}</button><button data-del-proxy="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无代理')}</p>`;
     $('#sshKeyList').innerHTML = sshKeys.map((k) => `<div class="mini-item ssh-key-item"><span class="ssh-key-tag ssh-key-tag-name" title="${escapeHtml(k.name)}">${escapeHtml(k.name)}</span><div class="ssh-key-meta"><span class="ssh-key-tag ssh-key-tag-private">${k.hasPrivateKey ? t('已保存私钥') : t('无私钥')}</span>${k.hasPassphrase ? `<span class="ssh-key-tag ssh-key-tag-passphrase">${t('有口令')}</span>` : ''}${k.remark ? `<span class="ssh-key-tag ssh-key-tag-remark" title="${escapeHtml(k.remark)}">${escapeHtml(k.remark)}</span>` : ''}</div><button data-edit-ssh-key="${k.id}">${t('编辑')}</button><button data-open-ssh-key="${k.id}">${t('查看')}</button><button data-del-ssh-key="${k.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 SSH 密钥')}</p>`;
 }
-function renderJumpOptions() { if ($('#jumpRouteConfig') && $('#connMode')?.value === 'jump') updateRouteOptions('jump', $$('#jumpRouteList [data-jump-route-select]').map((el) => el.value).filter(Boolean)); }
+function renderJumpOptions() {
+    if ($('#jumpRouteConfig') && $('#connMode')?.value === 'jump') {
+        // Preserve the current per-row selection by index so an async bastion
+        // refresh never resets a row back to the placeholder.
+        const native = $$('#jumpRouteList [data-jump-route-select]');
+        const byIndex = native.map((el) => el.value);
+        if (!native.length) {
+            updateRouteOptions('jump', []);
+            return;
+        }
+        native.forEach((select, index) => {
+            const keep = byIndex[index] || '';
+            select.innerHTML = jumpConnectionOptions(keep);
+            // Restore even when the option vanished (offline Agent) — the
+            // save validator will reject it with its own message.
+            select.value = keep;
+        });
+        native.forEach((select) => syncToggleSelectFace(select));
+    }
+}
 function resetProxyForm() { $('#proxyForm')?.reset(); $('#proxyId').value = ''; $('#proxyType').value = 'socks5'; $('#proxyPort').value = '1080'; }
 function proxyScrimSet(open, _Motion) {
     motionScrimSet('proxyModalScrim', 'proxy1-blurring', open);

@@ -31,7 +31,7 @@ test('the bastion row has no ambiguous subtitle', () => {
 test('every toggle is the liquid-glass switch, not MD3 Switch', () => {
   const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
   assert.match(toggle, /class LiquidToggle/);
-  assert.match(toggle, /GlassSwitch/);
+  assert.match(toggle, /Kyant0\/AndroidLiquidGlass/);
   assert.match(toggle, /BackdropFilter/);
   assert.match(toggle, /0xFF5AC8FA/);
   assert.match(toggle, /disableAnimations/);
@@ -40,15 +40,15 @@ test('every toggle is the liquid-glass switch, not MD3 Switch', () => {
   assert.doesNotMatch(group, /Switch\(/);
 });
 
-test('liquid toggle is the GlassSwitch 58 by 26 capsule with a 380ms jump', () => {
+test('liquid toggle follows Kyant geometry: 64 by 28, 40 by 24 thumb, 20pt travel', () => {
   const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
-  assert.match(toggle, /static const double trackWidth = 58/);
-  assert.match(toggle, /static const double trackHeight = 26/);
-  assert.match(toggle, /duration: const Duration\(milliseconds: 380\)/);
-  assert.match(toggle, /Curves\.easeInOutCubic/);
-  assert.match(toggle, /thumbSize \* 1\.6/);
-  assert.match(toggle, /bloom \* 16\.0|leadStretch/);
-  assert.match(toggle, /onHorizontalDragUpdate/);
+  assert.match(toggle, /static const double trackWidth = 64/);
+  assert.match(toggle, /static const double trackHeight = 28/);
+  assert.match(toggle, /static const double thumbWidth = 40/);
+  assert.match(toggle, /static const double thumbHeight = 24/);
+  assert.match(toggle, /static const double travel = trackWidth - thumbWidth - inset \* 2/);
+  assert.match(toggle, /_onPointerMove/);
+  assert.match(toggle, /SpringSimulation/);
 });
 
 test('the toggle track is the single theme accent, never a fixed green', () => {
@@ -58,26 +58,30 @@ test('the toggle track is the single theme accent, never a fixed green', () => {
   assert.doesNotMatch(toggle, /required this\.activeColor/);
   // On-state track resolves from SettingsPalette accent.
   assert.match(toggle, /SettingsPalette\.maybeOf\(context\)\?\.accent/);
-  // Off-state is the iOS-exact inactive groove from GlassSwitch.
-  assert.match(toggle, /0xFFC5C5C6/);
-  assert.match(toggle, /0x33FFFFFF/);
-  // The old "blend accent into system green" and the fixed green constant are gone.
+  // Off-state is the Kyant groove (translucent system gray).
+  assert.match(toggle, /0x33787878/);
+  assert.match(toggle, /0x5C787880/);
+  // Kyant's own system green must not appear — on-track is the theme accent.
   assert.doesNotMatch(toggle, /0xFF34C759/);
   assert.doesNotMatch(toggle, /0xFF30D158/);
-  assert.doesNotMatch(toggle, /Color\.lerp\(on, accent/);
+  // No sdegenaar specular track gradient or glow.
+  assert.doesNotMatch(toggle, /specularTop/);
   const group = read('zephyr_agent/lib/ui/settings_group.dart');
   assert.doesNotMatch(group, /activeColor: iconColor/);
 });
 
-test('the toggle thumb is a near-clear refractive pill, not a milk-white knob', () => {
+test('the toggle thumb is a hollow refractive shell, not a milk-white knob', () => {
   const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
-  // GlassSwitch._buildThumb light-mode glassColor alpha 0.12 / dark 0.08.
-  assert.match(toggle, /Color\.fromRGBO\(224, 224, 230, 0\.12\)/);
-  assert.match(toggle, /0x14FFFFFF/);
-  assert.match(toggle, /coreOpacity = \(1\.0 - bloom \* 1\.2\)/);
+  // Kyant onDrawSurface: white fades out on press, blur/lens scale with press.
+  assert.match(toggle, /surfaceOpacity = \(1 - press\)/);
+  assert.match(toggle, /blurSigma = 8 \* \(1 - press\)/);
+  assert.match(toggle, /refrHeight = 5 \* press/);
+  assert.match(toggle, /refrAmount = 10 \* press/);
   assert.match(toggle, /BackdropFilter/);
-  // The 1.0.33 milk fill (0.94 white) is gone.
+  assert.match(toggle, /0x0D000000/);
+  // The sdegenaar milk fill (0.94 white) and bloom core are gone.
   assert.doesNotMatch(toggle, /0\.94/);
+  assert.doesNotMatch(toggle, /coreOpacity/);
 });
 
 test('primary actions are glass capsules, not Material elevated buttons', () => {
