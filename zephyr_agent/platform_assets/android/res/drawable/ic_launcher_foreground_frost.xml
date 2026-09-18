@@ -34,7 +34,7 @@
         <group>
             <clip-path
                 android:fillType="evenOdd"
-                android:pathData="M 0 0 H 200 V 200 H 0 Z M 138.8 115 A 6.2 6.2 0 1 0 151.2 115 A 6.2 6.2 0 1 0 138.8 115 Z" />
+                android:pathData="M 0 0 H 200 V 200 H 0 Z M 138 115 A 7.0 7.0 0 1 0 152 115 A 7.0 7.0 0 1 0 138 115 Z" />
             <path
                 android:pathData="M 49 76 C 89 74, 126 89, 145 115 C 120 134, 76 153, 40 135"
                 android:strokeWidth="6"
@@ -76,9 +76,23 @@
             </aapt:attr>
         </path>
 
+        <!-- Outer concentric orbital ring -->
         <path
-            android:pathData="M 140.5 115 A 4.5 4.5 0 1 0 149.5 115 A 4.5 4.5 0 1 0 140.5 115 Z"
+            android:pathData="M 136.2 115 A 8.8 8.8 0 1 0 153.8 115 A 8.8 8.8 0 1 0 136.2 115 Z"
+            android:strokeColor="#FF0A84FF"
+            android:strokeWidth="1.8"
+            android:strokeAlpha="0.45" />
+
+        <!-- Core solid node -->
+        <path
+            android:pathData="M 140.2 115 A 4.8 4.8 0 1 0 149.8 115 A 4.8 4.8 0 1 0 140.2 115 Z"
             android:fillColor="#FF0A84FF"
-            android:fillAlpha="0.9" />
+            android:fillAlpha="0.95" />
+
+        <!-- Central white optical glint -->
+        <path
+            android:pathData="M 143.2 115 A 1.8 1.8 0 1 0 146.8 115 A 1.8 1.8 0 1 0 143.2 115 Z"
+            android:fillColor="#FFFFFFFF"
+            android:fillAlpha="0.95" />
     </group>
 </vector>
