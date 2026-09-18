@@ -38,13 +38,16 @@ void main() {
     expect(value, isFalse);
   });
 
-  testWidgets('toggle is the GlassSwitch 58 by 26 capsule', (tester) async {
+  testWidgets('toggle is the Kyant 64 by 28 capsule', (tester) async {
     await tester.pumpWidget(_wrap(LiquidToggle(value: false, onChanged: (_) {})));
     final size = tester.getSize(find.byType(LiquidToggle));
     expect(size.width, LiquidToggle.trackWidth);
     expect(size.height, LiquidToggle.trackHeight);
-    expect(LiquidToggle.trackWidth, 58);
-    expect(LiquidToggle.trackHeight, 26);
+    expect(LiquidToggle.trackWidth, 64);
+    expect(LiquidToggle.trackHeight, 28);
+    expect(LiquidToggle.thumbWidth, 40);
+    expect(LiquidToggle.thumbHeight, 24);
+    expect(LiquidToggle.travel, 20);
   });
 
   testWidgets('on-state track follows the theme accent, not a fixed green',
@@ -52,13 +55,13 @@ void main() {
     Future<Color> trackColor(ZephyrTheme theme) async {
       await tester.pumpWidget(_wrap(LiquidToggle(value: true, onChanged: (_) {}), theme: theme));
       await tester.pump();
-      final box = tester.widget<Container>(
+      final box = tester.widget<DecoratedBox>(
         find.descendant(
           of: find.byType(LiquidToggle),
-          matching: find.byType(Container),
+          matching: find.byType(DecoratedBox),
         ).first,
       );
-      return (box.decoration as BoxDecoration).gradient!.colors.last;
+      return (box.decoration as BoxDecoration).color!;
     }
 
     final frost = await trackColor(ZephyrTheme.frost);
@@ -69,23 +72,23 @@ void main() {
     expect(frost, isNot(const Color(0xFF34C759)));
   });
 
-  testWidgets('off-state track is the iOS-exact grey regardless of theme',
+  testWidgets('off-state track is the translucent groove regardless of theme',
       (tester) async {
     Future<Color> trackColor(ZephyrTheme theme) async {
       await tester.pumpWidget(_wrap(LiquidToggle(value: false, onChanged: (_) {}), theme: theme));
       await tester.pump();
-      final box = tester.widget<Container>(
+      final box = tester.widget<DecoratedBox>(
         find.descendant(
           of: find.byType(LiquidToggle),
-          matching: find.byType(Container),
+          matching: find.byType(DecoratedBox),
         ).first,
       );
-      return (box.decoration as BoxDecoration).gradient!.colors.last;
+      return (box.decoration as BoxDecoration).color!;
     }
 
     final frost = await trackColor(ZephyrTheme.frost);
     final lava = await trackColor(ZephyrTheme.lava);
-    expect(frost, const Color(0xFFC5C5C6));
+    expect(frost, const Color(0x33787878));
     expect(frost, lava);
   });
 }

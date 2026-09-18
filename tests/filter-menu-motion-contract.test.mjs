@@ -122,6 +122,20 @@ test('jump-host chain rows reuse the dashboard filter toggle + motion id', () =>
     assert.doesNotMatch(styleCss, /\.jump-route-row select\s*\{/);
 });
 
+test('jump-host options list online Agents in their own group, without resetting rows', () => {
+    const optsFn = extractFn(appJs, 'jumpConnectionOptions');
+    assert.match(optsFn, /在线 Agent 跳板机/);
+    assert.match(optsFn, /agent:\$\{id\}|`agent:\$\{id\}`|value: `agent:/);
+    // Accept raw conns and public-info rows; never render the same hop twice.
+    assert.match(optsFn, /a\?\.agentId \|\| a\?\.id/);
+    assert.match(optsFn, /findIndex\(\(x\) => x\.value === b\.value\)/);
+    const refreshFn = extractFn(appJs, 'renderJumpOptions');
+    assert.match(refreshFn, /keep/);
+    assert.match(refreshFn, /syncToggleSelectFace\(select\)/);
+    // Full rebuild must only run when no rows exist yet.
+    assert.match(refreshFn, /if \(!native\.length\)/);
+});
+
 test('snippet empty state mirrors ssh-key dashed muted card', () => {
     assert.match(appJs, /<p class="muted">\$\{t\('暂无代码片段'\)\}<\/p>/);
     assert.match(appJs, /<p class="muted">\$\{t\('暂无 SSH 密钥'\)\}<\/p>/);
