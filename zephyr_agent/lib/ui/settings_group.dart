@@ -1,22 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../theme/zephyr_colors.dart';
 import 'liquid_toggle.dart';
-
-class SettingsPalette extends InheritedWidget {
-  final ZephyrPalette palette;
-  const SettingsPalette({super.key, required this.palette, required super.child});
-
-  static ZephyrPalette of(BuildContext context) {
-    final scope = context.dependOnInheritedWidgetOfExactType<SettingsPalette>();
-    assert(scope != null, 'SettingsPalette missing');
-    return scope!.palette;
-  }
-
-  @override
-  bool updateShouldNotify(SettingsPalette oldWidget) => oldWidget.palette != palette;
-}
+import 'settings_palette.dart';
 
 class SettingsGroup extends StatelessWidget {
   final String? header;
@@ -205,7 +191,6 @@ class SettingsToggleRow extends StatelessWidget {
       trailing: LiquidToggle(
         value: value,
         onChanged: onChanged,
-        activeColor: iconColor,
       ),
     );
   }

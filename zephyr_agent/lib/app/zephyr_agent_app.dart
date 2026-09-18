@@ -5,6 +5,7 @@ import '../theme/zephyr_colors.dart';
 import '../agent/agent_controller.dart';
 import '../screens/home_screen.dart';
 import '../storage/local_settings.dart';
+import '../ui/apple_spinner.dart';
 
 class ZephyrAgentApp extends StatefulWidget {
   const ZephyrAgentApp({super.key});
@@ -56,7 +57,7 @@ class _ZephyrAgentAppState extends State<ZephyrAgentApp> {
         theme: ZephyrColors.buildTheme(_theme, Brightness.light),
         darkTheme: ZephyrColors.buildTheme(_theme, Brightness.dark),
         themeMode: ThemeMode.system,
-        home: const Scaffold(body: Center(child: CircularProgressIndicator())),
+        home: const Scaffold(body: Center(child: AppleSpinner(radius: 12))),
       );
     }
 
@@ -68,6 +69,8 @@ class _ZephyrAgentAppState extends State<ZephyrAgentApp> {
         theme: ZephyrColors.buildTheme(_theme, Brightness.light),
         darkTheme: ZephyrColors.buildTheme(_theme, Brightness.dark),
         themeMode: ThemeMode.system,
+        // UI strings resolve zh/en from the system locale; no in-app override.
+        supportedLocales: const [Locale('en'), Locale('zh')],
         home: HomeScreen(
           currentTheme: _theme,
           onThemeChanged: _setTheme,

@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../i18n/agent_strings.dart';
+
 /// Spawns the bundled `zephyr-link-embed` loopback runtime.
 ///
 /// Same contract as Android's EmbeddedLinkProcess: bind 127.0.0.1:0, print
@@ -28,7 +30,7 @@ class LinkEmbedProcess {
     await stop();
     final binary = resolveBinary();
     if (binary == null) {
-      throw StateError('未找到 zephyr-link-embed，无法建立加密跳板通道');
+      throw StateError(AgentStrings.system.linkEmbedMissing);
     }
     final identity = identityDir();
     await Directory(identity).create(recursive: true);
@@ -50,11 +52,11 @@ class LinkEmbedProcess {
         .first
         .timeout(const Duration(seconds: 10), onTimeout: () {
       child.kill(ProcessSignal.sigkill);
-      throw TimeoutException('Link Runtime 启动超时');
+      throw TimeoutException(AgentStrings.system.linkEmbedTimeout);
     });
     if (!RegExp(r'^127\.0\.0\.1:[1-9][0-9]{0,4}$').hasMatch(line.trim())) {
       child.kill(ProcessSignal.sigkill);
-      throw StateError('Link Runtime 启动失败: $line');
+      throw StateError(AgentStrings.system.linkEmbedFailed(line));
     }
     _process = child;
     unawaited(child.exitCode.then((_) {

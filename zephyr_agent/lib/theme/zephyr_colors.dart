@@ -1,18 +1,26 @@
 // Zephyr theme color definitions — aligned with public/style.css palettes.
 import 'package:flutter/material.dart';
 
+import '../i18n/agent_strings.dart';
+
 enum ZephyrTheme {
   frost,
   lava,
   asagi,
   cyber;
+}
 
-  String get label => switch (this) {
-    frost => '凝霜蓝',
-    lava => '熔岩流',
-    asagi => '浅葱影',
-    cyber => '极夜青',
-  };
+/// Localized display label for a theme (zh/en via [AgentStrings]).
+class ZephyrThemeLabels {
+  ZephyrThemeLabels._();
+  static String of(ZephyrTheme theme, AgentStrings s) => s.themeLabel(
+        switch (theme) {
+          ZephyrTheme.frost => ZephyrThemeLike.frost,
+          ZephyrTheme.lava => ZephyrThemeLike.lava,
+          ZephyrTheme.asagi => ZephyrThemeLike.asagi,
+          ZephyrTheme.cyber => ZephyrThemeLike.cyber,
+        },
+      );
 }
 
 class ZephyrPalette {
@@ -175,37 +183,9 @@ class ZephyrColors {
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         hintStyle: TextStyle(fontSize: 17, color: p.textSecondary.withValues(alpha: 0.7)),
       ),
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: p.accent,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-        ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: p.accent,
-          side: BorderSide(color: p.accent.withValues(alpha: 0.52)),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-      ),
-      switchTheme: SwitchThemeData(
-        thumbColor: WidgetStateProperty.resolveWith((states) {
-          return states.contains(WidgetState.selected) ? p.accent : p.textSecondary;
-        }),
-        trackColor: WidgetStateProperty.resolveWith((states) {
-          return states.contains(WidgetState.selected) ? p.accent.withValues(alpha: 0.36) : p.border;
-        }),
-      ),
-      chipTheme: ChipThemeData(
-        selectedColor: p.accent.withValues(alpha: 0.16),
-        backgroundColor: p.surface,
-        side: BorderSide(color: p.border),
-        labelStyle: TextStyle(color: p.text),
-      ),
+      // Deliberately no elevatedButtonTheme / outlinedButtonTheme /
+      // switchTheme / chipTheme: the UI must not fall back to MD3 controls.
+      // Buttons are GlassPrimaryButton capsules, toggles are LiquidToggle.
     );
   }
 }

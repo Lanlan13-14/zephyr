@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../i18n/agent_strings.dart';
 import 'link_embed_process.dart';
 import 'link_file_runtime.dart';
 import 'link_peer_resolver.dart';
@@ -35,7 +36,7 @@ class HostLinkFileRuntime extends LinkFileRuntime {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       final err = decoded['error'];
       final message = err is Map ? (err['message'] as String? ?? text) : (decoded['error'] as String? ?? text);
-      throw StateError(message.isEmpty ? 'Link Runtime 请求失败 (${res.statusCode})' : message);
+      throw StateError(message.isEmpty ? AgentStrings.system.linkRequestFailed(res.statusCode) : message);
     }
     return decoded;
   }
@@ -94,7 +95,7 @@ class HostLinkFileRuntime extends LinkFileRuntime {
           'serverName': target.serverName,
         });
         if (body['pending'] == true) {
-          throw StateError('Link 握手需要宿主签名，但此端已启用持久身份');
+          throw StateError(AgentStrings.system.linkHandshakeNeedsHost);
         }
         final sessionId = body['sessionId'] as String?;
         if (sessionId == null || sessionId.isEmpty) {
@@ -141,7 +142,7 @@ class HostLinkFileRuntime extends LinkFileRuntime {
     final id = sessionId;
     if (id == null) throw StateError('Agent Link runtime is not connected');
     final peer = _serverUrl ?? '';
-    if (peer.isEmpty) throw StateError('Link 对端未设置');
+    if (peer.isEmpty) throw StateError(AgentStrings.system.linkPeerUnset);
     await _post('/link/tunnel/start', {'sessionId': id, 'peerUrl': peer});
   }
 
