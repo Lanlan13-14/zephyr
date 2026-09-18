@@ -133,3 +133,17 @@ test('the Agent stream handshake is RFC 6455 so Node ws will accept it', () => {
     // Client frames on the public hop must be masked.
     assert.match(tunnel, /writeClientFrame\(t\.conn, 0x1, env\)/);
 });
+
+test('loopback tunnel dial is an HTTP 101 upgrade, not a raw hijack', () => {
+    const go = read('zephyr-link/cmd/zephyr-link-server/main.go');
+    const js = read('link-v2-go-proxy.js');
+    // After the Agent stream attached, the next hop was Node's linkTunnelDial.
+    // Go hijacked and copied tunnel bytes with no status line; Node's parser
+    // then emitted "Parse Error: Expected HTTP/". Both sides now speak 101.
+    assert.match(go, /func writeTunnelUpgrade\(/);
+    assert.match(go, /HTTP\/1\.1 101 Switching Protocols/);
+    assert.match(go, /Upgrade: tcp/);
+    assert.match(js, /Connection: 'Upgrade'/);
+    assert.match(js, /Upgrade: 'tcp'/);
+    assert.match(js, /req\.on\('upgrade'/);
+});

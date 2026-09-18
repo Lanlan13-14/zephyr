@@ -350,10 +350,20 @@ async function linkTunnelDial(sessionId, host_, port_, timeoutMs = 12000, lane =
     return new Promise((resolve, reject) => {
         const req = http.request({
             host, port: Number(port), path: '/internal/tunnel/dial', method: 'POST',
-            headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-link-admin': proc.adminToken },
+            headers: {
+                'content-type': 'application/json',
+                'content-length': Buffer.byteLength(body),
+                'x-link-admin': proc.adminToken,
+                // Without these, Node never emits `upgrade` even if Go writes a
+                // 101 — the parser stays in HTTP-response mode and the first
+                // tunnel byte becomes "Parse Error: Expected HTTP/".
+                Connection: 'Upgrade',
+                Upgrade: 'tcp',
+            },
         });
-        req.on('upgrade', (res, socket) => {
+        req.on('upgrade', (res, socket, head) => {
             socket.setTimeout(0);
+            if (head && head.length) socket.unshift(head);
             resolve(socket);
         });
         req.on('response', (res) => {
