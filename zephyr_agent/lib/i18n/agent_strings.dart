@@ -1,4 +1,4 @@
-import 'dart:ui' as ui show Locale, PlatformDispatcher;
+import 'dart:ui' as ui;
 
 /// Minimal zh/en string table. The bundle follows the system locale
 /// (`ui.PlatformDispatcher.instance.locale`): any zh-* language code resolves
@@ -11,7 +11,7 @@ class AgentStrings {
   final bool zh;
   const AgentStrings._(this.zh);
 
-  static AgentStrings of(Locale? locale) =>
+  static AgentStrings of(ui.Locale? locale) =>
       AgentStrings._(locale?.languageCode.toLowerCase() == 'zh');
 
   static AgentStrings get system => of(ui.PlatformDispatcher.instance.locale);
