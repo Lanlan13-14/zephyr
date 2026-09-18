@@ -36,10 +36,11 @@ class _GlassPrimaryButtonState extends State<GlassPrimaryButton> {
       curve: Curves.easeOutCubic,
       child: LiquidGlass(
         borderRadius: BorderRadius.circular(14),
-        blur: 18,
-        thickness: 18,
-        lightIntensity: 0.7,
-        tint: widget.color.withValues(alpha: _pressed ? 0.62 : 0.74),
+        refractionHeight: 12,
+        refractionAmount: 24,
+        // LiquidButton Tinted: Hue tint + 0.75 surface keeps refraction
+        // visible through the button instead of a flat color slab.
+        tint: widget.color.withValues(alpha: _pressed ? 0.68 : 0.75),
         child: SizedBox(
           height: 50,
           child: Row(
