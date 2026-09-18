@@ -33,7 +33,7 @@ void main() {
         label: 'Address',
         controller: TextEditingController(text: 'https://zephyr.example.com'),
         enabled: true,
-        placeholder: 'https://zephyr.example.com',
+        placeholder: 'https://host.example',
       ),
       SettingsToggleRow(
         icon: Icons.lock_open_outlined,
