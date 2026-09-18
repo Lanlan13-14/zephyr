@@ -1,0 +1,263 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../theme/zephyr_colors.dart';
+import 'liquid_toggle.dart';
+
+class SettingsPalette extends InheritedWidget {
+  final ZephyrPalette palette;
+  const SettingsPalette({super.key, required this.palette, required super.child});
+
+  static ZephyrPalette of(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<SettingsPalette>();
+    assert(scope != null, 'SettingsPalette missing');
+    return scope!.palette;
+  }
+
+  @override
+  bool updateShouldNotify(SettingsPalette oldWidget) => oldWidget.palette != palette;
+}
+
+class SettingsGroup extends StatelessWidget {
+  final String? header;
+  final String? footer;
+  final List<Widget> children;
+
+  const SettingsGroup({
+    super.key,
+    this.header,
+    this.footer,
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = SettingsPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (header != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                header!.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w400,
+                  letterSpacing: 0.2,
+                  color: palette.textSecondary,
+                ),
+              ),
+            ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                for (var i = 0; i < children.length; i++) ...[
+                  if (i > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 54),
+                      child: Divider(height: 0.5, thickness: 0.5, color: palette.border.withValues(alpha: 0.7)),
+                    ),
+                  children[i],
+                ],
+              ],
+            ),
+          ),
+          if (footer != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Text(
+                footer!,
+                style: TextStyle(fontSize: 13, height: 1.3, color: palette.textSecondary),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsRow extends StatefulWidget {
+  final IconData? icon;
+  final Color? iconColor;
+  final String title;
+  final String? detail;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+  final bool showChevron;
+
+  const SettingsRow({
+    super.key,
+    this.icon,
+    this.iconColor,
+    required this.title,
+    this.detail,
+    this.trailing,
+    this.onTap,
+    this.showChevron = false,
+  });
+
+  @override
+  State<SettingsRow> createState() => _SettingsRowState();
+}
+
+class _SettingsRowState extends State<SettingsRow> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = SettingsPalette.of(context);
+    final child = AnimatedContainer(
+      duration: const Duration(milliseconds: 90),
+      curve: Curves.easeOut,
+      color: _pressed ? palette.border.withValues(alpha: 0.45) : Colors.transparent,
+      constraints: const BoxConstraints(minHeight: 44),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          if (widget.icon != null) ...[
+            Container(
+              width: 29,
+              height: 29,
+              decoration: BoxDecoration(
+                color: widget.iconColor ?? palette.accent,
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: Icon(widget.icon, size: 18, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+          ],
+          Expanded(
+            child: Text(
+              widget.title,
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w400,
+                letterSpacing: -0.41,
+                color: palette.text,
+              ),
+            ),
+          ),
+          if (widget.detail != null)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 180),
+              child: Text(
+                widget.detail!,
+                textAlign: TextAlign.right,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 17, color: palette.textSecondary, letterSpacing: -0.3),
+              ),
+            ),
+          if (widget.trailing != null) widget.trailing!,
+          if (widget.showChevron)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Icon(Icons.chevron_right, size: 22, color: palette.textSecondary.withValues(alpha: 0.55)),
+            ),
+        ],
+      ),
+    );
+    if (widget.onTap == null) return child;
+    return Listener(
+      onPointerDown: (_) => setState(() => _pressed = true),
+      onPointerUp: (_) => setState(() => _pressed = false),
+      onPointerCancel: (_) => setState(() => _pressed = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          widget.onTap!();
+        },
+        child: child,
+      ),
+    );
+  }
+}
+
+class SettingsToggleRow extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  const SettingsToggleRow({
+    super.key,
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SettingsRow(
+      icon: icon,
+      iconColor: iconColor,
+      title: title,
+      trailing: LiquidToggle(
+        value: value,
+        onChanged: onChanged,
+        activeColor: iconColor,
+      ),
+    );
+  }
+}
+
+class SettingsFieldRow extends StatelessWidget {
+  final String label;
+  final TextEditingController controller;
+  final bool enabled;
+  final TextInputType? keyboardType;
+  final String? placeholder;
+
+  const SettingsFieldRow({
+    super.key,
+    required this.label,
+    required this.controller,
+    required this.enabled,
+    this.keyboardType,
+    this.placeholder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = SettingsPalette.of(context);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 44),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 88,
+              child: Text(
+                label,
+                style: TextStyle(fontSize: 17, letterSpacing: -0.41, color: palette.text),
+              ),
+            ),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                enabled: enabled,
+                keyboardType: keyboardType,
+                style: TextStyle(fontSize: 17, letterSpacing: -0.41, color: palette.text),
+                decoration: InputDecoration(
+                  hintText: placeholder,
+                  hintStyle: TextStyle(fontSize: 17, color: palette.textSecondary.withValues(alpha: 0.7)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -9,6 +9,8 @@ import '../app/agent_version.dart';
 import '../fs/file_provider.dart';
 import '../storage/local_settings.dart';
 import '../theme/zephyr_colors.dart';
+import '../ui/glass_button.dart';
+import '../ui/settings_group.dart';
 
 class HomeScreen extends StatefulWidget {
   final ZephyrTheme currentTheme;
@@ -38,9 +40,7 @@ class _BindSheetBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = Theme.of(context).brightness == Brightness.dark
-        ? ZephyrColors.palette(ZephyrTheme.frost, Brightness.dark)
-        : ZephyrColors.palette(ZephyrTheme.frost, Brightness.light);
+    final palette = SettingsPalette.of(context);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -186,36 +186,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _pickDirectory(AgentController ctrl) async {
     if (io.Platform.isAndroid) {
-      final choice = await showDialog<String>(
+      final choice = await showModalBottomSheet<String>(
         context: context,
-        builder: (context) => SimpleDialog(
-          title: const Text('选择映射位置'),
-          children: [
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, 'all'),
-              child: const ListTile(
-                leading: Icon(Icons.storage),
-                title: Text('映射整个共享存储'),
-                subtitle: Text('/storage/emulated/0，需要“所有文件访问权限”'),
+        showDragHandle: true,
+        builder: (ctx) => SettingsPalette(
+          palette: _palette,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('共享位置', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 12),
+                  SettingsGroup(children: [
+                    SettingsRow(icon: Icons.storage, iconColor: _palette.accent, title: '整个共享存储', showChevron: true, onTap: () => Navigator.pop(ctx, 'all')),
+                    SettingsRow(icon: Icons.folder_open, iconColor: _palette.accent, title: '选择目录', showChevron: true, onTap: () => Navigator.pop(ctx, 'saf')),
+                    SettingsRow(icon: Icons.edit, iconColor: _palette.textSecondary, title: '输入路径', showChevron: true, onTap: () => Navigator.pop(ctx, 'path')),
+                  ]),
+                ],
               ),
             ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, 'saf'),
-              child: const ListTile(
-                leading: Icon(Icons.folder_open),
-                title: Text('选择自定义目录'),
-                subtitle: Text('使用 Android SAF 授权一个目录'),
-              ),
-            ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, 'path'),
-              child: const ListTile(
-                leading: Icon(Icons.edit),
-                title: Text('手动输入路径'),
-                subtitle: Text('适合 root/Shizuku/特殊挂载路径'),
-              ),
-            ),
-          ],
+          ),
         ),
       );
       if (choice == null) return;
@@ -253,22 +245,30 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _showDesktopPathDialog(AgentController ctrl) async {
     final pathCtrl = TextEditingController(text: ctrl.config.sharedDirectoryPath ?? '');
-    final result = await showDialog<String>(
+    final result = await showModalBottomSheet<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('共享目录路径'),
-        content: TextField(
-          controller: pathCtrl,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: '/Users/name/Downloads 或 C:\\Users\\name\\Downloads',
-            labelText: '本机目录路径',
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => SettingsPalette(
+        palette: _palette,
+        child: Padding(
+          padding: EdgeInsets.only(left: 16, right: 16, top: 4, bottom: MediaQuery.viewInsetsOf(ctx).bottom + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('共享目录', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 12),
+              SettingsGroup(children: [
+                SettingsFieldRow(label: '路径', controller: pathCtrl, enabled: true, placeholder: '/Users/name/Downloads'),
+              ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(child: TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消'))),
+                Expanded(child: TextButton(onPressed: () => Navigator.pop(ctx, pathCtrl.text.trim()), child: const Text('完成'))),
+              ]),
+            ],
           ),
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          ElevatedButton(onPressed: () => Navigator.pop(context, pathCtrl.text.trim()), child: const Text('确定')),
-        ],
       ),
     );
     if (result == null || result.isEmpty) return;
@@ -328,141 +328,61 @@ class _HomeScreenState extends State<HomeScreen> {
         final isActive = ctrl.status.isActive;
         final brightness = Theme.of(context).brightness;
         final accent = ZephyrColors.getPrimary(widget.currentTheme, brightness);
-
-        return Scaffold(
-          appBar: AppBar(
-            leadingWidth: 96,
-            leading: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: '重置设置',
-                  icon: const Icon(Icons.restart_alt),
-                  onPressed: () => _resetSettings(ctrl),
-                ),
-                IconButton(
-                  tooltip: '保存设置',
-                  icon: const Icon(Icons.save_outlined),
-                  onPressed: () => _saveAndNotify(ctrl),
-                ),
-              ],
-            ),
-            title: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+        return SettingsPalette(
+          palette: _palette,
+          child: Scaffold(
+            appBar: AppBar(
+              leadingWidth: 96,
+              leading: Row(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(tooltip: '重置设置', icon: const Icon(Icons.restart_alt), onPressed: () => _resetSettings(ctrl)),
+                IconButton(tooltip: '保存设置', icon: const Icon(Icons.save_outlined), onPressed: () => _saveAndNotify(ctrl)),
+              ]),
+              title: Row(mainAxisSize: MainAxisSize.min, children: [
                 ZephyrMark(palette: _palette, size: 26),
                 const SizedBox(width: 8),
-                const Text('Zephyr Agent', style: TextStyle(fontWeight: FontWeight.w700)),
+                const Text('Zephyr Agent'),
+              ]),
+              actions: [
+                PopupMenuButton<ZephyrTheme>(
+                  icon: Icon(Icons.palette_outlined, color: accent),
+                  onSelected: widget.onThemeChanged,
+                  itemBuilder: (_) => ZephyrTheme.values.map((t) => PopupMenuItem(
+                    value: t,
+                    child: Row(children: [
+                      ZephyrMark(palette: ZephyrColors.palette(t, brightness), size: 22),
+                      const SizedBox(width: 8),
+                      Text(t.label),
+                      if (t == widget.currentTheme) ...[const Spacer(), Icon(Icons.check, size: 18, color: accent)],
+                    ]),
+                  )).toList(),
+                ),
               ],
             ),
-            actions: [
-              PopupMenuButton<ZephyrTheme>(
-                icon: Icon(Icons.palette, color: accent),
-                onSelected: widget.onThemeChanged,
-                itemBuilder: (_) => ZephyrTheme.values.map((t) => PopupMenuItem(
-                  value: t,
-                  child: Row(children: [
-                    ZephyrMark(
-                      palette: ZephyrColors.palette(t, brightness),
-                      size: 22,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(t.label),
-                    if (t == widget.currentTheme) ...[
-                      const Spacer(),
-                      Icon(Icons.check, size: 18, color: accent),
-                    ],
-                  ]),
-                )).toList(),
-              ),
-            ],
-          ),
-          // Bottom-center grey version from compile-time release tag
-          // (agent-v1.0.12 → v1.0.12). Not interactive.
-          bottomNavigationBar: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 10, top: 4),
-              child: Text(
-                AgentVersion.tag,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w400,
-                  letterSpacing: 0.2,
-                  color: _palette.textSecondary.withValues(alpha: 0.72),
-                ),
+            bottomNavigationBar: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 10, top: 4),
+                child: Text(AgentVersion.tag, textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 11, letterSpacing: 0.2, color: _palette.textSecondary.withValues(alpha: 0.72))),
               ),
             ),
-          ),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            body: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               children: [
-                // Status card
-                _buildStatusCard(ctrl, accent),
-                const SizedBox(height: 16),
-
-                // Connection form
-                _buildFormCard(ctrl, isActive, accent),
-                const SizedBox(height: 16),
-
-                // Directory & permissions
-                _buildDirectoryCard(ctrl, isActive, accent),
-                const SizedBox(height: 16),
-
-                // Optional bastion advertisement
-                _buildBastionCard(ctrl, isActive, accent),
-                const SizedBox(height: 16),
-
-                // Encrypted lane status / failure reason
-                if (isActive) _buildLinkStatusCard(ctrl, accent),
-                if (isActive) const SizedBox(height: 16),
-
-                // Auto-shutdown
-                _buildShutdownCard(ctrl, accent),
-                const SizedBox(height: 16),
-
-                // Transfer stats
-                if (ctrl.transferCount > 0)
-                  _buildStatsCard(ctrl, accent),
-
-                const SizedBox(height: 24),
-
-                // Action buttons
+                _statusGroup(ctrl),
+                _connectionGroup(ctrl, isActive, accent),
+                _shareGroup(ctrl, isActive, accent),
+                _accessGroup(ctrl, isActive, accent),
+                if (isActive && (ctrl.linkError.isNotEmpty || !ctrl.linkTunnelUp)) _linkGroup(ctrl),
+                if (ctrl.transferCount > 0) _statsGroup(ctrl),
+                const SizedBox(height: 8),
                 if (!isActive)
-                  SizedBox(
-                    height: 50,
-                    child: ElevatedButton.icon(
-                      onPressed: () => _startConnection(ctrl),
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('启动连接'),
-                    ),
-                  )
+                  GlassPrimaryButton(label: '启动连接', icon: Icons.play_arrow_rounded, color: accent, onPressed: () => _startConnection(ctrl))
                 else ...[
-                  SizedBox(
-                    height: 50,
-                    child: OutlinedButton.icon(
-                      onPressed: () => ctrl.stop(),
-                      icon: const Icon(Icons.stop),
-                      label: const Text('停止共享'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: _palette.danger,
-                        side: BorderSide(color: _palette.danger.withValues(alpha: 0.5)),
-                      ),
-                    ),
-                  ),
+                  GlassPrimaryButton(label: '停止共享', icon: Icons.stop_rounded, color: _palette.danger, onPressed: () => ctrl.stop()),
                   if (ctrl.config.autoShutdown && ctrl.shutdownAt != null) ...[
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 42,
-                      child: TextButton.icon(
-                        onPressed: () => ctrl.extendShutdown(),
-                        icon: const Icon(Icons.timer, size: 18),
-                        label: Text('延长 ${ctrl.config.autoShutdownMinutes} 分钟'),
-                      ),
-                    ),
+                    const SizedBox(height: 10),
+                    Center(child: TextButton(onPressed: () => ctrl.extendShutdown(), child: Text('延长 ${ctrl.config.autoShutdownMinutes} 分钟'))),
                   ],
                 ],
               ],
@@ -473,403 +393,153 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildStatusCard(AgentController ctrl, Color accent) {
+  Widget _statusGroup(AgentController ctrl) {
     final status = ctrl.status;
-    Color dotColor;
-    switch (status) {
-      case AgentStatus.online:
-        dotColor = _palette.success;
-        break;
-      case AgentStatus.connecting:
-      case AgentStatus.authenticating:
-      case AgentStatus.reconnecting:
-        dotColor = _palette.warning;
-        break;
-      case AgentStatus.error:
-        dotColor = _palette.danger;
-        break;
-      default:
-        dotColor = _palette.textSecondary;
-    }
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
-              width: 12, height: 12,
-              decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(status.label,
-                    style: TextStyle(fontWeight: FontWeight.w600, color: dotColor, fontSize: 15)),
-                  if (ctrl.errorMessage.isNotEmpty)
-                    Text(ctrl.errorMessage,
-                      style: TextStyle(color: _palette.textSecondary, fontSize: 12),
-                      maxLines: 2, overflow: TextOverflow.ellipsis),
-                  if (ctrl.agentId != null)
-                    Text('Agent: ${ctrl.agentId}',
-                      style: TextStyle(color: _palette.textSecondary, fontSize: 11)),
-                ],
-              ),
-            ),
-            if (ctrl.config.autoShutdown && ctrl.shutdownAt != null && ctrl.status == AgentStatus.online)
-              _buildCountdown(ctrl),
-          ],
-        ),
-      ),
-    );
+    final Color dot = switch (status) {
+      AgentStatus.online => _palette.success,
+      AgentStatus.connecting || AgentStatus.authenticating || AgentStatus.reconnecting => _palette.warning,
+      AgentStatus.error => _palette.danger,
+      _ => _palette.textSecondary,
+    };
+    return SettingsGroup(header: '状态', children: [
+      SettingsRow(icon: Icons.circle, iconColor: dot, title: status.label, detail: ctrl.errorMessage.isNotEmpty ? ctrl.errorMessage : ctrl.agentId),
+      if (ctrl.config.autoShutdown && ctrl.shutdownAt != null)
+        SettingsRow(icon: Icons.timer_outlined, iconColor: _palette.warning, title: '自动关闭', trailing: _countdown(ctrl)),
+    ]);
   }
 
-  Widget _buildCountdown(AgentController ctrl) {
-    final remaining = ctrl.remainingShutdownTime;
-    if (remaining == null) return const SizedBox.shrink();
+  Widget _countdown(AgentController ctrl) {
+    final remaining = ctrl.shutdownAt!.difference(DateTime.now());
+    if (remaining.isNegative) return Text('即将关闭', style: TextStyle(color: _palette.danger, fontSize: 15));
     final m = remaining.inMinutes;
-    final s = remaining.inSeconds % 60;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: _palette.surface,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}',
-        style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 16),
-      ),
-    );
+    final sec = remaining.inSeconds % 60;
+    return Text('${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}',
+        style: TextStyle(fontSize: 17, fontFamily: 'monospace', color: _palette.textSecondary));
   }
 
-  Widget _buildFormCard(AgentController ctrl, bool isActive, Color accent) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('连接设置', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _urlCtrl,
-              enabled: !isActive,
-              decoration: const InputDecoration(
-                labelText: '主端地址',
-                hintText: 'https://example.com',
-                prefixIcon: Icon(Icons.link, size: 20),
-              ),
-              keyboardType: TextInputType.url,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _nameCtrl,
-              enabled: !isActive,
-              decoration: const InputDecoration(
-                labelText: '设备名称',
-                prefixIcon: Icon(Icons.devices, size: 20),
-              ),
-            ),
+  Widget _connectionGroup(AgentController ctrl, bool isActive, Color accent) {
+    return SettingsGroup(header: '主端', children: [
+      SettingsFieldRow(label: '地址', controller: _urlCtrl, enabled: !isActive, keyboardType: TextInputType.url, placeholder: 'https://zephyr.example.com'),
+      SettingsRow(
+        icon: Icons.verified_user_outlined,
+        iconColor: ctrl.enrollmentStatus == '已绑定' ? _palette.success : accent,
+        title: '设备绑定', detail: ctrl.enrollmentStatus, showChevron: true,
+        onTap: isActive ? null : () => _openBinding(ctrl),
+      ),
+      SettingsToggleRow(
+        icon: Icons.lock_open_outlined, iconColor: _palette.warning, title: '允许自签名证书',
+        value: ctrl.config.allowBadCertificates,
+        onChanged: isActive ? null : (v) { setState(() => ctrl.config.allowBadCertificates = v); _saveConfig(ctrl); },
+      ),
+    ]);
+  }
+
+  Future<void> _openBinding(AgentController ctrl) async {
+    if (ctrl.enrollmentStatus == '已绑定') {
+      final unbind = await showModalBottomSheet<bool>(
+        context: context, showDragHandle: true,
+        builder: (ctx) => SettingsPalette(palette: _palette, child: SafeArea(child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('已绑定', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text('使用设备身份，无需 Token', style: TextStyle(color: _palette.textSecondary, fontSize: 15)),
             const SizedBox(height: 16),
-            _buildBindingRow(ctrl, isActive, accent),
-          ],
-        ),
-      ),
-    );
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text('解绑', style: TextStyle(color: _palette.danger, fontSize: 17))),
+          ]),
+        ))),
+      );
+      if (unbind == true) await ctrl.unbind();
+      return;
+    }
+    await _startEnrollment(ctrl);
   }
 
-  /// Device binding row — the Apple-style replacement for the token field.
-  /// Three states: bound / unbound / failed, each with one clear action.
-  Widget _buildBindingRow(AgentController ctrl, bool isActive, Color accent) {
-    final bound = ctrl.config.accessCredential != null && ctrl.config.accessCredential!.isNotEmpty;
-    final failed = ctrl.enrollmentError != null && !bound;
-    final label = bound
-        ? '已绑定此设备'
-        : failed
-            ? '绑定失败'
-            : ctrl.enrollmentBusy
-                ? '等待主端批准…'
-                : '未绑定';
-    final icon = bound
-        ? Icons.check_circle
-        : failed
-            ? Icons.error_outline
-            : Icons.qr_code_2;
-    final color = bound
-        ? _palette.success
-        : failed
-            ? _palette.danger
-            : accent;
-
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: color),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color)),
-              Text(
-                bound ? '使用 Zephyr One 设备身份，无需 Token' : '在主端批准后完成加密绑定',
-                style: TextStyle(fontSize: 11, color: _palette.textSecondary),
-              ),
-            ],
-          ),
-        ),
-        if (bound)
-          TextButton(
-            onPressed: isActive ? null : () async { await ctrl.unbind(); },
-            child: const Text('解绑'),
-          )
-        else
-          _buildBindButton(ctrl, isActive, accent),
-      ],
-    );
+  Widget _shareGroup(AgentController ctrl, bool isActive, Color accent) {
+    return SettingsGroup(header: '共享', children: [
+      SettingsRow(
+        icon: Icons.folder_outlined, iconColor: accent, title: '共享目录',
+        detail: (ctrl.config.sharedDirectoryPath ?? '').isEmpty ? '未选择' : ctrl.config.sharedDirectoryPath,
+        showChevron: !isActive, onTap: isActive ? null : () => _pickDirectory(ctrl),
+      ),
+      SettingsToggleRow(
+        icon: Icons.lock_outline, iconColor: accent, title: '只读',
+        value: ctrl.config.readOnly,
+        onChanged: isActive ? null : (v) { setState(() => ctrl.config.readOnly = v); _saveConfig(ctrl); },
+      ),
+    ]);
   }
 
-  Widget _buildBindButton(AgentController ctrl, bool isActive, Color accent) {
-    return FilledButton.tonal(
-      onPressed: isActive || ctrl.enrollmentBusy ? null : () => _startEnrollment(ctrl),
-      style: FilledButton.styleFrom(
-        foregroundColor: accent,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+  Widget _accessGroup(AgentController ctrl, bool isActive, Color accent) {
+    return SettingsGroup(header: '访问', children: [
+      SettingsToggleRow(
+        icon: Icons.alt_route, iconColor: accent, title: '作为跳板机',
+        value: ctrl.config.bastionEnabled,
+        onChanged: isActive ? null : (v) { setState(() => ctrl.config.bastionEnabled = v); _saveConfig(ctrl); },
       ),
-      child: ctrl.enrollmentBusy
-          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-          : const Text('绑定设备'),
-    );
+      SettingsToggleRow(
+        icon: Icons.timer_outlined, iconColor: _palette.warning, title: '闲置自动关闭',
+        value: ctrl.config.autoShutdown,
+        onChanged: isActive ? null : (v) { setState(() => ctrl.config.autoShutdown = v); _saveConfig(ctrl); },
+      ),
+    ]);
+  }
+
+  Widget _linkGroup(AgentController ctrl) {
+    final error = ctrl.linkError;
+    return SettingsGroup(header: '加密通道', footer: error.isEmpty ? null : error, children: [
+      SettingsRow(
+        icon: error.isEmpty ? Icons.check_circle_outline : Icons.error_outline,
+        iconColor: error.isEmpty ? _palette.success : _palette.danger,
+        title: error.isEmpty ? '已建立' : '未建立',
+      ),
+    ]);
+  }
+
+  Widget _statsGroup(AgentController ctrl) {
+    final bytes = ctrl.transferBytes;
+    final bytesStr = bytes < 1024 ? '$bytes B' : bytes < 1024 * 1024
+        ? '${(bytes / 1024).toStringAsFixed(1)} KB' : '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    return SettingsGroup(header: '传输', children: [
+      SettingsRow(icon: Icons.swap_vert, iconColor: _palette.accent, title: '${ctrl.transferCount} 次请求', detail: bytesStr),
+    ]);
   }
 
   Future<void> _startEnrollment(AgentController ctrl) async {
     _saveConfig(ctrl);
     ctrl.enroll();
-    // Show the bind sheet as soon as the pending enrollment exists; it
-    // refreshes on every controller notification.
     if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => ListenableBuilder(
-        listenable: ctrl,
-        builder: (dialogContext, _) {
-          final info = ctrl.enrollment;
-          final busy = ctrl.enrollmentBusy;
-          final error = ctrl.enrollmentError;
-          return AlertDialog(
-            title: Text(info != null ? '等待批准' : (busy ? '创建绑定…' : '绑定结果')),
-            content: SizedBox(
-              width: 320,
-              child: info != null
-                  ? _BindSheetBody(info: info)
-                  : (error != null
-                      ? Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Icon(Icons.error_outline, color: _palette.danger, size: 32),
-                          const SizedBox(height: 8),
-                          Text(error, style: TextStyle(fontSize: 13, color: _palette.danger)),
-                        ])
-                      : (busy
-                          ? const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
-                          : const Text('绑定完成'))),
-            ),
-            actions: [
-              if (info != null)
-                TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('后台等待')),
-              if (error != null || !busy)
-                FilledButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('好')),
-            ],
-          );
-        },
+    await showModalBottomSheet<void>(
+      context: context, isScrollControlled: true, showDragHandle: true,
+      builder: (sheetContext) => SettingsPalette(
+        palette: _palette,
+        child: ListenableBuilder(
+          listenable: ctrl,
+          builder: (sheetContext, _) {
+            final info = ctrl.enrollment;
+            final busy = ctrl.enrollmentBusy;
+            final error = ctrl.enrollmentError;
+            return SafeArea(child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(info != null ? '等待批准' : (busy ? '创建绑定…' : '绑定结果'),
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, letterSpacing: -0.4)),
+                const SizedBox(height: 16),
+                if (info != null) _BindSheetBody(info: info)
+                else if (error != null) Text(error, style: TextStyle(fontSize: 15, color: _palette.danger))
+                else if (busy) const Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())
+                else const Text('绑定完成', style: TextStyle(fontSize: 17)),
+                const SizedBox(height: 20),
+                TextButton(onPressed: () => Navigator.pop(sheetContext), child: Text(info != null ? '后台等待' : '完成')),
+              ]),
+            ));
+          },
+        ),
       ),
     );
     if (ctrl.config.accessCredential != null && ctrl.enrollmentError == null) {
       _showSnack('设备绑定成功');
     }
-  }
-
-  Widget _buildDirectoryCard(AgentController ctrl, bool isActive, Color accent) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('共享目录', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-            const SizedBox(height: 12),
-            InkWell(
-              onTap: isActive ? null : () => _pickDirectory(ctrl),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: _palette.surface,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.folder, color: accent),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        ctrl.config.sharedDirectoryPath ?? '点击选择共享目录',
-                        style: TextStyle(
-                          color: ctrl.config.sharedDirectoryPath != null
-                              ? _palette.text
-                              : _palette.textSecondary,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (!isActive) Icon(Icons.chevron_right, color: _palette.textSecondary),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Text('权限：', style: TextStyle(fontSize: 13)),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('只读'),
-                  selected: ctrl.config.readOnly,
-                  onSelected: isActive ? null : (v) {
-                    setState(() => ctrl.config.readOnly = true);
-                    _saveConfig(ctrl);
-                  },
-                ),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('读写'),
-                  selected: !ctrl.config.readOnly,
-                  onSelected: isActive ? null : (v) {
-                    setState(() => ctrl.config.readOnly = false);
-                    _saveConfig(ctrl);
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildShutdownCard(AgentController ctrl, Color accent) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Icon(Icons.timer_outlined, color: accent, size: 20),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                '${ctrl.config.autoShutdownMinutes} 分钟后自动关闭共享和跳板机',
-                style: const TextStyle(fontSize: 14),
-              ),
-            ),
-            Switch(
-              value: ctrl.config.autoShutdown,
-              onChanged: ctrl.status.isActive ? null : (v) {
-                setState(() => ctrl.config.autoShutdown = v);
-                _saveConfig(ctrl);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBastionCard(AgentController ctrl, bool isActive, Color accent) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Icon(Icons.alt_route, color: accent, size: 20),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('作为跳板机', style: TextStyle(fontSize: 14)),
-                  SizedBox(height: 3),
-                  Text('供主端和 One 经此 Agent 中转 SSH', style: TextStyle(fontSize: 11)),
-                ],
-              ),
-            ),
-            Switch(
-              value: ctrl.config.bastionEnabled,
-              onChanged: isActive ? null : (v) {
-                setState(() => ctrl.config.bastionEnabled = v);
-                _saveConfig(ctrl);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLinkStatusCard(AgentController ctrl, Color accent) {
-    final error = ctrl.linkError;
-    final tunnelUp = ctrl.linkTunnelUp;
-    if (error.isEmpty && tunnelUp) return const SizedBox.shrink();
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Icon(error.isEmpty ? Icons.check_circle : Icons.error_outline,
-                color: error.isEmpty ? accent : _palette.danger, size: 20),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(error.isEmpty ? '加密通道已建立' : '加密通道未建立', style: const TextStyle(fontSize: 14)),
-                  if (error.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(error, style: TextStyle(fontSize: 11, color: _palette.danger)),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatsCard(AgentController ctrl, Color accent) {
-    String bytesStr;
-    final bytes = ctrl.transferBytes;
-    if (bytes < 1024) {
-      bytesStr = '$bytes B';
-    } else if (bytes < 1024 * 1024) {
-      bytesStr = '${(bytes / 1024).toStringAsFixed(1)} KB';
-    } else {
-      bytesStr = '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
-    }
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Icon(Icons.swap_vert, color: accent, size: 20),
-            const SizedBox(width: 12),
-            Text('${ctrl.transferCount} 次请求'),
-            const SizedBox(width: 16),
-            Text(bytesStr, style: TextStyle(color: accent, fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    );
   }
 }
 
