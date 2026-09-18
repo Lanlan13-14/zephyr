@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -6,14 +5,13 @@ import 'package:flutter/material.dart';
 import '../theme/zephyr_colors.dart';
 import 'settings_palette.dart';
 
-/// Visual model taken from sdegenaar/liquid_glass_widgets (MIT):
-/// PATH B of `lightweight_glass.frag` — frost fill + dual-highlight specular
-/// rim + Fresnel + optional chromatic fringe. Driven with the same knobs
-/// (`blur`, `thickness`, `lightIntensity`, `refractiveIndex`, `saturation`).
+/// Visual model taken from sdegenaar/liquid_glass_widgets (MIT),
+/// PATH B of `lightweight_glass.frag`: low frost, dual-highlight specular
+/// rim, Fresnel inner highlight.
 ///
-/// We cannot depend on the pub package (it requires Flutter ≥ 3.41). This
-/// widget is the Agent's in-tree restoration of that look, so glass has a
-/// backdrop to sample: put it over a non-flat background.
+/// The 1.0.33 plate painted a 62% opaque white fill over an 18px blur —
+/// that's frosted plastic, not glass. Body alpha stays under ~0.20 so the
+/// backdrop actually reads; the edge does the rest.
 class LiquidGlass extends StatelessWidget {
   final Widget child;
   final BorderRadius borderRadius;
@@ -29,9 +27,9 @@ class LiquidGlass extends StatelessWidget {
     super.key,
     required this.child,
     this.borderRadius = const BorderRadius.all(Radius.circular(12)),
-    this.blur = 20,
+    this.blur = 28,
     this.thickness = 20,
-    this.lightIntensity = 0.5,
+    this.lightIntensity = 0.55,
     this.refractiveIndex = 1.2,
     this.tint,
     this.padding,
@@ -42,12 +40,11 @@ class LiquidGlass extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = SettingsPalette.maybeOf(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
-    // PATH B frost: light mode lifts toward white, dark mode stays a dim
-    // translucent plate. Matches applyGlassColorLW's achromatic path.
+    // PATH B frost floor is ~8%. Anything past ~0.25 reads as milk.
     final frost = tint ??
         (dark
-            ? const Color(0xFF1C1C1E).withValues(alpha: 0.55)
-            : const Color(0xFFFFFFFF).withValues(alpha: 0.62));
+            ? const Color(0xFFFFFFFF).withValues(alpha: 0.08)
+            : const Color(0xFFFFFFFF).withValues(alpha: 0.16));
     return ClipRRect(
       borderRadius: borderRadius,
       child: BackdropFilter(
@@ -95,31 +92,28 @@ class _GlassRimPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (!hairline || size.isEmpty) return;
     final rrect = radius.toRRect(Offset.zero & size);
-    // Dual-highlight specular (kSpecularPowerPrimary / Kick from the shader).
-    final rim = dark ? 0.55 : 0.78;
     final thicknessBoost = ((thickness - 10) / 10).clamp(-0.3, 0.6);
-    final alpha = (0.28 + 0.22 * lightIntensity + 0.08 * thicknessBoost) *
+    final alpha = (0.42 + 0.30 * lightIntensity + 0.08 * thicknessBoost) *
         refractiveIndex.clamp(1.0, 1.6);
 
     canvas.drawRRect(
-      rrect.deflate(0.5),
+      rrect.deflate(0.4),
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.6
+        ..strokeWidth = 0.7
         ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Colors.white.withValues(alpha: (rim * alpha).clamp(0.0, 1.0)),
-            Colors.white.withValues(alpha: 0.08),
-            accent.withValues(alpha: 0.10 * lightIntensity),
+            Colors.white.withValues(alpha: (0.92 * alpha).clamp(0.0, 1.0)),
+            Colors.white.withValues(alpha: dark ? 0.12 : 0.28),
+            accent.withValues(alpha: 0.16 * lightIntensity),
           ],
           stops: const [0.0, 0.55, 1.0],
         ).createShader(Offset.zero & size),
     );
 
-    // Inner highlight — top edge only, like the shader's fresnel * borderMask.
-    final inner = rrect.deflate(1.1);
+    final inner = rrect.deflate(1.2);
     canvas.save();
     canvas.clipRRect(inner);
     canvas.drawRRect(
@@ -127,9 +121,9 @@ class _GlassRimPainter extends CustomPainter {
       Paint()
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
-          end: const Alignment(0, -0.2),
+          end: const Alignment(0, -0.28),
           colors: [
-            Colors.white.withValues(alpha: dark ? 0.16 : 0.34),
+            Colors.white.withValues(alpha: dark ? 0.26 : 0.48),
             Colors.white.withValues(alpha: 0.0),
           ],
         ).createShader(Offset.zero & size),
@@ -145,8 +139,8 @@ class _GlassRimPainter extends CustomPainter {
       old.accent != accent;
 }
 
-/// Theme-tinted mesh that liquid glass can actually refract. Flat grey
-/// behind glass is why the previous build looked like a cheap BackdropFilter.
+/// Page backdrop. Light mode is plain white — the colored mesh was why
+/// 1.0.33 read as tinted plastic. Dark mode keeps the theme bg, no blobs.
 class LiquidGlassBackdrop extends StatelessWidget {
   final ZephyrPalette palette;
   final Widget child;
@@ -155,62 +149,9 @@ class LiquidGlassBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                palette.bg,
-                Color.lerp(palette.bg, palette.accent, dark ? 0.18 : 0.10)!,
-                Color.lerp(palette.bg, palette.accent, dark ? 0.08 : 0.04)!,
-              ],
-              stops: const [0.0, 0.55, 1.0],
-            ),
-          ),
-        ),
-        Positioned(
-          right: -80,
-          top: 40,
-          child: IgnorePointer(
-            child: ImageFiltered(
-              imageFilter: ImageFilter.blur(sigmaX: 48, sigmaY: 48),
-              child: Transform.rotate(
-                angle: -math.pi / 10,
-                child: Container(
-                  width: 280,
-                  height: 280,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: palette.accent.withValues(alpha: dark ? 0.22 : 0.14),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        Positioned(
-          left: -60,
-          bottom: 80,
-          child: IgnorePointer(
-            child: ImageFiltered(
-              imageFilter: ImageFilter.blur(sigmaX: 56, sigmaY: 56),
-              child: Container(
-                width: 220,
-                height: 220,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: palette.accentHover.withValues(alpha: dark ? 0.16 : 0.10),
-                ),
-              ),
-            ),
-          ),
-        ),
-        child,
-      ],
+    return ColoredBox(
+      color: dark ? palette.bg : const Color(0xFFFFFFFF),
+      child: child,
     );
   }
 }

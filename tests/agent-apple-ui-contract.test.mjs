@@ -31,24 +31,24 @@ test('the bastion row has no ambiguous subtitle', () => {
 test('every toggle is the liquid-glass switch, not MD3 Switch', () => {
   const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
   assert.match(toggle, /class LiquidToggle/);
-  assert.match(toggle, /SpringSimulation/);
+  assert.match(toggle, /GlassSwitch/);
   assert.match(toggle, /BackdropFilter/);
-  assert.match(toggle, /chromatic|0xFF5AC8FA/);
+  assert.match(toggle, /0xFF5AC8FA/);
   assert.match(toggle, /disableAnimations/);
   const group = read('zephyr_agent/lib/ui/settings_group.dart');
   assert.match(group, /LiquidToggle\(/);
   assert.doesNotMatch(group, /Switch\(/);
 });
 
-test('liquid toggle is 64 by 28 with a 40 by 24 thumb and 20pt travel', () => {
+test('liquid toggle is the GlassSwitch 58 by 26 capsule with a 380ms jump', () => {
   const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
-  assert.match(toggle, /static const double trackWidth = 64/);
-  assert.match(toggle, /static const double trackHeight = 28/);
-  assert.match(toggle, /static const double thumbWidth = 40/);
-  assert.match(toggle, /static const double thumbHeight = 24/);
-  assert.match(toggle, /static const double travel = trackWidth - thumbWidth - inset \* 2/);
-  assert.match(toggle, /onPanUpdate|PointerMoveEvent|_onPointerMove/);
-  assert.match(toggle, /SpringSimulation/);
+  assert.match(toggle, /static const double trackWidth = 58/);
+  assert.match(toggle, /static const double trackHeight = 26/);
+  assert.match(toggle, /duration: const Duration\(milliseconds: 380\)/);
+  assert.match(toggle, /Curves\.easeInOutCubic/);
+  assert.match(toggle, /thumbSize \* 1\.6/);
+  assert.match(toggle, /bloom \* 16\.0|leadStretch/);
+  assert.match(toggle, /onHorizontalDragUpdate/);
 });
 
 test('the toggle track is the single theme accent, never a fixed green', () => {
@@ -58,9 +58,9 @@ test('the toggle track is the single theme accent, never a fixed green', () => {
   assert.doesNotMatch(toggle, /required this\.activeColor/);
   // On-state track resolves from SettingsPalette accent.
   assert.match(toggle, /SettingsPalette\.maybeOf\(context\)\?\.accent/);
-  // Off-state neutral gray is kept (HIG #787878/#787880).
-  assert.match(toggle, /0xFF787878/);
-  assert.match(toggle, /0xFF787880/);
+  // Off-state is the iOS-exact inactive groove from GlassSwitch.
+  assert.match(toggle, /0xFFC5C5C6/);
+  assert.match(toggle, /0x33FFFFFF/);
   // The old "blend accent into system green" and the fixed green constant are gone.
   assert.doesNotMatch(toggle, /0xFF34C759/);
   assert.doesNotMatch(toggle, /0xFF30D158/);
@@ -69,17 +69,15 @@ test('the toggle track is the single theme accent, never a fixed green', () => {
   assert.doesNotMatch(group, /activeColor: iconColor/);
 });
 
-test('the toggle thumb refracts the backdrop with a Kyant-style lens', () => {
+test('the toggle thumb is a near-clear refractive pill, not a milk-white knob', () => {
   const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
-  assert.match(toggle, /FragmentProgram\.fromAsset\(\s*'shaders\/glass_lens\.frag'/);
-  assert.match(toggle, /ui\.ImageFilter\.shader\(/);
-  const shader = read('zephyr_agent/shaders/glass_lens.frag');
-  assert.match(shader, /uRefrHeight/);
-  assert.match(shader, /uRefrAmount/);
-  assert.match(shader, /uChroma/);
-  assert.match(shader, /sdCapsule/);
-  const pubspec = read('zephyr_agent/pubspec.yaml');
-  assert.match(pubspec, /- shaders\//);
+  // GlassSwitch._buildThumb light-mode glassColor alpha 0.12 / dark 0.08.
+  assert.match(toggle, /Color\.fromRGBO\(224, 224, 230, 0\.12\)/);
+  assert.match(toggle, /0x14FFFFFF/);
+  assert.match(toggle, /coreOpacity = \(1\.0 - bloom \* 1\.2\)/);
+  assert.match(toggle, /BackdropFilter/);
+  // The 1.0.33 milk fill (0.94 white) is gone.
+  assert.doesNotMatch(toggle, /0\.94/);
 });
 
 test('primary actions are glass capsules, not Material elevated buttons', () => {
@@ -210,4 +208,10 @@ test('grouped cards, sheets, and the primary button are liquid glass over a refr
   assert.match(glass, /BackdropFilter/);
   assert.match(glass, /sdegenaar\/liquid_glass_widgets/);
   assert.match(glass, /PATH B/);
+  // Light-mode page is plain white — the tinted mesh was plastic, not glass.
+  assert.match(glass, /dark \? palette\.bg : const Color\(0xFFFFFFFF\)/);
+  assert.doesNotMatch(glass, /palette\.accent\.withValues\(alpha: dark \? 0\.22/);
+  // Body frost stays under 0.20 so the backdrop reads through.
+  assert.match(glass, /alpha: 0\.16\)/);
+  assert.doesNotMatch(glass, /alpha: 0\.62/);
 });
