@@ -182,10 +182,12 @@ class _GlassRimPainter extends CustomPainter {
       old.dark != dark || old.accent != accent;
 }
 
-/// Page backdrop. A refraction plate needs real high-frequency pixels
-/// behind it or the math is identity and the plate reads as a flat fill.
-/// Each theme ships a luminous photographic-grade field: light blooms drift
-/// across a neutral base so blur, lens and dispersion always have signal.
+/// Clean, calm Apple system backdrop.
+///
+/// Light mode resolves to iOS systemGroupedBackground (0xFFF2F2F7),
+/// Dark mode resolves to true deep OLED black (0xFF000000).
+/// Eliminates cluttered color blooms and plastic gradients so the content
+/// cards and liquid glass interactions shine with clarity and high contrast.
 class LiquidGlassBackdrop extends StatelessWidget {
   final ZephyrPalette palette;
   final Widget child;
@@ -194,104 +196,10 @@ class LiquidGlassBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: dark
-              ? const [Color(0xFF14161C), Color(0xFF101114), Color(0xFF1E222B)]
-              : const [Color(0xFFDCE2EE), Color(0xFFF5F5F7), Color(0xFFCBD3E2)],
-          stops: const [0.0, 0.55, 1.0],
-        ),
-      ),
-      child: Stack(
-        children: [
-          // Light-mode blooms (blue-violet / aqua / warm white).
-          if (!dark) ...[
-            Positioned(
-              left: -90,
-              top: -70,
-              child: _Bloom(
-                size: 260,
-                colors: const [Color(0xFFBFD4FF), Color(0x00000000)],
-              ),
-            ),
-            Positioned(
-              right: -80,
-              top: 120,
-              child: _Bloom(
-                size: 300,
-                colors: const [Color(0xFFCDEFF5), Color(0x00000000)],
-              ),
-            ),
-            Positioned(
-              left: 40,
-              bottom: -110,
-              child: _Bloom(
-                size: 320,
-                colors: const [Color(0xFFE8DFFB), Color(0x00000000)],
-              ),
-            ),
-            Positioned(
-              right: 30,
-              bottom: 140,
-              child: _Bloom(
-                size: 180,
-                colors: const [Color(0xFFFFF3DF), Color(0x00000000)],
-              ),
-            ),
-          ] else ...[
-            // Dark-mode embers: faint blue / teal / violet glows so the
-            // plates refract light instead of absorbing into black.
-            Positioned(
-              left: -80,
-              top: -60,
-              child: _Bloom(
-                size: 240,
-                colors: const [Color(0xFF2A3F66), Color(0x00000000)],
-              ),
-            ),
-            Positioned(
-              right: -70,
-              top: 140,
-              child: _Bloom(
-                size: 280,
-                colors: const [Color(0xFF1E4A52), Color(0x00000000)],
-              ),
-            ),
-            Positioned(
-              left: 60,
-              bottom: -100,
-              child: _Bloom(
-                size: 300,
-                colors: const [Color(0xFF3A2E63), Color(0x00000000)],
-              ),
-            ),
-          ],
-          Positioned.fill(child: child),
-        ],
-      ),
-    );
-  }
-}
-
-class _Bloom extends StatelessWidget {
-  final double size;
-  final List<Color> colors;
-  const _Bloom({required this.size, required this.colors});
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(colors: colors),
-        ),
-      ),
+    final bg = dark ? const Color(0xFF000000) : const Color(0xFFF2F2F7);
+    return ColoredBox(
+      color: bg,
+      child: child,
     );
   }
 }

@@ -230,10 +230,12 @@ class _LiquidToggleState extends State<LiquidToggle>
                 // Kyant track: solid interpolated color. No specular
                 // gradient on the track, no accent glow.
                 final track = Color.lerp(off, on, t)!;
-                // pressedScale 1.5, drag velocity stretches like layerBlock.
-                final v = (_velocity / 50).clamp(-0.2, 0.2);
-                final scaleX = 1.5 / (1 - (v * 0.75).clamp(-0.2, 0.2));
-                final scaleY = 1.5 * (1 - (v * 0.25).clamp(-0.2, 0.2));
+                // DampedDragAnimation: resting scale is 1.0; press gently blooms (1.0 -> 1.12),
+                // drag velocity stretches along motion axis (squash & stretch).
+                final baseScale = 1.0 + 0.12 * press;
+                final v = (_velocity / 50).clamp(-0.25, 0.25);
+                final scaleX = baseScale / (1.0 - (v * 0.75).clamp(-0.25, 0.25));
+                final scaleY = baseScale * (1.0 - (v * 0.25).clamp(-0.25, 0.25));
                 // Kyant graphicsLayer: 2pt inset, translationX lerps
                 // padding→padding+travel with t.
                 final thumbX = LiquidToggle.inset + LiquidToggle.travel * t;
@@ -342,11 +344,17 @@ class _GlassThumbState extends State<_GlassThumb> {
         decoration: BoxDecoration(
           borderRadius: radius,
           boxShadow: const [
-            // Upstream is 4dp black at 5%.
+            // Soft ambient drop shadow giving physical floating depth
             BoxShadow(
-              color: Color(0x0D000000),
-              blurRadius: 4,
-              offset: Offset(0, 0),
+              color: Color(0x26000000), // 15% black
+              blurRadius: 3.5,
+              offset: Offset(0, 1.5),
+            ),
+            // Contact shadow
+            BoxShadow(
+              color: Color(0x0D000000), // 5% black
+              blurRadius: 1,
+              offset: Offset(0, 0.5),
             ),
           ],
         ),
@@ -374,46 +382,36 @@ class _ThumbGlassPainter extends CustomPainter {
     final rect = Offset.zero & size;
     final rrect =
         RRect.fromRectAndRadius(rect, Radius.circular(size.height / 2));
-    // Kyant onDrawSurface: white 100% resting, gone on full press. Resting
-    // alpha is 0.20–0.40 so the backdrop shows through even at rest; press
-    // thins it toward the ~0.08 edge hiss of a pure refraction shell.
-    final surface = 0.32 * (1 - press) + 0.08 * press;
-    canvas.drawRRect(
-      rrect,
-      Paint()..color = Colors.white.withValues(alpha: surface),
-    );
 
-    // Kyant Highlight.Ambient at alpha = press: light-side crescent whose
-    // size tracks press, not a uniform ring. Draw only the facing arc.
-    final ambient = (0.30 + 0.70 * press).clamp(0.0, 1.0);
+    // Kyant onDrawSurface: 100% pure white at rest (alpha = 1.0),
+    // melting smoothly to translucent liquid refraction on press (1.0 - press).
+    final surfaceAlpha = (1.0 - press).clamp(0.0, 1.0);
+    if (surfaceAlpha > 0.001) {
+      canvas.drawRRect(
+        rrect,
+        Paint()..color = Colors.white.withValues(alpha: surfaceAlpha),
+      );
+    }
+
+    // Kyant Highlight.Ambient: delicate 45° specular crescent that responds to press.
+    final ambientAlpha = (0.20 + 0.50 * press).clamp(0.0, 1.0);
     canvas.save();
-    canvas.clipRRect(rrect.deflate(0.9));
+    canvas.clipRRect(rrect.deflate(0.6));
     canvas.drawArc(
       Rect.fromCenter(
         center: Offset(size.width / 2, size.height / 2),
-        width: size.width + 1.5,
-        height: size.height + 1.5,
+        width: size.width + 1.0,
+        height: size.height + 1.0,
       ),
       0.7853982 - 1.15,
       2.3,
       false,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.1
-        ..color = Colors.white.withValues(alpha: 0.75 * ambient),
+        ..strokeWidth = 0.8
+        ..color = Colors.white.withValues(alpha: ambientAlpha),
     );
     canvas.restore();
-
-    // Kyant InnerShadow(radius 4·p, alpha p): press-controlled depth cue.
-    if (press > 0.02) {
-      canvas.drawRRect(
-        rrect.deflate(1.1),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 4 * press
-          ..color = Colors.black.withValues(alpha: press),
-      );
-    }
   }
 
   @override

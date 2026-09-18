@@ -87,6 +87,6 @@ test('server resolveRoutePlan accepts agent bastion prefix in jump chain', () =>
 
   const app = read('public/app.js');
   assert.match(app, /api\('\/api\/rdp\/agent-bastions'\)/);
-  assert.match(app, /agent:\$\{a\.agentId\}/);
+  assert.match(app, /agent:\$\{(?:a\.agentId|id)\}/);
   assert.match(app, /在线 Agent 跳板机/);
 });

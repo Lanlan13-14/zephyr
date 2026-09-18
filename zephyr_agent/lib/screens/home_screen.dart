@@ -469,6 +469,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _accessGroup(AgentController ctrl, bool isActive, Color accent, AgentStrings s) {
     return SettingsGroup(header: s.groupAccess, children: [
+      // 作为跳板机
       SettingsToggleRow(
         icon: Icons.alt_route, iconColor: accent, title: s.rowBastion,
         value: ctrl.config.bastionEnabled,
@@ -522,6 +523,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _linkGroup(AgentController ctrl, AgentStrings s) {
     final error = ctrl.linkError;
+    // 加密通道未建立 / 加密通道已建立
     return SettingsGroup(header: s.groupLink, footer: error.isEmpty ? null : error, children: [
       SettingsRow(
         icon: error.isEmpty ? Icons.check_circle_outline : Icons.error_outline,

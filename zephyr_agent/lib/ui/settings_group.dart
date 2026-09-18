@@ -10,9 +10,9 @@ class SettingsGroup extends StatelessWidget {
   final String? header;
   final String? footer;
   final List<Widget> children;
-  /// When false, skip the liquid-glass plate — used inside an already-glass
-  /// sheet so we don't stack BackdropFilters (the glass-in-glass anti-pattern
-  /// called out by liquid_glass_widgets).
+  /// When true, wraps the card in a liquid-glass plate. Default is false,
+  /// matching Apple HIG Inset Grouped Settings cards (solid surface with
+  /// high contrast, no optical distortion over text).
   final bool glass;
 
   const SettingsGroup({
@@ -20,21 +20,22 @@ class SettingsGroup extends StatelessWidget {
     this.header,
     this.footer,
     required this.children,
-    this.glass = true,
+    this.glass = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = SettingsPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 28),
+      padding: const EdgeInsets.only(bottom: 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (header != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 7),
               child: Text(
                 header!.toUpperCase(),
                 style: TextStyle(
@@ -46,6 +47,7 @@ class SettingsGroup extends StatelessWidget {
               ),
             ),
           _groupPlate(
+            context,
             glass: glass,
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -54,7 +56,13 @@ class SettingsGroup extends StatelessWidget {
                   if (i > 0)
                     Padding(
                       padding: const EdgeInsets.only(left: 54),
-                      child: Divider(height: 0.5, thickness: 0.5, color: palette.border.withValues(alpha: 0.45)),
+                      child: Divider(
+                        height: 0.5,
+                        thickness: 0.5,
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.10)
+                            : Colors.black.withValues(alpha: 0.08),
+                      ),
                     ),
                   children[i],
                 ],
@@ -63,7 +71,7 @@ class SettingsGroup extends StatelessWidget {
           ),
           if (footer != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 7, 16, 0),
               child: Text(
                 footer!,
                 style: TextStyle(fontSize: 13, height: 1.3, color: palette.textSecondary),
@@ -74,10 +82,33 @@ class SettingsGroup extends StatelessWidget {
     );
   }
 
-  Widget _groupPlate({required bool glass, required Widget child}) {
-    if (!glass) return child;
-    return LiquidGlass(
-      borderRadius: BorderRadius.circular(12),
+  Widget _groupPlate(BuildContext context, {required bool glass, required Widget child}) {
+    if (glass) {
+      return LiquidGlass(
+        borderRadius: BorderRadius.circular(12),
+        child: child,
+      );
+    }
+    final palette = SettingsPalette.of(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: dark
+            ? Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5)
+            : null,
+        boxShadow: dark
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+      ),
+      clipBehavior: Clip.antiAlias,
       child: child,
     );
   }
