@@ -177,6 +177,16 @@ func main() {
 			writeJSONError(w, http.StatusInternalServerError, "hijack_failed", err.Error())
 			return
 		}
+		// Node's linkTunnelDial is an HTTP client waiting for a 101 so it can
+		// emit `upgrade` and hand back the raw socket. Hijacking and copying
+		// tunnel bytes with no status line made Node's parser emit
+		// "Parse Error: Expected HTTP/" — the error that replaced "no live
+		// stream" the moment the Agent stream actually attached.
+		if err := writeTunnelUpgrade(buf); err != nil {
+			conn.Close()
+			netConn.Close()
+			return
+		}
 		go pipeTunnel(netConn, buf, conn)
 	})
 
@@ -236,6 +246,22 @@ func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 func jsonString(value string) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
+}
+
+// writeTunnelUpgrade emits the 101 Node's HTTP client needs before the
+// connection becomes a raw tunnel. Must be flushed: buf is a ReadWriter
+// sitting in front of the hijacked socket.
+func writeTunnelUpgrade(buf *bufio.ReadWriter) error {
+	if _, err := buf.WriteString("HTTP/1.1 101 Switching Protocols\r\n"); err != nil {
+		return err
+	}
+	if _, err := buf.WriteString("Connection: Upgrade\r\n"); err != nil {
+		return err
+	}
+	if _, err := buf.WriteString("Upgrade: tcp\r\n\r\n"); err != nil {
+		return err
+	}
+	return buf.Flush()
 }
 
 // pipeTunnel bridges the hijacked loopback TCP conn and the sealed Agent tunnel.
