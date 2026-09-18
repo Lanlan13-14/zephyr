@@ -94,6 +94,9 @@ type Node struct {
 	streamWriters map[string]*streamPushWriter
 	// agentHub is the embedded Agent tunnel hub, created on /link/tunnel/start.
 	agentHub *AgentTunnelHub
+	// identityDir, when set, persists ES256 device keys and lets Dial finish
+	// a proof-required handshake without the host signing. Empty on Android.
+	identityDir string
 }
 
 // RequireEnrollment makes the handshake reject unregistered devices and require
@@ -157,6 +160,8 @@ func NewNode() *Node {
 	// connects /link/stream and pumps TCP bytes under the session keys. The
 	// host only names the peer and session; no key material ever leaves.
 	n.mux.HandleFunc("/link/tunnel/start", n.handleTunnelStart)
+	n.mux.HandleFunc("/link/identity/jwk", n.handleIdentityJWK)
+	n.mux.HandleFunc("/link/identity/enrollment-proof", n.handleEnrollmentProof)
 	// Loopback mirror of every zft2 lane for the host process (Dart). One
 	// local WebSocket carries all lanes; messages prefix the lane id.
 	n.mux.HandleFunc("/link/zft2/stream", n.handleZft2Local)
@@ -372,6 +377,15 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 		}
 		n.sessionTLS[result.sessionID] = tls
 		n.mu.Unlock()
+		if n.identityEnabled() && req.DeviceID != "" {
+			proof, err := n.signPendingTranscript(req.DeviceID, result.transcript)
+			if err != nil {
+				errJSON(w, http.StatusBadGateway, "identity_unavailable", err.Error())
+				return
+			}
+			n.completePendingDial(w, result.sessionID, proof)
+			return
+		}
 		writeJSON(w, map[string]any{
 			"ok": true, "pending": true,
 			"sessionId":  result.sessionID,
@@ -389,6 +403,14 @@ func (n *Node) handleDial(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (n *Node) signPendingTranscript(deviceID string, transcript []byte) (string, error) {
+	priv, err := n.ensureDeviceSigner(deviceID)
+	if err != nil {
+		return "", err
+	}
+	return SignHandshakeProof(priv, deviceID, transcript)
+}
+
 func (n *Node) handleDialFinish(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `json:"sessionId"`
@@ -398,23 +420,27 @@ func (n *Node) handleDialFinish(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "invalid_handshake", "bad json")
 		return
 	}
+	n.completePendingDial(w, req.SessionID, req.Proof)
+}
+
+func (n *Node) completePendingDial(w http.ResponseWriter, sessionID, proof string) {
 	now := time.Now()
 	n.mu.Lock()
 	n.sweepPendingLocked(now)
-	pending := n.pendingDial[req.SessionID]
+	pending := n.pendingDial[sessionID]
 	if pending != nil {
-		delete(n.pendingDial, req.SessionID)
+		delete(n.pendingDial, sessionID)
 	}
 	n.mu.Unlock()
 	if pending == nil {
 		errJSON(w, http.StatusBadRequest, "invalid_handshake", "unknown or expired handshake")
 		return
 	}
-	if req.Proof == "" {
+	if proof == "" {
 		errJSON(w, http.StatusForbidden, "proof_required", errProofRequired.Error())
 		return
 	}
-	if err := n.completePeerFinish(pending.peerURL, pending.sessionID, req.Proof, pending.spkiPins, pending.insecure, pending.serverName); err != nil {
+	if err := n.completePeerFinish(pending.peerURL, pending.sessionID, proof, pending.spkiPins, pending.insecure, pending.serverName); err != nil {
 		var remote *RemoteLinkError
 		if errors.As(err, &remote) {
 			errJSONRetryable(w, http.StatusBadGateway, remote.Code, remote.Message, remote.Retryable)

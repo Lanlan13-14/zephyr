@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - 'zephyr_agent/**'
+      - 'zephyr-link/**'
       - 'tests/agent-**'
       - '.github/workflows/agent.yml'
   pull_request:
     branches: [main]
     paths:
       - 'zephyr_agent/**'
+      - 'zephyr-link/**'
       - 'tests/agent-**'
       - '.github/workflows/agent.yml'
   workflow_dispatch:
@@ -37,6 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -50,6 +57,13 @@ jobs:
 
       - name: Run tests
         run: flutter test
+
+      - name: Compile zephyr-link-embed (desktop/apple host runtime)
+        working-directory: zephyr-link
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
+            -o /tmp/zephyr-link-embed ./cmd/zephyr-link-embed
+          test -s /tmp/zephyr-link-embed
 
       - name: Build Android debug bundle for host-code compile coverage
         run: |
@@ -110,6 +124,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -129,6 +148,11 @@ jobs:
 
       - run: flutter pub get
       - run: flutter build windows --release --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
+
+      - name: Bundle zephyr-link-embed next to the Flutter executable
+        working-directory: .
+        shell: bash
+        run: sh zephyr_agent/tool/bundle_link_runtime.sh windows
 
       - name: Archive portable zip
         shell: pwsh
@@ -177,6 +201,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -200,6 +229,11 @@ jobs:
       - run: flutter pub get
       - run: flutter build linux --release --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
 
+      - name: Bundle zephyr-link-embed next to the Flutter executable
+        working-directory: .
+        run: sh zephyr_agent/tool/bundle_link_runtime.sh linux
+
+
       - name: Archive
         run: tar czf zephyr-agent-linux-x64.tar.gz -C build/linux/x64/release/bundle .
 
@@ -214,6 +248,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
 
       - uses: subosito/flutter-action@v2
         with:
@@ -231,6 +270,11 @@ jobs:
 
       - run: flutter pub get
       - run: flutter build macos --release --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
+
+      - name: Bundle zephyr-link-embed next to the Flutter executable
+        working-directory: .
+        run: sh zephyr_agent/tool/bundle_link_runtime.sh macos
+
 
       - name: Archive macOS zip and dmg
         run: |
@@ -255,6 +299,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -271,6 +320,11 @@ jobs:
 
       - run: flutter pub get
       - run: flutter build ios --release --no-codesign --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
+
+      - name: Bundle zephyr-link-embed next to the Flutter executable
+        working-directory: .
+        run: sh zephyr_agent/tool/bundle_link_runtime.sh ios
+
 
       - name: Archive iOS zip and ipa
         run: |

@@ -29,9 +29,24 @@ class LinkFileRuntime {
     _tunnelUp = false;
   }
 
+  Future<String?> signingJwk(String deviceId) async => null;
+
+  Future<Map<String, String>> mlkemGenerate(String deviceId) async {
+    throw UnimplementedError('Platform Link runtime adapter is unavailable');
+  }
+
+  Future<String> enrollmentProof({
+    required String bindId,
+    required String deviceId,
+    required String userCode,
+    required String sas,
+    required String enrollmentSecret,
+    required String serverId,
+  }) async {
+    throw UnimplementedError('Platform Link runtime adapter is unavailable');
+  }
+
   Future<bool> connect({required String serverUrl, required String deviceId, bool allowBadCertificates = false}) async {
-    // The native host owns the Go runtime and must override this method through
-    // the platform adapter before enabling the capability advertisement.
     _ready = false;
     _sessionId = null;
     return false;
@@ -39,6 +54,14 @@ class LinkFileRuntime {
 
   Future<LinkFileReply> request(String op, Map<String, dynamic> params) async {
     if (!ready) throw StateError('Agent Link runtime is not connected');
+    throw UnimplementedError('Platform Link runtime adapter is unavailable');
+  }
+
+  Future<void> startTunnel() async {
+    throw UnimplementedError('Platform Link runtime adapter is unavailable');
+  }
+
+  Future<int> zft2LocalPort() async {
     throw UnimplementedError('Platform Link runtime adapter is unavailable');
   }
 

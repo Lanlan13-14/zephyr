@@ -12,11 +12,13 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
   static const _channel = MethodChannel('com.zephyr.agent/link');
   String? _serverUrl;
 
+  @override
   Future<String?> signingJwk(String deviceId) async =>
       await _channel.invokeMethod<String>('linkSigningJwk', {'deviceId': deviceId});
 
   /// Generates (once per device) an ML-KEM-768 keypair inside the embedded Go
   /// runtime. Returns { publicKey, seed }; the seed stays on the host side.
+  @override
   Future<Map<String, String>> mlkemGenerate(String deviceId) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('mlkemGenerate', {'deviceId': deviceId});
     return (result ?? const {}).map((k, v) => MapEntry(k.toString(), (v ?? '').toString()));
@@ -24,6 +26,7 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
 
   /// Signs the One enrollment proof with the device's ES256 key and returns
   /// base64(P1363) exactly as the main end's verifyP1363 expects.
+  @override
   Future<String> enrollmentProof({
     required String bindId,
     required String deviceId,
@@ -86,6 +89,7 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
 
   /// Boots the bastion tunnel hub inside the embedded Go runtime: it connects
   /// the encrypted /link/stream channel and pumps TCP bytes under ZSL/2.
+  @override
   Future<void> startTunnel() async {
     final sessionId = this.sessionId;
     if (sessionId == null) throw StateError('Agent Link runtime is not connected');
@@ -93,5 +97,12 @@ class PlatformLinkFileRuntime extends LinkFileRuntime {
       'sessionId': sessionId,
       'peerUrl': _serverUrl,
     });
+  }
+
+  @override
+  Future<int> zft2LocalPort() async {
+    final port = await _channel.invokeMethod<int>('linkZft2Port');
+    if (port == null || port <= 0) throw StateError('zft2 local port unavailable');
+    return port;
   }
 }
