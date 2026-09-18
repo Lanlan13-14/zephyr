@@ -78,9 +78,10 @@ test('the toggle thumb bends the backdrop through the lens shader, not a knob', 
   assert.match(toggle, /setFloat\(4, 10 \* press\)/);
   assert.match(toggle, /BackdropFilter/);
   assert.match(toggle, /0x0D000000/);
-  // Resting surface is translucent (Kyant 1.0 -> 0 by press); static chalk
-  // white and the sdegenaar leftovers are gone.
-  assert.match(toggle, /0\.32 \* \(1 - press\) \+ 0\.08 \* press/);
+  // Resting surface is pure white (Kyant 1.0 -> 0 by press); melts to clear
+  // liquid glass upon touch. The plastic 0.32 chalk-gray tint is eradicated.
+  assert.match(toggle, /1\.0 - press/);
+  assert.doesNotMatch(toggle, /0\.32 \* \(1 - press\)/);
   assert.doesNotMatch(toggle, /surfaceOpacity = \(1 - press\)/);
   assert.doesNotMatch(toggle, /0\.94/);
   assert.doesNotMatch(toggle, /coreOpacity/);
@@ -202,7 +203,7 @@ test('settings field rows are a 44pt iOS row, never an expanding TextField', () 
   assert.doesNotMatch(group, /isCollapsed: true/);
 });
 
-test('grouped cards, sheets, and the primary button are liquid glass over a refracting backdrop', () => {
+test('primary actions, sheets and controls employ liquid glass over a calm system backdrop', () => {
   const group = read('zephyr_agent/lib/ui/settings_group.dart');
   assert.match(group, /LiquidGlass\(/);
   const button = read('zephyr_agent/lib/ui/glass_button.dart');
@@ -223,7 +224,6 @@ test('grouped cards, sheets, and the primary button are liquid glass over a refr
   assert.match(glass, /0xFF121212/);
   // Rim is a 45° crescent (Default) over a Plain hairline — never a uniform ring.
   assert.match(glass, /0\.7853982 - 1\.35/);
-  // The backdrop must carry light for refraction: blooms, not a dead fill.
-  assert.match(glass, /_Bloom\(/);
-  assert.doesNotMatch(glass, /0xFFFFFFFF\)/);
+  // The backdrop is a calm Apple HIG system backdrop without messy blooms.
+  assert.doesNotMatch(glass, /_Bloom\(/);
 });
