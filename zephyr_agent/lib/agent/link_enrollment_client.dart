@@ -16,7 +16,7 @@ import 'dart:io' as io;
 
 import '../app/agent_version.dart';
 import 'agent_state.dart';
-import 'platform_link_file_runtime.dart';
+import 'link_file_runtime.dart';
 
 class EnrollmentException implements Exception {
   final String code;
@@ -51,7 +51,7 @@ class EnrollmentInfo {
 }
 
 class EnrollmentClient {
-  final PlatformLinkFileRuntime _runtime;
+  final LinkFileRuntime _runtime;
   bool _allowBadCertificates = false;
 
   EnrollmentClient(this._runtime);

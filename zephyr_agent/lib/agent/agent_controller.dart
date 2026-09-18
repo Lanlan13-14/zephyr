@@ -11,7 +11,8 @@ import 'package:uuid/uuid.dart';
 import 'agent_state.dart';
 import '../fs/file_provider.dart';
 import 'file_transfer_protocol.dart';
-import 'platform_link_file_runtime.dart';
+import 'link_file_runtime.dart';
+import 'link_runtime_factory.dart';
 import 'link_enrollment_client.dart';
 import 'zft2_link_lane.dart';
 import '../app/agent_version.dart';
@@ -46,7 +47,7 @@ class AgentController extends ChangeNotifier {
 
   // File provider
   ZephyrFileProvider? _fileProvider;
-  final PlatformLinkFileRuntime _linkRuntime = PlatformLinkFileRuntime();
+  final LinkFileRuntime _linkRuntime = createLinkFileRuntime();
   late final EnrollmentClient _enrollmentClient = EnrollmentClient(_linkRuntime);
   EnrollmentInfo? _enrollment;
   bool _enrollmentBusy = false;
@@ -679,6 +680,7 @@ class AgentController extends ChangeNotifier {
   void _connectZft2Lane() {
     if (_zft2Lane != null) return;
     final lane = Zft2LinkLaneClient(
+      runtime: _linkRuntime,
       onFrame: _onZft2LaneFrame,
       onLost: () { _zft2Lane = null; _connectZft2Lane(); },
     );

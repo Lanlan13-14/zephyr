@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:flutter/services.dart';
+
+import 'link_file_runtime.dart';
 
 /// Pumps the Agent's ZFT2 file dispatcher onto the encrypted Link zft2 lane.
 ///
@@ -11,7 +12,7 @@ import 'package:flutter/services.dart';
 /// protocol never changed, only the carrier, so semantics (queueing, cancel,
 /// window) are identical.
 class Zft2LinkLaneClient {
-  static const _channel = MethodChannel('com.zephyr.agent/link');
+  final LinkFileRuntime _runtime;
   final void Function(int laneId, Uint8List frame) onFrame;
   final void Function() onLost;
   WebSocket? _socket;
@@ -19,13 +20,10 @@ class Zft2LinkLaneClient {
   bool _closed = false;
   bool get attached => _socket != null;
 
-  Zft2LinkLaneClient({required this.onFrame, required this.onLost});
+  Zft2LinkLaneClient({required LinkFileRuntime runtime, required this.onFrame, required this.onLost})
+      : _runtime = runtime;
 
-  Future<int> _localPort() async {
-    final port = await _channel.invokeMethod<int>('linkZft2Port');
-    if (port == null || port <= 0) throw StateError('zft2 local port unavailable');
-    return port;
-  }
+  Future<int> _localPort() => _runtime.zft2LocalPort();
 
   /// Connect (idempotent) and start pumping. Reconnect-safe.
   Future<void> connect() async {
