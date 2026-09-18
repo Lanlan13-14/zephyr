@@ -60,8 +60,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 bin="$tmp/$out_name"
 
-CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" "$GO" build -trimpath -ldflags='-s -w' \
-  -o "$bin" "$mod/cmd/zephyr-link-embed"
+CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" "$GO" build -C "$mod" -trimpath -ldflags='-s -w' \
+  -o "$bin" ./cmd/zephyr-link-embed
 
 if [ "$platform" = "macos" ] && [ -z "${2:-}" ]; then
   app_path="$(find "$root/zephyr_agent/build/macos/Build/Products/Release" -maxdepth 1 -name '*.app' | head -n 1)"

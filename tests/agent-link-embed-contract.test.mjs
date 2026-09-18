@@ -51,6 +51,10 @@ test('CI bundles zephyr-link-embed on linux/windows/macos/ios', () => {
   const script = read('zephyr_agent/tool/bundle_link_runtime.sh');
   assert.match(script, /cmd\/zephyr-link-embed/);
   assert.match(script, /GOOS="\$goos"/);
+  // go.mod lives in zephyr-link/, not the repo root. Building from outside
+  // the module is what failed analyze-and-test on the first #166 push.
+  assert.match(script, /build -C "\$mod"/);
+  assert.match(wf, /working-directory: zephyr-link[\s\S]{0,200}cmd\/zephyr-link-embed/);
 });
 
 test('Zft2 lane uses the runtime port, not a hard-coded MethodChannel', () => {

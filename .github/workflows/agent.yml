@@ -59,10 +59,10 @@ jobs:
         run: flutter test
 
       - name: Compile zephyr-link-embed (desktop/apple host runtime)
-        working-directory: .
+        working-directory: zephyr-link
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
-            -o /tmp/zephyr-link-embed ./zephyr-link/cmd/zephyr-link-embed
+            -o /tmp/zephyr-link-embed ./cmd/zephyr-link-embed
           test -s /tmp/zephyr-link-embed
 
       - name: Build Android debug bundle for host-code compile coverage
