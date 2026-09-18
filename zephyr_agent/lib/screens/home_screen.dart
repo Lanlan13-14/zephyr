@@ -104,6 +104,24 @@ class _HomeScreenState extends State<HomeScreen> {
     _urlCtrl = TextEditingController(text: config.serverUrl);
     _nameCtrl = TextEditingController(text: config.deviceName);
 
+    _urlCtrl.addListener(() {
+      final ctrl = context.read<AgentController>();
+      final text = _urlCtrl.text.trim();
+      if (text.isNotEmpty && text != ctrl.config.serverUrl) {
+        ctrl.config.serverUrl = text;
+        LocalSettings.saveConfig(ctrl.config);
+      }
+    });
+
+    _nameCtrl.addListener(() {
+      final ctrl = context.read<AgentController>();
+      final text = _nameCtrl.text.trim();
+      if (text.isNotEmpty && text != ctrl.config.deviceName) {
+        ctrl.config.deviceName = text;
+        LocalSettings.saveConfig(ctrl.config);
+      }
+    });
+
     // Update countdown display
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
@@ -340,16 +358,20 @@ class _HomeScreenState extends State<HomeScreen> {
               appBar: AppBar(
                 backgroundColor: Colors.transparent,
                 surfaceTintColor: Colors.transparent,
-                leadingWidth: 96,
-                leading: Row(mainAxisSize: MainAxisSize.min, children: [
-                  IconButton(tooltip: s.tooltipReset, icon: const Icon(Icons.restart_alt), onPressed: () => _resetSettings(ctrl)),
-                  IconButton(tooltip: s.tooltipSave, icon: const Icon(Icons.save_outlined), onPressed: () => _saveAndNotify(ctrl)),
-                ]),
-                title: Row(mainAxisSize: MainAxisSize.min, children: [
-                  ZephyrMark(palette: _palette, size: 26),
-                  const SizedBox(width: 8),
-                  Text(s.appTitle),
-                ]),
+                elevation: 0,
+                scrolledUnderElevation: 0,
+                centerTitle: true,
+                title: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ZephyrMark(palette: _palette, size: 24),
+                    const SizedBox(width: 8),
+                    Text(
+                      s.appTitle,
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, letterSpacing: -0.4),
+                    ),
+                  ],
+                ),
               ),
               bottomNavigationBar: SafeArea(
                 top: false,
@@ -369,7 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _appearanceGroup(accent, s),
                 if (isActive && (ctrl.linkError.isNotEmpty || !ctrl.linkTunnelUp)) _linkGroup(ctrl, s),
                 if (ctrl.transferCount > 0) _statsGroup(ctrl, s),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 if (!isActive)
                   GlassPrimaryButton(label: s.actionStart, icon: Icons.play_arrow_rounded, color: accent, onPressed: () => _startConnection(ctrl))
                 else ...[
@@ -378,6 +400,47 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 10),
                     Center(child: TextButton(onPressed: () => ctrl.extendShutdown(), child: Text(s.extendMinutes(ctrl.config.autoShutdownMinutes)))),
                   ],
+                ],
+                if (!isActive) ...[
+                  const SizedBox(height: 16),
+                  SettingsGroup(
+                    children: [
+                      SettingsRow(
+                        title: s.tooltipReset,
+                        textColor: _palette.danger,
+                        centerTitle: true,
+                        onTap: () async {
+                          final confirm = await showGlassSheet<bool>(
+                            context: context,
+                            palette: _palette,
+                            builder: (ctx) => Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(s.tooltipReset, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    s.pick('确定要重置所有设置并恢复默认吗？', 'Are you sure you want to reset all settings to defaults?'),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: _palette.textSecondary, fontSize: 14),
+                                  ),
+                                  const SizedBox(height: 18),
+                                  Row(children: [
+                                    Expanded(child: TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.actionCancel))),
+                                    Expanded(child: TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(s.tooltipReset, style: TextStyle(color: _palette.danger)))),
+                                  ]),
+                                ],
+                              ),
+                            ),
+                          );
+                          if (confirm == true) {
+                            await _resetSettings(ctrl);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
                 ],
               ],
             ),

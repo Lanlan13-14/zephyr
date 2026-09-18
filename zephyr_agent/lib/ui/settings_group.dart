@@ -122,6 +122,8 @@ class SettingsRow extends StatefulWidget {
   final Widget? trailing;
   final VoidCallback? onTap;
   final bool showChevron;
+  final Color? textColor;
+  final bool centerTitle;
 
   const SettingsRow({
     super.key,
@@ -132,6 +134,8 @@ class SettingsRow extends StatefulWidget {
     this.trailing,
     this.onTap,
     this.showChevron = false,
+    this.textColor,
+    this.centerTitle = false,
   });
 
   @override
@@ -167,11 +171,12 @@ class _SettingsRowState extends State<SettingsRow> {
           Expanded(
             child: Text(
               widget.title,
+              textAlign: widget.centerTitle ? TextAlign.center : TextAlign.left,
               style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w400,
                 letterSpacing: -0.41,
-                color: palette.text,
+                color: widget.textColor ?? palette.text,
               ),
             ),
           ),
@@ -272,7 +277,7 @@ class SettingsFieldRow extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             SizedBox(
-              width: 88,
+              width: 96,
               child: Text(
                 label,
                 maxLines: 1,
@@ -290,6 +295,7 @@ class SettingsFieldRow extends StatelessWidget {
                 placeholder: placeholder,
                 padding: EdgeInsets.zero,
                 decoration: const BoxDecoration(),
+                textAlign: TextAlign.right,
                 style: TextStyle(fontSize: 17, height: 1.2, letterSpacing: -0.41, color: palette.text),
                 placeholderStyle: TextStyle(fontSize: 17, height: 1.2, color: palette.textSecondary.withValues(alpha: 0.7)),
               ),

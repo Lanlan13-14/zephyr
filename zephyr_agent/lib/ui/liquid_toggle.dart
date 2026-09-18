@@ -9,19 +9,22 @@ import 'glass_program.dart';
 import 'settings_palette.dart';
 
 /// Capsule liquid-glass switch, 1:1 after Kyant0/AndroidLiquidGlass
-/// `LiquidToggle`.
+/// `LiquidToggle` + `DampedDragAnimation`.
 ///
 /// 64×28 track, 40×24 glass thumb, 2pt inset, 20pt travel. The thumb is a
-/// hollow refractive shell: backdrop sampling + blur(8, press-scaled) +
-/// lens(5→10, chromatic) + ambient highlight, over a white surface that
-/// fades out on press (alpha 1→0). A 4dp black/5% shadow and a press-gated
-/// inner shadow sit underneath. Press scales the whole thumb; drag velocity
-/// stretches it. Track stays the track: solid on-color when asked
-/// (theme accent), translucent groove when off.
+/// hollow refractive shell: backdrop sampling + blur(8·(1-p)) +
+/// lens(5p→10p, chromatic) + ambient highlight, over a white surface that
+/// fades out on press (alpha 1→0).
 ///
-/// Kyant's on-track is system green; here it is the single active theme
-/// accent so every switch on screen is the same color. Everything else —
-/// geometry, glass stack, interaction physics — follows upstream.
+/// On touch or toggle jump:
+/// - Thumb blooms (scale 1.0 → 1.5, pressProgress 0 → 1), solid white melts away
+///   into living liquid glass with chromatic dispersion.
+/// - During motion, finger velocity squashes and stretches the knob.
+/// - On landing, underdamped springs (damping 0.6 / 0.7) snap the knob back
+///   with a juicy jelly bounce as the white surface solidifies into place.
+///
+/// Track stays the track: solid interpolated color (theme accent when on,
+/// translucent gray groove when off).
 class LiquidToggle extends StatefulWidget {
   final bool value;
   final ValueChanged<bool>? onChanged;
@@ -32,7 +35,7 @@ class LiquidToggle extends StatefulWidget {
     required this.onChanged,
   });
 
-  /// LiquidToggle geometry.
+  /// LiquidToggle geometry (Kyant0 / AndroidLiquidGlass).
   static const double trackWidth = 64;
   static const double trackHeight = 28;
   static const double thumbWidth = 40;
@@ -56,74 +59,63 @@ class _LiquidToggleState extends State<LiquidToggle>
     with TickerProviderStateMixin {
   late final AnimationController _fraction;
   late final AnimationController _press;
+  late final AnimationController _scaleX;
+  late final AnimationController _scaleY;
+
   bool _dragging = false;
   Offset _lastMove = Offset.zero;
   Duration _lastMoveAt = Duration.zero;
   double _velocity = 0;
   bool _tapDown = false;
+  VoidCallback? _landingCheck;
 
   bool get _enabled => widget.onChanged != null;
 
   @override
   void initState() {
     super.initState();
-    // DampedDragAnimation value spec: spring(1, 1000). Position snaps with a
-    // stiff critically-damped spring rather than a fixed-duration tween.
+    // DampedDragAnimation value spec: spring(1, 1000). Critically damped travel.
     _fraction = AnimationController.unbounded(
       vsync: this,
-      value: widget.value ? 1 : 0,
+      value: widget.value ? 1.0 : 0.0,
     )..addListener(() => setState(() {}));
-    // pressProgress spec: same spring, drives scale 1→1.5 and the glass stack.
-    _press = AnimationController.unbounded(vsync: this, value: 0)
+
+    // pressProgress spec: spring(1, 1000). Drives the glass melting stack.
+    _press = AnimationController.unbounded(vsync: this, value: 0.0)
+      ..addListener(() => setState(() {}));
+
+    // scaleX spec: spring(0.6, 250). Underdamped bounce on release!
+    _scaleX = AnimationController.unbounded(vsync: this, value: 1.0)
+      ..addListener(() => setState(() {}));
+
+    // scaleY spec: spring(0.7, 250). Underdamped bounce on release!
+    _scaleY = AnimationController.unbounded(vsync: this, value: 1.0)
       ..addListener(() => setState(() {}));
   }
 
   @override
   void didUpdateWidget(covariant LiquidToggle oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.value != widget.value && !_dragging) {
-      _animateFraction(widget.value ? 1 : 0);
-      _animatePress(widget.value ? 1 : 0);
+    if (oldWidget.value != widget.value && !_dragging && !_tapDown) {
+      _animateToTarget(widget.value ? 1.0 : 0.0);
     }
   }
 
   @override
   void dispose() {
+    if (_landingCheck != null) {
+      _fraction.removeListener(_landingCheck!);
+      _landingCheck = null;
+    }
     _fraction.dispose();
     _press.dispose();
+    _scaleX.dispose();
+    _scaleY.dispose();
     super.dispose();
   }
 
   bool get _reduceMotion =>
       MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-
-  void _animateFraction(double target) {
-    if (_reduceMotion) {
-      _fraction.value = target;
-      return;
-    }
-    _fraction.animateWith(SpringSimulation(
-      _valueSpring,
-      _fraction.value,
-      target,
-      _velocity,
-      tolerance: const Tolerance(distance: 0.001, velocity: 0.001),
-    ));
-  }
-
-  void _animatePress(double target) {
-    if (_reduceMotion) {
-      _press.value = target;
-      return;
-    }
-    _press.animateWith(SpringSimulation(
-      _pressSpring,
-      _press.value,
-      target,
-      0,
-      tolerance: const Tolerance(distance: 0.001, velocity: 0.001),
-    ));
-  }
 
   static final _valueSpring = SpringDescription.withDampingRatio(
     mass: 1,
@@ -134,6 +126,16 @@ class _LiquidToggleState extends State<LiquidToggle>
     mass: 1,
     stiffness: 1000,
     ratio: 1.0,
+  );
+  static final _scaleXSpring = SpringDescription.withDampingRatio(
+    mass: 1,
+    stiffness: 250,
+    ratio: 0.6, // Kyant DampedDragAnimation: underdamped jelly bounce
+  );
+  static final _scaleYSpring = SpringDescription.withDampingRatio(
+    mass: 1,
+    stiffness: 250,
+    ratio: 0.7, // Kyant DampedDragAnimation: underdamped jelly bounce
   );
   static final _velocitySpring = SpringDescription.withDampingRatio(
     mass: 0.5,
@@ -146,6 +148,107 @@ class _LiquidToggleState extends State<LiquidToggle>
     unawaited(HapticFeedback.lightImpact());
   }
 
+  void _pressDown() {
+    if (_reduceMotion) {
+      _press.value = 1.0;
+      _scaleX.value = 1.5;
+      _scaleY.value = 1.5;
+      return;
+    }
+    _press.animateWith(SpringSimulation(
+      _pressSpring,
+      _press.value,
+      1.0,
+      0,
+      tolerance: const Tolerance(distance: 0.001, velocity: 0.001),
+    ));
+    _scaleX.animateWith(SpringSimulation(
+      _scaleXSpring,
+      _scaleX.value,
+      1.5,
+      0,
+      tolerance: const Tolerance(distance: 0.001, velocity: 0.001),
+    ));
+    _scaleY.animateWith(SpringSimulation(
+      _scaleYSpring,
+      _scaleY.value,
+      1.5,
+      0,
+      tolerance: const Tolerance(distance: 0.001, velocity: 0.001),
+    ));
+  }
+
+  void _releaseUp() {
+    if (_reduceMotion) {
+      _press.value = 0.0;
+      _scaleX.value = 1.0;
+      _scaleY.value = 1.0;
+      return;
+    }
+    _press.animateWith(SpringSimulation(
+      _pressSpring,
+      _press.value,
+      0.0,
+      0,
+      tolerance: const Tolerance(distance: 0.001, velocity: 0.001),
+    ));
+    _scaleX.animateWith(SpringSimulation(
+      _scaleXSpring,
+      _scaleX.value,
+      1.0,
+      0,
+      tolerance: const Tolerance(distance: 0.001, velocity: 0.001),
+    ));
+    _scaleY.animateWith(SpringSimulation(
+      _scaleYSpring,
+      _scaleY.value,
+      1.0,
+      0,
+      tolerance: const Tolerance(distance: 0.001, velocity: 0.001),
+    ));
+  }
+
+  void _animateToTarget(double target) {
+    if (_landingCheck != null) {
+      _fraction.removeListener(_landingCheck!);
+      _landingCheck = null;
+    }
+
+    if (_reduceMotion) {
+      _fraction.value = target;
+      _press.value = 0.0;
+      _scaleX.value = 1.0;
+      _scaleY.value = 1.0;
+      return;
+    }
+
+    // 1. Bloom the thumb into living liquid glass
+    _pressDown();
+
+    // 2. Animate fraction across the track with critically damped spring
+    _fraction.animateWith(SpringSimulation(
+      _valueSpring,
+      _fraction.value,
+      target,
+      _velocity,
+      tolerance: const Tolerance(distance: 0.001, velocity: 0.001),
+    ));
+
+    // 3. Monitor landing: when near destination, trigger underdamped release bounce!
+    void check() {
+      if ((_fraction.value - target).abs() <= 0.035 || !_fraction.isAnimating) {
+        if (_landingCheck != null) {
+          _fraction.removeListener(_landingCheck!);
+          _landingCheck = null;
+        }
+        _releaseUp();
+      }
+    }
+
+    _landingCheck = check;
+    _fraction.addListener(check);
+  }
+
   void _onPointerDown(PointerDownEvent e) {
     if (!_enabled) return;
     _tapDown = true;
@@ -153,7 +256,7 @@ class _LiquidToggleState extends State<LiquidToggle>
     _lastMove = e.position;
     _lastMoveAt = e.timeStamp;
     _velocity = 0;
-    _animatePress(1);
+    _pressDown();
   }
 
   void _onPointerMove(PointerMoveEvent e) {
@@ -164,41 +267,31 @@ class _LiquidToggleState extends State<LiquidToggle>
     _lastMoveAt = e.timeStamp;
     if (dx.abs() > 0.4) _dragging = true;
     if (!_dragging || dt <= 0) return;
-    final next =
-        (_fraction.value + dx / LiquidToggle.travel).clamp(0.0, 1.0);
+    final next = (_fraction.value + dx / LiquidToggle.travel).clamp(0.0, 1.0);
     final crossedMid = (_fraction.value - 0.5) * (next - 0.5) < 0;
     _velocity = (next - _fraction.value) / dt;
     _fraction.stop();
     _fraction.value = next;
-    // iOS ticks once at the 50% mark regardless of direction.
     if (crossedMid) _haptic();
   }
 
   void _onPointerUp(PointerEvent e) {
     if (!_enabled || !_tapDown) return;
     _tapDown = false;
-    _animatePress(0);
-    bool next;
+    final double target;
     if (_dragging) {
-      final v = _velocity;
-      _fraction.animateWith(SpringSimulation(
-        _velocitySpring,
-        _fraction.value,
-        _fraction.value,
-        v,
-        tolerance: const Tolerance(distance: 0.001, velocity: 5),
-      ));
-      // Allow one frame for velocity spring state, then snap by 50%.
-      next = v.abs() > 300 ? v > 0 : _fraction.value >= 0.5;
-      _animateFraction(next ? 1 : 0);
+      target = (_velocity.abs() > 200 ? _velocity > 0 : _fraction.value >= 0.5) ? 1.0 : 0.0;
     } else {
-      next = !widget.value;
-      _animateFraction(next ? 1 : 0);
+      target = widget.value ? 0.0 : 1.0;
       _haptic();
     }
+    _animateToTarget(target);
     _dragging = false;
     _velocity = 0;
-    if (next != widget.value) widget.onChanged?.call(next);
+    final bool nextValue = target == 1.0;
+    if (nextValue != widget.value) {
+      widget.onChanged?.call(nextValue);
+    }
   }
 
   @override
@@ -221,23 +314,17 @@ class _LiquidToggleState extends State<LiquidToggle>
           onPointerCancel: _onPointerUp,
           child: RepaintBoundary(
             child: AnimatedBuilder(
-              animation: _fraction,
+              animation: Listenable.merge([_fraction, _press, _scaleX, _scaleY]),
               builder: (context, _) {
-                // Kyant DampedDragAnimation.value: 0..1 fraction, press drives
-                // the glass stack separately below.
                 final t = _fraction.value.clamp(0.0, 1.0);
                 final press = _press.value.clamp(0.0, 1.0);
-                // Kyant track: solid interpolated color. No specular
-                // gradient on the track, no accent glow.
                 final track = Color.lerp(off, on, t)!;
-                // DampedDragAnimation: resting scale is 1.0; press gently blooms (1.0 -> 1.12),
-                // drag velocity stretches along motion axis (squash & stretch).
-                final baseScale = 1.0 + 0.12 * press;
-                final v = (_velocity / 50).clamp(-0.25, 0.25);
-                final scaleX = baseScale / (1.0 - (v * 0.75).clamp(-0.25, 0.25));
-                final scaleY = baseScale * (1.0 - (v * 0.25).clamp(-0.25, 0.25));
-                // Kyant graphicsLayer: 2pt inset, translationX lerps
-                // padding→padding+travel with t.
+
+                // Squash & stretch from drag velocity and underdamped spring scale
+                final v = (_velocity / 50).clamp(-0.2, 0.2);
+                final scaleX = _scaleX.value / (1.0 - (v * 0.75).clamp(-0.2, 0.2));
+                final scaleY = _scaleY.value * (1.0 - (v * 0.25).clamp(-0.2, 0.2));
+
                 final thumbX = LiquidToggle.inset + LiquidToggle.travel * t;
 
                 return SizedBox(
@@ -259,7 +346,7 @@ class _LiquidToggleState extends State<LiquidToggle>
                         top: LiquidToggle.inset,
                         child: Transform(
                           alignment: Alignment.center,
-                          transform: Matrix4.diagonal3Values(scaleX, scaleY, 1),
+                          transform: Matrix4.diagonal3Values(scaleX, scaleY, 1.0),
                           child: _GlassThumb(
                             width: LiquidToggle.thumbWidth,
                             height: LiquidToggle.thumbHeight,
@@ -319,10 +406,7 @@ class _GlassThumbState extends State<_GlassThumb> {
     final lens = _lens;
     final ImageFilter backdrop;
     if (lens != null) {
-      // Kyant thumb stack, 1:1: blur(8·(1−p)) then lens(5p, 10p,
-      // chromatic). The combined backdrop runs on the real screen behind
-      // the thumb; the same-shader multi-effect chain equals upstream
-      // effects = { blur(...); lens(...) } without a second layer.
+      // Kyant thumb stack, 1:1: blur(8·(1−p)) then lens(5p, 10p, chromatic)
       lens
         ..setFloat(0, widget.width)
         ..setFloat(1, widget.height)
@@ -394,7 +478,7 @@ class _ThumbGlassPainter extends CustomPainter {
     }
 
     // Kyant Highlight.Ambient: delicate 45° specular crescent that responds to press.
-    final ambientAlpha = (0.20 + 0.50 * press).clamp(0.0, 1.0);
+    final ambientAlpha = (0.20 + 0.60 * press).clamp(0.0, 1.0);
     canvas.save();
     canvas.clipRRect(rrect.deflate(0.6));
     canvas.drawArc(
@@ -409,7 +493,7 @@ class _ThumbGlassPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 0.8
-        ..color = Colors.white.withValues(alpha: ambientAlpha),
+        ..color = Colors.white.withValues(alpha: ambientAlpha * (0.2 + 0.8 * press)),
     );
     canvas.restore();
   }
