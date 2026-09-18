@@ -39,7 +39,7 @@ class _GlassPrimaryButtonState extends State<GlassPrimaryButton> {
         blur: 18,
         thickness: 18,
         lightIntensity: 0.7,
-        tint: widget.color.withValues(alpha: _pressed ? 0.72 : 0.86),
+        tint: widget.color.withValues(alpha: _pressed ? 0.62 : 0.74),
         child: SizedBox(
           height: 50,
           child: Row(
