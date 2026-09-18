@@ -699,6 +699,8 @@ class FileAgentManager {
         this.linkRegisterAgentKey = typeof options.linkRegisterAgentKey === 'function' ? options.linkRegisterAgentKey : null;
         /** Resolves a One enrollment access credential to its device row. */
         this.resolveDeviceAccess = typeof options.resolveDeviceAccess === 'function' ? options.resolveDeviceAccess : null;
+        /** Optional: persist last-seen for an enrolled device (hello / ping). */
+        this.onAgentSeen = typeof options.onAgentSeen === 'function' ? options.onAgentSeen : null;
 
         this._loadTokens();
         this._restoreLinkIdentities();
@@ -1477,6 +1479,7 @@ class FileAgentManager {
         }, HEARTBEAT_INTERVAL_MS);
 
         this.log(`[file-agent] registered: ${conn.deviceName} (${agentId}) for owner ${ownerId}`);
+        this._recordAgentSeen(conn);
         this._broadcastEvent({
             type: 'file_agent_online',
             agent: conn.toPublicInfo(),
@@ -1547,6 +1550,19 @@ class FileAgentManager {
         });
     }
 
+    _recordAgentSeen(conn) {
+        if (!conn?.deviceId || typeof this.onAgentSeen !== 'function') return;
+        try {
+            this.onAgentSeen({
+                deviceId: conn.deviceId,
+                appVersion: conn.appVersion,
+                lastSeenAt: conn.lastSeenAt,
+            });
+        } catch (err) {
+            this.log('[file-agent] onAgentSeen failed:', err?.message || err);
+        }
+    }
+
     _handleAgentResponse(agentId, msg) {
         const conn = this.agents.get(agentId);
         if (!conn) return;
@@ -1559,6 +1575,7 @@ class FileAgentManager {
         if (!conn) return;
         conn.lastSeenAt = Date.now();
         conn.heartbeatMissCount = 0;
+        this._recordAgentSeen(conn);
         try {
             ws.send(JSON.stringify({ type: 'pong', time: Date.now() }));
         } catch {}

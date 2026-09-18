@@ -7,9 +7,9 @@
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
     <link rel="modulepreload" href="i18n/runtime.js?v=20260916-agent-devices1">
-    <link rel="modulepreload" href="app.js?v=20260916-agent-devices1">
+    <link rel="modulepreload" href="app.js?v=20260918-jump-select-motion">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
-    <link rel="stylesheet" href="style.css?v=20260916-agent-devices1">
+    <link rel="stylesheet" href="style.css?v=20260918-jump-select-motion">
     <script src="liquid-glass-renderer.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-tab-layout.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-nav.js?v=20260916-agent-devices1" defer></script>
@@ -749,9 +749,6 @@
                             </div>
                         </div>
                         <div class="settings-panel" id="settings-agent">
-                            <h2 data-i18n="Zephyr Client">Zephyr Client</h2>
-                            <p class="muted" data-i18n="Zephyr Agent 与 Zephyr One 都通过设备绑定（enrollment）连接主端，不再需要 Client Token。">Zephyr Agent 与 Zephyr One 都通过设备绑定（enrollment）连接主端，不再需要 Client Token。</p>
-
                             <h2 data-i18n="已绑定的 Zephyr Agent">已绑定的 Zephyr Agent</h2>
                             <p class="muted" data-i18n="Agent 在手机上点「绑定设备」并在主端批准后显示在此。删除后需重新绑定。">Agent 在手机上点「绑定设备」并在主端批准后显示在此。删除后需重新绑定。</p>
                             <div class="agent-token-actions"><button class="btn" type="button" id="agentDeviceRefreshBtn" data-i18n="刷新设备">刷新设备</button></div>
@@ -1367,7 +1364,7 @@
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
 <script src="preview-mock.js?v=20260916-agent-devices1" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260916-agent-devices1" type="module"></script>
+<script src="app.js?v=20260918-jump-select-motion" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

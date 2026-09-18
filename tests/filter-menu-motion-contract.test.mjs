@@ -36,12 +36,14 @@ test('motion opt-in set covers dashboard filters + settings/appearance/terminal 
         'colorSchemeSelect', 'themeModeSelect', 'terminalBgSource', 'terminalBgFit',
         'terminalMaxWindows', 'terminalSmartbarOrder', 'terminalShortcutPlatform',
         'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
+        'aiTodoPriority',
         // 连接编辑器与图五首页筛选使用同一套菜单动画
         'connProtocol', 'connSshKey', 'connEncoding', 'connRoute',
         'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
         // 设置 → 语言 与 代理弹窗 → 类型
         'languageSelect', 'proxyType',
         'adminUserRole',
+        'jumpRouteSelect',
     ];
     assert.deepEqual(ids.sort(), expected.sort());
     for (const id of ['connProtocol', 'connSshKey', 'connEncoding', 'connRoute']) {
@@ -107,6 +109,17 @@ test('CSS keeps menu displayed during close animation and blocks interaction', (
 test('cache bust includes dated motion marker', () => {
     assert.match(appHtml, /app\.js\?v=\d{8}-[a-z0-9-]+/);
     assert.match(appHtml, /style\.css\?v=\d{8}-[a-z0-9-]+/);
+});
+
+test('jump-host chain rows reuse the dashboard filter toggle + motion id', () => {
+    const renderFn = extractFn(appJs, 'renderJumpRouteRows');
+    assert.match(renderFn, /data-jump-route-select/);
+    assert.match(renderFn, /enhanceToggleSelect\(el\)/);
+    assert.match(renderFn, /shell\.dataset\.selectId = 'jumpRouteSelect'/);
+    assert.match(appJs, /nativeId\.startsWith\('jumpRouteSelect-'\) \? 'jumpRouteSelect'/);
+    assert.match(styleCss, /\.jump-route-row\s*\{[\s\S]*?border:\s*0/);
+    assert.match(styleCss, /\.jump-route-row \.ui-toggle-select/);
+    assert.doesNotMatch(styleCss, /\.jump-route-row select\s*\{/);
 });
 
 test('snippet empty state mirrors ssh-key dashed muted card', () => {

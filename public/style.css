@@ -3306,8 +3306,7 @@ body.adminuser1-blurring #adminUserModalScrim { pointer-events: auto; }
     display: grid;
     gap: 10px;
 }
-.route-proxy-config select,
-.jump-route-row select {
+.route-proxy-config select {
     width: 100%;
     min-width: 0;
     padding: 12px 14px;
@@ -3319,8 +3318,7 @@ body.adminuser1-blurring #adminUserModalScrim { pointer-events: auto; }
     outline: none;
     box-shadow: 0 2px 8px rgba(0,0,0,.10);
 }
-.route-proxy-config select:focus,
-.jump-route-row select:focus {
+.route-proxy-config select:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(10,132,255,.12), 0 2px 8px rgba(0,0,0,.10);
 }
@@ -3330,23 +3328,26 @@ body.adminuser1-blurring #adminUserModalScrim { pointer-events: auto; }
 }
 .jump-route-row {
     display: grid;
-    grid-template-columns: 78px minmax(0, 1fr) 34px;
+    grid-template-columns: minmax(0, 1fr) 40px;
     align-items: center;
-    gap: 10px;
-    padding: 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--surface) 84%, var(--bg));
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    background: transparent;
 }
 .jump-route-row label {
-    margin: 0;
+    grid-column: 1 / -1;
+    margin: 0 0 2px;
     color: var(--text-secondary);
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 600;
+}
+.jump-route-row .ui-toggle-select {
+    min-width: 0;
 }
 .jump-route-remove {
-    width: 34px;
-    height: 34px;
+    width: 40px;
+    height: 40px;
     border: 0;
     border-radius: 999px;
     background: transparent;
@@ -3354,6 +3355,7 @@ body.adminuser1-blurring #adminUserModalScrim { pointer-events: auto; }
     cursor: pointer;
     font-size: 26px;
     line-height: 1;
+    align-self: center;
 }
 .jump-route-remove:hover {
     background: rgba(248,81,73,.12);
@@ -3669,11 +3671,10 @@ body.app-body > .toast-container {
     }
     #settings-security { width: 100%; min-width: 0; }
     .jump-route-row {
-        grid-template-columns: 1fr auto;
+        grid-template-columns: minmax(0, 1fr) 40px;
         gap: 8px;
     }
-    .jump-route-row label,
-    .jump-route-row select {
+    .jump-route-row label {
         grid-column: 1 / -1;
     }
     .settings-form,
