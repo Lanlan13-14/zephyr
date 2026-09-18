@@ -138,6 +138,7 @@ class _LiquidToggleState extends State<LiquidToggle>
     _press.animateWith(SpringSimulation(
       target > 0.5 ? _pressSpring : _settleSpring,
       _press.value,
+      target,
       0,
     ));
   }

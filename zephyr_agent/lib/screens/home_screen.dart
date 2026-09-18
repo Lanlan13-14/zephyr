@@ -14,6 +14,7 @@ import '../ui/apple_spinner.dart';
 import '../ui/glass_button.dart';
 import '../ui/glass_sheet.dart';
 import '../ui/settings_group.dart';
+import '../ui/settings_palette.dart';
 
 class HomeScreen extends StatefulWidget {
   final ZephyrTheme currentTheme;

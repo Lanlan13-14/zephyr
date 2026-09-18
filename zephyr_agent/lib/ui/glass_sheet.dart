@@ -2,8 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
-import '../theme/zephyr_colors.dart';
-import 'settings_group.dart';
+import 'settings_palette.dart';
 
 /// Presents a modal sheet in the iOS card style: it floats over the dimmed
 /// previous context, the top corners are continuously rounded, the surface is
@@ -16,7 +15,7 @@ Future<T?> showGlassSheet<T>({
   required WidgetBuilder builder,
   bool isScrollControlled = false,
 }) {
-  final palette = SettingsPaletteLike.of(context);
+  final palette = SettingsPalette.of(context);
   return showModalBottomSheet<T>(
     context: context,
     isScrollControlled: isScrollControlled,
@@ -29,12 +28,6 @@ Future<T?> showGlassSheet<T>({
       ),
     ),
   );
-}
-
-/// Duck-typed accessor so the sheet does not depend on the settings module's
-/// private API surface.
-class SettingsPaletteLike {
-  static ZephyrPalette of(BuildContext context) => SettingsPalette.of(context);
 }
 
 class _GlassSheetFrame extends StatelessWidget {

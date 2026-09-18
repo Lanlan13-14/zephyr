@@ -1,4 +1,4 @@
-import 'dart:ui' as ui;
+import 'dart:ui' as ui show Locale, PlatformDispatcher;
 
 /// Minimal zh/en string table. The bundle follows the system locale
 /// (`ui.PlatformDispatcher.instance.locale`): any zh-* language code resolves
