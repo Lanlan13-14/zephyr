@@ -70,6 +70,12 @@ const (
 	// FrameDetach detaches from a session without killing it.
 	FrameDetach FrameType = 0x51
 
+	// FrameReset requests resetting a session to its template state.
+	FrameReset FrameType = 0x52
+
+	// FrameResetResult returns the result of a reset request.
+	FrameResetResult FrameType = 0x53
+
 	// --- Keepalive ---
 
 	// FramePing is a keepalive ping.
@@ -123,6 +129,10 @@ func (t FrameType) String() string {
 		return "ATTACH"
 	case FrameDetach:
 		return "DETACH"
+	case FrameReset:
+		return "RESET"
+	case FrameResetResult:
+		return "RESET_RESULT"
 	case FramePing:
 		return "PING"
 	case FramePong:
@@ -142,7 +152,7 @@ func (t FrameType) IsValid() bool {
 		FrameFSReq, FrameFSResp, FrameFSChunk,
 		FrameOffloadReq, FrameOffloadResp,
 		FrameMetrics, FrameAuditPull, FrameAuditData,
-		FrameAttach, FrameDetach,
+		FrameAttach, FrameDetach, FrameReset, FrameResetResult,
 		FramePing, FramePong,
 		FrameError:
 		return true

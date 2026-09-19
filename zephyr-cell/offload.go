@@ -39,11 +39,11 @@ type OffloadFile struct {
 
 // Standard offload exit codes (§5.3).
 const (
-	OffloadExitSuccess         = 0
-	OffloadExitTimeout         = 124
+	OffloadExitSuccess          = 0
+	OffloadExitTimeout          = 124
 	OffloadExitPermissionDenied = 125
-	OffloadExitUnavailable     = 126
-	OffloadExitUnknown         = 127
+	OffloadExitUnavailable      = 126
+	OffloadExitUnknown          = 127
 )
 
 // OffloadCommands lists all standard zc-* offload commands (§5.2).
