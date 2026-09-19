@@ -13,7 +13,7 @@ import one.zephyr.mobile.model.SshKey
  * still [one.zephyr.mobile.model.PageState.InitialLoading] can be replayed onto the opened form
  * instead of being dropped on the floor.
  */
-internal data class AgentBastionCandidate(
+data class AgentBastionCandidate(
     val agentId: String,
     val label: String,
 ) {
