@@ -307,13 +307,38 @@ class SettingsFieldRow extends StatelessWidget {
                 // Draw a Flutter capsule toolbar; never ask the OS for one.
                 enableInteractiveSelection: true,
                 selectionControls: cupertinoTextSelectionHandleControls,
+                magnifierConfiguration: TextMagnifierConfiguration.disabled,
                 contextMenuBuilder: (context, editableTextState) {
-                  return _AddressSelectionToolbar(editableTextState: editableTextState);
+                  return _AddressSelectionToolbar(
+                    editableTextState: editableTextState,
+                    palette: palette,
+                  );
                 },
                 style: TextStyle(fontSize: 17, height: 1.2, letterSpacing: -0.41, color: palette.text),
                 placeholderStyle: TextStyle(fontSize: 17, height: 1.2, color: palette.textSecondary.withValues(alpha: 0.7)),
               ),
             ),
+            if (controller.text.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  final text = controller.text.trim();
+                  if (text.isNotEmpty) {
+                    Clipboard.setData(ClipboardData(text: text));
+                    HapticFeedback.lightImpact();
+                  }
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                  child: Icon(
+                    Icons.copy_rounded,
+                    size: 15,
+                    color: palette.textSecondary.withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -325,44 +350,62 @@ class SettingsFieldRow extends StatelessWidget {
 /// overlay — the Android 14 SystemContextMenu fog is what this replaces.
 class _AddressSelectionToolbar extends StatelessWidget {
   final EditableTextState editableTextState;
-  const _AddressSelectionToolbar({required this.editableTextState});
+  final ZephyrPalette palette;
+
+  const _AddressSelectionToolbar({
+    required this.editableTextState,
+    required this.palette,
+  });
 
   @override
   Widget build(BuildContext context) {
     final anchors = editableTextState.contextMenuAnchors;
-    final palette = SettingsPalette.of(context);
     final items = editableTextState.contextMenuButtonItems;
     if (items.isEmpty) return const SizedBox.shrink();
-    return AdaptiveTextSelectionToolbar(
-      anchors: anchors,
-      children: [
-        Material(
-          color: Colors.transparent,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.16),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 0; i < items.length; i++) ...[
-                  if (i > 0)
-                    Container(width: 0.5, height: 28, color: palette.border.withValues(alpha: 0.45)),
-                  _ToolbarButton(item: items[i], color: palette.text),
-                ],
-              ],
+
+    // Position directly via TextSelectionToolbarLayoutDelegate in the
+    // overlay. Does NOT route through AdaptiveTextSelectionToolbar (which
+    // wraps Material 3 container on Android) and NEVER looks up
+    // SettingsPalette in the Overlay (which throws NullCheckException).
+    return CustomSingleChildLayout(
+      delegate: TextSelectionToolbarLayoutDelegate(
+        anchorAbove: anchors.primaryAnchor,
+        anchorBelow: anchors.secondaryAnchor ?? anchors.primaryAnchor,
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x33000000),
+                blurRadius: 14,
+                offset: Offset(0, 4),
+              ),
+            ],
+            border: Border.all(
+              color: palette.border.withValues(alpha: 0.35),
+              width: 0.5,
             ),
           ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < items.length; i++) ...[
+                if (i > 0)
+                  Container(
+                    width: 0.5,
+                    height: 24,
+                    color: palette.border.withValues(alpha: 0.45),
+                  ),
+                _ToolbarButton(item: items[i], color: palette.text),
+              ],
+            ],
+          ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -372,16 +415,17 @@ class _ToolbarButton extends StatelessWidget {
   final Color color;
   const _ToolbarButton({required this.item, required this.color});
 
-  String get _label {
+  String _label(BuildContext context) {
+    final isZh = Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
     switch (item.type) {
       case ContextMenuButtonType.copy:
-        return 'Copy';
+        return isZh ? '复制' : 'Copy';
       case ContextMenuButtonType.cut:
-        return 'Cut';
+        return isZh ? '剪切' : 'Cut';
       case ContextMenuButtonType.paste:
-        return 'Paste';
+        return isZh ? '粘贴' : 'Paste';
       case ContextMenuButtonType.selectAll:
-        return 'Select All';
+        return isZh ? '全选' : 'Select All';
       default:
         return item.label ?? '';
     }
@@ -393,10 +437,15 @@ class _ToolbarButton extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: () => item.onPressed?.call(),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         child: Text(
-          _label,
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: color),
+          _label(context),
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: color,
+            letterSpacing: -0.2,
+          ),
         ),
       ),
     );

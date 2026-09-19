@@ -38,6 +38,7 @@ class _GlassPrimaryButtonState extends State<GlassPrimaryButton> {
         borderRadius: BorderRadius.circular(14),
         refractionHeight: 12,
         refractionAmount: 24,
+        specularCrescent: false,
         // LiquidButton Tinted: Hue tint + 0.75 surface keeps refraction
         // visible through the button instead of a flat color slab.
         tint: widget.color.withValues(alpha: _pressed ? 0.68 : 0.75),
