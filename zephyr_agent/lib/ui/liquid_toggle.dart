@@ -31,11 +31,18 @@ class LiquidToggle extends StatelessWidget {
     final onTrack = SettingsPalette.maybeOf(context)?.accent ?? (dark ? const Color(0xFF0A84FF) : const Color(0xFF007AFF));
     final offTrack = dark ? const Color(0x5C787880) : const Color(0x33787878);
 
-    return LiquidGlassSwitch(
+    final control = LiquidGlassSwitch(
       value: value,
-      onChanged: onChanged,
-      activeTrackColor: onTrack,
-      inactiveTrackColor: offTrack,
+      onChanged: onChanged ?? (_) {},
+      activeColor: onTrack,
+      inactiveColor: offTrack,
     );
+
+    if (onChanged == null) {
+      return IgnorePointer(
+        child: Opacity(opacity: 0.42, child: control),
+      );
+    }
+    return control;
   }
 }

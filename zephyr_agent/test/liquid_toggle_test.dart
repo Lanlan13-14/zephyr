@@ -65,6 +65,6 @@ void main() {
       (tester) async {
     await tester.pumpWidget(_wrap(LiquidToggle(value: false, onChanged: (_) {})));
     final sw = tester.widget<LiquidGlassSwitch>(find.byType(LiquidGlassSwitch));
-    expect(sw.inactiveTrackColor, const Color(0x33787878));
+    expect(sw.inactiveColor, const Color(0x33787878));
   });
 }
