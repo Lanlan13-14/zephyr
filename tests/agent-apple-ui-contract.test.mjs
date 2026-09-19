@@ -201,6 +201,33 @@ test('settings field rows are a 44pt iOS row, never an expanding TextField', () 
   // Material TextField's InputDecorator is what painted the gray slab.
   assert.doesNotMatch(group, /child: TextField\(/);
   assert.doesNotMatch(group, /isCollapsed: true/);
+  // Android 14 SystemContextMenu is a PlatformView that inherited the
+  // card clip and painted as a full-viewport gray slab on text select.
+  assert.match(group, /AdaptiveTextSelectionToolbar\.editableText/);
+  assert.match(group, /clipBehavior: Clip\.none/);
+  assert.match(group, /maxLines: 1/);
+});
+
+test('binding sheet opens the system browser the way Zephyr One does', () => {
+  const home = read('zephyr_agent/lib/screens/home_screen.dart');
+  const browser = read('zephyr_agent/lib/platform/system_browser.dart');
+  const strings = read('zephyr_agent/lib/i18n/agent_strings.dart');
+  const android = read('zephyr_agent/android_host/MainActivity.kt');
+  const ios = read('zephyr_agent/ios_host/AppDelegate.swift');
+  const mac = read('zephyr_agent/macos_host/MainFlutterWindow.swift');
+  assert.match(home, /SystemBrowser\.open/);
+  assert.match(home, /s\.actionOpenSystemBrowser/);
+  assert.match(strings, /在系统浏览器批准/);
+  assert.match(strings, /Approve in System Browser/);
+  assert.doesNotMatch(home, /SelectableText\(info\.verificationUri/);
+  assert.match(browser, /openUrl/);
+  assert.match(android, /"openUrl"/);
+  assert.match(android, /Intent\.ACTION_VIEW/);
+  assert.match(android, /CATEGORY_BROWSABLE/);
+  assert.match(ios, /"openUrl"/);
+  assert.match(ios, /UIApplication\.shared\.open/);
+  assert.match(mac, /"openUrl"/);
+  assert.match(mac, /NSWorkspace\.shared\.open/);
 });
 
 test('primary actions, sheets and controls employ liquid glass over a calm system backdrop', () => {

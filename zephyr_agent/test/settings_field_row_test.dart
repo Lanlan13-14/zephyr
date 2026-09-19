@@ -72,4 +72,18 @@ void main() {
     expect(tf.height, lessThanOrEqualTo(44));
     expect(find.text('https://example.com'), findsOneWidget);
   });
+
+  testWidgets('address field ships a Flutter toolbar, never Android SystemContextMenu',
+      (tester) async {
+    await tester.pumpWidget(wrap(SettingsFieldRow(
+      label: 'Address',
+      controller: TextEditingController(text: 'https://example.com'),
+      enabled: true,
+    )));
+    await tester.pumpAndSettle();
+    final field = tester.widget<CupertinoTextField>(find.byType(CupertinoTextField));
+    expect(field.contextMenuBuilder, isNotNull);
+    expect(field.maxLines, 1);
+    expect(field.minLines, 1);
+  });
 }

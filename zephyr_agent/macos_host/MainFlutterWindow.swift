@@ -10,6 +10,17 @@ class MainFlutterWindow: NSWindow {
 
     let channel = FlutterMethodChannel(name: "com.zephyr.agent/platform", binaryMessenger: flutterViewController.engine.binaryMessenger)
     channel.setMethodCallHandler { call, result in
+      if call.method == "openUrl" {
+        let args = call.arguments as? [String: Any]
+        guard let raw = args?["url"] as? String, let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
+          result(FlutterError(code: "bad_args", message: "only http(s) urls", details: nil))
+          return
+        }
+        let ok = NSWorkspace.shared.open(url)
+        result(ok ? nil : FlutterError(code: "open_url", message: "unable to open system browser", details: nil))
+        return
+      }
       guard call.method == "setIconTheme" else {
         result(FlutterMethodNotImplemented)
         return

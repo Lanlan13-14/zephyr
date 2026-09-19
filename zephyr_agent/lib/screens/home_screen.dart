@@ -8,6 +8,7 @@ import '../agent/link_enrollment_client.dart';
 import '../app/agent_version.dart';
 import '../fs/file_provider.dart';
 import '../i18n/agent_strings.dart';
+import '../platform/system_browser.dart';
 import '../storage/local_settings.dart';
 import '../theme/zephyr_colors.dart';
 import '../ui/apple_spinner.dart';
@@ -73,11 +74,28 @@ class _BindSheetBody extends StatelessWidget {
         Text(info.sas,
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, fontFamily: 'monospace', color: palette.accent)),
-        const SizedBox(height: 12),
-        Text(s.bindingOpenLink, style: TextStyle(fontSize: 12, color: palette.textSecondary)),
-        const SizedBox(height: 4),
-        SelectableText(info.verificationUri,
-            style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+        const SizedBox(height: 16),
+        GlassPrimaryButton(
+          label: s.actionOpenSystemBrowser,
+          icon: Icons.open_in_browser_rounded,
+          color: palette.accent,
+          onPressed: info.verificationUri.isEmpty
+              ? null
+              : () async {
+                  final ok = await SystemBrowser.open(info.verificationUri);
+                  if (!ok && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(s.snackOpenBrowserFailed), behavior: SnackBarBehavior.floating),
+                    );
+                  }
+                },
+        ),
+        const SizedBox(height: 10),
+        Text(
+          s.bindingBrowserHint,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12.5, height: 1.35, color: palette.textSecondary),
+        ),
         if (_expiresLabel(s).isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -379,6 +397,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               body: ListView(
+                clipBehavior: Clip.none,
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                 children: [
                 _statusGroup(ctrl, s),
