@@ -38,6 +38,7 @@ public enum MobileApiPaths {
     public static let putMobileV1BlobsUploadsByChunksBy = "/api/mobile/v1/blobs/uploads/{uploadId}/chunks/{index}"
     public static let getMobileV1BlobsByChunksBy = "/api/mobile/v1/blobs/{sha256}/chunks/{index}"
     public static let getMobileV1BlobsBy = "/api/mobile/v1/blobs/{sha256}"
+    public static let getMobileV1AgentBastions = "/api/mobile/v1/agent-bastions"
 
     public static func deviceById(_ deviceId: String) -> String {
         "/api/mobile/v1/devices/" + deviceId
