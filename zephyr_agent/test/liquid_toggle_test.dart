@@ -25,7 +25,7 @@ void main() {
     expect(find.byType(LiquidToggle), findsOneWidget);
     expect(find.byType(LiquidGlassSwitch), findsOneWidget);
     await tester.tap(find.byType(LiquidToggle));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(value, isTrue);
   });
 
@@ -35,8 +35,8 @@ void main() {
       value: value,
       onChanged: null,
     )));
-    await tester.tap(find.byType(LiquidToggle));
-    await tester.pump();
+    await tester.tap(find.byType(LiquidToggle), warnIfMissed: false);
+    await tester.pumpAndSettle();
     expect(value, isFalse);
   });
 
