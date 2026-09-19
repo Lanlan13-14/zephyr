@@ -1,9 +1,9 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
-import { createNotesController } from './notes.js?v=20260916-agent-devices1';
+import { createNotesController } from './notes.js?v=20260919-direct-ssh-no-jump';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260916-agent-devices1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260916-agent-devices1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260919-direct-ssh-no-jump';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260919-direct-ssh-no-jump';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 const $ = (sel) => document.querySelector(sel);
@@ -885,7 +885,16 @@ function handleSharedClipboardMessage(data = {}) {
 const systemThemeQuery = matchMedia('(prefers-color-scheme: dark)');
 function getSystemTheme() { return systemThemeQuery.matches ? 'dark' : 'light'; }
 function getAppearance() { return settings?.appearance || {}; }
-function isSessionPersistenceEnabled() { return settings?.workspace?.sessionPersistence !== false; }
+function isSessionPersistenceLocallyDisabled() {
+    try { return localStorage.getItem('zephyr.sessionPersistence.disabled') === '1'; } catch { return false; }
+}
+function isSessionPersistenceEnabled() {
+    /* Settings load after the first paint. Treat an explicit local disable
+     * as authoritative so a closed toggle cannot restore the last view
+     * from a leftover zephyr.lastView before /api/settings returns. */
+    if (isSessionPersistenceLocallyDisabled()) return false;
+    return settings?.workspace?.sessionPersistence !== false;
+}
 function isAutoThemeEnabled() { return getAppearance().autoThemeEnabled !== false; }
 function getPreferredTheme() {
     const appearance = getAppearance();
@@ -4152,6 +4161,14 @@ function updateRdpTouchSettingsUi() {
     if (output) output.textContent = `${sensitivity.toFixed(1)}×`;
 }
 
+function assertConnectionRouteComplete(payload) {
+    if (payload.connectionMode === 'jump' && !(payload.jumpHostIds || []).length) {
+        throw new Error(t('跳板机不能为空'));
+    }
+    if (payload.connectionMode === 'proxy' && !payload.proxyId) {
+        throw new Error(t('请选择代理服务器'));
+    }
+}
 function connectionPayload({ forTest = false } = {}) {
     const protocol = String($('#connProtocol').value || 'SSH').toUpperCase();
     const mode = $('#connMode').value || 'direct';
@@ -4200,6 +4217,7 @@ async function saveConnection(e) {
      * reached window.onunhandledrejection, which reports every failure as
      * "前端异步错误" and hides the reason the server actually gave. */
     try {
+        assertConnectionRouteComplete(payload);
         if (editingId) await api(`/api/connections/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) });
         else await api('/api/connections', { method: 'POST', body: JSON.stringify(payload) });
     } catch (err) {
@@ -4221,6 +4239,7 @@ async function testConnection() {
     setConnectionTestLatency(t('测试中...'), 'pending');
     try {
         const payload = connectionPayload({ forTest: true });
+        assertConnectionRouteComplete(payload);
         let result;
         if (connectionModalMode === 'transient') {
             if (!transientToken) throw new Error(t('临时凭据已失效，请重新打开链接'));
@@ -4350,6 +4369,7 @@ async function connectEphemeral() {
     if (testBtn) testBtn.disabled = true;
     try {
         const payload = connectionPayload({ forTest: true });
+        assertConnectionRouteComplete(payload);
         await openEphemeralSession(payload);
         closeModal();
         toast(t('正在建立临时连接…'));
@@ -14002,6 +14022,10 @@ async function restoreLastWorkspace() {
         workspaceRevision = null;
         workspaceRestoring = false;
         workspaceReady = true;
+        /* A leftover lastView / early-view paint must not survive a closed
+         * persistence toggle. Land on the dashboard homepage. */
+        if (currentAppView !== 'dashboard') switchView('dashboard');
+        document.documentElement.removeAttribute('data-early-view');
         return;
     }
     workspaceRestoring = true;
@@ -14748,6 +14772,9 @@ async function init() {
         ensureWorkspaceClientId();
         // Early shell switch: if last view was terminal, paint that shell before
         // network restore so refresh does not flash the dashboard first.
+        // Must honor the local disable flag here: settings are still empty,
+        // so isSessionPersistenceEnabled() would otherwise default to on and
+        // replay zephyr.lastView even after the user turned persistence off.
         try {
             const lastView = isSessionPersistenceEnabled() ? (localStorage.getItem('zephyr.lastView') || '') : '';
             if (['activity', 'terminal', 'remote', 'notes', 'settings', 'dashboard'].includes(lastView) && lastView !== 'dashboard') {
@@ -14755,6 +14782,12 @@ async function init() {
                 $$('.nav-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === lastView));
                 $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${lastView}`));
                 document.body.classList.toggle('terminal-mode', lastView === 'terminal');
+            } else {
+                currentAppView = 'dashboard';
+                document.documentElement.removeAttribute('data-early-view');
+                $$('.nav-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === 'dashboard'));
+                $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-dashboard'));
+                document.body.classList.remove('terminal-mode');
             }
         } catch {}
         notesController = createNotesController({

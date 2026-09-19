@@ -24,10 +24,22 @@ test('personalization exposes the default-on session persistence switch', () => 
 test('session persistence is a personal setting and defaults to enabled', () => {
     assert.match(userSettings, /'workspace\.sessionPersistence'/);
     assert.match(appJs, /function isSessionPersistenceEnabled\(\)/);
+    assert.match(appJs, /function isSessionPersistenceLocallyDisabled\(\)/);
     assert.match(appJs, /settings\?\.workspace\?\.sessionPersistence !== false/);
     assert.match(appJs, /#sessionPersistenceEnabled[^\n]*\.checked = isSessionPersistenceEnabled\(\)/);
     assert.match(appJs, /sessionPersistence:\s*true/);
 });
+
+test('a closed persistence toggle cannot restore lastView before settings load', () => {
+    // init() used to call isSessionPersistenceEnabled() while settings was
+    // still {}, so `undefined !== false` treated a leftover zephyr.lastView as
+    // live even after the user turned the toggle off.
+    assert.match(appJs, /if \(isSessionPersistenceLocallyDisabled\(\)\) return false;/);
+    assert.match(appJs, /Must honor the local disable flag here/);
+    assert.match(appJs, /if \(currentAppView !== 'dashboard'\) switchView\('dashboard'\)/);
+    assert.match(appHtml, /sessionPersistenceDisabled \? '' : \(localStorage\.getItem\('zephyr\.lastView'\) \|\| ''\)/);
+});
+
 
 test('disabled persistence skips restore, autosave, snapshots, and last-view replay', () => {
     assert.match(appJs, /function scheduleWorkspaceSave[\s\S]*?!isSessionPersistenceEnabled\(\)/);

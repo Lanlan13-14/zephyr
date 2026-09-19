@@ -2977,6 +2977,25 @@ function resolveRoutePlan(conn) {
     return { target: conn, hops, firstProxy };
 }
 
+/* Direct SSH (no hops, no proxy) used to build the Agent/proxy label
+ * unconditionally and then crash on `null.name` after the handshake had
+ * already succeeded. The catch in createRoutedSSHConnection then tore the
+ * live client down, so a connection without a jump host could never stay
+ * up. Guard the label on a real first hop. */
+function describeFirstHop(firstProxy) {
+    if (!firstProxy) return '';
+    if (firstProxy.type === 'agent') {
+        return `Agent 跳板 ${firstProxy.name || firstProxy.agentId}`;
+    }
+    return `代理 ${firstProxy.name || firstProxy.host}`;
+}
+
+function describeRoutedPath(firstProxy, targetLabel) {
+    const prefix = describeFirstHop(firstProxy);
+    const label = targetLabel || '';
+    return prefix ? `${prefix} -> ${label}` : label;
+}
+
 async function createRoutedSSHConnection(conn, timeout = 10000) {
     const plan = resolveRoutePlan(conn);
     const clients = [];
@@ -2985,10 +3004,7 @@ async function createRoutedSSHConnection(conn, timeout = 10000) {
             const sock = plan.firstProxy ? await openProxyConnection(plan.firstProxy, conn.host, conn.port, timeout) : undefined;
             const client = await connectSSHClient(conn, { timeout, sock });
             clients.push(client);
-            const prefix = plan.firstProxy?.type === 'agent'
-                ? `Agent 跳板 ${plan.firstProxy.name || plan.firstProxy.agentId}`
-                : `代理 ${plan.firstProxy.name || plan.firstProxy.host}`;
-            return { client, clients, route: plan.firstProxy ? `${prefix} -> ${conn.name || conn.host}` : conn.name || conn.host };
+            return { client, clients, route: describeRoutedPath(plan.firstProxy, conn.name || conn.host) };
         }
 
         let firstSock = plan.firstProxy ? await openProxyConnection(plan.firstProxy, plan.hops[0].host, plan.hops[0].port, timeout) : undefined;
@@ -3135,7 +3151,7 @@ async function createRoutedTcpForward(conn, targetPort, timeout = 10000, { signa
                 return null;
             }
 
-            const route = `代理 ${plan.firstProxy.name || plan.firstProxy.host} -> ${conn.name || targetLabel}`;
+            const route = describeRoutedPath(plan.firstProxy, conn.name || targetLabel);
             return await listenLocalTcpForward({
                 route,
                 targetLabel,
@@ -3333,7 +3349,7 @@ async function openRoutedTcpConnection(conn, targetPort, timeout = 10000) {
         if (!plan.hops.length) {
             const socket = plan.firstProxy ? await openProxyConnection(plan.firstProxy, targetHost, port, timeout) : net.createConnection(port, targetHost);
             if (!plan.firstProxy) await waitForSocket(socket, timeout, 'TCP 连接');
-            return { socket, clients, route: plan.firstProxy ? `代理 ${plan.firstProxy.name || plan.firstProxy.host} -> ${conn.name || `${targetHost}:${port}`}` : conn.name || `${targetHost}:${port}` };
+            return { socket, clients, route: describeRoutedPath(plan.firstProxy, conn.name || `${targetHost}:${port}`) };
         }
         const firstSock = plan.firstProxy ? await openProxyConnection(plan.firstProxy, plan.hops[0].host, plan.hops[0].port, timeout) : undefined;
         let currentClient = await connectSSHClient(plan.hops[0], { timeout, sock: firstSock });

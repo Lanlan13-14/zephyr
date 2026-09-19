@@ -12,7 +12,8 @@ const app = read('public/app.js');
  *  matching, so an assertion cannot accidentally match a neighbouring
  *  function that happens to contain the right words. */
 function functionBody(source, name) {
-    const start = source.indexOf(`async function ${name}(`);
+    let start = source.indexOf(`async function ${name}(`);
+    if (start === -1) start = source.indexOf(`function ${name}(`);
     assert.notEqual(start, -1, `${name} not found`);
     const open = source.indexOf('{', start);
     let depth = 0;
@@ -83,6 +84,10 @@ test('the save-failure toast key exists in both catalogs', () => {
             Object.prototype.hasOwnProperty.call(catalog, '保存失败'),
             `保存失败 missing from ${locale}`,
         );
+        assert.ok(
+            Object.prototype.hasOwnProperty.call(catalog, '跳板机不能为空'),
+            `跳板机不能为空 missing from ${locale}`,
+        );
     }
 });
 
@@ -111,4 +116,17 @@ test('the jump hop validator accepts every id space the resolvers accept', () =>
     // A hop must be SSH and must not be the connection being edited.
     assert.match(resource, /跳板机只能是 SSH 连接/);
     assert.match(resource, /跳板机不能引用当前连接自身/);
+    // Jump mode with an empty hop list must fail at save time, not later as
+    // "未配置跳板机路径" after the user already stored a broken row.
+    assert.match(resource, /if \(!jumpIds\.length\) throw new HttpError\(400, 'invalid_dependency', '跳板机不能为空'/);
+});
+
+test('the editor refuses an empty jump or proxy route before posting', () => {
+    assert.match(app, /function assertConnectionRouteComplete\(payload\)/);
+    const save = functionBody(app, 'saveConnection');
+    assert.match(save, /assertConnectionRouteComplete\(payload\)/);
+    const testFnStart = app.indexOf('async function testConnection(');
+    assert.notEqual(testFnStart, -1);
+    const testBody = app.slice(testFnStart, testFnStart + 1800);
+    assert.match(testBody, /assertConnectionRouteComplete\(payload\)/);
 });

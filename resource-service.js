@@ -532,7 +532,8 @@ class ResourceService {
                 throw new HttpError(403, 'forbidden_dependency_sshKey', '无权使用该 SSH 密钥', false);
             }
         }
-        if (conn.connectionMode === 'proxy' && conn.proxyId) {
+        if (conn.connectionMode === 'proxy') {
+            if (!conn.proxyId) throw new HttpError(400, 'invalid_dependency', '选择的代理不存在', false);
             const proxy = this._ownerOf('proxy', conn.proxyId);
             if (!proxy) throw new HttpError(400, 'invalid_dependency', '选择的代理不存在', false);
             const owned = proxy.ownerUserId === user.userId;
@@ -541,7 +542,9 @@ class ResourceService {
             }
         }
         if (conn.connectionMode === 'jump') {
-            for (const jumpId of (Array.isArray(conn.jumpHostIds) ? conn.jumpHostIds : [])) {
+            const jumpIds = Array.isArray(conn.jumpHostIds) ? conn.jumpHostIds : [];
+            if (!jumpIds.length) throw new HttpError(400, 'invalid_dependency', '跳板机不能为空', false);
+            for (const jumpId of jumpIds) {
                 this._assertJumpHopUsable(user, jumpId, conn);
             }
         }
