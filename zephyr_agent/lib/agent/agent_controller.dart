@@ -80,6 +80,13 @@ class AgentController extends ChangeNotifier {
   Timer? _transferUiTimer;
   bool _transferUiDirty = false;
 
+  int _bastionCount = 0;
+  int _bastionActiveCount = 0;
+  int _bastionBytes = 0;
+  String _lastBastionTarget = '';
+  Timer? _bastionUiTimer;
+  bool _bastionUiDirty = false;
+
   AgentController(this._config);
 
   // ─── Getters ─────────────────────────────────────────────────
@@ -92,6 +99,10 @@ class AgentController extends ChangeNotifier {
   String get linkError => _linkError;
   int get transferCount => _transferCount;
   int get transferBytes => _transferBytes;
+  int get bastionCount => _bastionCount;
+  int get bastionActiveCount => _bastionActiveCount;
+  int get bastionBytes => _bastionBytes;
+  String get lastBastionTarget => _lastBastionTarget;
   DateTime? get shutdownAt => _shutdownAt;
 
   Duration? get remainingShutdownTime {
@@ -308,6 +319,7 @@ class AgentController extends ChangeNotifier {
     // rode it is gone too. Clearing the latch here is what lets the next
     // connect start a tunnel on the new session.
     _bastionTunnelSessionId = null;
+    _bastionActiveCount = 0;
     _linkRuntime.markTunnelDown();
     await _linkRuntime.close();
     try {
@@ -405,6 +417,9 @@ class AgentController extends ChangeNotifier {
         break;
       case 'pong':
         _missedHeartbeats = 0;
+        break;
+      case 'bastion_activity':
+        _handleBastionActivity(msg);
         break;
       default:
         break;
@@ -583,6 +598,45 @@ class AgentController extends ChangeNotifier {
       _transferUiTimer = null;
       if (!_transferUiDirty) return;
       _transferUiDirty = false;
+      notifyListeners();
+    });
+  }
+
+  void _handleBastionActivity(Map<String, dynamic> msg) {
+    final event = msg['event'] as String? ?? 'open';
+    final target = (msg['target'] as String?) ?? '';
+    final targetHost = (msg['targetHost'] as String?) ?? '';
+    final targetPort = (msg['targetPort'] as num?)?.toInt() ?? 0;
+    final displayTarget = target.isNotEmpty
+        ? target
+        : (targetHost.isNotEmpty ? '$targetHost:$targetPort' : '');
+    final bytes = (msg['bytes'] as num?)?.toInt() ?? 0;
+
+    if (displayTarget.isNotEmpty) {
+      _lastBastionTarget = displayTarget;
+    }
+    if (bytes > 0) {
+      _bastionBytes += bytes;
+    }
+
+    if (event == 'open') {
+      _bastionCount++;
+      _bastionActiveCount++;
+    } else if (event == 'close') {
+      if (_bastionActiveCount > 0) {
+        _bastionActiveCount--;
+      }
+    }
+    _scheduleBastionUiUpdate();
+  }
+
+  void _scheduleBastionUiUpdate() {
+    _bastionUiDirty = true;
+    if (_bastionUiTimer != null) return;
+    _bastionUiTimer = Timer(const Duration(milliseconds: 250), () {
+      _bastionUiTimer = null;
+      if (!_bastionUiDirty) return;
+      _bastionUiDirty = false;
       notifyListeners();
     });
   }
@@ -938,6 +992,7 @@ class AgentController extends ChangeNotifier {
   @override
   void dispose() {
     _transferUiTimer?.cancel();
+    _bastionUiTimer?.cancel();
     _zft2Tasks.clear();
     _zft2PathQueues.clear();
     _handlePaths.clear();

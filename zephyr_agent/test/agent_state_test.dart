@@ -72,5 +72,19 @@ void main() {
       expect(AgentStatus.connecting.isActive, true);
       expect(AgentStatus.stopped.isActive, false);
     });
+
+    test('bastion strings are localized for both bundles', () {
+      final zh = AgentStrings.of(const Locale('zh'));
+      expect(zh.groupBastion, '跳板机中转');
+      expect(zh.bastionRequests(3), '3 次连接');
+      expect(zh.bastionActive(1), '1 个连接正在中转');
+      expect(zh.bastionTraffic, '中转流量');
+
+      final en = AgentStrings.of(const Locale('en'));
+      expect(en.groupBastion, 'Bastion Relay');
+      expect(en.bastionRequests(3), '3 connections');
+      expect(en.bastionActive(1), '1 active relay connections');
+      expect(en.bastionTraffic, 'Relayed Traffic');
+    });
   });
 }

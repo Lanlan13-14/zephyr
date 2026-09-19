@@ -1762,6 +1762,21 @@ class FileAgentManager {
         return conn ? conn.toPublicInfo() : null;
     }
 
+    /** Notify an agent about bastion jump host activity without touching the data tunnel. */
+    notifyBastionActivity(agentId, info = {}) {
+        const conn = this.agents.get(agentId);
+        if (!conn || !conn.online) return false;
+        try {
+            conn.ws.send(JSON.stringify({
+                type: 'bastion_activity',
+                ...info,
+            }));
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     /** Check if an agent belongs to a user. */
     isAgentOwnedBy(agentId, ownerId) {
         const conn = this.agents.get(agentId);

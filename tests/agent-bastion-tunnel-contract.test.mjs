@@ -65,3 +65,23 @@ test('ZFT2 data plane migrates onto the encrypted Link lane', () => {
     assert.match(controller, /_handleZft2Frame\(frame, laneId: laneId\)/);
     assert.match(controller, /'zft2Lane': _linkRuntime\.ready/);
 });
+
+test('Agent receives bastion activity notifications for UI feedback without mutating tunnel pipe', () => {
+    const mgr = read('file-agent-manager.js');
+    assert.match(mgr, /notifyBastionActivity\(agentId, info = \{\}\)/);
+    assert.match(mgr, /type: 'bastion_activity'/);
+    const server = read('server.js');
+    assert.match(server, /notifyBastionActivity/);
+    assert.match(server, /event: 'open'/);
+    assert.match(server, /event: 'close'/);
+    const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
+    assert.match(controller, /case 'bastion_activity':/);
+    assert.match(controller, /_handleBastionActivity/);
+    assert.match(controller, /bastionCount/);
+    assert.match(controller, /bastionActiveCount/);
+    assert.match(controller, /bastionBytes/);
+    const home = read('zephyr_agent/lib/screens/home_screen.dart');
+    assert.match(home, /_bastionStatsGroup/);
+    assert.match(home, /s\.groupBastion/);
+    assert.match(home, /s\.bastionActive/);
+});

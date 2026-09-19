@@ -69,6 +69,7 @@ class _GlassSheetHost extends StatelessWidget {
                 type: MaterialType.transparency,
                 child: LiquidGlass(
                   borderRadius: BorderRadius.circular(28),
+                  specularCrescent: false,
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
                       maxHeight: MediaQuery.sizeOf(context).height * (isScrollControlled ? 0.92 : 0.72),

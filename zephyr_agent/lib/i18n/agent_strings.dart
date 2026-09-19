@@ -42,6 +42,7 @@ class AgentStrings {
   String get groupAccess => pick('访问', 'Access');
   String get groupLink => pick('加密通道', 'Encrypted Channel');
   String get groupTransfer => pick('传输', 'Transfers');
+  String get groupBastion => pick('跳板机中转', 'Bastion Relay');
   String get groupAppearance => pick('外观', 'Appearance');
 
   // ── Rows ─────────────────────────────────────────────────────────────
@@ -60,6 +61,9 @@ class AgentStrings {
   String get linkNotEstablished => pick('未建立', 'Not Established');
   String get noDirectorySelected => pick('未选择', 'Not Selected');
   String transferRequests(int count) => pick('$count 次请求', '$count requests');
+  String bastionRequests(int count) => pick('$count 次连接', '$count connections');
+  String bastionActive(int count) => pick('$count 个连接正在中转', '$count active relay connections');
+  String get bastionTraffic => pick('中转流量', 'Relayed Traffic');
 
   // ── Actions ──────────────────────────────────────────────────────────
   String get actionStart => pick('启动连接', 'Start Sharing');
