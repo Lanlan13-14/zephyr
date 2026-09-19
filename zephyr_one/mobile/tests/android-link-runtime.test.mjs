@@ -24,6 +24,8 @@ test('Android ships and drives the embedded Go Link core instead of re-implement
   const api = read('android/app/src/main/kotlin/one/zephyr/mobile/app/EmbeddedLinkApi.kt');
   assert.match(api, /\/link\/dial/);
   assert.match(api, /\/link\/dial\/finish/);
+  assert.match(api, /readJsonErrorMessage/);
+  assert.match(api, /Agent 跳板拨号失败/);
   assert.match(api, /fun interface HandshakeSigner/);
   assert.match(api, /signTranscript/);
   const identity = read('android/core-security/src/main/kotlin/one/zephyr/mobile/security/DeviceIdentity.kt');

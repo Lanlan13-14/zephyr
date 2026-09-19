@@ -96,13 +96,16 @@ internal class EmbeddedLinkApi(
         }
         socket.getOutputStream().write(request.toByteArray(Charsets.UTF_8))
         socket.getOutputStream().flush()
-        val header = readHttpHeaders(socket.getInputStream())
+        val input = socket.getInputStream()
+        val header = readHttpHeaders(input)
         val status = header.lineSequence().firstOrNull()?.split(' ')?.getOrNull(1)
         if (status != "101") {
+            val detail = readJsonErrorMessage(input, header)
             socket.close()
             throw LinkRequestException(
                 code = "initiator_dial_failed",
-                message = "Agent 跳板拨号失败 ($status)",
+                message = detail?.takeIf { it.isNotBlank() }
+                    ?: ("Agent 跳板拨号失败 ($status)"),
                 retryable = status?.toIntOrNull()?.let { it >= 500 } == true,
             )
         }
@@ -128,6 +131,33 @@ internal class EmbeddedLinkApi(
             prev = next
         }
         return String(bytes.toByteArray(), Charsets.ISO_8859_1)
+    }
+
+    /**
+     * Pulls Go's `{error:{message}}` off a failed initiator/dial so the SSH
+     * screen shows the real refusal ("one-relay is not authorized") instead
+     * of a bare HTTP status. A missing or non-JSON body stays null.
+     */
+    private fun readJsonErrorMessage(input: java.io.InputStream, header: String): String? {
+        val length = header.lineSequence()
+            .firstOrNull { it.startsWith("Content-Length:", ignoreCase = true) }
+            ?.substringAfter(':')
+            ?.trim()
+            ?.toIntOrNull()
+            ?: 0
+        if (length <= 0 || length > 16 * 1024) return null
+        val body = ByteArray(length)
+        var offset = 0
+        while (offset < length) {
+            val read = input.read(body, offset, length - offset)
+            if (read < 0) break
+            offset += read
+        }
+        if (offset <= 0) return null
+        return runCatching {
+            val json = MobileJson.instance.parseToJsonElement(String(body, 0, offset, Charsets.UTF_8))
+            json.jsonObject["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+        }.getOrNull()
     }
 
     /** Establish a ZSL/2 channel to a Link server URL through the embedded Go core. */

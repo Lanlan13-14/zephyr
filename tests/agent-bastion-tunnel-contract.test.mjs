@@ -99,6 +99,16 @@ test('One can splice onto an Agent bastion through the main-end Link hub', () =>
     assert.match(server, /\/internal\/link\/one-relay/);
     const proxy = read('link-v2-go-proxy.js');
     assert.match(proxy, /ZEPHYR_LINK_ONE_RELAY_AUTH/);
+    assert.match(
+        proxy,
+        /function createLinkV2GoProxy\(\{[^}]*oneRelayAuthUrlReady/,
+        'createLinkV2GoProxy must accept the one-relay auth URL the server already builds',
+    );
+    assert.match(
+        proxy,
+        /sharedProcess\(log, \{[\s\S]*oneRelayAuthUrlReady/,
+        'GoLinkProcess must receive oneRelayAuthUrlReady; otherwise ZEPHYR_LINK_ONE_RELAY_AUTH is empty and Android dials 502',
+    );
     const mobile = read('mobile-v1-routes.js');
     assert.match(mobile, /\/api\/mobile\/v1\/agent-bastions/);
     assert.match(mobile, /listBastionAgentsForUser/);
