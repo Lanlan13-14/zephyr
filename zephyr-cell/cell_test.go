@@ -299,3 +299,81 @@ func TestDefaultNetworkPolicy(t *testing.T) {
 		t.Error("ForceProxy must default empty")
 	}
 }
+
+
+// --- Template ID (content-addressed) ---
+
+func TestComputeTemplateID_Deterministic(t *testing.T) {
+	tpl := Template{
+		Layers:   []string{"sha256:abc", "sha256:def"},
+		Env:      map[string]string{"MY_VAR": "hello"},
+		Limits:   DefaultLimits(),
+		Offloads: []string{"zc-device", "zc-calendar"},
+		Network:  DefaultNetworkPolicy(),
+	}
+
+	id1 := ComputeTemplateID(&tpl)
+	id2 := ComputeTemplateID(&tpl)
+
+	if id1 != id2 {
+		t.Error("same template should produce same ID")
+	}
+	if len(id1) != 64 { // SHA-256 hex
+		t.Errorf("ID length: want 64, got %d", len(id1))
+	}
+}
+
+func TestComputeTemplateID_DifferentTemplates(t *testing.T) {
+	tpl1 := Template{Offloads: []string{"zc-device"}}
+	tpl2 := Template{Offloads: []string{"zc-calendar"}}
+
+	id1 := ComputeTemplateID(&tpl1)
+	id2 := ComputeTemplateID(&tpl2)
+
+	if id1 == id2 {
+		t.Error("different templates should produce different IDs")
+	}
+}
+
+func TestComputeTemplateID_OffloadOrderInsensitive(t *testing.T) {
+	tpl1 := Template{Offloads: []string{"zc-device", "zc-calendar"}}
+	tpl2 := Template{Offloads: []string{"zc-calendar", "zc-device"}}
+
+	id1 := ComputeTemplateID(&tpl1)
+	id2 := ComputeTemplateID(&tpl2)
+
+	if id1 != id2 {
+		t.Error("offload order should not affect template ID")
+	}
+}
+
+func TestTemplate_EnsureID(t *testing.T) {
+	tpl := Template{Limits: DefaultLimits()}
+	if tpl.ID != "" {
+		t.Error("ID should start empty")
+	}
+	tpl.EnsureID()
+	if tpl.ID == "" {
+		t.Error("ID should be set after EnsureID")
+	}
+}
+
+func TestL2CompatTemplate(t *testing.T) {
+	tpl := L2CompatTemplate()
+	if tpl.Limits.MaxOutputKB != 256 {
+		t.Errorf("L2 compat MaxOutputKB: want 256, got %d", tpl.Limits.MaxOutputKB)
+	}
+	if len(tpl.Offloads) != 0 {
+		t.Error("L2 compat: offloads should be empty (all denied)")
+	}
+}
+
+func TestFullTemplate(t *testing.T) {
+	tpl := FullTemplate()
+	if len(tpl.Offloads) != len(OffloadCommands) {
+		t.Errorf("full template offloads: want %d, got %d", len(OffloadCommands), len(tpl.Offloads))
+	}
+	if len(tpl.Network.AllowedDomains) == 0 {
+		t.Error("full template should have open network")
+	}
+}
