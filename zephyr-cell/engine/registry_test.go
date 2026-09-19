@@ -26,12 +26,15 @@ func (s *stubEngine) ExecStream(_ context.Context, _ string, _ string, _ ExecLim
 func (s *stubEngine) SpawnPTY(_ context.Context, _ string, _, _ int) (*PTYHandle, error) {
 	return nil, ErrUnsupported
 }
-func (s *stubEngine) Signal(_ context.Context, _ string, _ int) error     { return ErrUnsupported }
-func (s *stubEngine) Mount(_ context.Context, _, _, _ string) error       { return ErrUnsupported }
-func (s *stubEngine) Unmount(_ context.Context, _, _ string) error        { return ErrUnsupported }
-func (s *stubEngine) InterceptExecve(_ context.Context, _ string) error   { return ErrUnsupported }
-func (s *stubEngine) Teardown(_ context.Context, _ string) error          { return ErrUnsupported }
-func (s *stubEngine) Shutdown(_ context.Context) error                    { return nil }
+func (s *stubEngine) Signal(_ context.Context, _ string, _ int) error   { return ErrUnsupported }
+func (s *stubEngine) Mount(_ context.Context, _, _, _ string) error     { return ErrUnsupported }
+func (s *stubEngine) Unmount(_ context.Context, _, _ string) error      { return ErrUnsupported }
+func (s *stubEngine) InterceptExecve(_ context.Context, _ string) error { return ErrUnsupported }
+func (s *stubEngine) ResetSession(_ context.Context, _ SessionConfig) error {
+	return ErrUnsupported
+}
+func (s *stubEngine) Teardown(_ context.Context, _ string) error { return ErrUnsupported }
+func (s *stubEngine) Shutdown(_ context.Context) error           { return nil }
 
 func TestRegistry_RegisterAndGet(t *testing.T) {
 	r := NewRegistry()

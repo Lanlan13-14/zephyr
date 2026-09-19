@@ -7,8 +7,8 @@ import (
 
 func TestBuiltinTools_Count(t *testing.T) {
 	tools := BuiltinTools()
-	if len(tools) != 5 {
-		t.Errorf("want 5 builtin tools, got %d", len(tools))
+	if len(tools) != 6 {
+		t.Errorf("want 6 builtin tools, got %d", len(tools))
 	}
 
 	names := map[string]bool{
@@ -17,6 +17,7 @@ func TestBuiltinTools_Count(t *testing.T) {
 		"cell_write_file":      true,
 		"cell_list_dir":        true,
 		"cell_install_package": true,
+		"cell_reset":           true,
 	}
 	for _, tool := range tools {
 		if !names[tool.Name] {
@@ -54,10 +55,10 @@ func TestBuiltinTools_SchemaProperties(t *testing.T) {
 		if schema.Type != "object" {
 			t.Errorf("tool %s: schema type should be 'object', got %q", tool.Name, schema.Type)
 		}
-		if len(schema.Properties) == 0 {
+		if len(schema.Properties) == 0 && tool.Name != "cell_reset" {
 			t.Errorf("tool %s: schema should have properties", tool.Name)
 		}
-		if len(schema.Required) == 0 {
+		if len(schema.Required) == 0 && tool.Name != "cell_reset" {
 			t.Errorf("tool %s: schema should have required fields", tool.Name)
 		}
 	}

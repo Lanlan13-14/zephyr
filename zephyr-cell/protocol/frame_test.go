@@ -26,6 +26,8 @@ func TestFrameRoundtrip(t *testing.T) {
 		{Type: FrameAuditData, Payload: []byte(`[{"ts":"2026-01-01T00:00:01Z"}]`)},
 		{Type: FrameAttach, Payload: []byte(`{"session_id":"abc-123"}`)},
 		{Type: FrameDetach, Payload: nil},
+		{Type: FrameReset, Payload: []byte(`{"session_id":"abc-123"}`)},
+		{Type: FrameResetResult, Payload: []byte(`{"ok":true}`)},
 	}
 
 	for _, tc := range cases {
@@ -164,6 +166,8 @@ func TestFrameType_String(t *testing.T) {
 		FrameAuditData:   "AUDIT_DATA",
 		FrameAttach:      "ATTACH",
 		FrameDetach:      "DETACH",
+		FrameReset:       "RESET",
+		FrameResetResult: "RESET_RESULT",
 		FramePing:        "PING",
 		FramePong:        "PONG",
 		FrameError:       "ERROR",
@@ -182,7 +186,7 @@ func TestFrameType_IsValid(t *testing.T) {
 		FrameFSReq, FrameFSResp, FrameFSChunk,
 		FrameOffloadReq, FrameOffloadResp,
 		FrameMetrics, FrameAuditPull, FrameAuditData,
-		FrameAttach, FrameDetach,
+		FrameAttach, FrameDetach, FrameReset, FrameResetResult,
 		FramePing, FramePong,
 		FrameError,
 	}

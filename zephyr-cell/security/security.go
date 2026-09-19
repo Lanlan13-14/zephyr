@@ -142,8 +142,8 @@ func NewNetworkEnforcer(domains []string, cidrs []string, blockMeta bool, proxy 
 
 	// Cloud metadata ranges (§3.5: Web端为强制不可关)
 	metaRanges := []string{
-		"169.254.0.0/16",  // AWS/GCP/Azure link-local metadata
-		"fd00:ec2::/120",  // AWS IMDSv2 IPv6
+		"169.254.0.0/16", // AWS/GCP/Azure link-local metadata
+		"fd00:ec2::/120", // AWS IMDSv2 IPv6
 	}
 	for _, mr := range metaRanges {
 		_, ipNet, err := net.ParseCIDR(mr)

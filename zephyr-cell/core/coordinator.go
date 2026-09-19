@@ -38,7 +38,7 @@ type Session struct {
 	CreatedAt time.Time
 
 	// Persistent shell state
-	shellAlive  atomic.Bool
+	shellAlive      atomic.Bool
 	shellGeneration atomic.Uint64
 
 	// Idle tracking
@@ -47,6 +47,11 @@ type Session struct {
 
 	// Lifecycle
 	killed atomic.Bool
+
+	// Canonical session configuration used to recreate the sandbox on Reset.
+	// BindMounts contains only the session's explicit mounts; /cell/shared
+	// mounts are preserved by the engine's ResetSession implementation.
+	sessionConfig engine.SessionConfig
 
 	// Audit sink
 	auditSink AuditSink
@@ -64,12 +69,12 @@ type AuditSink interface {
 
 // QuotaTracker tracks resource usage against limits.
 type QuotaTracker struct {
-	mu    sync.Mutex
+	mu     sync.Mutex
 	limits cell.Limits
 
-	execCount      int64
-	totalOutputKB  int64
-	totalDuration  time.Duration
+	execCount     int64
+	totalOutputKB int64
+	totalDuration time.Duration
 }
 
 // NewQuotaTracker creates a quota tracker with the given limits.
@@ -177,14 +182,15 @@ func (c *Coordinator) SpawnSession(ctx context.Context, tpl cell.Template, sessi
 	}
 
 	sess := &Session{
-		ID:        sessionID,
-		CellID:    uuid.New().String(),
-		Template:  tpl,
-		Engine:    c.eng,
-		Caps:      c.caps,
-		CreatedAt: time.Now(),
-		auditSink: c.audit,
-		quota:     NewQuotaTracker(limits),
+		ID:            sessionID,
+		CellID:        uuid.New().String(),
+		Template:      tpl,
+		Engine:        c.eng,
+		Caps:          c.caps,
+		CreatedAt:     time.Now(),
+		sessionConfig: sCfg,
+		auditSink:     c.audit,
+		quota:         NewQuotaTracker(limits),
 	}
 	sess.touchActivity()
 
@@ -212,6 +218,75 @@ func (c *Coordinator) GetSession(id string) *Session {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.sessions[id]
+}
+
+// ResetSession restores a live session to its original template state.
+// The session ID and Cell identity remain stable. The engine destroys and
+// recreates session-local state while preserving /cell/shared mounts.
+// Reset is serialized against Exec and is safe to call repeatedly.
+func (c *Coordinator) ResetSession(ctx context.Context, sessionID string) error {
+	sess := c.GetSession(sessionID)
+	if sess == nil {
+		return cell.ErrSessionNotFound
+	}
+	if sess.IsKilled() {
+		return cell.NewError(cell.ErrCodeSessionDead, "session has been killed", nil)
+	}
+
+	// Reuse the per-session mutex so reset cannot race with Exec or another
+	// reset. The engine receives the exact original session configuration.
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+
+	if sess.IsKilled() {
+		return cell.NewError(cell.ErrCodeSessionDead, "session has been killed", nil)
+	}
+
+	if err := sess.Engine.ResetSession(ctx, cloneSessionConfig(sess.sessionConfig)); err != nil {
+		if sess.auditSink != nil {
+			sess.auditSink.Record(cell.AuditEntry{
+				TS:      time.Now(),
+				Session: sessionID,
+				Kind:    cell.AuditReset,
+				Cmd:     "reset",
+				Engine:  sess.Engine.Name(),
+				Error:   err.Error(),
+			})
+		}
+		return cell.NewError(cell.ErrCodeResetFailed, "failed to reset sandbox to template state", err)
+	}
+
+	// Reset all in-memory session-local state. Shared mounts are owned by the
+	// engine and intentionally survive this operation.
+	sess.shellAlive.Store(false)
+	sess.shellGeneration.Add(1)
+	sess.paused.Store(false)
+	sess.quota = NewQuotaTracker(sess.Template.Limits)
+	sess.touchActivity()
+
+	if sess.auditSink != nil {
+		sess.auditSink.Record(cell.AuditEntry{
+			TS:      time.Now(),
+			Session: sessionID,
+			Kind:    cell.AuditReset,
+			Cmd:     "reset",
+			Engine:  sess.Engine.Name(),
+		})
+	}
+	return nil
+}
+
+func cloneSessionConfig(cfg engine.SessionConfig) engine.SessionConfig {
+	clone := cfg
+	clone.Env = make(map[string]string, len(cfg.Env))
+	for k, v := range cfg.Env {
+		clone.Env[k] = v
+	}
+	clone.BindMounts = make(map[string]string, len(cfg.BindMounts))
+	for guestPath, hostPath := range cfg.BindMounts {
+		clone.BindMounts[guestPath] = hostPath
+	}
+	return clone
 }
 
 // KillSession terminates a session and releases resources (idempotent).

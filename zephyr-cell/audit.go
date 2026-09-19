@@ -79,6 +79,9 @@ const (
 	// AuditSeccompFallback records a seccomp fallback retry (Android §4.5.3).
 	AuditSeccompFallback AuditKind = "seccomp_fallback"
 
+	// AuditReset records a destructive reset to the template state.
+	AuditReset AuditKind = "reset"
+
 	// AuditInstall records a package installation (apk/pip/npm).
 	AuditInstall AuditKind = "install"
 )

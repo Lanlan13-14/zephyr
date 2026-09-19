@@ -15,8 +15,8 @@ type bootTestEngine struct {
 	execFn  func(ctx context.Context, sid, cmd string, l engine.ExecLimits) (*engine.ExecResult, error)
 }
 
-func (e *bootTestEngine) Name() string                                     { return e.name }
-func (e *bootTestEngine) Boot(_ context.Context, _ engine.Config) error    { return e.bootErr }
+func (e *bootTestEngine) Name() string                                                 { return e.name }
+func (e *bootTestEngine) Boot(_ context.Context, _ engine.Config) error                { return e.bootErr }
 func (e *bootTestEngine) SpawnSession(_ context.Context, _ engine.SessionConfig) error { return nil }
 func (e *bootTestEngine) Exec(ctx context.Context, sid, cmd string, l engine.ExecLimits) (*engine.ExecResult, error) {
 	if e.execFn != nil {
@@ -30,12 +30,15 @@ func (e *bootTestEngine) ExecStream(_ context.Context, _ string, _ string, _ eng
 func (e *bootTestEngine) SpawnPTY(_ context.Context, _ string, _, _ int) (*engine.PTYHandle, error) {
 	return nil, engine.ErrUnsupported
 }
-func (e *bootTestEngine) Signal(_ context.Context, _ string, _ int) error { return nil }
-func (e *bootTestEngine) Mount(_ context.Context, _, _, _ string) error   { return nil }
-func (e *bootTestEngine) Unmount(_ context.Context, _, _ string) error    { return nil }
+func (e *bootTestEngine) Signal(_ context.Context, _ string, _ int) error   { return nil }
+func (e *bootTestEngine) Mount(_ context.Context, _, _, _ string) error     { return nil }
+func (e *bootTestEngine) Unmount(_ context.Context, _, _ string) error      { return nil }
 func (e *bootTestEngine) InterceptExecve(_ context.Context, _ string) error { return nil }
-func (e *bootTestEngine) Teardown(_ context.Context, _ string) error      { return nil }
-func (e *bootTestEngine) Shutdown(_ context.Context) error                { return nil }
+func (e *bootTestEngine) ResetSession(_ context.Context, _ engine.SessionConfig) error {
+	return nil
+}
+func (e *bootTestEngine) Teardown(_ context.Context, _ string) error { return nil }
+func (e *bootTestEngine) Shutdown(_ context.Context) error           { return nil }
 
 func TestDetectHost(t *testing.T) {
 	info := DetectHost()

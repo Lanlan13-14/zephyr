@@ -300,7 +300,6 @@ func TestDefaultNetworkPolicy(t *testing.T) {
 	}
 }
 
-
 // --- Template ID (content-addressed) ---
 
 func TestComputeTemplateID_Deterministic(t *testing.T) {

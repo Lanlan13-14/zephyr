@@ -28,6 +28,10 @@ type Cell struct {
 	engine   engine.Engine
 	caps     CapabilitySet
 	created  time.Time
+
+	// sessionConfig is the canonical engine configuration used to recreate
+	// this session during Reset. It is immutable after Spawn.
+	sessionConfig engine.SessionConfig
 }
 
 // Option configures a Cell at spawn time.
@@ -180,8 +184,43 @@ func (c *Cell) Resume() error {
 	return ErrEngineUnsupported
 }
 
+// Reset restores the sandbox to its original template state.
+// Reset is destructive for session-local guest state: running processes,
+// persistent shell state, /cell/workspace, /cell/inbox, /cell/outbox, and
+// /cell/tmp are recreated from the template. Cross-session shared paths
+// under /cell/shared are preserved. The session ID and Cell identity remain
+// unchanged. Reset is idempotent and serialized by the engine.
+func (c *Cell) Reset() error {
+	if c == nil || c.engine == nil {
+		return ErrEngineUnavailable
+	}
+	cfg := cloneSessionConfig(c.sessionConfig)
+	if cfg.SessionID == "" {
+		cfg.SessionID = c.session
+	}
+	if err := c.engine.ResetSession(context.Background(), cfg); err != nil {
+		if err == engine.ErrUnsupported {
+			return ErrEngineUnsupported
+		}
+		return NewError(ErrCodeResetFailed, "failed to reset sandbox to template state", err)
+	}
+	return nil
+}
+
+func cloneSessionConfig(cfg engine.SessionConfig) engine.SessionConfig {
+	clone := cfg
+	clone.Env = make(map[string]string, len(cfg.Env))
+	for key, value := range cfg.Env {
+		clone.Env[key] = value
+	}
+	clone.BindMounts = make(map[string]string, len(cfg.BindMounts))
+	for guestPath, hostPath := range cfg.BindMounts {
+		clone.BindMounts[guestPath] = hostPath
+	}
+	return clone
+}
+
 // Kill terminates the cell and releases all resources (§6.1).
-// Kill is idempotent.
 func (c *Cell) Kill() error {
 	return ErrEngineUnsupported
 }

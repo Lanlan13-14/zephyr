@@ -19,8 +19,8 @@ type testEngine struct {
 	execFn  func(ctx context.Context, sessionID, cmd string, limits engine.ExecLimits) (*engine.ExecResult, error)
 }
 
-func (e *testEngine) Name() string                                     { return e.name }
-func (e *testEngine) Boot(_ context.Context, _ engine.Config) error    { return e.bootErr }
+func (e *testEngine) Name() string                                                 { return e.name }
+func (e *testEngine) Boot(_ context.Context, _ engine.Config) error                { return e.bootErr }
 func (e *testEngine) SpawnSession(_ context.Context, _ engine.SessionConfig) error { return nil }
 func (e *testEngine) Exec(ctx context.Context, sid, cmd string, l engine.ExecLimits) (*engine.ExecResult, error) {
 	if e.execFn != nil {
@@ -34,12 +34,15 @@ func (e *testEngine) ExecStream(_ context.Context, _ string, _ string, _ engine.
 func (e *testEngine) SpawnPTY(_ context.Context, _ string, _, _ int) (*engine.PTYHandle, error) {
 	return nil, engine.ErrUnsupported
 }
-func (e *testEngine) Signal(_ context.Context, _ string, _ int) error { return nil }
-func (e *testEngine) Mount(_ context.Context, _, _, _ string) error   { return nil }
-func (e *testEngine) Unmount(_ context.Context, _, _ string) error    { return nil }
+func (e *testEngine) Signal(_ context.Context, _ string, _ int) error   { return nil }
+func (e *testEngine) Mount(_ context.Context, _, _, _ string) error     { return nil }
+func (e *testEngine) Unmount(_ context.Context, _, _ string) error      { return nil }
 func (e *testEngine) InterceptExecve(_ context.Context, _ string) error { return nil }
-func (e *testEngine) Teardown(_ context.Context, _ string) error      { return nil }
-func (e *testEngine) Shutdown(_ context.Context) error                { return nil }
+func (e *testEngine) ResetSession(_ context.Context, _ engine.SessionConfig) error {
+	return nil
+}
+func (e *testEngine) Teardown(_ context.Context, _ string) error { return nil }
+func (e *testEngine) Shutdown(_ context.Context) error           { return nil }
 
 // --- Coordinator tests ---
 
@@ -201,7 +204,121 @@ func TestSession_KilledSessionRejects(t *testing.T) {
 	}
 }
 
-// --- Audit store tests ---
+type resetTrackingEngine struct {
+	testEngine
+	resetCalls int
+	lastConfig engine.SessionConfig
+	resetErr   error
+}
+
+func (e *resetTrackingEngine) ResetSession(_ context.Context, cfg engine.SessionConfig) error {
+	e.resetCalls++
+	e.lastConfig = cfg
+	return e.resetErr
+}
+
+func TestCoordinator_ResetPreservesIdentityAndUsesTemplateConfig(t *testing.T) {
+	audit := NewMemoryAuditStore()
+	eng := &resetTrackingEngine{testEngine: testEngine{name: "test"}}
+	coord := NewCoordinator(eng, cell.CapsDirect, "0.1.0", audit)
+
+	tpl := cell.Template{
+		Env:    map[string]string{"USER_VALUE": "kept"},
+		Limits: cell.DefaultLimits(),
+	}
+	sess, err := coord.SpawnSession(context.Background(), tpl, "reset-1")
+	if err != nil {
+		t.Fatalf("SpawnSession: %v", err)
+	}
+	cellID, sessionID := sess.CellID, sess.ID
+
+	if err := coord.ResetSession(context.Background(), sessionID); err != nil {
+		t.Fatalf("ResetSession: %v", err)
+	}
+	if eng.resetCalls != 1 {
+		t.Fatalf("reset calls: want 1, got %d", eng.resetCalls)
+	}
+	if sess.CellID != cellID || sess.ID != sessionID {
+		t.Fatal("reset must preserve Cell and session identity")
+	}
+	if eng.lastConfig.SessionID != sessionID {
+		t.Errorf("reset config session: want %s, got %s", sessionID, eng.lastConfig.SessionID)
+	}
+	if eng.lastConfig.Env["USER_VALUE"] != "kept" {
+		t.Error("reset must reuse template environment")
+	}
+
+	entries := audit.Query(sessionID, time.Time{}, 0)
+	var resetCount int
+	for _, entry := range entries {
+		if entry.Kind == cell.AuditReset {
+			resetCount++
+		}
+	}
+	if resetCount != 1 {
+		t.Errorf("reset audit entries: want 1, got %d", resetCount)
+	}
+}
+
+func TestCoordinator_ResetIsIdempotent(t *testing.T) {
+	eng := &resetTrackingEngine{testEngine: testEngine{name: "test"}}
+	coord := NewCoordinator(eng, cell.CapsDirect, "0.1.0", NewMemoryAuditStore())
+	_, err := coord.SpawnSession(context.Background(), cell.Template{Limits: cell.DefaultLimits()}, "reset-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.ResetSession(context.Background(), "reset-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.ResetSession(context.Background(), "reset-2"); err != nil {
+		t.Fatal(err)
+	}
+	if eng.resetCalls != 2 {
+		t.Errorf("reset calls: want 2, got %d", eng.resetCalls)
+	}
+}
+
+func TestCoordinator_ResetFailureIsStructuredAndAudited(t *testing.T) {
+	resetErr := fmt.Errorf("recreate failed")
+	eng := &resetTrackingEngine{testEngine: testEngine{name: "test"}, resetErr: resetErr}
+	audit := NewMemoryAuditStore()
+	coord := NewCoordinator(eng, cell.CapsDirect, "0.1.0", audit)
+	_, err := coord.SpawnSession(context.Background(), cell.Template{Limits: cell.DefaultLimits()}, "reset-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = coord.ResetSession(context.Background(), "reset-3")
+	if err == nil {
+		t.Fatal("expected reset failure")
+	}
+	cellErr, ok := err.(*cell.CellError)
+	if !ok || cellErr.Code != cell.ErrCodeResetFailed {
+		t.Fatalf("want RESET_FAILED CellError, got %T: %v", err, err)
+	}
+	entries := audit.Query("reset-3", time.Time{}, 0)
+	if len(entries) < 2 || entries[len(entries)-1].Error == "" {
+		t.Error("failed reset must append an error audit entry")
+	}
+}
+
+func TestCoordinator_ResetMissingAndKilledSession(t *testing.T) {
+	eng := &resetTrackingEngine{testEngine: testEngine{name: "test"}}
+	coord := NewCoordinator(eng, cell.CapsDirect, "0.1.0", NewMemoryAuditStore())
+	if err := coord.ResetSession(context.Background(), "missing"); err != cell.ErrSessionNotFound {
+		t.Errorf("missing reset: want ErrSessionNotFound, got %v", err)
+	}
+	_, err := coord.SpawnSession(context.Background(), cell.Template{Limits: cell.DefaultLimits()}, "reset-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.KillSession(context.Background(), "reset-4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := coord.ResetSession(context.Background(), "reset-4"); err != cell.ErrSessionNotFound {
+		t.Errorf("killed/removed reset: want ErrSessionNotFound, got %v", err)
+	}
+}
 
 func TestMemoryAuditStore_RecordAndQuery(t *testing.T) {
 	store := NewMemoryAuditStore()
