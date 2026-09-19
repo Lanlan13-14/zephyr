@@ -104,18 +104,24 @@ func (n *Node) handleStream(w http.ResponseWriter, r *http.Request) {
 // loop owns the connection; any protocol or crypto error closes it.
 func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep *Endpoint) {
 	defer conn.Close()
+	// Every server frame on this WebSocket — push data, request acknowledgements,
+	// pong and close controls — must pass through one writer. writeServerFrame
+	// emits its header and payload in separate writes, so independent locks let
+	// those bytes interleave and corrupt the stream under keepalive traffic.
+	push := &streamPushWriter{conn: conn}
 	defer func() {
 		// Dropping the stream must not kill the session itself: the session
 		// belongs to the dial; the stream is only one carrier for it. A peer
-		// may re-attach a fresh stream (tunnel reconnect) — killing the
-		// session here would force a full re-handshake on every blip.
+		// may re-attach a fresh stream. The retiring stream may only unregister
+		// itself; deleting a successor leaves an online Agent with no push path.
 		n.mu.Lock()
-		delete(n.streamWriters, sessionID)
+		if n.streamWriters[sessionID] == push {
+			delete(n.streamWriters, sessionID)
+		}
 		n.mu.Unlock()
 	}()
 	// Register the server-push path so the main end can originate sealed frames
 	// on this stream (Agent bastion tunnels need server-initiated data).
-	push := &streamPushWriter{conn: conn}
 	n.mu.Lock()
 	if n.streamWriters == nil {
 		n.streamWriters = make(map[string]*streamPushWriter)
@@ -129,10 +135,14 @@ func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep
 		}
 		switch op {
 		case 0x8: // close
-			_ = writeServerFrame(conn, 0x8, nil)
+			_ = push.writeFrame(0x8, nil)
 			return
 		case 0x9: // ping -> pong
-			_ = writeServerFrame(conn, 0xA, payload)
+			if err := push.writeFrame(0xA, payload); err != nil {
+				return
+			}
+			continue
+		case 0xA: // unsolicited pong is legal and has no business payload
 			continue
 		case 0x1, 0x2, 0x0: // text/binary/continuation
 		default:
@@ -160,7 +170,7 @@ func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep
 			return
 		}
 		out, _ := json.Marshal(ack)
-		if err := writeServerFrame(conn, 0x1, out); err != nil {
+		if err := push.write(out); err != nil {
 			return
 		}
 	}
@@ -174,10 +184,14 @@ type streamPushWriter struct {
 	conn net.Conn
 }
 
-func (w *streamPushWriter) write(env []byte) error {
+func (w *streamPushWriter) writeFrame(opcode byte, payload []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return writeServerFrame(w.conn, 0x1, env)
+	return writeServerFrame(w.conn, opcode, payload)
+}
+
+func (w *streamPushWriter) write(env []byte) error {
+	return w.writeFrame(0x1, env)
 }
 
 // PushStreamFrame seals body under the named session and writes it to that
