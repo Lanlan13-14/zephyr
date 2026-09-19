@@ -9378,8 +9378,12 @@ function imeTextAlreadySent(text, windowMs = 900) {
         && now < mobileImeComposeSuppressUntil) {
         return true;
     }
-    // Progressive "kimi" then Enter leftover "kimi" (IME re-fill).
-    if (imeLeftoverAlreadyOnLine(payload)) return true;
+    // Progressive line accumulation is only meaningful when interpreting the
+    // IME's leftover buffer during Enter. It must not make a new printable
+    // payload look like a duplicate just because it happens to be a suffix of
+    // the current line (e.g. next + the next word trace starts with "t").
+    // This is intentionally NOT checked here; flushMobileImeEnter uses
+    // imeLeftoverDelta() for that separate leftover-buffer decision.
     return false;
 }
 
@@ -9402,11 +9406,14 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     // because commitComposedImeText arms suppress only AFTER a successful send.
     // Case-insensitive: compositionend "Kimi" after Enter flush "kimi".
     const duplicateWindow = paste ? 320 : (payload.length > 1 ? 320 : 100);
-    // Dedup by payload content only: browser input/composition sources can
-    // deliver the same committed text through different event paths.
+    const isDirectInput = source === 'mobile-ime-input';
+    // A repeated printable character is valid input ("nexttrace" has "tt").
+    // Only suppress an equal payload when it crosses event paths, such as the
+    // beforeinput timeout fallback followed by the authoritative input event.
     if (mobileImeLastSent.text
-        && mobileImeLastSent.text === payload
-        && now - mobileImeLastSent.at < duplicateWindow) {
+        && imeTextEqual(mobileImeLastSent.text, payload)
+        && now - mobileImeLastSent.at < duplicateWindow
+        && (!isDirectInput || mobileImeLastSent.source !== 'mobile-ime-input')) {
         return false;
     }
     if (
@@ -10031,11 +10038,9 @@ function setupMobileStableImeProxy() {
         }
         const text = proxy.value || '';
         if (!text) return;
-        // Case-insensitive: drop re-delivery after Enter flush / compositionend.
-        if (imeTextAlreadySent(text, 900)) {
-            proxy.value = '';
-            return;
-        }
+        // Do not pre-filter direct input here. Consecutive identical characters
+        // are valid (the second "t" in nexttrace). sendMobileStableImeText
+        // owns cross-event-path deduplication for beforeinput fallbacks.
         sendMobileStableImeText(text, 'mobile-ime-input');
         proxy.value = '';
     });

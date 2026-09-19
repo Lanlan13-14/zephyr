@@ -82,7 +82,7 @@ test('terminal.html loads fork terminal.css (not stock @wterm/dom)', () => {
         'must load fork terminal.css');
     assert.ok(!/\/vendor\/@wterm\/dom\/terminal\.css/.test(terminalHtml),
         'must not load stock terminal.css as primary');
-    assert.ok(/terminal\.js\?v=20260916-agent-devices1/.test(terminalHtml), 'current terminal cache-bust present');
+    assert.ok(/terminal\.js\?v=20260919-mobile-input1/.test(terminalHtml), 'current terminal cache-bust present');
 });
 
 test('getTerminalCharMetrics prefers term.getCellMetrics (no Math.max multi-source)', () => {
@@ -112,16 +112,16 @@ test('surface onRenderComplete does NOT force-pin scroll', () => {
         'render complete may update geometry/scrollbar only');
 });
 
-test('IME send dedups by payload regardless of source', () => {
+test('IME send dedup allows consecutive identical printable input', () => {
     const idx = terminalJs.indexOf('function sendMobileStableImeText');
     assert.ok(idx > 0);
-    const body = terminalJs.slice(idx, idx + 1600);
+    const body = terminalJs.slice(idx, idx + 2000);
     // Old: source !== source gate. New: content-only window.
     assert.ok(!/mobileImeLastSent\.source\s*!==\s*source/.test(body),
         'must not require different source for dedup');
-    assert.ok(/mobileImeLastSent\.text\s*===\s*payload/.test(body),
-        'dedup by payload text');
-    assert.ok(/Dedup by payload content only/.test(body), 'documents content-only dedup');
+    assert.ok(/mobileImeLastSent\.source\s*!==\s*'mobile-ime-input'/.test(body),
+        'direct input path must not suppress itself (second "t" in nexttrace)');
+    assert.ok(/repeated printable character is valid input/.test(body), 'documents the repeat-char case');
 });
 
 test('IME proxy anchor helpers exist and are wired', () => {

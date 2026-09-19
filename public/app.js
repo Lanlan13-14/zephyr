@@ -5125,8 +5125,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20260804-terminal-shell3&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260916-agent-devices1`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260916-agent-devices1`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260919-mobile-input1`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260919-mobile-input1`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
