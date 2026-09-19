@@ -83,6 +83,21 @@ test('Link failures surface to the agent UI instead of being swallowed', () => {
   assert.match(ui, /ctrl\.config\.fileSharingEnabled/);
 });
 
+test('One-Agent Link stream stays alive without application traffic', () => {
+  const tunnel = read('zephyr-link/internal/link/tunnel.go');
+  const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
+  const manager = read('file-agent-manager.js');
+  assert.match(tunnel, /tunnelPingInterval = 20 \* time\.Second/);
+  assert.match(tunnel, /go h\.pingLoop\(generation\)/);
+  assert.match(tunnel, /func \(t \*tunnelStreamConn\) ping\(\)/);
+  assert.match(tunnel, /tunnelIdleTimeout\s+= 30 \* time\.Minute/);
+  assert.match(controller, /_markControlAlive\(\)/);
+  assert.match(controller, /extendShutdown\(\)/);
+  assert.match(manager, /silentFor >= HEARTBEAT_INTERVAL_MS \* HEARTBEAT_TIMEOUT_FACTOR/);
+  assert.match(manager, /if \(conn\) conn\.lastSeenAt = Date\.now\(\)/);
+  assert.doesNotMatch(manager, /heartbeatMissCount\+\+/);
+});
+
 test('server resolveRoutePlan accepts agent bastion prefix in jump chain', () => {
   const server = read('server.js');
   assert.match(server, /rawId\.startsWith\('agent:'\)/);

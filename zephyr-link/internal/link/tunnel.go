@@ -40,8 +40,16 @@ const (
 	tunnelMaxDataBytes   = 256 * 1024 // per-frame plaintext cap, matches ZFT2 chunk sizing
 	tunnelDialTimeout    = 12 * time.Second
 	tunnelWriteTimeout   = 15 * time.Second
-	tunnelIdleTimeout    = 5 * time.Minute
+	// Idle timeout applies to the Agent-side TCP hop toward the SSH target.
+	// 5 minutes used to tear down a live session the moment the user paused
+	// at a prompt; 30 minutes still reclaims abandoned sockets without
+	// interrupting an interactive shell.
+	tunnelIdleTimeout    = 30 * time.Minute
 	tunnelChannelBufSize = 64
+	// WebSocket ping keeps NAT / reverse-proxy idle timeouts from dropping
+	// /link/stream when no AGENT_TUNNEL frames are in flight. Both Agent and
+	// One initiator hubs send these; the peer answers with pong.
+	tunnelPingInterval = 20 * time.Second
 )
 
 type tunnelFrame struct {
@@ -104,6 +112,15 @@ func (t *tunnelStreamConn) readEnvelope() ([]byte, error) {
 			return nil, errors.New("tunnel: bad stream opcode")
 		}
 	}
+}
+
+func (t *tunnelStreamConn) ping() error {
+	t.wmu.Lock()
+	defer t.wmu.Unlock()
+	if t.closed {
+		return errors.New("tunnel: stream closed")
+	}
+	return writeClientFrame(t.conn, 0x9, nil)
 }
 
 func (t *tunnelStreamConn) Close() error {
@@ -375,6 +392,7 @@ func (h *AgentTunnelHub) Start(peerURL, sessionID string) error {
 	}
 	go h.writeLoop(generation)
 	go h.readLoop(generation)
+	go h.pingLoop(generation)
 	return nil
 }
 
@@ -577,6 +595,28 @@ func (h *AgentTunnelHub) writeLoop(generation uint64) {
 			}
 			raw, _ := json.Marshal(env)
 			if err := stream.writeEnvelope(raw); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (h *AgentTunnelHub) pingLoop(generation uint64) {
+	ticker := time.NewTicker(tunnelPingInterval)
+	defer ticker.Stop()
+	for {
+		h.mu.Lock()
+		ctx, stream := h.ctx, h.stream
+		current := h.generation
+		h.mu.Unlock()
+		if ctx == nil || stream == nil || current != generation {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := stream.ping(); err != nil {
 				return
 			}
 		}
@@ -1278,6 +1318,7 @@ func (h *InitiatorHub) Start(peerURL, sessionID string) error {
 	}
 	go h.writeLoop(generation)
 	go h.readLoop(generation)
+	go h.pingLoop(generation)
 	return nil
 }
 
@@ -1354,6 +1395,28 @@ func (h *InitiatorHub) writeLoop(generation uint64) {
 			}
 			raw, _ := json.Marshal(env)
 			if err := stream.writeEnvelope(raw); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (h *InitiatorHub) pingLoop(generation uint64) {
+	ticker := time.NewTicker(tunnelPingInterval)
+	defer ticker.Stop()
+	for {
+		h.mu.Lock()
+		ctx, stream := h.ctx, h.stream
+		current := h.generation
+		h.mu.Unlock()
+		if ctx == nil || stream == nil || current != generation {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := stream.ping(); err != nil {
 				return
 			}
 		}

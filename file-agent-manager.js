@@ -346,7 +346,6 @@ class FileAgentConnection {
         this.maxInflight = Math.max(1, Math.min(16, Number(this.capabilities.maxInflight || 8)));
         this.maxChunkSize = Math.max(64 * 1024, Math.min(1024 * 1024, Number(this.capabilities.maxChunkSize || 1024 * 1024)));
         this.heartbeatTimer = null;
-        this.heartbeatMissCount = 0;
         /* Link-lane transport: when set, all ZFT2 frames ride the encrypted
          * Link tunnel (zft2 lane) instead of the public WebSocket. The WS then
          * carries hello/heartbeat/online state only. */
@@ -1280,6 +1279,7 @@ class FileAgentManager {
         ws.on('message', (raw, isBinary) => {
             if (state === 'authenticated' && agentId) {
                 const conn = this.agents.get(agentId);
+                if (conn) conn.lastSeenAt = Date.now();
                 if (conn && conn.handleBinaryResponse(raw)) return;
             }
 
@@ -1469,10 +1469,13 @@ class FileAgentManager {
             });
         }
 
-        // Start heartbeat monitor
+        // Heartbeat is last-seen based, not tick-based. Any authenticated
+        // frame (ping, RPC, link_ready, bastion_activity) resets lastSeenAt;
+        // dropping a busy Agent after 45s of file/SSH traffic is what made
+        // the hop disappear mid-session.
         conn.heartbeatTimer = setInterval(() => {
-            conn.heartbeatMissCount++;
-            if (conn.heartbeatMissCount >= HEARTBEAT_TIMEOUT_FACTOR) {
+            const silentFor = Date.now() - (conn.lastSeenAt || conn.connectedAt || 0);
+            if (silentFor >= HEARTBEAT_INTERVAL_MS * HEARTBEAT_TIMEOUT_FACTOR) {
                 this.log(`[file-agent] heartbeat timeout for ${agentId}`);
                 this.unregisterAgent(agentId, 'heartbeat_timeout');
             }
@@ -1574,7 +1577,6 @@ class FileAgentManager {
         const conn = this.agents.get(agentId);
         if (!conn) return;
         conn.lastSeenAt = Date.now();
-        conn.heartbeatMissCount = 0;
         this._recordAgentSeen(conn);
         try {
             ws.send(JSON.stringify({ type: 'pong', time: Date.now() }));
