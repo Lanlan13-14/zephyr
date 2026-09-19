@@ -405,6 +405,7 @@ class AgentController extends ChangeNotifier {
       return;
     }
 
+    _markControlAlive();
     switch (msg['type']) {
       case 'hello_ack':
         _handleHelloAck(msg);
@@ -416,7 +417,6 @@ class AgentController extends ChangeNotifier {
         _handleRequest(msg);
         break;
       case 'pong':
-        _missedHeartbeats = 0;
         break;
       case 'bastion_activity':
         _handleBastionActivity(msg);
@@ -622,10 +622,13 @@ class AgentController extends ChangeNotifier {
     if (event == 'open') {
       _bastionCount++;
       _bastionActiveCount++;
+      extendShutdown();
     } else if (event == 'close') {
       if (_bastionActiveCount > 0) {
         _bastionActiveCount--;
       }
+    } else if (event == 'data' && bytes > 0) {
+      extendShutdown();
     }
     _scheduleBastionUiUpdate();
   }
@@ -856,6 +859,14 @@ class AgentController extends ChangeNotifier {
       }
       _send({'type': 'ping', 'time': DateTime.now().millisecondsSinceEpoch});
     });
+  }
+
+  /// Any inbound WebSocket frame is proof the control channel is alive, so a
+  /// file RPC or bastion_activity must reset the miss counter the same way a
+  /// pong does. Counting misses on a busy socket is what made a live Agent
+  /// drop itself as "Heartbeat timeout".
+  void _markControlAlive() {
+    _missedHeartbeats = 0;
   }
 
   void _cancelHeartbeat() {
