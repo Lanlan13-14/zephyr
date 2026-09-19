@@ -54,6 +54,10 @@ test('canonical binding is deterministic and DER signatures are rejected', () =>
   assert.equal(proofProtocol.canonicalPath('https://evil.example/api/mobile/v1/sync/status'), null);
   assert.equal(proofProtocol.proofUsage('GET', '/api/mobile/v1/sync/status'), 'sync.status');
   assert.equal(proofProtocol.proofUsage('GET', '/api/mobile/v1/devices'), 'devices.list');
+  assert.equal(
+    proofProtocol.proofUsage('GET', '/api/mobile/v1/agent-bastions'),
+    'agent-bastions.list',
+  );
   assert.equal(proofProtocol.proofUsage('PATCH', '/api/mobile/v1/devices/abc'), 'devices.patch');
   assert.equal(proofProtocol.proofUsage('DELETE', '/api/mobile/v1/devices/abc'), 'devices.revoke');
   assert.equal(proofProtocol.proofUsage('POST', '/api/mobile/v1/sensitive/verify'), 'sensitive.verify');
@@ -113,6 +117,15 @@ test('all device data-plane routes require Bearer AND a one-time ES256 proof', a
       listTokens(username) {
         return username === 'alice' ? [{ id: 'token-1' }] : [{ id: 'token-2' }];
       },
+      listBastionAgentsForUser(user) {
+        return user.userId === 'owner-1' ? [{
+          agentId: 'agent-owner-1',
+          deviceName: 'Living room',
+          tokenName: 'Home Agent',
+          online: true,
+          bastionEnabled: true,
+        }] : [];
+      },
     },
   });
   api.serverEncryptionKey = () => null;
@@ -167,6 +180,7 @@ test('all device data-plane routes require Bearer AND a one-time ES256 proof', a
     ['GET', '/api/mobile/v1/blobs/' + 'a'.repeat(64) + '/chunks/0'],
     ['GET', '/api/mobile/v1/blobs/' + 'a'.repeat(64)],
     ['GET', '/api/mobile/v1/shared'],
+    ['GET', '/api/mobile/v1/agent-bastions'],
     ['GET', '/api/mobile/v1/shared/connection/c1'],
     ['POST', '/api/mobile/v1/shared/connection/c1/invoke'],
     ['POST', '/api/mobile/v1/shared/connections/c1/sessions'],
@@ -200,6 +214,26 @@ test('all device data-plane routes require Bearer AND a one-time ES256 proof', a
     headers: { authorization: 'Bearer access-1', ...proofHeaders(pair1.privateKey, 'device-1', valid) },
   });
   assert.equal(validResponse.status, 200);
+
+  const agentChallenge = await challengeFor({ target: '/api/mobile/v1/agent-bastions' });
+  assert.equal(agentChallenge.usage, 'agent-bastions.list');
+  const agentResponse = await fetch(base + '/api/mobile/v1/agent-bastions', {
+    headers: {
+      authorization: 'Bearer access-1',
+      ...proofHeaders(pair1.privateKey, 'device-1', agentChallenge),
+    },
+  });
+  assert.equal(agentResponse.status, 200);
+  assert.deepEqual(await agentResponse.json(), {
+    ok: true,
+    agents: [{
+      agentId: 'agent-owner-1',
+      deviceName: 'Living room',
+      tokenName: 'Home Agent',
+      online: true,
+      bastionEnabled: true,
+    }],
+  });
 
   const replay = await fetch(base + '/api/mobile/v1/sync/status', {
     headers: { authorization: 'Bearer access-1', ...proofHeaders(pair1.privateKey, 'device-1', valid) },
@@ -281,7 +315,7 @@ test('OpenAPI declares challenge access-only and every data operation as access 
   );
   assert.deepEqual(spec.paths['/api/mobile/v1/devices/refresh'].post.security, []);
   for (const [route, item] of Object.entries(spec.paths)) {
-    if (!/^\/api\/mobile\/v1\/(sync|blobs|shared|file-bridge\/lease)/.test(route)) continue;
+    if (!/^\/api\/mobile\/v1\/(sync|blobs|shared|agent-bastions|file-bridge\/lease)/.test(route)) continue;
     for (const operation of Object.values(item)) {
       assert.deepEqual(operation.security, [{ DeviceAccess: [], DeviceProof: [] }], route);
     }

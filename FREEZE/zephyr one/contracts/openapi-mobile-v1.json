@@ -3299,6 +3299,12 @@
         "summary": "List online Agents opted in as bastion hops",
         "operationId": "getApiMobileV1AgentBastions",
         "x-zephyr-implementation": "implemented-one-agent-jump",
+        "security": [
+          {
+            "DeviceAccess": [],
+            "DeviceProof": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success",
