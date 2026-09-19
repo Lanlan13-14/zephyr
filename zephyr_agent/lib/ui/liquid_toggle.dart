@@ -423,15 +423,6 @@ class _GlassThumbState extends State<_GlassThumb> {
         sigmaY: 8 * (1 - press),
       );
     }
-    // Stack, bottom → top, matching Kyant drawBackdrop + CombinedBackdrop:
-    //   1. Scaled track colour (the CombinedBackdrop of the groove). At
-    //      rest scaleY=0 so it vanishes; pressed it fills the glass body
-    //      and is what the lens refracts — the green puddle in the demo.
-    //   2. BackdropFilter lens over that colour so the rim rainbows.
-    //   3. White overlay (alpha 1→0) hiding the glass at rest.
-    //   4. Ambient crescent + inner shadow, press-gated.
-    final contentScaleX = (2.0 / 3.0) + (0.75 - 2.0 / 3.0) * press;
-    final contentScaleY = 0.75 * press;
     return SizedBox(
       width: widget.width,
       height: widget.height,
@@ -451,12 +442,6 @@ class _GlassThumbState extends State<_GlassThumb> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (press > 0.01)
-                Transform(
-                  alignment: Alignment.center,
-                  transform: Matrix4.diagonal3Values(contentScaleX, contentScaleY, 1),
-                  child: ColoredBox(color: widget.trackColor),
-                ),
               BackdropFilter(
                 filter: backdrop,
                 child: const ColoredBox(color: Color(0x00000000)),

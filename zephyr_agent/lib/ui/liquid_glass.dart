@@ -38,6 +38,7 @@ class LiquidGlass extends StatefulWidget {
 
   final EdgeInsetsGeometry? padding;
   final bool hairline;
+  final bool specularCrescent;
 
   const LiquidGlass({
     super.key,
@@ -50,6 +51,7 @@ class LiquidGlass extends StatefulWidget {
     this.tint,
     this.padding,
     this.hairline = true,
+    this.specularCrescent = true,
   });
 
   @override
@@ -112,6 +114,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
               dark: dark,
               hairline: widget.hairline,
               accent: palette?.accent,
+              specularCrescent: widget.specularCrescent,
             ),
             child: ColoredBox(
               // Kyant onDrawSurface sits ON TOP of the refracted backdrop;
@@ -133,12 +136,14 @@ class _GlassRimPainter extends CustomPainter {
   final bool dark;
   final bool hairline;
   final Color? accent;
+  final bool specularCrescent;
 
   _GlassRimPainter({
     required this.radius,
     required this.dark,
     required this.hairline,
     required this.accent,
+    this.specularCrescent = true,
   });
 
   @override
@@ -156,30 +161,33 @@ class _GlassRimPainter extends CustomPainter {
     );
 
     // Kyant Highlight.Default at 45°: edge normals facing the light pick up
-    // the specular, the rest falls off. This is the crescent that reads as
-    // liquid; an isotropic white ring reads as molded plastic.
-    canvas.save();
-    canvas.clipRRect(rrect.deflate(1.0));
-    canvas.drawArc(
-      Rect.fromCenter(
-        center: Offset(size.width / 2, size.height / 2),
-        width: size.width + 2,
-        height: size.height + 2,
-      ),
-      0.7853982 - 1.35,
-      2.7,
-      false,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4
-        ..color = Colors.white.withValues(alpha: dark ? 0.34 : 0.50),
-    );
-    canvas.restore();
+    // the specular, the rest falls off.
+    // Suppressed on buttons so wide elongated capsules stay clean and
+    // uninterrupted without an arbitrary circular arc cutting across the label.
+    if (specularCrescent) {
+      canvas.save();
+      canvas.clipRRect(rrect.deflate(1.0));
+      canvas.drawArc(
+        Rect.fromCenter(
+          center: Offset(size.width / 2, size.height / 2),
+          width: size.width + 2,
+          height: size.height + 2,
+        ),
+        0.7853982 - 1.35,
+        2.7,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4
+          ..color = Colors.white.withValues(alpha: dark ? 0.34 : 0.50),
+      );
+      canvas.restore();
+    }
   }
 
   @override
   bool shouldRepaint(covariant _GlassRimPainter old) =>
-      old.dark != dark || old.accent != accent;
+      old.dark != dark || old.accent != accent || old.specularCrescent != specularCrescent;
 }
 
 /// Clean, calm Apple system backdrop.
