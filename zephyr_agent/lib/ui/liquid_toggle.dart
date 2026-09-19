@@ -404,13 +404,17 @@ class _GlassThumbState extends State<_GlassThumb> {
     final lens = _lens;
     final ImageFilter backdrop;
     if (lens != null) {
-      // Kyant thumb stack, 1:1: blur(8·(1−p)) then lens(5p, 10p, chromatic)
+      // Kyant: blur(8·(1−p)) then lens(height·p, amount·p, chromatic).
+      // Height is the full capsule half-height so the rim band actually
+      // covers the pill — 5px on a 24px thumb was identity in the middle
+      // and the rainbow never showed. Amount 18px matches the demo's
+      // visible bend of the green track through the glass.
       lens
         ..setFloat(0, widget.width)
         ..setFloat(1, widget.height)
         ..setFloat(2, widget.height / 2)
-        ..setFloat(3, 5 * press)
-        ..setFloat(4, 10 * press)
+        ..setFloat(3, widget.height * press)
+        ..setFloat(4, 18 * press)
         ..setFloat(5, 1.0);
       backdrop = ImageFilter.shader(lens);
     } else {
@@ -419,6 +423,15 @@ class _GlassThumbState extends State<_GlassThumb> {
         sigmaY: 8 * (1 - press),
       );
     }
+    // Stack, bottom → top, matching Kyant drawBackdrop + CombinedBackdrop:
+    //   1. Scaled track colour (the CombinedBackdrop of the groove). At
+    //      rest scaleY=0 so it vanishes; pressed it fills the glass body
+    //      and is what the lens refracts — the green puddle in the demo.
+    //   2. BackdropFilter lens over that colour so the rim rainbows.
+    //   3. White overlay (alpha 1→0) hiding the glass at rest.
+    //   4. Ambient crescent + inner shadow, press-gated.
+    final contentScaleX = (2.0 / 3.0) + (0.75 - 2.0 / 3.0) * press;
+    final contentScaleY = 0.75 * press;
     return SizedBox(
       width: widget.width,
       height: widget.height,
@@ -426,7 +439,6 @@ class _GlassThumbState extends State<_GlassThumb> {
         decoration: BoxDecoration(
           borderRadius: radius,
           boxShadow: const [
-            // Kyant Shadow(radius 4dp, Black 5%, offset (0, radius/6)).
             BoxShadow(
               color: Color(0x0D000000),
               blurRadius: 4,
@@ -436,14 +448,23 @@ class _GlassThumbState extends State<_GlassThumb> {
         ),
         child: ClipRRect(
           borderRadius: radius,
-          child: BackdropFilter(
-            filter: backdrop,
-            child: CustomPaint(
-              painter: _ThumbGlassPainter(
-                press: press,
-                trackColor: widget.trackColor,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (press > 0.01)
+                Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.diagonal3Values(contentScaleX, contentScaleY, 1),
+                  child: ColoredBox(color: widget.trackColor),
+                ),
+              BackdropFilter(
+                filter: backdrop,
+                child: const ColoredBox(color: Color(0x00000000)),
               ),
-            ),
+              CustomPaint(
+                painter: _ThumbGlassPainter(press: press),
+              ),
+            ],
           ),
         ),
       ),
@@ -453,38 +474,17 @@ class _GlassThumbState extends State<_GlassThumb> {
 
 class _ThumbGlassPainter extends CustomPainter {
   final double press;
-  final Color trackColor;
 
-  _ThumbGlassPainter({required this.press, required this.trackColor});
+  _ThumbGlassPainter({required this.press});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
     final rrect =
-        RRect.fromRectAndRadius(rect, Radius.circular(size.height / 2));
-
-    // Kyant CombinedBackdrop of the track, scaled by
-    //   scaleX = lerp(2/3, 0.75, press)
-    //   scaleY = lerp(0,   0.75, press)
-    // At rest Y=0 so the track is invisible; the white overlay hides it.
-    // Pressed, the track colour is sampled through the glass body — this
-    // is why the demo thumb reads as liquid over the groove, not a hole.
-    if (press > 0.02) {
-      canvas.save();
-      canvas.clipRRect(rrect);
-      canvas.translate(size.width / 2, size.height / 2);
-      canvas.scale(
-        (2.0 / 3.0) + (0.75 - 2.0 / 3.0) * press,
-        0.75 * press,
-      );
-      canvas.drawRect(
-        Rect.fromCenter(center: Offset.zero, width: size.width, height: size.height),
-        Paint()..color = trackColor,
-      );
-      canvas.restore();
-    }
+        RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(size.height / 2));
 
     // Kyant onDrawSurface: 100% pure white at rest, gone on full press.
+    // This is the pebble that hides the CombinedBackdrop until the finger
+    // lands — matching glass.mt512 exactly.
     final surfaceAlpha = (1.0 - press).clamp(0.0, 1.0);
     if (surfaceAlpha > 0.001) {
       canvas.drawRRect(
@@ -525,6 +525,5 @@ class _ThumbGlassPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _ThumbGlassPainter old) =>
-      old.press != press || old.trackColor != trackColor;
+  bool shouldRepaint(covariant _ThumbGlassPainter old) => old.press != press;
 }

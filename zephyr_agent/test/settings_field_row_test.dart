@@ -83,6 +83,7 @@ void main() {
     await tester.pumpAndSettle();
     final field = tester.widget<CupertinoTextField>(find.byType(CupertinoTextField));
     expect(field.contextMenuBuilder, isNotNull);
+    expect(field.selectionControls, cupertinoTextSelectionHandleControls);
     expect(field.maxLines, 1);
     expect(field.minLines, 1);
   });

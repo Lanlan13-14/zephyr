@@ -293,11 +293,6 @@ class SettingsFieldRow extends StatelessWidget {
             Expanded(
               // CupertinoTextField with an empty BoxDecoration paints no
               // Material fill — the gray slab in 1.0.32 was InputDecorator.
-              //
-              // contextMenuBuilder MUST be the Flutter Adaptive toolbar.
-              // The default on Android 14+ is SystemContextMenu, a
-              // PlatformView that inherits the nearest clip and paints as
-              // a full-viewport gray rectangle when the field is selected.
               child: CupertinoTextField(
                 controller: controller,
                 enabled: enabled,
@@ -308,16 +303,100 @@ class SettingsFieldRow extends StatelessWidget {
                 textAlign: TextAlign.right,
                 minLines: 1,
                 maxLines: 1,
+                // Android 14+ SystemContextMenu dims the whole Activity.
+                // Draw a Flutter capsule toolbar; never ask the OS for one.
+                enableInteractiveSelection: true,
+                selectionControls: cupertinoTextSelectionHandleControls,
+                contextMenuBuilder: (context, editableTextState) {
+                  return _AddressSelectionToolbar(editableTextState: editableTextState);
+                },
                 style: TextStyle(fontSize: 17, height: 1.2, letterSpacing: -0.41, color: palette.text),
                 placeholderStyle: TextStyle(fontSize: 17, height: 1.2, color: palette.textSecondary.withValues(alpha: 0.7)),
-                contextMenuBuilder: (context, editableTextState) {
-                  return AdaptiveTextSelectionToolbar.editableText(
-                    editableTextState: editableTextState,
-                  );
-                },
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Flutter-owned selection toolbar. Never a PlatformView, never a dim
+/// overlay — the Android 14 SystemContextMenu fog is what this replaces.
+class _AddressSelectionToolbar extends StatelessWidget {
+  final EditableTextState editableTextState;
+  const _AddressSelectionToolbar({required this.editableTextState});
+
+  @override
+  Widget build(BuildContext context) {
+    final anchors = editableTextState.contextMenuAnchors;
+    final palette = SettingsPalette.of(context);
+    final items = editableTextState.contextMenuButtonItems;
+    if (items.isEmpty) return const SizedBox.shrink();
+    return AdaptiveTextSelectionToolbar(
+      anchors: anchors,
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.16),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < items.length; i++) ...[
+                  if (i > 0)
+                    Container(width: 0.5, height: 28, color: palette.border.withValues(alpha: 0.45)),
+                  _ToolbarButton(item: items[i], color: palette.text),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ToolbarButton extends StatelessWidget {
+  final ContextMenuButtonItem item;
+  final Color color;
+  const _ToolbarButton({required this.item, required this.color});
+
+  String get _label {
+    switch (item.type) {
+      case ContextMenuButtonType.copy:
+        return 'Copy';
+      case ContextMenuButtonType.cut:
+        return 'Cut';
+      case ContextMenuButtonType.paste:
+        return 'Paste';
+      case ContextMenuButtonType.selectAll:
+        return 'Select All';
+      default:
+        return item.label ?? '';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => item.onPressed?.call(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Text(
+          _label,
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: color),
         ),
       ),
     );
