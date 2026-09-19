@@ -13,11 +13,19 @@ import one.zephyr.mobile.model.SshKey
  * still [one.zephyr.mobile.model.PageState.InitialLoading] can be replayed onto the opened form
  * instead of being dropped on the floor.
  */
+internal data class AgentBastionCandidate(
+    val agentId: String,
+    val label: String,
+) {
+    val hopId: String get() = "agent:$agentId"
+}
+
 internal data class JumpInventory(
     val proxies: List<Proxy> = emptyList(),
     val keys: List<SshKey> = emptyList(),
     val jumps: List<JumpHost> = emptyList(),
     val rows: List<Connection> = emptyList(),
+    val agents: List<AgentBastionCandidate> = emptyList(),
 )
 
 /**
@@ -36,12 +44,21 @@ internal object JumpPicker {
                 row.id != editingId
         }
 
-    fun usableIds(connections: List<Connection>, jumps: List<JumpHost>): Set<String> = buildSet {
+    fun usableIds(
+        connections: List<Connection>,
+        jumps: List<JumpHost>,
+        agents: List<AgentBastionCandidate> = emptyList(),
+    ): Set<String> = buildSet {
         addAll(connections.map { it.id })
         addAll(jumps.filter { it.capabilities.canUse && it.deletedAt == null }.map { it.id })
+        addAll(agents.map { it.hopId })
     }
 
-    fun labels(connections: List<Connection>, jumps: List<JumpHost>): Map<String, String> = buildMap {
+    fun labels(
+        connections: List<Connection>,
+        jumps: List<JumpHost>,
+        agents: List<AgentBastionCandidate> = emptyList(),
+    ): Map<String, String> = buildMap {
         for (connection in connections) {
             put(
                 connection.id,
@@ -51,6 +68,9 @@ internal object JumpPicker {
         for (host in jumps) {
             put(host.id, host.name)
         }
+        for (agent in agents) {
+            put(agent.hopId, agent.label)
+        }
     }
 
     fun addable(
@@ -58,10 +78,19 @@ internal object JumpPicker {
         jumps: List<JumpHost>,
         chain: List<String>,
         usableIds: Set<String>,
+        agents: List<AgentBastionCandidate> = emptyList(),
     ): List<Pair<String, String>> {
-        val names = labels(connections, jumps)
+        val names = labels(connections, jumps, agents)
         val seen = mutableSetOf<String>()
+        val agentAlready = chain.any { it.startsWith("agent:") }
         return buildList {
+            if (!agentAlready) {
+                for (agent in agents) {
+                    if (agent.hopId !in chain && agent.hopId in usableIds && seen.add(agent.hopId)) {
+                        add(agent.hopId to (names[agent.hopId] ?: agent.label))
+                    }
+                }
+            }
             for (connection in connections) {
                 if (connection.id !in chain && connection.id in usableIds && seen.add(connection.id)) {
                     add(connection.id to (names[connection.id] ?: connection.host))
@@ -91,11 +120,12 @@ internal fun ConnectionEditorUiState.withJumpInventory(
                 .filter { it.capabilities.canUse && it.deletedAt == null }
                 .map { it.id }
                 .toSet(),
-            usableJumpHostIds = JumpPicker.usableIds(jumpConnections, snapshot.jumps),
+            usableJumpHostIds = JumpPicker.usableIds(jumpConnections, snapshot.jumps, snapshot.agents),
         ),
         proxies = snapshot.proxies,
         sshKeys = snapshot.keys,
         jumpHosts = snapshot.jumps,
         jumpConnections = jumpConnections,
+        agentBastions = snapshot.agents,
     )
 }

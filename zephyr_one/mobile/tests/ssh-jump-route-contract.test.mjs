@@ -24,7 +24,7 @@ test('the SSH engine dials the resolved chain instead of refusing routed session
    * The fix connects each hop through connectVia on the previous client's
    * direct-tcpip channel, the same shape as the main end's forwardOut loop. */
   assert.match(engine, /connectVia\(from\.newDirectConnection/);
-  assert.doesNotMatch(engine, /route_unsupported[\s\S]*跳板链/);
+  assert.doesNotMatch(engine, /route_unsupported.{0,80}跳板链/);
   assert.match(engine, /RouteHop\.SshJump/);
 });
 
@@ -114,6 +114,20 @@ test('the jump chain is selectable inside the card via a full-screen sheet', () 
   assert.match(screen, /onClick = if \(canAdd && addable\.isNotEmpty\(\)\) onPickJump else null/);
   assert.doesNotMatch(screen, /DropdownMenu\(expanded = expanded[\s\S]*JumpAdded/);
   assert.doesNotMatch(screen, /跳板链（有序/);
+});
+
+test('an agent: hop is planned as AgentBastion first, never rejected as unsupported', () => {
+  const planner = read('android/protocol-ssh/src/main/kotlin/one/zephyr/mobile/protocol/ssh/SshRoute.kt');
+  assert.match(planner, /data class AgentBastion/);
+  assert.match(planner, /Agent 跳板必须置于首级跳板位置/);
+  assert.doesNotMatch(planner, /agent_bastion_mobile_unsupported/);
+  const engine = read('android/protocol-ssh/src/main/kotlin/one/zephyr/mobile/protocol/ssh/SshjEngine.kt');
+  assert.match(engine, /fun interface AgentBastionDialer/);
+  assert.match(engine, /connectOverSocket\(hopClient, jump\.host, jump\.port, agentSocket\)/);
+  assert.match(engine, /class AlreadyConnectedSocket/);
+  const picker = read('android/feature-connections/src/main/kotlin/one/zephyr/mobile/feature/connections/JumpPicker.kt');
+  assert.match(picker, /data class AgentBastionCandidate/);
+  assert.match(picker, /agentAlready/);
 });
 
 test('main-end jump resolution semantics are pinned in one place', () => {

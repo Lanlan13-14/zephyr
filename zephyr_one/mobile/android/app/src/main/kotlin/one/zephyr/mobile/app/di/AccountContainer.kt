@@ -14,8 +14,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import one.zephyr.mobile.app.binding.AccountDatabaseReadiness
 import one.zephyr.mobile.app.LocalAiWorkspace
 import one.zephyr.mobile.app.binding.BindingGeneration
@@ -259,6 +263,17 @@ class AccountContainer(
     )
 
     val api: MobileApi = MobileApi(apiClient)
+
+    /**
+     * Live Agent bastions for the hop picker. Polled over HTTPS because
+     * presence is not a synced entity: an Agent going offline must drop out
+     * of the sheet without waiting for a change-feed round.
+     */
+    private val agentBastionState = MutableStateFlow<List<one.zephyr.mobile.feature.connections.AgentBastionCandidate>>(emptyList())
+    val agentBastions: StateFlow<List<one.zephyr.mobile.feature.connections.AgentBastionCandidate>> =
+        agentBastionState.asStateFlow()
+    private val initiatorMutex = Mutex()
+    @Volatile private var initiatorReady = false
 
     /** Server-owned AI runtime. Uses SID when present, then the bound device access credential. */
     val aiRuntime: one.zephyr.mobile.network.AiRuntimeApi = one.zephyr.mobile.network.AiRuntimeApi(
@@ -506,30 +521,38 @@ class AccountContainer(
         (endpoint.tlsPolicy as? TlsPolicy.PinnedSpki)?.sha256Pins ?: emptyList()
     private val linkInsecure: Boolean = endpoint.tlsPolicy is TlsPolicy.InsecureTrust
 
+    private val linkSessionMutex = Mutex()
+    private var linkSession: one.zephyr.mobile.app.EmbeddedLinkApi.LinkSession? = null
+
+    private suspend fun ensureLinkSession(): one.zephyr.mobile.app.EmbeddedLinkApi.LinkSession {
+        linkSessionMutex.withLock {
+            linkSession?.let { return it }
+            val next = appContainer.embeddedLink.dial(
+                endpoint.baseUrl, binding.deviceId, linkSpkiPins, linkInsecure,
+                signer = one.zephyr.mobile.app.EmbeddedLinkApi.HandshakeSigner { transcript ->
+                    deviceIdentity.signHandshakeTranscript(transcript)
+                },
+            )
+            linkSession = next
+            return next
+        }
+    }
+
     private val linkChannel = object : LinkChannel {
-        private val sessionMutex = Mutex()
         /* ZSL/2 frames carry an ordered sequence number. SyncActor serializes
          * rounds, but wake/manual and lifecycle callbacks can still enter this
          * channel from different coroutines. Keep one push in flight per
          * binding so the embedded Link runtime cannot race its send state. */
         private val pushMutex = Mutex()
-        private var session: one.zephyr.mobile.app.EmbeddedLinkApi.LinkSession? = null
 
-        override val isEstablished: Boolean get() = session != null
+        override val isEstablished: Boolean get() = linkSession != null
 
         override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
             var result: kotlinx.serialization.json.JsonObject? = null
             pushMutex.withLock {
                 var attemptedRedial = false
                 while (result == null) {
-                    val sess = sessionMutex.withLock {
-                        session ?: appContainer.embeddedLink.dial(
-                            endpoint.baseUrl, binding.deviceId, linkSpkiPins, linkInsecure,
-                            signer = one.zephyr.mobile.app.EmbeddedLinkApi.HandshakeSigner { transcript ->
-                                deviceIdentity.signHandshakeTranscript(transcript)
-                            },
-                        ).also { session = it }
-                    }
+                    val sess = ensureLinkSession()
                     try {
                         result = appContainer.embeddedLink.push(
                             endpoint.baseUrl, sess, kind = LinkKinds.SYNC_OP,
@@ -540,14 +563,19 @@ class AccountContainer(
                          * resend once: opId makes push idempotent; bootstrap/changes/ack are reads or
                          * monotonic receipts. Business failures keep their exact state-machine code. */
                         if (e.sessionInvalid && !attemptedRedial) {
-                            sessionMutex.withLock { if (session == sess) session = null }
+                            linkSessionMutex.withLock { if (linkSession == sess) linkSession = null }
+                            initiatorReady = false
                             attemptedRedial = true
                             continue
                         }
-                        if (e.sessionInvalid) sessionMutex.withLock { if (session == sess) session = null }
+                        if (e.sessionInvalid) {
+                            linkSessionMutex.withLock { if (linkSession == sess) linkSession = null }
+                            initiatorReady = false
+                        }
                         throw LinkChannelException(e.message, e.code, e.retryable, e.details)
                     } catch (e: Exception) {
-                        sessionMutex.withLock { if (session == sess) session = null }
+                        linkSessionMutex.withLock { if (linkSession == sess) linkSession = null }
+                        initiatorReady = false
                         throw LinkChannelException(e.message ?: "Link 推送失败")
                     }
                 }
@@ -726,6 +754,7 @@ class AccountContainer(
             }
         }
         aiEntitySync.start()
+        startAgentBastionRefresh()
         wakeCoordinator.start(wakeScope)
         wakeCoordinator.onHoldAliveChanged(holdAlive.get())
         wakeCoordinator.onForegroundChanged(appContainer.isProcessForeground())
@@ -834,9 +863,59 @@ class AccountContainer(
      * Cancelling this job waits for actor rounds and collectors started by this account. WorkManager
      * cancellation follows, so no queued worker can reacquire the graph during teardown.
      */
+    /**
+     * Opens a TCP socket through an enrolled Agent: One → Link → main → Agent → host:port.
+     * The SSH engine uses this as the first hop's transport.
+     */
+    fun openAgentBastion(agentId: String, host: String, port: Int): java.net.Socket {
+        if (localMode) error("当前设备未绑定主端，无法经由 Agent 跳板")
+        return kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+            initiatorMutex.withLock {
+                val session = ensureLinkSession()
+                if (!initiatorReady) {
+                    appContainer.embeddedLink.startInitiator(
+                        endpoint.baseUrl,
+                        session,
+                        insecure = linkInsecure,
+                    )
+                    initiatorReady = true
+                }
+            }
+            appContainer.embeddedLink.dialInitiator(agentId, host, port)
+        }
+    }
+
+    private fun startAgentBastionRefresh() {
+        if (localMode) return
+        syncScope.launch {
+            while (networkEnabled.get()) {
+                runCatching { refreshAgentBastions() }
+                delay(8_000)
+            }
+        }
+    }
+
+    private suspend fun refreshAgentBastions() {
+        when (val result = api.agentBastions()) {
+            is one.zephyr.mobile.network.ApiResult.Success -> {
+                agentBastionState.value = result.value.agents
+                    .filter { it.online && it.bastionEnabled && it.agentId.isNotBlank() }
+                    .map { agent ->
+                        val name = agent.tokenName.ifBlank { agent.deviceName.ifBlank { agent.agentId } }
+                        one.zephyr.mobile.feature.connections.AgentBastionCandidate(
+                            agentId = agent.agentId,
+                            label = "$name（在线 Agent）",
+                        )
+                    }
+            }
+            is one.zephyr.mobile.network.ApiResult.Failure -> Unit
+        }
+    }
+
     override suspend fun stopAndJoin() {
         networkEnabled.set(false)
         holdAlive.set(false)
+        initiatorReady = false
         wakeCoordinator.stopAndJoin()
         wakeJob.cancelAndJoin()
         syncJob.cancelAndJoin()

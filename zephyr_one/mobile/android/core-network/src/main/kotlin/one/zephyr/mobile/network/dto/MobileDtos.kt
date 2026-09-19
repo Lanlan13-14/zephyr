@@ -763,3 +763,18 @@ data class DevicePatchDto(
     val automaticEnabled: Boolean? = null,
     val syncIntervalSec: Int? = null,
 )
+
+@Serializable
+data class AgentBastionDto(
+    val agentId: String,
+    val deviceName: String = "",
+    val tokenName: String = "",
+    val online: Boolean = false,
+    val bastionEnabled: Boolean = false,
+)
+
+@Serializable
+data class AgentBastionListDto(
+    val ok: Boolean = false,
+    val agents: List<AgentBastionDto> = emptyList(),
+)

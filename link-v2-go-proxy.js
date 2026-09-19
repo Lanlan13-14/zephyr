@@ -41,7 +41,7 @@ function resolveBin() {
 }
 
 class GoLinkProcess {
-    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeUrlReady = null, syncBridgeToken = '', fileBridgeUrl = '', fileBridgeUrlReady = null, fileBridgeToken = '' } = {}) {
+    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeUrlReady = null, syncBridgeToken = '', fileBridgeUrl = '', fileBridgeUrlReady = null, fileBridgeToken = '', oneRelayAuthUrl = '', oneRelayAuthUrlReady = null } = {}) {
         this.log = log || (() => {});
         this.proc = null;
         this.addr = null;
@@ -55,6 +55,8 @@ class GoLinkProcess {
         this.fileBridgeUrl = fileBridgeUrl;
         this.fileBridgeUrlReady = fileBridgeUrlReady;
         this.fileBridgeToken = fileBridgeToken;
+        this.oneRelayAuthUrl = oneRelayAuthUrl;
+        this.oneRelayAuthUrlReady = oneRelayAuthUrlReady;
     }
 
     async ensureStarted() {
@@ -71,6 +73,9 @@ class GoLinkProcess {
         if (this.fileBridgeUrlReady) {
             this.fileBridgeUrl = await this.fileBridgeUrlReady;
         }
+        if (this.oneRelayAuthUrlReady) {
+            this.oneRelayAuthUrl = await this.oneRelayAuthUrlReady;
+        }
         const bin = resolveBin();
         if (!bin) throw Object.assign(new Error('link-go-binary-missing'), { code: 'link_go_missing' });
         const proc = spawn(bin, [], {
@@ -85,6 +90,7 @@ class GoLinkProcess {
                 ZEPHYR_LINK_SYNC_TOKEN: this.syncBridgeToken,
                 ZEPHYR_LINK_FILE_BRIDGE: this.fileBridgeUrl,
                 ZEPHYR_LINK_FILE_TOKEN: this.fileBridgeToken,
+                ZEPHYR_LINK_ONE_RELAY_AUTH: this.oneRelayAuthUrl,
             },
             stdio: ['ignore', 'pipe', 'inherit'],
         });

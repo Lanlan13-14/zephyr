@@ -2925,6 +2925,29 @@ class MobileV1Api {
             }
         });
 
+        app.get('/api/mobile/v1/agent-bastions', (req, res) => {
+            const auth = self.requireDevice(req, res);
+            if (!auth) return undefined;
+            try {
+                noStore(res);
+                const agents = typeof self.fileAgentManager?.listBastionAgentsForUser === 'function'
+                    ? self.fileAgentManager.listBastionAgentsForUser(auth.user)
+                    : [];
+                return res.json({
+                    ok: true,
+                    agents: agents.map((agent) => ({
+                        agentId: String(agent.agentId || ''),
+                        deviceName: String(agent.deviceName || ''),
+                        tokenName: String(agent.tokenName || ''),
+                        online: agent.online === true,
+                        bastionEnabled: agent.bastionEnabled === true,
+                    })).filter((agent) => agent.agentId),
+                });
+            } catch (err) {
+                return sendThrown(res, err, req.mobileRequestId);
+            }
+        });
+
         app.post('/api/mobile/v1/file-bridge/lease', (req, res) => {
             const auth = self.requireDevice(req, res);
             if (!auth) return undefined;

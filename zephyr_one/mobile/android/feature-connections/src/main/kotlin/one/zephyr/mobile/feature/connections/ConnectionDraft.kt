@@ -143,7 +143,13 @@ data class ConnectionDraft(
     fun withJumpHostAdded(jumpHostId: String): ConnectionDraft {
         if (jumpHostId in current.jumpHostIds) return this
         if (current.jumpHostIds.size >= Connection.MAX_JUMP_DEPTH) return this
-        return copy(current = current.copy(jumpHostIds = current.jumpHostIds + jumpHostId))
+        val next = if (jumpHostId.startsWith("agent:")) {
+            if (current.jumpHostIds.any { it.startsWith("agent:") }) return this
+            listOf(jumpHostId) + current.jumpHostIds
+        } else {
+            current.jumpHostIds + jumpHostId
+        }
+        return copy(current = current.copy(jumpHostIds = next))
     }
 
     fun withJumpHostRemoved(jumpHostId: String): ConnectionDraft =
@@ -155,6 +161,11 @@ data class ConnectionDraft(
         if (from !in chain.indices) return this
         val target = to.coerceIn(0, chain.size - 1)
         if (from == target) return this
+        // An Agent hop is only legal at index 0; moving it, or moving something
+        // into its slot, would produce a route the planner refuses.
+        if (chain[from].startsWith("agent:") || (target == 0 && chain.first().startsWith("agent:"))) {
+            return this
+        }
         val reordered = chain.toMutableList()
         reordered.add(target, reordered.removeAt(from))
         return copy(current = current.copy(jumpHostIds = reordered))

@@ -47,6 +47,89 @@ internal class EmbeddedLinkApi(
         fun signTranscript(transcript: ByteArray): String
     }
 
+    /**
+     * Attach /link/stream on an established One session so DialRelay can splice
+     * through the main end onto an Agent bastion.
+     */
+    suspend fun startInitiator(
+        serverUrl: String,
+        session: LinkSession,
+        insecure: Boolean = false,
+    ): Unit = withContext(Dispatchers.IO) {
+        val base = process.ensureStarted().baseUrl
+        val peer = LinkPeerResolver.resolve(linkRoot(serverUrl))
+        val body = JsonObject(mapOf(
+            "sessionId" to JsonPrimitive(session.sessionId),
+            "peerUrl" to JsonPrimitive(peer.url),
+            "insecure" to JsonPrimitive(insecure),
+        ))
+        post("$base/link/tunnel/initiator/start", body)
+    }
+
+    /**
+     * Open a TCP splice to [host]:[port] through [agentId]. Returns a connected
+     * Socket whose bytes ride One → main → Agent. Handshake is raw HTTP so we
+     * can keep the leftover socket after the 101.
+     */
+    suspend fun dialInitiator(
+        agentId: String,
+        host: String,
+        port: Int,
+    ): java.net.Socket = withContext(Dispatchers.IO) {
+        val endpoint = process.ensureStarted()
+        val loopback = java.net.URI.create(endpoint.baseUrl)
+        val socket = java.net.Socket()
+        socket.connect(
+            java.net.InetSocketAddress(loopback.host, loopback.port),
+            8_000,
+        )
+        val payload = """{"agentId":${jsonString(agentId)},"host":${jsonString(host)},"port":$port}"""
+        val request = buildString {
+            append("POST /link/tunnel/initiator/dial HTTP/1.1\r\n")
+            append("Host: ${loopback.host}:${loopback.port}\r\n")
+            append("Content-Type: application/json\r\n")
+            append("Connection: Upgrade\r\n")
+            append("Upgrade: tcp\r\n")
+            append("Content-Length: ${payload.toByteArray(Charsets.UTF_8).size}\r\n")
+            append("\r\n")
+            append(payload)
+        }
+        socket.getOutputStream().write(request.toByteArray(Charsets.UTF_8))
+        socket.getOutputStream().flush()
+        val header = readHttpHeaders(socket.getInputStream())
+        val status = header.lineSequence().firstOrNull()?.split(' ')?.getOrNull(1)
+        if (status != "101") {
+            socket.close()
+            throw LinkRequestException(
+                code = "initiator_dial_failed",
+                message = "Agent 跳板拨号失败 ($status)",
+                retryable = status?.toIntOrNull()?.let { it >= 500 } == true,
+            )
+        }
+        socket
+    }
+
+    private fun jsonString(value: String): String =
+        "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+    private fun readHttpHeaders(input: java.io.InputStream): String {
+        val bytes = java.io.ByteArrayOutputStream()
+        var prev = -1
+        while (true) {
+            val next = input.read()
+            if (next < 0) break
+            bytes.write(next)
+            if (prev == '\r'.code && next == '\n'.code && bytes.size() >= 4) {
+                val arr = bytes.toByteArray()
+                if (arr[arr.size - 4] == '\r'.code.toByte() && arr[arr.size - 3] == '\n'.code.toByte()) {
+                    return String(arr, Charsets.ISO_8859_1)
+                }
+            }
+            prev = next
+        }
+        return String(bytes.toByteArray(), Charsets.ISO_8859_1)
+    }
+
     /** Establish a ZSL/2 channel to a Link server URL through the embedded Go core. */
     /** The main end mounts the Link proxy at /api/link/v2; the Go Dial/push append the leaf. */
     private fun linkRoot(serverUrl: String): String = serverUrl.trimEnd('/') + "/api/link/v2"

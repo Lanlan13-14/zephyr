@@ -228,6 +228,27 @@ class ConnectionDraftTest {
     }
 
     @Test
+    fun agentBastionIsForcedToTheFrontAndCannotBeReordered() {
+        val draft = ConnectionDraft.create(Fixtures.OWNER, "c-new")
+            .withJumpHostAdded("j-1")
+            .withJumpHostAdded("agent:phone-1")
+            .withJumpHostAdded("j-2")
+        assertEquals(listOf("agent:phone-1", "j-1", "j-2"), draft.current.jumpHostIds)
+        assertEquals(
+            listOf("agent:phone-1", "j-1", "j-2"),
+            draft.withJumpHostMoved(0, 2).current.jumpHostIds,
+        )
+        assertEquals(
+            listOf("agent:phone-1", "j-1", "j-2"),
+            draft.withJumpHostMoved(1, 0).current.jumpHostIds,
+        )
+        assertEquals(
+            listOf("agent:phone-1", "j-1", "j-2"),
+            draft.withJumpHostAdded("agent:phone-2").current.jumpHostIds,
+        )
+    }
+
+    @Test
     fun jumpChainMoveClampsInsteadOfThrowing() {
         val draft = ConnectionDraft.create(Fixtures.OWNER, "c-new")
             .withJumpHostAdded("j-1")

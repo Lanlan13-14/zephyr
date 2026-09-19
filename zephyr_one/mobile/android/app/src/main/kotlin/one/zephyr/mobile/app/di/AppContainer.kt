@@ -86,9 +86,16 @@ class AppContainer(private val context: Context) {
      */
     val rdpEngine: RdpEngine by lazy { AndroidRdpEngine(context.filesDir) }
 
-    /** Process-scoped SSH client. Direct password / key auth only. */
+    /** Process-scoped SSH client. Agent bastion hops ride the bound account's Link session. */
     val sshEngine: one.zephyr.mobile.protocol.ssh.SshEngine by lazy {
-        one.zephyr.mobile.protocol.ssh.SshjEngine(context.filesDir)
+        one.zephyr.mobile.protocol.ssh.SshjEngine(
+            context.filesDir,
+            one.zephyr.mobile.protocol.ssh.AgentBastionDialer { agentId, host, port ->
+                val account = this.account
+                    ?: error("当前设备未绑定主端，无法经由 Agent 跳板")
+                account.openAgentBastion(agentId, host, port)
+            },
+        )
     }
 
     /** Packaged Go agent loop; binding only changes its optional data source. */

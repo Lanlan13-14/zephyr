@@ -38,6 +38,7 @@ object MobileApiPaths {
     const val PUT_MOBILE_V1_BLOBS_UPLOADS_BY_CHUNKS_BY: String = "/api/mobile/v1/blobs/uploads/{uploadId}/chunks/{index}"
     const val GET_MOBILE_V1_BLOBS_BY_CHUNKS_BY: String = "/api/mobile/v1/blobs/{sha256}/chunks/{index}"
     const val GET_MOBILE_V1_BLOBS_BY: String = "/api/mobile/v1/blobs/{sha256}"
+    const val GET_MOBILE_V1_AGENT_BASTIONS: String = "/api/mobile/v1/agent-bastions"
 
     fun deviceById(deviceId: String): String = "/api/mobile/v1/devices/" + deviceId
 

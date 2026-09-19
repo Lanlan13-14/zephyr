@@ -3,6 +3,7 @@ package link
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -270,5 +271,98 @@ func TestStreamPeerIdentityRestoresHostnameForIPLiteral(t *testing.T) {
 	sni, host = streamPeerIdentity(named, "")
 	if sni != "ssh.example.com" || host != "ssh.example.com" {
 		t.Fatalf("named sni=%q host=%q", sni, host)
+	}
+}
+
+// TestOneRelaySplicesThroughMainEnd drives the missing hop: a One node dials
+// the main end, an Agent node attaches its stream, and One DialRelay reaches
+// a TCP echo target through the Agent. Bytes never leave ZSL/2 on the wire.
+func TestOneRelaySplicesThroughMainEnd(t *testing.T) {
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			c, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				io.Copy(c, c)
+			}(c)
+		}
+	}()
+	echoAddr := echo.Addr().(*net.TCPAddr)
+
+	server := NewNode()
+	srv := httptest.NewServer(server.Handler())
+	defer srv.Close()
+
+	agent := NewNode()
+	_, agentSession, err := agent.Dial(srv.URL, "agent-device-relay")
+	if err != nil {
+		t.Fatalf("agent dial: %v", err)
+	}
+	agentHub := NewAgentTunnelHub(agent)
+	go agentHub.Start(srv.URL, agentSession)
+
+	one := NewNode()
+	_, oneSession, err := one.Dial(srv.URL, "one-device-relay")
+	if err != nil {
+		t.Fatalf("one dial: %v", err)
+	}
+	initHub := NewInitiatorHub(one)
+	if err := initHub.Start(srv.URL, oneSession); err != nil {
+		t.Fatalf("initiator start: %v", err)
+	}
+
+	mainHub := NewMainEndTunnelHub(server)
+	mainHub.EnsureRouted()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := mainHub.Attach(agentSession); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !mainHub.Attached(agentSession) {
+		t.Fatal("agent never attached")
+	}
+	mainHub.SetOneRelayAuth(func(oneDeviceID, agentID, host string, port int) (string, error) {
+		if agentID != "agent-1" {
+			return "", errors.New("unexpected agent")
+		}
+		if host != "127.0.0.1" || port != echoAddr.Port {
+			return "", errors.New("unexpected target")
+		}
+		return agentSession, nil
+	})
+	time.Sleep(150 * time.Millisecond)
+
+	conn, err := initHub.DialRelay("agent-1", "127.0.0.1", echoAddr.Port)
+	if err != nil {
+		t.Fatalf("dial relay: %v", err)
+	}
+	defer conn.Close()
+
+	payload := []byte("one-to-agent-via-main")
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, len(payload))
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	if string(buf) != string(payload) {
+		t.Fatalf("echo mismatch: got %q", buf)
+	}
+
+	// A foreign Agent id is refused instead of splicing onto the live Agent.
+	if _, err := initHub.DialRelay("agent-other", "127.0.0.1", echoAddr.Port); err == nil {
+		t.Fatal("expected foreign agent refusal")
 	}
 }

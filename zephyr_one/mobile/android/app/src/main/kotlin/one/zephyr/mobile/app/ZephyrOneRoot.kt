@@ -652,6 +652,7 @@ private fun BoundRoot(
                         onDriveCleared = {
                             editorConnectionId?.let(account.connectionShares::forget)
                         },
+                        agentBastions = account.agentBastions,
                     ),
                 )
                 val pickDriveDirectory = rememberDirectoryAuthorizer(
