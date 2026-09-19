@@ -315,12 +315,16 @@ class _LiquidToggleState extends State<LiquidToggle>
                 final press = _press.value.clamp(0.0, 1.0);
                 final track = Color.lerp(off, on, t)!;
 
-                // Squash & stretch from drag velocity and underdamped spring scale
+                // Dynamic thumb expansion from liquid_glass_easy:
+                // Rest: 40x24 inside 64x28 track.
+                // Pressed/Dragging: swells to 56x36 (spills organically outside track).
                 final v = (_velocity / 50).clamp(-0.2, 0.2);
-                final scaleX = _scaleX.value / (1.0 - (v * 0.75).clamp(-0.2, 0.2));
-                final scaleY = _scaleY.value * (1.0 - (v * 0.25).clamp(-0.2, 0.2));
+                final pillW = (LiquidToggle.thumbWidth + 16.0 * press) * (_scaleX.value / (1.0 - (v * 0.75).clamp(-0.2, 0.2)));
+                final pillH = (LiquidToggle.thumbHeight + 12.0 * press) * (_scaleY.value * (1.0 - (v * 0.25).clamp(-0.2, 0.2)));
 
-                final thumbX = LiquidToggle.inset + LiquidToggle.travel * t;
+                final centerTrackX = LiquidToggle.inset + LiquidToggle.thumbWidth / 2 + LiquidToggle.travel * t;
+                final thumbLeft = centerTrackX - pillW / 2;
+                final thumbTop = (LiquidToggle.trackHeight - pillH) / 2;
 
                 return SizedBox(
                   width: LiquidToggle.trackWidth,
@@ -331,24 +335,30 @@ class _LiquidToggleState extends State<LiquidToggle>
                       Positioned.fill(
                         child: DecoratedBox(
                           decoration: BoxDecoration(
-                            color: track,
+                            color: press > 0.01 ? Colors.transparent : track,
                             borderRadius: BorderRadius.circular(LiquidToggle.trackHeight / 2),
+                          ),
+                          child: CustomPaint(
+                            painter: _ToggleTrackPainter(
+                              color: track,
+                              press: press,
+                              holeCenterX: centerTrackX,
+                              holeWidth: pillW - 4.0,
+                              holeHeight: pillH - 4.0,
+                              bodyScale: 0.78,
+                            ),
                           ),
                         ),
                       ),
                       Positioned(
-                        left: thumbX,
-                        top: LiquidToggle.inset,
-                        child: Transform(
-                          alignment: Alignment.center,
-                          transform: Matrix4.diagonal3Values(scaleX, scaleY, 1.0),
-                          child: _GlassThumb(
-                            width: LiquidToggle.thumbWidth,
-                            height: LiquidToggle.thumbHeight,
-                            press: press,
-                            trackColor: track,
-                            fraction: t,
-                          ),
+                        left: thumbLeft,
+                        top: thumbTop,
+                        child: _GlassThumb(
+                          width: pillW,
+                          height: pillH,
+                          press: press,
+                          trackColor: track,
+                          fraction: t,
                         ),
                       ),
                     ],
@@ -361,6 +371,91 @@ class _LiquidToggleState extends State<LiquidToggle>
       ),
     );
   }
+}
+
+/// Paints the toggle track body with a pinch hole and shrunken inner copy,
+/// ported directly from liquid_glass_easy's ToggleBodyPainter.
+///
+/// At rest (press = 0), draws an untouched stadium capsule.
+/// When dragging/pressing, cuts a pill hole under the swollen glass thumb
+/// and unions an optically minified capsule in, producing the fluid
+/// organic pinch indentation seen in real iOS 26 Liquid Glass!
+class _ToggleTrackPainter extends CustomPainter {
+  final Color color;
+  final double press;
+  final double holeCenterX;
+  final double holeWidth;
+  final double holeHeight;
+  final double bodyScale;
+
+  _ToggleTrackPainter({
+    required this.color,
+    required this.press,
+    required this.holeCenterX,
+    required this.holeWidth,
+    required this.holeHeight,
+    required this.bodyScale,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final radius = size.height / 2;
+    final paint = Paint()
+      ..color = color
+      ..isAntiAlias = true;
+
+    final capsule = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Offset.zero & size,
+        Radius.circular(radius),
+      ));
+
+    if (press <= 0.01 || holeWidth <= 0.001 || holeHeight <= 0.001) {
+      canvas.drawPath(capsule, paint);
+      return;
+    }
+
+    final hole = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: Offset(holeCenterX, size.height / 2),
+          width: holeWidth,
+          height: holeHeight,
+        ),
+        Radius.circular(holeHeight / 2),
+      ));
+
+    final effectiveScale = 1.0 - (1.0 - bodyScale) * press;
+    final bodyCenterX =
+        effectiveScale * (size.width / 2) + (1 - effectiveScale) * holeCenterX;
+
+    final shrunk = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: Offset(bodyCenterX, size.height / 2),
+          width: size.width * effectiveScale,
+          height: size.height * effectiveScale,
+        ),
+        Radius.circular(radius * effectiveScale),
+      ));
+
+    final body = Path.combine(
+      PathOperation.union,
+      Path.combine(PathOperation.difference, capsule, hole),
+      shrunk,
+    );
+
+    canvas.drawPath(body, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ToggleTrackPainter old) =>
+      old.color != color ||
+      old.press != press ||
+      old.holeCenterX != holeCenterX ||
+      old.holeWidth != holeWidth ||
+      old.holeHeight != holeHeight ||
+      old.bodyScale != bodyScale;
 }
 
 class _GlassThumb extends StatefulWidget {
