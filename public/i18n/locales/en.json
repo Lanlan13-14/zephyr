@@ -524,6 +524,7 @@
   "用户名（可选，取决于 VNC 服务）": "Username (optional, depends on VNC service)",
   "用户名": "Username",
   "请选择跳板机": "Select jump host",
+  "跳板机不能为空": "Jump host cannot be empty",
   "移除跳板机": "Remove jump host",
   "不使用密钥库": "No key vault entry",
   "（有口令）": "(passphrase)",

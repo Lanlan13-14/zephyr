@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260916-agent-devices1';
+import { t } from './i18n/runtime.js?v=20260919-direct-ssh-no-jump';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 
