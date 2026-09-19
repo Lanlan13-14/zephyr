@@ -147,10 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
     LocalSettings.saveConfig(ctrl.config);
   }
 
-  void _saveAndNotify(AgentController ctrl) {
-    _saveConfig(ctrl);
-    _showSnack(_s.snackSaved);
-  }
+  // (Auto-save is wired directly via TextEditingController listeners)
 
   Future<void> _resetSettings(AgentController ctrl) async {
     await ctrl.stop();

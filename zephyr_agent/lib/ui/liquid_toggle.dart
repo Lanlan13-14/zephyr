@@ -137,11 +137,6 @@ class _LiquidToggleState extends State<LiquidToggle>
     stiffness: 250,
     ratio: 0.7, // Kyant DampedDragAnimation: underdamped jelly bounce
   );
-  static final _velocitySpring = SpringDescription.withDampingRatio(
-    mass: 0.5,
-    stiffness: 300,
-    ratio: 1.0,
-  );
 
   void _haptic() {
     if (_reduceMotion) return;
@@ -477,25 +472,76 @@ class _ThumbGlassPainter extends CustomPainter {
       );
     }
 
-    // Kyant Highlight.Ambient: delicate 45° specular crescent that responds to press.
-    final ambientAlpha = (0.20 + 0.60 * press).clamp(0.0, 1.0);
-    canvas.save();
-    canvas.clipRRect(rrect.deflate(0.6));
-    canvas.drawArc(
-      Rect.fromCenter(
-        center: Offset(size.width / 2, size.height / 2),
-        width: size.width + 1.0,
-        height: size.height + 1.0,
-      ),
-      0.7853982 - 1.15,
-      2.3,
-      false,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8
-        ..color = Colors.white.withValues(alpha: ambientAlpha * (0.2 + 0.8 * press)),
-    );
-    canvas.restore();
+    if (press > 0.02) {
+      // 1. Internal convex glass refraction luminosity
+      final glowRect = rect.deflate(0.5);
+      canvas.drawRRect(
+        rrect.deflate(0.5),
+        Paint()
+          ..shader = RadialGradient(
+            center: const Alignment(-0.25, -0.35),
+            radius: 0.85,
+            colors: [
+              Colors.white.withValues(alpha: 0.28 * press),
+              Colors.white.withValues(alpha: 0.0),
+            ],
+          ).createShader(glowRect),
+      );
+
+      // 2. Kyant Highlight.Ambient: 45° specular crescent responding to press
+      canvas.save();
+      canvas.clipRRect(rrect.deflate(0.6));
+      canvas.drawArc(
+        Rect.fromCenter(
+          center: Offset(size.width / 2, size.height / 2),
+          width: size.width + 1.0,
+          height: size.height + 1.0,
+        ),
+        0.7853982 - 1.15,
+        2.3,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0
+          ..color = Colors.white.withValues(alpha: 0.85 * press),
+      );
+      canvas.restore();
+
+      // 3. Top-left caustic glint for genuine Apple 3D liquid refraction
+      final glintRect = Rect.fromCenter(
+        center: Offset(size.width * 0.35, size.height * 0.32),
+        width: size.width * 0.32,
+        height: size.height * 0.24,
+      );
+      canvas.drawOval(
+        glintRect,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [
+              Colors.white.withValues(alpha: 0.65 * press),
+              Colors.white.withValues(alpha: 0.0),
+            ],
+          ).createShader(glintRect),
+      );
+
+      // 4. Subtle bottom meniscus absorption for real spherical depth
+      final meniscusRect = Rect.fromLTWH(0, size.height * 0.60, size.width, size.height * 0.40);
+      canvas.save();
+      canvas.clipRRect(rrect);
+      canvas.drawRect(
+        meniscusRect,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.transparent,
+              Colors.black.withValues(alpha: 0.12 * press),
+            ],
+          ).createShader(meniscusRect),
+      );
+      canvas.restore();
+    }
   }
 
   @override
