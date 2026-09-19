@@ -74,8 +74,8 @@ test('the toggle thumb bends the backdrop through the lens shader, not a knob', 
   const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
   // Kyant thumb stack: blur + lens shader on the real backdrop, press-driven.
   assert.match(toggle, /GlassProgram\.ensure\(\)/);
-  assert.match(toggle, /setFloat\(3, 5 \* press\)/);
-  assert.match(toggle, /setFloat\(4, 10 \* press\)/);
+  assert.match(toggle, /setFloat\(3, widget\.height \* press\)/);
+  assert.match(toggle, /setFloat\(4, 18 \* press\)/);
   assert.match(toggle, /BackdropFilter/);
   assert.match(toggle, /0x0D000000/);
   // Resting surface is pure white (Kyant 1.0 -> 0 by press); melts to clear
@@ -201,11 +201,14 @@ test('settings field rows are a 44pt iOS row, never an expanding TextField', () 
   // Material TextField's InputDecorator is what painted the gray slab.
   assert.doesNotMatch(group, /child: TextField\(/);
   assert.doesNotMatch(group, /isCollapsed: true/);
-  // Android 14 SystemContextMenu is a PlatformView that inherited the
-  // card clip and painted as a full-viewport gray slab on text select.
-  assert.match(group, /AdaptiveTextSelectionToolbar\.editableText/);
+  // Android 14 SystemContextMenu dims the whole Activity. Adaptive's
+  // default toolbar still routes there on SDK 34+, so the field must
+  // ship a Flutter-owned capsule toolbar and cupertino handles.
+  assert.match(group, /_AddressSelectionToolbar/);
+  assert.match(group, /cupertinoTextSelectionHandleControls/);
   assert.match(group, /clipBehavior: Clip\.none/);
   assert.match(group, /maxLines: 1/);
+  assert.doesNotMatch(group, /AdaptiveTextSelectionToolbar\.editableText/);
 });
 
 test('binding sheet opens the system browser the way Zephyr One does', () => {
