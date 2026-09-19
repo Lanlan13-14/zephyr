@@ -7,6 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
 
 const terminalJs = fs.readFileSync(new URL('../public/terminal.js', import.meta.url), 'utf8');
 
@@ -33,6 +34,16 @@ function alreadySent(s, text, windowMs = 900) {
   if (s.lastSent.text && imeTextEqual(s.lastSent.text, text) && s.now - s.lastSent.at < windowMs) return true;
   if (s.lastComposed && imeTextEqual(s.lastComposed, text) && s.now < s.suppressUntil) return true;
   return false;
+}
+
+function leftoverDelta(lineAcc, leftover) {
+  const raw = String(leftover || '');
+  if (!raw) return '';
+  const b = raw.toLowerCase();
+  const a = String(lineAcc || '').toLowerCase();
+  if (!a || a === b || a.endsWith(b)) return a === b || a.endsWith(b) ? '' : raw;
+  if (b.startsWith(a)) return raw.slice(String(lineAcc).length);
+  return raw;
 }
 
 function sendText(s, text, { forceImmediate = false } = {}) {
@@ -147,6 +158,18 @@ test('leftover delta after partial progressive send', () => {
   assert.equal(delta('kimi'), 'kimi');
 });
 
+test('current line suffix is not a global duplicate for later printable input', () => {
+  // Regression for the reported shape: after typing "next", the next word
+  // can begin with a character that is also a suffix of the current line.
+  // That must still reach the PTY; lineAcc is only for Enter leftover repair.
+  const s = makeImeState();
+  s.sent.push({ kind: 'text', text: 'next' });
+  s.lastSent = { text: 'next', at: s.now };
+  assert.equal(alreadySent(s, 't'), false);
+  assert.equal(alreadySent(s, 'next'), true);
+  assert.equal(leftoverDelta('next', 'next'), '');
+  assert.equal(leftoverDelta('next', 'trace'), 'trace');
+});
 test('late compositionend "Kimi" after Enter is dropped (no kimikimi)', () => {
   const s = makeImeState();
   s.composing = true;
@@ -156,6 +179,15 @@ test('late compositionend "Kimi" after Enter is dropped (no kimikimi)', () => {
   const result = onCompositionEnd(s, 'Kimi');
   assert.equal(result, 'swallowed');
   assert.deepEqual(s.sent, [{ kind: 'text', text: 'kimi' }, { kind: 'cr' }]);
+});
+
+test('source keeps progressive line matching scoped to Enter leftovers', () => {
+  for (const source of [terminalJs, fs.readFileSync(new URL('../public/telnet-terminal.js', import.meta.url), 'utf8')]) {
+    const fn = source.match(/function imeTextAlreadySent([\s\S]*?\n\})/)?.[0] || '';
+    assert.ok(fn, 'imeTextAlreadySent must be present');
+    assert.doesNotMatch(fn, /imeLeftoverAlreadyOnLine\(payload\)/);
+    assert.match(source, /flushMobileImeEnter[\s\S]*imeLeftoverDelta\(leftover\)/);
+  }
 });
 
 test('case-insensitive alreadySent blocks forceImmediate re-delivery', () => {
