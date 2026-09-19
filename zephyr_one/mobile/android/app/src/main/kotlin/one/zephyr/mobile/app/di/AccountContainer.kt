@@ -84,8 +84,6 @@ import one.zephyr.mobile.sync.BlobTransferPort
 import one.zephyr.mobile.sync.BootstrapOutcome
 import one.zephyr.mobile.sync.DeviceEnvelopeOpener
 import one.zephyr.mobile.sync.DeviceSecretSealer
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import one.zephyr.mobile.sync.LinkChannel
 import one.zephyr.mobile.sync.LinkKinds
 import one.zephyr.mobile.sync.LinkChannelException
