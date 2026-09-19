@@ -114,6 +114,13 @@ type Engine interface {
 	// given guest binary path.
 	InterceptExecve(ctx context.Context, path string) error
 
+	// ResetSession restores a session to its original template state.
+	// Session-local mutable state is destroyed and recreated; shared mounts
+	// under /cell/shared remain intact. The session ID remains unchanged.
+	// Implementations MUST serialize reset against all session operations and
+	// make repeated reset calls safe (idempotent).
+	ResetSession(ctx context.Context, cfg SessionConfig) error
+
 	// Teardown destroys a session and reclaims all resources.
 	Teardown(ctx context.Context, sessionID string) error
 

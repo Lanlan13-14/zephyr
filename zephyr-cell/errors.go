@@ -83,6 +83,10 @@ const (
 	// timeout (exit code 124).
 	ErrCodeOffloadTimeout ErrorCode = "OFFLOAD_TIMEOUT"
 
+	// ErrCodeResetFailed: the engine could not restore the sandbox to
+	// its template state.
+	ErrCodeResetFailed ErrorCode = "RESET_FAILED"
+
 	// ErrCodeTransport: frame protocol or transport-level failure.
 	ErrCodeTransport ErrorCode = "TRANSPORT"
 
@@ -99,6 +103,7 @@ var (
 	ErrEngineUnavailable = &CellError{Code: ErrCodeEngineUnavailable, Message: "engine could not start"}
 	ErrSessionNotFound   = &CellError{Code: ErrCodeSessionNotFound, Message: "session not found"}
 	ErrQuotaExceeded     = &CellError{Code: ErrCodeQuotaExceeded, Message: "resource quota exceeded"}
+	ErrResetFailed       = &CellError{Code: ErrCodeResetFailed, Message: "sandbox reset failed"}
 )
 
 // NewError creates a CellError with the given code, message, and optional cause.

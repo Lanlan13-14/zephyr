@@ -1,13 +1,13 @@
 // Package boot implements the first-boot and engine selection flow (§9.3).
 //
 // Flow:
-//   1. Detect host (OS/arch/capabilities)
-//   2. Select engine and rootfs variant
-//   3. Verify/download rootfs
-//   4. Boot engine
-//   5. Smoke test: exec("echo ok")
-//   6. Report Capabilities
-//   7. Ready
+//  1. Detect host (OS/arch/capabilities)
+//  2. Select engine and rootfs variant
+//  3. Verify/download rootfs
+//  4. Boot engine
+//  5. Smoke test: exec("echo ok")
+//  6. Report Capabilities
+//  7. Ready
 //
 // Any step failure produces structured diagnostics — never just "init failed".
 package boot
@@ -24,8 +24,8 @@ import (
 
 // HostInfo describes the detected host platform.
 type HostInfo struct {
-	OS       string // runtime.GOOS
-	Arch     string // runtime.GOARCH
+	OS       string   // runtime.GOOS
+	Arch     string   // runtime.GOARCH
 	Features []string // detected host features (user_ns, wsl2, vf, etc.)
 }
 
@@ -56,10 +56,10 @@ func SelectRootfsVariant(host HostInfo) string {
 
 // Diagnostic describes a boot failure with structured detail.
 type Diagnostic struct {
-	Step    string // which boot step failed
-	Engine  string // which engine was being tried
-	Error   error
-	Hint    string // actionable suggestion for the user
+	Step   string // which boot step failed
+	Engine string // which engine was being tried
+	Error  error
+	Hint   string // actionable suggestion for the user
 }
 
 func (d Diagnostic) String() string {

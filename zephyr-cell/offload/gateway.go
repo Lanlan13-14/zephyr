@@ -205,22 +205,22 @@ const (
 
 // WireRequest is the mobile wire protocol request frame (§5.1).
 type WireRequest struct {
-	Magic     uint32 `json:"magic"`
-	Version   uint8  `json:"version"`
-	PID       int    `json:"pid"`
-	SessionID string `json:"session_id"`
-	Command   string `json:"command"`
-	Args      []string `json:"args"`
+	Magic     uint32            `json:"magic"`
+	Version   uint8             `json:"version"`
+	PID       int               `json:"pid"`
+	SessionID string            `json:"session_id"`
+	Command   string            `json:"command"`
+	Args      []string          `json:"args"`
 	Env       map[string]string `json:"env,omitempty"`
-	Cwd       string `json:"cwd"`
+	Cwd       string            `json:"cwd"`
 }
 
 // WireResponse is the mobile wire protocol response frame.
 type WireResponse struct {
-	Magic    uint32 `json:"magic"`
-	Version  uint8  `json:"version"`
+	Magic    uint32             `json:"magic"`
+	Version  uint8              `json:"version"`
 	Result   cell.OffloadResult `json:"result"`
-	TempFile string `json:"temp_file,omitempty"` // guest path for large output
+	TempFile string             `json:"temp_file,omitempty"` // guest path for large output
 }
 
 // EncodeWireRequest serializes a wire request to JSON.

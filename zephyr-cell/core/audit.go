@@ -16,8 +16,8 @@ import (
 //
 // The store is append-only (§8.3) and segmented by session.
 type MemoryAuditStore struct {
-	mu      sync.RWMutex
-	entries []cell.AuditEntry
+	mu        sync.RWMutex
+	entries   []cell.AuditEntry
 	bySession map[string][]int // session_id → indices into entries
 }
 

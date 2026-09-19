@@ -6,6 +6,7 @@
 //   - write_file: Write a file to the guest filesystem
 //   - list_dir: List directory contents
 //   - install_package: Install packages via apk
+//   - reset: Reset the sandbox to its template state
 //
 // Tool descriptions include guardrail information (quotas, whitelist semantics)
 // so LLMs can make informed decisions.
@@ -24,8 +25,8 @@ type Tool struct {
 
 // ToolResult is the result of an MCP tool invocation.
 type ToolResult struct {
-	Content  []ContentBlock `json:"content"`
-	IsError  bool           `json:"isError,omitempty"`
+	Content []ContentBlock `json:"content"`
+	IsError bool           `json:"isError,omitempty"`
 }
 
 // ContentBlock is a block of content in a tool result.
@@ -49,7 +50,7 @@ func ErrorResult(text string) ToolResult {
 	}
 }
 
-// BuiltinTools returns the five built-in MCP tools for Cell (§6.5).
+// BuiltinTools returns the six built-in MCP tools for Cell (§6.5).
 func BuiltinTools() []Tool {
 	return []Tool{
 		{
@@ -176,6 +177,21 @@ Network access is required (egress whitelist must include Alpine repositories).`
 					}
 				},
 				"required": ["packages"]
+			}`),
+		},
+		{
+			Name: "cell_reset",
+			Description: `Reset the Cell sandbox to its original template state.
+
+This is destructive for session-local state: running processes, persistent
+shell state, /cell/workspace, /cell/inbox, /cell/outbox, and /cell/tmp are
+removed and recreated. Cross-session shared paths under /cell/shared are
+preserved. The Cell and session IDs remain unchanged. Reset is safe to repeat
+and is append-only audited.`,
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {},
+				"additionalProperties": false
 			}`),
 		},
 	}

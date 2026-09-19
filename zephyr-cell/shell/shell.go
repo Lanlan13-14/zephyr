@@ -26,13 +26,13 @@ type PromptDetector struct {
 // These cover common sh/bash/zsh/ash prompts in the Alpine guest.
 func DefaultPromptPatterns() []string {
 	return []string{
-		`(?m)^[\w.-]+@[\w.-]+[#$%>]\s*$`, // user@host# or user@host$
-		`(?m)^/ #\s*$`,                     // Alpine ash root
-		`(?m)^~ #\s*$`,                     // Alpine ash home
-		`(?m)^[\w/.-]+ #\s*$`,             // path #
-		`(?m)^[\w/.-]+ \$\s*$`,            // path $
+		`(?m)^[\w.-]+@[\w.-]+[#$%>]\s*$`,      // user@host# or user@host$
+		`(?m)^/ #\s*$`,                        // Alpine ash root
+		`(?m)^~ #\s*$`,                        // Alpine ash home
+		`(?m)^[\w/.-]+ #\s*$`,                 // path #
+		`(?m)^[\w/.-]+ \$\s*$`,                // path $
 		`(?m)^\([\w.-]+\)\s*[\w/.-]+[#$]\s*$`, // (venv) path$
-		`(?m)^[\w.-]+[#$]\s*$`,            // hostname# or hostname$
+		`(?m)^[\w.-]+[#$]\s*$`,                // hostname# or hostname$
 	}
 }
 
@@ -65,10 +65,10 @@ func (d *PromptDetector) Detect(output []byte) bool {
 type PersistentShell struct {
 	mu sync.Mutex
 
-	sessionID  string
-	generation atomic.Uint64
-	alive      atomic.Bool
-	startedAt  time.Time
+	sessionID    string
+	generation   atomic.Uint64
+	alive        atomic.Bool
+	startedAt    time.Time
 	rebuildCount atomic.Int64
 
 	// Env tracking for snapshot injection

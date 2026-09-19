@@ -69,8 +69,8 @@ func TestPersistentShell_EnvDiff(t *testing.T) {
 
 	// First call: all keys are new
 	toSet, toUnset := ps.EnvDiff(map[string]string{
-		"PATH": "/bin",
-		"HOME": "/root",
+		"PATH":   "/bin",
+		"HOME":   "/root",
 		"MY_VAR": "hello",
 	})
 	if len(toSet) != 3 {
