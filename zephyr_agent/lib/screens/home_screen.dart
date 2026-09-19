@@ -327,26 +327,28 @@ class _HomeScreenState extends State<HomeScreen> {
       _showSnack(s.snackNeedBinding);
       return;
     }
-    if (ctrl.config.sharedDirectoryPath == null) {
+    if (ctrl.config.fileSharingEnabled && ctrl.config.sharedDirectoryPath == null) {
       _showSnack(s.snackNeedDirectory);
       return;
     }
 
-    if (io.Platform.isAndroid) {
-      final path = ctrl.config.sharedDirectoryPath!;
-      if (path.startsWith('content://')) {
-        ctrl.setFileProvider(AndroidSafFileProvider(path));
-      } else {
-        final hasAllFiles = await AndroidStorageAccess.hasAllFilesAccess();
-        if (!hasAllFiles) {
-          await AndroidStorageAccess.openAllFilesAccessSettings();
-          _showSnack(s.snackNeedAllFiles);
-          return;
+    if (ctrl.config.fileSharingEnabled && ctrl.config.sharedDirectoryPath != null) {
+      if (io.Platform.isAndroid) {
+        final path = ctrl.config.sharedDirectoryPath!;
+        if (path.startsWith('content://')) {
+          ctrl.setFileProvider(AndroidSafFileProvider(path));
+        } else {
+          final hasAllFiles = await AndroidStorageAccess.hasAllFilesAccess();
+          if (!hasAllFiles) {
+            await AndroidStorageAccess.openAllFilesAccessSettings();
+            _showSnack(s.snackNeedAllFiles);
+            return;
+          }
+          ctrl.setFileProvider(DesktopFileProvider(path));
         }
-        ctrl.setFileProvider(DesktopFileProvider(path));
+      } else {
+        ctrl.setFileProvider(DesktopFileProvider(ctrl.config.sharedDirectoryPath!));
       }
-    } else {
-      ctrl.setFileProvider(DesktopFileProvider(ctrl.config.sharedDirectoryPath!));
     }
     await ctrl.start();
   }
@@ -405,7 +407,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _shareGroup(ctrl, isActive, accent, s),
                 _accessGroup(ctrl, isActive, accent, s),
                 _appearanceGroup(accent, s),
-                if (isActive && (ctrl.linkError.isNotEmpty || !ctrl.linkTunnelUp)) _linkGroup(ctrl, s),
+                if (isActive) _linkGroup(ctrl, s),
                 if (ctrl.transferCount > 0) _statsGroup(ctrl, s),
                 const SizedBox(height: 12),
                 if (!isActive)
@@ -533,16 +535,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _shareGroup(AgentController ctrl, bool isActive, Color accent, AgentStrings s) {
     return SettingsGroup(header: s.groupSharing, children: [
-      SettingsRow(
-        icon: Icons.folder_outlined, iconColor: accent, title: s.rowSharedDirectory,
-        detail: (ctrl.config.sharedDirectoryPath ?? '').isEmpty ? s.noDirectorySelected : ctrl.config.sharedDirectoryPath,
-        showChevron: !isActive, onTap: isActive ? null : () => _pickDirectory(ctrl),
-      ),
       SettingsToggleRow(
-        icon: Icons.lock_outline, iconColor: accent, title: s.rowReadOnly,
-        value: ctrl.config.readOnly,
-        onChanged: isActive ? null : (v) { setState(() => ctrl.config.readOnly = v); _saveConfig(ctrl); },
+        icon: Icons.folder_shared_outlined, iconColor: accent, title: s.rowFileSharing,
+        value: ctrl.config.fileSharingEnabled,
+        onChanged: isActive ? null : (v) { setState(() => ctrl.config.fileSharingEnabled = v); _saveConfig(ctrl); },
       ),
+      if (ctrl.config.fileSharingEnabled) ...[
+        SettingsRow(
+          icon: Icons.folder_outlined, iconColor: accent, title: s.rowSharedDirectory,
+          detail: (ctrl.config.sharedDirectoryPath ?? '').isEmpty ? s.noDirectorySelected : ctrl.config.sharedDirectoryPath,
+          showChevron: !isActive, onTap: isActive ? null : () => _pickDirectory(ctrl),
+        ),
+        SettingsToggleRow(
+          icon: Icons.lock_outline, iconColor: accent, title: s.rowReadOnly,
+          value: ctrl.config.readOnly,
+          onChanged: isActive ? null : (v) { setState(() => ctrl.config.readOnly = v); _saveConfig(ctrl); },
+        ),
+      ],
     ]);
   }
 
