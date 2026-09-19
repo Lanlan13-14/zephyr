@@ -150,6 +150,7 @@ class MainActivity : FlutterActivity() {
                     "openAllFilesAccessSettings" -> openAllFilesAccessSettings(result)
                     "externalStorageRoot" -> result.success(Environment.getExternalStorageDirectory().absolutePath)
                     "setLauncherTheme" -> setLauncherTheme(call, result)
+                    "openUrl" -> openUrl(call, result)
                     "list" -> list(call, result)
                     "stat" -> stat(call, result)
                     "open" -> open(call, result)
@@ -167,6 +168,29 @@ class MainActivity : FlutterActivity() {
             } catch (e: Exception) {
                 result.error("io_error", e.message ?: e.javaClass.simpleName, null)
             }
+        }
+    }
+
+    private fun openUrl(call: MethodCall, result: MethodChannel.Result) {
+        val url = call.argument<String>("url") ?: run {
+            result.error("bad_args", "url required", null)
+            return
+        }
+        val uri = Uri.parse(url)
+        val scheme = uri.scheme?.lowercase()
+        if (scheme != "https" && scheme != "http") {
+            result.error("bad_args", "only http(s) urls", null)
+            return
+        }
+        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(intent)
+            result.success(null)
+        } catch (e: Exception) {
+            result.error("open_url", e.message ?: "unable to open system browser", null)
         }
     }
 

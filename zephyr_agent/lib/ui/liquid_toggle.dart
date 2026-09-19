@@ -346,6 +346,7 @@ class _LiquidToggleState extends State<LiquidToggle>
                             width: LiquidToggle.thumbWidth,
                             height: LiquidToggle.thumbHeight,
                             press: press,
+                            trackColor: track,
                           ),
                         ),
                       ),
@@ -365,11 +366,13 @@ class _GlassThumb extends StatefulWidget {
   final double width;
   final double height;
   final double press;
+  final Color trackColor;
 
   const _GlassThumb({
     required this.width,
     required this.height,
     required this.press,
+    required this.trackColor,
   });
 
   @override
@@ -423,17 +426,11 @@ class _GlassThumbState extends State<_GlassThumb> {
         decoration: BoxDecoration(
           borderRadius: radius,
           boxShadow: const [
-            // Soft ambient drop shadow giving physical floating depth
+            // Kyant Shadow(radius 4dp, Black 5%, offset (0, radius/6)).
             BoxShadow(
-              color: Color(0x26000000), // 15% black
-              blurRadius: 3.5,
-              offset: Offset(0, 1.5),
-            ),
-            // Contact shadow
-            BoxShadow(
-              color: Color(0x0D000000), // 5% black
-              blurRadius: 1,
-              offset: Offset(0, 0.5),
+              color: Color(0x0D000000),
+              blurRadius: 4,
+              offset: Offset(0, 0.67),
             ),
           ],
         ),
@@ -442,7 +439,10 @@ class _GlassThumbState extends State<_GlassThumb> {
           child: BackdropFilter(
             filter: backdrop,
             child: CustomPaint(
-              painter: _ThumbGlassPainter(press: press),
+              painter: _ThumbGlassPainter(
+                press: press,
+                trackColor: widget.trackColor,
+              ),
             ),
           ),
         ),
@@ -453,8 +453,9 @@ class _GlassThumbState extends State<_GlassThumb> {
 
 class _ThumbGlassPainter extends CustomPainter {
   final double press;
+  final Color trackColor;
 
-  _ThumbGlassPainter({required this.press});
+  _ThumbGlassPainter({required this.press, required this.trackColor});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -462,8 +463,28 @@ class _ThumbGlassPainter extends CustomPainter {
     final rrect =
         RRect.fromRectAndRadius(rect, Radius.circular(size.height / 2));
 
-    // Kyant onDrawSurface: 100% pure white at rest (alpha = 1.0),
-    // melting smoothly to translucent liquid refraction on press (1.0 - press).
+    // Kyant CombinedBackdrop of the track, scaled by
+    //   scaleX = lerp(2/3, 0.75, press)
+    //   scaleY = lerp(0,   0.75, press)
+    // At rest Y=0 so the track is invisible; the white overlay hides it.
+    // Pressed, the track colour is sampled through the glass body — this
+    // is why the demo thumb reads as liquid over the groove, not a hole.
+    if (press > 0.02) {
+      canvas.save();
+      canvas.clipRRect(rrect);
+      canvas.translate(size.width / 2, size.height / 2);
+      canvas.scale(
+        (2.0 / 3.0) + (0.75 - 2.0 / 3.0) * press,
+        0.75 * press,
+      );
+      canvas.drawRect(
+        Rect.fromCenter(center: Offset.zero, width: size.width, height: size.height),
+        Paint()..color = trackColor,
+      );
+      canvas.restore();
+    }
+
+    // Kyant onDrawSurface: 100% pure white at rest, gone on full press.
     final surfaceAlpha = (1.0 - press).clamp(0.0, 1.0);
     if (surfaceAlpha > 0.001) {
       canvas.drawRRect(
@@ -473,24 +494,9 @@ class _ThumbGlassPainter extends CustomPainter {
     }
 
     if (press > 0.02) {
-      // 1. Internal convex glass refraction luminosity
-      final glowRect = rect.deflate(0.5);
-      canvas.drawRRect(
-        rrect.deflate(0.5),
-        Paint()
-          ..shader = RadialGradient(
-            center: const Alignment(-0.25, -0.35),
-            radius: 0.85,
-            colors: [
-              Colors.white.withValues(alpha: 0.28 * press),
-              Colors.white.withValues(alpha: 0.0),
-            ],
-          ).createShader(glowRect),
-      );
-
-      // 2. Kyant Highlight.Ambient: 45° specular crescent responding to press
+      // Kyant Highlight.Ambient (45°, width/1.5, alpha = press).
       canvas.save();
-      canvas.clipRRect(rrect.deflate(0.6));
+      canvas.clipRRect(rrect.deflate(0.5));
       canvas.drawArc(
         Rect.fromCenter(
           center: Offset(size.width / 2, size.height / 2),
@@ -502,49 +508,23 @@ class _ThumbGlassPainter extends CustomPainter {
         false,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0
-          ..color = Colors.white.withValues(alpha: 0.85 * press),
+          ..strokeWidth = 0.5
+          ..color = Colors.white.withValues(alpha: 0.38 * press),
       );
       canvas.restore();
 
-      // 3. Top-left caustic glint for genuine Apple 3D liquid refraction
-      final glintRect = Rect.fromCenter(
-        center: Offset(size.width * 0.35, size.height * 0.32),
-        width: size.width * 0.32,
-        height: size.height * 0.24,
-      );
-      canvas.drawOval(
-        glintRect,
+      // Kyant InnerShadow(radius 4·p, alpha 0.15·p).
+      canvas.drawRRect(
+        rrect.deflate(1.0),
         Paint()
-          ..shader = RadialGradient(
-            colors: [
-              Colors.white.withValues(alpha: 0.65 * press),
-              Colors.white.withValues(alpha: 0.0),
-            ],
-          ).createShader(glintRect),
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4 * press
+          ..color = Colors.black.withValues(alpha: 0.15 * press),
       );
-
-      // 4. Subtle bottom meniscus absorption for real spherical depth
-      final meniscusRect = Rect.fromLTWH(0, size.height * 0.60, size.width, size.height * 0.40);
-      canvas.save();
-      canvas.clipRRect(rrect);
-      canvas.drawRect(
-        meniscusRect,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.transparent,
-              Colors.black.withValues(alpha: 0.12 * press),
-            ],
-          ).createShader(meniscusRect),
-      );
-      canvas.restore();
     }
   }
 
   @override
   bool shouldRepaint(covariant _ThumbGlassPainter old) =>
-      old.press != press;
+      old.press != press || old.trackColor != trackColor;
 }

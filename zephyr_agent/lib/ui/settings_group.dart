@@ -108,7 +108,12 @@ class SettingsGroup extends StatelessWidget {
                 ),
               ],
       ),
-      clipBehavior: Clip.antiAlias,
+      // Clip.none is load-bearing: (1) LiquidToggle blooms to 1.5× on press
+      // and must overflow the 44pt row the way Kyant / glass.mt512 does;
+      // (2) Android SystemContextMenu is a PlatformView that inherits the
+      // nearest ClipRRect — clipping the card made the text-selection menu
+      // paint as a full-viewport gray slab (the 1.0.38 screenshot).
+      clipBehavior: Clip.none,
       child: child,
     );
   }
@@ -288,6 +293,11 @@ class SettingsFieldRow extends StatelessWidget {
             Expanded(
               // CupertinoTextField with an empty BoxDecoration paints no
               // Material fill — the gray slab in 1.0.32 was InputDecorator.
+              //
+              // contextMenuBuilder MUST be the Flutter Adaptive toolbar.
+              // The default on Android 14+ is SystemContextMenu, a
+              // PlatformView that inherits the nearest clip and paints as
+              // a full-viewport gray rectangle when the field is selected.
               child: CupertinoTextField(
                 controller: controller,
                 enabled: enabled,
@@ -296,8 +306,15 @@ class SettingsFieldRow extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 decoration: const BoxDecoration(),
                 textAlign: TextAlign.right,
+                minLines: 1,
+                maxLines: 1,
                 style: TextStyle(fontSize: 17, height: 1.2, letterSpacing: -0.41, color: palette.text),
                 placeholderStyle: TextStyle(fontSize: 17, height: 1.2, color: palette.textSecondary.withValues(alpha: 0.7)),
+                contextMenuBuilder: (context, editableTextState) {
+                  return AdaptiveTextSelectionToolbar.editableText(
+                    editableTextState: editableTextState,
+                  );
+                },
               ),
             ),
           ],

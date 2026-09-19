@@ -106,6 +106,14 @@ class AgentStrings {
   String get bindingCheckSas =>
       pick('确认安全码一致（防中间人）：', 'Confirm the safety code matches (anti-MITM):');
   String get bindingOpenLink => pick('或打开链接批准：', 'Or open this link to approve:');
+  String get actionOpenSystemBrowser =>
+      pick('在系统浏览器批准', 'Approve in System Browser');
+  String get snackOpenBrowserFailed =>
+      pick('无法打开系统浏览器', 'Could not open the system browser');
+  String get bindingBrowserHint => pick(
+        '登录、Passkey、TOTP 和验证码都在系统浏览器完成。Agent 不会保存账号密码。',
+        'Sign-in, Passkey, TOTP and the code all happen in the system browser. Agent never stores the account password.',
+      );
   String bindingExpires(int minutes) =>
       pick('$minutes 分钟内有效', 'Valid for $minutes min');
   String get bindingExpiring => pick('即将过期', 'Expiring soon');
