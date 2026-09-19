@@ -413,7 +413,7 @@ private fun JumpChainEditor(
     onPickJump: () -> Unit,
 ) {
     val chain = ui.draft.current.jumpHostIds
-    val names = JumpPicker.labels(ui.jumpConnections, ui.jumpHosts)
+    val names = JumpPicker.labels(ui.jumpConnections, ui.jumpHosts, ui.agentBastions)
     val addable = jumpAddable(ui)
     ui.issueFor("jumpHostIds")?.let { IssueText(it) }
 
@@ -500,6 +500,7 @@ private fun jumpAddable(ui: ConnectionEditorUiState): List<Pair<String, String>>
         jumps = ui.jumpHosts,
         chain = ui.draft.current.jumpHostIds,
         usableIds = ui.inventory.usableJumpHostIds,
+        agents = ui.agentBastions,
     )
 
 @Composable

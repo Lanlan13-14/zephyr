@@ -10,6 +10,7 @@ import one.zephyr.mobile.model.SecretEnvelope
 import one.zephyr.mobile.model.SensitiveGrant
 import one.zephyr.mobile.model.ServerCapabilities
 import one.zephyr.mobile.model.withLocalDiagnostic
+import one.zephyr.mobile.network.dto.AgentBastionListDto
 import one.zephyr.mobile.network.dto.AckRequestDto
 import one.zephyr.mobile.network.dto.AckResponseDto
 import one.zephyr.mobile.network.dto.BindRequestDto
@@ -305,6 +306,12 @@ class MobileApi(private val client: MobileApiClient) {
      * the request shape stays honest and the caller sees a registered error code
      * instead of a 404.
      */
+    suspend fun agentBastions(): ApiResult<AgentBastionListDto> =
+        client.get(
+            path = MobileApiPaths.GET_MOBILE_V1_AGENT_BASTIONS,
+            responseSerializer = AgentBastionListDto.serializer(),
+        )
+
     suspend fun fileBridgeLease(
         shareProfileIds: List<String>,
         readOnly: Boolean = true,

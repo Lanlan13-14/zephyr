@@ -94,6 +94,8 @@ type Node struct {
 	streamWriters map[string]*streamPushWriter
 	// agentHub is the embedded Agent tunnel hub, created on /link/tunnel/start.
 	agentHub *AgentTunnelHub
+	// initiatorHub is the embedded One tunnel hub, created on /link/tunnel/initiator/start.
+	initiatorHub *InitiatorHub
 	// identityDir, when set, persists ES256 device keys and lets Dial finish
 	// a proof-required handshake without the host signing. Empty on Android.
 	identityDir string
@@ -160,6 +162,8 @@ func NewNode() *Node {
 	// connects /link/stream and pumps TCP bytes under the session keys. The
 	// host only names the peer and session; no key material ever leaves.
 	n.mux.HandleFunc("/link/tunnel/start", n.handleTunnelStart)
+	n.mux.HandleFunc("/link/tunnel/initiator/start", n.handleInitiatorStart)
+	n.mux.HandleFunc("/link/tunnel/initiator/dial", n.handleInitiatorDial)
 	n.mux.HandleFunc("/link/identity/jwk", n.handleIdentityJWK)
 	n.mux.HandleFunc("/link/identity/enrollment-proof", n.handleEnrollmentProof)
 	// Loopback mirror of every zft2 lane for the host process (Dart). One
@@ -255,6 +259,99 @@ func (n *Node) handleTunnelStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleInitiatorStart boots the One-side tunnel hub on an established dial
+// session so DialRelay can splice through the main end onto an Agent.
+func (n *Node) handleInitiatorStart(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+		PeerURL   string `json:"peerUrl"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" || req.PeerURL == "" {
+		http.Error(w, "sessionId and peerUrl required", http.StatusBadRequest)
+		return
+	}
+	n.mu.Lock()
+	hub := n.initiatorHub
+	n.mu.Unlock()
+	if hub == nil {
+		hub = NewInitiatorHub(n)
+		n.mu.Lock()
+		if n.initiatorHub == nil {
+			n.initiatorHub = hub
+		} else {
+			hub = n.initiatorHub
+		}
+		n.mu.Unlock()
+	}
+	if err := hub.Start(req.PeerURL, req.SessionID); err != nil {
+		errJSON(w, http.StatusBadGateway, "initiator_start_failed", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleInitiatorDial hijacks the loopback HTTP connection into a raw TCP
+// splice onto a one-relay tunnel through the main end.
+func (n *Node) handleInitiatorDial(w http.ResponseWriter, r *http.Request) {
+	n.mu.Lock()
+	hub := n.initiatorHub
+	n.mu.Unlock()
+	if hub == nil {
+		errJSON(w, http.StatusPreconditionFailed, "initiator_unavailable", "initiator hub not started")
+		return
+	}
+	var req struct {
+		AgentID string `json:"agentId"`
+		Host    string `json:"host"`
+		Port    int    `json:"port"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.AgentID == "" || req.Host == "" {
+		http.Error(w, "agentId and host required", http.StatusBadRequest)
+		return
+	}
+	conn, err := hub.DialRelay(req.AgentID, req.Host, req.Port)
+	if err != nil {
+		errJSON(w, http.StatusBadGateway, "initiator_dial_failed", err.Error())
+		return
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		conn.Close()
+		errJSON(w, http.StatusInternalServerError, "hijack_unsupported", "loopback hijack unsupported")
+		return
+	}
+	netConn, buf, err := hj.Hijack()
+	if err != nil {
+		conn.Close()
+		errJSON(w, http.StatusInternalServerError, "hijack_failed", err.Error())
+		return
+	}
+	if _, err := buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: tcp\r\nConnection: Upgrade\r\n\r\n"); err != nil {
+		conn.Close()
+		netConn.Close()
+		return
+	}
+	if err := buf.Flush(); err != nil {
+		conn.Close()
+		netConn.Close()
+		return
+	}
+	go func() {
+		defer netConn.Close()
+		defer conn.Close()
+		go func() { _, _ = io.Copy(conn, netConn); conn.Close() }()
+		_, _ = io.Copy(netConn, conn)
+	}()
 }
 
 // handleZft2Local upgrades a loopback WebSocket that mirrors every zft2 lane:

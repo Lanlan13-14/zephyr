@@ -47,6 +47,10 @@
     {
       "name": "Shared",
       "description": "Online-only zero-residency shared resource access and sessions."
+    },
+    {
+      "name": "AgentBastion",
+      "description": "Live Agent bastion hops the bound device may use as the first jump."
     }
   ],
   "paths": {
@@ -3286,6 +3290,58 @@
           }
         ]
       }
+    },
+    "/api/mobile/v1/agent-bastions": {
+      "get": {
+        "tags": [
+          "AgentBastion"
+        ],
+        "summary": "List online Agents opted in as bastion hops",
+        "operationId": "getApiMobileV1AgentBastions",
+        "x-zephyr-implementation": "implemented-one-agent-jump",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentBastionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4941,6 +4997,53 @@
           },
           "challenge": {
             "$ref": "#/components/schemas/ProofChallenge"
+          }
+        }
+      },
+      "AgentBastion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agentId",
+          "deviceName",
+          "tokenName",
+          "online",
+          "bastionEnabled"
+        ],
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "deviceName": {
+            "type": "string"
+          },
+          "tokenName": {
+            "type": "string"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "bastionEnabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AgentBastionList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "agents"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentBastion"
+            }
           }
         }
       }

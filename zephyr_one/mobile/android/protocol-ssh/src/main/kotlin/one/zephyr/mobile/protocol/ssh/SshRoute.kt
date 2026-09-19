@@ -30,6 +30,16 @@ sealed interface RouteHop {
         val connectionId: String,
     ) : RouteHop
 
+    /**
+     * First hop through an enrolled Agent bastion. The One device never dials
+     * the Agent itself: bytes ride One → Link → main end → Link → Agent →
+     * target. [agentId] is the live Agent id stored as `agent:<id>` in
+     * jumpHostIds, matching the main end.
+     */
+    data class AgentBastion(val agentId: String) : RouteHop {
+        override val host: String get() = "agent"
+        override val port: Int get() = 0
+    }
 
     data class Target(override val host: String, override val port: Int) : RouteHop
 }
@@ -101,12 +111,28 @@ object SshRoutePlanner {
                 // A jump host pointing back at the connection it is dialling would recurse until the
                 // socket budget is gone, so the whole chain is checked for repeats up front.
                 val seen = mutableSetOf(connection.id)
-                for (jumpId in connection.jumpHostIds) {
+                var agentUsed = false
+                for ((index, jumpId) in connection.jumpHostIds.withIndex()) {
                     if (jumpId.startsWith("agent:")) {
-                        return RoutePlanResult.Rejected(
-                            "agent_bastion_mobile_unsupported",
-                            "One 移动端暂不支持经由 Agent 跳板中转，请使用 SSH 跳板机",
-                        )
+                        val agentId = jumpId.removePrefix("agent:").trim()
+                        if (agentId.isEmpty()) {
+                            return RoutePlanResult.Rejected("dependency_missing", "Agent 跳板 id 为空")
+                        }
+                        if (index != 0) {
+                            return RoutePlanResult.Rejected(
+                                "agent_bastion_not_first",
+                                "Agent 跳板必须置于首级跳板位置",
+                            )
+                        }
+                        if (agentUsed) {
+                            return RoutePlanResult.Rejected(
+                                "agent_bastion_duplicate",
+                                "每条跳板链最多包含一个 Agent 跳板",
+                            )
+                        }
+                        agentUsed = true
+                        hops += RouteHop.AgentBastion(agentId)
+                        continue
                     }
                     /* Main-end resolveRoutePlan semantics: a stored jump id names a jumpHost
                      * resource whose connectionId is the hop; when no such resource exists the

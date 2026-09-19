@@ -11,6 +11,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/link"
 )
@@ -30,6 +32,7 @@ const envSyncBridge = "ZEPHYR_LINK_SYNC_BRIDGE" // loopback Node sync-core bridg
 const envSyncToken = "ZEPHYR_LINK_SYNC_TOKEN"   // loopback shared secret for the bridge
 const envFileBridge = "ZEPHYR_LINK_FILE_BRIDGE" // loopback Node file bridge URL
 const envFileToken = "ZEPHYR_LINK_FILE_TOKEN"   // loopback shared secret for file bridge
+const envOneRelayAuth = "ZEPHYR_LINK_ONE_RELAY_AUTH" // loopback Node one-relay auth URL
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -102,6 +105,58 @@ func main() {
 	// session and dials TCP through it. Loopback + admin token only, same as
 	// the other internal lanes.
 	tunnelHub := link.NewMainEndTunnelHub(node)
+	// One-originated one-relay opens must be dispatched even before any Agent
+	// has attached: otherwise the first One hop is dropped as an unknown kind.
+	tunnelHub.EnsureRouted()
+	if authURL := os.Getenv(envOneRelayAuth); authURL != "" {
+		client := &http.Client{Timeout: 8 * time.Second}
+		token := adminToken
+		url := authURL
+		tunnelHub.SetOneRelayAuth(func(oneDeviceID, agentID, host string, port int) (string, error) {
+			payload, _ := json.Marshal(map[string]any{
+				"oneDeviceId": oneDeviceID,
+				"agentId":     agentID,
+				"host":        host,
+				"port":        port,
+			})
+			req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(payload)))
+			if err != nil {
+				return "", err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Link-Admin", token)
+			resp, err := client.Do(req)
+			if err != nil {
+				return "", err
+			}
+			defer resp.Body.Close()
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+			if resp.StatusCode >= 300 {
+				var env struct {
+					Error struct {
+						Message string `json:"message"`
+					} `json:"error"`
+				}
+				_ = json.Unmarshal(raw, &env)
+				msg := env.Error.Message
+				if msg == "" {
+					msg = string(raw)
+				}
+				if msg == "" {
+					msg = "one-relay refused"
+				}
+				return "", errors.New(msg)
+			}
+			var ok struct {
+				AgentSessionId string `json:"agentSessionId"`
+			}
+			if err := json.Unmarshal(raw, &ok); err != nil || ok.AgentSessionId == "" {
+				return "", errors.New("one-relay auth returned no agent session")
+			}
+			return ok.AgentSessionId, nil
+		})
+		log.Info("one-relay auth bridged to Node", "url", authURL)
+	}
 	mux.HandleFunc("/internal/tunnel/attach", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)

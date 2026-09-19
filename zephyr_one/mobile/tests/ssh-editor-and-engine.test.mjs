@@ -36,7 +36,7 @@ test('app wires SSHJ instead of the unavailable stub', () => {
   assert.doesNotMatch(root, /emulator = SimpleVtEmulator\(/);
   assert.match(root, /autoConnect = true/);
   assert.doesNotMatch(root, /UnavailableTerminalHost\(TERMINAL_ENGINE_MISSING\)/);
-  assert.match(read(CONTAINER), /SshjEngine\(context\.filesDir\)/);
+  assert.match(read(CONTAINER), /SshjEngine\(\s*context\.filesDir/);
   assert.match(read(HOST), /class SshTerminalHost/);
   assert.match(read(ENGINE), /class SshjEngine/);
   assert.match(read(ENGINE), /TRUST_FILE_NAME = "ssh_known_hosts"/);

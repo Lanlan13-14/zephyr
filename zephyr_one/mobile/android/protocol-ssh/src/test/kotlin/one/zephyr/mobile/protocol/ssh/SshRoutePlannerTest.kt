@@ -290,11 +290,31 @@ class SshRoutePlannerTest {
     }
 
     @Test
-    fun `an agent bastion jump id is rejected with a clear message on mobile`() {
+    fun `an agent bastion jump id becomes the first hop`() {
+        val via = connection(id = "bastion", host = "bastion.corp", port = 2222, username = "ops")
+        val route = (plan(
+            connection(mode = ConnectionMode.JUMP, jumpHostIds = listOf("agent:phone-1", "bastion")),
+            connections = mapOf("bastion" to via),
+        ) as RoutePlanResult.Planned).route
+
+        assertEquals(
+            listOf(
+                RouteHop.AgentBastion("phone-1"),
+                RouteHop.SshJump("bastion.corp", 2222, "ops", "bastion"),
+                RouteHop.Target("10.0.0.5", 22),
+            ),
+            route.hops,
+        )
+    }
+
+    @Test
+    fun `an agent bastion that is not first is refused`() {
+        val via = connection(id = "bastion", host = "bastion.corp", port = 2222, username = "ops")
         val rejected = plan(
-            connection(mode = ConnectionMode.JUMP, jumpHostIds = listOf("agent:agent-123")),
+            connection(mode = ConnectionMode.JUMP, jumpHostIds = listOf("bastion", "agent:phone-1")),
+            connections = mapOf("bastion" to via),
         ) as RoutePlanResult.Rejected
 
-        assertEquals("agent_bastion_mobile_unsupported", rejected.code)
+        assertEquals("agent_bastion_not_first", rejected.code)
     }
 }

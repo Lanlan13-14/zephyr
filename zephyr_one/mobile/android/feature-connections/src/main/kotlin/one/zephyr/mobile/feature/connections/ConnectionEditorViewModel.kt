@@ -38,6 +38,8 @@ data class ConnectionEditorUiState(
      * `jumpConnectionOptions`: any SSH row except the one being edited.
      */
     val jumpConnections: List<Connection> = emptyList(),
+    /** Online Agents opted in as the first hop, matching main-end `agent:<id>`. */
+    val agentBastions: List<AgentBastionCandidate> = emptyList(),
     /** Populated only after a save attempt, so a pristine form is not covered in red. */
     val issues: List<DraftIssue> = emptyList(),
     val saving: Boolean = false,
@@ -92,6 +94,8 @@ class ConnectionEditorViewModel(
     private val driveMapping: () -> DriveMappingSnapshot = { DriveMappingSnapshot() },
     private val onDriveChosen: (String) -> Unit = {},
     private val onDriveCleared: () -> Unit = {},
+    private val agentBastions: kotlinx.coroutines.flow.Flow<List<AgentBastionCandidate>> =
+        kotlinx.coroutines.flow.flowOf(emptyList()),
 ) : ViewModel(), LockSensitiveSink {
 
     private val page = MutableStateFlow<PageState<ConnectionEditorUiState>>(PageState.InitialLoading)
@@ -123,7 +127,10 @@ class ConnectionEditorViewModel(
             resources.observeSshKeys(ownerUserId),
             resources.observeJumpHosts(ownerUserId),
             connections.observeAll(ownerUserId),
-        ) { proxies, keys, jumps, rows -> JumpInventory(proxies, keys, jumps, rows) }
+            agentBastions,
+        ) { proxies, keys, jumps, rows, agents ->
+            JumpInventory(proxies, keys, jumps, rows, agents)
+        }
             .onEach(::applyInventory)
             .launchIn(viewModelScope)
     }
@@ -472,6 +479,8 @@ class ConnectionEditorViewModel(
             driveMapping: () -> DriveMappingSnapshot = { DriveMappingSnapshot() },
             onDriveChosen: (String) -> Unit = {},
             onDriveCleared: () -> Unit = {},
+            agentBastions: kotlinx.coroutines.flow.Flow<List<AgentBastionCandidate>> =
+                kotlinx.coroutines.flow.flowOf(emptyList()),
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ConnectionEditorViewModel(
@@ -491,6 +500,7 @@ class ConnectionEditorViewModel(
                 driveMapping = driveMapping,
                 onDriveChosen = onDriveChosen,
                 onDriveCleared = onDriveCleared,
+                agentBastions = agentBastions,
             ) as T
         }
     }

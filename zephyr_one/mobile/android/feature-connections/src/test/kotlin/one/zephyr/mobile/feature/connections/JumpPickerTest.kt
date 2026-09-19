@@ -110,6 +110,31 @@ class JumpPickerTest {
     }
 
     @Test
+    fun `online Agent bastions appear first and only as the first hop`() {
+        val agent = AgentBastionCandidate("phone-1", "客厅手机（在线 Agent）")
+        val connections = listOf(hopA, hopB)
+        val usable = JumpPicker.usableIds(connections, emptyList(), listOf(agent))
+        val emptyChain = JumpPicker.addable(
+            connections = connections,
+            jumps = emptyList(),
+            chain = emptyList(),
+            usableIds = usable,
+            agents = listOf(agent),
+        )
+        assertEquals("agent:phone-1", emptyChain.first().first)
+        assertEquals("客厅手机（在线 Agent）", emptyChain.first().second)
+
+        val afterAgent = JumpPicker.addable(
+            connections = connections,
+            jumps = emptyList(),
+            chain = listOf("agent:phone-1"),
+            usableIds = usable,
+            agents = listOf(agent),
+        )
+        assertFalse(afterAgent.any { it.first.startsWith("agent:") })
+    }
+
+    @Test
     fun `labels prefer the connection name then host colon port`() {
         val unnamed = hopA.copy(name = "")
         val labels = JumpPicker.labels(listOf(unnamed, hopB), listOf(alias))

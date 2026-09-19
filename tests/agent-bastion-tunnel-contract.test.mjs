@@ -85,3 +85,21 @@ test('Agent receives bastion activity notifications for UI feedback without muta
     assert.match(home, /s\.groupBastion/);
     assert.match(home, /s\.bastionActive/);
 });
+
+test('One can splice onto an Agent bastion through the main-end Link hub', () => {
+    const tunnel = read('zephyr-link/internal/link/tunnel.go');
+    assert.match(tunnel, /Lane == "one-relay"/);
+    assert.match(tunnel, /func \(h \*InitiatorHub\) DialRelay/);
+    assert.match(tunnel, /func \(h \*MainEndTunnelHub\) openOneRelay/);
+    assert.match(tunnel, /SetOneRelayAuth/);
+    const node = read('zephyr-link/internal/link/node.go');
+    assert.match(node, /\/link\/tunnel\/initiator\/start/);
+    assert.match(node, /\/link\/tunnel\/initiator\/dial/);
+    const server = read('server.js');
+    assert.match(server, /\/internal\/link\/one-relay/);
+    const proxy = read('link-v2-go-proxy.js');
+    assert.match(proxy, /ZEPHYR_LINK_ONE_RELAY_AUTH/);
+    const mobile = read('mobile-v1-routes.js');
+    assert.match(mobile, /\/api\/mobile\/v1\/agent-bastions/);
+    assert.match(mobile, /listBastionAgentsForUser/);
+});

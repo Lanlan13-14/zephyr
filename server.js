@@ -9254,6 +9254,43 @@ try {
             log: (...args) => console.log('[link-file]', ...args),
         });
         linkInternalApp.post('/internal/link/file', (req, res) => linkFileBridge.handle(req, res));
+        /* One → main → Agent bastion. Go asks Node which Agent session a One
+         * device may use; Node re-checks live ownership and opt-in. */
+        linkInternalApp.post('/internal/link/one-relay', (req, res) => {
+            if (String(req.headers['x-link-admin'] || '') !== linkSyncAdminToken) {
+                return res.status(401).json({ ok: false, error: { code: 'unauthorized', message: 'bad admin token' } });
+            }
+            const oneDeviceId = String(req.body?.oneDeviceId || '');
+            const agentId = String(req.body?.agentId || '');
+            const host = String(req.body?.host || '');
+            const port = Number(req.body?.port) || 0;
+            if (!oneDeviceId || !agentId || !host || port < 1 || port > 65535) {
+                return res.status(400).json({ ok: false, error: { code: 'invalid_request', message: 'oneDeviceId, agentId, host and port required' } });
+            }
+            let deviceRow = null;
+            try {
+                deviceRow = mobileV1Api.store.getDeviceRow(oneDeviceId);
+            } catch {}
+            if (!deviceRow || deviceRow.revoked_at) {
+                return res.status(403).json({ ok: false, error: { code: 'device_unknown', message: 'One device is not enrolled' } });
+            }
+            const user = storage.getUserBrief(deviceRow.owner_user_id);
+            if (!user || user.status === 'deleted' || user.status === 'suspended') {
+                return res.status(403).json({ ok: false, error: { code: 'account_unavailable', message: 'account unavailable' } });
+            }
+            const agent = fileAgentManager?.getAgentInfo(agentId);
+            if (!agent || !agent.online || agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) {
+                return res.status(403).json({ ok: false, error: { code: 'agent_unavailable', message: 'Agent 跳板不在线或未启用' } });
+            }
+            if (!fileAgentManager.isAgentOwnedByUser(agentId, user)) {
+                return res.status(403).json({ ok: false, error: { code: 'forbidden', message: '无权使用该 Agent 跳板' } });
+            }
+            const sessionId = String(agent.linkSessionId || '');
+            if (!sessionId) {
+                return res.status(409).json({ ok: false, error: { code: 'link_session_missing', message: 'Agent Link 会话未建立' } });
+            }
+            return res.json({ ok: true, agentSessionId: sessionId });
+        });
         linkInternalServer = http.createServer(linkInternalApp);
         const requestedInternalPort = Number(process.env.ZEPHYR_LINK_INTERNAL_PORT);
         const linkInternalPort = Number.isInteger(requestedInternalPort) && requestedInternalPort >= 0
@@ -9283,6 +9320,7 @@ try {
             syncBridgeToken: linkSyncAdminToken,
             fileBridgeUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/file')),
             fileBridgeToken: linkSyncAdminToken,
+            oneRelayAuthUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/one-relay')),
             log: (...args) => console.log('[link-v2]', ...args),
         });
         linkGoForAgents = linkGo;

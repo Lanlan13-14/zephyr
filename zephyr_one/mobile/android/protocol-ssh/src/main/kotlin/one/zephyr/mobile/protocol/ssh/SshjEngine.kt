@@ -45,13 +45,43 @@ private const val MAX_FILE_RANGE_BYTES = 32 * 1024 * 1024
 private const val STREAM_CHUNK_BYTES = 256 * 1024
 private const val DEFAULT_NEW_FILE_MODE = 0x1A4 // 0644
 
+/**
+ * SSHJ's connect() always calls socket.connect() on a factory-created Socket.
+ * The Agent splice is already open, so connect() is a no-op and streams
+ * come from the inner tunnel socket.
+ */
+private class AlreadyConnectedSocket(private val inner: Socket) : Socket() {
+    override fun connect(endpoint: java.net.SocketAddress?) = Unit
+    override fun connect(endpoint: java.net.SocketAddress?, timeout: Int) = Unit
+    override fun getInputStream() = inner.getInputStream()
+    override fun getOutputStream() = inner.getOutputStream()
+    override fun close() { inner.close() }
+    override fun isConnected() = inner.isConnected
+    override fun isClosed() = inner.isClosed
+    override fun isBound() = true
+    override fun setTcpNoDelay(on: Boolean) { runCatching { inner.tcpNoDelay = on } }
+    override fun getTcpNoDelay() = runCatching { inner.tcpNoDelay }.getOrDefault(false)
+    override fun setSoTimeout(timeout: Int) { runCatching { inner.soTimeout = timeout } }
+    override fun getSoTimeout() = runCatching { inner.soTimeout }.getOrDefault(0)
+    override fun getInetAddress(): java.net.InetAddress? = inner.inetAddress
+    override fun getPort() = inner.port
+    override fun getLocalPort() = inner.localPort
+    override fun shutdownInput() { runCatching { inner.shutdownInput() } }
+    override fun shutdownOutput() { runCatching { inner.shutdownOutput() } }
+}
+
 
 
 
 /** Live direct SSH transport: shell, SFTP, exec and request/reply latency probes. */
+fun interface AgentBastionDialer {
+    fun open(agentId: String, host: String, port: Int): Socket
+}
+
 class SshjEngine internal constructor(
     private val io: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
     private val knownHosts: SshKnownHostsBook = MemorySshKnownHostsBook(),
+    private val agentBastionDialer: AgentBastionDialer? = null,
 ) : SshEngine {
 
     constructor() : this(Dispatchers.IO, MemorySshKnownHostsBook())
@@ -59,6 +89,12 @@ class SshjEngine internal constructor(
     constructor(filesDir: File) : this(
         io = Dispatchers.IO,
         knownHosts = FileSshKnownHostsBook(File(filesDir, TRUST_FILE_NAME)),
+    )
+
+    constructor(filesDir: File, agentBastionDialer: AgentBastionDialer?) : this(
+        io = Dispatchers.IO,
+        knownHosts = FileSshKnownHostsBook(File(filesDir, TRUST_FILE_NAME)),
+        agentBastionDialer = agentBastionDialer,
     )
 
     init {
@@ -74,12 +110,24 @@ class SshjEngine internal constructor(
 
     override suspend fun connect(request: SshConnectRequest): SshConnectOutcome = withContext(io) {
         sessions.remove(request.sessionId)?.close()
-        val jumps = request.route.hops.filterIsInstance<RouteHop.SshJump>()
-        if (request.route.hops.any { it !is RouteHop.Target && it !is RouteHop.SshJump }) {
+        val hops = request.route.hops
+        val agentHop = hops.filterIsInstance<RouteHop.AgentBastion>().singleOrNull()
+        if (hops.any { it !is RouteHop.Target && it !is RouteHop.SshJump && it !is RouteHop.AgentBastion }) {
             return@withContext SshConnectOutcome.Failed(
                 MobileError.local("route_unsupported", "当前 SSHJ 引擎尚未接入代理链", false),
             )
         }
+        if (hops.count { it is RouteHop.AgentBastion } > 1) {
+            return@withContext SshConnectOutcome.Failed(
+                MobileError.local("agent_bastion_duplicate", "每条跳板链最多包含一个 Agent 跳板", false),
+            )
+        }
+        if (agentHop != null && hops.first() !is RouteHop.AgentBastion) {
+            return@withContext SshConnectOutcome.Failed(
+                MobileError.local("agent_bastion_not_first", "Agent 跳板必须置于首级跳板位置", false),
+            )
+        }
+        val jumps = hops.filterIsInstance<RouteHop.SshJump>()
         val target = request.route.target
         val chain = mutableListOf<SSHClient>()
         var stage = ConnectStage.TRANSPORT
@@ -91,6 +139,7 @@ class SshjEngine internal constructor(
          * only the hops, and a leaked target transport would sit on the last
          * jump's direct-tcpip channel. */
         val client = SSHClient()
+        var agentSocket: Socket? = null
         try {
             /* Jump chain, main-end createRoutedSSHConnection semantics: hop 1 is
              * dialed directly; each next hop is reached through a direct-tcpip
@@ -98,6 +147,22 @@ class SshjEngine internal constructor(
              * connection's own credential and presents its own host key, keyed by
              * the hop's host:port — approving one hop must never trust another. */
             var upstream: SSHClient? = null
+            val firstSsh = hops.firstOrNull { it is RouteHop.SshJump || it is RouteHop.Target }
+            if (agentHop != null) {
+                val dialer = agentBastionDialer
+                    ?: return@withContext SshConnectOutcome.Failed(
+                        MobileError.local(
+                            "agent_bastion_unavailable",
+                            "当前设备未绑定主端，无法经由 Agent 跳板",
+                            false,
+                        ),
+                    )
+                val next = firstSsh
+                    ?: return@withContext SshConnectOutcome.Failed(
+                        MobileError.local("invalid_host", "Agent 跳板缺少下一跳", false),
+                    )
+                agentSocket = dialer.open(agentHop.agentId, next.host, next.port)
+            }
             for (jump in jumps) {
                 val hopClient = SSHClient()
                 chain += hopClient
@@ -105,13 +170,18 @@ class SshjEngine internal constructor(
                 hopClient.addHostKeyVerifier(hopVerifier)
                 val from = upstream
                 try {
-                    if (from == null) {
-                        hopClient.connect(jump.host, jump.port)
-                    } else {
-                        /* SSHJ's jump-host transport: the direct-tcpip channel on the
-                         * previous client carries this hop's handshake. connectVia is
-                         * the SocketClient entry point that accepts a DirectConnection. */
-                        hopClient.connectVia(from.newDirectConnection(jump.host, jump.port))
+                    when {
+                        from == null && agentSocket != null -> {
+                            connectOverSocket(hopClient, jump.host, jump.port, agentSocket)
+                            agentSocket = null
+                        }
+                        from == null -> hopClient.connect(jump.host, jump.port)
+                        else -> {
+                            /* SSHJ's jump-host transport: the direct-tcpip channel on the
+                             * previous client carries this hop's handshake. connectVia is
+                             * the SocketClient entry point that accepts a DirectConnection. */
+                            hopClient.connectVia(from.newDirectConnection(jump.host, jump.port))
+                        }
                     }
                 } catch (error: Exception) {
                     val key = hopVerifier.presented
@@ -129,10 +199,13 @@ class SshjEngine internal constructor(
             client.addHostKeyVerifier(verifier)
             val from = upstream
             try {
-                if (from == null) {
-                    client.connect(target.host, target.port)
-                } else {
-                    client.connectVia(from.newDirectConnection(target.host, target.port))
+                when {
+                    from == null && agentSocket != null -> {
+                        connectOverSocket(client, target.host, target.port, agentSocket)
+                        agentSocket = null
+                    }
+                    from == null -> client.connect(target.host, target.port)
+                    else -> client.connectVia(from.newDirectConnection(target.host, target.port))
                 }
             } catch (error: Exception) {
                 val key = verifier.presented
@@ -157,6 +230,7 @@ class SshjEngine internal constructor(
             /* `client` is still a local here: sessions[...] is only set after a
              * fully successful open, so a failed attempt must close it directly. */
             runCatching { client.disconnect() }
+            runCatching { agentSocket?.close() }
             val untrusted = firstUntrusted
             if (untrusted != null) {
                 pending[request.sessionId] = untrusted.first
@@ -584,6 +658,23 @@ class SshjEngine internal constructor(
     /** Test seam: the first handshake stores the presented key before the user accepts it. */
     internal fun rememberPendingForTest(sessionId: String, host: String, port: Int, key: HostKey) {
         pending[sessionId] = PendingHostKey(host, port, key)
+    }
+
+    /**
+     * SSHJ 0.38 has no connect(host, port, Socket). A SocketFactory that
+     * returns the already-connected Agent splice lets connect() skip the
+     * TCP handshake and still run onConnect() / host-key verification.
+     */
+    private fun connectOverSocket(client: SSHClient, host: String, port: Int, prepared: Socket) {
+        val wrapped = AlreadyConnectedSocket(prepared)
+        client.socketFactory = object : javax.net.SocketFactory() {
+            override fun createSocket(): Socket = wrapped
+            override fun createSocket(h: String, p: Int): Socket = wrapped
+            override fun createSocket(h: String, p: Int, localHost: java.net.InetAddress, localPort: Int): Socket = wrapped
+            override fun createSocket(a: java.net.InetAddress, p: Int): Socket = wrapped
+            override fun createSocket(a: java.net.InetAddress, p: Int, local: java.net.InetAddress, localPort: Int): Socket = wrapped
+        }
+        client.connect(host, port)
     }
 
     private fun authenticate(client: SSHClient, request: SshConnectRequest) {
