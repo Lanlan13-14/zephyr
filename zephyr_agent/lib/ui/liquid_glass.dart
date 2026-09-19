@@ -51,7 +51,7 @@ class LiquidGlass extends StatefulWidget {
     this.tint,
     this.padding,
     this.hairline = true,
-    this.specularCrescent = true,
+    this.specularCrescent = false,
   });
 
   @override
@@ -143,7 +143,7 @@ class _GlassRimPainter extends CustomPainter {
     required this.dark,
     required this.hairline,
     required this.accent,
-    this.specularCrescent = true,
+    this.specularCrescent = false,
   });
 
   @override

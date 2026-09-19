@@ -409,6 +409,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _appearanceGroup(accent, s),
                 if (isActive) _linkGroup(ctrl, s),
                 if (ctrl.transferCount > 0) _statsGroup(ctrl, s),
+                if (ctrl.bastionCount > 0 || ctrl.bastionActiveCount > 0) _bastionStatsGroup(ctrl, s),
                 const SizedBox(height: 12),
                 if (!isActive)
                   GlassPrimaryButton(label: s.actionStart, icon: Icons.play_arrow_rounded, color: accent, onPressed: () => _startConnection(ctrl))
@@ -479,6 +480,8 @@ class _HomeScreenState extends State<HomeScreen> {
     };
     return SettingsGroup(header: s.groupStatus, children: [
       SettingsRow(icon: Icons.circle, iconColor: dot, title: s.statusLabel(status.name), detail: ctrl.errorMessage.isNotEmpty ? ctrl.errorMessage : ctrl.agentId),
+      if (ctrl.bastionActiveCount > 0)
+        SettingsRow(icon: Icons.alt_route, iconColor: _palette.success, title: s.groupBastion, detail: s.bastionActive(ctrl.bastionActiveCount)),
       if (ctrl.config.autoShutdown && ctrl.shutdownAt != null)
         SettingsRow(icon: Icons.timer_outlined, iconColor: _palette.warning, title: s.rowAutoShutdown, trailing: _countdown(ctrl, s)),
     ]);
@@ -628,6 +631,36 @@ class _HomeScreenState extends State<HomeScreen> {
     return SettingsGroup(header: s.groupTransfer, children: [
       SettingsRow(icon: Icons.swap_vert, iconColor: _palette.accent, title: s.transferRequests(ctrl.transferCount), detail: bytesStr),
     ]);
+  }
+
+  Widget _bastionStatsGroup(AgentController ctrl, AgentStrings s) {
+    final bytes = ctrl.bastionBytes;
+    final bytesStr = bytes < 1024
+        ? '$bytes B'
+        : bytes < 1024 * 1024
+            ? '${(bytes / 1024).toStringAsFixed(1)} KB'
+            : '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    final active = ctrl.bastionActiveCount;
+    final target = ctrl.lastBastionTarget;
+
+    return SettingsGroup(
+      header: s.groupBastion,
+      children: [
+        SettingsRow(
+          icon: Icons.alt_route,
+          iconColor: active > 0 ? const Color(0xFF34C759) : _palette.accent,
+          title: active > 0 ? s.bastionActive(active) : s.bastionRequests(ctrl.bastionCount),
+          detail: target.isNotEmpty ? target : null,
+        ),
+        if (bytes > 0 || active > 0)
+          SettingsRow(
+            icon: Icons.swap_vert,
+            iconColor: _palette.accent,
+            title: s.bastionTraffic,
+            detail: bytesStr,
+          ),
+      ],
+    );
   }
 
   Future<void> _startEnrollment(AgentController ctrl) async {

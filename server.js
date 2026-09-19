@@ -2758,9 +2758,50 @@ async function openAgentBastionConnection(proxy, targetHost, targetPort, timeout
      * that is the dead one, and the user saw "session has no live stream". */
     await linkTunnelAttach(linkSessionId);
     const socket = await linkTunnelDial(linkSessionId, String(targetHost || ''), Number(targetPort) || 22, Math.max(timeout, 12000));
+
+    const hostStr = String(targetHost || '');
+    const portNum = Number(targetPort) || 22;
+    fileAgentManager?.notifyBastionActivity?.(agentId, {
+        event: 'open',
+        targetHost: hostStr,
+        targetPort: portNum,
+        target: `${hostStr}:${portNum}`,
+    });
+
+    let totalBytes = 0;
+    socket.on('data', (chunk) => {
+        totalBytes += chunk?.length || 0;
+    });
+
+    let lastReportedBytes = 0;
+    const progressTimer = setInterval(() => {
+        if (totalBytes > lastReportedBytes) {
+            const diff = totalBytes - lastReportedBytes;
+            lastReportedBytes = totalBytes;
+            fileAgentManager?.notifyBastionActivity?.(agentId, {
+                event: 'data',
+                targetHost: hostStr,
+                targetPort: portNum,
+                target: `${hostStr}:${portNum}`,
+                bytes: diff,
+            });
+        }
+    }, 2000);
+
     const onAbort = () => { try { socket.destroy(); } catch {} };
     signal?.addEventListener?.('abort', onAbort, { once: true });
-    socket.once('close', () => signal?.removeEventListener?.('abort', onAbort));
+    socket.once('close', () => {
+        clearInterval(progressTimer);
+        signal?.removeEventListener?.('abort', onAbort);
+        const remaining = totalBytes - lastReportedBytes;
+        fileAgentManager?.notifyBastionActivity?.(agentId, {
+            event: 'close',
+            targetHost: hostStr,
+            targetPort: portNum,
+            target: `${hostStr}:${portNum}`,
+            bytes: remaining > 0 ? remaining : 0,
+        });
+    });
     return socket;
 }
 

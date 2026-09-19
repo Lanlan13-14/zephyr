@@ -227,3 +227,10 @@ test('primary actions, sheets and controls employ liquid glass over a calm syste
   // The backdrop is a calm Apple HIG system backdrop without messy blooms.
   assert.doesNotMatch(glass, /_Bloom\(/);
 });
+
+test('secondary glass sheets suppress specular crescent arc', () => {
+  const sheet = read('zephyr_agent/lib/ui/glass_sheet.dart');
+  assert.match(sheet, /specularCrescent: false/);
+  const glass = read('zephyr_agent/lib/ui/liquid_glass.dart');
+  assert.match(glass, /this\.specularCrescent = false/);
+});
