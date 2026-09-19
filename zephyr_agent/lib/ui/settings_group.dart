@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'liquid_glass.dart';
 import 'liquid_toggle.dart';
 import 'settings_palette.dart';
+import '../theme/zephyr_colors.dart';
 
 class SettingsGroup extends StatelessWidget {
   final String? header;
