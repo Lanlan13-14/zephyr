@@ -29,6 +29,8 @@ class AgentConfig {
   String? mlkemSeed;
   String? sharedDirectoryPath;
   String? sharedDirectoryName;
+  /// Enable or disable file sharing independently of bastion / connection.
+  bool fileSharingEnabled;
   bool readOnly;
   bool autoShutdown;
   int autoShutdownMinutes;
@@ -51,6 +53,7 @@ class AgentConfig {
     this.mlkemSeed,
     this.sharedDirectoryPath,
     this.sharedDirectoryName,
+    this.fileSharingEnabled = true,
     this.readOnly = true,
     this.autoShutdown = true,
     this.autoShutdownMinutes = 10,
@@ -71,6 +74,7 @@ class AgentConfig {
     'mlkemSeed': mlkemSeed,
     'sharedDirectoryPath': sharedDirectoryPath,
     'sharedDirectoryName': sharedDirectoryName,
+    'fileSharingEnabled': fileSharingEnabled,
     'readOnly': readOnly,
     'autoShutdown': autoShutdown,
     'autoShutdownMinutes': autoShutdownMinutes,
@@ -91,6 +95,7 @@ class AgentConfig {
     mlkemSeed: json['mlkemSeed'] as String?,
     sharedDirectoryPath: json['sharedDirectoryPath'] as String?,
     sharedDirectoryName: json['sharedDirectoryName'] as String?,
+    fileSharingEnabled: json['fileSharingEnabled'] as bool? ?? true,
     readOnly: json['readOnly'] as bool? ?? true,
     autoShutdown: json['autoShutdown'] as bool? ?? true,
     autoShutdownMinutes: json['autoShutdownMinutes'] as int? ?? 10,

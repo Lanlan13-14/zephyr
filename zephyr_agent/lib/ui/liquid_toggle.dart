@@ -347,6 +347,7 @@ class _LiquidToggleState extends State<LiquidToggle>
                             height: LiquidToggle.thumbHeight,
                             press: press,
                             trackColor: track,
+                            fraction: t,
                           ),
                         ),
                       ),
@@ -367,12 +368,14 @@ class _GlassThumb extends StatefulWidget {
   final double height;
   final double press;
   final Color trackColor;
+  final double fraction;
 
   const _GlassThumb({
     required this.width,
     required this.height,
     required this.press,
     required this.trackColor,
+    required this.fraction,
   });
 
   @override
@@ -404,11 +407,6 @@ class _GlassThumbState extends State<_GlassThumb> {
     final lens = _lens;
     final ImageFilter backdrop;
     if (lens != null) {
-      // Kyant: blur(8·(1−p)) then lens(height·p, amount·p, chromatic).
-      // Height is the full capsule half-height so the rim band actually
-      // covers the pill — 5px on a 24px thumb was identity in the middle
-      // and the rainbow never showed. Amount 18px matches the demo's
-      // visible bend of the green track through the glass.
       lens
         ..setFloat(0, widget.width)
         ..setFloat(1, widget.height)
@@ -423,6 +421,7 @@ class _GlassThumbState extends State<_GlassThumb> {
         sigmaY: 8 * (1 - press),
       );
     }
+
     return SizedBox(
       width: widget.width,
       height: widget.height,
@@ -447,7 +446,11 @@ class _GlassThumbState extends State<_GlassThumb> {
                 child: const ColoredBox(color: Color(0x00000000)),
               ),
               CustomPaint(
-                painter: _ThumbGlassPainter(press: press),
+                painter: _ThumbGlassPainter(
+                  press: press,
+                  trackColor: widget.trackColor,
+                  fraction: widget.fraction,
+                ),
               ),
             ],
           ),
@@ -459,56 +462,168 @@ class _GlassThumbState extends State<_GlassThumb> {
 
 class _ThumbGlassPainter extends CustomPainter {
   final double press;
+  final Color trackColor;
+  final double fraction;
 
-  _ThumbGlassPainter({required this.press});
+  _ThumbGlassPainter({
+    required this.press,
+    required this.trackColor,
+    required this.fraction,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rrect =
-        RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(size.height / 2));
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(size.height / 2));
 
-    // Kyant onDrawSurface: 100% pure white at rest, gone on full press.
-    // This is the pebble that hides the CombinedBackdrop until the finger
-    // lands — matching glass.mt512 exactly.
-    final surfaceAlpha = (1.0 - press).clamp(0.0, 1.0);
-    if (surfaceAlpha > 0.001) {
+    // ─────────────────────────────────────────────────────────────────────────
+    // STAGE 1: RESTING STATE SOLID WHITE PEBBLE (纯白温润白玉实体)
+    // ─────────────────────────────────────────────────────────────────────────
+    // At rest (press = 0), thumb is 100% solid pure white with gentle bevel.
+    // As press increases, the solid white pebble melts and contracts towards
+    // the trailing edge (creating the iconic melted pebble seen in Image 2!).
+    final solidWhiteAlpha = (1.0 - press).clamp(0.0, 1.0);
+    if (solidWhiteAlpha > 0.001) {
       canvas.drawRRect(
         rrect,
-        Paint()..color = Colors.white.withValues(alpha: surfaceAlpha),
+        Paint()..color = Colors.white.withValues(alpha: solidWhiteAlpha),
       );
     }
 
     if (press > 0.02) {
-      // Kyant Highlight.Ambient (45°, width/1.5, alpha = press).
+      // ───────────────────────────────────────────────────────────────────────
+      // STAGE 2: MELTED JELLY PEBBLE (图二右侧带有半月凹陷的融化玉质弧面)
+      // ───────────────────────────────────────────────────────────────────────
+      // When dragging or pressing, the white body melts into a crescent/horseshoe
+      // on the trailing edge (right side if moving right, left side if moving left).
+      final pebbleWidth = size.width * (0.42 + 0.15 * (1.0 - press));
+      final pebbleLeft = fraction >= 0.5
+          ? (size.width - pebbleWidth)
+          : 0.0;
+      final pebbleRect = Rect.fromLTWH(pebbleLeft, 1, pebbleWidth, size.height - 2);
+      final pebbleRRect = RRect.fromRectAndRadius(
+        pebbleRect,
+        Radius.circular((size.height - 2) / 2),
+      );
+
+      final pebblePaint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            Colors.white.withValues(alpha: 0.05 * press),
+            Colors.white.withValues(alpha: 0.55 * press),
+            Colors.white.withValues(alpha: 0.88 * press),
+          ],
+          stops: const [0.0, 0.45, 1.0],
+        ).createShader(pebbleRect);
+
+      canvas.save();
+      canvas.clipRRect(rrect);
+      canvas.drawRRect(pebbleRRect, pebblePaint);
+      canvas.restore();
+
+      // ───────────────────────────────────────────────────────────────────────
+      // STAGE 3: CHROMATIC ABERRATION SPECTRAL EDGES (图二标志性彩虹色散光边)
+      // ───────────────────────────────────────────────────────────────────────
+      // Top Edge: Shortwave refraction spectrum (Cyan -> Blue -> Pure White glint)
+      final topRainbowPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.2 * press
+        ..shader = const LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            Color(0x0000E5FF),
+            Color(0xEE00E5FF), // vivid cyan
+            Color(0xFFFFFFFF), // pure white glint
+            Color(0xDD2979FF), // vibrant royal blue
+            Color(0x002979FF),
+          ],
+          stops: [0.0, 0.22, 0.50, 0.78, 1.0],
+        ).createShader(rect);
+
+      // Bottom Edge: Longwave refraction spectrum (Amber -> Gold -> Lime -> Cyan)
+      final bottomRainbowPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.2 * press
+        ..shader = const LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            Color(0x00FFD600),
+            Color(0xEEFFD600), // vivid golden yellow
+            Color(0xFFFF9100), // warm amber
+            Color(0xDDAEEA00), // lime green
+            Color(0x0000B0FF),
+          ],
+          stops: [0.0, 0.25, 0.55, 0.82, 1.0],
+        ).createShader(rect);
+
+      // Draw top and bottom chromatic bands clipped inside the capsule rim
+      canvas.save();
+      canvas.clipRRect(rrect);
+      // Top spectrum arc
+      canvas.drawLine(
+        Offset(size.height * 0.4, 1.2),
+        Offset(size.width - size.height * 0.4, 1.2),
+        topRainbowPaint,
+      );
+      // Bottom spectrum arc
+      canvas.drawLine(
+        Offset(size.height * 0.4, size.height - 1.2),
+        Offset(size.width - size.height * 0.4, size.height - 1.2),
+        bottomRainbowPaint,
+      );
+      canvas.restore();
+
+      // ───────────────────────────────────────────────────────────────────────
+      // STAGE 4: AMBIENT SPECULAR CRESCENT & INNER SHADOW (45°月牙高光与立体内阴影)
+      // ───────────────────────────────────────────────────────────────────────
+      // 45° Keylight specular crescent along top-left curve
       canvas.save();
       canvas.clipRRect(rrect.deflate(0.5));
       canvas.drawArc(
         Rect.fromCenter(
-          center: Offset(size.width / 2, size.height / 2),
-          width: size.width + 1.0,
-          height: size.height + 1.0,
+          center: Offset(size.width * 0.45, size.height * 0.48),
+          width: size.width * 0.95,
+          height: size.height * 0.95,
         ),
-        0.7853982 - 1.15,
-        2.3,
+        0.7853982 - 1.25,
+        2.5,
         false,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.5
-          ..color = Colors.white.withValues(alpha: 0.38 * press),
+          ..strokeWidth = 1.0
+          ..color = Colors.white.withValues(alpha: 0.65 * press),
       );
       canvas.restore();
 
-      // Kyant InnerShadow(radius 4·p, alpha 0.15·p).
+      // Inner physical shadow for convex glass depth
       canvas.drawRRect(
-        rrect.deflate(1.0),
+        rrect.deflate(0.8),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 4 * press
-          ..color = Colors.black.withValues(alpha: 0.15 * press),
+          ..strokeWidth = 3.5 * press
+          ..color = Colors.black.withValues(alpha: 0.12 * press),
       );
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STAGE 5: HAIRLINE GLASS RIM (0.5px 精细外沿发丝线)
+    // ─────────────────────────────────────────────────────────────────────────
+    canvas.drawRRect(
+      rrect.deflate(0.5),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.5
+        ..color = Colors.white.withValues(alpha: 0.35 + 0.25 * press),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _ThumbGlassPainter old) => old.press != press;
+  bool shouldRepaint(covariant _ThumbGlassPainter old) =>
+      old.press != press ||
+      old.trackColor != trackColor ||
+      old.fraction != fraction;
 }

@@ -51,6 +51,7 @@ class AgentStrings {
   String get rowServerAddress => pick('地址', 'Address');
   String get rowDeviceBinding => pick('设备绑定', 'Device Binding');
   String get rowAllowSelfSigned => pick('允许自签名证书', 'Allow Self-Signed Certificates');
+  String get rowFileSharing => pick('文件共享', 'File Sharing');
   String get rowSharedDirectory => pick('共享目录', 'Shared Directory');
   String get rowReadOnly => pick('只读', 'Read-Only');
   String get rowBastion => pick('作为跳板机', 'Use as Jump Host');

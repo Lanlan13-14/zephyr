@@ -76,6 +76,11 @@ test('Link failures surface to the agent UI instead of being swallowed', () => {
   assert.match(controller, /_linkError = error\.toString\(\)/);
   assert.match(ui, /加密通道未建立/);
   assert.match(ui, /ctrl\.linkError/);
+  // Encrypted channel group stays visible while active — never vanishes upon success
+  assert.match(ui, /if \(isActive\) _linkGroup\(ctrl, s\)/);
+  // File sharing has its own independent toggle
+  assert.match(ui, /s\.rowFileSharing/);
+  assert.match(ui, /ctrl\.config\.fileSharingEnabled/);
 });
 
 test('server resolveRoutePlan accepts agent bastion prefix in jump chain', () => {
