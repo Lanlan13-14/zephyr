@@ -28,27 +28,14 @@ test('the bastion row has no ambiguous subtitle', () => {
   assert.doesNotMatch(strings, /供主端和 One 经此 Agent 中转 SSH/);
 });
 
-test('every toggle is the liquid-glass switch, not MD3 Switch', () => {
+test('every toggle is the liquid_glass_easy switch, not MD3 Switch', () => {
   const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
   assert.match(toggle, /class LiquidToggle/);
-  assert.match(toggle, /Kyant0\/AndroidLiquidGlass/);
-  assert.match(toggle, /BackdropFilter/);
-  assert.match(toggle, /glass_lens\.frag|GlassProgram/);
-  assert.match(toggle, /disableAnimations/);
+  assert.match(toggle, /package:liquid_glass_easy\/liquid_glass_easy\.dart/);
+  assert.match(toggle, /LiquidGlassSwitch\(/);
   const group = read('zephyr_agent/lib/ui/settings_group.dart');
   assert.match(group, /LiquidToggle\(/);
   assert.doesNotMatch(group, /Switch\(/);
-});
-
-test('liquid toggle follows Kyant geometry: 64 by 28, 40 by 24 thumb, 20pt travel', () => {
-  const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
-  assert.match(toggle, /static const double trackWidth = 64/);
-  assert.match(toggle, /static const double trackHeight = 28/);
-  assert.match(toggle, /static const double thumbWidth = 40/);
-  assert.match(toggle, /static const double thumbHeight = 24/);
-  assert.match(toggle, /static const double travel = trackWidth - thumbWidth - inset \* 2/);
-  assert.match(toggle, /_onPointerMove/);
-  assert.match(toggle, /SpringSimulation/);
 });
 
 test('the toggle track is the single theme accent, never a fixed green', () => {
@@ -58,33 +45,16 @@ test('the toggle track is the single theme accent, never a fixed green', () => {
   assert.doesNotMatch(toggle, /required this\.activeColor/);
   // On-state track resolves from SettingsPalette accent.
   assert.match(toggle, /SettingsPalette\.maybeOf\(context\)\?\.accent/);
-  // Off-state is the Kyant groove (translucent system gray).
+  // Off-state is the translucent system gray.
   assert.match(toggle, /0x33787878/);
   assert.match(toggle, /0x5C787880/);
-  // Kyant's own system green must not appear — on-track is the theme accent.
+  // Fixed green must not appear — on-track is the theme accent.
   assert.doesNotMatch(toggle, /0xFF34C759/);
   assert.doesNotMatch(toggle, /0xFF30D158/);
-  // No sdegenaar specular track gradient or glow.
+  // No specular track gradient or glow.
   assert.doesNotMatch(toggle, /specularTop/);
   const group = read('zephyr_agent/lib/ui/settings_group.dart');
   assert.doesNotMatch(group, /activeColor: iconColor/);
-});
-
-test('the toggle thumb bends the backdrop through the lens shader, not a knob', () => {
-  const toggle = read('zephyr_agent/lib/ui/liquid_toggle.dart');
-  // Kyant thumb stack: blur + lens shader on the real backdrop, press-driven.
-  assert.match(toggle, /GlassProgram\.ensure\(\)/);
-  assert.match(toggle, /setFloat\(3, widget\.height \* press\)/);
-  assert.match(toggle, /setFloat\(4, 18 \* press\)/);
-  assert.match(toggle, /BackdropFilter/);
-  assert.match(toggle, /0x0D000000/);
-  // Resting surface is pure white (Kyant 1.0 -> 0 by press); melts to clear
-  // liquid glass upon touch. The plastic 0.32 chalk-gray tint is eradicated.
-  assert.match(toggle, /1\.0 - press/);
-  assert.doesNotMatch(toggle, /0\.32 \* \(1 - press\)/);
-  assert.doesNotMatch(toggle, /surfaceOpacity = \(1 - press\)/);
-  assert.doesNotMatch(toggle, /0\.94/);
-  assert.doesNotMatch(toggle, /coreOpacity/);
 });
 
 test('primary actions are glass capsules, not Material elevated buttons', () => {
