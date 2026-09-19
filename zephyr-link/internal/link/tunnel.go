@@ -80,20 +80,32 @@ type tunnelStreamConn struct {
 	closed bool
 }
 
-func (t *tunnelStreamConn) writeEnvelope(env []byte) error {
+func (t *tunnelStreamConn) writeFrame(opcode byte, payload []byte) error {
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
 	if t.closed {
 		return errors.New("tunnel: stream closed")
 	}
+	// A half-open mobile connection must not hold the only writer forever.
+	// The deadline also bounds a ping waiting behind an application write.
+	_ = t.conn.SetWriteDeadline(time.Now().Add(tunnelWriteTimeout))
+	err := writeClientFrame(t.conn, opcode, payload)
+	_ = t.conn.SetWriteDeadline(time.Time{})
+	return err
+}
+
+func (t *tunnelStreamConn) writeEnvelope(env []byte) error {
 	// Client-to-server: MASK is mandatory. Node's ws (the public hop)
 	// drops unmasked frames, which is why a 101 upgrade still left the
 	// main end with "session has no live stream".
-	return writeClientFrame(t.conn, 0x1, env)
+	return t.writeFrame(0x1, env)
 }
 
 func (t *tunnelStreamConn) readEnvelope() ([]byte, error) {
 	for {
+		// Pings only help if a peer that stopped answering is eventually
+		// declared dead. Any data, ping or pong renews this deadline.
+		_ = t.conn.SetReadDeadline(time.Now().Add(3 * tunnelPingInterval))
 		op, payload, err := readFrame(t.br)
 		if err != nil {
 			return nil, err
@@ -102,9 +114,11 @@ func (t *tunnelStreamConn) readEnvelope() ([]byte, error) {
 		case 0x8:
 			return nil, io.EOF
 		case 0x9: // ping -> pong keeps middleboxes from idling the stream
-			t.wmu.Lock()
-			_ = writeClientFrame(t.conn, 0xA, payload)
-			t.wmu.Unlock()
+			if err := t.writeFrame(0xA, payload); err != nil {
+				return nil, err
+			}
+			continue
+		case 0xA: // pong acknowledges our keepalive; it carries no envelope
 			continue
 		case 0x1, 0x2, 0x0:
 			return payload, nil
@@ -115,12 +129,7 @@ func (t *tunnelStreamConn) readEnvelope() ([]byte, error) {
 }
 
 func (t *tunnelStreamConn) ping() error {
-	t.wmu.Lock()
-	defer t.wmu.Unlock()
-	if t.closed {
-		return errors.New("tunnel: stream closed")
-	}
-	return writeClientFrame(t.conn, 0x9, nil)
+	return t.writeFrame(0x9, nil)
 }
 
 func (t *tunnelStreamConn) Close() error {
@@ -130,6 +139,7 @@ func (t *tunnelStreamConn) Close() error {
 		return nil
 	}
 	t.closed = true
+	_ = t.conn.SetWriteDeadline(time.Now().Add(tunnelWriteTimeout))
 	_ = writeClientFrame(t.conn, 0x8, nil)
 	return t.conn.Close()
 }
@@ -257,6 +267,7 @@ type agentTunnel struct {
 
 type AgentTunnelHub struct {
 	mu      sync.Mutex
+	startMu sync.Mutex
 	node    *Node
 	peerURL string
 	// sessionID is the Link session the current stream runs on. It changes
@@ -365,6 +376,8 @@ func NewAgentTunnelHub(node *Node) *AgentTunnelHub {
 // then recognise that it no longer owns the hub and must not tear down the
 // stream its successor just installed.
 func (h *AgentTunnelHub) Start(peerURL, sessionID string) error {
+	h.startMu.Lock()
+	defer h.startMu.Unlock()
 	stream, ep, err := h.node.dialTunnelStream(peerURL, sessionID)
 	if err != nil {
 		return err
@@ -1263,6 +1276,7 @@ func (h *MainEndTunnelHub) dial(sessionID string, open tunnelFrame) (net.Conn, e
 // through the main end, which splices them onto an Agent bastion.
 type InitiatorHub struct {
 	mu         sync.Mutex
+	startMu    sync.Mutex
 	node       *Node
 	peerURL    string
 	sessionID  string
@@ -1296,6 +1310,8 @@ func NewInitiatorHub(node *Node) *InitiatorHub {
 
 // Start attaches /link/stream on an established One session. Restartable.
 func (h *InitiatorHub) Start(peerURL, sessionID string) error {
+	h.startMu.Lock()
+	defer h.startMu.Unlock()
 	stream, ep, err := h.node.dialTunnelStream(peerURL, sessionID)
 	if err != nil {
 		return err
@@ -1322,7 +1338,35 @@ func (h *InitiatorHub) Start(peerURL, sessionID string) error {
 	return nil
 }
 
+func (h *InitiatorHub) closeAll(generation uint64) bool {
+	h.mu.Lock()
+	if generation != h.generation {
+		h.mu.Unlock()
+		return false
+	}
+	cancel, stream := h.cancel, h.stream
+	tunnels := make([]*initiatorTunnel, 0, len(h.tunnels))
+	for id, t := range h.tunnels {
+		tunnels = append(tunnels, t)
+		delete(h.tunnels, id)
+	}
+	h.stream = nil
+	h.ep = nil
+	h.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if stream != nil {
+		_ = stream.Close()
+	}
+	for _, t := range tunnels {
+		t.once.Do(func() { close(t.dead) })
+	}
+	return true
+}
+
 func (h *InitiatorHub) readLoop(generation uint64) {
+	defer h.closeAll(generation)
 	for {
 		h.mu.Lock()
 		stream, ep := h.stream, h.ep
@@ -1430,6 +1474,15 @@ func (h *InitiatorHub) send(tf tunnelFrame) error {
 	case <-time.After(tunnelWriteTimeout):
 		return errors.New("tunnel: initiator write timeout")
 	}
+}
+
+// Close tears the initiator hub down (tests and process exit).
+func (h *InitiatorHub) Close() {
+	h.mu.Lock()
+	generation := h.generation
+	h.generation++
+	h.mu.Unlock()
+	h.closeAll(generation)
 }
 
 // DialRelay opens a TCP tunnel to host:port through the named Agent, via the

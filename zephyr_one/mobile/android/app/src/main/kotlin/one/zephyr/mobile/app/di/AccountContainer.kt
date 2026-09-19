@@ -868,19 +868,33 @@ class AccountContainer(
     fun openAgentBastion(agentId: String, host: String, port: Int): java.net.Socket {
         if (localMode) error("当前设备未绑定主端，无法经由 Agent 跳板")
         return kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-            initiatorMutex.withLock {
-                val session = ensureLinkSession()
-                if (!initiatorReady) {
-                    appContainer.embeddedLink.startInitiator(
-                        endpoint.baseUrl,
-                        session,
-                        insecure = linkInsecure,
-                    )
-                    initiatorReady = true
-                }
+            try {
+                ensureInitiatorAndDial(agentId, host, port)
+            } catch (error: one.zephyr.mobile.app.EmbeddedLinkApi.LinkRequestException) {
+                /* The embedded Go hub closes its stream state when the link dies,
+                 * but nothing re-attaches it on its own. Restarting once here is
+                 * what keeps "test connection" green across network switches
+                 * instead of timing out on a hub that died minutes ago. */
+                if (!error.message.contains("initiator stream is not started")) throw error
+                initiatorMutex.withLock { initiatorReady = false }
+                ensureInitiatorAndDial(agentId, host, port)
             }
-            appContainer.embeddedLink.dialInitiator(agentId, host, port)
         }
+    }
+
+    private suspend fun ensureInitiatorAndDial(agentId: String, host: String, port: Int): java.net.Socket {
+        initiatorMutex.withLock {
+            val session = ensureLinkSession()
+            if (!initiatorReady) {
+                appContainer.embeddedLink.startInitiator(
+                    endpoint.baseUrl,
+                    session,
+                    insecure = linkInsecure,
+                )
+                initiatorReady = true
+            }
+        }
+        return appContainer.embeddedLink.dialInitiator(agentId, host, port)
     }
 
     private fun startAgentBastionRefresh() {
