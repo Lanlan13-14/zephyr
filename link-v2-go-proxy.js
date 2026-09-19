@@ -136,8 +136,21 @@ function stopLinkV2Go() {
     if (shared.proc) { shared.proc.stop(); shared.proc = null; }
 }
 
-function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken, fileBridgeUrl, fileBridgeUrlReady, fileBridgeToken } = {}) {
-    const proc = sharedProcess(log, { adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken, fileBridgeUrl, fileBridgeUrlReady, fileBridgeToken });
+function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken, fileBridgeUrl, fileBridgeUrlReady, fileBridgeToken, oneRelayAuthUrl, oneRelayAuthUrlReady } = {}) {
+    /* oneRelayAuthUrlReady must reach GoLinkProcess. Dropping it left
+     * ZEPHYR_LINK_ONE_RELAY_AUTH empty, so every One→Agent splice died as
+     * "one-relay is not authorized on this server" and Android showed 502. */
+    const proc = sharedProcess(log, {
+        adminToken,
+        syncBridgeUrl,
+        syncBridgeUrlReady,
+        syncBridgeToken,
+        fileBridgeUrl,
+        fileBridgeUrlReady,
+        fileBridgeToken,
+        oneRelayAuthUrl,
+        oneRelayAuthUrlReady,
+    });
     // Devices the Go service is known to hold this process lifetime, so we only
     // re-register once per device per restart instead of on every handshake.
     // Value is true once the ES256 JWK has been pushed; an id-only registration
