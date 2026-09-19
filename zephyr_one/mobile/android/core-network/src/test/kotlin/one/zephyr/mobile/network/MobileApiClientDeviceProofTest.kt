@@ -282,6 +282,32 @@ class MobileApiClientDeviceProofTest {
     }
 
     @Test
+    fun `GET agent bastions requests a device proof`() = runTest {
+        val path = "/api/mobile/v1/agent-bastions"
+        server.enqueue(challengeResponse(NONCE_A, "GET", path, EMPTY_SHA256, "agent-bastions.list"))
+        server.enqueue(successResponse())
+        val seen = mutableListOf<DeviceProofChallenge>()
+        val client = client(DeviceProofSigner { challenge ->
+            seen += challenge
+            proofFor(challenge)
+        })
+
+        val result = client.get(path, TestReply.serializer())
+
+        assertTrue(result is ApiResult.Success)
+        val challengeBody = MobileJson.instance.decodeFromString(
+            DeviceProofChallengeRequestDto.serializer(),
+            server.takeRequest().body.readUtf8(),
+        )
+        val dataRequest = server.takeRequest()
+        assertEquals("agent-bastions.list", challengeBody.usage)
+        assertEquals("agent-bastions.list", seen.single().usage)
+        assertEquals(path, challengeBody.path)
+        assertEquals(NONCE_A, dataRequest.getHeader(HEADER_SERVER_NONCE))
+        assertEquals(proofFor(seen.single()), dataRequest.getHeader(HEADER_DEVICE_PROOF))
+    }
+
+    @Test
     fun `sensitive verify is a SID-plane call and does not request device proof`() = runTest {
         server.enqueue(successResponse())
         val client = client(DeviceProofSigner { error("sensitive verify must not request device proof") })
