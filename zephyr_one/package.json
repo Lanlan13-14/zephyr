@@ -37,7 +37,6 @@
     "productName": "Zephyr One",
     "copyright": "Zephyr",
     "executableName": "zephyr-one",
-    "publish": "never",
     "directories": {
       "output": "release"
     },
