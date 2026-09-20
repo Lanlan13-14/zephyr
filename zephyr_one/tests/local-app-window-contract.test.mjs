@@ -12,10 +12,13 @@ test('runtime hands the authenticated session to a top-level loopback window', (
   const main = read('electron/main.mjs');
   assert.match(runtime, /const LOCAL_APP_PATH = '\/app\.html\?zephyrOne=1'/);
   assert.match(runtime, /httpOnly:\s*true/);
-  assert.match(runtime, /sameSite:\s*'strict'/);
+  assert.match(runtime, /sameSite:\s*'lax'/);
+  assert.doesNotMatch(runtime, /domain:\s*'127\.0\.0\.1'/);
+  assert.match(main, /cookies\.remove\(cookie\.url, cookie\.name\)/);
   assert.match(main, /cookies\.set\(cookie\)/);
   assert.match(main, /productWindow\.loadURL\(target\)/);
   assert.match(main, /mainWindow\.hide\(\)/);
+  assert.match(main, /preload: preloadPath\(\)/);
 });
 
 test('local product navigation and window lifecycle fail closed', () => {
@@ -33,6 +36,7 @@ test('trusted shell explicitly enters only after runtime_start returns', () => {
   const enter = renderer.indexOf("await safeInvoke('runtime_enter')", start);
   assert.ok(start >= 0 && enter > start);
   assert.match(main, /ipcMain\.handle\('runtime_enter'/);
+  assert.match(main, /ipcMain\.handle\('runtime_restart'/);
 });
 
 test('release autostart starts only the child and defers every WebView operation', () => {

@@ -57,8 +57,18 @@
             restarting = false;
             schedule();
         }, RESTART_TIMEOUT_MS);
-        /* The shell (src/main.js) owns the listener for this message and only
-         * accepts it from the expected loopback origin of its own core. */
+        /* Electron product window is top-level, so parent postMessage never
+         * reaches the boot shell. Prefer the preload bridge; fall back to the
+         * iframe message used by older Tauri/dev layouts. */
+        if (window.zephyrOne && typeof window.zephyrOne.invoke === 'function') {
+            window.zephyrOne.invoke('runtime_restart').then(function () {
+                enterApp();
+            }).catch(function () {
+                restarting = false;
+                schedule();
+            });
+            return;
+        }
         window.parent.postMessage({ type: 'zephyr-one:restart' }, '*');
     }
 
