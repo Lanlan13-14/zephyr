@@ -16,6 +16,10 @@ describe('Windows install smoke harness', () => {
     assert.match(smoke, /ExpectedServer/);
     assert.match(smoke, /zephyr-autostart\.log/);
     assert.match(smoke, /zephyr-one-embed\.css/);
+    assert.match(smoke, /zephyr-one-windows-x64-\*\.exe/);
+    assert.match(smoke, /resources\\desktop-runtime\\node\.exe/);
+    assert.match(smoke, /resources\\zephyr-core\\server\.js/);
+    assert.doesNotMatch(smoke, /src-tauri\\target\\release\\bundle/);
   });
 
   it('wires smoke into the Windows CI job', () => {

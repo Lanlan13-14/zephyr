@@ -105,7 +105,7 @@ jobs:
         run: npm run build
       - name: Electron build Windows
         shell: pwsh
-        run: npx electron-builder --win nsis portable zip --x64
+        run: npx electron-builder --win nsis portable zip --x64 --publish never
       - name: Collect Windows artifacts
         shell: bash
         run: |
@@ -155,7 +155,7 @@ jobs:
       - name: Core runtime smoke (embedded boot + redirect loop guard)
         run: sh scripts/smoke-core.sh
       - name: Electron build macOS
-        run: npx electron-builder --mac dmg zip --universal
+        run: npx electron-builder --mac dmg zip --arm64 --publish never
       - name: Collect macOS artifacts
         run: |
           mkdir -p dist-out
@@ -165,7 +165,7 @@ jobs:
           test -n "$(find dist-out -maxdepth 1 -type f -name '*.zip' -print -quit)"
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-universal
+          name: macos-arm64
           path: zephyr_one/dist-out/**
           if-no-files-found: error
 
@@ -194,7 +194,7 @@ jobs:
       - name: Core runtime smoke (embedded boot + redirect loop guard)
         run: sh scripts/smoke-core.sh
       - name: Electron build Linux
-        run: npx electron-builder --linux deb rpm --x64
+        run: npx electron-builder --linux deb rpm --x64 --publish never
       - name: Collect Linux artifacts
         run: |
           mkdir -p dist-out
@@ -253,8 +253,8 @@ jobs:
           test "$count_exe" -ge 1 || { echo "ERROR: expected Windows exe artifacts" >&2; exit 1; }
           find release-artifacts/windows-x64 -type f -name '*.exe' -exec cp -v {} dist-one/ \;
           require_one windows-x64 '*.zip'
-          require_one macos-universal '*.dmg'
-          require_one macos-universal '*.zip'
+          require_one macos-arm64 '*.dmg'
+          require_one macos-arm64 '*.zip'
           require_one linux-x64 '*.deb'
           require_one linux-x64 '*.rpm'
           ls -la dist-one || true
@@ -272,7 +272,7 @@ jobs:
             | Platform | Artifact |
             |---|---|
             | Windows | NSIS / portable / zip |
-            | macOS | DMG / app zip |
+            | macOS | DMG / app zip (arm64) |
             | Linux | deb / rpm |
 
             Android and iOS are **not** part of desktop Zephyr One. Both platforms

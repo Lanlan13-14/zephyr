@@ -151,6 +151,20 @@ test('release packaging and notes cover desktop artifacts only', () => {
     assert.doesNotMatch(body, /\|\s*(Android|iOS)\s*(APK)?\s*\|/, 'no mobile artifact row');
 });
 
+test('electron-builder metadata and publish flags are complete enough to ship', () => {
+    const pkg = JSON.parse(read('zephyr_one/package.json'));
+    assert.match(String(pkg.author), /@/);
+    assert.match(String(pkg.homepage), /^https:\/\//);
+    assert.equal(pkg.build.publish, 'never');
+    assert.equal(pkg.build.linux.maintainer.includes('@'), true);
+    assert.equal(pkg.build.executableName, 'zephyr-one');
+    assert.match(workflow, /electron-builder --win nsis portable zip --x64 --publish never/);
+    assert.match(workflow, /electron-builder --mac dmg zip --arm64 --publish never/);
+    assert.match(workflow, /electron-builder --linux deb rpm --x64 --publish never/);
+    assert.match(workflow, /name: macos-arm64/);
+    assert.doesNotMatch(workflow, /--mac dmg zip --universal/);
+});
+
 test('desktop dispatch has a Mobile-style prerelease_label and stamps SHA not a pre-existing tag', () => {
     assert.match(workflow, /prerelease_label:/);
     assert.match(workflow, /ZEPHYR_ONE_RELEASE_TAG: \$\{\{ github\.event\.inputs\.tag \}\}\$\{\{ github\.event\.inputs\.prerelease_label \}\}/);
