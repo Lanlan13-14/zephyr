@@ -164,7 +164,7 @@ class FileSyncConfigService {
         return [...byId.values()];
     }
 
-    /** One clients are phone/tablet sync devices only (android / ios).
+    /** One clients are phone/tablet/desktop sync devices (android / ios / desktop).
      * Agent-enrolled devices (platform agent*) are managed under the Agent
      * token screen and must not appear here. */
     static isAgentPlatform(platform, { appVersion = '' } = {}) {

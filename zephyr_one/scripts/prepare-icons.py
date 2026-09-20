@@ -6,7 +6,7 @@ Inputs
 
 Outputs
     src-tauri/icons/*                      bundle icon set, rendered from frost
-    src-tauri/runtime-icons/*.png          one per theme, for runtime set_icon
+    src-tauri/runtime-icons/*.png          one per theme, for Electron setIcon
 
 Why two output sets
     The bundle icon is baked into the installer and the .app / .exe resource, so

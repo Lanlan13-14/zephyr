@@ -21,8 +21,8 @@
  *     login event log, IP whitelist / brute-force policy, CAPTCHA. Every one of
  *     those authenticates or rate-limits a *remote* browser client. Zephyr One
  *     is a local child process on loopback whose real gate is the OS unlock
- *     (Biometric / Windows Hello / LocalAuthentication) performed by the shell
- *     before the WebView loads.
+ *     (Biometric / Windows Hello / LocalAuthentication) performed by the
+ *     Electron shell before the product window loads.
  *   - Logout button: the shell re-adopts the local account on the next request,
  *     so logging out either bounces straight back in or looks broken.
  *
@@ -51,8 +51,8 @@ const EMBED_STYLESHEET = '/zephyr-one-embed.css';
  * serve (404) for a feature it cannot perform.
  */
 const EMBED_RDP_SETTINGS_SCRIPT = '/zephyr-one-rdp-settings.js';
-const EMBED_NATIVE_RDP_SCRIPT = '/zephyr-one-native-rdp.js';
 const EMBED_SECURITY_SCRIPT = '/zephyr-one-security-ui.js';
+const EMBED_LINK_SCRIPT = '/zephyr-one-link-ui.js';
 
 /** Exact markup fragments this transform depends on existing in app.html. */
 const SECURITY_TAB_BUTTON = '<button class="settings-tab active" data-settings="security" data-i18n="安全设置">安全设置</button>';
@@ -74,22 +74,11 @@ const HTML_TAG = '<html lang="zh-CN" data-theme="dark">';
 const FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">';
 const ONE_FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/zephyr-one-mark.svg">';
 
-/* Zephyr Client → 文件同步 (One side only).
- *
- * The main product keeps the name "Zephyr Client" because there it really is
- * the client-management surface: Agent tokens, online agents, drive mappings,
- * plus the bound One devices. Inside One that framing is wrong — One *is* the
- * client, so the panel's job there is the file-sync relationship with the main
- * instance, and the product contract names that surface 文件同步.
- *
- * The heading text is not unique in app.html (the About panel carries the same
- * "Zephyr Client" h2 as a download link, which must keep its name), so this
- * rename is region-scoped to the agent panel. */
+/* Agent tab stays Agent management. File sync is the existing Link panel,
+ * shown only inside One and wired by zephyr-one-link-ui.js. */
 const AGENT_TAB_BUTTON = '<button class="settings-tab" data-settings="agent" data-i18n="Zephyr Client">Zephyr Client</button>';
-const CLIENT_HEADING = '<h2 data-i18n="Zephyr Client">Zephyr Client</h2>';
-const FILE_SYNC_HEADING = '<h2 data-i18n="文件同步">文件同步</h2>';
-const AGENT_PANEL_ANCHOR = 'id="settings-agent"';
-const DATA_PANEL_ANCHOR = '<div class="settings-panel" id="settings-data"';
+const LINK_TAB_BUTTON = '<button class="settings-tab force-hidden" id="linkSettingsTab" data-settings="link" data-i18n="文件同步">Zephyr Link</button>';
+const LINK_HEADING = '<h2 data-i18n="文件同步">Zephyr Link</h2>';
 
 /* Browser Zephyr keeps the v1.1.500 Agent-backed storage switch. Only One has
  * a native picker, so its local folder controls are introduced by this embed
@@ -231,17 +220,17 @@ const EDITS = [
     {
         name: 'rename-agent-tab',
         from: AGENT_TAB_BUTTON,
-        to: '<button class="settings-tab" data-settings="agent" data-i18n="文件同步">文件同步</button>',
+        to: '<button class="settings-tab" data-settings="agent" data-i18n="Zephyr Agent">Zephyr Agent</button>',
     },
     {
-        /* Region-scoped: the same heading exists in the About panel and must
-         * keep its name there. Bounding by the neighbouring panel ids instead
-         * of matching indentation keeps this working if app.html is reflowed. */
-        name: 'rename-agent-heading',
-        from: CLIENT_HEADING,
-        to: FILE_SYNC_HEADING,
-        within: AGENT_PANEL_ANCHOR,
-        until: DATA_PANEL_ANCHOR,
+        name: 'show-link-tab',
+        from: LINK_TAB_BUTTON,
+        to: '<button class="settings-tab" id="linkSettingsTab" data-settings="link" data-i18n="Zephyr Link">Zephyr Link</button>',
+    },
+    {
+        name: 'rename-link-heading',
+        from: LINK_HEADING,
+        to: '<h2 data-i18n="Zephyr Link">Zephyr Link</h2>',
     },
     {
         name: 'use-one-folder-mapping-controls',
@@ -393,7 +382,7 @@ function applyEmbeddedSurface(source) {
                 injectOverlayScript(injectStylesheet(withOnePanel), EMBED_SECURITY_SCRIPT),
                 EMBED_RDP_SETTINGS_SCRIPT,
             ),
-            EMBED_NATIVE_RDP_SCRIPT,
+            EMBED_LINK_SCRIPT,
         ),
         applied,
         skipped,
@@ -411,8 +400,8 @@ module.exports = {
     FAVICON_LINK,
     ONE_FAVICON_LINK,
     EMBED_RDP_SETTINGS_SCRIPT,
-    EMBED_NATIVE_RDP_SCRIPT,
     EMBED_SECURITY_SCRIPT,
+    EMBED_LINK_SCRIPT,
     ONE_SECURITY_PANEL_BODY,
     BROWSER_AGENT_STORAGE_ROW,
     ONE_FOLDER_STORAGE_CONTROLS,

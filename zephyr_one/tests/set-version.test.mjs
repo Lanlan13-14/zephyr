@@ -95,19 +95,12 @@ function manifestVersions() {
   const packageVersion = JSON.parse(
     fs.readFileSync(path.join(root, 'package.json'), 'utf8'),
   ).version;
-  const cargo = fs.readFileSync(path.join(root, 'src-tauri/Cargo.toml'), 'utf8');
-  const cargoVersion = /^version\s*=\s*"([^"]+)"$/m.exec(cargo)?.[1];
-  const tauriVersion = JSON.parse(
-    fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'),
-  ).version;
-  return { packageVersion, cargoVersion, tauriVersion };
+  return { packageVersion };
 }
 
 function assertManifestVersions(version) {
   assert.deepEqual(manifestVersions(), {
     packageVersion: version,
-    cargoVersion: version,
-    tauriVersion: version,
   });
 }
 
@@ -118,8 +111,6 @@ describe('set-version.py', () => {
     for (const rel of [
       'scripts/set-version.py',
       'package.json',
-      'src-tauri/Cargo.toml',
-      'src-tauri/tauri.conf.json',
     ]) copy(rel);
   });
 
@@ -135,7 +126,7 @@ describe('set-version.py', () => {
     assertManifestVersions('9.8.7');
   });
 
-  it('parses one-v0.1.7 into all three manifests', () => {
+  it('parses one-v0.1.7 into package.json', () => {
     const r = runSetVersion('one-v0.1.7');
     assert.equal(r.status, 0, resultMessage(r));
     assert.match(r.stdout, /ZEPHYR_ONE_VERSION_NAME=0\.1\.7/);

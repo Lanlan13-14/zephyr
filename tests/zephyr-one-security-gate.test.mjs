@@ -45,16 +45,22 @@ const SHELL_INSTANCE = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 const SERVER_JS = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const APP_JS = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const UI_JS = fs.readFileSync(path.join(root, 'zephyr-one-security-ui.js'), 'utf8');
-const BRIDGE_RS = fs.readFileSync(
-    path.join(root, 'zephyr_one/src-tauri/src/unlock_bridge/mod.rs'),
+const WATCHERS_JS = fs.readFileSync(
+    path.join(root, 'zephyr_one/electron/watchers.mjs'),
     'utf8',
 );
-const COMMANDS_RS = fs.readFileSync(
-    path.join(root, 'zephyr_one/src-tauri/src/commands/mod.rs'),
+const ELECTRON_MAIN = fs.readFileSync(
+    path.join(root, 'zephyr_one/electron/main.mjs'),
     'utf8',
 );
-const LIB_RS = fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/src/lib.rs'), 'utf8');
-const RUNTIME_RS = fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/src/runtime/mod.rs'), 'utf8');
+const RUNTIME_JS = fs.readFileSync(
+    path.join(root, 'zephyr_one/electron/runtime.mjs'),
+    'utf8',
+);
+const SHELL_AUTH_JS = fs.readFileSync(
+    path.join(root, 'zephyr_one/electron/shell-auth.mjs'),
+    'utf8',
+);
 
 /** A fake Express that records handlers so they can be invoked directly. */
 function fakeApp() {
@@ -585,23 +591,16 @@ test('every reveal call site awaits the now-async challenge', () => {
 });
 
 test('the shell watcher is wired and publishes what the platform can do', () => {
-    /* auth/mod.rs has implemented Windows Hello / Touch ID since the first
-     * desktop build, but nothing in the product UI could reach it: the WebView
-     * is on a remote origin and cannot invoke a command. This is that bridge. */
-    assert.match(LIB_RS, /mod unlock_bridge;/);
-    assert.match(COMMANDS_RS, /unlock_bridge::spawn_unlock_watcher\(&watcher_app\);/);
-    assert.match(BRIDGE_RS, /api\/one\/security\/unlock-queue/);
-    assert.match(BRIDGE_RS, /api\/one\/security\/capabilities/);
-    assert.match(BRIDGE_RS, /crate::auth::unlock\(&app, &reason\)/);
-    assert.match(BRIDGE_RS, /crate::auth::capabilities\(app\)/);
-    assert.match(BRIDGE_RS, /X-Zephyr-One-Shell-Mac/);
-    assert.match(BRIDGE_RS, /X-Zephyr-One-Shell-Nonce/);
-    assert.match(RUNTIME_RS, /unlock_bridge::shell_identity_env\(\)/);
-    assert.match(RUNTIME_RS, /\.env\("ZEPHYR_ONE_SHELL_SECRET", shell_secret\)/);
-    assert.match(RUNTIME_RS, /\.env\("ZEPHYR_ONE_SHELL_INSTANCE", shell_instance\)/);
+    assert.match(ELECTRON_MAIN, /spawnUnlockWatcher\(\{ identity \}\)/);
+    assert.match(WATCHERS_JS, /api\/one\/security\/unlock-queue/);
+    assert.match(WATCHERS_JS, /api\/one\/security\/capabilities/);
+    assert.match(WATCHERS_JS, /await unlock\(reason\)/);
+    assert.match(WATCHERS_JS, /capabilities\(\)/);
+    assert.match(SHELL_AUTH_JS, /X-Zephyr-One-Shell-Mac/);
+    assert.match(SHELL_AUTH_JS, /X-Zephyr-One-Shell-Nonce/);
+    assert.match(RUNTIME_JS, /ZEPHYR_ONE_SHELL_SECRET/);
+    assert.match(RUNTIME_JS, /ZEPHYR_ONE_SHELL_INSTANCE/);
     assert.match(SERVER_JS, /delete process\.env\.ZEPHYR_ONE_SHELL_SECRET/);
-    // Idempotent, or a retried runtime_start would race two watchers for one id.
-    assert.match(BRIDGE_RS, /WATCHER_STARTED\.swap\(true, Ordering::SeqCst\)/);
 });
 
 test('the overlay refuses to report success it did not get', () => {

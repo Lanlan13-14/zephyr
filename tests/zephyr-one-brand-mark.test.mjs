@@ -334,36 +334,21 @@ test('bundle icons are regenerated from the One artwork, not Agent', () => {
     assert.equal(icns.subarray(0, 4).toString('ascii'), 'icns', 'ICNS magic');
 });
 
-test('the Rust side embeds one artwork per palette and defaults to frost', () => {
-    const rs = read('zephyr_one/src-tauri/src/icon/mod.rs');
-
+test('the Electron shell ships one artwork per palette and defaults to frost', () => {
+    const watchers = read('zephyr_one/electron/watchers.mjs');
+    const main = read('zephyr_one/electron/main.mjs');
     for (const palette of PALETTES) {
         assert.ok(
-            rs.includes(`include_bytes!("../../runtime-icons/zephyr-one-${palette}.png")`),
-            `${palette} artwork must be embedded`,
+            existsSync(path.join(root, 'zephyr_one/src-tauri/runtime-icons', `zephyr-one-${palette}.png`)),
+            `${palette} artwork must exist`,
         );
     }
-    // frost is the palette baked into the installer icon, so the runtime
-    // fallback must agree or first launch would show two different icons.
-    assert.match(rs, /const DEFAULT_THEME: &str = "frost";/);
-
-    // macOS has no per-window icon; pretending otherwise would be a silent no-op.
-    assert.match(rs, /#\[cfg\(target_os = "macos"\)\]/);
-    assert.match(rs, /applied: false/);
-
-    // Reading the core's own HTTP API avoids granting IPC to a remote origin.
-    assert.match(rs, /api\/me\/settings/);
-    assert.match(rs, /settings.*appearance.*colorScheme|"colorScheme"/s);
-
-    // Cargo must enable the feature Image::from_bytes lives behind.
-    assert.match(
-        read('zephyr_one/src-tauri/Cargo.toml'),
-        /tauri = \{ version = "2", features = \["image-png"\] \}/,
-        'Image::from_bytes requires the image-png feature',
-    );
-
-    // The command has to be reachable from JS.
-    assert.match(read('zephyr_one/src-tauri/src/lib.rs'), /commands::set_theme_icon/);
+    assert.match(watchers, /const DEFAULT_THEME = 'frost'/);
+    assert.match(watchers, /api\/me\/settings/);
+    assert.match(watchers, /colorScheme/);
+    assert.match(main, /ipcMain\.handle\('set_theme_icon'/);
+    assert.match(watchers, /process\.platform === 'darwin'/);
+    assert.match(watchers, /applied: false/);
 });
 
 test('the icon generator is wired into npm and reads the One SVGs', () => {
