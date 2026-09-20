@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "description": "Zephyr One — full Zephyr product in Electron; remote main is sync-only",
-  "author": "Zephyr",
+  "author": "Zephyr <noreply@users.noreply.github.com>",
+  "homepage": "https://github.com/Lanlan13-14/zephyr",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -35,6 +36,8 @@
     "appId": "com.zephyr.one",
     "productName": "Zephyr One",
     "copyright": "Zephyr",
+    "executableName": "zephyr-one",
+    "publish": "never",
     "directories": {
       "output": "release"
     },
@@ -82,11 +85,13 @@
         "dmg",
         "zip"
       ],
-      "artifactName": "zephyr-one-macos-${version}.${ext}"
+      "artifactName": "zephyr-one-macos-${version}.${ext}",
+      "x64ArchFiles": "Contents/Resources/desktop-runtime/**"
     },
     "linux": {
       "icon": "src-tauri/icons",
       "category": "Utility",
+      "maintainer": "Zephyr <noreply@users.noreply.github.com>",
       "target": [
         "deb",
         "rpm"

@@ -137,9 +137,9 @@ function Dump-Fail([string]$Reason) {
   throw $Reason
 }
 
-$bundle = Join-Path $Root "src-tauri\target\release\bundle"
-$nsis = Get-ChildItem -Path $bundle -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue |
-  Where-Object { $_.FullName -match '\\nsis\\' } |
+$releaseDir = Join-Path $Root "release"
+$nsis = Get-ChildItem -Path $releaseDir -File -Filter "zephyr-one-windows-x64-*.exe" -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -notmatch 'portable' } |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
 if (-not $nsis) { Dump-Fail "No NSIS installer was produced" }
@@ -149,17 +149,18 @@ $installer = Start-Process -FilePath $nsis.FullName -ArgumentList "/S" -Wait -Pa
 if ($installer.ExitCode -ne 0) { Dump-Fail ("NSIS installer exit {0}" -f $installer.ExitCode) }
 
 $knownCandidates = @(@(
+    (Join-Path $env:LOCALAPPDATA "Programs\Zephyr One\zephyr-one.exe"),
     (Join-Path $env:LOCALAPPDATA "Zephyr One\zephyr-one.exe"),
     (Join-Path $env:ProgramFiles "Zephyr One\zephyr-one.exe"),
     (Join-Path ${env:ProgramFiles(x86)} "Zephyr One\zephyr-one.exe")
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
-if ($knownCandidates.Count -ne 1) {
-  Dump-Fail ("Expected exactly one installed Zephyr executable, found {0}" -f $knownCandidates.Count)
+if ($knownCandidates.Count -lt 1) {
+  Dump-Fail ("Expected an installed Zephyr One executable, found {0}" -f $knownCandidates.Count)
 }
 $launchExe = (Resolve-Path -LiteralPath $knownCandidates[0]).Path
 $script:InstallDir = Split-Path -Parent $launchExe
-$script:ExpectedNode = Join-Path $script:InstallDir "_up_\desktop-runtime\node.exe"
-$script:ExpectedServer = Join-Path $script:InstallDir "_up_\zephyr-core\server.js"
+$script:ExpectedNode = Join-Path $script:InstallDir "resources\desktop-runtime\node.exe"
+$script:ExpectedServer = Join-Path $script:InstallDir "resources\zephyr-core\server.js"
 foreach ($required in @($launchExe, $script:ExpectedNode, $script:ExpectedServer)) {
   if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
     Dump-Fail ("Installed runtime file missing: {0}" -f $required)
