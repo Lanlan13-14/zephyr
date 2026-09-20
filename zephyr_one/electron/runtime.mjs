@@ -354,7 +354,7 @@ export function sessionCookie() {
   };
 }
 
-export function writeUiReadyMarker({ nonce, corePid, url }) {
+export function writeUiReadyMarker({ nonce, corePid, url, instanceId }) {
   if (!state.dataDir) return;
   const configured = process.env.ZEPHYR_ONE_UI_READY_MARKER;
   if (!configured && !nonce) return;
@@ -375,7 +375,7 @@ export function writeUiReadyMarker({ nonce, corePid, url }) {
     appReady: true,
     readyState: 'complete',
     port: state.port,
-    instanceId: '',
+    instanceId: String(instanceId || ''),
     corePid,
     url,
     createdAtMs: Date.now(),
