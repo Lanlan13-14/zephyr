@@ -30,9 +30,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. one-v0.1.2)'
+        description: 'Release version (e.g. one-v0.1.20). Do not put the pre suffix here.'
         required: false
-        default: ''
+        default: 'one-v0.1.20'
+      prerelease_label:
+        description: 'Pre-release suffix appended to the tag (e.g. pre1). Leave empty for a stable release.'
+        required: false
+        default: 'pre1'
       validation_only:
         description: 'Build the desktop targets for validation without publishing a release'
         type: boolean
@@ -44,6 +48,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  ZEPHYR_ONE_RELEASE_TAG: ${{ github.event.inputs.tag }}${{ github.event.inputs.prerelease_label }}
 
 defaults:
   run:
@@ -79,15 +84,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.tag != '' && github.event.inputs.tag || github.sha }}
-      - name: Verify release source tag
-        if: github.event.inputs.tag != ''
-        shell: bash
-        run: |
-          set -eu
-          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 '${{ github.event.inputs.tag }}')"
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
-      - name: Stamp package version from release tag
+          ref: ${{ github.sha }}
+      - name: Stamp package version from release version
         shell: bash
         run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
       - uses: actions/setup-node@v4
@@ -144,14 +142,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.tag != '' && github.event.inputs.tag || github.sha }}
-      - name: Verify release source tag
-        if: github.event.inputs.tag != ''
-        run: |
-          set -eu
-          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 '${{ github.event.inputs.tag }}')"
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
-      - name: Stamp package version from release tag
+          ref: ${{ github.sha }}
+      - name: Stamp package version from release version
         run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
       - uses: actions/setup-node@v4
         with:
@@ -184,14 +176,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.tag != '' && github.event.inputs.tag || github.sha }}
-      - name: Verify release source tag
-        if: github.event.inputs.tag != ''
-        run: |
-          set -eu
-          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 '${{ github.event.inputs.tag }}')"
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
-      - name: Stamp package version from release tag
+          ref: ${{ github.sha }}
+      - name: Stamp package version from release version
         run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
       - uses: actions/setup-node@v4
         with:
@@ -226,19 +212,28 @@ jobs:
     if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true' && needs.test.result == 'success' && needs.build-windows.result == 'success' && needs.build-macos.result == 'success' && needs.build-linux.result == 'success' }}
     needs: [test, build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
+    concurrency:
+      group: zephyr-one-desktop-release-${{ github.event.inputs.tag }}${{ github.event.inputs.prerelease_label }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.tag }}
-      - name: Verify release source tag
-        working-directory: .
-        run: |
-          set -eu
-          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 '${{ github.event.inputs.tag }}')"
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          ref: ${{ github.sha }}
       - uses: actions/download-artifact@v4
         with:
           path: release-artifacts
+      - name: Replace target prerelease and tag
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_TAG: ${{ env.ZEPHYR_ONE_RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TARGET_TAG" >/dev/null 2>&1; then
+            gh release delete "$TARGET_TAG" --cleanup-tag --yes
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TARGET_TAG" >/dev/null 2>&1; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TARGET_TAG"
+          fi
       - name: Pack all platforms
         working-directory: .
         run: |
@@ -265,10 +260,11 @@ jobs:
           ls -la dist-one || true
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag }}
-          name: "Zephyr One ${{ github.event.inputs.tag }}"
+          tag_name: ${{ env.ZEPHYR_ONE_RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: "Zephyr One ${{ env.ZEPHYR_ONE_RELEASE_TAG }}"
           body: |
-            ## Zephyr One ${{ github.event.inputs.tag }}
+            ## Zephyr One ${{ env.ZEPHYR_ONE_RELEASE_TAG }}
 
             Full Zephyr product embedded in Electron (local core). Remote main is **data sync only**.
 
@@ -291,5 +287,5 @@ jobs:
             - Does **not** replace Zephyr Agent (`com.zephyr.agent`)
           files: dist-one/*
           draft: false
-          prerelease: true
+          prerelease: ${{ github.event.inputs.prerelease_label != '' }}
           fail_on_unmatched_files: true

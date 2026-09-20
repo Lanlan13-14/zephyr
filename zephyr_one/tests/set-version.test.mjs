@@ -146,6 +146,14 @@ describe('set-version.py', () => {
     assert.match(r.stdout, /ZEPHYR_ONE_VERSION_CODE=10000/);
   });
 
+  it('keeps pre suffixes out of the marketing version when given a clean one-v tag', () => {
+    const r = runSetVersion('one-v0.1.20');
+    assert.equal(r.status, 0, resultMessage(r));
+    assertManifestVersions('0.1.20');
+    assert.match(r.stdout, /ZEPHYR_ONE_VERSION_NAME=0\.1\.20/);
+    assert.doesNotMatch(r.stdout, /pre1/);
+  });
+
   it('rejects unparseable tags', () => {
     const before = manifestVersions();
     const r = runSetVersion('not-a-version');

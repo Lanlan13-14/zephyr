@@ -142,13 +142,26 @@ test('release packaging and notes cover desktop artifacts only', () => {
         assert.ok(!pack.includes(mobile), `${mobile} must no longer be collected`);
     }
 
-    const bodyAt = workflow.indexOf('## Zephyr One ${{ github.event.inputs.tag }}');
+    const bodyAt = workflow.indexOf('## Zephyr One ${{ env.ZEPHYR_ONE_RELEASE_TAG }}');
     assert.ok(bodyAt > 0, 'release body must exist');
     const body = workflow.slice(bodyAt, workflow.indexOf('files: dist-one/*'));
     for (const platform of ['Windows', 'macOS', 'Linux']) {
         assert.ok(body.includes(platform), `${platform} must be listed`);
     }
     assert.doesNotMatch(body, /\|\s*(Android|iOS)\s*(APK)?\s*\|/, 'no mobile artifact row');
+});
+
+test('desktop dispatch has a Mobile-style prerelease_label and stamps SHA not a pre-existing tag', () => {
+    assert.match(workflow, /prerelease_label:/);
+    assert.match(workflow, /ZEPHYR_ONE_RELEASE_TAG: \$\{\{ github\.event\.inputs\.tag \}\}\$\{\{ github\.event\.inputs\.prerelease_label \}\}/);
+    const windows = workflow.slice(workflow.indexOf('\n  build-windows:'), workflow.indexOf('\n  build-macos:'));
+    assert.match(windows, /ref: \$\{\{ github\.sha \}\}/);
+    assert.doesNotMatch(windows, /git rev-list -n 1/);
+    const release = workflow.slice(workflow.indexOf('\n  release:'));
+    assert.match(release, /tag_name: \$\{\{ env\.ZEPHYR_ONE_RELEASE_TAG \}\}/);
+    assert.match(release, /target_commitish: \$\{\{ github\.sha \}\}/);
+    assert.match(release, /prerelease: \$\{\{ github\.event\.inputs\.prerelease_label != '' \}\}/);
+    assert.match(release, /gh release delete "\$TARGET_TAG" --cleanup-tag --yes/);
 });
 
 test('the built-in SQLite flag is set unconditionally for every desktop platform', () => {
