@@ -99,7 +99,10 @@ test('embedded mode breaks the / -> /app.html -> / redirect loop', { timeout: 18
         // The recovery script is served only to the embedded core.
         const script = await fetch(`${base}/zephyr-one-recovery.js`);
         assert.equal(script.status, 200);
-        assert.match(await script.text(), /zephyr-one:restart/);
+        const recoveryScript = await script.text();
+        assert.match(recoveryScript, /zephyr-one:restart/);
+        assert.match(recoveryScript, /runtime_restart/);
+        assert.match(recoveryScript, /window\.zephyrOne/);
 
         // A recover request with no live session is refused (no capability re-mint).
         const noSidRecover = await fetch(`${base}/__zephyr_one/recover`, { method: 'POST' });

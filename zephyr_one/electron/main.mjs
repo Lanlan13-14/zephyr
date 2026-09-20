@@ -71,6 +71,7 @@ function createProductWindow() {
     backgroundColor: '#101114',
     icon: path.join(oneRoot, 'src-tauri', 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: {
+      preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -87,6 +88,12 @@ function createProductWindow() {
     if (!origin) return;
     if (url === 'about:blank') return;
     if (!url.startsWith(origin)) event.preventDefault();
+  });
+  window.webContents.on('did-fail-load', (event) => {
+    appendRuntimeLog(
+      app.getPath('userData'),
+      `product window failed to load ${event.validatedURL || ''}: ${event.errorCode} ${event.errorDescription || ''}`,
+    );
   });
   window.on('close', () => {
     app.quit();
@@ -125,6 +132,12 @@ async function startRuntime() {
   return info;
 }
 
+async function restartProduct() {
+  try { await stopRuntime(); } catch { /* best effort */ }
+  await startRuntime();
+  return enterProduct();
+}
+
 async function enterProduct() {
   const info = runtimeInfo();
   if (!info.running || !info.baseUrl) {
@@ -134,6 +147,9 @@ async function enterProduct() {
     productWindow = createProductWindow();
   }
   const cookie = sessionCookie();
+  try {
+    await session.defaultSession.cookies.remove(cookie.url, cookie.name);
+  } catch { /* first launch has nothing to remove */ }
   await session.defaultSession.cookies.set(cookie);
   const target = localAppUrl();
   await productWindow.loadURL(target);
@@ -169,6 +185,7 @@ function wireIpc() {
   ipcMain.handle('runtime_enter', () => enterProduct());
   ipcMain.handle('runtime_info', () => runtimeInfo());
   ipcMain.handle('runtime_stop', () => stopRuntime());
+  ipcMain.handle('runtime_restart', () => restartProduct());
 }
 
 app.setName('Zephyr One');

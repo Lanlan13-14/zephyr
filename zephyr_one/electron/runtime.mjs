@@ -342,15 +342,17 @@ export function localAppUrl() {
 
 export function sessionCookie() {
   if (!state.sessionId) throw new Error('embedded product session is missing');
+  /* Host-only cookie: Chromium rejects Domain=127.0.0.1 (it is not a public
+   * suffix / registrable domain), so setting that field silently drops the
+   * session and /app.html redirects to the black recovery document. */
   return {
     url: state.baseUrl,
     name: 'zephyr_sid',
     value: state.sessionId,
-    domain: '127.0.0.1',
     path: '/',
     httpOnly: true,
     secure: false,
-    sameSite: 'strict',
+    sameSite: 'lax',
   };
 }
 
