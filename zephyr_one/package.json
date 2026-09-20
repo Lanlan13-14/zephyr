@@ -53,8 +53,12 @@
         "to": "zephyr-core",
         "filter": [
           "**/*",
-          "node_modules/**"
+          "!node_modules"
         ]
+      },
+      {
+        "from": "zephyr-core/node_modules",
+        "to": "zephyr-core/node_modules"
       },
       {
         "from": "desktop-runtime",
