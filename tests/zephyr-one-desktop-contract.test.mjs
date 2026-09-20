@@ -157,6 +157,8 @@ test('electron-builder metadata and publish flags are complete enough to ship', 
     assert.match(String(pkg.homepage), /^https:\/\//);
     assert.equal(pkg.build.linux.maintainer.includes('@'), true);
     assert.equal(pkg.build.executableName, 'zephyr-one');
+    const coreResource = pkg.build.extraResources.find((item) => item.to === 'zephyr-core');
+    assert.ok(coreResource.filter.includes('node_modules/**'), 'staged core must ship production node_modules');
     assert.match(workflow, /electron-builder --win nsis portable zip --x64 --publish never/);
     assert.match(workflow, /electron-builder --mac dmg zip --arm64 --publish never/);
     assert.match(workflow, /electron-builder --linux deb rpm --x64 --publish never/);
