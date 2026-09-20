@@ -197,10 +197,13 @@ if (!gotLock) {
     }
 
     if (shouldAutostart(process.env.ZEPHYR_ONE_AUTOSTART_RUNTIME, windowsRelease)) {
-      const kick = () => {
-        startRuntime().catch((error) => {
+      const kick = async () => {
+        try {
+          await startRuntime();
+          await enterProduct();
+        } catch (error) {
           appendRuntimeLog(app.getPath('userData'), `runtime start failed: ${error.message}`);
-        });
+        }
       };
       if (windowsRelease) kick();
       else setTimeout(kick, 2000);
