@@ -40,5 +40,7 @@ test('release autostart starts only the child and defers every WebView operation
   const main = read('electron/main.mjs');
   assert.match(runtime, /export function shouldAutostart/);
   assert.match(main, /shouldAutostart\(process\.env\.ZEPHYR_ONE_AUTOSTART_RUNTIME, windowsRelease\)/);
-  assert.match(main, /setTimeout\([\s\S]*startRuntime/);
+  assert.match(main, /app\.setPath\('userData', path\.join\(app\.getPath\('appData'\), 'com\.zephyr\.one'\)\)/);
+  assert.match(main, /if \(windowsRelease\) kick\(\);/);
+  assert.match(main, /setTimeout\(kick, 2000\)/);
 });
