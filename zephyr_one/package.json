@@ -50,7 +50,11 @@
     "extraResources": [
       {
         "from": "zephyr-core",
-        "to": "zephyr-core"
+        "to": "zephyr-core",
+        "filter": [
+          "**/*",
+          "node_modules/**"
+        ]
       },
       {
         "from": "desktop-runtime",
