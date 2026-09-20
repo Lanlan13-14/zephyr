@@ -27,6 +27,7 @@ let productWindow = null;
 let watchersStarted = false;
 
 function iconsDir() {
+  if (app.isPackaged) return path.join(process.resourcesPath, 'runtime-icons');
   return path.join(oneRoot, 'src-tauri', 'runtime-icons');
 }
 
@@ -169,6 +170,7 @@ function wireIpc() {
 
 app.setName('Zephyr One');
 app.setAppUserModelId('com.zephyr.one');
+app.setPath('userData', path.join(app.getPath('appData'), 'com.zephyr.one'));
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -195,11 +197,13 @@ if (!gotLock) {
     }
 
     if (shouldAutostart(process.env.ZEPHYR_ONE_AUTOSTART_RUNTIME, windowsRelease)) {
-      setTimeout(() => {
+      const kick = () => {
         startRuntime().catch((error) => {
           appendRuntimeLog(app.getPath('userData'), `runtime start failed: ${error.message}`);
         });
-      }, 2000).unref?.();
+      };
+      if (windowsRelease) kick();
+      else setTimeout(kick, 2000);
     }
   });
 }
