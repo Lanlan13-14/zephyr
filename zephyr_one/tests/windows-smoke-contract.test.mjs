@@ -19,7 +19,10 @@ describe('Windows install smoke harness', () => {
     assert.match(smoke, /zephyr-one-windows-x64-\*\.exe/);
     assert.match(smoke, /resources\\desktop-runtime\\node\.exe/);
     assert.match(smoke, /resources\\zephyr-core\\server\.js/);
+    assert.match(smoke, /C:\\ZephyrOneSmoke/);
+    assert.match(smoke, /\/D=\$\(\$script:InstallDir\)/);
     assert.doesNotMatch(smoke, /src-tauri\\target\\release\\bundle/);
+    assert.doesNotMatch(smoke, /ArgumentList "\/S"/);
   });
 
   it('wires smoke into the Windows CI job', () => {

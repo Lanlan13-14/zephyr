@@ -122,7 +122,11 @@ function Dump-Fail([string]$Reason) {
       Format-Table -AutoSize | Out-String)) | Out-Null
   } catch { $lines.Add("$_") | Out-Null }
   $lines.Add("---- installed resource roots ----") | Out-Null
-  foreach ($path in @($script:InstallDir, (Split-Path -Parent $script:ExpectedNode), (Split-Path -Parent $script:ExpectedServer))) {
+  $rootCandidates = @()
+  if ($script:InstallDir) { $rootCandidates += $script:InstallDir }
+  if ($script:ExpectedNode) { $rootCandidates += (Split-Path -Parent $script:ExpectedNode) }
+  if ($script:ExpectedServer) { $rootCandidates += (Split-Path -Parent $script:ExpectedServer) }
+  foreach ($path in $rootCandidates) {
     if ($path -and (Test-Path -LiteralPath $path)) {
       try {
         $lines.Add((Get-Item -LiteralPath $path -Force |
@@ -144,12 +148,20 @@ $nsis = Get-ChildItem -Path $releaseDir -File -Filter "zephyr-one-windows-x64-*.
   Select-Object -First 1
 if (-not $nsis) { Dump-Fail "No NSIS installer was produced" }
 
-Write-Log ("Installing NSIS: {0}" -f $nsis.FullName)
-$installer = Start-Process -FilePath $nsis.FullName -ArgumentList "/S" -Wait -PassThru
-if ($installer.ExitCode -ne 0) { Dump-Fail ("NSIS installer exit {0}" -f $installer.ExitCode) }
+$script:InstallDir = 'C:\ZephyrOneSmoke'
+if (Test-Path -LiteralPath $script:InstallDir) {
+  Remove-Item -LiteralPath $script:InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+New-Item -ItemType Directory -Force -Path $script:InstallDir | Out-Null
+Write-Log ("Installing NSIS: {0} -> {1}" -f $nsis.FullName, $script:InstallDir)
+# NSIS requires /D= to be last and unquoted. cmd.exe preserves that contract.
+$install = Start-Process -FilePath "cmd.exe" -ArgumentList @('/c', "`"$($nsis.FullName)`" /S /D=$($script:InstallDir)") -Wait -PassThru
+if ($install.ExitCode -ne 0) { Dump-Fail ("NSIS installer exit {0}" -f $install.ExitCode) }
 
 $knownCandidates = @(@(
+    (Join-Path $script:InstallDir "zephyr-one.exe"),
     (Join-Path $env:LOCALAPPDATA "Programs\Zephyr One\zephyr-one.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\zephyr-one\zephyr-one.exe"),
     (Join-Path $env:LOCALAPPDATA "Zephyr One\zephyr-one.exe"),
     (Join-Path $env:ProgramFiles "Zephyr One\zephyr-one.exe"),
     (Join-Path ${env:ProgramFiles(x86)} "Zephyr One\zephyr-one.exe")
