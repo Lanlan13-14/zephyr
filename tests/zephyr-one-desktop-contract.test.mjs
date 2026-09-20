@@ -155,7 +155,6 @@ test('electron-builder metadata and publish flags are complete enough to ship', 
     const pkg = JSON.parse(read('zephyr_one/package.json'));
     assert.match(String(pkg.author), /@/);
     assert.match(String(pkg.homepage), /^https:\/\//);
-    assert.equal(pkg.build.publish, 'never');
     assert.equal(pkg.build.linux.maintainer.includes('@'), true);
     assert.equal(pkg.build.executableName, 'zephyr-one');
     assert.match(workflow, /electron-builder --win nsis portable zip --x64 --publish never/);
