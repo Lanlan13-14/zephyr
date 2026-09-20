@@ -141,10 +141,13 @@ async function enterProduct() {
   productWindow.focus();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
   try {
+    const health = await fetch(`${info.baseUrl.replace(/\/+$/, '')}/healthz`);
+    const body = health.ok ? await health.json() : {};
     writeUiReadyMarker({
       nonce: process.env.ZEPHYR_ONE_UI_READY_NONCE || '',
       corePid: currentCorePid(),
       url: target,
+      instanceId: body.instanceId || '',
     });
   } catch { /* smoke harness only */ }
   return info;
