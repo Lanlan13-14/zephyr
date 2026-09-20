@@ -43,4 +43,5 @@ test('release autostart starts only the child and defers every WebView operation
   assert.match(main, /app\.setPath\('userData', path\.join\(app\.getPath\('appData'\), 'com\.zephyr\.one'\)\)/);
   assert.match(main, /if \(windowsRelease\) kick\(\);/);
   assert.match(main, /setTimeout\(kick, 2000\)/);
+  assert.match(main, /await startRuntime\(\);\s*await enterProduct\(\);/s);
 });
