@@ -200,8 +200,10 @@ class LinkV2EnrollmentStore {
         }
         const platformTag = String(platform || '');
         if (platformTag !== 'android' && platformTag !== 'ios'
+            && platformTag !== 'desktop' && platformTag !== 'linux'
+            && platformTag !== 'macos' && platformTag !== 'windows'
             && !/^agent(-[a-z0-9]+)?$/.test(platformTag)) {
-            throw new MobileStoreError('invalid_request', 'platform 必须为 android、ios 或 agent', 400);
+            throw new MobileStoreError('invalid_request', 'platform 必须为 android、ios、desktop 或 agent', 400);
         }
         const encryption = Buffer.from(String(keys?.encryption?.publicKey || ''), 'base64');
         if (encryption.length !== 1184) {

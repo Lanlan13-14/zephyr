@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 
-const host = process.env.TAURI_DEV_HOST || false;
+const host = process.env.ELECTRON_DEV_HOST || false;
 
 export default defineConfig({
   clearScreen: false,
@@ -18,7 +18,7 @@ export default defineConfig({
       ignored: ['**/src-tauri/**'],
     },
   },
-  envPrefix: ['VITE_', 'TAURI_'],
+  envPrefix: ['VITE_', 'ELECTRON_'],
   build: {
     target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari14',
     minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,

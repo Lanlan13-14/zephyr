@@ -124,13 +124,16 @@ class MobileV1Store {
         this.registryHash = sha256(canonicalJson(this.entityRegistry));
     }
 
-    /** One-shot migration: mobile_devices.platform gains agent platforms.
+    /** One-shot migration: mobile_devices.platform gains agent + desktop platforms.
      * Idempotent — the widened CHECK on a fresh table makes the guard false. */
     _widenPlatformCheck() {
         const sql = this.db.prepare(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='mobile_devices'"
         ).get();
-        if (!sql || !/platform IN \('android','ios'\)/i.test(String(sql.sql || ''))) return;
+        const ddl = String(sql?.sql || '');
+        if (!ddl) return;
+        if (/platform IN \('android','ios','desktop','linux','macos','windows'\)/i.test(ddl)) return;
+        if (!/platform IN \('android','ios'\)/i.test(ddl) && !/platform LIKE 'agent%'/i.test(ddl)) return;
         this.db.exec('BEGIN');
         try {
             this.db.exec(`
@@ -142,7 +145,7 @@ class MobileV1Store {
                     owner_username_compat TEXT NOT NULL,
                     token_id TEXT NOT NULL,
                     device_name TEXT NOT NULL,
-                    platform TEXT NOT NULL CHECK(platform IN ('android','ios') OR platform LIKE 'agent%'),
+                    platform TEXT NOT NULL CHECK(platform IN ('android','ios','desktop','linux','macos','windows') OR platform LIKE 'agent%'),
                     app_version TEXT NOT NULL,
                     encryption_public_key BLOB NOT NULL,
                     signing_public_jwk TEXT NOT NULL,
@@ -195,7 +198,7 @@ class MobileV1Store {
                 owner_username_compat TEXT NOT NULL,
                 token_id TEXT NOT NULL,
                 device_name TEXT NOT NULL,
-                platform TEXT NOT NULL CHECK(platform IN ('android','ios') OR platform LIKE 'agent%'),
+                platform TEXT NOT NULL CHECK(platform IN ('android','ios','desktop','linux','macos','windows') OR platform LIKE 'agent%'),
                 app_version TEXT NOT NULL,
                 encryption_public_key BLOB NOT NULL,
                 signing_public_jwk TEXT NOT NULL,
@@ -781,8 +784,10 @@ class MobileV1Store {
         }
         const platformTag = String(platform || '');
         if (platformTag !== 'android' && platformTag !== 'ios'
+            && platformTag !== 'desktop' && platformTag !== 'linux'
+            && platformTag !== 'macos' && platformTag !== 'windows'
             && !/^agent(-[a-z0-9]+)?$/.test(platformTag)) {
-            throw new MobileStoreError('invalid_request', 'platform 必须为 android、ios 或 agent', 400);
+            throw new MobileStoreError('invalid_request', 'platform 必须为 android、ios、desktop 或 agent', 400);
         }
         const encryption = Buffer.from(String(keys?.encryption?.publicKey || ''), 'base64');
         if (encryption.length !== 1184) {

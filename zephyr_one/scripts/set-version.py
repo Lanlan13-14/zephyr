@@ -8,8 +8,6 @@ Examples:
 
 Updates (in-place, under zephyr_one/):
   - package.json              "version"
-  - src-tauri/Cargo.toml      version =
-  - src-tauri/tauri.conf.json "version"
 
 Also writes GITHUB_ENV keys when present:
   ZEPHYR_ONE_VERSION_NAME, ZEPHYR_ONE_VERSION_CODE
@@ -31,8 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def parse_version(raw: str | None) -> str:
     value = (raw or os.environ.get("ZEPHYR_ONE_VERSION") or "").strip()
     if not value:
-        # fall back to current tauri.conf.json
-        conf = ROOT / "src-tauri" / "tauri.conf.json"
+        conf = ROOT / "package.json"
         if conf.exists():
             try:
                 value = json.loads(conf.read_text(encoding="utf-8")).get("version") or ""
@@ -107,27 +104,6 @@ def patch_package_json(version: str) -> None:
     atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
-def patch_tauri_conf(version: str) -> None:
-    path = ROOT / "src-tauri" / "tauri.conf.json"
-    data = json.loads(path.read_text(encoding="utf-8"))
-    data["version"] = version
-    atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-
-
-def patch_cargo_toml(version: str) -> None:
-    path = ROOT / "src-tauri" / "Cargo.toml"
-    text = path.read_text(encoding="utf-8")
-    new, n = re.subn(
-        r'(?m)^version\s*=\s*"[^"]*"',
-        f'version = "{version}"',
-        text,
-        count=1,
-    )
-    if n != 1:
-        raise SystemExit(f"Failed to patch version in {path}")
-    atomic_write_text(path, new)
-
-
 def main() -> None:
     raw = sys.argv[1] if len(sys.argv) > 1 else None
     version = parse_version(raw)
@@ -135,8 +111,6 @@ def main() -> None:
     # (run id is not a product version; one-v0.1.8 must become 108, not 27).
     code = version_code(version, os.environ.get("ZEPHYR_ONE_VERSION_CODE"))
     patch_package_json(version)
-    patch_tauri_conf(version)
-    patch_cargo_toml(version)
 
     env_file = os.environ.get("GITHUB_ENV")
     if env_file:
@@ -147,7 +121,7 @@ def main() -> None:
     # ASCII only: Windows runners default to cp1252 and choke on arrows/CJK.
     print(f"ZEPHYR_ONE_VERSION_NAME={version}")
     print(f"ZEPHYR_ONE_VERSION_CODE={code}")
-    print(f"stamped package.json / Cargo.toml / tauri.conf.json -> {version}")
+    print(f"stamped package.json -> {version}")
 
 
 if __name__ == "__main__":

@@ -41,7 +41,7 @@ const {
 const SERVER_JS = read('server.js');
 const OVERLAY_JS = read('zephyr-one-rdp-settings.js');
 const CLIENT_JS = read('public/rdp-wasm-client.js');
-const PICKER_RS = read('zephyr_one/src-tauri/src/rdp_picker/mod.rs');
+const PICKER_JS = read('zephyr_one/electron/watchers.mjs');
 const SHELL_SECRET = '0123456789abcdef'.repeat(4);
 const SHELL_INSTANCE = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
 
@@ -778,7 +778,7 @@ test('picker path and error values are not written to native resolve logs', () =
         const rendered = JSON.stringify(logs);
         assert.equal(rendered.includes(pathMarker), false);
         assert.equal(rendered.includes(errorMarker), false);
-        assert.doesNotMatch(PICKER_RS, /eprintln!\([^;]*\{(?:path|error)\}/s);
+        assert.doesNotMatch(PICKER_JS, /console\.error\([^;]*(?:chosen|pathMarker|filePaths)/s);
     } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -859,11 +859,9 @@ test('the mapping file lands in the data dir it was given', () => {
 /* ── server integration ────────────────────────────────────────────────── */
 
 test('the shell watcher now has the endpoints it polls', () => {
-    /* This is the regression the module exists to fix. rdp_picker/mod.rs polls
-     * one URL and posts to another; both had no route after b0e5a9c, so the
-     * watcher 404d every 300ms for the life of the process. Deriving the paths
-     * from the Rust source means renaming one side fails here. */
-    assert.match(PICKER_RS, /api\/one\/rdp\/picker-queue/, 'the watcher must still poll this');
+    /* This is the regression the module exists to fix. The Electron watcher
+     * polls one URL and posts to another; both had no route after b0e5a9c. */
+    assert.match(PICKER_JS, /api\/one\/rdp\/picker-queue/, 'the watcher must still poll this');
     const source = read('zephyr-one-rdp-storage.js');
     assert.match(source, /app\.get\('\/api\/one\/rdp\/picker-queue'/);
     assert.match(source, /app\.post\('\/api\/one\/rdp\/picker-queue\/:id'/);

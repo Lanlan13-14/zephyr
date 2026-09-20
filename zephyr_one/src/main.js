@@ -8,15 +8,19 @@
  *   via CSS when loading the local app.
  */
 
-import { invoke } from '@tauri-apps/api/core';
-import { createNativeRdpShellController } from './rdp/native-rdp-client.js';
-
 const $ = (sel) => document.querySelector(sel);
 const STORAGE_KEY = 'zephyr_one.local.v2';
 
+function desktopInvoke(command, args) {
+  if (typeof window !== 'undefined' && window.zephyrOne?.invoke) {
+    return window.zephyrOne.invoke(command, args);
+  }
+  return null;
+}
+
 const state = {
   requireUnlock: false,
-  isTauri: typeof window !== 'undefined' && !!(window.__TAURI_INTERNALS__ || window.__TAURI__),
+  isElectron: typeof window !== 'undefined' && !!window.zephyrOne?.invoke,
   caps: null,
   runtime: null,
   /** optional remote main for sync only */
@@ -87,7 +91,6 @@ function createOperationStatus() {
 }
 
 const operationStatus = createOperationStatus();
-let nativeRdpController = null;
 
 function loadLocal() {
   try {
@@ -112,15 +115,14 @@ function saveLocal() {
 }
 
 async function safeInvoke(cmd, args = {}) {
-  if (!state.isTauri) {
+  if (!state.isElectron) {
     if (cmd === 'auth_capabilities') {
-      return { available: false, biometry: false, reason: '非 Tauri 运行时' };
+      return { available: false, biometry: false, reason: '非 Electron 运行时' };
     }
     if (cmd === 'auth_unlock') {
-      return { ok: false, error: '非 Tauri 运行时' };
+      return { ok: false, error: '非 Electron 运行时' };
     }
     if (cmd === 'runtime_start' || cmd === 'runtime_enter' || cmd === 'runtime_info') {
-      // Dev browser: point at a local zephyr if developer runs npm start
       return {
         running: true,
         baseUrl: 'http://127.0.0.1:3000',
@@ -131,7 +133,7 @@ async function safeInvoke(cmd, args = {}) {
     }
     return null;
   }
-  return invoke(cmd, args);
+  return desktopInvoke(cmd, args);
 }
 
 function show(el) {
@@ -168,40 +170,6 @@ async function requestSystemUnlock(reason) {
   return true;
 }
 
-/**
- * Keep the trusted Tauri document as the outer shell and load the local core in
- * an iframe. The loopback page intentionally has no Tauri IPC capability; the
- * outer shell filters source/origin and accepts only an opaque connection id.
- * Native code resolves and authorizes the connection atomically.
- */
-function openLocalZephyr(baseUrl) {
-  const u = new URL(baseUrl);
-  u.searchParams.set('zephyrOne', '1');
-  const frame = $('#localAppFrame');
-  const host = $('#appGate');
-  if (!frame || !host) throw new Error('Local Zephyr app host is unavailable.');
-
-  nativeRdpController?.dispose();
-  nativeRdpController = createNativeRdpShellController({
-    frame,
-    expectedOrigin: u.origin,
-    invoke,
-    isTauri: state.isTauri,
-    onStatus(action) {
-      if (action === 'error') operationStatus.announce('Native RDP operation failed.');
-      else if (action === 'open') operationStatus.announce('Native RDP window opened.');
-    },
-  });
-
-  host.setAttribute('aria-busy', 'true');
-  frame.addEventListener('load', () => {
-    host.setAttribute('aria-busy', 'false');
-    operationStatus.announce('Zephyr One is ready.');
-  }, { once: true });
-  only(host);
-  frame.src = u.toString();
-}
-
 function startAndEnter(control) {
   return operationStatus.run(
     {
@@ -229,7 +197,6 @@ function startAndEnter(control) {
     state.runtime = { ...info, baseUrl: cleanOrigin };
     if (status) status.textContent = '本地核心就绪，正在进入完整界面…';
     await safeInvoke('runtime_enter');
-    if (!state.isTauri) openLocalZephyr(bootstrapUrl);
   } catch (e) {
     operationStatus.announce('Startup failed.');
     only($('#errorGate'));
@@ -428,5 +395,3 @@ async function boot() {
 }
 
 boot();
-
-window.addEventListener('beforeunload', () => nativeRdpController?.dispose(), { once: true });

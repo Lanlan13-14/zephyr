@@ -366,7 +366,7 @@ test('the wordmark is the only thing the small frames lose', () => {
 /* -------- the desktop shell's own screens -------- */
 
 test('the shell boot screens show Zephyr One, not Zephyr', () => {
-    /* This is the very first thing the product shows: index.html is the Tauri
+    /* This is the very first thing the product shows: index.html is the Electron
      * frontend, displayed while the embedded core starts. It used to load
      * Zephyr's mark, so One launched under the other product's logo. */
     assert.doesNotMatch(

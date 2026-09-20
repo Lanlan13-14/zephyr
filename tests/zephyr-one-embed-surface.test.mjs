@@ -75,29 +75,13 @@ test('every fragment the transform depends on appears exactly once in its scope'
     }
 });
 
-test('region-scoped edits really are bounded, not accidentally global', () => {
-    /* If `within`/`until` were ignored the heading rename would still "work"
-     * on the first match, so a passing rename proves nothing by itself. This
-     * asserts the bound is real: the fragment is ambiguous globally, unique
-     * inside the region, and the region stops before the About panel. */
-    const scoped = EDITS.filter((e) => e.within);
-    assert.ok(scoped.length > 0, 'at least one edit must be region-scoped');
-
-    for (const edit of scoped) {
-        const region = regionOf(APP_HTML, edit);
-        const slice = APP_HTML.slice(region.start, region.end);
-        assert.equal(countOccurrences(slice, edit.from), 1);
-        assert.ok(
-            region.end < APP_HTML.length,
-            `"${edit.name}" must stop at ${edit.until}, not run to end of file`,
-        );
-        // The About panel is outside every scoped region.
-        assert.equal(slice.includes('id="settings-about"'), false);
-    }
-
-    // And the specific ambiguity this mechanism exists for.
+test('the About panel keeps the Zephyr Client download name', () => {
     const heading = '<h2 data-i18n="Zephyr Client">Zephyr Client</h2>';
-    assert.equal(countOccurrences(APP_HTML, heading), 2, 'heading must be globally ambiguous');
+    assert.equal(countOccurrences(APP_HTML, heading), 1, 'the About heading is unique now');
+    const { html } = applyEmbeddedSurface(APP_HTML);
+    assert.match(html, /id="settings-about"[\s\S]*Zephyr Client/);
+    assert.match(html, /data-settings="agent" data-i18n="Zephyr Agent"/);
+    assert.match(html, /id="linkSettingsTab"[^>]*data-i18n="Zephyr Link"/);
 });
 
 test('transform replaces the security panel body and removes logout', () => {

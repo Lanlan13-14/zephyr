@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-android/
+release/
 zephyr-core/
 desktop-runtime/
 third_party/

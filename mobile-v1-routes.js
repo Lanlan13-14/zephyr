@@ -713,7 +713,7 @@ class MobileV1Api {
             ok: true,
             protocolVersions: PROTOCOL_VERSIONS,
             registryHash: this.store.registryHash,
-            minimumAppVersions: { android: '0.1.0', ios: '0.1.0' },
+            minimumAppVersions: { android: '0.1.0', ios: '0.1.0', desktop: '0.1.0' },
             limits: {
                 maxOpsPerBatch: MAX_OPS_PER_BATCH,
                 maxPageSize: MAX_PAGE_SIZE,

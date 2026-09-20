@@ -70,9 +70,9 @@ fi
 
 # Production dependencies follow the root lockfile. Install scripts stay enabled
 # so any native addon is built for the host, but the runtime still selects
-# node:sqlite (ZEPHYR_ONE_USE_BUILTIN_SQLITE=1 in runtime/mod.rs) because the
-# bundled Node is the CI runner's own binary and the macOS bundle is universal
-# while npm can only build a single-arch addon.
+# node:sqlite (ZEPHYR_ONE_USE_BUILTIN_SQLITE=1 in electron/runtime.mjs) because the
+# bundled Node is the CI runner's own binary and a universal macOS extraResource
+# cannot carry a single-arch better-sqlite3 addon.
 if command -v npm >/dev/null 2>&1; then
   (cd "$OUT" && npm ci --omit=dev --no-audit --no-fund) || {
     echo "ERROR: npm ci failed in desktop zephyr-core" >&2
@@ -134,17 +134,9 @@ cat > "$OUT/ZEPHYR_ONE_CORE.json" <<EOF
 }
 EOF
 
-# ── One-only: retire the browser RDP client in favour of native FreeRDP ──
-#
-# Zephyr One talks RDP through native FreeRDP. The staging transform replaces
-# app.js's browser iframe URL with an inert native-session marker, copies the
-# One-only control surface, and drops every browser-only RDP runtime asset.
-# The repository's own public/ is untouched, so the standalone server keeps
-# serving WASM RDP to browser users byte-for-byte.
-#
-# This runs after dependency/vendor copies so the verifier sees the final tree.
-# motion-wasm and every unrelated asset stay untouched.
-node "$ROOT/scripts/stage-native-rdp.mjs" "$OUT"
+# Desktop One keeps the Web WASM RDP client. FreeRDP staging is gone with the
+# Tauri shell; public/rdp.html and rdp-wasm-* stay in the staged core so the
+# embedded UI matches hosted Zephyr.
 
 echo "Staged core OK: $OUT"
 test -f "$OUT/server.js"

@@ -14283,60 +14283,9 @@ async function initLinkPanel() {
     if (!panel) return;
     const isOneMode = typeof window !== 'undefined' && !!window.__zephyrOneUnlock;
     if (!isOneMode) return;
-
-    const bindStatus = document.getElementById('linkBindStatus');
-    const syncSettings = document.getElementById('linkSyncSettings');
-    const devices = document.getElementById('linkDevices');
-    const shares = document.getElementById('linkShares');
-    const conflicts = document.getElementById('linkConflicts');
-    const diagnostics = document.getElementById('linkDiagnostics');
-
-    async function refreshLinkState() {
-        try {
-            const state = await api('/api/link/v2/state');
-            if (state.bound) {
-                bindStatus.innerHTML = `<p class="field-hint">${t('已绑定 {user}', { user: state.username || state.userId || '' })}</p>`;
-                syncSettings.style.display = '';
-                devices.style.display = '';
-                shares.style.display = '';
-                conflicts.style.display = '';
-                diagnostics.style.display = '';
-            } else {
-                bindStatus.innerHTML = `<p class="empty-state">${t('未绑定')}</p><button type="button" class="z-btn z-btn-primary" id="linkBindBtn">${t('绑定主端')}</button>`;
-                syncSettings.style.display = 'none';
-                devices.style.display = 'none';
-                shares.style.display = 'none';
-                conflicts.style.display = 'none';
-                diagnostics.style.display = 'none';
-                document.getElementById('linkBindBtn')?.addEventListener('click', startBind);
-            }
-        } catch (err) {
-            bindStatus.innerHTML = `<p class="gate-error">${t('加载失败：{message}', { message: err?.message || String(err) })}</p>`;
-        }
-    }
-
-    async function startBind() {
-        try {
-            const result = await api('/api/link/v2/enrollments', { method: 'POST' });
-            if (result.verificationPath) {
-                window.open(result.verificationPath, '_blank');
-            }
-        } catch (err) {
-            toast(t('绑定失败：{message}', { message: err?.message || String(err) }));
-        }
-    }
-
-    document.getElementById('linkSyncNowBtn')?.addEventListener('click', async () => {
-        try {
-            await api('/api/link/v2/sync', { method: 'POST' });
-            toast(t('同步已触发'));
-        } catch (err) {
-            toast(t('同步失败：{message}', { message: err?.message || String(err) }));
-        }
-    });
-
-    await refreshLinkState();
-    panel.classList.add('force-hidden');
+    /* Desktop One injects zephyr-one-link-ui.js, which owns this panel end to
+     * end (enrollment, interval, devices, diagnostics). app.js must not paint a
+     * second, incomplete bind form over it. */
 }
 
 function renderAdminUsers(users) {

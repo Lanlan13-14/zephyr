@@ -287,19 +287,25 @@ test('icon.icns keeps the full Retina ladder', () => {
   }
 });
 
-test('every bundle icon named by tauri.conf.json exists at its stated size', () => {
-  // A missing path fails the bundle step; a wrongly-sized PNG ships quietly.
-  const conf = JSON.parse(
-    fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/tauri.conf.json'), 'utf8'),
+test('every bundle icon named by electron-builder exists at its stated size', () => {
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(root, 'zephyr_one/package.json'), 'utf8'),
   );
-  const listed = conf.bundle.icon;
-  assert.ok(Array.isArray(listed) && listed.length > 0, 'bundle.icon must list artefacts');
+  const listed = [
+    pkg.build?.win?.icon,
+    pkg.build?.mac?.icon,
+    'src-tauri/icons/32x32.png',
+    'src-tauri/icons/128x128.png',
+    'src-tauri/icons/128x128@2x.png',
+    'src-tauri/icons/icon.ico',
+  ].filter(Boolean);
+  assert.ok(listed.length > 0, 'electron-builder must name icon artefacts');
 
   const EXPECTED_EDGE = { '32x32.png': 32, '128x128.png': 128, '128x128@2x.png': 256 };
 
   for (const rel of listed) {
-    const abs = path.join(root, 'zephyr_one/src-tauri', rel);
-    assert.ok(fs.existsSync(abs), rel + ' is referenced by tauri.conf.json but missing');
+    const abs = path.join(root, 'zephyr_one', rel);
+    assert.ok(fs.existsSync(abs), rel + ' is referenced by electron-builder but missing');
     const edge = EXPECTED_EDGE[path.basename(rel)];
     if (edge) {
       const size = pngSize(fs.readFileSync(abs));
@@ -308,7 +314,6 @@ test('every bundle icon named by tauri.conf.json exists at its stated size', () 
     }
   }
 
-  // icon.ico has to be in the list or Windows falls back to a Tauri default.
   assert.ok(
     listed.some((rel) => rel.endsWith('icon.ico')),
     'the Windows .ico must be bundled',
@@ -316,10 +321,8 @@ test('every bundle icon named by tauri.conf.json exists at its stated size', () 
 });
 
 test('each palette has a runtime icon compiled into the shell', () => {
-  // icon/mod.rs pulls these in with include_bytes!, so a missing or resized
-  // file is a build break or a blurry live theme swap rather than a warning.
-  const rs = fs.readFileSync(
-    path.join(root, 'zephyr_one/src-tauri/src/icon/mod.rs'),
+  const watchers = fs.readFileSync(
+    path.join(root, 'zephyr_one/electron/watchers.mjs'),
     'utf8',
   );
   for (const theme of ['frost', 'lava', 'asagi', 'cyber']) {
@@ -328,6 +331,6 @@ test('each palette has a runtime icon compiled into the shell', () => {
     const size = pngSize(readIcon(rel));
     assert.ok(size, rel + ' must be a PNG');
     assert.equal(size.width, 128, theme + ' runtime icon must stay 128px');
-    assert.match(rs, new RegExp('runtime-icons/zephyr-one-' + theme + '\.png'));
   }
+  assert.match(watchers, /zephyr-one-\$\{resolved\}\.png/);
 });

@@ -194,6 +194,7 @@ const { applyEmbeddedSurface } = require('./zephyr-one-embed-surface');
 const { mountRoutes: mountOneRdpFolderMapping } = require('./zephyr-one-rdp-storage');
 const { mountRoutes: mountOneRdpNativeBroker } = require('./zephyr-one-rdp-native-broker');
 const { mountRoutes: mountOneSecurity } = require('./zephyr-one-security');
+const { createZephyrOneLinkSync, mountZephyrOneLinkRoutes } = require('./zephyr-one-link-sync');
 const { installAsyncHandlerGuard, jsonErrorMiddleware } = require('./express-async-guard');
 const terminalSessionTools = require('./ai-terminal-session-tools');
 const { FileTransferGateway } = require('./file-transfer-ws');
@@ -8963,6 +8964,14 @@ app.get('/zephyr-one-rdp-settings.js', (req, res, next) => {
         if (error) next(error);
     });
 });
+app.get('/zephyr-one-link-ui.js', (req, res, next) => {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    res.type('application/javascript');
+    res.setHeader('Cache-Control', 'no-store');
+    res.sendFile(path.join(__dirname, 'zephyr-one-link-ui.js'), (error) => {
+        if (error) next(error);
+    });
+});
 app.get('/zephyr-one-recovery.js', (req, res, next) => {
     if (!ZEPHYR_ONE_EMBEDDED) return next();
     res.type('application/javascript');
@@ -9419,6 +9428,22 @@ if (ZEPHYR_ONE_EMBEDDED) {
         dataDir: DATA_DIR,
         logger: console,
     });
+
+    /* Zephyr Link on the desktop: same enrollment + mobile-v1 sync plane as
+     * Android One. Bound to the auto-adopted local account and only mounted
+     * inside the embedded core so a hosted main never talks to a remote as a
+     * client of itself. */
+    const oneLinkSync = createZephyrOneLinkSync({
+        dataDir: DATA_DIR,
+        storage,
+        resourceService,
+        notesService,
+        userSettingsService,
+        mobileV1Api,
+        log: (...args) => console.log('[one-link]', ...args),
+    });
+    mountZephyrOneLinkRoutes(app, { linkSync: oneLinkSync, requireUser });
+    oneLinkSync.start();
 }
 
 app.get('/healthz', (req, res) => {
@@ -9489,14 +9514,9 @@ function handleHttpUpgrade(req, socket, head) {
         pathname = req.url || '';
     }
 
-    /* Zephyr One presents RDP through the native FreeRDP surface. Exposing the
-     * browser/WASM proxy in embedded mode would silently reintroduce the
-     * retired fallback whenever native attachment failed. Hosted Zephyr keeps
-     * the existing proxy route for browser clients. */
-    if (ZEPHYR_ONE_EMBEDDED && pathname === '/rdp-proxy') {
-        rejectSocket(socket, 404, 'Not Found');
-        return;
-    }
+    /* Desktop One uses the same WASM RDP client as the Web product. The
+     * previous FreeRDP-only path is gone with the Tauri shell; blocking the
+     * proxy here would leave RDP with no working engine. */
 
     const targetWss = pathname === '/ssh'
         ? wss
