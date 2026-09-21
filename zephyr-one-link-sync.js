@@ -142,6 +142,26 @@ function defaultDeviceName() {
     return `Zephyr One (${host})`.slice(0, 120);
 }
 
+function applyQuery(url, query) {
+    if (!query || typeof query !== 'object') return url;
+    for (const [key, value] of Object.entries(query)) {
+        if (value == null || value === '') continue;
+        url.searchParams.set(key, String(value));
+    }
+    return url;
+}
+
+function canonicalRequestPath(pathname, query) {
+    const encoded = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    const url = new URL(encoded, 'https://mobile.invalid');
+    applyQuery(url, query);
+    /* Must match requestJson's on-the-wire origin-form. URLSearchParams(object)
+     * stringifies undefined as "undefined", which made bootstrap sign
+     * ?pageToken=undefined while the GET dropped the key — the main then
+     * rejected every proof as 设备签名无效. */
+    return mobileProof.canonicalPath(url.pathname + url.search);
+}
+
 function requestJson(baseUrl, {
     method = 'GET',
     path: pathname,
@@ -152,12 +172,7 @@ function requestJson(baseUrl, {
     allowInsecureTls = false,
 } = {}) {
     const url = new URL(pathname, String(baseUrl).replace(/\/+$/, '') + '/');
-    if (query && typeof query === 'object') {
-        for (const [key, value] of Object.entries(query)) {
-            if (value == null || value === '') continue;
-            url.searchParams.set(key, String(value));
-        }
-    }
+    applyQuery(url, query);
     const payload = body === undefined ? null : Buffer.from(JSON.stringify(body), 'utf8');
     const isHttps = url.protocol === 'https:';
     const lib = isHttps ? https : http;
@@ -220,15 +235,6 @@ function httpError(response, fallback) {
     err.retryAfterSec = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : (err.status === 429 ? RATE_LIMIT_DEFAULT_SEC : 0);
     err.retryable = response?.data?.error?.retryable === true || err.status === 429;
     return err;
-}
-
-function canonicalRequestPath(pathname, query) {
-    const encoded = pathname.startsWith('/') ? pathname : `/${pathname}`;
-    return mobileProof.canonicalPath(
-        query && Object.keys(query).length
-            ? `${encoded}?${new URLSearchParams(query).toString()}`
-            : encoded,
-    );
 }
 
 class ZephyrOneLinkSync {
@@ -687,6 +693,11 @@ class ZephyrOneLinkSync {
             },
         });
         if (response.status === 401 && !_retried401) {
+            const err = httpError(response, `${method} ${pathname} failed`);
+            /* Android maps device_proof_invalid to re-auth. Refreshing the
+             * bearer cannot fix a mismatched signed path, and a retry would
+             * burn another challenge. */
+            if (err.code === 'device_proof_invalid') throw err;
             const refreshed = await this._refreshAccess();
             if (refreshed) {
                 return this._authorizedRequest({
@@ -1200,4 +1211,6 @@ module.exports = {
     MAX_PAGES_PER_ROUND,
     PAGE_TOKEN_TTL_MS,
     RATE_LIMIT_DEFAULT_SEC,
+    canonicalRequestPath,
+    applyQuery,
 };
