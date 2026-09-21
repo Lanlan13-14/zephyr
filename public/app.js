@@ -3150,6 +3150,8 @@ const TOGGLE_SELECT_IDS = [
     'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
     // 多用户 → 添加用户 → 角色（与首页「全部协议」同源 toggle-select）
     'adminUserRole',
+    // Zephyr Link 同步间隔 / 网络策略：与首页「全部协议」同源 toggle-select
+    'linkIntervalSelect', 'linkNetworkPolicySelect',
 ];
 let _toggleSelectDocBound = false;
 
@@ -3179,6 +3181,8 @@ const MOTION_FILTER_SELECT_IDS = [
     'adminUserRole',
     // 连接编辑器 → 跳板机链：每行下拉与首页「全部协议」同一套 FLIP
     'jumpRouteSelect',
+    // Zephyr Link：同步间隔 / 网络策略与首页筛选同一套 Motion.morph(mac) / macClose
+    'linkIntervalSelect', 'linkNetworkPolicySelect',
 ];
 function isMotionFilterShell(shell) {
     return !!shell && MOTION_FILTER_SELECT_IDS.includes(shell.dataset?.selectId || '');
@@ -3342,6 +3346,10 @@ function enhanceToggleSelect(select) {
 
     select.addEventListener('change', () => syncToggleSelectFace(select));
     return shell;
+}
+if (typeof window !== 'undefined') {
+    window.enhanceToggleSelect = enhanceToggleSelect;
+    window.syncToggleSelectFace = syncToggleSelectFace;
 }
 
 function enhanceAllToggleSelects() {

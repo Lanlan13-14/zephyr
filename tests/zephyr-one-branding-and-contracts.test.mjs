@@ -297,7 +297,7 @@ test('the header uses the compact mark and the settings preview the full one', (
 /* ---- optical sizing: the generated app icons --------------------------- */
 
 test('the icon generator drops the wordmark below the size it can be read at', () => {
-    assert.match(PREPARE_ICONS, /^WORDMARK_MIN_SIZE = 64$/m, 'the threshold must be explicit');
+    assert.match(PREPARE_ICONS, /^WORDMARK_MIN_SIZE = 32$/m, 'the threshold must be explicit');
     assert.match(PREPARE_ICONS, /def simplify_for_small_size/);
     assert.match(PREPARE_ICONS, /def staged_small_master/);
 
@@ -328,15 +328,14 @@ test('the shipped .ico has no wordmark smear in its small frames', () => {
     const frames = icoFrames(fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/icons/icon.ico')));
     assert.deepEqual([...frames.keys()].sort((a, b) => a - b), [16, 32, 48, 64, 128, 256]);
 
-    for (const size of [16, 32, 48]) {
+    for (const size of [16]) {
         const ink = wordmarkInk(frames.get(size));
         assert.equal(ink, 0, `the ${size}px frame still has wordmark ink (${ink}px) and will look blurry`);
     }
 
-    /* And the large frames must still carry it -- otherwise "no smear" would be
-     * satisfied by dropping the wordmark everywhere, which is a different logo
-     * rather than optical sizing. */
-    for (const size of [64, 128, 256]) {
+    /* Android's launcher always carries the outlined One wordmark. Desktop
+     * must match from the 32px taskbar frame up; only 16px is below the grid. */
+    for (const size of [32, 48, 64, 128, 256]) {
         const ink = wordmarkInk(frames.get(size));
         assert.ok(ink > 0, `the ${size}px frame must still carry the One wordmark`);
     }
@@ -348,7 +347,7 @@ test('the wordmark is the only thing the small frames lose', () => {
      * blank rather than simplified. Compared as total opaque coverage outside
      * the wordmark box, which the strokes dominate. */
     const frames = icoFrames(fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/icons/icon.ico')));
-    for (const size of [16, 32, 48]) {
+    for (const size of [16]) {
         const { width, height, pixels } = decodePng(frames.get(size));
         let opaque = 0;
         for (let i = 3; i < pixels.length; i += 4) {

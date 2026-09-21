@@ -38,7 +38,16 @@ const DEFAULT_INTERVAL_SEC = 300;
 const WRITE_DEBOUNCE_MS = 1500;
 const PAGE_SIZE = 100;
 const CHANGE_LIMIT = 200;
+/* Android SyncActor.MAX_PAGES_PER_ROUND is 512; desktop stays well under the
+ * proof-challenge budget (120 issues / minute). A round that hits this cap
+ * persists the page token and continues on the next trigger instead of
+ * restarting the snapshot — restarting is what burned the rate limit. */
+const MAX_PAGES_PER_ROUND = 24;
 const MAX_BOOTSTRAP_PAGES = 200;
+const PAGE_TOKEN_TTL_MS = 30 * 60 * 1000;
+const CAPABILITIES_TTL_MS = 60 * 1000;
+const RATE_LIMIT_DEFAULT_SEC = 5;
+const RATE_LIMIT_MAX_WAIT_MS = 15 * 1000;
 const LINK_TOKEN_ID = 'link-v2-enrollment';
 const MIRROR_TYPES = new Set(['connection', 'proxy', 'sshKey', 'jumpHost', 'note']);
 
@@ -50,6 +59,21 @@ function clampInterval(value) {
 
 function nowMs() {
     return Date.now();
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function headerValue(headers, name) {
+    if (!headers) return '';
+    const raw = headers[name] || headers[String(name).toLowerCase()];
+    if (Array.isArray(raw)) return String(raw[0] || '');
+    return raw == null ? '' : String(raw);
+}
+
+function pushedKey(entityType, entityId) {
+    return `${entityType}:${entityId}`;
 }
 
 function atomicWriteJson(filePath, value) {
@@ -190,7 +214,11 @@ function httpError(response, fallback) {
     err.status = response?.status || 0;
     err.code = response?.data?.error?.code || response?.data?.code || `http_${err.status}`;
     err.data = response?.data;
-    err.retryable = response?.data?.error?.retryable === true;
+    const retryAfter = Number(headerValue(response?.headers, 'retry-after'))
+        || Number(response?.data?.error?.retryAfterSec)
+        || 0;
+    err.retryAfterSec = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : (err.status === 429 ? RATE_LIMIT_DEFAULT_SEC : 0);
+    err.retryable = response?.data?.error?.retryable === true || err.status === 429;
     return err;
 }
 
@@ -213,6 +241,8 @@ class ZephyrOneLinkSync {
         mobileV1Api,
         log = console.log,
         now = nowMs,
+        httpRequest = requestJson,
+        sleepFn = sleep,
     } = {}) {
         if (!dataDir) throw new Error('ZephyrOneLinkSync requires dataDir');
         this.dataDir = path.resolve(dataDir);
@@ -223,6 +253,8 @@ class ZephyrOneLinkSync {
         this.mobileV1Api = mobileV1Api;
         this.log = typeof log === 'function' ? log : () => {};
         this.now = now;
+        this._http = typeof httpRequest === 'function' ? httpRequest : requestJson;
+        this._sleep = typeof sleepFn === 'function' ? sleepFn : sleep;
         this.bindingPath = path.join(this.dataDir, BINDING_FILE);
         this.keysPath = path.join(this.dataDir, KEYS_FILE);
         this.statePath = path.join(this.dataDir, STATE_FILE);
@@ -232,6 +264,8 @@ class ZephyrOneLinkSync {
         this._rerun = false;
         this._pendingEnrollment = null;
         this._listeners = new Set();
+        this._capabilitiesCache = null;
+        this._rateLimitedUntil = 0;
         this.state = this._loadState();
         this.binding = this._loadBinding();
         this.keys = this._loadKeys();
@@ -265,6 +299,13 @@ class ZephyrOneLinkSync {
             conflictCount: Number(saved.conflictCount) || 0,
             bootstrapComplete: saved.bootstrapComplete === true,
             registryHash: saved.registryHash || '',
+            bootstrapPageToken: saved.bootstrapPageToken || null,
+            bootstrapId: saved.bootstrapId || '',
+            bootstrapPagesFetched: Number(saved.bootstrapPagesFetched) || 0,
+            bootstrapTokenExpiresAt: Number(saved.bootstrapTokenExpiresAt) || 0,
+            lastPushedRevisions: (saved.lastPushedRevisions && typeof saved.lastPushedRevisions === 'object')
+                ? saved.lastPushedRevisions
+                : {},
         };
     }
 
@@ -334,6 +375,7 @@ class ZephyrOneLinkSync {
             appliedCursor: this.state.appliedCursor,
             snapshotCursor: this.state.snapshotCursor,
             bootstrapComplete: this.state.bootstrapComplete === true,
+            bootstrapResume: !!(this.state.bootstrapPageToken && !this.state.bootstrapComplete),
             running: this._running,
             enrollment: this._pendingEnrollment
                 ? {
@@ -406,7 +448,7 @@ class ZephyrOneLinkSync {
         const keys = this._ensureKeys();
         const deviceId = crypto.randomUUID();
         const platform = detectDesktopPlatform();
-        const created = await requestJson(url, {
+        const created = await this._http(url, {
             method: 'POST',
             path: '/api/link/v2/enrollments',
             allowInsecureTls,
@@ -445,7 +487,7 @@ class ZephyrOneLinkSync {
     async pollEnrollment() {
         const pending = this._pendingEnrollment;
         if (!pending) return this.publicState();
-        const status = await requestJson(pending.serverUrl, {
+        const status = await this._http(pending.serverUrl, {
             method: 'GET',
             path: `/api/link/v2/enrollments/${encodeURIComponent(pending.bindId)}`,
             query: { userCode: pending.userCode },
@@ -476,7 +518,7 @@ class ZephyrOneLinkSync {
             serverId: pending.serverId,
         });
         const proof = p1363Sign(keys.signing.privateKeyPem, payload);
-        const consumed = await requestJson(pending.serverUrl, {
+        const consumed = await this._http(pending.serverUrl, {
             method: 'POST',
             path: `/api/link/v2/enrollments/${encodeURIComponent(pending.bindId)}/consume`,
             allowInsecureTls: pending.allowInsecureTls,
@@ -514,6 +556,11 @@ class ZephyrOneLinkSync {
         this.state.appliedCursor = 0;
         this.state.ackedCursor = 0;
         this.state.snapshotCursor = 0;
+        this.state.bootstrapPageToken = null;
+        this.state.bootstrapId = '';
+        this.state.bootstrapPagesFetched = 0;
+        this.state.bootstrapTokenExpiresAt = 0;
+        this.state.lastPushedRevisions = {};
         this.state.lastError = null;
         this.state.lastErrorCode = null;
         this._saveBinding();
@@ -537,6 +584,11 @@ class ZephyrOneLinkSync {
         this.state.appliedCursor = 0;
         this.state.ackedCursor = 0;
         this.state.snapshotCursor = 0;
+        this.state.bootstrapPageToken = null;
+        this.state.bootstrapId = '';
+        this.state.bootstrapPagesFetched = 0;
+        this.state.bootstrapTokenExpiresAt = 0;
+        this.state.lastPushedRevisions = {};
         this.state.lastError = null;
         this.state.lastErrorCode = null;
         this._saveBinding();
@@ -545,7 +597,48 @@ class ZephyrOneLinkSync {
         return this.publicState();
     }
 
-    async _authorizedRequest({ method, path: pathname, query, body, timeoutMs }) {
+    async _waitOutRateLimit() {
+        const wait = this._rateLimitedUntil - nowMs();
+        if (wait <= 0) return;
+        await this._sleep(Math.min(wait, RATE_LIMIT_MAX_WAIT_MS));
+    }
+
+    _markRateLimited(err) {
+        const sec = Number(err?.retryAfterSec) || RATE_LIMIT_DEFAULT_SEC;
+        this._rateLimitedUntil = Math.max(this._rateLimitedUntil, nowMs() + sec * 1000);
+    }
+
+    async _issueProofChallenge({ method, target, digest, usage }) {
+        await this._waitOutRateLimit();
+        const challenge = await this._http(this.binding.serverUrl, {
+            method: 'POST',
+            path: '/api/mobile/v1/devices/proof-challenge',
+            allowInsecureTls: this.binding.allowInsecureTls,
+            headers: { Authorization: `Bearer ${this.binding.accessCredential}` },
+            body: { method: method.toUpperCase(), path: target, bodySha256: digest, usage },
+        });
+        if (challenge.ok) return challenge.data.challenge;
+        const err = httpError(challenge, 'device proof challenge failed');
+        if (err.status === 429 || err.code === 'rate_limited') {
+            this._markRateLimited(err);
+            const waitMs = Math.min((err.retryAfterSec || RATE_LIMIT_DEFAULT_SEC) * 1000, RATE_LIMIT_MAX_WAIT_MS);
+            await this._sleep(waitMs);
+            const retry = await this._http(this.binding.serverUrl, {
+                method: 'POST',
+                path: '/api/mobile/v1/devices/proof-challenge',
+                allowInsecureTls: this.binding.allowInsecureTls,
+                headers: { Authorization: `Bearer ${this.binding.accessCredential}` },
+                body: { method: method.toUpperCase(), path: target, bodySha256: digest, usage },
+            });
+            if (retry.ok) return retry.data.challenge;
+            const retryErr = httpError(retry, 'device proof challenge failed');
+            this._markRateLimited(retryErr);
+            throw retryErr;
+        }
+        throw err;
+    }
+
+    async _authorizedRequest({ method, path: pathname, query, body, timeoutMs, _retried401 = false }) {
         if (!this.binding) {
             const err = new Error('尚未绑定主端');
             err.code = 'unbound';
@@ -568,15 +661,7 @@ class ZephyrOneLinkSync {
             err.code = 'device_proof_not_supported';
             throw err;
         }
-        const challenge = await requestJson(this.binding.serverUrl, {
-            method: 'POST',
-            path: '/api/mobile/v1/devices/proof-challenge',
-            allowInsecureTls: this.binding.allowInsecureTls,
-            headers: { Authorization: `Bearer ${this.binding.accessCredential}` },
-            body: { method: method.toUpperCase(), path: target, bodySha256: digest, usage },
-        });
-        if (!challenge.ok) throw httpError(challenge, 'device proof challenge failed');
-        const issued = challenge.data.challenge;
+        const issued = await this._issueProofChallenge({ method, target, digest, usage });
         const payload = mobileProof.signedProofPayload({
             deviceId: this.binding.deviceId,
             method: issued.method,
@@ -587,7 +672,7 @@ class ZephyrOneLinkSync {
             nonce: issued.nonce,
         });
         const proof = p1363Sign(keys.signing.privateKeyPem, payload);
-        const response = await requestJson(this.binding.serverUrl, {
+        const response = await this._http(this.binding.serverUrl, {
             method,
             path: pathname,
             query,
@@ -601,9 +686,18 @@ class ZephyrOneLinkSync {
                 'X-Zephyr-Proof-Timestamp': String(issued.timestamp),
             },
         });
-        if (response.status === 401) {
+        if (response.status === 401 && !_retried401) {
             const refreshed = await this._refreshAccess();
-            if (refreshed) return this._authorizedRequest({ method, path: pathname, query, body, timeoutMs });
+            if (refreshed) {
+                return this._authorizedRequest({
+                    method, path: pathname, query, body, timeoutMs, _retried401: true,
+                });
+            }
+        }
+        if (response.status === 429) {
+            const err = httpError(response, `${method} ${pathname} failed`);
+            this._markRateLimited(err);
+            throw err;
         }
         if (!response.ok) throw httpError(response, `${method} ${pathname} failed`);
         return response.data;
@@ -618,7 +712,7 @@ class ZephyrOneLinkSync {
 
     async _refreshAccess() {
         if (!this.binding?.refreshCredential) return false;
-        const response = await requestJson(this.binding.serverUrl, {
+        const response = await this._http(this.binding.serverUrl, {
             method: 'POST',
             path: '/api/mobile/v1/devices/refresh',
             allowInsecureTls: this.binding.allowInsecureTls,
@@ -684,35 +778,81 @@ class ZephyrOneLinkSync {
         }
     }
 
+    _liveBootstrapToken() {
+        const token = this.state.bootstrapPageToken;
+        const expiresAt = Number(this.state.bootstrapTokenExpiresAt) || 0;
+        if (!token) return null;
+        if (expiresAt && expiresAt <= nowMs()) {
+            this.state.bootstrapPageToken = null;
+            this.state.bootstrapId = '';
+            this.state.bootstrapPagesFetched = 0;
+            this.state.bootstrapTokenExpiresAt = 0;
+            return null;
+        }
+        return token;
+    }
+
+    async _fetchCapabilities({ force = false } = {}) {
+        const cached = this._capabilitiesCache;
+        if (!force && cached && (nowMs() - cached.at) < CAPABILITIES_TTL_MS) return cached.data;
+        const response = await this._http(this.binding.serverUrl, {
+            method: 'GET',
+            path: '/api/mobile/v1/capabilities',
+            allowInsecureTls: this.binding.allowInsecureTls,
+        });
+        if (!response.ok) throw httpError(response, 'capabilities failed');
+        this._capabilitiesCache = { at: nowMs(), data: response.data };
+        if (response.data.serverId) {
+            this.binding.serverId = response.data.serverId;
+            this._saveBinding();
+        }
+        if (response.data.registryHash) this.state.registryHash = response.data.registryHash;
+        return response.data;
+    }
+
     async _bootstrapAll() {
-        let pageToken = null;
+        let pageToken = this._liveBootstrapToken();
+        let pagesThisRound = 0;
+        if (!this.binding.serverId) await this._fetchCapabilities();
         for (let i = 0; i < MAX_BOOTSTRAP_PAGES; i += 1) {
-            if (!this.binding.serverId) {
-                const capabilities = await requestJson(this.binding.serverUrl, {
-                    method: 'GET',
-                    path: '/api/mobile/v1/capabilities',
-                    allowInsecureTls: this.binding.allowInsecureTls,
-                });
-                if (capabilities.ok && capabilities.data.serverId) {
-                    this.binding.serverId = capabilities.data.serverId;
-                    this._saveBinding();
-                }
+            if (pagesThisRound >= MAX_PAGES_PER_ROUND) {
+                this._saveState();
+                this._rerun = true;
+                return;
             }
-            const page = await this._authorizedRequest({
-                method: 'GET',
-                path: '/api/mobile/v1/sync/bootstrap',
-                query: {
-                    pageToken: pageToken || undefined,
-                    pageSize: String(PAGE_SIZE),
-                },
-            });
+            let page;
+            try {
+                page = await this._authorizedRequest({
+                    method: 'GET',
+                    path: '/api/mobile/v1/sync/bootstrap',
+                    query: {
+                        pageToken: pageToken || undefined,
+                        pageSize: String(PAGE_SIZE),
+                    },
+                });
+            } catch (err) {
+                if (err.code === 'bootstrap_expired' && pageToken) {
+                    pageToken = null;
+                    this.state.bootstrapPageToken = null;
+                    this.state.bootstrapId = '';
+                    this.state.bootstrapPagesFetched = 0;
+                    this.state.bootstrapTokenExpiresAt = 0;
+                    continue;
+                }
+                throw err;
+            }
             const entities = Array.isArray(page.entities) ? page.entities : [];
             for (const entity of entities) await this._applyRemoteChange(entity);
             this.state.snapshotCursor = Number(page.snapshotCursor) || this.state.snapshotCursor;
             this.state.appliedCursor = this.state.snapshotCursor;
+            this.state.bootstrapId = page.bootstrapId || this.state.bootstrapId;
+            this.state.bootstrapPagesFetched = (Number(this.state.bootstrapPagesFetched) || 0) + 1;
+            pagesThisRound += 1;
             pageToken = page.nextPageToken || null;
             if (page.complete || !pageToken) {
                 this.state.bootstrapComplete = true;
+                this.state.bootstrapPageToken = null;
+                this.state.bootstrapTokenExpiresAt = 0;
                 this.state.ackedCursor = this.state.appliedCursor;
                 this._saveState();
                 if (this.state.appliedCursor > 0) {
@@ -720,6 +860,9 @@ class ZephyrOneLinkSync {
                 }
                 return;
             }
+            this.state.bootstrapPageToken = pageToken;
+            this.state.bootstrapTokenExpiresAt = nowMs() + PAGE_TOKEN_TTL_MS;
+            this._saveState();
         }
         const err = new Error('bootstrap exceeded page budget');
         err.code = 'bootstrap_incomplete';
@@ -728,7 +871,7 @@ class ZephyrOneLinkSync {
 
     async _pullChanges() {
         let cursor = this.state.appliedCursor;
-        for (let i = 0; i < 50; i += 1) {
+        for (let i = 0; i < MAX_PAGES_PER_ROUND; i += 1) {
             const page = await this._authorizedRequest({
                 method: 'GET',
                 path: '/api/mobile/v1/sync/changes',
@@ -748,6 +891,7 @@ class ZephyrOneLinkSync {
             this._saveState();
             if (!page.hasMore) return;
         }
+        this._rerun = true;
     }
 
     async _ack(cursor, appliedOpIds) {
@@ -767,16 +911,11 @@ class ZephyrOneLinkSync {
         if (!api || !this.binding) return;
         const user = this._localUser();
         if (!user) return;
-        const capabilities = await requestJson(this.binding.serverUrl, {
-            method: 'GET',
-            path: '/api/mobile/v1/capabilities',
-            allowInsecureTls: this.binding.allowInsecureTls,
-        });
-        if (!capabilities.ok) throw httpError(capabilities, 'capabilities failed');
-        if (capabilities.data.serverId) this.binding.serverId = capabilities.data.serverId;
-        const serverKey = capabilities.data.serverEncryption;
+        const capabilities = await this._fetchCapabilities();
+        const serverKey = capabilities.serverEncryption;
         if (!serverKey?.publicKey) return;
-        const registryHash = capabilities.data.registryHash || this.binding.registryHash;
+        const registryHash = capabilities.registryHash || this.binding.registryHash;
+        const lastPushed = this.state.lastPushedRevisions || {};
         const operations = [];
         for (const type of MIRROR_TYPES) {
             const adapter = api.adapters.get(type);
@@ -785,7 +924,9 @@ class ZephyrOneLinkSync {
             const rows = adapter.list(user) || [];
             for (const row of rows) {
                 const id = String(adapter.idOf(row));
-                const revision = adapter.revisionOf(row);
+                const revision = Number(adapter.revisionOf(row)) || 0;
+                const key = pushedKey(type, id);
+                if (Number(lastPushed[key] || 0) >= revision) continue;
                 const payload = this._pushPayload(spec, row);
                 const envelopes = this._sealSecrets({
                     spec,
@@ -793,7 +934,7 @@ class ZephyrOneLinkSync {
                     entityType: type,
                     entityId: id,
                     entityRevision: revision + 1,
-                    serverId: capabilities.data.serverId,
+                    serverId: capabilities.serverId,
                     serverKey,
                 });
                 operations.push({
@@ -825,9 +966,15 @@ class ZephyrOneLinkSync {
                 operations,
             },
         });
-        const accepted = (result.results || []).filter((item) => item.status === 'accepted').length;
+        const accepted = (result.results || []).filter((item) => item.status === 'accepted' || item.status === 'duplicate');
         const conflicts = (result.results || []).filter((item) => item.status === 'conflict').length;
-        this.state.pendingCount = Math.max(0, operations.length - accepted);
+        for (const item of accepted) {
+            const op = operations.find((row) => row.opId === item.opId);
+            if (!op) continue;
+            lastPushed[pushedKey(op.entityType, op.entityId)] = Number(item.revision) || (op.baseRevision + 1);
+        }
+        this.state.lastPushedRevisions = lastPushed;
+        this.state.pendingCount = Math.max(0, operations.length - accepted.length);
         this.state.conflictCount = conflicts;
         if (Number(result.serverCursor) > 0) this.state.appliedCursor = Number(result.serverCursor);
     }
@@ -890,6 +1037,7 @@ class ZephyrOneLinkSync {
         const entityId = String(change.entityId || '');
         if (change.action === 'delete') {
             try { adapter.remove(user, entityId, { actorDeviceId: this.binding.deviceId }); } catch { /* already gone */ }
+            delete this.state.lastPushedRevisions[pushedKey(entityType, entityId)];
             return;
         }
         const payload = { ...(change.payload || {}) };
@@ -898,19 +1046,26 @@ class ZephyrOneLinkSync {
         const existing = adapter.read(user, entityId);
         if (!existing) {
             adapter.create(user, entityId, payload, { actorDeviceId: this.binding.deviceId });
-            return;
+        } else {
+            const patch = {};
+            const mask = Array.isArray(change.fieldMask) && change.fieldMask.length
+                ? change.fieldMask
+                : Object.keys(payload);
+            for (const field of mask) {
+                if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
+            }
+            for (const field of spec.secretFields || []) {
+                if (Object.prototype.hasOwnProperty.call(opened, field)) patch[field] = opened[field];
+            }
+            adapter.update(user, entityId, patch, { actorDeviceId: this.binding.deviceId });
         }
-        const patch = {};
-        const mask = Array.isArray(change.fieldMask) && change.fieldMask.length
-            ? change.fieldMask
-            : Object.keys(payload);
-        for (const field of mask) {
-            if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
+        const applied = adapter.read(user, entityId);
+        const appliedRevision = applied && typeof adapter.revisionOf === 'function'
+            ? Number(adapter.revisionOf(applied)) || Number(change.revision) || 0
+            : Number(change.revision) || 0;
+        if (appliedRevision > 0) {
+            this.state.lastPushedRevisions[pushedKey(entityType, entityId)] = appliedRevision;
         }
-        for (const field of spec.secretFields || []) {
-            if (Object.prototype.hasOwnProperty.call(opened, field)) patch[field] = opened[field];
-        }
-        adapter.update(user, entityId, patch, { actorDeviceId: this.binding.deviceId });
     }
 
     _openSecrets(spec, change) {
@@ -1042,4 +1197,7 @@ module.exports = {
     clampInterval,
     detectDesktopPlatform,
     generateDeviceKeys,
+    MAX_PAGES_PER_ROUND,
+    PAGE_TOKEN_TTL_MS,
+    RATE_LIMIT_DEFAULT_SEC,
 };
