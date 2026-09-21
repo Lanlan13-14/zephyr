@@ -16812,8 +16812,13 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    overflow: hidden;
+    /* visible: Link interval/network menus are the homepage
+     * .ui-toggle-select-menu and must not be clipped. */
+    overflow: visible;
     margin-bottom: 16px;
+}
+#linkStatusGroup {
+    overflow: hidden;
 }
 .link-row {
     appearance: none;
@@ -16834,8 +16839,7 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
 }
 .link-group > .link-row:last-child,
 .link-group > .link-row-panel:last-child { border-bottom: 0; }
-.link-row-switch,
-.link-row-select { cursor: default; }
+.link-row-switch { cursor: default; }
 .link-row-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
 .link-row-copy strong { font-size: 14px; font-weight: 600; }
 .link-row-copy small { color: var(--text-secondary); font-size: 12px; }
@@ -16869,10 +16873,22 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
     padding: 8px 14px 14px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
-.link-row-select .ui-toggle-select {
-    flex: 0 0 auto;
-    width: min(220px, 46%);
-    min-width: 132px;
+.link-select-block {
+    display: grid;
+    gap: 8px;
+    padding: 12px 14px 14px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.link-select-block:last-child { border-bottom: 0; }
+.link-select-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .04em;
+}
+.link-select-block .ui-toggle-select {
+    width: 100%;
+    min-width: 0;
 }
 .link-enroll,
 .link-enroll-pending { padding: 16px; display: grid; gap: 12px; }
@@ -16897,11 +16913,11 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
 .link-enroll-code code { font-family: var(--font-mono); color: var(--text); }
 .link-device-row { padding: 4px 0; }
 @media (hover: hover) and (pointer: fine) {
-    .link-row:not(.link-row-switch):not(.link-row-select):hover {
+    .link-row:not(.link-row-switch):hover {
         background: color-mix(in srgb, var(--accent) 8%, transparent);
     }
 }
-.link-row:not(.link-row-switch):not(.link-row-select):active:not(:disabled) {
+.link-row:not(.link-row-switch):active:not(:disabled) {
     transform: scale(0.97);
 }
 .link-hero-foot .btn:active:not(:disabled) {
