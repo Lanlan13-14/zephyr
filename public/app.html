@@ -7,9 +7,9 @@
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
     <link rel="modulepreload" href="i18n/runtime.js?v=20260919-direct-ssh-no-jump">
-    <link rel="modulepreload" href="app.js?v=20260921-link-ui2">
+    <link rel="modulepreload" href="app.js?v=20260921-link-ui3">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
-    <link rel="stylesheet" href="style.css?v=20260921-link-ui2">
+    <link rel="stylesheet" href="style.css?v=20260921-link-ui3">
     <script src="liquid-glass-renderer.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-tab-layout.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-nav.js?v=20260916-agent-devices1" defer></script>
@@ -828,6 +828,20 @@
                             </div>
 
                             <p class="link-section-label" id="linkPolicyLabel" hidden data-i18n="策略">策略</p>
+                            <div class="link-filter-bar" id="linkFilterBar" hidden>
+                                <select id="linkIntervalSelect">
+                                    <option value="30">30 秒</option>
+                                    <option value="60">1 分钟</option>
+                                    <option value="300">5 分钟</option>
+                                    <option value="900">15 分钟</option>
+                                    <option value="1800">30 分钟</option>
+                                    <option value="3600">1 小时</option>
+                                </select>
+                                <select id="linkNetworkPolicySelect">
+                                    <option value="any" data-i18n="任意网络">任意网络</option>
+                                    <option value="wifiOnly" data-i18n="仅 Wi-Fi 传大文件">仅 Wi-Fi 传大文件</option>
+                                </select>
+                            </div>
                             <div class="link-group" id="linkPolicyGroup" hidden>
                                 <label class="link-row link-row-switch" for="linkAutoSyncToggleRow">
                                     <span class="link-row-copy">
@@ -838,24 +852,6 @@
                                         <span aria-hidden="true"></span>
                                     </span>
                                 </label>
-                                <div class="link-select-block">
-                                    <label class="link-select-label" for="linkIntervalSelect" data-i18n="目标间隔">目标间隔</label>
-                                    <select id="linkIntervalSelect">
-                                        <option value="30">30 秒</option>
-                                        <option value="60">1 分钟</option>
-                                        <option value="300">5 分钟</option>
-                                        <option value="900">15 分钟</option>
-                                        <option value="1800">30 分钟</option>
-                                        <option value="3600">1 小时</option>
-                                    </select>
-                                </div>
-                                <div class="link-select-block">
-                                    <label class="link-select-label" for="linkNetworkPolicySelect" data-i18n="网络策略">网络策略</label>
-                                    <select id="linkNetworkPolicySelect">
-                                        <option value="any" data-i18n="任意网络">任意网络</option>
-                                        <option value="wifiOnly" data-i18n="仅 Wi-Fi 传大文件">仅 Wi-Fi 传大文件</option>
-                                    </select>
-                                </div>
                                 <button type="button" class="link-row" id="linkBindRow" hidden>
                                     <span class="link-row-copy">
                                         <strong data-i18n="绑定主端">绑定主端</strong>
@@ -1417,7 +1413,7 @@
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
 <script src="preview-mock.js?v=20260919-direct-ssh-no-jump" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260921-link-ui2" type="module"></script>
+<script src="app.js?v=20260921-link-ui3" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

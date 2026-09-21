@@ -125,6 +125,59 @@ test('desktop link engine caps pages per round and resumes bootstrap from a chec
     assert.doesNotMatch(src, /for \(let i = 0; i < MAX_BOOTSTRAP_PAGES; i \+= 1\) \{\s*if \(!this\.binding\.serverId\)/);
 });
 
+test('canonicalRequestPath drops undefined query keys the same way requestJson does', (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const { canonicalRequestPath } = mod;
+    assert.equal(
+        canonicalRequestPath('/api/mobile/v1/sync/bootstrap', { pageToken: undefined, pageSize: '100' }),
+        '/api/mobile/v1/sync/bootstrap?pageSize=100',
+    );
+    assert.equal(
+        canonicalRequestPath('/api/mobile/v1/sync/bootstrap', { pageToken: null, pageSize: 100 }),
+        '/api/mobile/v1/sync/bootstrap?pageSize=100',
+    );
+    assert.equal(
+        canonicalRequestPath('/api/mobile/v1/sync/bootstrap', { pageToken: 'page-2', pageSize: '100' }),
+        '/api/mobile/v1/sync/bootstrap?pageSize=100&pageToken=page-2',
+    );
+    assert.equal(
+        canonicalRequestPath('/api/mobile/v1/sync/changes', { sinceCursor: '4', limit: '200' }),
+        '/api/mobile/v1/sync/changes?limit=200&sinceCursor=4',
+    );
+    assert.doesNotMatch(
+        canonicalRequestPath('/api/mobile/v1/sync/bootstrap', { pageToken: undefined, pageSize: '100' }),
+        /pageToken=undefined/,
+    );
+});
+
+test('bootstrap GET proof is signed for the on-the-wire URL, not URLSearchParams(object)', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const challengePaths = [];
+    const { sync } = bindDesktopSync(mod, {
+        httpRequest: async (_base, opts) => {
+            if (opts.path === '/api/mobile/v1/devices/proof-challenge') {
+                challengePaths.push(opts.body.path);
+                return challengeOk(opts);
+            }
+            if (opts.path === '/api/mobile/v1/sync/bootstrap') {
+                return {
+                    ok: true, status: 200, headers: {},
+                    data: { entities: [], snapshotCursor: 1, nextPageToken: null, complete: true, bootstrapId: 'b1' },
+                };
+            }
+            if (opts.path === '/api/mobile/v1/sync/ack') {
+                return { ok: true, status: 200, headers: {}, data: { ok: true } };
+            }
+            throw new Error('unexpected ' + opts.path);
+        },
+    });
+    await sync.syncNow({ trigger: 'manual' });
+    assert.ok(challengePaths.includes('/api/mobile/v1/sync/bootstrap?pageSize=100'));
+    assert.equal(challengePaths.some((p) => String(p).includes('pageToken=undefined')), false);
+});
+
 function bindDesktopSync(mod, { httpRequest, sleepFn } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'one-link-'));
     const keys = mod.generateDeviceKeys();

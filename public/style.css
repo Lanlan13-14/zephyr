@@ -16873,22 +16873,18 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
     padding: 8px 14px 14px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
-.link-select-block {
+.link-filter-bar {
     display: grid;
-    gap: 8px;
-    padding: 12px 14px 14px;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin: 0 0 16px;
 }
-.link-select-block:last-child { border-bottom: 0; }
-.link-select-label {
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: .04em;
-}
-.link-select-block .ui-toggle-select {
+.link-filter-bar .ui-toggle-select {
     width: 100%;
     min-width: 0;
+}
+@media (min-width: 761px) {
+    .link-filter-bar { grid-template-columns: 1fr 1fr; }
 }
 .link-enroll,
 .link-enroll-pending { padding: 16px; display: grid; gap: 12px; }

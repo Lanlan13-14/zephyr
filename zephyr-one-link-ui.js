@@ -137,6 +137,7 @@
         setHidden($('linkStatusLabel'), false);
         setHidden($('linkStatusGroup'), false);
         setHidden($('linkPolicyLabel'), false);
+        setHidden($('linkFilterBar'), false);
         setHidden($('linkPolicyGroup'), false);
         setHidden($('linkShares'), true);
         setHidden($('linkBindRow'), bound || waiting);
