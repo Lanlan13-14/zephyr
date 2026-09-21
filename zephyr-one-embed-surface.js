@@ -74,11 +74,13 @@ const HTML_TAG = '<html lang="zh-CN" data-theme="dark">';
 const FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">';
 const ONE_FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/zephyr-one-mark.svg">';
 
-/* Agent tab stays Agent management. File sync is the existing Link panel,
- * shown only inside One and wired by zephyr-one-link-ui.js. */
+/* Agent management belongs to the hosted main, not to desktop One. The
+ * shared app.html still ships the tab (browser Zephyr binds Agents there);
+ * One drops it and keeps Zephyr Link as the interconnect surface. */
 const AGENT_TAB_BUTTON = '<button class="settings-tab" data-settings="agent" data-i18n="Zephyr Client">Zephyr Client</button>';
+const AGENT_PANEL_OPEN = '<div class="settings-panel" id="settings-agent">';
+const LINK_PANEL_OPEN = '<div class="settings-panel" id="settings-link">';
 const LINK_TAB_BUTTON = '<button class="settings-tab force-hidden" id="linkSettingsTab" data-settings="link" data-i18n="文件同步">Zephyr Link</button>';
-const LINK_HEADING = '<h2 data-i18n="文件同步">Zephyr Link</h2>';
 
 /* Browser Zephyr keeps the v1.1.500 Agent-backed storage switch. Only One has
  * a native picker, so its local folder controls are introduced by this embed
@@ -184,6 +186,23 @@ function replaceSecurityPanelBody(html) {
     return html.slice(0, bodyStart) + ONE_SECURITY_PANEL_BODY + html.slice(closeAt);
 }
 
+/**
+ * Removes the Agent settings tab body. The tab button is dropped by EDITS;
+ * the panel has to go too or a restored `settingsSubTab=agent` would land on
+ * an empty pane. Bounded by the Link panel that follows it in app.html.
+ */
+function dropAgentPanel(html) {
+    const open = html.indexOf(AGENT_PANEL_OPEN);
+    if (open < 0) return html;
+    const next = html.indexOf(LINK_PANEL_OPEN, open + AGENT_PANEL_OPEN.length);
+    if (next < 0) {
+        throw new Error(
+            'zephyr-one embedded surface: could not find #settings-link after #settings-agent',
+        );
+    }
+    return html.slice(0, open) + html.slice(next);
+}
+
 const EDITS = [
     {
         name: 'drop-logout-button',
@@ -218,19 +237,14 @@ const EDITS = [
         to: ONE_FAVICON_LINK,
     },
     {
-        name: 'rename-agent-tab',
+        name: 'drop-agent-tab',
         from: AGENT_TAB_BUTTON,
-        to: '<button class="settings-tab" data-settings="agent" data-i18n="Zephyr Agent">Zephyr Agent</button>',
+        to: '',
     },
     {
         name: 'show-link-tab',
         from: LINK_TAB_BUTTON,
-        to: '<button class="settings-tab" id="linkSettingsTab" data-settings="link" data-i18n="Zephyr Link">Zephyr Link</button>',
-    },
-    {
-        name: 'rename-link-heading',
-        from: LINK_HEADING,
-        to: '<h2 data-i18n="Zephyr Link">Zephyr Link</h2>',
+        to: '<button class="settings-tab" id="linkSettingsTab" data-settings="link" data-i18n="文件同步">Zephyr Link</button>',
     },
     {
         name: 'use-one-folder-mapping-controls',
@@ -301,12 +315,11 @@ function injectOverlayScript(html, src = EMBED_RDP_SETTINGS_SCRIPT) {
 /**
  * Resolve the `[start, end)` slice an edit is allowed to touch.
  *
- * Most edits match a globally unique fragment. Some do not: the "Zephyr Client"
- * h2 appears both in the agent panel (which One renames) and in the About panel
- * (which must keep the name, it is a download link). For those, `within` /
- * `until` bound the search to one region so the edit cannot reach the other
- * occurrence — and so a duplicate *inside* the region is still an error rather
- * than a silent first-match replacement.
+ * Most edits match a globally unique fragment. Some do not: historically the
+ * "Zephyr Client" h2 appeared in both the Agent panel and About. One now
+ * drops the Agent panel entirely, but `within` / `until` still bound any
+ * remaining region-scoped edit so a duplicate *inside* the region is an
+ * error rather than a silent first-match replacement.
  *
  * @param {string} html
  * @param {{ within?: string, until?: string, name: string }} edit
@@ -370,6 +383,12 @@ function applyEmbeddedSurface(source) {
     const withOnePanel = replaceSecurityPanelBody(html);
     if (withOnePanel !== html) applied.push('replace-security-panel');
     else skipped.push('replace-security-panel');
+    html = withOnePanel;
+
+    const withoutAgent = dropAgentPanel(html);
+    if (withoutAgent !== html) applied.push('drop-agent-panel');
+    else skipped.push('drop-agent-panel');
+    html = withoutAgent;
 
     return {
         /* Two overlays, injected in dependency order. The security script
@@ -379,7 +398,7 @@ function applyEmbeddedSurface(source) {
          * a module and therefore deferred. */
         html: injectOverlayScript(
             injectOverlayScript(
-                injectOverlayScript(injectStylesheet(withOnePanel), EMBED_SECURITY_SCRIPT),
+                injectOverlayScript(injectStylesheet(html), EMBED_SECURITY_SCRIPT),
                 EMBED_RDP_SETTINGS_SCRIPT,
             ),
             EMBED_LINK_SCRIPT,
@@ -406,5 +425,6 @@ module.exports = {
     BROWSER_AGENT_STORAGE_ROW,
     ONE_FOLDER_STORAGE_CONTROLS,
     replaceSecurityPanelBody,
+    dropAgentPanel,
     EDITS,
 };
