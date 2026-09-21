@@ -25,6 +25,8 @@ test('Link panel markup matches Android FileSyncScreen groups, not a native form
     const panel = html.slice(html.indexOf('id="settings-link"'), html.indexOf('id="settings-data"'));
     assert.match(panel, /<select id="linkIntervalSelect">/);
     assert.match(panel, /<select id="linkNetworkPolicySelect">/);
+    assert.match(panel, /class="link-select-block"/);
+    assert.doesNotMatch(panel, /link-row-select/);
 });
 
 test('Link interval and network selects join the homepage toggle + mac motion set', () => {
@@ -53,4 +55,16 @@ test('Link motion CSS stays GPU-only with press scale and reduced-motion', () =>
     assert.match(css, /cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
     assert.doesNotMatch(css.slice(css.indexOf('/* Zephyr Link')), /transition:\s*all/);
     assert.doesNotMatch(css.slice(css.indexOf('/* Zephyr Link')), /scale\(0\)/);
+});
+
+test('Link interval/network dropdowns are the homepage pill, not a clipped row chip', () => {
+    const linkCss = css.slice(css.indexOf('/* Zephyr Link'));
+    assert.match(linkCss, /\.link-group \{[\s\S]*?overflow:\s*visible/);
+    assert.match(linkCss, /\.link-select-block \.ui-toggle-select \{[\s\S]*?width:\s*100%/);
+    assert.doesNotMatch(linkCss, /link-row-select \.ui-toggle-select/);
+    assert.doesNotMatch(linkCss, /width:\s*min\(220px/);
+    assert.match(appJs, /function enhanceToggleSelect\(select\)/);
+    assert.match(appJs, /function openToggleSelectMenu\(shell\)/);
+    assert.match(appJs, /Motion\.morph\(menu, from, \{[\s\S]*?preset:\s*'mac'/);
+    assert.match(appJs, /MOTION_FILTER_SELECT_IDS\.includes\(shell\.dataset\?\.selectId/);
 });

@@ -1,7 +1,7 @@
-const CACHE_NAME = 'zephyr-static-20260921-link-ui1';
+const CACHE_NAME = 'zephyr-static-20260921-link-ui2';
 const PRECACHE = [
-    '/app.js?v=20260921-link-ui1',
-    '/style.css?v=20260921-link-ui1',
+    '/app.js?v=20260921-link-ui2',
+    '/style.css?v=20260921-link-ui2',
     '/i18n/runtime.js?v=20260919-direct-ssh-no-jump',
     '/i18n/locales/en.json?v=20260919-direct-ssh-no-jump',
     '/i18n/locales/zh-CN.json?v=20260919-direct-ssh-no-jump',
