@@ -44,6 +44,7 @@ test('motion opt-in set covers dashboard filters + settings/appearance/terminal 
         'languageSelect', 'proxyType',
         'adminUserRole',
         'jumpRouteSelect',
+        'linkIntervalSelect', 'linkNetworkPolicySelect',
     ];
     assert.deepEqual(ids.sort(), expected.sort());
     for (const id of ['connProtocol', 'connSshKey', 'connEncoding', 'connRoute']) {

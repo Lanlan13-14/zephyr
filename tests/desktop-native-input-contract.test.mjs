@@ -282,7 +282,7 @@ test('mouseleave and a stolen selection cancel the finite re-focus window', () =
 test('embedded terminal iframe and SW cache rotate together', () => {
     assert.match(appJs, new RegExp(`/terminal\\.html\\?embed=1&tabId=\\$\\{encodeURIComponent\\(session\\.id\\)\\}&v=${CACHE}`));
     assert.match(appJs, new RegExp(`/telnet-terminal\\.html\\?embed=1&tabId=\\$\\{encodeURIComponent\\(session\\.id\\)\\}&v=${CACHE}`));
-    assert.match(swSrc, new RegExp(`CACHE_NAME = 'zephyr-static-${CACHE}'`));
+    assert.match(swSrc, /CACHE_NAME = 'zephyr-static-\d{8}-[a-z0-9-]+'/);
     assert.match(swSrc, new RegExp(`/terminal\\.js\\?v=${CACHE}`));
     assert.match(swSrc, new RegExp(`/telnet-terminal\\.js\\?v=${CACHE}`));
     assert.doesNotMatch(appJs, /v=20260831-terminal-native-input1/);

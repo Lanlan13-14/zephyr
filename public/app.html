@@ -7,9 +7,9 @@
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
     <link rel="modulepreload" href="i18n/runtime.js?v=20260919-direct-ssh-no-jump">
-    <link rel="modulepreload" href="app.js?v=20260919-direct-ssh-no-jump">
+    <link rel="modulepreload" href="app.js?v=20260921-link-ui1">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
-    <link rel="stylesheet" href="style.css?v=20260919-mobile-input1">
+    <link rel="stylesheet" href="style.css?v=20260921-link-ui1">
     <script src="liquid-glass-renderer.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-tab-layout.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-nav.js?v=20260916-agent-devices1" defer></script>
@@ -771,56 +771,113 @@
                         </div>
                         <div class="settings-panel" id="settings-link">
                             <h2 data-i18n="文件同步">Zephyr Link</h2>
-                            <p class="muted" data-i18n="Zephyr Link 同步连接、笔记、密钥元数据等到本机。绑定后按间隔自动同步。">Zephyr Link 同步连接、笔记、密钥元数据等到本机。绑定后按间隔自动同步。</p>
+                            <p class="muted link-lede" data-i18n="Zephyr Link 同步连接、笔记、密钥元数据等到本机。绑定后按间隔自动同步。">Zephyr Link 同步连接、笔记、密钥元数据等到本机。绑定后按间隔自动同步。</p>
 
-                            <div class="link-bind-status" id="linkBindStatus">
-                                <p class="empty-state" data-i18n="未绑定">未绑定</p>
+                            <div class="link-bind-status" id="linkBindStatus"></div>
+
+                            <section class="link-hero" id="linkSyncSettings" hidden>
+                                <div class="link-hero-top">
+                                    <span class="link-hero-mark" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none"><path d="M4.5 12a7.5 7.5 0 0 1 12.7-5.4l1.3-1.3V9h-3.7l1.2-1.2A5.5 5.5 0 1 0 17.5 12h2A7.5 7.5 0 0 1 4.5 12Zm15 0a7.5 7.5 0 0 1-12.7 5.4L5.5 18.7V15h3.7l-1.2 1.2A5.5 5.5 0 1 0 6.5 12h-2Z" fill="currentColor"/></svg>
+                                    </span>
+                                    <div class="link-hero-copy">
+                                        <p class="link-hero-phase" id="linkSyncStatus" role="status" aria-live="polite"></p>
+                                        <p class="link-hero-sub" id="linkSyncSub"></p>
+                                    </div>
+                                    <label class="connection-share-switch" for="linkAutoSyncToggle" title="自动同步">
+                                        <input type="checkbox" id="linkAutoSyncToggle" />
+                                        <span aria-hidden="true"></span>
+                                    </label>
+                                </div>
+                                <div class="link-hero-progress" aria-hidden="true"><span id="linkSyncProgress"></span></div>
+                                <div class="link-hero-foot">
+                                    <p class="link-hero-pending" id="linkPendingText"></p>
+                                    <button type="button" class="btn btn-primary" id="linkSyncNowBtn" data-i18n="立即同步">立即同步</button>
+                                </div>
+                            </section>
+
+                            <p class="link-section-label" id="linkStatusLabel" hidden data-i18n="状态">状态</p>
+                            <div class="link-group" id="linkStatusGroup" hidden>
+                                <button type="button" class="link-row" id="linkConflicts" data-link-section="conflicts">
+                                    <span class="link-row-icon warn" aria-hidden="true">!</span>
+                                    <span class="link-row-copy">
+                                        <strong data-i18n="冲突中心">冲突中心</strong>
+                                        <small id="linkConflictMeta"></small>
+                                    </span>
+                                    <span class="link-row-badge" id="linkConflictBadge" hidden></span>
+                                    <span class="link-row-chevron" aria-hidden="true"></span>
+                                </button>
+                                <div class="link-row-panel" id="linkConflictList" hidden></div>
+                                <button type="button" class="link-row" id="linkDevices" data-link-section="devices">
+                                    <span class="link-row-icon" aria-hidden="true"></span>
+                                    <span class="link-row-copy">
+                                        <strong data-i18n="One 设备">One 设备</strong>
+                                        <small id="linkDeviceMeta"></small>
+                                    </span>
+                                    <span class="link-row-chevron" aria-hidden="true"></span>
+                                </button>
+                                <div class="link-row-panel" id="linkDeviceList" hidden></div>
+                                <button type="button" class="link-row" id="linkDiagnostics" data-link-section="diagnostics">
+                                    <span class="link-row-icon" aria-hidden="true"></span>
+                                    <span class="link-row-copy">
+                                        <strong data-i18n="诊断">诊断</strong>
+                                        <small id="linkDiagnosticsText"></small>
+                                    </span>
+                                    <span class="link-row-chevron" aria-hidden="true"></span>
+                                </button>
                             </div>
 
-                            <div class="link-sync-settings" id="linkSyncSettings" style="display:none">
-                                <h3 data-i18n="同步设置">同步设置</h3>
-                                <label class="z-check">
-                                    <input type="checkbox" id="linkAutoSyncToggle" />
-                                    <span data-i18n="自动同步">自动同步</span>
+                            <p class="link-section-label" id="linkPolicyLabel" hidden data-i18n="策略">策略</p>
+                            <div class="link-group" id="linkPolicyGroup" hidden>
+                                <label class="link-row link-row-switch" for="linkAutoSyncToggleRow">
+                                    <span class="link-row-copy">
+                                        <strong data-i18n="自动同步">自动同步</strong>
+                                    </span>
+                                    <span class="connection-share-switch">
+                                        <input type="checkbox" id="linkAutoSyncToggleRow" />
+                                        <span aria-hidden="true"></span>
+                                    </span>
                                 </label>
-                                <div class="form-group">
-                                    <label data-i18n="同步间隔">同步间隔</label>
+                                <div class="link-row link-row-select">
+                                    <span class="link-row-copy">
+                                        <strong data-i18n="目标间隔">目标间隔</strong>
+                                    </span>
                                     <select id="linkIntervalSelect">
+                                        <option value="30">30 秒</option>
+                                        <option value="60">1 分钟</option>
                                         <option value="300">5 分钟</option>
                                         <option value="900">15 分钟</option>
                                         <option value="1800">30 分钟</option>
                                         <option value="3600">1 小时</option>
                                     </select>
                                 </div>
-                                <div class="form-group">
-                                    <label data-i18n="网络策略">网络策略</label>
+                                <div class="link-row link-row-select">
+                                    <span class="link-row-copy">
+                                        <strong data-i18n="网络策略">网络策略</strong>
+                                    </span>
                                     <select id="linkNetworkPolicySelect">
-                                        <option value="any" data-i18n="任何网络">任何网络</option>
-                                        <option value="wifiOnly" data-i18n="仅 Wi-Fi">仅 Wi-Fi</option>
+                                        <option value="any" data-i18n="任意网络">任意网络</option>
+                                        <option value="wifiOnly" data-i18n="仅 Wi-Fi 传大文件">仅 Wi-Fi 传大文件</option>
                                     </select>
                                 </div>
-                                <button type="button" class="z-btn z-btn-primary" id="linkSyncNowBtn" data-i18n="立即同步">立即同步</button>
-                                <p class="field-hint" id="linkSyncStatus" role="status" aria-live="polite"></p>
+                                <button type="button" class="link-row" id="linkBindRow" hidden>
+                                    <span class="link-row-copy">
+                                        <strong data-i18n="绑定主端">绑定主端</strong>
+                                        <small data-i18n="系统浏览器批准设备公钥">系统浏览器批准设备公钥</small>
+                                    </span>
+                                    <span class="link-row-chevron" aria-hidden="true"></span>
+                                </button>
+                                <button type="button" class="link-row danger" id="linkUnbindBtn" hidden>
+                                    <span class="link-row-copy">
+                                        <strong data-i18n="解绑并删除本地镜像">解绑并删除本地镜像</strong>
+                                        <small data-i18n="先 revoke 后清本机">先 revoke 后清本机</small>
+                                    </span>
+                                    <span class="link-row-chevron" aria-hidden="true"></span>
+                                </button>
                             </div>
 
-                            <div class="link-devices" id="linkDevices" style="display:none">
-                                <h3 data-i18n="设备">设备</h3>
-                                <div class="link-device-list" id="linkDeviceList"></div>
-                            </div>
-
-                            <div class="link-shares" id="linkShares" style="display:none">
-                                <h3 data-i18n="共享">共享</h3>
+                            <div class="link-shares" id="linkShares" hidden>
                                 <div class="link-share-list" id="linkShareList"></div>
-                            </div>
-
-                            <div class="link-conflicts" id="linkConflicts" style="display:none">
-                                <h3 data-i18n="冲突">冲突</h3>
-                                <div class="link-conflict-list" id="linkConflictList"></div>
-                            </div>
-
-                            <div class="link-diagnostics" id="linkDiagnostics" style="display:none">
-                                <h3 data-i18n="诊断">诊断</h3>
-                                <p class="field-hint" id="linkDiagnosticsText"></p>
                             </div>
                         </div>
                         <div class="settings-panel" id="settings-data">
@@ -1364,7 +1421,7 @@
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
 <script src="preview-mock.js?v=20260919-direct-ssh-no-jump" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260919-direct-ssh-no-jump" type="module"></script>
+<script src="app.js?v=20260921-link-ui1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

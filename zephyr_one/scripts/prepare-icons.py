@@ -52,7 +52,12 @@ DEFAULT_THEME = "frost"
 RUNTIME_SIZE = 128
 # Below this edge length the "One" wordmark is dropped. See
 # simplify_for_small_size() for the measurement behind the number.
-WORDMARK_MIN_SIZE = 64
+#
+# Android's launcher always shows the outlined wordmark (vector, 108dp).
+# Desktop must match that at the sizes the OS actually displays: Windows
+# taskbar / Start (32–48), Explorer (32+), and every 64px+ frame. 16px is
+# still below the pixel grid for letterforms, so only that frame simplifies.
+WORDMARK_MIN_SIZE = 32
 MASTER_SIZE = 1024
 
 # Bundle set. Keys are file names, values the square edge length.
