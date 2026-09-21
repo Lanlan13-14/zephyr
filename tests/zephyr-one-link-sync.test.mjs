@@ -107,8 +107,9 @@ test('embed surface shows Zephyr Link instead of renaming Agent to 文件同步'
     const { applyEmbeddedSurface } = require('../zephyr-one-embed-surface.js');
     const html = fs.readFileSync(path.join(root, 'public/app.html'), 'utf8');
     const transformed = applyEmbeddedSurface(html).html;
-    assert.match(transformed, /data-settings="agent" data-i18n="Zephyr Agent"/);
-    assert.match(transformed, /id="linkSettingsTab"[^>]*data-i18n="Zephyr Link"/);
+    assert.doesNotMatch(transformed, /data-settings="agent"/);
+    assert.doesNotMatch(transformed, /id="settings-agent"/);
+    assert.match(transformed, /id="linkSettingsTab"[^>]*data-i18n="文件同步"/);
     assert.match(transformed, /zephyr-one-link-ui\.js/);
     assert.doesNotMatch(transformed, /zephyr-one-native-rdp\.js/);
 });

@@ -5,7 +5,9 @@
 .settings-tab[data-settings="mail"],
 #settings-mail,
 .settings-tab[data-settings="beian"],
-#settings-beian {
+#settings-beian,
+.settings-tab[data-settings="agent"],
+#settings-agent {
   display: none !important;
 }
 

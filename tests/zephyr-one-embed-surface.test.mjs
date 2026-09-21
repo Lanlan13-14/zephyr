@@ -75,20 +75,33 @@ test('every fragment the transform depends on appears exactly once in its scope'
     }
 });
 
+test('desktop One settings has Zephyr Link and no Agent management', () => {
+    const { html } = applyEmbeddedSurface(APP_HTML);
+    assert.match(html, /id="linkSettingsTab"[^>]*data-i18n="文件同步"/);
+    assert.match(html, /id="settings-link"/);
+    assert.doesNotMatch(html, /data-settings="agent"/);
+    assert.doesNotMatch(html, /id="settings-agent"/);
+    assert.doesNotMatch(html, /id="agentDeviceList"/);
+    assert.doesNotMatch(html, /已绑定的 Zephyr Agent/);
+    assert.match(html, /id="aboutAgentReleaseLink"/);
+});
+
 test('the About panel keeps the Zephyr Client download name', () => {
     const heading = '<h2 data-i18n="Zephyr Client">Zephyr Client</h2>';
     assert.equal(countOccurrences(APP_HTML, heading), 1, 'the About heading is unique now');
     const { html } = applyEmbeddedSurface(APP_HTML);
     assert.match(html, /id="settings-about"[\s\S]*Zephyr Client/);
-    assert.match(html, /data-settings="agent" data-i18n="Zephyr Agent"/);
-    assert.match(html, /id="linkSettingsTab"[^>]*data-i18n="Zephyr Link"/);
+    assert.doesNotMatch(html, /data-settings="agent"/);
+    assert.doesNotMatch(html, /id="settings-agent"/);
+    assert.match(html, /id="linkSettingsTab"[^>]*data-i18n="文件同步"/);
 });
 
 test('transform replaces the security panel body and removes logout', () => {
     const { html, applied } = applyEmbeddedSurface(APP_HTML);
 
-    // Every structural edit fired against real markup, plus the panel rebuild.
-    assert.deepEqual(applied, [...EDITS.map((e) => e.name), 'replace-security-panel']);
+    // Every structural edit fired against real markup, plus the panel rebuild
+    // and the Agent-settings drop.
+    assert.deepEqual(applied, [...EDITS.map((e) => e.name), 'replace-security-panel', 'drop-agent-panel']);
 
     /* The tab stays. It is a valid landing target again, and app.js falls back
      * to clicking `[data-settings="security"]` in two places when the active tab
@@ -167,7 +180,7 @@ test('transform is idempotent', () => {
     // rebuild detects its own marker and reports itself skipped for the same
     // reason, so a double-applied transform cannot nest two switches.
     assert.deepEqual(twice.applied, []);
-    assert.deepEqual(twice.skipped, [...EDITS.map((e) => e.name), 'replace-security-panel']);
+    assert.deepEqual(twice.skipped, [...EDITS.map((e) => e.name), 'replace-security-panel', 'drop-agent-panel']);
     assert.equal(countOccurrences(twice.html, 'id="oneRevealRequiresUnlock"'), 1);
 });
 
@@ -186,15 +199,14 @@ test('embed stylesheet route supports source and staged layouts', () => {
 
 test('a markup change that defeats the transform throws instead of degrading', () => {
     /* Source absent AND result absent -> app.html changed shape. Asserted on
-     * `rename-agent-tab`, which is a real remaining edit; the language-promotion
-     * edits this used to target were removed when security became the landing
-     * panel again, and an assertion against a deleted edit would pass for the
-     * wrong reason. */
+     * `show-link-tab`, which has a non-empty replacement. Removal edits with
+     * empty `to` treat a missing source as already applied, so they cannot
+     * prove the throw path. */
     const mangled = APP_HTML.replace(
-        '<button class="settings-tab" data-settings="agent" data-i18n="Zephyr Client">Zephyr Client</button>',
-        '<button class="settings-tab" data-settings="client" data-i18n="Zephyr Client">Zephyr Client</button>',
+        '<button class="settings-tab force-hidden" id="linkSettingsTab" data-settings="link" data-i18n="文件同步">Zephyr Link</button>',
+        '<button class="settings-tab force-hidden" id="linkSettingsTab" data-settings="sync" data-i18n="文件同步">Zephyr Link</button>',
     );
-    assert.throws(() => applyEmbeddedSurface(mangled), /rename-agent-tab/);
+    assert.throws(() => applyEmbeddedSurface(mangled), /show-link-tab/);
 
     // Duplicated fragment -> ambiguous target.
     const duplicated = APP_HTML.replace(
@@ -246,12 +258,13 @@ test('embedded mode skips the login page only after one-time bootstrap', () => {
 
 test('stage script stages the One stylesheet from the repository root', () => {
     assert.match(STAGE_SH, /cp "\$REPO\/zephyr-one-embed\.css" "\$OUT\/public\/zephyr-one-embed\.css"/);
-    for (const selector of ['admin', 'mail', 'beian']) {
+    for (const selector of ['admin', 'mail', 'beian', 'agent']) {
         assert.ok(
             EMBED_CSS.includes(`.settings-tab[data-settings="${selector}"]`),
             `embed CSS should hide the ${selector} settings tab`,
         );
     }
+    assert.ok(EMBED_CSS.includes('#settings-agent'), 'embed CSS should hide the Agent panel');
 });
 
 test('backup / restore stays reachable in One', () => {
