@@ -27,6 +27,7 @@ const windowsRelease = process.platform === 'win32' && app.isPackaged;
 let mainWindow = null;
 let productWindow = null;
 let watchersStarted = false;
+let enteringProduct = null;
 
 function emitRuntimeProgress(pct, message) {
   const payload = { pct: Number(pct) || 0, message: String(message || '') };
@@ -154,6 +155,14 @@ async function restartProduct() {
 }
 
 async function enterProduct() {
+  if (enteringProduct) return enteringProduct;
+  enteringProduct = openProductWindow().finally(() => {
+    enteringProduct = null;
+  });
+  return enteringProduct;
+}
+
+async function openProductWindow() {
   const info = runtimeInfo();
   if (!info.running || !info.baseUrl) {
     throw new Error('embedded product is not ready for trusted entry');
@@ -236,13 +245,15 @@ if (!gotLock) {
       await mainWindow.loadFile(index);
     }
 
-    /* Packaged Windows may pre-spawn Node so the overlay is not waiting on
-     * process launch, but the renderer still owns enterProduct. Hiding this
-     * window from here is what made first paint a black product window. */
+    /* Show the overlay first, then start Node. enterProduct still waits for
+     * the core, so first paint is never the black product window. Joining the
+     * renderer runtime_enter keeps a single Node and a single UI-ready marker. */
     if (shouldAutostart(process.env.ZEPHYR_ONE_AUTOSTART_RUNTIME, windowsRelease)) {
-      startRuntime().catch((error) => {
-        appendRuntimeLog(app.getPath('userData'), `runtime start failed: ${error.message}`);
-      });
+      startRuntime()
+        .then(() => enterProduct())
+        .catch((error) => {
+          appendRuntimeLog(app.getPath('userData'), `runtime start failed: ${error.message}`);
+        });
     }
   });
 }

@@ -106,12 +106,15 @@ test('the overlay is visible in HTML before any JS runs', () => {
     assert.doesNotMatch(overlay, /classList\.remove\('materialize'\)/);
 });
 
-test('Windows packaged boot no longer hides the overlay by entering the product from main', () => {
+test('Windows packaged boot shows the overlay before the product window', () => {
     assert.doesNotMatch(MAIN, /if \(windowsRelease\) kick\(\)/);
-    assert.match(MAIN, /startRuntime\(\)\.catch/);
-    assert.doesNotMatch(MAIN, /await startRuntime\(\);\s*await enterProduct\(\);/s);
+    assert.match(MAIN, /startRuntime\(\)/);
+    assert.match(MAIN, /\.then\(\(\) => enterProduct\(\)\)/);
     assert.match(MAIN, /ready-to-show/);
     assert.match(MAIN, /backgroundColor: '#090b0e'/);
+    const loadAt = MAIN.indexOf('await mainWindow.loadFile');
+    const enterAt = MAIN.indexOf('.then(() => enterProduct())');
+    assert.ok(loadAt >= 0 && enterAt > loadAt);
 });
 
 test('the product window completes unlocks over IPC instead of waiting on the 300ms watcher', () => {

@@ -45,10 +45,13 @@ test('release autostart starts only the child and defers every WebView operation
   assert.match(runtime, /export function shouldAutostart/);
   assert.match(main, /shouldAutostart\(process\.env\.ZEPHYR_ONE_AUTOSTART_RUNTIME, windowsRelease\)/);
   assert.match(main, /app\.setPath\('userData', path\.join\(app\.getPath\('appData'\), 'com\.zephyr\.one'\)\)/);
-  assert.match(main, /startRuntime\(\)\.catch/);
+  assert.match(main, /startRuntime\(\)/);
+  assert.match(main, /\.then\(\(\) => enterProduct\(\)\)/);
   assert.doesNotMatch(main, /if \(windowsRelease\) kick\(\);/);
-  assert.doesNotMatch(main, /await startRuntime\(\);\s*await enterProduct\(\);/s);
   assert.match(runtime, /state\.starting/);
+  const overlayAt = main.indexOf("path.join(app.getAppPath(), 'dist', 'index.html')");
+  const autostartAt = main.indexOf('.then(() => enterProduct())');
+  assert.ok(overlayAt >= 0 && autostartAt > overlayAt, 'overlay must load before autostart enters the product');
   assert.match(main, /instanceId: body\.instanceId/);
   assert.match(runtime, /instanceId: String\(instanceId \|\| ''\)/);
 });
