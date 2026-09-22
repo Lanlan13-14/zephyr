@@ -77,11 +77,8 @@ function startSequence() {
   const progress = $('progressContainer');
   const stage = $('launchStage');
   if (stage) stage.classList.remove('dismissed');
-  squircle?.classList.remove('materialize');
-  progress?.classList.remove('materialize');
-  logo?.classList.remove('blossom');
-  seed?.classList.remove('ignited');
-  if (squircle) void squircle.offsetWidth;
+  /* HTML already has materialize/blossom/ignited so first paint is not blank.
+   * Do not strip those classes here — that would hide the overlay until JS. */
   if (reduced) {
     squircle?.classList.add('materialize');
     progress?.classList.add('materialize');
@@ -89,12 +86,10 @@ function startSequence() {
     seed?.classList.add('ignited');
     return;
   }
-  window.setTimeout(() => {
-    squircle?.classList.add('materialize');
-    seed?.classList.add('ignited');
-  }, 50);
-  window.setTimeout(() => logo?.classList.add('blossom'), 200);
-  window.setTimeout(() => progress?.classList.add('materialize'), 320);
+  squircle?.classList.add('materialize');
+  seed?.classList.add('ignited');
+  logo?.classList.add('blossom');
+  progress?.classList.add('materialize');
 }
 
 function dismiss() {

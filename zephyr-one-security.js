@@ -296,6 +296,31 @@ class UnlockQueue {
         return null;
     }
 
+    /**
+     * Claim a specific request. Electron's product window can invoke
+     * auth_unlock directly; it must still go through the queue so the
+     * grant is minted by poll(). Same shell may reclaim its own claim.
+     */
+    claimById(id, { shellInstance } = {}) {
+        this.sweep();
+        const claimant = String(shellInstance || '');
+        if (!claimant) return null;
+        const entry = this.pending.get(String(id));
+        if (!entry) return null;
+        if (entry.state === 'done') return null;
+        if (entry.state === 'claimed' && entry.claimedBy && entry.claimedBy !== claimant) {
+            return null;
+        }
+        entry.state = 'claimed';
+        entry.claimedBy = claimant;
+        return {
+            id: entry.id,
+            username: entry.username,
+            purpose: entry.purpose,
+            reason: entry.reason,
+        };
+    }
+
     resolve(id, { username, purpose, ok, method, error }, { shellInstance } = {}) {
         const entry = this.pending.get(String(id));
         if (!entry || entry.state !== 'claimed') return false;
@@ -542,6 +567,12 @@ function mountRoutes(app, {
         const shell = requireShell(req, res, 'unlock.claim', []);
         if (!shell) return;
         res.json(unlocks.claim(shell) || { id: '', username: '', purpose: '', reason: '' });
+    });
+
+    app.get('/api/one/security/unlock-queue/:id', requireUser, (req, res) => {
+        const shell = requireShell(req, res, 'unlock.peek', [req.params.id]);
+        if (!shell) return;
+        res.json(unlocks.claimById(req.params.id, shell) || { id: '', username: '', purpose: '', reason: '' });
     });
 
     app.post('/api/one/security/unlock-queue/:id', requireUser, (req, res) => {

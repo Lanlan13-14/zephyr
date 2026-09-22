@@ -17,7 +17,7 @@ import {
   writeUiReadyMarker,
 } from './runtime.mjs';
 import { createShellIdentity } from './shell-auth.mjs';
-import { applyThemeIcon, spawnPickerWatcher, spawnThemeWatcher, spawnUnlockWatcher } from './watchers.mjs';
+import { applyThemeIcon, completeQueuedUnlock, spawnPickerWatcher, spawnThemeWatcher, spawnUnlockWatcher } from './watchers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const oneRoot = path.resolve(here, '..');
@@ -52,9 +52,9 @@ function createMainWindow() {
     minWidth: 880,
     minHeight: 600,
     title: 'Zephyr One',
-    show: true,
+    show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#101114',
+    backgroundColor: '#090b0e',
     icon: path.join(oneRoot, 'src-tauri', 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: {
       preload: preloadPath(),
@@ -62,6 +62,9 @@ function createMainWindow() {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  window.once('ready-to-show', () => {
+    if (!window.isDestroyed()) window.show();
   });
   window.on('closed', () => {
     mainWindow = null;
@@ -84,7 +87,7 @@ function createProductWindow() {
       preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
     },
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -202,6 +205,7 @@ function wireIpc() {
   ipcMain.handle('runtime_info', () => runtimeInfo());
   ipcMain.handle('runtime_stop', () => stopRuntime());
   ipcMain.handle('runtime_restart', () => restartProduct());
+  ipcMain.handle('security_complete_unlock', (_event, payload) => completeQueuedUnlock({ identity, payload }));
 }
 
 app.setName('Zephyr One');
@@ -232,17 +236,13 @@ if (!gotLock) {
       await mainWindow.loadFile(index);
     }
 
+    /* Packaged Windows may pre-spawn Node so the overlay is not waiting on
+     * process launch, but the renderer still owns enterProduct. Hiding this
+     * window from here is what made first paint a black product window. */
     if (shouldAutostart(process.env.ZEPHYR_ONE_AUTOSTART_RUNTIME, windowsRelease)) {
-      const kick = async () => {
-        try {
-          await startRuntime();
-          await enterProduct();
-        } catch (error) {
-          appendRuntimeLog(app.getPath('userData'), `runtime start failed: ${error.message}`);
-        }
-      };
-      if (windowsRelease) kick();
-      else setTimeout(kick, 2000);
+      startRuntime().catch((error) => {
+        appendRuntimeLog(app.getPath('userData'), `runtime start failed: ${error.message}`);
+      });
     }
   });
 }

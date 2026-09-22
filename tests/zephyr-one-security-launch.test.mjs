@@ -95,3 +95,31 @@ test('the One security switch stays enabled so a broken authenticator can be tur
     assert.match(UI, /toggle\.disabled = false/);
     assert.doesNotMatch(UI, /toggle\.disabled = caps\.known === true && caps\.available !== true/);
 });
+
+test('the overlay is visible in HTML before any JS runs', () => {
+    assert.match(HTML, /id="iconSquircle" class="icon-squircle materialize"|class="icon-squircle materialize"/);
+    assert.match(HTML, /class="logo-svg blossom"/);
+    assert.match(HTML, /class="seed-point ignited"/);
+    assert.match(HTML, /class="progress-container materialize"/);
+    assert.match(HTML, /#bootGate\.launch-gate \{ min-height: 100dvh/);
+    const overlay = read('zephyr_one/src/js/shell/launch-overlay.js');
+    assert.doesNotMatch(overlay, /classList\.remove\('materialize'\)/);
+});
+
+test('Windows packaged boot no longer hides the overlay by entering the product from main', () => {
+    assert.doesNotMatch(MAIN, /if \(windowsRelease\) kick\(\)/);
+    assert.match(MAIN, /startRuntime\(\)\.catch/);
+    assert.doesNotMatch(MAIN, /await startRuntime\(\);\s*await enterProduct\(\);/s);
+    assert.match(MAIN, /ready-to-show/);
+    assert.match(MAIN, /backgroundColor: '#090b0e'/);
+});
+
+test('the product window completes unlocks over IPC instead of waiting on the 300ms watcher', () => {
+    assert.match(UI, /security_complete_unlock/);
+    assert.match(MAIN, /ipcMain\.handle\('security_complete_unlock'/);
+    assert.match(WATCHERS, /export async function completeQueuedUnlock/);
+    assert.match(WATCHERS, /unlock\.peek/);
+    const security = read('zephyr-one-security.js');
+    assert.match(security, /claimById/);
+    assert.match(security, /unlock-queue\/:id/);
+});

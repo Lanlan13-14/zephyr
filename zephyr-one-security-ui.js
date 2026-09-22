@@ -71,6 +71,12 @@
      * app.js is inside a try/catch that toasts the message, so a rejection is
      * reported to the user rather than swallowed.
      */
+    function nativeUnlock() {
+        return window.zephyrOne && typeof window.zephyrOne.invoke === 'function'
+            ? window.zephyrOne
+            : null;
+    }
+
     async function runSystemUnlock(reason) {
         var filed = await api('/api/one/security/unlock', {
             method: 'POST',
@@ -78,6 +84,14 @@
         });
         var id = filed && filed.id;
         if (!id) throw new Error('\u65e0\u6cd5\u53d1\u8d77\u7cfb\u7edf\u89e3\u9501');
+
+        var bridge = nativeUnlock();
+        if (bridge) {
+            var verdict = await bridge.invoke('security_complete_unlock', { id: id, reason: reason || '' });
+            if (!verdict || !verdict.ok) {
+                throw new Error((verdict && verdict.error) || '\u7cfb\u7edf\u89e3\u9501\u5931\u8d25\u6216\u5df2\u53d6\u6d88');
+            }
+        }
 
         var deadline = Date.now() + POLL_TIMEOUT_MS;
         while (Date.now() < deadline) {

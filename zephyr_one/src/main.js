@@ -408,8 +408,8 @@ function listenRuntimeProgress() {
 async function boot() {
   loadLocal();
   listenRuntimeProgress();
-  await applyLaunchAppearance();
   launch.startSequence();
+  applyLaunchAppearance().catch(() => {});
   wire();
 
   if (location.hash === '#security' || location.search.includes('security=1')) {

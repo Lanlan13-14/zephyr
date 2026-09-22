@@ -337,6 +337,17 @@ test('an unlock request is claimed once, resolved once, and read once', () => {
     assert.equal(queue.poll(id, { username: 'local' }).status, 'unknown');
 });
 
+test('claimById lets the product window take a specific request without a second prompt', () => {
+    const queue = new UnlockQueue();
+    const first = queue.request({ username: 'local', purpose: 'reveal_secret', reason: 'a' });
+    const second = queue.request({ username: 'local', purpose: 'reveal_secret', reason: 'b' });
+    const claimed = queue.claimById(second, { shellInstance: 'shell-ipc' });
+    assert.equal(claimed.id, second);
+    assert.equal(queue.claimById(second, { shellInstance: 'other' }), null);
+    assert.equal(queue.claimById(second, { shellInstance: 'shell-ipc' }).id, second);
+    assert.equal(queue.claim({ shellInstance: 'shell-a' }).id, first);
+});
+
 test('resolve requires its claim and is bound to shell, user, and purpose', () => {
     const queue = new UnlockQueue();
     const id = queue.request({ username: 'alice', purpose: 'reveal_key', reason: 'r' });
@@ -592,6 +603,7 @@ test('every reveal call site awaits the now-async challenge', () => {
 
 test('the shell watcher is wired and publishes what the platform can do', () => {
     assert.match(ELECTRON_MAIN, /spawnUnlockWatcher\(\{ identity \}\)/);
+    assert.match(ELECTRON_MAIN, /security_complete_unlock/);
     assert.match(WATCHERS_JS, /api\/one\/security\/unlock-queue/);
     assert.match(WATCHERS_JS, /api\/one\/security\/capabilities/);
     assert.match(WATCHERS_JS, /await unlock\(reason\)/);
