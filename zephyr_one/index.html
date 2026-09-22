@@ -8,6 +8,7 @@
   <title>Zephyr One</title>
   <link rel="icon" type="image/svg+xml" href="/src/assets/logo/zephyr-one-icon.svg" />
   <link rel="stylesheet" href="/src/styles/mirror-shell.css" />
+  <link rel="stylesheet" href="/src/styles/launch-overlay.css" />
 </head>
 <body class="shell-body">
   <main id="appGate" class="app-host force-hidden" aria-busy="true">
@@ -33,13 +34,39 @@
   </div>
 
   <!-- Boot local full Zephyr core -->
-  <div id="bootGate" class="gate" aria-busy="false">
-    <div class="gate-card">
-      <img class="gate-logo" src="/src/assets/logo/zephyr-one-icon.svg" width="72" height="72" alt="Zephyr One" />
-      <h1>Zephyr One</h1>
-      <p class="gate-sub" id="bootStatus">正在准备完整 Zephyr…</p>
-      <p class="gate-hint">本地运行完整主端功能；与远程主端仅用于可选数据同步。</p>
-      <button type="button" class="z-btn" id="openSecurityFromBoot">安全设置</button>
+  <div id="bootGate" class="gate launch-gate" aria-busy="false">
+    <div class="launch-stage" id="launchStage">
+      <div class="icon-squircle" id="iconSquircle">
+        <svg class="logo-svg" id="logoSvg" viewBox="0 0 200 200" aria-hidden="true">
+          <defs>
+            <linearGradient id="windGradient" x1="15%" y1="15%" x2="85%" y2="85%">
+              <stop id="gradStop1" offset="0%" stop-color="#eef2f7"/>
+              <stop id="gradStop2" offset="58%" stop-color="#a8b5c3"/>
+              <stop id="gradStop3" offset="100%" stop-color="#6e7b88"/>
+            </linearGradient>
+            <mask id="gcut" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+              <rect width="200" height="200" fill="#ffffff"/>
+              <ellipse cx="145" cy="115" rx="6" ry="5.6" fill="#000000"/>
+            </mask>
+          </defs>
+          <circle class="seed-point" id="seedPoint" cx="145" cy="115" r="5" />
+          <path class="wind-path wind-p1" stroke="url(#windGradient)" d="M 43 64 C 84 44, 138 52, 160 77 C 148 94, 108 104, 76 123" />
+          <path class="wind-path wind-p2" stroke="url(#windGradient)" d="M 49 76 C 89 74, 126 89, 145 115 C 120 134, 76 153, 40 135" mask="url(#gcut)" />
+          <path class="wind-path wind-p3" stroke="url(#windGradient)" d="M 78 88 C 108 106, 137 137, 170 128" />
+          <g class="one-text" id="oneWordmark">
+            <text x="145" y="120.7" text-anchor="middle">O</text>
+            <text x="152.4" y="120.7">ne</text>
+          </g>
+        </svg>
+      </div>
+      <div class="progress-container" id="progressContainer">
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="status-caption" id="statusCaption" role="status" aria-live="polite">正在唤醒本地核心…</div>
+      </div>
+      <p class="sr-only" id="bootStatus">正在准备完整 Zephyr…</p>
+      <button type="button" class="launch-security-link" id="openSecurityFromBoot">安全设置</button>
     </div>
   </div>
 

@@ -132,11 +132,10 @@
 
         if (toggle) {
             toggle.checked = !!(policy && policy.revealRequiresUnlock);
-            /* Disabled only when the shell has *told* us the platform has no
-             * authenticator. While capabilities are still unknown the control
-             * stays live: the arm path verifies before saving anyway, so a slow
-             * shell must not look like an unsupported platform. */
-            toggle.disabled = caps.known === true && caps.available !== true;
+            /* Keep the control live even when the platform has no authenticator:
+             * turning it OFF must always work, otherwise a broken Hello/PIN
+             * config would strand the user. Arming still proves the unlock. */
+            toggle.disabled = false;
         }
         if (hint) {
             hint.textContent = '\u5f00\u542f\u540e\uff0c\u67e5\u770b\u5df2\u4fdd\u5b58\u7684\u8fde\u63a5\u5bc6\u7801\u3001SSH \u79c1\u94a5\u7b49\u654f\u611f\u4fe1\u606f\u524d\u9700\u5148\u901a\u8fc7\u7cfb\u7edf\u89e3\u9501\uff08Windows Hello / Touch ID / \u8bbe\u5907 PIN\uff09\u3002\u5173\u95ed\u65f6\u4e0d\u4f1a\u505a\u4efb\u4f55\u9a8c\u8bc1\u3002';

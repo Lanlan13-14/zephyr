@@ -8,8 +8,11 @@
  *   via CSS when loading the local app.
  */
 
+import { createLaunchOverlay } from './js/shell/launch-overlay.js';
+
 const $ = (sel) => document.querySelector(sel);
 const STORAGE_KEY = 'zephyr_one.local.v2';
+const launch = createLaunchOverlay();
 
 function desktopInvoke(command, args) {
   if (typeof window !== 'undefined' && window.zephyrOne?.invoke) {
@@ -131,6 +134,9 @@ async function safeInvoke(cmd, args = {}) {
         mode: 'dev-external',
       };
     }
+    if (cmd === 'get_launch_appearance') {
+      return { palette: 'frost', theme: 'dark', autoTheme: true };
+    }
     return null;
   }
   return desktopInvoke(cmd, args);
@@ -180,13 +186,14 @@ function startAndEnter(control) {
     },
     async () => {
   only($('#bootGate'));
+  launch.startSequence();
+  launch.setProgress(6, '正在唤醒本地核心…');
   const status = $('#bootStatus');
   if (status) {
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
     status.setAttribute('aria-atomic', 'true');
-    status.textContent =
-      '正在启动内置 Zephyr 核心…';
+    status.textContent = '正在启动内置 Zephyr 核心…';
   }
   try {
     const info = await safeInvoke('runtime_start');
@@ -196,6 +203,8 @@ function startAndEnter(control) {
     const cleanOrigin = new URL(bootstrapUrl).origin;
     state.runtime = { ...info, baseUrl: cleanOrigin };
     if (status) status.textContent = '本地核心就绪，正在进入完整界面…';
+    launch.setProgress(100, '准备就绪');
+    await launch.ready();
     await safeInvoke('runtime_enter');
   } catch (e) {
     operationStatus.announce('Startup failed.');
@@ -376,8 +385,31 @@ function wire() {
   ));
 }
 
+async function applyLaunchAppearance() {
+  try {
+    const appearance = await safeInvoke('get_launch_appearance');
+    launch.applyAppearance(appearance || { palette: 'frost', theme: 'dark' });
+  } catch {
+    launch.applyAppearance({ palette: 'frost', theme: 'dark' });
+  }
+}
+
+function listenRuntimeProgress() {
+  const api = window.zephyrOne;
+  if (!api?.onProgress) return;
+  api.onProgress((payload) => {
+    if (!payload) return;
+    launch.setProgress(payload.pct, payload.message);
+    const status = $('#bootStatus');
+    if (status && payload.message) status.textContent = payload.message;
+  });
+}
+
 async function boot() {
   loadLocal();
+  listenRuntimeProgress();
+  await applyLaunchAppearance();
+  launch.startSequence();
   wire();
 
   if (location.hash === '#security' || location.search.includes('security=1')) {

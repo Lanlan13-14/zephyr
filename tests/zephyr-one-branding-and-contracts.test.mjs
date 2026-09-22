@@ -375,9 +375,12 @@ test('the shell boot screens show Zephyr One, not Zephyr', () => {
     );
     assert.match(SHELL_HTML, /\/src\/assets\/logo\/zephyr-one-icon\.svg/);
 
-    // Every gate, plus the favicon: 4 <img> + 1 <link>.
+    // Favicon + lock/error/security gates still use the SVG file. The boot
+    // gate paints the same mark inline so the launch overlay can animate it.
     const refs = SHELL_HTML.match(/zephyr-one-icon\.svg/g) || [];
-    assert.equal(refs.length, 5, `every shell surface must use the One mark, saw ${refs.length}`);
+    assert.equal(refs.length, 4, `lock/error/security plus favicon must use the One mark, saw ${refs.length}`);
+    assert.match(SHELL_HTML, /id="launchStage"/);
+    assert.match(SHELL_HTML, /id="oneWordmark"/);
     assert.match(
         SHELL_HTML,
         /<link rel="icon" type="image\/svg\+xml"/,
