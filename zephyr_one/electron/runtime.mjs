@@ -35,6 +35,7 @@ const state = {
   dataDir: '',
   nodePath: '',
   autostartLog: null,
+  starting: null,
 };
 
 function encodeHex(bytes) {
@@ -249,7 +250,18 @@ export function runtimeInfo() {
   };
 }
 
-export async function ensureStarted({
+export async function ensureStarted(opts) {
+  if (state.child && state.child.exitCode == null && state.sessionReady) {
+    return runtimeInfo();
+  }
+  if (state.starting) return state.starting;
+  state.starting = startCore(opts).finally(() => {
+    state.starting = null;
+  });
+  return state.starting;
+}
+
+async function startCore({
   userDataDir,
   resourceDir,
   appPath,

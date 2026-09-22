@@ -167,10 +167,6 @@ async function enterProduct() {
   } catch { /* first launch has nothing to remove */ }
   await session.defaultSession.cookies.set(cookie);
   const target = localAppUrl();
-  await productWindow.loadURL(target);
-  productWindow.show();
-  productWindow.focus();
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
   try {
     const health = await fetch(`${info.baseUrl.replace(/\/+$/, '')}/healthz`);
     const body = health.ok ? await health.json() : {};
@@ -181,6 +177,10 @@ async function enterProduct() {
       instanceId: body.instanceId || '',
     });
   } catch { /* smoke harness only */ }
+  await productWindow.loadURL(target);
+  productWindow.show();
+  productWindow.focus();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
   return info;
 }
 

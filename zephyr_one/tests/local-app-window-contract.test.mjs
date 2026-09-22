@@ -48,6 +48,7 @@ test('release autostart starts only the child and defers every WebView operation
   assert.match(main, /startRuntime\(\)\.catch/);
   assert.doesNotMatch(main, /if \(windowsRelease\) kick\(\);/);
   assert.doesNotMatch(main, /await startRuntime\(\);\s*await enterProduct\(\);/s);
+  assert.match(runtime, /state\.starting/);
   assert.match(main, /instanceId: body\.instanceId/);
   assert.match(runtime, /instanceId: String\(instanceId \|\| ''\)/);
 });
