@@ -1,9 +1,11 @@
 import http from 'node:http';
 import path from 'node:path';
 import { nativeImage, nativeTheme } from 'electron';
-import { capabilities, unlock } from './auth.mjs';
+import { capabilities, unlock, unlockReason } from './auth.mjs';
 import { currentBaseUrl, currentSessionId } from './runtime.mjs';
 import { signHeaders } from './shell-auth.mjs';
+
+const ipcUnlockIds = new Set();
 
 const POLL_MS = 300;
 const THEME_POLL_MS = 3000;
@@ -132,6 +134,7 @@ export function spawnUnlockWatcher({ identity }) {
       });
       if (response.status !== 200 || !response.data?.id) return;
       claim = response.data;
+      if (ipcUnlockIds.has(String(claim.id))) return;
     } catch { return; }
     const reason = claim.reason || '查看敏感信息需要系统解锁';
     const verdict = await unlock(reason);
@@ -157,6 +160,45 @@ export function spawnUnlockWatcher({ identity }) {
   };
   tick().catch(() => {});
   setInterval(() => { tick().catch(() => {}); }, POLL_MS).unref?.();
+}
+
+export async function completeQueuedUnlock({ identity, payload } = {}) {
+  const id = String(payload?.id || '');
+  const reason = unlockReason(payload, payload?.reason || '查看敏感信息需要系统解锁');
+  const base = currentBaseUrl();
+  if (!id) return { ok: false, error: '系统解锁请求无效' };
+  if (!base || !identity) return { ok: false, error: '本地核心尚未就绪' };
+  const root = base.replace(/\/+$/, '');
+  ipcUnlockIds.add(id);
+  try {
+    const claimed = await requestJson(`${root}/api/one/security/unlock-queue/${encodeURIComponent(id)}`, {
+      headers: signHeaders(identity, 'unlock.peek', [id]),
+    });
+    if (claimed.status !== 200 || !claimed.data?.id) {
+      return { ok: false, error: '系统解锁请求已失效，请重试' };
+    }
+    const verdict = await unlock(reason || claimed.data.reason);
+    const ok = !!verdict.ok;
+    const method = ok ? (verdict.method || 'system') : '';
+    const error = ok ? '' : (verdict.error || '系统解锁失败或已取消');
+    const fields = [claimed.data.id, claimed.data.username, claimed.data.purpose, ok ? '1' : '0', method, error];
+    await requestJson(`${root}/api/one/security/unlock-queue/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      headers: signHeaders(identity, 'unlock.resolve', fields),
+      body: {
+        username: claimed.data.username,
+        purpose: claimed.data.purpose,
+        ok,
+        method,
+        error,
+      },
+    });
+    return verdict;
+  } catch (error) {
+    return { ok: false, error: error.message || '系统解锁失败或已取消' };
+  } finally {
+    ipcUnlockIds.delete(id);
+  }
 }
 
 export function spawnPickerWatcher({ identity, dialog, getWindow }) {
