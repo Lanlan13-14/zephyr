@@ -7,11 +7,15 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (rel) => readFileSync(path.join(root, rel), 'utf8');
 const authJs = read('zephyr_one/electron/auth.mjs');
+const helloPs1 = read('zephyr_one/electron/windows-hello.ps1');
 
 test('Windows unlock calls the real UserConsentVerifier verification', () => {
-    assert.match(authJs, /UserConsentVerifier/);
-    assert.match(authJs, /RequestVerificationAsync/);
     assert.match(authJs, /powershell\.exe/);
+    assert.match(authJs, /windows-hello\.ps1/);
+    assert.match(authJs, /'-STA'/);
+    assert.match(helloPs1, /UserConsentVerifier/);
+    assert.match(helloPs1, /RequestVerificationAsync/);
+    assert.match(helloPs1, /CheckAvailabilityAsync/);
 });
 
 test('success is reachable only through a Verified verdict', () => {
