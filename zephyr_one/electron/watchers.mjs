@@ -1,6 +1,6 @@
 import http from 'node:http';
 import path from 'node:path';
-import { nativeImage } from 'electron';
+import { nativeImage, nativeTheme } from 'electron';
 import { capabilities, unlock } from './auth.mjs';
 import { currentBaseUrl, currentSessionId } from './runtime.mjs';
 import { signHeaders } from './shell-auth.mjs';
@@ -73,7 +73,17 @@ export function applyThemeIcon(windows, iconsDir, theme) {
   };
 }
 
-export function spawnThemeWatcher({ getWindows, iconsDir }) {
+function appearanceFromSettings(body) {
+  const appearance = body?.settings?.appearance || {};
+  const palette = resolveTheme(appearance.colorScheme);
+  const autoTheme = appearance.autoThemeEnabled !== false || appearance.theme === 'auto' || !appearance.theme;
+  const theme = autoTheme
+    ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+    : (appearance.theme === 'light' ? 'light' : 'dark');
+  return { palette, theme, autoTheme };
+}
+
+export function spawnThemeWatcher({ getWindows, iconsDir, persistAppearance }) {
   let current = '';
   const tick = async () => {
     const base = currentBaseUrl();
@@ -84,12 +94,11 @@ export function spawnThemeWatcher({ getWindows, iconsDir }) {
     try {
       const response = await requestJson(`${base.replace(/\/+$/, '')}/api/me/settings`);
       if (response.status !== 200) return;
-      const scheme = schemeFromSettingsJson(response.data);
-      if (!scheme) return;
-      const resolved = resolveTheme(scheme);
-      if (resolved === current) return;
-      const result = applyThemeIcon(getWindows(), iconsDir, resolved);
-      if (result.applied) current = resolved;
+      const next = appearanceFromSettings(response.data);
+      if (typeof persistAppearance === 'function') persistAppearance(next);
+      if (next.palette === current) return;
+      const result = applyThemeIcon(getWindows(), iconsDir, next.palette);
+      if (result.applied) current = next.palette;
     } catch { /* ignore transient */ }
   };
   setInterval(() => { tick().catch(() => {}); }, THEME_POLL_MS).unref?.();
@@ -99,18 +108,21 @@ export function spawnUnlockWatcher({ identity }) {
   let published = false;
   const tick = async () => {
     const base = currentBaseUrl();
-    if (!base) return;
+    if (!base) {
+      published = false;
+      return;
+    }
     const root = base.replace(/\/+$/, '');
     if (!published) {
       try {
         const caps = capabilities();
         const fields = [caps.available ? '1' : '0', caps.biometry ? '1' : '0', caps.reason];
-        await requestJson(`${root}/api/one/security/capabilities`, {
+        const response = await requestJson(`${root}/api/one/security/capabilities`, {
           method: 'POST',
           headers: signHeaders(identity, 'capabilities', fields),
           body: caps,
         });
-        published = true;
+        published = response.status === 200;
       } catch { /* core may still be booting */ }
     }
     let claim;
@@ -143,6 +155,7 @@ export function spawnUnlockWatcher({ identity }) {
       console.error('zephyr-one: unlock result not delivered:', err.message);
     }
   };
+  tick().catch(() => {});
   setInterval(() => { tick().catch(() => {}); }, POLL_MS).unref?.();
 }
 

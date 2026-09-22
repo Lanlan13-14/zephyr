@@ -20,7 +20,9 @@ const BOOTSTRAP_HEADER = 'X-Zephyr-One-Bootstrap-Challenge';
 const READY_CONTEXT = Buffer.from('zephyr-one-ready-v1\0', 'utf8');
 const LOCAL_APP_PATH = '/app.html?zephyrOne=1';
 const UI_READY_MARKER = 'zephyr-one-ui-ready.json';
+const LAUNCH_APPEARANCE_FILE = 'one-launch-appearance.json';
 const EMBEDDED_CORE_READY_TIMEOUT_MS = process.platform === 'win32' ? 210_000 : 60_000;
+const PALETTES = ['frost', 'lava', 'asagi', 'cyber'];
 
 const state = {
   child: null,
@@ -160,9 +162,15 @@ function requestOnce(url, { method = 'GET', headers = {}, timeoutMs = 5000 } = {
   });
 }
 
-async function waitHttpReady(child, url, port, challenge, timeoutMs) {
+function reportProgress(onProgress, pct, message) {
+  if (typeof onProgress !== 'function') return;
+  try { onProgress(pct, message); } catch { /* renderer may be gone */ }
+}
+
+async function waitHttpReady(child, url, port, challenge, timeoutMs, onProgress) {
   const probe = crypto.randomBytes(32);
   const start = Date.now();
+  let lastBucket = -1;
   try {
     while (Date.now() - start < timeoutMs) {
       if (child.exitCode != null) {
@@ -177,6 +185,19 @@ async function waitHttpReady(child, url, port, challenge, timeoutMs) {
         const expected = readinessMac(challenge, probe, port).toString('hex');
         if (response.status === 200 && proof === expected) return;
       } catch { /* retry */ }
+      const elapsed = Date.now() - start;
+      const ratio = Math.max(0, Math.min(0.92, elapsed / timeoutMs));
+      const pct = Math.round(28 + ratio * 54);
+      const bucket = Math.floor(pct / 6);
+      if (bucket !== lastBucket) {
+        lastBucket = bucket;
+        const message = pct < 45
+          ? '正在初始化本地存储与密钥…'
+          : pct < 70
+            ? '加载凭据与安全数据库…'
+            : '等待服务健康响应…';
+        reportProgress(onProgress, pct, message);
+      }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     throw new Error(`本地 Zephyr 启动超时（${url}）`);
@@ -236,6 +257,7 @@ export async function ensureStarted({
   appVersion,
   shellSecret,
   shellInstance,
+  onProgress,
 }) {
   if (state.child && state.child.exitCode == null && state.sessionReady) {
     return runtimeInfo();
@@ -252,6 +274,8 @@ export async function ensureStarted({
   const port = await pickPort();
   const publicOrigin = `http://127.0.0.1:${port}`;
   const challenge = generateChallenge();
+
+  reportProgress(onProgress, 8, '正在唤醒本地核心…');
 
   const env = {
     ...process.env,
@@ -290,7 +314,9 @@ export async function ensureStarted({
   try { fs.unlinkSync(path.join(dataDir, UI_READY_MARKER)); } catch { /* absent */ }
 
   try {
-    await waitHttpReady(child, `${publicOrigin}/healthz`, port, challenge, EMBEDDED_CORE_READY_TIMEOUT_MS);
+    reportProgress(onProgress, 22, '握手内部守护进程…');
+    await waitHttpReady(child, `${publicOrigin}/healthz`, port, challenge, EMBEDDED_CORE_READY_TIMEOUT_MS, onProgress);
+    reportProgress(onProgress, 94, '建立安全通道…');
     const sid = await exchangeBootstrap(publicOrigin, challenge);
     challenge.fill(0);
     state.child = child;
@@ -303,6 +329,7 @@ export async function ensureStarted({
     state.dataDir = dataDir;
     state.nodePath = node;
     appendLog(`runtime ready port=${port} node=${node}`);
+    reportProgress(onProgress, 100, '准备就绪');
     return runtimeInfo();
   } catch (error) {
     try { child.kill(); } catch { /* already gone */ }
@@ -401,4 +428,34 @@ export function currentCorePid() {
 
 export function hereDir(metaUrl) {
   return path.dirname(fileURLToPath(metaUrl));
+}
+
+function appearancePath(userDataDir) {
+  return path.join(userDataDir, 'zephyr-data', LAUNCH_APPEARANCE_FILE);
+}
+
+export function normalizeLaunchAppearance(raw = {}) {
+  const palette = PALETTES.includes(String(raw.palette || '')) ? String(raw.palette) : 'frost';
+  const theme = raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : 'dark';
+  const autoTheme = raw.autoTheme !== false;
+  return { palette, theme, autoTheme };
+}
+
+export function readLaunchAppearance(userDataDir) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(appearancePath(userDataDir), 'utf8'));
+    return normalizeLaunchAppearance(raw);
+  } catch {
+    return normalizeLaunchAppearance({});
+  }
+}
+
+export function writeLaunchAppearance(userDataDir, appearance) {
+  const next = normalizeLaunchAppearance(appearance);
+  const file = appearancePath(userDataDir);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(next));
+  fs.renameSync(temporary, file);
+  return next;
 }

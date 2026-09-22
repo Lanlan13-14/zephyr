@@ -1,17 +1,19 @@
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { capabilities, unlock } from './auth.mjs';
+import { capabilities, unlock, unlockReason } from './auth.mjs';
 import {
   appendRuntimeLog,
   currentBaseUrl,
   currentCorePid,
   ensureStarted,
   localAppUrl,
+  readLaunchAppearance,
   runtimeInfo,
   sessionCookie,
   shouldAutostart,
   stopRuntime,
+  writeLaunchAppearance,
   writeUiReadyMarker,
 } from './runtime.mjs';
 import { createShellIdentity } from './shell-auth.mjs';
@@ -25,6 +27,14 @@ const windowsRelease = process.platform === 'win32' && app.isPackaged;
 let mainWindow = null;
 let productWindow = null;
 let watchersStarted = false;
+
+function emitRuntimeProgress(pct, message) {
+  const payload = { pct: Number(pct) || 0, message: String(message || '') };
+  for (const window of [mainWindow, productWindow]) {
+    if (!window || window.isDestroyed()) continue;
+    window.webContents.send('runtime_progress', payload);
+  }
+}
 
 function iconsDir() {
   if (app.isPackaged) return path.join(process.resourcesPath, 'runtime-icons');
@@ -114,6 +124,7 @@ async function startRuntime() {
     appVersion: app.getVersion(),
     shellSecret: identity.secret,
     shellInstance: identity.instance,
+    onProgress: (pct, message) => emitRuntimeProgress(pct, message),
   });
   if (!watchersStarted) {
     spawnUnlockWatcher({ identity });
@@ -125,6 +136,7 @@ async function startRuntime() {
     spawnThemeWatcher({
       getWindows: () => [mainWindow, productWindow].filter(Boolean),
       iconsDir: iconsDir(),
+      persistAppearance: (appearance) => writeLaunchAppearance(app.getPath('userData'), appearance),
     });
     watchersStarted = true;
   }
@@ -177,7 +189,11 @@ function wireIpc() {
   }));
   ipcMain.handle('get_app_version', () => app.getVersion());
   ipcMain.handle('auth_capabilities', () => capabilities());
-  ipcMain.handle('auth_unlock', async (_event, reason) => unlock(reason || '解锁 Zephyr One'));
+  ipcMain.handle('auth_unlock', async (_event, payload) => unlock(unlockReason(payload)));
+  ipcMain.handle('get_launch_appearance', () => readLaunchAppearance(app.getPath('userData')));
+  ipcMain.handle('set_launch_appearance', (_event, appearance) => (
+    writeLaunchAppearance(app.getPath('userData'), appearance)
+  ));
   ipcMain.handle('set_theme_icon', (_event, theme) => (
     applyThemeIcon([mainWindow, productWindow].filter(Boolean), iconsDir(), theme)
   ));
