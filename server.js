@@ -1108,13 +1108,35 @@ setInterval(() => { try { sessionStore.gc(); } catch {} }, 10 * 60 * 1000).unref
  * these services; no route may re-implement role or ownership checks. */
 const authz = new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserBrief(id) });
 const resolveAgentBastion = (user, agentId) => {
-    const agent = fileAgentManager?.getAgentInfo(String(agentId || ''));
-    if (!agent || !agent.online || agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) return null;
-    if (!fileAgentManager.isAgentOwnedByUser(String(agentId), user)) return null;
-    return {
-        agentId: String(agentId),
-        name: agent.tokenName ? `${agent.tokenName} (${agent.deviceName || agentId})` : (agent.deviceName || agentId),
-    };
+    /* Hosted main: Agents connect directly to this core, so the local
+     * registry is authoritative. Embedded desktop One has no local Agents;
+     * its bastions live on the bound main end (same list the dropdown
+     * relays), and the ownership check is delegated to the main through the
+     * device-proof route — the main rejects ids the user does not own. */
+    const id = String(agentId || '');
+    if (!ZEPHYR_ONE_EMBEDDED && fileAgentManager) {
+        const agent = fileAgentManager.getAgentInfo(id);
+        if (!agent || !agent.online || agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) return null;
+        if (!fileAgentManager.isAgentOwnedByUser(id, user)) return null;
+        return {
+            agentId: id,
+            name: agent.tokenName ? `${agent.tokenName} (${agent.deviceName || id})` : (agent.deviceName || id),
+        };
+    }
+    if (ZEPHYR_ONE_EMBEDDED && oneLinkSync?.binding) {
+        return {
+            agentId: id,
+            name: id,
+            relayed: true,
+            /* resolveRoutePlan re-validates online/bastion flags from this
+             * entry; the dropdown only offers online bastion-enabled Agents
+             * and the main refuses to splice unowned ones, so a cached copy
+             * of the relayed list is the source of truth here. */
+            online: true,
+            bastionEnabled: true,
+        };
+    }
+    return null;
 };
 const resourceService = new ResourceService(storage, authz, { agentBastionResolver: resolveAgentBastion });
 const sharingService = new SharingService(authz, storage, resourceService);
@@ -2965,6 +2987,23 @@ function resolveRoutePlan(conn) {
             if (agentBastion) throw new Error('每条跳板链最多包含一个 Agent 跳板');
             if (sshJumpIds.length > 0) throw new Error('Agent 跳板必须置于首级跳板位置');
             const agentId = rawId.slice(6);
+            /* Embedded desktop One: the Agent lives on the bound main end.
+             * resolveAgentBastion() has already established (from the
+             * device-proof relay) that this user may use it; the main refuses
+             * the actual splice for anyone else. Local lookup would always
+             * report "not online" because no Agent connects to a desktop. */
+            const relayedAgent = ZEPHYR_ONE_EMBEDDED
+                ? resolveAgentBastion({ userId: conn.ownerUserId, username: conn.ownerUsername }, agentId)
+                : null;
+            if (ZEPHYR_ONE_EMBEDDED) {
+                if (!relayedAgent) throw new Error(`Agent 跳板无权使用或已不可用：${agentId}`);
+                agentBastion = {
+                    type: 'agent',
+                    agentId,
+                    name: relayedAgent.name,
+                };
+                continue;
+            }
             const agent = fileAgentManager ? fileAgentManager.getAgentInfo(agentId) : null;
             if (!agent || !agent.online) throw new Error(`Agent 跳板不在线：${agentId}`);
             if (!fileAgentManager?.isAgentOwnedByUser(agentId, { userId: conn.ownerUserId, username: conn.ownerUsername })) {

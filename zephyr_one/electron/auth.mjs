@@ -65,7 +65,11 @@ export function capabilities() {
 }
 
 function mapWindowsHello(code, stdout) {
-  const name = String(stdout || '').trim() || String(code);
+  /* The script's protocol tokens are ASCII, but a failure path can emit an
+   * exception message in the console codepage. Strip a leading BOM, trim
+   * control characters, and only accept known tokens verbatim; anything else
+   * is surfaced as-is (it is already a readable cause after the UTF-8 fix). */
+  const name = String(stdout || '').replace(/^\uFEFF/, '').replace(/[\x00-\x1f]+/g, ' ').trim() || String(code);
   if (code === 0 || name === 'Verified') {
     return { ok: true, method: 'windows_hello' };
   }
@@ -106,13 +110,27 @@ async function unlockWindows(reason) {
         '-File', WINDOWS_HELLO_SCRIPT,
         '-ReasonBase64', encoded,
       ],
-      { windowsHide: true, timeout: 120000, windowsVerbatimArguments: false },
+      {
+        windowsHide: true,
+        timeout: 120000,
+        windowsVerbatimArguments: false,
+        /* powershell.exe inherits the OEM codepage (GBK on zh-CN) and its
+         * stdout bytes would decode as mojibake; the script sets UTF-8 and
+         * execFile decodes with the same encoding. */
+        encoding: 'utf8',
+      },
     );
     return mapWindowsHello(0, stdout);
   } catch (error) {
     const code = Number(error?.code);
     if (Number.isInteger(code)) return mapWindowsHello(code, error.stdout);
-    return { ok: false, error: error.message || '系统解锁失败或已取消' };
+    /* Surface a readable cause instead of a raw spawn error; the raw message
+     * is kept for the runtime log. */
+    const raw = String(error?.message || '');
+    if (raw.includes('ENOENT')) {
+      return { ok: false, error: '找不到 powershell.exe，无法调用系统解锁。请检查系统环境后重试。' };
+    }
+    return { ok: false, error: raw || '系统解锁失败或已取消' };
   }
 }
 
