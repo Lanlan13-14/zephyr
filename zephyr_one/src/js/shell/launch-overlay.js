@@ -77,8 +77,19 @@ function startSequence() {
   const progress = $('progressContainer');
   const stage = $('launchStage');
   if (stage) stage.classList.remove('dismissed');
-  /* HTML already has materialize/blossom/ignited so first paint is not blank.
-   * Do not strip those classes here — that would hide the overlay until JS. */
+  /* HTML ships the classes so a paint before this module is not a blank
+   * window. Once the Electron window is actually visible we strip and reflow
+   * so the blossom plays for the user instead of finishing while hidden. */
+  const replay = () => {
+    for (const node of [squircle, progress, logo, seed]) {
+      node?.classList.remove('materialize', 'blossom', 'ignited');
+    }
+    void document.body?.offsetWidth;
+    squircle?.classList.add('materialize');
+    seed?.classList.add('ignited');
+    logo?.classList.add('blossom');
+    progress?.classList.add('materialize');
+  };
   if (reduced) {
     squircle?.classList.add('materialize');
     progress?.classList.add('materialize');
@@ -86,10 +97,7 @@ function startSequence() {
     seed?.classList.add('ignited');
     return;
   }
-  squircle?.classList.add('materialize');
-  seed?.classList.add('ignited');
-  logo?.classList.add('blossom');
-  progress?.classList.add('materialize');
+  replay();
 }
 
 function dismiss() {

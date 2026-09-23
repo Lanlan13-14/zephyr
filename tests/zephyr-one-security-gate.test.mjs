@@ -348,6 +348,19 @@ test('claimById lets the product window take a specific request without a second
     assert.equal(queue.claim({ shellInstance: 'shell-a' }).id, first);
 });
 
+test('a reserved unlock stays out of the watcher claim until the window takes it', () => {
+    const queue = new UnlockQueue();
+    const id = queue.request({ username: 'local', purpose: 'reveal_secret', reason: 'enable' });
+    assert.equal(queue.reserve(id), true);
+    assert.equal(queue.reserve(id), false, 'a request is reserved once');
+    assert.equal(queue.claim({ shellInstance: 'shell-watcher' }), null);
+    const taken = queue.claimById(id, { shellInstance: 'shell-ipc' });
+    assert.equal(taken.id, id);
+    assert.equal(queue.resolve(id, {
+        username: 'local', purpose: 'reveal_secret', ok: true, method: 'windows_hello',
+    }, { shellInstance: 'shell-ipc' }), true);
+});
+
 test('resolve requires its claim and is bound to shell, user, and purpose', () => {
     const queue = new UnlockQueue();
     const id = queue.request({ username: 'alice', purpose: 'reveal_key', reason: 'r' });

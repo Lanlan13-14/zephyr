@@ -115,6 +115,23 @@ export function resolveCoreDir({ resourceDir, appPath, isPackaged }) {
   throw new Error('未找到本地 Zephyr 核心（server.js + public）。构建前请运行 scripts/stage-zephyr-core.sh');
 }
 
+export function resolveLinkEmbedBin({ resourceDir, appPath, isPackaged }) {
+  const name = process.platform === 'win32' ? 'zephyr-link-embed.exe' : 'zephyr-link-embed';
+  if (resourceDir) {
+    for (const root of resourceCandidates(resourceDir, 'desktop-runtime')) {
+      const candidate = path.join(root, name);
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    }
+  }
+  if (!isPackaged) {
+    for (const relative of [`desktop-runtime/${name}`, path.join('..', 'bin', name)]) {
+      const candidate = path.join(appPath, relative);
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    }
+  }
+  return '';
+}
+
 export function resolveNodeBin({ resourceDir, appPath, isPackaged }) {
   if (resourceDir) {
     for (const root of resourceCandidates(resourceDir, 'desktop-runtime')) {
@@ -283,6 +300,7 @@ async function startCore({
 
   const core = resolveCoreDir({ resourceDir, appPath, isPackaged });
   const node = nodeCompatiblePath(resolveNodeBin({ resourceDir, appPath, isPackaged }));
+  const linkEmbed = resolveLinkEmbedBin({ resourceDir, appPath, isPackaged });
   const port = await pickPort();
   const publicOrigin = `http://127.0.0.1:${port}`;
   const challenge = generateChallenge();
@@ -305,6 +323,7 @@ async function startCore({
     ZEPHYR_ONE_SHELL_INSTANCE: shellInstance,
     ZEPHYR_VERSION: appVersion || '0.1.0',
     ZEPHYR_ONE_USE_BUILTIN_SQLITE: '1',
+    ...(linkEmbed ? { ZEPHYR_LINK_EMBED_BIN: linkEmbed } : {}),
   };
   delete env.NODE_OPTIONS;
   delete env.NODE_PATH;

@@ -166,6 +166,7 @@ const { OneClientManager } = require('./one-client-manager');
 const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
 const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-enrollment');
 const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go, linkTunnelDial, linkTunnelAttach } = require('./link-v2-go-proxy');
+const { OneLinkInitiator } = require('./zephyr-one-link-embed');
 const { createLinkSyncBridge } = require('./link-v2-sync-bridge');
 const { createLinkFileBridge } = require('./link-v2-file-bridge');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
@@ -262,6 +263,8 @@ delete process.env.ZEPHYR_ONE_STARTUP_CHALLENGE;
  * it. Left null on hosted Zephyr, where the account password and TOTP are real
  * credentials and `verifySensitiveAccess` is the right gate. */
 let oneSecurity = null;
+let oneLinkSync = null;
+let oneLinkInitiator = null;
 const EMBEDDED_LISTEN_HOST = ZEPHYR_ONE_EMBEDDED
     ? '127.0.0.1'
     : String(process.env.ZEPHYR_BIND_HOST || '');
@@ -2743,6 +2746,27 @@ function openProxyConnection(proxy, targetHost, targetPort, timeout = 10000, sig
 async function openAgentBastionConnection(proxy, targetHost, targetPort, timeout = 10000, signal = null) {
     const agentId = String(proxy?.agentId || proxy?.host || '');
     if (!agentId) throw new Error('Agent 跳板配置缺少 agentId');
+    /* Desktop One has no Agent of its own. Android reaches the owner's Agent
+     * through the Link session it already holds with the main end; do the
+     * same here once this device is bound. A hosted main keeps the local
+     * path below, because the Agent is connected to it directly. */
+    if (ZEPHYR_ONE_EMBEDDED && oneLinkInitiator) {
+        const identity = oneLinkSync?.binding;
+        if (identity?.serverUrl && identity?.deviceId) {
+            console.debug('[agent-bastion]', 'dial remote Agent via Link', { agentId, targetHost, targetPort });
+            const socket = await oneLinkInitiator.dial(agentId, String(targetHost || ''), Number(targetPort) || 22);
+            if (signal?.aborted) {
+                try { socket.destroy(); } catch { /* already closed */ }
+                throw new Error('Agent 跳板拨号已取消');
+            }
+            if (signal) {
+                const onAbort = () => { try { socket.destroy(); } catch { /* already closed */ } };
+                signal.addEventListener('abort', onAbort, { once: true });
+                socket.once('close', () => signal.removeEventListener('abort', onAbort));
+            }
+            return socket;
+        }
+    }
     const agent = fileAgentManager ? fileAgentManager.getAgentInfo(agentId) : null;
     if (!agent || !agent.online) throw new Error(`Agent 跳板不在线：${agent?.deviceName || agentId}`);
     if (agent.capabilities?.bastion !== true || agent.bastionEnabled !== true) {
@@ -9433,7 +9457,7 @@ if (ZEPHYR_ONE_EMBEDDED) {
      * Android One. Bound to the auto-adopted local account and only mounted
      * inside the embedded core so a hosted main never talks to a remote as a
      * client of itself. */
-    const oneLinkSync = createZephyrOneLinkSync({
+    oneLinkSync = createZephyrOneLinkSync({
         dataDir: DATA_DIR,
         storage,
         resourceService,
@@ -9443,6 +9467,20 @@ if (ZEPHYR_ONE_EMBEDDED) {
         log: (...args) => console.log('[one-link]', ...args),
     });
     mountZephyrOneLinkRoutes(app, { linkSync: oneLinkSync, requireUser });
+    oneLinkInitiator = new OneLinkInitiator({
+        getIdentity: () => {
+            const binding = oneLinkSync?.binding;
+            const keys = oneLinkSync?.keys;
+            if (!binding?.serverUrl || !binding?.deviceId || !keys?.signing?.privateKeyPem) return null;
+            return {
+                serverUrl: binding.serverUrl,
+                deviceId: binding.deviceId,
+                privateKeyPem: keys.signing.privateKeyPem,
+                allowInsecureTls: binding.allowInsecureTls === true,
+            };
+        },
+        log: (...args) => console.log(...args),
+    });
     oneLinkSync.start();
 }
 

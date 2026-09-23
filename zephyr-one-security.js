@@ -282,7 +282,11 @@ class UnlockQueue {
         const claimant = String(shellInstance || '');
         if (!claimant) return null;
         for (const entry of this.pending.values()) {
-            if (entry.state === 'pending') {
+            /* A request the product window already reserved belongs to the IPC
+             * path. Claiming it here would race the modal OS prompt: the 300ms
+             * watcher used to win, run unlock, and resolve failure before the
+             * window's own prompt could start. */
+            if (entry.state === 'pending' && !entry.reservedBy) {
                 entry.state = 'claimed';
                 entry.claimedBy = claimant;
                 return {
@@ -294,6 +298,19 @@ class UnlockQueue {
             }
         }
         return null;
+    }
+
+    /**
+     * Hold a request for the product window before the OS prompt starts.
+     * The watcher must not claim a reserved id. Reservation does not mint a
+     * grant; claimById still binds the shell instance that will resolve it.
+     */
+    reserve(id) {
+        this.sweep();
+        const entry = this.pending.get(String(id));
+        if (!entry || entry.state !== 'pending' || entry.reservedBy) return false;
+        entry.reservedBy = 'ipc';
+        return true;
     }
 
     /**
@@ -567,6 +584,15 @@ function mountRoutes(app, {
         const shell = requireShell(req, res, 'unlock.claim', []);
         if (!shell) return;
         res.json(unlocks.claim(shell) || { id: '', username: '', purpose: '', reason: '' });
+    });
+
+    app.post('/api/one/security/unlock/:id/reserve', requireUser, (req, res) => {
+        /* The product window calls this before invoking the OS prompt, so the
+         * 300ms watcher cannot claim the same id and fail it first. */
+        if (!unlocks.reserve(req.params.id)) {
+            return res.status(409).json({ ok: false, code: 'unlock_not_reservable' });
+        }
+        return res.json({ ok: true, id: req.params.id });
     });
 
     app.get('/api/one/security/unlock-queue/:id', requireUser, (req, res) => {
