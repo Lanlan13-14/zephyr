@@ -19,6 +19,7 @@ export default defineConfig({
     },
   },
   envPrefix: ['VITE_', 'ELECTRON_'],
+  base: './',
   build: {
     target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari14',
     minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,

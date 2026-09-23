@@ -47,6 +47,9 @@
       "src/**",
       "package.json"
     ],
+    "asarUnpack": [
+      "electron/windows-hello.ps1"
+    ],
     "extraResources": [
       {
         "from": "zephyr-core",
