@@ -64,8 +64,14 @@ function createMainWindow() {
       sandbox: true,
     },
   });
-  window.once('ready-to-show', () => {
-    if (!window.isDestroyed()) window.show();
+  /* The overlay's CSS animation starts when the document loads. A hidden
+   * window still loads, so waiting for ready-to-show lets the blossom finish
+   * before the user ever sees the window. Show as soon as the DOM exists,
+   * then let the renderer restart the sequence on zephyr-one:shown. */
+  window.webContents.once('dom-ready', () => {
+    if (window.isDestroyed()) return;
+    window.show();
+    window.webContents.send('zephyr-one:shown');
   });
   window.on('closed', () => {
     mainWindow = null;

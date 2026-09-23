@@ -405,9 +405,20 @@ function listenRuntimeProgress() {
   });
 }
 
+function listenWindowShown() {
+  const api = window.zephyrOne;
+  if (!api?.onShown) return;
+  api.onShown(() => {
+    /* dom-ready shows the window before the module may have run. Replay so
+     * the user sees the seed, the ribbons and the bar, not the finished frame. */
+    launch.startSequence();
+  });
+}
+
 async function boot() {
   loadLocal();
   listenRuntimeProgress();
+  listenWindowShown();
   launch.startSequence();
   applyLaunchAppearance().catch(() => {});
   wire();

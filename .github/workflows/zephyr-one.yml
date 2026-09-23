@@ -67,6 +67,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run test:ci
       - run: npm run build
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
       - name: Stage Zephyr core and the desktop Node runtime
         run: |
           npm run stage:desktop
@@ -76,6 +80,7 @@ jobs:
           test -f zephyr-core/public/rdp-wasm-client.js
           test -d desktop-runtime
           test -f desktop-runtime/runtime.json
+          test -f desktop-runtime/zephyr-link-embed
 
   build-windows:
     if: github.event_name == 'workflow_dispatch' && (github.event.inputs.tag != '' || inputs.validation_only == true)
@@ -94,6 +99,10 @@ jobs:
       - name: Install npm deps
         shell: pwsh
         run: npm install
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
       - name: Stage Zephyr core
         shell: bash
         run: sh scripts/stage-zephyr-core.sh
@@ -149,6 +158,10 @@ jobs:
         with:
           node-version: '22'
       - run: npm install
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
       - run: npm run build
@@ -187,6 +200,10 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y rpm fakeroot xvfb
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: zephyr-link/go.sum
       - run: npm install
       - run: npm run stage:core
       - run: node scripts/stage-desktop-runtime.mjs

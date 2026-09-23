@@ -103,18 +103,35 @@ test('the overlay is visible in HTML before any JS runs', () => {
     assert.match(HTML, /class="progress-container materialize"/);
     assert.match(HTML, /#bootGate\.launch-gate \{ min-height: 100dvh/);
     const overlay = read('zephyr_one/src/js/shell/launch-overlay.js');
-    assert.doesNotMatch(overlay, /classList\.remove\('materialize'\)/);
+    /* A replay may strip the classes, but only to re-add them after a reflow
+     * once the window is visible. Stripping without putting them back would
+     * leave the first paint blank. */
+    assert.match(overlay, /classList\.remove\('materialize', 'blossom', 'ignited'\)/);
+    assert.match(overlay, /classList\.add\('materialize'\)/);
+    assert.match(read('zephyr_one/src/main.js'), /listenWindowShown/);
 });
 
 test('Windows packaged boot shows the overlay before the product window', () => {
     assert.doesNotMatch(MAIN, /if \(windowsRelease\) kick\(\)/);
     assert.match(MAIN, /startRuntime\(\)/);
     assert.match(MAIN, /\.then\(\(\) => enterProduct\(\)\)/);
-    assert.match(MAIN, /ready-to-show/);
+    /* dom-ready, not ready-to-show: the window must be visible before the
+     * blossom finishes, and the renderer replays on zephyr-one:shown. */
+    assert.match(MAIN, /dom-ready/);
+    assert.match(MAIN, /zephyr-one:shown/);
+    assert.match(PRELOAD, /zephyr-one:shown/);
     assert.match(MAIN, /backgroundColor: '#090b0e'/);
     const loadAt = MAIN.indexOf('await mainWindow.loadFile');
     const enterAt = MAIN.indexOf('.then(() => enterProduct())');
     assert.ok(loadAt >= 0 && enterAt > loadAt);
+});
+
+test('the product window reserves an unlock before the OS prompt so the watcher cannot fail it', () => {
+    assert.match(UI, /\/reserve/);
+    const security = read('zephyr-one-security.js');
+    assert.match(security, /reserve\(id\)/);
+    assert.match(security, /unlock\/:id\/reserve/);
+    assert.match(security, /!entry\.reservedBy/);
 });
 
 test('the product window completes unlocks over IPC instead of waiting on the 300ms watcher', () => {

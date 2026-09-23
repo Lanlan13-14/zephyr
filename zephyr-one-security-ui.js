@@ -87,6 +87,14 @@
 
         var bridge = nativeUnlock();
         if (bridge) {
+            /* Reserve before the invoke. The invoke does not return until the
+             * OS prompt does, and the watcher polls every 300ms — without this
+             * it claims the request and reports failure while Hello is still
+             * on screen. */
+            await api('/api/one/security/unlock/' + encodeURIComponent(id) + '/reserve', {
+                method: 'POST',
+                body: '{}'
+            });
             var verdict = await bridge.invoke('security_complete_unlock', { id: id, reason: reason || '' });
             if (!verdict || !verdict.ok) {
                 throw new Error((verdict && verdict.error) || '\u7cfb\u7edf\u89e3\u9501\u5931\u8d25\u6216\u5df2\u53d6\u6d88');
