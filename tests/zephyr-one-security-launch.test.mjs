@@ -143,3 +143,59 @@ test('the product window completes unlocks over IPC instead of waiting on the 30
     assert.match(security, /claimById/);
     assert.match(security, /unlock-queue\/:id/);
 });
+
+test('packaged assets resolve relative so file:// does not drop the overlay', () => {
+    /* loadFile() serves dist/index.html over file://. Vite's default base '/'
+     * makes href="/assets/main.css" resolve to the drive root, so the boot
+     * window renders as unstyled HTML — a dead black screen with no overlay.
+     * The build must emit relative asset URLs. */
+    const vite = read('zephyr_one/vite.config.js');
+    assert.match(vite, /^\s*base:\s*'\.\/',/m);
+    /* In dev the source index.html references /src/... which is only valid
+     * through the vite server; the packaged copy is what must be relative. */
+    const distIndex = path.join(root, 'zephyr_one/dist/index.html');
+    if (existsSync(distIndex)) {
+        const index = readFileSync(distIndex, 'utf8');
+        assert.match(index, /href="\.\.\/assets\/|href="\.\/assets\//);
+        assert.doesNotMatch(index, /href="\/assets\//);
+        assert.doesNotMatch(index, /src="\/assets\//);
+    }
+    /* The source page itself must not pin absolute /assets/ paths either —
+     * everything under dist is emitted by vite with the base above. */
+    const source = HTML;
+    assert.doesNotMatch(source, /href="\/assets\//);
+});
+
+test('windows-hello.ps1 ships outside app.asar and is resolved on disk', () => {
+    /* powershell.exe -File cannot open a path inside an archive; the helper
+     * must be unpacked and resolved through process.resourcesPath. */
+    const pkg = JSON.parse(read('zephyr_one/package.json'));
+    assert.ok(Array.isArray(pkg.build.asarUnpack));
+    assert.ok(pkg.build.asarUnpack.some((p) => p.includes('windows-hello.ps1')));
+    assert.match(AUTH, /app\.asar\.unpacked/);
+    assert.match(AUTH, /process\.resourcesPath/);
+    assert.match(AUTH, /ZEPHYR_ONE_WINDOWS_HELLO_SCRIPT/);
+    /* Missing script must fail with an actionable message, not a raw
+     * PowerShell path error. */
+    assert.match(AUTH, /安装包缺少 Windows Hello 脚本/);
+});
+
+test('bastion candidates come from the bound main via device-proof relay', () => {
+    /* Desktop One has no locally connected Agents; the dropdown must pull
+     * /api/mobile/v1/agent-bastions from the bound main end, and only fall
+     * back to local Agents when unbound (hosted main keeps direct ones). */
+    const sync = read('zephyr-one-link-sync.js');
+    assert.match(sync, /async agentBastions\(\)/);
+    assert.match(sync, /\/api\/mobile\/v1\/agent-bastions/);
+    assert.match(sync, /app\.get\('\/api\/one\/link\/agent-bastions'/);
+    assert.match(sync, /source: 'main'/);
+    assert.match(sync, /source: 'local'/);
+    const app = read('public/app.js');
+    assert.match(app, /api\('\/api\/one\/link\/agent-bastions'\)/);
+    assert.doesNotMatch(app, /api\('\/api\/rdp\/agent-bastions'\)/);
+    /* Offline or non-bastion Agents must not appear as selectable hops. */
+    assert.match(app, /a\.online !== false && a\.bastionEnabled !== false/);
+    const server = read('server.js');
+    assert.match(server, /listLocalBastionAgents/);
+    assert.match(server, /mountZephyrOneLinkRoutes\(app, \{/);
+});

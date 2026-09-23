@@ -3,13 +3,35 @@
  * Windows Hello / macOS LocalAuthentication only; Linux reports unavailable.
  */
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
-const WINDOWS_HELLO_SCRIPT = path.join(here, 'windows-hello.ps1');
+
+/* electron-builder packs the app into app.asar, but powershell.exe cannot
+ * read inside an archive: -File must point at a real file on disk. The
+ * script is therefore asarUnpack'ed; resolve the extracted copy when we are
+ * running from an archive, and fall back to the source tree in dev. */
+function resolveWindowsHelloScript() {
+  const candidates = [];
+  if (process.env.ZEPHYR_ONE_WINDOWS_HELLO_SCRIPT) {
+    candidates.push(process.env.ZEPHYR_ONE_WINDOWS_HELLO_SCRIPT);
+  }
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'windows-hello.ps1'));
+  }
+  candidates.push(path.join(here, 'windows-hello.ps1'));
+  for (const candidate of candidates) {
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch { /* try next */ }
+  }
+  return null;
+}
+const WINDOWS_HELLO_SCRIPT = (() => { try { return resolveWindowsHelloScript(); } catch { return null; } })();
 
 export function unlockReason(payload, fallback = '解锁 Zephyr One') {
   if (payload == null || payload === '') return fallback;
@@ -69,6 +91,9 @@ function mapWindowsHello(code, stdout) {
 }
 
 async function unlockWindows(reason) {
+  if (!WINDOWS_HELLO_SCRIPT) {
+    return { ok: false, error: '安装包缺少 Windows Hello 脚本，无法调用系统解锁。请重新安装或保持开关关闭。' };
+  }
   const encoded = Buffer.from(String(reason || 'Unlock Zephyr One'), 'utf8').toString('base64');
   try {
     const { stdout } = await execFileAsync(

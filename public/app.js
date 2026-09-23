@@ -12678,13 +12678,15 @@ async function loadNetwork() {
         api('/api/proxies'),
         api('/api/ssh-keys').catch(() => ({ sshKeys: [] })),
         api('/api/jump-hosts').catch(() => ({ jumpHosts: [] })),
-        api('/api/rdp/agent-bastions').catch(() => ({ agents: [] })),
+        api('/api/one/link/agent-bastions').catch(() => ({ agents: [], source: 'none' })),
     ]);
     if (generation !== networkLoadGeneration) return { proxies, sshKeys, jumpHosts, agentBastions };
     proxies = proxyData.proxies || [];
     sshKeys = keyData.sshKeys || [];
     jumpHosts = jumpData.jumpHosts || [];
-    agentBastions = bastionData.agents || [];
+    /* The proxy route resolves bastions from the bound main (Android parity)
+     * and only falls back to locally connected Agents when unbound. */
+    agentBastions = (bastionData.agents || []).filter((a) => a && a.online !== false && a.bastionEnabled !== false);
     renderNetwork();
     updateRouteOptions();
     renderSshKeyOptions($('#connSshKey')?.value || '');

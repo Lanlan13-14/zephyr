@@ -9466,7 +9466,13 @@ if (ZEPHYR_ONE_EMBEDDED) {
         mobileV1Api,
         log: (...args) => console.log('[one-link]', ...args),
     });
-    mountZephyrOneLinkRoutes(app, { linkSync: oneLinkSync, requireUser });
+    mountZephyrOneLinkRoutes(app, {
+        linkSync: oneLinkSync,
+        requireUser,
+        listLocalBastionAgents: (req) => (fileAgentManager
+            ? fileAgentManager.listBastionAgentsForUser(req.user)
+            : []),
+    });
     oneLinkInitiator = new OneLinkInitiator({
         getIdentity: () => {
             const binding = oneLinkSync?.binding;

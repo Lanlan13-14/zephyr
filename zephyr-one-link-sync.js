@@ -748,6 +748,27 @@ class ZephyrOneLinkSync {
         return true;
     }
 
+    /** List the owner's online Agent bastions from the bound main end, the
+     * same device-proof route Android uses (/api/mobile/v1/agent-bastions).
+     * Desktop One has no locally connected Agents, so this is the only
+     * source of `agent:<id>` jump candidates. */
+    async agentBastions() {
+        const data = await this._authorizedRequest({
+            method: 'GET',
+            path: '/api/mobile/v1/agent-bastions',
+        });
+        if (!Array.isArray(data?.agents)) {
+            throw new Error('主端未返回 Agent 跳板列表');
+        }
+        return data.agents.map((agent) => ({
+            agentId: String(agent.agentId || ''),
+            deviceName: String(agent.deviceName || ''),
+            tokenName: String(agent.tokenName || ''),
+            online: agent.online === true,
+            bastionEnabled: agent.bastionEnabled === true,
+        })).filter((agent) => agent.agentId);
+    }
+
     async syncNow({ trigger = 'manual', respectPolicy = false } = {}) {
         if (!this.binding) {
             const err = new Error('尚未绑定主端');
@@ -1152,6 +1173,7 @@ function createZephyrOneLinkSync(opts) {
 function mountZephyrOneLinkRoutes(app, {
     linkSync,
     requireUser,
+    listLocalBastionAgents = null,
 } = {}) {
     if (!app || !linkSync) return;
     const sendErr = (res, err) => {
@@ -1177,6 +1199,23 @@ function mountZephyrOneLinkRoutes(app, {
         try {
             res.json(await linkSync.pollEnrollment());
         } catch (err) {
+            sendErr(res, err);
+        }
+    });
+    app.get('/api/one/link/agent-bastions', requireUser, async (req, res) => {
+        /* Desktop One has no Agents of its own. When bound to a main end the
+         * candidates come from the main (the same device-proof route Android
+         * uses); unbound or failed probes fall back to local connections so
+         * a hosted main keeps its direct Agents. */
+        try {
+            const agents = await linkSync.agentBastions();
+            res.json({ ok: true, source: 'main', agents });
+        } catch (err) {
+            if (err?.code === 'unbound') {
+                const local = typeof listLocalBastionAgents === 'function' ? listLocalBastionAgents(req) : [];
+                res.json({ ok: true, source: 'local', agents: local });
+                return;
+            }
             sendErr(res, err);
         }
     });
