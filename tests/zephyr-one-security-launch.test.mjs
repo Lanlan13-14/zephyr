@@ -199,3 +199,30 @@ test('bastion candidates come from the bound main via device-proof relay', () =>
     assert.match(server, /listLocalBastionAgents/);
     assert.match(server, /mountZephyrOneLinkRoutes\(app, \{/);
 });
+
+test('embedded One validates agent: hops against the relayed main, not the local registry', () => {
+    /* resolveRoutePlan used to require fileAgentManager.getAgentInfo(id) to
+     * return an online Agent — impossible on a desktop One, so every dial
+     * failed with "Agent 跳板不在线" even though the dropdown (relayed from
+     * the main) had just offered the same id. */
+    const server = read('server.js');
+    const routePlan = server.slice(server.indexOf('function resolveRoutePlan'));
+    assert.match(routePlan, /ZEPHYR_ONE_EMBEDDED\s*\?\s*resolveAgentBastion/);
+    assert.match(routePlan, /Agent 跳板无权使用或已不可用/);
+    const resolver = server.slice(server.indexOf('const resolveAgentBastion'), server.indexOf('const resourceService'));
+    assert.match(resolver, /oneLinkSync\?\.binding/);
+    assert.match(resolver, /relayed: true/);
+    /* Hosted main keeps the direct-connection check. */
+    assert.match(resolver, /!ZEPHYR_ONE_EMBEDDED && fileAgentManager/);
+});
+
+test('windows hello output is decoded as UTF-8 on both sides of the pipe', () => {
+    /* zh-CN Windows defaults the console to GBK; without forcing the
+     * codepage the failure path surfaced as mojibake in the security panel. */
+    const ps1 = read('zephyr_one/electron/windows-hello.ps1');
+    assert.match(ps1, /\[Console\]::OutputEncoding = \[System\.Text\.Encoding\]::UTF8/);
+    assert.match(AUTH, /encoding: 'utf8'/);
+    /* The mapper strips BOM/control bytes before matching protocol tokens. */
+    assert.match(AUTH, /\\uFEFF/);
+    assert.match(AUTH, /\[\\x00-\\x1f\]\+/);
+});

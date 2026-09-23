@@ -11,8 +11,16 @@ param(
 #   2 not available / not configured / disabled
 #   3 other failure
 # stdout: Verified | Canceled | NotConfiguredForUser | DeviceNotPresent | DisabledByPolicy | DeviceBusy | RetriesExhausted | error text
+#
+# All output is ASCII protocol tokens; force the console codepage to UTF-8 so
+# a CJK Windows locale (GBK default) cannot mangle error text into mojibake,
+# and the Node host can decode stdout as UTF-8 unconditionally.
 
 $ErrorActionPreference = 'Stop'
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch { /* pre-PS5.1 hosts keep their default; tokens are ASCII anyway */ }
 $reason = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ReasonBase64))
 if ([string]::IsNullOrWhiteSpace($reason)) { $reason = 'Unlock Zephyr One' }
 
