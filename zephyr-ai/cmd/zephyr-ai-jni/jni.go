@@ -21,6 +21,10 @@ static const char *get_string_utf_chars(JNIEnv *env, jstring s) {
 static void release_string_utf_chars(JNIEnv *env, jstring s, const char *c) {
     (*env)->ReleaseStringUTFChars(env, s, c);
 }
+
+static int string_is_null(jstring s) {
+    return s == NULL;
+}
 */
 import "C"
 import (
@@ -55,12 +59,12 @@ func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeDispatch(env *C.JNIEn
 	path := C.GoString(cPath)
 
 	var headers, body string
-	if jHeaders != nil {
+	if C.string_is_null(jHeaders) == 0 {
 		cHeaders := C.get_string_utf_chars(env, jHeaders)
 		headers = C.GoString(cHeaders)
 		C.release_string_utf_chars(env, jHeaders, cHeaders)
 	}
-	if jBody != nil {
+	if C.string_is_null(jBody) == 0 {
 		cBody := C.get_string_utf_chars(env, jBody)
 		body = C.GoString(cBody)
 		C.release_string_utf_chars(env, jBody, cBody)
