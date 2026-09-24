@@ -228,6 +228,12 @@ jobs:
           test -d "$ANDROID_NDK_HOME"
           export CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
           test -x "$CC"
+          # cgo needs the NDK sysroot headers on the preprocessor path or
+          # #include <jni.h> resolves to nothing.
+          SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          export CGO_CFLAGS="-I${SYSROOT}/usr/include -I${SYSROOT}/usr/include/aarch64-linux-android"
+          export CGO_LDFLAGS="--sysroot=${SYSROOT}"
+          test -f "${SYSROOT}/usr/include/jni.h"
           out="zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_ai_runtime_jni.so"
           (cd zephyr-ai && CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
             go build -buildmode=c-shared -trimpath -ldflags='-s -w' -o "../${out}" ./cmd/zephyr-ai-jni)
