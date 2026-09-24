@@ -6,6 +6,21 @@ package main
 #include <jni.h>
 #include <stdlib.h>
 #include <string.h>
+
+// C-mode JNI accessors: the NDK's jni.h exposes functions through the
+// JNIEnv function-pointer table, not as direct C symbols, so cgo cannot
+// call them as C.GetStringUTFChars. These shims dereference the table.
+static jstring new_string_utf(JNIEnv *env, const char *s) {
+    return (*env)->NewStringUTF(env, s);
+}
+
+static const char *get_string_utf_chars(JNIEnv *env, jstring s) {
+    return (*env)->GetStringUTFChars(env, s, NULL);
+}
+
+static void release_string_utf_chars(JNIEnv *env, jstring s, const char *c) {
+    (*env)->ReleaseStringUTFChars(env, s, c);
+}
 */
 import "C"
 import (
@@ -17,8 +32,8 @@ import (
 
 //export Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeInit
 func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeInit(env *C.JNIEnv, class C.jclass, jConfig C.jstring) C.jstring {
-	cConfig := C.GetStringUTFChars(env, jConfig, nil)
-	defer C.ReleaseStringUTFChars(env, jConfig, cConfig)
+	cConfig := C.get_string_utf_chars(env, jConfig)
+	defer C.release_string_utf_chars(env, jConfig, cConfig)
 
 	res, err := embedded.InitGlobal(C.GoString(cConfig))
 	if err != nil {
@@ -26,29 +41,29 @@ func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeInit(env *C.JNIEnv, c
 	}
 	cRes := C.CString(res)
 	defer C.free(unsafe.Pointer(cRes))
-	return C.NewStringUTF(env, cRes)
+	return C.new_string_utf(env, cRes)
 }
 
 //export Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeDispatch
 func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeDispatch(env *C.JNIEnv, class C.jclass, jMethod, jPath, jHeaders, jBody C.jstring) C.jstring {
-	cMethod := C.GetStringUTFChars(env, jMethod, nil)
-	defer C.ReleaseStringUTFChars(env, jMethod, cMethod)
+	cMethod := C.get_string_utf_chars(env, jMethod)
+	defer C.release_string_utf_chars(env, jMethod, cMethod)
 	method := C.GoString(cMethod)
 
-	cPath := C.GetStringUTFChars(env, jPath, nil)
-	defer C.ReleaseStringUTFChars(env, jPath, cPath)
+	cPath := C.get_string_utf_chars(env, jPath)
+	defer C.release_string_utf_chars(env, jPath, cPath)
 	path := C.GoString(cPath)
 
 	var headers, body string
 	if jHeaders != nil {
-		cHeaders := C.GetStringUTFChars(env, jHeaders, nil)
+		cHeaders := C.get_string_utf_chars(env, jHeaders)
 		headers = C.GoString(cHeaders)
-		C.ReleaseStringUTFChars(env, jHeaders, cHeaders)
+		C.release_string_utf_chars(env, jHeaders, cHeaders)
 	}
 	if jBody != nil {
-		cBody := C.GetStringUTFChars(env, jBody, nil)
+		cBody := C.get_string_utf_chars(env, jBody)
 		body = C.GoString(cBody)
-		C.ReleaseStringUTFChars(env, jBody, cBody)
+		C.release_string_utf_chars(env, jBody, cBody)
 	}
 
 	res, err := embedded.DispatchGlobal(method, path, headers, body)
@@ -57,7 +72,12 @@ func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeDispatch(env *C.JNIEn
 	}
 	cRes := C.CString(res)
 	defer C.free(unsafe.Pointer(cRes))
-	return C.NewStringUTF(env, cRes)
+	return C.new_string_utf(env, cRes)
+}
+
+//export Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeClose
+func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeClose(env *C.JNIEnv, class C.jclass) {
+	embedded.CloseGlobal()
 }
 
 // jniErrorJSON builds an error envelope that survives err.Error() carrying
@@ -69,9 +89,4 @@ func jniErrorJSON(err error) string {
 		return `{"ok":false,"error":"jni error marshal failure"}`
 	}
 	return string(b)
-}
-
-//export Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeClose
-func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeClose(env *C.JNIEnv, class C.jclass) {
-	embedded.CloseGlobal()
 }
