@@ -1,9 +1,9 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
-import { createNotesController } from './notes.js?v=20260919-direct-ssh-no-jump';
+import { createNotesController } from './notes.js?v=20260924-os-probe';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260919-direct-ssh-no-jump';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260919-direct-ssh-no-jump';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260924-os-probe';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260924-os-probe';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 const $ = (sel) => document.querySelector(sel);
@@ -3146,7 +3146,7 @@ const TOGGLE_SELECT_IDS = [
     // Proxy modal
     'proxyType',
     // Connection modal / RDP (when opened)
-    'connProtocol', 'connSshKey', 'connEncoding', 'connRoute',
+    'connProtocol', 'connSshKey', 'connEncoding', 'connRoute', 'connIcon',
     'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
     // 多用户 → 添加用户 → 角色（与首页「全部协议」同源 toggle-select）
     'adminUserRole',
@@ -3169,7 +3169,7 @@ const MOTION_FILTER_SELECT_IDS = [
     // 设置 → 终端工作台
     'terminalMaxWindows', 'terminalSmartbarOrder', 'terminalShortcutPlatform',
     // 连接弹窗：协议 / SSH 密钥 / Telnet 编码 / 代理选择与首页筛选同款菜单动画
-    'connProtocol', 'connSshKey', 'connEncoding', 'connRoute',
+    'connProtocol', 'connSshKey', 'connEncoding', 'connRoute', 'connIcon',
     'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
     // AI 助理 / 供应商弹窗（与 CAPTCHA 完全同一套 open/close 动画）
     'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
@@ -3456,6 +3456,48 @@ function filteredConnections() {
     const list = connections.filter((c) => [c.name, c.host, c.remark, c.username, (c.tags || []).join(' ')].join(' ').toLowerCase().includes(q) && (proto === 'all' || c.protocol === proto) && (tag === 'all' || (c.tags || []).includes(tag)));
     return list.sort((a, b) => sort === 'name' ? String(a.name).localeCompare(String(b.name), 'zh-CN') : sort === 'protocol' ? String(a.protocol).localeCompare(String(b.protocol)) : (b[sort] || 0) - (a[sort] || 0));
 }
+const CONNECTION_OS_ICONS = {
+    windows: '<svg viewBox="0 0 24 24" fill="#0078D4"><path d="M0 0h11v11H0zM13 0h11v11H13zM0 13h11v11H0zM13 13h11v11H13z"/></svg>',
+    macos: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>',
+    ubuntu: '<svg viewBox="0 0 24 24" fill="#E95420"><path d="M17.61.455a3.41 3.41 0 0 0-3.41 3.41 3.41 3.41 0 0 0 3.41 3.41 3.41 3.41 0 0 0 3.41-3.41 3.41 3.41 0 0 0-3.41-3.41zM12.92.8C8.923.777 5.137 2.941 3.148 6.451a4.5 4.5 0 0 1 .26-.007 4.92 4.92 0 0 1 2.585.737A8.316 8.316 0 0 1 12.688 3.6 4.944 4.944 0 0 1 13.723.834 11.008 11.008 0 0 0 12.92.8zm9.226 4.994a4.915 4.915 0 0 1-1.918 2.246 8.36 8.36 0 0 1-.273 8.303 4.89 4.89 0 0 1 1.632 2.54 11.156 11.156 0 0 0 .559-13.089zM3.41 7.932A3.41 3.41 0 0 0 0 11.342a3.41 3.41 0 0 0 3.41 3.409 3.41 3.41 0 0 0 3.41-3.41 3.41 3.41 0 0 0-3.41-3.41zm2.027 7.866a4.908 4.908 0 0 1-2.915.358 11.1 11.1 0 0 0 7.991 6.698 11.234 11.234 0 0 0 2.422.249 4.879 4.879 0 0 1-.999-2.85 8.484 8.484 0 0 1-.836-.136 8.304 8.304 0 0 1-5.663-4.32zm11.405.928a3.41 3.41 0 0 0-3.41 3.41 3.41 3.41 0 0 0 3.41 3.41 3.41 3.41 0 0 0 3.41-3.41 3.41 3.41 0 0 0-3.41-3.41z"/></svg>',
+    debian: '<svg viewBox="0 0 24 24" fill="#D70A53"><path d="M13.88 12.685c-.4 0 .08.2.601.28.14-.1.27-.22.39-.33a3.001 3.001 0 01-.99.05m2.14-.53c.23-.33.4-.69.47-1.06-.06.27-.2.5-.33.73-.75.47-.07-.27 0-.56-.8 1.01-.11.6-.14.89m.781-2.05c.05-.721-.14-.501-.2-.221.07.04.13.5.2.22M12.38.31c.2.04.45.07.42.12.23-.05.28-.1-.43-.12m.43.12l-.15.03.14-.01V.43m6.633 9.944c.02.64-.2.95-.38 1.5l-.35.181c-.28.54.03.35-.17.78-.44.39-1.34 1.22-1.62 1.301-.201 0 .14-.25.19-.34-.591.4-.481.6-1.371.85l-.03-.06c-2.221 1.04-5.303-1.02-5.253-3.842-.03.17-.07.13-.12.2a3.551 3.552 0 012.001-3.501 3.361 3.362 0 013.732.48 3.341 3.342 0 00-2.721-1.3c-1.18.01-2.281.76-2.651 1.57-.6.38-.67 1.47-.93 1.661-.361 2.601.66 3.722 2.38 5.042.27.19.08.21.12.35a4.702 4.702 0 01-1.53-1.16c.23.33.47.66.8.91-.55-.18-1.27-1.3-1.48-1.35.93 1.66 3.78 2.921 5.261 2.3a6.203 6.203 0 01-2.33-.28c-.33-.16-.77-.51-.7-.57a5.802 5.803 0 005.902-.84c.44-.35.93-.94 1.07-.95-.2.32.04.16-.12.44.44-.72-.2-.3.46-1.24l.24.33c-.09-.6.74-1.321.66-2.262.19-.3.2.3 0 .97.29-.74.08-.85.15-1.46.08.2.18.42.23.63-.18-.7.2-1.2.28-1.6-.09-.05-.28.3-.32-.53 0-.37.1-.2.14-.28-.08-.05-.26-.32-.38-.861.08-.13.22.33.34.34-.08-.42-.2-.75-.2-1.08-.34-.68-.12.1-.4-.3-.34-1.091.3-.25.34-.74.54.77.84 1.96.981 2.46-.1-.6-.28-1.2-.49-1.76.16.07-.26-1.241.21-.37A7.823 7.824 0 0017.702 1.6c.18.17.42.39.33.42-.75-.45-.62-.48-.73-.67-.61-.25-.65.02-1.06 0C15.082.73 14.862.8 13.8.4l.05.23c-.77-.25-.9.1-1.73 0-.05-.04.27-.14.53-.18-.741.1-.701-.14-1.431.03.17-.13.36-.21.55-.32-.6.04-1.44.35-1.18.07C9.6.68 7.847 1.3 6.867 2.22L6.838 2c-.45.54-1.96 1.611-2.08 2.311l-.131.03c-.23.4-.38.85-.57 1.261-.3.52-.45.2-.4.28-.6 1.22-.9 2.251-1.16 3.102.18.27 0 1.65.07 2.76-.3 5.463 3.84 10.776 8.363 12.006.67.23 1.65.23 2.49.25-.99-.28-1.12-.15-2.08-.49-.7-.32-.85-.7-1.34-1.13l.2.35c-.971-.34-.57-.42-1.361-.67l.21-.27c-.31-.03-.83-.53-.97-.81l-.34.01c-.41-.501-.63-.871-.61-1.161l-.111.2c-.13-.21-1.52-1.901-.8-1.511-.13-.12-.31-.2-.5-.55l.14-.17c-.35-.44-.64-1.02-.62-1.2.2.24.32.3.45.33-.88-2.172-.93-.12-1.601-2.202l.15-.02c-.1-.16-.18-.34-.26-.51l.06-.6c-.63-.74-.18-3.102-.09-4.402.07-.54.53-1.1.88-1.981l-.21-.04c.4-.71 2.341-2.872 3.241-2.761.43-.55-.09 0-.18-.14.96-.991 1.26-.7 1.901-.88.7-.401-.6.16-.27-.151 1.2-.3.85-.7 2.421-.85.16.1-.39.14-.52.26 1-.49 3.151-.37 4.562.27 1.63.77 3.461 3.011 3.531 5.132l.08.02c-.04.85.13 1.821-.17 2.711l.2-.42M9.54 13.236l-.05.28c.26.35.47.73.8 1.01-.24-.47-.42-.66-.75-1.3m.62-.02c-.14-.15-.22-.34-.31-.52.08.32.26.6.43.88l-.12-.36m10.945-2.382l-.07.15c-.1.76-.34 1.511-.69 2.212.4-.73.65-1.541.75-2.362M12.45.12c.27-.1.66-.05.95-.12-.37.03-.74.05-1.1.1l.15.02M3.006 5.142c.07.57-.43.8.11.42.3-.66-.11-.18-.1-.42m-.64 2.661c.12-.39.15-.62.2-.84-.35.44-.17.53-.2.83"/></svg>',
+    arch: '<svg viewBox="0 0 24 24" fill="#1793D1"><path d="M11.39.605C10.376 3.092 9.764 4.72 8.635 7.132c.693.734 1.543 1.589 2.923 2.554-1.484-.61-2.496-1.224-3.252-1.86C6.86 10.842 4.596 15.138 0 23.395c3.612-2.085 6.412-3.37 9.021-3.862a6.61 6.61 0 01-.171-1.547l.003-.115c.058-2.315 1.261-4.095 2.687-3.973 1.426.12 2.534 2.096 2.478 4.409a6.52 6.52 0 01-.146 1.243c2.58.505 5.352 1.787 8.914 3.844-.702-1.293-1.33-2.459-1.929-3.57-.943-.73-1.926-1.682-3.933-2.713 1.38.359 2.367.772 3.137 1.234-6.09-11.334-6.582-12.84-8.67-17.74zM22.898 21.36v-.623h-.234v-.084h.562v.084h-.234v.623h.331v-.707h.142l.167.5.034.107a2.26 2.26 0 01.038-.114l.17-.493H24v.707h-.091v-.593l-.206.593h-.084l-.205-.602v.602h-.091"/></svg>',
+    alpine: '<svg viewBox="0 0 24 24" fill="#0D597F"><path d="M5.998 1.607L0 12l5.998 10.393h12.004L24 12 18.002 1.607H5.998zM9.965 7.12L12.66 9.9l1.598 1.595.002-.002 2.41 2.363c-.2.14-.386.252-.563.344a3.756 3.756 0 01-.496.217 2.702 2.702 0 01-.425.111c-.131.023-.25.034-.358.034-.13 0-.242-.014-.338-.034a1.317 1.317 0 01-.24-.072.95.95 0 01-.2-.113l-1.062-1.092-3.039-3.041-1.1 1.053-3.07 3.072a.974.974 0 01-.2.111 1.274 1.274 0 01-.237.073c-.096.02-.209.033-.338.033-.108 0-.227-.009-.358-.031a2.7 2.7 0 01-.425-.114 3.748 3.748 0 01-.496-.217 5.228 5.228 0 01-.563-.343l6.803-6.727zm4.72.785l4.579 4.598 1.382 1.353a5.24 5.24 0 01-.564.344 3.73 3.73 0 01-.494.217 2.697 2.697 0 01-.426.111c-.13.023-.251.034-.36.034-.129 0-.241-.014-.337-.034a1.285 1.285 0 01-.385-.146c-.033-.02-.05-.036-.053-.04l-1.232-1.218-2.111-2.111-.334.334L12.79 9.8l1.896-1.897zm-5.966 4.12v2.529a2.128 2.128 0 01-.356-.035 2.765 2.765 0 01-.422-.116 3.708 3.708 0 01-.488-.214 5.217 5.217 0 01-.555-.34l1.82-1.825Z"/></svg>',
+    raspberry: '<svg viewBox="0 0 24 24" fill="#C51A4A"><path d="m19.8955 10.8961-.1726-.3028c.0068-2.1746-1.0022-3.061-2.1788-3.7348.356-.0938.7237-.1711.8245-.6182.6118-.1566.7397-.4398.8011-.7398.16-.1066.6955-.4061.6394-.9211.2998-.2069.4669-.4725.3819-.8487.3222-.3515.407-.6419.2702-.9096.3868-.4805.2152-.7295.05-.9817.2897-.5254.0341-1.0887-.7758-.9944-.3221-.4733-1.0244-.3659-1.133-.3637-.1215-.1519-.2819-.2821-.7755-.219-.3197-.2851-.6771-.2364-1.0458-.0964-.4378-.3403-.7275-.0675-1.0584.0356-.53-.1706-.6513.0631-.9117.1583-.5781-.1203-.7538.1416-1.0309.4182l-.3224-.0063c-.8719.5061-1.305 1.5366-1.4585 2.0664-.1536-.5299-.5858-1.5604-1.4575-2.0664l-.3223.0063C9.942.5014 9.7663.2394 9.1883.3597 8.9279.2646 8.807.0309 8.2766.2015c-.2172-.0677-.417-.2084-.6522-.2012l.0004.0002C7.5017.0041 7.369.049 7.2185.166c-.3688-.1401-.7262-.1887-1.0459.0964-.4936-.0631-.654.0671-.7756.219C5.2887.4791 4.5862.3717 4.264.845c-.8096-.0943-1.0655.4691-.7756.9944-.1653.2521-.3366.5013.05.9819-.1367.2677-.0519.5581.2703.9096-.085.3763.0822.6418.3819.8487-.0561.515.4795.8144.6394.9211.0614.3001.1894.5832.8011.7398.1008.4472.4685.5244.8245.6183-1.1766.6737-2.1856 1.56-2.1788 3.7348l-.1724.3028c-1.3491.8082-2.5629 3.4056-.6648 5.5167.124.6609.3319 1.1355.5171 1.6609.2769 2.117 2.0841 3.1082 2.5608 3.2255.6984.524 1.4423 1.0212 2.449 1.3696.949.964 1.977 1.3314 3.0107 1.3308.0152 0 .0306.0002.0457 0 1.0337.0006 2.0618-.3668 3.0107-1.3308 1.0067-.3483 1.7506-.8456 2.4491-1.3696.4766-.1173 2.2838-1.1085 2.5607-3.2255.1851-.5253.3931-1 .517-1.6609 1.8981-2.1113.6843-4.7089-.6649-5.517zm-1.0386-.3715c-.0704.8759-4.6354-3.0504-3.8472-3.1808 2.1391-.3558 3.9191.896 3.8472 3.1808zm-2.0155 4.3649c-1.1481.7409-2.8025.2626-3.6953-1.0681-.8928-1.3306-.6858-3.0101.4623-3.7509 1.1481-.7409 2.8025-.2627 3.6953 1.068.8927 1.3307.6858 3.0101-.4623 3.751z"/></svg>',
+    redhat: '<svg viewBox="0 0 24 24" fill="#EE0000"><path d="M16.009 13.386c1.577 0 3.86-.326 3.86-2.202a1.765 1.765 0 0 0-.04-.431l-.94-4.08c-.216-.898-.406-1.305-1.982-2.093-1.223-.625-3.888-1.658-4.676-1.658-.733 0-.947.946-1.822.946-.842 0-1.467-.706-2.255-.706-.757 0-1.25.515-1.63 1.576 0 0-1.06 2.99-1.197 3.424a.81.81 0 0 0-.028.245c0 1.162 4.577 4.974 10.71 4.974m4.101-1.435c.218 1.032.218 1.14.218 1.277 0 1.765-1.984 2.745-4.593 2.745-5.895.004-11.06-3.451-11.06-5.734a2.326 2.326 0 0 1 .19-.925C2.746 9.415 0 9.794 0 12.217c0 3.969 9.405 8.861 16.851 8.861 5.71 0 7.149-2.582 7.149-4.62 0-1.605-1.387-3.425-3.887-4.512"/></svg>',
+    linux: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.003 0c-2.42 0-4.385 1.96-4.385 4.38 0 .42.06.83.17 1.22C6.388 6.46 5.158 8.04 5.158 9.94c0 .48.08.94.23 1.37-.99.78-1.62 1.97-1.62 3.32 0 1.92 1.28 3.54 3.05 4.09.43 2.99 2.99 5.28 6.185 5.28 3.2 0 5.75-2.29 6.19-5.28 1.77-.55 3.05-2.17 3.05-4.09 0-1.35-.63-2.54-1.62-3.32.15-.43.23-.89.23-1.37 0-1.9-1.23-3.48-2.63-4.34.11-.39.17-.8.17-1.22C16.388 1.96 14.423 0 12.003 0z"/></svg>',
+    unknown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+};
+
+function detectConnectionIconKey(c) {
+    const explicit = String(c?.icon || '').toLowerCase().trim();
+    /* iconSource manual/probed：icon 来自用户指定或远端探测事实，直接采信；
+       只有 auto 才退回文本启发式猜测。 */
+    if (explicit && explicit !== 'auto' && CONNECTION_OS_ICONS[explicit]) {
+        return explicit;
+    }
+    const text = [
+        c?.name || '',
+        c?.remark || '',
+        (c?.tags || []).join(' '),
+        c?.host || '',
+    ].join(' ').toLowerCase();
+
+    if (/(windows|win11|win10|winserver|\bwin\b)/i.test(text)) return 'windows';
+    if (/(macos|osx|darwin|apple|macbook|macmini|imac|macstudio|\bmac\b)/i.test(text)) return 'macos';
+    if (/ubuntu/i.test(text)) return 'ubuntu';
+    if (/debian/i.test(text)) return 'debian';
+    if (/(arch|archlinux|manjaro)/i.test(text)) return 'arch';
+    if (/(alpine|alpinelinux)/i.test(text)) return 'alpine';
+    if (/(raspberry|rpi|raspbian|\bpi\s?[2-5]\w*\b)/i.test(text)) return 'raspberry';
+    if (/(redhat|rhel|centos|fedora|rocky|alma)/i.test(text)) return 'redhat';
+    if (/(linux|kali|gentoo|suse|opensuse)/i.test(text)) return 'linux';
+
+    if (String(c?.protocol || '').toUpperCase() === 'RDP') return 'windows';
+
+    return 'unknown';
+}
+
 function renderConnections() {
     refreshTagFilter();
     $('#connectionTitle').textContent = t('连接列表 ({count})', { count: connections.length });
@@ -3468,10 +3510,17 @@ function renderConnections() {
         const sourceBadge = c.owner === 'shared'
             ? `<span class="connection-source-badge shared">${t('共享')}</span>`
             : (c.owner === 'own' ? `<span class="connection-source-badge">${t('我的')}</span>` : '');
-        return `<article class="connection-card"><div class="card-top"><span class="protocol-badge">${escapeHtml(c.protocol)}</span><div class="card-top-meta">${sourceBadge}<span class="last-time">${fmtTime(c.lastConnectedAt)}</span></div></div>
-        <h2>${escapeHtml(c.name)}</h2><p class="host-line">${escapeHtml(c.host)}:${escapeHtml(c.port)} · ${c.connectionMode === 'proxy' ? t('代理') : c.connectionMode === 'jump' ? t('跳板机') : t('直连')}</p>
-        <div class="tag-row">${(c.tags || []).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="remark-md">${renderMarkdown(c.remark || t('暂无备注'))}</div>
-        <div class="card-actions">${canEdit ? `<button class="tool-btn" data-edit="${c.id}">${t('编辑')}</button>` : ''}${canDelete ? `<button class="tool-btn danger" data-delete="${c.id}">${t('删除')}</button>` : ''}${canUse ? `<button class="btn btn-primary" data-connect="${c.id}">${t('连接')}</button>` : `<button class="btn btn-primary" disabled title="${t('仅观察')}">${t('只读')}</button>`}</div></article>`;
+        const iconKey = detectConnectionIconKey(c);
+        const iconSvg = CONNECTION_OS_ICONS[iconKey] || CONNECTION_OS_ICONS.unknown;
+        const hasRemark = !!(c.remark && c.remark.trim());
+        const remarkHtml = hasRemark
+            ? renderMarkdown(c.remark)
+            : `<svg class="empty-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg><span>${t('暂无备注')}</span>`;
+
+        return `<article class="connection-card"><div class="card-top"><div class="card-top-left"><div class="distro-icon-capsule os-${iconKey}" title="${escapeHtml(c.name)}">${iconSvg}</div><span class="protocol-badge">${escapeHtml(c.protocol)}</span></div><div class="card-top-meta">${sourceBadge}<span class="last-time">${fmtTime(c.lastConnectedAt)}</span></div></div>
+        <h2>${escapeHtml(c.name)}</h2><p class="host-line">${escapeHtml(c.host)}:${escapeHtml(c.port)} · <span class="route-mode-text">${c.connectionMode === 'proxy' ? t('代理') : c.connectionMode === 'jump' ? t('跳板机') : t('直连')}</span></p>
+        <div class="tag-row">${(c.tags || []).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="remark-md ${hasRemark ? '' : 'empty-state'}">${remarkHtml}</div>
+        <div class="card-actions">${canEdit ? `<button class="tool-btn" data-edit="${c.id}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>${t('编辑')}</span></button>` : ''}${canDelete ? `<button class="tool-btn danger" data-delete="${c.id}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span>${t('删除')}</span></button>` : ''}${canUse ? `<button class="btn btn-primary" data-connect="${c.id}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>${t('连接')}</span></button>` : `<button class="btn btn-primary" disabled title="${t('仅观察')}">${t('只读')}</button>`}</div></article>`;
     }).join('') : connectionListEmptyHtml();
     renderRemoteServers(); renderJumpOptions();
 }
@@ -3919,6 +3968,7 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     if ($('#connEncoding')) $('#connEncoding').value = conn?.encoding || 'utf-8';
     renderSshKeyOptions(conn?.sshKeyId || '');
     $('#connTags').value = (conn?.tags || []).join(', '); setRouteMode(conn?.connectionMode || 'direct', conn?.connectionMode === 'jump' ? (conn?.jumpHostIds || (conn?.jumpHostId ? [conn.jumpHostId] : [])) : (conn?.proxyId || ''));
+    if ($('#connIcon')) $('#connIcon').value = conn?.icon || 'auto';
     $('#connPassword').type = 'password'; $('#toggleConnPassword').textContent = '👁️';
     // Transient credentials must never be written as a readable DOM value.
     if (connectionModalMode === 'transient' && conn?.hasTransientCredential) {
@@ -3950,7 +4000,7 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     updateProtocolFields({ preservePort: !!conn });
     // Connection/RDP selects: toggle-select so re-tap closes the menu.
     enhanceAllToggleSelects();
-    ['connProtocol', 'connSshKey', 'connEncoding', 'connRoute', 'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode'].forEach((id) => {
+    ['connProtocol', 'connSshKey', 'connEncoding', 'connRoute', 'connIcon', 'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode'].forEach((id) => {
         const el = document.getElementById(id);
         if (el) syncToggleSelectFace(el);
     });
@@ -4192,7 +4242,7 @@ function connectionPayload({ forTest = false } = {}) {
     const proxyId = mode === 'proxy' ? ($('#connRoute')?.value || '') : '';
     const jumpHostIds = mode === 'jump' ? [...new Set($$('#jumpRouteList [data-jump-route-select]').map((el) => el.value).filter(Boolean))] : [];
     const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : protocol === 'TELNET' ? 23 : 22;
-    const payload = { name: $('#connName').value.trim(), protocol, host: $('#connHost').value.trim(), port: Number($('#connPort').value) || defaultPort, username: $('#connUsername').value.trim(), sshKeyId: protocol === 'SSH' ? ($('#connSshKey')?.value || '') : '', password: $('#connPassword').value, privateKey: protocol === 'SSH' ? $('#connPrivateKey').value : '', remark: $('#connRemark').value, tags: parseTags($('#connTags').value), connectionMode: mode, proxyId: mode === 'proxy' ? proxyId : '', jumpHostId: mode === 'jump' ? (jumpHostIds[0] || '') : '', jumpHostIds, shareWithUsers: !!$('#connShareUsers')?.checked, shareWithAdmins: !!$('#connShareAdmins')?.checked };
+    const payload = { name: $('#connName').value.trim(), protocol, host: $('#connHost').value.trim(), port: Number($('#connPort').value) || defaultPort, username: $('#connUsername').value.trim(), sshKeyId: protocol === 'SSH' ? ($('#connSshKey')?.value || '') : '', icon: $('#connIcon')?.value || 'auto', password: $('#connPassword').value, privateKey: protocol === 'SSH' ? $('#connPrivateKey').value : '', remark: $('#connRemark').value, tags: parseTags($('#connTags').value), connectionMode: mode, proxyId: mode === 'proxy' ? proxyId : '', jumpHostId: mode === 'jump' ? (jumpHostIds[0] || '') : '', jumpHostIds, shareWithUsers: !!$('#connShareUsers')?.checked, shareWithAdmins: !!$('#connShareAdmins')?.checked };
     if (protocol === 'TELNET') {
         payload.encoding = String($('#connEncoding')?.value || 'utf-8');
         payload.sshKeyId = '';
@@ -4284,6 +4334,18 @@ async function testConnection() {
         }
         setConnectionTestLatency(`连接延迟：${result.durationMs}ms`, 'success');
         toast(result.message || t('连接测试成功'));
+        /* 后端探测到远端系统后回写了 icon（auto → 实际系统）：
+           更新内存中的连接并重渲染卡片；编辑中的表单下拉同步新值。 */
+        if (result.detectedIcon) {
+            const idx = connections.findIndex((c) => String(c.id) === String(editingId));
+            if (idx >= 0 && (!connections[idx].icon || connections[idx].icon === 'auto')) {
+                connections[idx].icon = result.detectedIcon;
+                if ($('#connIcon')) $('#connIcon').value = result.detectedIcon;
+                syncToggleSelectFace($('#connIcon'));
+                renderConnections();
+                toast(t('已识别系统：{os}', { os: result.detectedIcon }));
+            }
+        }
     } catch (err) {
         setConnectionTestLatency(t('测试失败'), 'error');
         toast(err.message);
@@ -4584,6 +4646,16 @@ function rollbackLocallyMountedCardFlipTab(tabId) {
 async function openConnection(id, options = {}) {
     const data = await api(`/api/connections/${id}/open`, { method: 'POST' }); const c = data.connection;
     const protocol = String(c.protocol || 'SSH').toUpperCase();
+    /* 后端在 SSH 建连时探测远端系统并可能回写了 icon（auto/probed → 实际系统）。
+       open 响应带回最新值：与内存不一致就同步并重渲染卡片。 */
+    {
+        const idx = connections.findIndex((x) => String(x.id) === String(id));
+        if (idx >= 0 && c.icon && c.icon !== connections[idx].icon) {
+            connections[idx].icon = c.icon;
+            connections[idx].iconSource = c.iconSource || 'auto';
+            renderConnections();
+        }
+    }
     // Restore path supplies a stable sessionId so refresh reattaches the live PTY.
     // Normal "连接" still opens a fresh tab unless the same session is already open.
     const preferredId = String(options.sessionId || options.tabId || '').trim();
@@ -14230,6 +14302,18 @@ function bindDeepLinkChannel() {
                 console.warn('[terminal-notes]', 'fullscreen exit before notes failed', err);
                 toast(t('无法打开笔记，请重试'));
             });
+    });
+    // Terminal -> app: backend probed the remote OS and persisted the icon
+    // (auto/probed → actual system). Sync memory + re-render connection cards.
+    window.addEventListener('message', (event) => {
+        if (event.origin !== location.origin) return;
+        const data = event.data || {};
+        if (data.type !== 'zephyr-os-detected' || !data.connectionId || !data.icon) return;
+        const idx = connections.findIndex((c) => String(c.id) === String(data.connectionId));
+        if (idx < 0 || connections[idx].icon === data.icon) return;
+        connections[idx].icon = data.icon;
+        connections[idx].iconSource = 'probed';
+        renderConnections();
     });
 }
 

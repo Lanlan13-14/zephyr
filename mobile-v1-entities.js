@@ -557,6 +557,7 @@ function connectionDefaults(id, patch) {
         password: typeof patch.password === 'string' ? patch.password : '',
         privateKey: typeof patch.privateKey === 'string' ? patch.privateKey : '',
         sshKeyId: String(patch.sshKeyId || ''),
+        icon: String(patch.icon || '').trim() || 'auto',
         remark: String(patch.remark || ''),
         tags: Array.isArray(patch.tags) ? patch.tags.map(String).filter(Boolean) : [],
         connectionMode: ['direct', 'proxy', 'jump'].includes(patch.connectionMode) ? patch.connectionMode : 'direct',

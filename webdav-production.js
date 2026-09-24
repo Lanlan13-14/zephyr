@@ -278,7 +278,7 @@ function createUserScopedSnapshotSource({
                 const row = noteRevision(storage.getConnectionById(id));
                 return ownedRecord(row, userId, [
                     'id', 'name', 'host', 'port', 'protocol', 'username', 'password', 'privateKey',
-                    'remark', 'tags', 'connectionMode', 'proxyId', 'jumpHostId', 'jumpHostIds', 'sshKeyId',
+                    'remark', 'tags', 'connectionMode', 'proxyId', 'jumpHostId', 'jumpHostIds', 'sshKeyId', 'icon',
                     'rdpSoundMode', 'rdpClipboard', 'rdpMicrophone', 'rdpCamera', 'rdpStorage', 'rdpLocation',
                     'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpPipeline', 'rdpTouchMode',
                     'rdpTouchSensitivity', 'rdpDomain', 'encoding', 'visibility', 'createdAt', 'updatedAt',

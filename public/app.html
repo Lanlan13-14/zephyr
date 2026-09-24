@@ -6,10 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260919-direct-ssh-no-jump">
-    <link rel="modulepreload" href="app.js?v=20260921-link-ui3">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260924-os-probe">
+    <link rel="modulepreload" href="app.js?v=20260924-os-probe">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
-    <link rel="stylesheet" href="style.css?v=20260921-link-ui3">
+    <link rel="stylesheet" href="style.css?v=20260924-os-probe">
     <script src="liquid-glass-renderer.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-tab-layout.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-nav.js?v=20260916-agent-devices1" defer></script>
@@ -1254,6 +1254,7 @@
             <div class="form-group force-hidden" id="rdpDomainGroup"><label data-i18n="Windows 域（可选）">Windows 域（可选）</label><input id="rdpDomain" placeholder="例如 CORP 或 WORKGROUP" data-i18n-placeholder="例如 CORP 或 WORKGROUP"><p class="field-hint" data-i18n="Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。">Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。</p></div>
             <div class="form-group"><label data-i18n="选择已保存 SSH 密钥">选择已保存 SSH 密钥</label><select id="connSshKey"><option value="" data-i18n="不使用密钥库">不使用密钥库</option></select><p class="field-hint" data-i18n="选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。">选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。</p></div>
             <div class="form-group"><label data-i18n="标签（逗号分隔）">标签（逗号分隔）</label><input id="connTags" placeholder="生产, 数据库, 海外" data-i18n-placeholder="生产, 数据库, 海外"></div>
+            <div class="form-group"><label data-i18n="系统图标">系统图标</label><select id="connIcon"><option value="auto" data-i18n="自动识别">自动识别 (Auto)</option><option value="windows">Windows</option><option value="macos">macOS</option><option value="ubuntu">Ubuntu</option><option value="debian">Debian</option><option value="arch">Arch Linux</option><option value="alpine">Alpine Linux</option><option value="raspberry">Raspberry Pi</option><option value="redhat">Red Hat / CentOS / Fedora</option><option value="linux">Linux (通用)</option><option value="unknown" data-i18n="未识别 (?)">未识别 (?)</option></select><p class="field-hint" data-i18n="默认根据名称与协议自动识别；可手动指定图标以防识别不准。">默认根据名称与协议自动识别；可手动指定图标以防识别不准。</p></div>
             <section class="advanced-route-panel" aria-label="高级选项" data-i18n-aria-label="高级选项">
                 <h3 data-i18n="高级选项">高级选项</h3>
                 <div class="advanced-route-divider"></div>
@@ -1411,9 +1412,9 @@
     </div>
 
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
-<script src="preview-mock.js?v=20260919-direct-ssh-no-jump" type="module"></script>
+<script src="preview-mock.js?v=20260924-os-probe" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260921-link-ui3" type="module"></script>
+<script src="app.js?v=20260924-os-probe" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
