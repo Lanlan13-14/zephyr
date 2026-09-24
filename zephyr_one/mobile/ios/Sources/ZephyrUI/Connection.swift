@@ -12,6 +12,9 @@ public struct Connection: Codable, Equatable, Sendable, Identifiable {
     public var username: String
     public var remark: String
     public var tags: [String]
+    /// System icon key synced from the main end: "auto" until the main probes
+    /// or the user picks one (probe-backed, same key as the Zephyr web app).
+    public var icon: String
     public var encoding: TerminalEncoding
     public var connectionMode: ConnectionMode
     public var proxyId: String?
@@ -49,6 +52,7 @@ public struct Connection: Codable, Equatable, Sendable, Identifiable {
         username: String = "",
         remark: String = "",
         tags: [String] = [],
+        icon: String = "auto",
         encoding: TerminalEncoding = .standardDefault,
         connectionMode: ConnectionMode = .standardDefault,
         proxyId: String? = nil,
@@ -81,6 +85,7 @@ public struct Connection: Codable, Equatable, Sendable, Identifiable {
         self.username = username
         self.remark = remark
         self.tags = tags
+        self.icon = icon
         self.encoding = encoding
         self.connectionMode = connectionMode
         self.proxyId = proxyId

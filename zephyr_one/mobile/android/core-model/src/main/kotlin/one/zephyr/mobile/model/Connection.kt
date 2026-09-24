@@ -14,6 +14,8 @@ data class Connection(
     val username: String = "",
     val remark: String = "",
     val tags: List<String> = emptyList(),
+    /** System icon key synced from the main end: 'auto' until the main probes or the user picks one. */
+    val icon: String = "auto",
     val encoding: TerminalEncoding = TerminalEncoding.default,
     val connectionMode: ConnectionMode = ConnectionMode.default,
     val proxyId: String? = null,

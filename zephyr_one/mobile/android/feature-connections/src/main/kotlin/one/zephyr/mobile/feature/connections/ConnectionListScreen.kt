@@ -1,5 +1,6 @@
 package one.zephyr.mobile.feature.connections
 
+import one.zephyr.mobile.ui.icon.OsIcons
 import one.zephyr.mobile.ui.icon.ZephyrIcons
 
 import androidx.compose.foundation.background
@@ -423,13 +424,26 @@ private fun ConnectionCard(
                     .background(protocolColor.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = if (connection.protocol == Protocol.TELNET) "TEL" else connection.protocol.wireName,
-                    color = protocolColor,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.5.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                )
+                /* Probe-backed system icon (same key as the Zephyr web app):
+                   resolved glyphs win; `auto` keeps the protocol monogram
+                   until the main end connects and probes the remote OS. */
+                val osGlyph = OsIcons.glyphFor(connection.icon)
+                if (osGlyph != null) {
+                    Icon(
+                        imageVector = osGlyph.vector,
+                        contentDescription = null,
+                        tint = osGlyph.brandColor ?: palette.onBackground,
+                        modifier = Modifier.size(22.dp),
+                    )
+                } else {
+                    Text(
+                        text = if (connection.protocol == Protocol.TELNET) "TEL" else connection.protocol.wireName,
+                        color = protocolColor,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
