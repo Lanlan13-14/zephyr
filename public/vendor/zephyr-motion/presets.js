@@ -65,6 +65,14 @@ export const PRESETS = {
   // Bottom-anchored fill (mobile terminal fullscreen). Same curve both ways —
   // reference HTML cubic-bezier(0.65,0,0.35,1) @ 0.6s → critically-damped ~0.48s.
   stretch: { response: 0.48, damping: 1.0 },
+
+  // AI 专业交互定制预设
+  aiCapsule:       { response: 0.28, damping: 0.96 }, // 输入底栏单行/多行弹性高度自适应与复位
+  aiPopover:       { response: 0.32, damping: 0.82 }, // 长按发送键锚点弹出思考卡片（轻微 Apple 弹性微回弹）
+  aiDrawer:        { response: 0.36, damping: 0.88 }, // 桌面端右侧 Cell 实时检查器与移动端会话抽屉滑入
+  aiMicroIsland:   { response: 0.30, damping: 0.85 }, // 顶栏双段微晶岛展开与状态指示切换
+  aiApprovalPulse: { response: 0.40, damping: 0.68 }, // 高危工具审批卡片警示微脉冲动效
+  aiSendMorph:     { response: 0.22, damping: 0.92 }, // 发送键由箭头平滑形变为旋转光环与中断方块
 };
 
 /** Resolve a preset name or {response, damping} object to numbers. */

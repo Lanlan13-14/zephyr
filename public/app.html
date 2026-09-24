@@ -1048,15 +1048,25 @@
         <div class="panel-drag-handle" data-ai-agent-drag title="拖动移动窗口" data-i18n-title="拖动移动窗口">
             <button class="panel-traffic-btn" data-ai-agent-layout title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
         </div>
-        <div class="ai-agent-window">
-            <aside class="ai-agent-sidebar">
+        <div class="ai-agent-window ai-three-pane">
+            <aside class="ai-agent-sidebar ai-nav-pane">
                 <div class="ai-sidebar-header"><span data-i18n="全部对话">全部对话</span><button class="new-chat-btn" type="button" id="aiNewChatBtn">＋</button></div>
                 <div class="ai-chat-list" id="aiChatList"></div>
                 <div class="ai-sidebar-footer"><button class="ui-btn" type="button" id="aiRefreshStatusBtn" data-i18n="刷新配置">刷新配置</button></div>
             </aside>
-            <section class="ai-agent-main">
+            <section class="ai-agent-main ai-stage-pane">
                 <div class="ai-title-bar panel-titlebar">
                     <div class="ai-title" id="aiCurrentChatTitle">Zephyr AI</div>
+                    <!-- Top Bar: Dual-Segment Micro-Island -->
+                    <div class="ai-micro-island" id="aiMicroIsland" title="切换模型与 Cell 执行沙箱">
+                        <div class="ai-island-segment model">
+                            <span id="aiIslandModelName">Auto</span>
+                            <span class="ai-island-badge" id="aiIslandThinkingBadge">Thinking</span>
+                        </div>
+                        <div class="ai-island-segment cell">
+                            <span id="aiIslandCellLabel">[Cell: Local]</span>
+                        </div>
+                    </div>
                     <div class="ai-header-actions">
                         <input id="aiProviderSelect" type="hidden">
                         <input id="aiModelSelect" type="hidden">
@@ -1085,6 +1095,7 @@
                             <button type="button" class="ai-segment-btn" data-value="yolo" role="tab" aria-selected="false" title="除 deny 外全自动（危险）" data-i18n-title="除 deny 外全自动（危险）">Yolo</button>
                         </div>
                         <button class="ui-btn ai-picker-btn" type="button" id="aiThinkPickerBtn" data-i18n="推理">推理</button>
+                        <button class="ui-btn" type="button" id="aiCellToggleBtn" title="切换沙箱检查器 (Cmd+J)">Cell</button>
                         <button class="ui-btn" type="button" id="aiUsageBtn" data-i18n="用量">用量</button>
                         <button class="ui-btn" type="button" id="aiBrowserPreviewToggleBtn" data-i18n="浏览器预览">浏览器预览</button>
                         <button class="ui-btn" type="button" id="aiCompressChatBtn" data-i18n="压缩摘要">压缩摘要</button>
@@ -1098,17 +1109,68 @@
                     <div class="ai-browser-preview-body" id="aiBrowserPreviewBody"><span data-i18n="AI 打开网页后，会在这里持续显示它正在代操作的页面。">AI 打开网页后，会在这里持续显示它正在代操作的页面。</span></div>
                 </div>
                 <div class="ai-chat-area" id="aiChatArea"><div class="ai-typing-indicator" id="aiTypingIndicator"><span></span><span></span><span></span></div></div>
-                <div class="ai-input-area">
+                
+                <!-- Floating Liquid Glass Input Capsule -->
+                <div class="ai-floating-capsule ai-input-area" id="aiFloatingCapsule">
                     <input type="file" id="aiFileUpload" style="display:none;" multiple>
-                    <button class="ai-tool-btn" type="button" id="aiUploadBtn" title="添加附件" data-i18n-title="添加附件" aria-label="添加附件" data-i18n-aria-label="添加附件"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></button>
-                    <!-- 语音输入已移除：保留附件上传与文本输入 -->
+                    <button class="ai-capsule-attach-btn ai-tool-btn" type="button" id="aiUploadBtn" title="添加附件" data-i18n-title="添加附件" aria-label="添加附件">＋</button>
                     <span class="ai-md-toggle-removed" hidden></span>
-                    <textarea class="ai-input-box" id="aiUserInput" rows="1" placeholder="输入指令，可让 AI 搜索网页、分析连接、执行远程命令..." data-i18n-placeholder="输入指令，可让 AI 搜索网页、分析连接、执行远程命令..."></textarea>
-                    <button class="ai-cancel-edit-btn" type="button" id="aiCancelEditBtn" hidden data-i18n="退出编辑" aria-label="退出编辑" data-i18n-aria-label="退出编辑">退出编辑</button>
-                    <button class="ai-send-btn" type="button" id="aiSendBtn" title="发送" data-i18n-title="发送" aria-label="发送" data-i18n-aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg></button>
+                    <textarea class="ai-capsule-input ai-input-box" id="aiUserInput" rows="1" placeholder="输入控制指令，可让 AI 搜索网页、分析系统、在沙箱中执行命令..." data-i18n-placeholder="输入控制指令，可让 AI 搜索网页、分析系统、在沙箱中执行命令..."></textarea>
+                    <button class="ai-cancel-edit-btn" type="button" id="aiCancelEditBtn" hidden data-i18n="退出编辑" aria-label="退出编辑">退出编辑</button>
+                    <button class="ai-capsule-send-btn ai-send-btn" type="button" id="aiSendBtn" title="发送 (长按展开推理深度)" data-i18n-title="发送 (长按展开推理深度)" aria-label="发送">▲</button>
                     <div class="ai-input-preview" id="aiInputPreview" hidden></div>
                 </div>
+
+                <!-- Origin-Aware Obsidian Thinking Level Card -->
+                <div class="ai-thinking-popover" id="aiThinkingPopover" aria-hidden="true">
+                    <div class="ai-thinking-popover-title">Thinking Level (推理深度)</div>
+                    <button type="button" class="ai-thinking-option" data-level="high">
+                        <span>High (深层推理 · 架构与排错)</span>
+                        <span class="ai-thinking-indicator-dot"></span>
+                    </button>
+                    <button type="button" class="ai-thinking-option" data-level="medium">
+                        <span>Medium (标准思考 · 常规交付)</span>
+                        <span class="ai-thinking-indicator-dot"></span>
+                    </button>
+                    <button type="button" class="ai-thinking-option" data-level="low">
+                        <span>Low (快速响应 · 简单问答)</span>
+                        <span class="ai-thinking-indicator-dot"></span>
+                    </button>
+                    <button type="button" class="ai-thinking-option" data-level="minimal">
+                        <span>Minimal (极速直出)</span>
+                        <span class="ai-thinking-indicator-dot"></span>
+                    </button>
+                    <div style="height:1px; background:rgba(255,255,255,0.08); margin:4px 0;"></div>
+                    <button type="button" class="ai-thinking-option" data-level="do-not-send">
+                        <span>Do Not Send (仅更新配置不发送)</span>
+                        <span class="ai-thinking-indicator-dot"></span>
+                    </button>
+                </div>
             </section>
+
+            <!-- Pane 3: Zephyr Cell Live Inspector Drawer -->
+            <aside class="ai-cell-inspector" id="aiCellInspector">
+                <div class="ai-cell-inspector-header">
+                    <span>Zephyr Cell (沙箱环境)</span>
+                    <button class="ui-btn" type="button" id="aiCellInspectorCloseBtn" style="padding:2px 8px; font-size:11px;">✕</button>
+                </div>
+                <div class="ai-cell-inspector-body">
+                    <div class="ai-cell-terminal-container" id="aiCellTerminalContainer">
+                        <div style="opacity:0.6; margin-bottom:6px;">$ zephyr-cell direct-engine initialized</div>
+                        <div style="color:#58a6ff;">[Cell: Local · Isolated Lease Active]</div>
+                    </div>
+                    <div class="ai-cell-workspace-tree" id="aiCellWorkspaceTree">
+                        <div style="font-weight:600; margin-bottom:4px; color:#c5d1e8;">workspace/</div>
+                        <div style="padding-left:12px;">├── inbox/</div>
+                        <div style="padding-left:12px;">├── outbox/</div>
+                        <div style="padding-left:12px;">└── execution.log</div>
+                    </div>
+                    <div class="ai-cell-resource-bar">
+                        <span>CPU: 8% · RAM: 142MB</span>
+                        <span style="color:#00d2b4;">Lease: OK</span>
+                    </div>
+                </div>
+            </aside>
         </div>
         <div class="panel-resize-handle left" data-ai-agent-resize="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
         <div class="panel-resize-handle right" data-ai-agent-resize="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>

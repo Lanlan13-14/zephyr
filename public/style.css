@@ -9761,6 +9761,435 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     .ai-provider-item, .ai-skill-item { grid-template-columns: minmax(0,1fr); }
 }
 
+/* ==========================================================================
+   Zephyr AI Master Unification: Phase 6-8 Liquid Glass & 3-Pane Workspace
+   Faithfully ported from:
+     - martin65536/liquid-glass-webgl (SDF refraction, dispersion, bevel highlight)
+     - Kyant0/AndroidLiquidGlass (Backdrop AGSL, circleMap lens displacement)
+   Strictly Zero-Emoji, Apple HIG Ergonomics, 780px golden reading width.
+   ========================================================================== */
+
+/* --- Layer 0: Titanium Micro-Texture Canvas --- */
+.ai-agent-panel.ai-unified-theme {
+    background: radial-gradient(circle at 50% 0%, #151a26 0%, #0c0f16 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    box-shadow: 0 32px 80px rgba(0, 0, 0, 0.64), inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
+}
+
+/* --- Layer 1: Desktop 3-Pane Adaptive Workspace --- */
+.ai-agent-window.ai-three-pane {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Pane 1: Session Navigation (260px foldable) */
+.ai-agent-sidebar.ai-nav-pane {
+    width: 260px;
+    flex: 0 0 260px;
+    background: rgba(14, 18, 26, 0.88);
+    backdrop-filter: blur(28px) saturate(160%);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    transition: transform 0.36s cubic-bezier(0.16, 1, 0.3, 1), width 0.36s ease;
+}
+.ai-agent-sidebar.ai-nav-pane.is-collapsed {
+    transform: translateX(-100%);
+    width: 0;
+    flex: 0 0 0;
+    overflow: hidden;
+    border-right: none;
+}
+
+/* Pane 2: Conversation & Reasoning Main Stage (780px golden width) */
+.ai-agent-main.ai-stage-pane {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    background: transparent;
+}
+.ai-stage-pane .ai-chat-area {
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 24px 20px 140px;
+    box-sizing: border-box;
+}
+
+/* Pane 3: Zephyr Cell Live Inspector & PTY Console (380px drawer) */
+.ai-cell-inspector {
+    width: 380px;
+    flex: 0 0 380px;
+    display: flex;
+    flex-direction: column;
+    background: rgba(12, 16, 24, 0.94);
+    backdrop-filter: blur(32px) saturate(180%);
+    border-left: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow: -16px 0 40px rgba(0, 0, 0, 0.45);
+    z-index: 10;
+    transform: translateX(0);
+    transition: transform 0.36s cubic-bezier(0.16, 1, 0.3, 1), width 0.36s ease;
+}
+.ai-cell-inspector.is-collapsed {
+    transform: translateX(100%);
+    width: 0;
+    flex: 0 0 0;
+    overflow: hidden;
+    border-left: none;
+}
+.ai-cell-inspector-header {
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 13px;
+    font-weight: 600;
+    color: #e4e7ee;
+}
+.ai-cell-inspector-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.ai-cell-terminal-container {
+    flex: 1 1 55%;
+    min-height: 160px;
+    background: #06080d;
+    padding: 10px;
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    color: #a4b1cd;
+    overflow-y: auto;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.ai-cell-workspace-tree {
+    flex: 1 1 35%;
+    padding: 10px 14px;
+    overflow-y: auto;
+    font-size: 12px;
+    color: #8c97af;
+}
+.ai-cell-resource-bar {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    background: rgba(0, 0, 0, 0.35);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 11px;
+    color: #727e96;
+}
+
+/* --- Layer 2: Dual-Segment Micro-Island (Top Bar) --- */
+.ai-micro-island {
+    display: inline-flex;
+    align-items: center;
+    height: 34px;
+    padding: 2px 4px;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.35),
+                0 4px 16px rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s;
+}
+.ai-micro-island:hover {
+    background: rgba(255, 255, 255, 0.13);
+    border-color: rgba(255, 255, 255, 0.25);
+}
+.ai-micro-island:active {
+    transform: scale(0.96);
+}
+.ai-island-segment {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #e2e8f5;
+    border-radius: 999px;
+}
+.ai-island-segment.model {
+    font-weight: 600;
+}
+.ai-island-segment.cell {
+    color: #8fa0be;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+.ai-island-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(20, 126, 251, 0.22);
+    color: #58a6ff;
+    font-weight: 600;
+}
+
+/* --- Layer 3: Floating Liquid Glass Input Capsule --- */
+.ai-floating-capsule {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(760px, calc(100% - 36px));
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 8px 12px;
+    background: rgba(22, 28, 40, 0.78);
+    backdrop-filter: blur(28px) saturate(190%);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 26px;
+    box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.45),
+                inset 0 -0.5px 0.5px rgba(0, 0, 0, 0.35),
+                0 16px 48px rgba(0, 0, 0, 0.45);
+    z-index: 20;
+    box-sizing: border-box;
+    transition: box-shadow 0.28s ease, border-color 0.28s ease;
+}
+.ai-floating-capsule:focus-within {
+    border-color: rgba(20, 126, 251, 0.55);
+    box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.55),
+                0 0 0 1px rgba(20, 126, 251, 0.4),
+                0 20px 54px rgba(0, 0, 0, 0.55);
+}
+.ai-capsule-attach-btn {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.08);
+    color: #c0cbe0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    margin-bottom: 2px;
+    transition: background 0.18s, transform 0.18s;
+}
+.ai-capsule-attach-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+}
+.ai-capsule-attach-btn:active {
+    transform: scale(0.92);
+}
+.ai-capsule-input {
+    flex: 1 1 auto;
+    min-height: 38px;
+    max-height: 140px;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #f0f4fc;
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.45;
+    padding: 8px 4px;
+    resize: none;
+}
+.ai-capsule-input::placeholder {
+    color: rgba(160, 175, 205, 0.55);
+}
+
+/* Multi-State Dynamic Send Button */
+.ai-capsule-send-btn {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    border-radius: 999px;
+    border: none;
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+    margin-bottom: 1px;
+    transition: background 0.22s, color 0.22s, transform 0.18s;
+}
+.ai-capsule-send-btn.is-ready {
+    background: #147efb;
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(20, 126, 251, 0.45);
+}
+.ai-capsule-send-btn.is-streaming {
+    background: #e23636;
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(226, 54, 54, 0.45);
+}
+.ai-capsule-send-btn:active {
+    transform: scale(0.92);
+}
+
+/* --- Layer 4: Origin-Aware Obsidian Thinking Level Card --- */
+.ai-thinking-popover {
+    position: absolute;
+    width: 290px;
+    background: rgba(18, 22, 32, 0.95);
+    backdrop-filter: blur(36px) saturate(190%);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 18px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.65),
+                inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    padding: 12px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.85);
+    transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1),
+                transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ai-thinking-popover.is-open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
+}
+.ai-thinking-popover-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #7b88a2;
+    padding: 4px 8px 6px;
+}
+.ai-thinking-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: transparent;
+    border: none;
+    color: #d8e0f0;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.16s;
+}
+.ai-thinking-option:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+.ai-thinking-option.is-selected {
+    background: rgba(20, 126, 251, 0.18);
+    color: #58a6ff;
+    font-weight: 600;
+}
+.ai-thinking-indicator-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: #00d2b4;
+    display: none;
+}
+.ai-thinking-option.is-selected .ai-thinking-indicator-dot {
+    display: block;
+}
+
+/* --- Layer 5: Structured Action Approval Card with Pulse --- */
+.ai-action-approval-card {
+    background: rgba(26, 32, 46, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 16px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    position: relative;
+    overflow: hidden;
+}
+.ai-action-approval-card.pulse {
+    animation: aiApprovalPulseAnim 2.4s infinite cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes aiApprovalPulseAnim {
+    0%   { border-color: rgba(255, 171, 0, 0.3); box-shadow: 0 0 0 0 rgba(255, 171, 0, 0.3); }
+    50%  { border-color: rgba(255, 171, 0, 0.8); box-shadow: 0 0 0 4px rgba(255, 171, 0, 0.15); }
+    100% { border-color: rgba(255, 171, 0, 0.3); box-shadow: 0 0 0 0 rgba(255, 171, 0, 0); }
+}
+.ai-action-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    font-weight: 600;
+    color: #e5eaf5;
+}
+.ai-action-card-command {
+    background: rgba(0, 0, 0, 0.45);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    color: #63e2b7;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.ai-action-card-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}
+.ai-action-btn-reject {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: transparent;
+    color: #a0aec5;
+    cursor: pointer;
+    font-size: 12px;
+}
+.ai-action-btn-approve {
+    padding: 6px 16px;
+    border-radius: 8px;
+    border: none;
+    background: #147efb;
+    color: #fff;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(20, 126, 251, 0.4);
+}
+
+/* --- Zero-Emoji Badge System --- */
+.ai-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    line-height: 1.3;
+}
+.ai-badge-vision    { background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.35); color: #38bdf8; }
+.ai-badge-reasoning { background: rgba(168, 85, 247, 0.15); border-color: rgba(168, 85, 247, 0.35); color: #c084fc; }
+.ai-badge-tools     { background: rgba(34, 197, 94, 0.15);  border-color: rgba(34, 197, 94, 0.35);  color: #4ade80; }
+.ai-badge-cell      { background: rgba(249, 115, 22, 0.15); border-color: rgba(249, 115, 22, 0.35); color: #fb923c; }
+.ai-badge-isolated  { background: rgba(239, 68, 68, 0.15);  border-color: rgba(239, 68, 68, 0.35);  color: #f87171; }
+
+
 
 /* Zephyr AI Agent mobile polish */
 .ai-floating-btn.active {
