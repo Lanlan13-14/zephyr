@@ -83,7 +83,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "zephyr-one-windows-x64-${version}.exe"
+      "artifactName": "zephyr-one-windows-x64-${version}.exe",
+      "include": "build/installer.nsh"
     },
     "portable": {
       "artifactName": "zephyr-one-windows-portable-${version}.exe"

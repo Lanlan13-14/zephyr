@@ -216,6 +216,22 @@ test('embedded One validates agent: hops against the relayed main, not the local
     assert.match(resolver, /!ZEPHYR_ONE_EMBEDDED && fileAgentManager/);
 });
 
+test('the windows uninstaller offers to wipe the pinned userData directory', () => {
+    /* app.setPath pins Electron userData to %APPDATA%\com.zephyr.one, which
+     * deleteAppDataOnUninstall never touches (it only removes
+     * $APPDATA\<productName>); reinstalling therefore "kept" all data. The
+     * custom uninstall section must offer a delete and cover the pinned
+     * directory plus Local caches. */
+    const pkg = JSON.parse(read('zephyr_one/package.json'));
+    assert.strictEqual(pkg.build.nsis.include, 'build/installer.nsh');
+    const nsh = read('zephyr_one/build/installer.nsh');
+    assert.match(nsh, /!macro customUnInstall/);
+    assert.match(nsh, /RMDir \/r "\$APPDATA\\com\.zephyr\.one"/);
+    assert.match(nsh, /RMDir \/r "\$LOCALAPPDATA\\com\.zephyr\.one"/);
+    /* The wipe must be a user choice, not silent data loss. */
+    assert.match(nsh, /MB_YESNO/);
+});
+
 test('windows hello output is decoded as UTF-8 on both sides of the pipe', () => {
     /* zh-CN Windows defaults the console to GBK; without forcing the
      * codepage the failure path surfaced as mojibake in the security panel. */
