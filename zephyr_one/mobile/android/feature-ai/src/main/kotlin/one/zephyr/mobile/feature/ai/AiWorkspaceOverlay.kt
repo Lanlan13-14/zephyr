@@ -77,6 +77,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
+import one.zephyr.mobile.ui.glass.liquidGlass
+import one.zephyr.mobile.ui.glass.Highlight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -883,9 +885,18 @@ private fun AiMessage(text: String, user: Boolean, modifier: Modifier = Modifier
 @Composable
 private fun AiToolTraceCard(item: AiTranscriptItem.ToolTrace) {
     val palette = ZephyrTheme.palette
+    val shape = RoundedCornerShape(14.dp)
     Column(
-        Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(14.dp))
-            .background(palette.surfaces.content).border(BorderStroke(1.dp, palette.surfaces.outlineSoft), RoundedCornerShape(14.dp))
+        Modifier.fillMaxWidth().padding(bottom = 10.dp)
+            .liquidGlass(
+                shape = shape,
+                blurRadius = 12.dp,
+                refractionHeight = 8.dp,
+                refractionAmount = 10.dp,
+                highlight = Highlight.Default,
+            )
+            .background(palette.surfaces.content.copy(alpha = 0.75f))
+            .border(BorderStroke(1.dp, palette.surfaces.outlineSoft.copy(alpha = 0.5f)), shape)
             .padding(horizontal = 13.dp, vertical = 11.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -903,42 +914,55 @@ private fun AiComposer(model: String, enabled: Boolean, onSend: (String) -> Unit
     val palette = ZephyrTheme.palette
     var text by remember { mutableStateOf("") }
     val sendInteraction = remember { MutableInteractionSource() }
-    Row(
-        Modifier.fillMaxWidth().background(palette.surfaces.elevated)
-            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 12.dp)
-            .navigationBarsPadding().imePadding(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Box(
+        Modifier.fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
+            .navigationBarsPadding().imePadding()
+            .liquidGlass(
+                shape = RoundedCornerShape(26.dp),
+                blurRadius = 16.dp,
+                refractionHeight = 14.dp,
+                refractionAmount = 18.dp,
+                chromaticAberration = true,
+                highlight = Highlight.Default,
+            )
+            .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
-        BasicTextField(
-            value = text,
-            onValueChange = { text = it.take(40_000) },
-            enabled = enabled,
-            modifier = Modifier.weight(1f).height(AiSheetGeometry.INPUT_HEIGHT_DP.dp)
-                .clip(RoundedCornerShape(20.dp)).background(palette.surfaces.content)
-                .border(BorderStroke(1.dp, palette.surfaces.outlineSoft), RoundedCornerShape(20.dp))
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            textStyle = TextStyle(color = palette.onBackground, fontSize = 14.sp),
-            cursorBrush = SolidColor(palette.brand.accent),
-            singleLine = true,
-            decorationBox = { input ->
-                Box(contentAlignment = Alignment.CenterStart) {
-                    if (text.isEmpty()) Text(AiWorkspaceCopy.askPlaceholder(model), color = palette.onFloatingSubtle, fontSize = 14.sp, maxLines = 1)
-                    input()
-                }
-            },
-        )
-        val canSend = enabled && text.isNotBlank()
-        Box(
-            Modifier.size(AiSheetGeometry.SEND_SIZE_DP.dp).pressScale(AiSheetGeometry.SEND_PRESS_SCALE, interaction = sendInteraction)
-                .clip(CircleShape).background(if (canSend) palette.brand.accent else palette.surfaces.outlineSoft)
-                .clickable(enabled = canSend, interactionSource = sendInteraction, indication = null) {
-                    val prompt = text.trim()
-                    text = ""
-                    onSend(prompt)
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicTextField(
+                value = text,
+                onValueChange = { text = it.take(40_000) },
+                enabled = enabled,
+                modifier = Modifier.weight(1f).height(AiSheetGeometry.INPUT_HEIGHT_DP.dp)
+                    .clip(RoundedCornerShape(20.dp)).background(palette.surfaces.content.copy(alpha = 0.65f))
+                    .border(BorderStroke(1.dp, palette.surfaces.outlineSoft.copy(alpha = 0.5f)), RoundedCornerShape(20.dp))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                textStyle = TextStyle(color = palette.onBackground, fontSize = 14.sp),
+                cursorBrush = SolidColor(palette.brand.accent),
+                singleLine = true,
+                decorationBox = { input ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (text.isEmpty()) Text(AiWorkspaceCopy.askPlaceholder(model), color = palette.onFloatingSubtle, fontSize = 14.sp, maxLines = 1)
+                        input()
+                    }
                 },
-            contentAlignment = Alignment.Center,
-        ) { Icon(ZephyrIcons.ArrowUp, "发送", tint = Color.White, modifier = Modifier.size(16.dp)) }
+            )
+            val canSend = enabled && text.isNotBlank()
+            Box(
+                Modifier.size(AiSheetGeometry.SEND_SIZE_DP.dp).pressScale(AiSheetGeometry.SEND_PRESS_SCALE, interaction = sendInteraction)
+                    .clip(CircleShape).background(if (canSend) palette.brand.accent else palette.surfaces.outlineSoft)
+                    .clickable(enabled = canSend, interactionSource = sendInteraction, indication = null) {
+                        val prompt = text.trim()
+                        text = ""
+                        onSend(prompt)
+                    },
+                contentAlignment = Alignment.Center,
+            ) { Icon(ZephyrIcons.ArrowUp, "发送", tint = Color.White, modifier = Modifier.size(16.dp)) }
+        }
     }
 }
 

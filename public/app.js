@@ -11464,6 +11464,119 @@ function closeAiAssistantPanel() {
     });
 }
 function bringAiPanelToFront() { const p = $('#aiAgentPanel'); if (!p) return; p.style.zIndex = String(10080 + Math.floor(Date.now() % 40)); p.style.setProperty('--panel-z', p.style.zIndex); }
+
+function initZephyrAiPhase68Interactions() {
+    const sendBtn = $('#aiSendBtn');
+    const input = $('#aiUserInput');
+    const popover = $('#aiThinkingPopover');
+    const cellInspector = $('#aiCellInspector');
+    const navPane = $('.ai-agent-sidebar.ai-nav-pane');
+    const microIsland = $('#aiMicroIsland');
+
+    if (!sendBtn || !input) return;
+
+    // 1. Dynamic Send Button Multi-State
+    const updateSendBtnState = () => {
+        const isRunning = aiIsSessionRunning(aiCurrentSessionId);
+        const hasText = input.value.trim().length > 0;
+        sendBtn.classList.toggle('is-streaming', isRunning);
+        sendBtn.classList.toggle('is-ready', !isRunning && hasText);
+        sendBtn.textContent = isRunning ? '■' : '▲';
+    };
+    input.addEventListener('input', updateSendBtnState);
+
+    // 2. Long-press Send Button to open Obsidian Thinking Level Card (aiPopover)
+    let longPressTimer = 0;
+    const openThinkingPopover = () => {
+        if (!popover) return;
+        const rect = sendBtn.getBoundingClientRect();
+        const capsule = $('#aiFloatingCapsule');
+        const capsuleRect = capsule ? capsule.getBoundingClientRect() : rect;
+        popover.style.bottom = `${window.innerHeight - capsuleRect.top + 10}px`;
+        popover.style.right = `${window.innerWidth - rect.right}px`;
+        popover.classList.add('is-open');
+    };
+    const closeThinkingPopover = () => {
+        popover?.classList.remove('is-open');
+    };
+
+    sendBtn.addEventListener('mousedown', (e) => {
+        if (e.button === 2) return;
+        longPressTimer = window.setTimeout(openThinkingPopover, 260);
+    });
+    sendBtn.addEventListener('mouseup', () => window.clearTimeout(longPressTimer));
+    sendBtn.addEventListener('mouseleave', () => window.clearTimeout(longPressTimer));
+    sendBtn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        openThinkingPopover();
+    });
+
+    sendBtn.addEventListener('touchstart', () => {
+        longPressTimer = window.setTimeout(openThinkingPopover, 260);
+    }, { passive: true });
+    sendBtn.addEventListener('touchend', () => window.clearTimeout(longPressTimer));
+
+    popover?.addEventListener('click', (e) => {
+        const option = e.target.closest?.('.ai-thinking-option');
+        if (!option) return;
+        const level = option.dataset.level;
+        popover.querySelectorAll('.ai-thinking-option').forEach(el => el.classList.remove('is-selected'));
+        option.classList.add('is-selected');
+        const badge = $('#aiIslandThinkingBadge');
+        if (badge && level) badge.textContent = level.charAt(0).toUpperCase() + level.slice(1);
+        closeThinkingPopover();
+        if (level !== 'do-not-send' && input.value.trim().length > 0) {
+            sendAiMessage();
+        }
+    });
+
+    // 3. Zephyr Cell Inspector Toggle (Cmd+J / Button)
+    const toggleCell = () => cellInspector?.classList.toggle('is-collapsed');
+    $('#aiCellToggleBtn')?.addEventListener('click', toggleCell);
+    $('#aiCellInspectorCloseBtn')?.addEventListener('click', () => cellInspector?.classList.add('is-collapsed'));
+
+    // 4. Micro-Island Click -> Model/Cell Router
+    microIsland?.addEventListener('click', () => {
+        openAiPicker('model', microIsland);
+    });
+
+    // 5. Global Keyboard Shortcuts
+    document.addEventListener('keydown', (e) => {
+        const panel = $('#aiAgentPanel');
+        if (!panel || panel.style.display === 'none') return;
+
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+            e.preventDefault();
+            navPane?.classList.toggle('is-collapsed');
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+            e.preventDefault();
+            toggleCell();
+        }
+        if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+            e.preventDefault();
+            const options = Array.from(popover?.querySelectorAll('.ai-thinking-option') || []);
+            const curIdx = options.findIndex(o => o.classList.contains('is-selected'));
+            let nextIdx = e.key === 'ArrowUp' ? curIdx - 1 : curIdx + 1;
+            if (nextIdx < 0) nextIdx = options.length - 1;
+            if (nextIdx >= options.length) nextIdx = 0;
+            options[nextIdx]?.click();
+        }
+        if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+            e.preventDefault();
+            input.focus();
+        }
+        if (e.key === 'Escape' && popover?.classList.contains('is-open')) {
+            closeThinkingPopover();
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest?.('#aiThinkingPopover, #aiSendBtn')) {
+            closeThinkingPopover();
+        }
+    });
+}
 let aiPanelLayoutMotionToken = 0;
 
 async function applyAiPanelLayout(layout, { animate = true } = {}) {
@@ -12082,6 +12195,7 @@ function setupAiAssistant() {
     $('#aiClosePanelBtn')?.addEventListener('click', closeAiAssistantPanel); $('#aiNewChatBtn')?.addEventListener('click', () => createAiChat());
     $('#aiChatList')?.addEventListener('click', (e) => { const del = e.target.closest?.('[data-ai-delete-chat]')?.dataset.aiDeleteChat; if (del) { e.preventDefault(); e.stopPropagation(); deleteAiChat(del); return; } const id = e.target.closest?.('[data-ai-chat]')?.dataset.aiChat || e.target.closest?.('[data-ai-chat-row]')?.dataset.aiChatRow; if (id) { cancelAiMessageEdit({ focus: false }); aiCurrentSessionId = id; saveAiChats(); renderAiChat(); } });
     $('#aiSendBtn')?.addEventListener('click', () => { if (aiIsSessionRunning(aiCurrentSessionId)) stopAiResponse(aiCurrentSessionId); else sendAiMessage(); });
+    initZephyrAiPhase68Interactions();
     $('#aiCancelEditBtn')?.addEventListener('click', () => cancelAiMessageEdit());
     $('#aiUserInput')?.addEventListener('input', (e) => { autoResizeAiInput(e.target); updateAiInputPreview(); });
     $('#aiUserInput')?.addEventListener('keydown', (e) => { if (e.key === 'Escape' && aiEditingMessageIndex >= 0) { e.preventDefault(); cancelAiMessageEdit(); return; } if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendAiMessage(); } });
