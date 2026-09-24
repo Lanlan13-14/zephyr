@@ -109,13 +109,11 @@ test('responses maps effort to reasoning object while chat uses reasoning_effort
   assert.equal(chat.reasoning, undefined);
 });
 
-test('Anthropic and Gemini mappings stay protocol-specific', () => {
+test('Anthropic mappings stay protocol-specific', () => {
   const claude = { type: 'anthropic', models: [{ id: 'claude-opus-4-8', reasoning: true }] };
   const claudeOptions = sanitizeThinkingOptions(claude, 'claude-opus-4-8', { effort: 'xhigh' });
   assert.equal(claudeOptions.effort, 'max');
   assert.equal(claudeOptions.output_config.effort, 'max');
-  const gemini = { type: 'gemini', models: [{ id: 'gemini-2.5-pro', reasoning: true }] };
-  assert.deepEqual(sanitizeThinkingOptions(gemini, 'gemini-2.5-pro', { thinkingConfig: { thinkingLevel: 'xhigh' } }).thinkingConfig, { thinkingBudget: 8192 });
 });
 
 test('reasoning rejection parser detects unsupported value for downgrade retry', () => {

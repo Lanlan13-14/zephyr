@@ -39,17 +39,14 @@ func NormalizeKind(k Kind) Kind {
 	s := strings.ToLower(strings.TrimSpace(string(k)))
 	switch s {
 	case "openai", "openai-compatible", "openai_compatible", "ollama":
-		if s == "ollama" {
-			return KindOllama
-		}
+		// "ollama" stays a compat alias: old saved rows keep routing to the
+		// OpenAI-compatible wire path with their custom baseUrl.
 		if s == "openai" {
 			return KindOpenAI
 		}
 		return KindOpenAIComp
 	case "anthropic", "claude":
 		return KindAnthropic
-	case "gemini", "google", "google-gemini":
-		return KindGemini
 	default:
 		if s == "" {
 			return KindOpenAIComp

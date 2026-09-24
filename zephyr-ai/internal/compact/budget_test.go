@@ -11,9 +11,6 @@ func TestModelWindowTokens(t *testing.T) {
 	if got := ModelWindowTokens("claude-3-7-sonnet", 0); got != 200000 {
 		t.Fatalf("claude window %d", got)
 	}
-	if got := ModelWindowTokens("gemini-2.5-pro", 0); got != 1000000 {
-		t.Fatalf("gemini window %d", got)
-	}
 	if got := ModelWindowTokens("gpt-4", 0); got != 8192 {
 		t.Fatalf("gpt-4 window %d", got)
 	}

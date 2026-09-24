@@ -16,8 +16,8 @@ const OUT = {
   manifest: 'contracts/ai/v2/GENERATED_MANIFEST.json',
 };
 
-const FAMILIES = ['openai', 'anthropic', 'google', 'deepseek', 'ollama', 'custom'];
-const APIS = ['openai-responses', 'openai-chat-completions', 'anthropic-messages', 'google-generative-ai', 'ollama-openai'];
+const FAMILIES = ['openai', 'anthropic', 'openai-compatible', 'custom'];
+const APIS = ['openai-responses', 'openai-chat-completions', 'anthropic-messages'];
 const AUTH_KINDS = ['api-key', 'bearer-token', 'device-envelope', 'none'];
 const VISIBILITIES = ['private', 'shared'];
 const PROMPT_CACHE = ['unsupported', 'auto', 'explicit'];

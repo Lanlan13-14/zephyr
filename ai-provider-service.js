@@ -11,7 +11,7 @@ const {
     selectableModelIds,
 } = require('./ai-model-catalog');
 
-const TYPES = new Set(['openai', 'openai-compatible', 'anthropic', 'gemini', 'ollama']);
+const TYPES = new Set(['openai', 'openai-compatible', 'anthropic']);
 const VIS = new Set(['private', 'shared_users', 'shared_admins', 'shared_all', 'selected']);
 const SENSITIVE_CONFIG_KEYS = new Set([
     'apikey', 'authorization', 'authheader', 'bearer', 'cookie', 'cookies',

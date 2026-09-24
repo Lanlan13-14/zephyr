@@ -24,9 +24,9 @@
       "schema": "model-descriptor.schema.json",
       "document": {
         "schemaVersion": 2,
-        "id": "gemini-2.5-flash",
-        "providerAccountId": "google-main",
-        "displayName": "Gemini 2.5 Flash",
+        "id": "gpt-5-reasoning",
+        "providerAccountId": "openai-main",
+        "displayName": "GPT Reasoning",
         "contextWindow": 1048576,
         "maxOutputTokens": 65536,
         "modalities": {

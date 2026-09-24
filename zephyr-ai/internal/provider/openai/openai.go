@@ -1,5 +1,5 @@
 // Package openai implements OpenAI chat/completions and responses APIs,
-// and is also used for openai-compatible and ollama endpoints.
+// and is also used for openai-compatible endpoints.
 package openai
 
 import (
@@ -23,7 +23,6 @@ func init() {
 	}
 	provider.Register(provider.KindOpenAI, f)
 	provider.Register(provider.KindOpenAIComp, f)
-	provider.Register(provider.KindOllama, f)
 }
 
 type Client struct {

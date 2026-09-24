@@ -38,8 +38,8 @@ test('Kotlin DTOs carry the contract field names verbatim', () => {
   assert.ok(source.includes('class EmbeddedTransportTarget') || source.includes('data class EmbeddedTransportTarget'));
 });
 
-test('provider Config exposes transport for all three wire adapters', () => {
-  for (const file of ['openai/openai.go', 'anthropic/anthropic.go', 'gemini/gemini.go']) {
+test('provider Config exposes transport for both wire adapters', () => {
+  for (const file of ['openai/openai.go', 'anthropic/anthropic.go']) {
     const source = fs.readFileSync(path.join(root, 'zephyr-ai/internal/provider', file), 'utf8');
     assert.ok(source.includes('transport.NewClient(cfg.Transport'), file + ' does not build from cfg.Transport');
     assert.ok(source.includes('RewriteRequest'), file + ' does not rewrite to the dial IP');

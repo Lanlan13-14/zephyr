@@ -10,15 +10,13 @@ type ProviderFamily string
 const (
 	ProviderFamilyOpenAI ProviderFamily = "openai"
 	ProviderFamilyAnthropic ProviderFamily = "anthropic"
-	ProviderFamilyGoogle ProviderFamily = "google"
-	ProviderFamilyDeepseek ProviderFamily = "deepseek"
-	ProviderFamilyOllama ProviderFamily = "ollama"
+	ProviderFamilyOpenAICompatible ProviderFamily = "openai-compatible"
 	ProviderFamilyCustom ProviderFamily = "custom"
 )
 
 func (v ProviderFamily) Valid() bool {
 	switch v {
-	case ProviderFamilyOpenAI, ProviderFamilyAnthropic, ProviderFamilyGoogle, ProviderFamilyDeepseek, ProviderFamilyOllama, ProviderFamilyCustom:
+	case ProviderFamilyOpenAI, ProviderFamilyAnthropic, ProviderFamilyOpenAICompatible, ProviderFamilyCustom:
 		return true
 	default:
 		return false
@@ -31,13 +29,11 @@ const (
 	ProviderAPIOpenAIResponses ProviderAPI = "openai-responses"
 	ProviderAPIOpenAIChatCompletions ProviderAPI = "openai-chat-completions"
 	ProviderAPIAnthropicMessages ProviderAPI = "anthropic-messages"
-	ProviderAPIGoogleGenerativeAI ProviderAPI = "google-generative-ai"
-	ProviderAPIOllamaOpenAI ProviderAPI = "ollama-openai"
 )
 
 func (v ProviderAPI) Valid() bool {
 	switch v {
-	case ProviderAPIOpenAIResponses, ProviderAPIOpenAIChatCompletions, ProviderAPIAnthropicMessages, ProviderAPIGoogleGenerativeAI, ProviderAPIOllamaOpenAI:
+	case ProviderAPIOpenAIResponses, ProviderAPIOpenAIChatCompletions, ProviderAPIAnthropicMessages:
 		return true
 	default:
 		return false

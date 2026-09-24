@@ -119,10 +119,6 @@ function normalizeOptionsForRuntime(provider = {}, model = '', merged = {}) {
     let mode = 'chat';
     if (type === 'anthropic' || base.includes('anthropic.com')) {
         mode = 'anthropic';
-    } else if (type === 'gemini' || type === 'google' || type === 'google-gemini' || base.includes('generativelanguage.googleapis.com')) {
-        mode = 'gemini';
-    } else if (type === 'ollama') {
-        mode = 'chat';
     } else {
         // openai / openai-compatible
         mode = openAiApiMode({

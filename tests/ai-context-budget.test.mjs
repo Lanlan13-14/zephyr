@@ -7,7 +7,6 @@ const { compactConversationHistory } = aiAgent;
 
 test('model context windows are inferred or explicitly overridden', () => {
   assert.equal(budget.inferModelWindowTokens({}, 'claude-3-7-sonnet'), 200000);
-  assert.equal(budget.inferModelWindowTokens({}, 'gemini-2.5-pro'), 1000000);
   assert.equal(budget.inferModelWindowTokens({}, 'gpt-4'), 8192);
   assert.equal(budget.inferModelWindowTokens({}, 'unknown-model', 64000), 64000);
 });

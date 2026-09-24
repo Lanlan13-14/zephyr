@@ -7836,7 +7836,6 @@ function aiProviderKind(provider = {}) {
     const type = String(provider?.type || '').toLowerCase();
     const base = String(provider?.baseUrl || '').toLowerCase();
     if (type === 'anthropic' || type === 'claude' || base.includes('anthropic.com')) return 'anthropic';
-    if (type === 'gemini' || type === 'google' || base.includes('generativelanguage.googleapis.com')) return 'gemini';
     return 'openai';
 }
 function aiThinkingOptionsForProvider(provider = {}, model = '') {
@@ -9706,10 +9705,6 @@ function aiIntensityOptions() {
     const provider = (ai.providers || []).find((p) => p.id === $('#aiProviderSelect')?.value) || {};
     const model = $('#aiModelSelect')?.value || provider.defaultModel || '';
     const kind = aiProviderKind(provider);
-    if (kind === 'gemini') {
-        if (/^-?\d+$/.test(value)) return { thinkingConfig: { thinkingBudget: Number(value) } };
-        return { thinkingConfig: { thinkingLevel: value } };
-    }
     const raw = kind === 'anthropic' ? { effort: value } : { reasoning_effort: value };
     return globalThis.ZephyrThinkingPolicy?.sanitizeThinkingOptions?.(provider, model, raw) || raw;
 }
@@ -11957,18 +11952,14 @@ function updateAiProviderModalHints() {
     if (base) {
         base.placeholder = mode === 'responses'
             ? 'https://api.openai.com/v1/responses'
-            : type === 'gemini'
-                ? 'https://generativelanguage.googleapis.com/v1beta'
-                : type === 'anthropic'
+            : type === 'anthropic'
                     ? 'https://api.anthropic.com/v1'
                     : 'https://api.openai.com/v1 / https://api.deepseek.com/v1';
     }
     if (extra) {
         extra.placeholder = type === 'anthropic'
             ? '{"thinking":{"type":"adaptive","display":"omitted"},"output_config":{"effort":"medium"}}'
-            : type === 'gemini'
-                ? '{"thinkingConfig":{"thinkingLevel":"low"}} 或 {"thinkingConfig":{"thinkingBudget":1024}}'
-                : mode === 'responses'
+            : mode === 'responses'
                     ? '{"text":{"format":{"type":"json_object"}},"reasoning":{"effort":"medium"}}'
                     : '{"response_format":{"type":"json_object"}}';
     }

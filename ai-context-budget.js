@@ -9,7 +9,6 @@ const KNOWN_WINDOWS = [
     [/gpt-4(?!o|\.1|-turbo)/i, 8192],
     [/gpt-3\.5-turbo/i, 16385],
     [/claude-3|claude-4|claude-sonnet|claude-opus|claude-haiku/i, 200000],
-    [/gemini-2|gemini-1\.5/i, 1000000],
     [/deepseek|qwen|glm-4|kimi|moonshot/i, 128000],
     [/llama-3\.1|llama-3\.2|llama-3\.3/i, 128000],
 ];

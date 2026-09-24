@@ -514,10 +514,9 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			case "usage":
 				emitNorm(norm.Push(chunk)...)
 				if chunk.Usage != nil {
-					// Usage events are provider-specific snapshots. Gemini may send
-					// repeated cumulative snapshots; Anthropic may split input and
-					// output across events. Keep the latest non-zero value per field
-					// and add it to the run exactly once after this call finishes.
+					// Usage events are provider-specific snapshots. Anthropic may split
+					// input and output across events. Keep the latest non-zero value
+					// per field and add it to the run exactly once after this call finishes.
 					mergeUsageSnapshot(&callUsage, chunk.Usage)
 				}
 			}

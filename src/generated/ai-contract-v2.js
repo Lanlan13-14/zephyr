@@ -6,9 +6,7 @@ export const AI_CONTRACT_SCHEMA_VERSION = 2;
 export const ProviderFamily = Object.freeze({
   OPENAI: "openai",
   ANTHROPIC: "anthropic",
-  GOOGLE: "google",
-  DEEPSEEK: "deepseek",
-  OLLAMA: "ollama",
+  OPENAI_COMPATIBLE: "openai-compatible",
   CUSTOM: "custom",
 });
 
@@ -16,8 +14,6 @@ export const ProviderAPI = Object.freeze({
   OPENAI_RESPONSES: "openai-responses",
   OPENAI_CHAT_COMPLETIONS: "openai-chat-completions",
   ANTHROPIC_MESSAGES: "anthropic-messages",
-  GOOGLE_GENERATIVE_AI: "google-generative-ai",
-  OLLAMA_OPENAI: "ollama-openai",
 });
 
 export const AuthKind = Object.freeze({

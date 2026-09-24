@@ -178,7 +178,7 @@ private fun ProviderEditor(initial: LocalAiProvider, save: (LocalAiProvider, Cha
     AiScroll {
         Card {
             Field("名称", d.name) { value -> d = d.copy(name = value) }
-            Choice("类型", d.type, listOf("openai-compatible", "openai", "anthropic", "gemini", "ollama")) { value -> d = d.copy(type = value) }
+            Choice("类型", d.type, listOf("openai-compatible", "openai", "anthropic")) { value -> d = d.copy(type = value) }
             Field("API Base URL", d.baseUrl) { value -> d = d.copy(baseUrl = value) }
             SecretField("API Key", key) { value -> key = value }
             Choice("接口模式", d.apiMode, listOf("auto", "chat", "responses")) { value -> d = d.copy(apiMode = value) }
