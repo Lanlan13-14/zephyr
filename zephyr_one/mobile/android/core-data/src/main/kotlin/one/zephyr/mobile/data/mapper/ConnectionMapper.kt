@@ -58,6 +58,7 @@ object ConnectionMapper {
             username = EntityCodec.text(payload, "username"),
             remark = EntityCodec.text(payload, "remark"),
             tags = EntityCodec.stringList(payload, "tags"),
+            icon = EntityCodec.text(payload, "icon", "auto"),
             encoding = TerminalEncoding.fromWire(EntityCodec.string(payload, "encoding")),
             connectionMode = ConnectionMode.fromWire(EntityCodec.string(payload, "connectionMode")),
             proxyId = EntityCodec.string(payload, "proxyId"),
@@ -142,6 +143,7 @@ object ConnectionMapper {
                 "protocol" -> JsonPrimitive(connection.protocol.wireName)
                 "username" -> JsonPrimitive(connection.username)
                 "remark" -> JsonPrimitive(connection.remark)
+                "icon" -> JsonPrimitive(connection.icon)
                 "tags" -> JsonArrays.of(connection.tags)
                 "connectionMode" -> JsonPrimitive(connection.connectionMode.wireName)
                 "proxyId" -> connection.proxyId?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull

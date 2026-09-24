@@ -29,6 +29,10 @@ class ProductionSyncWireFixtureTest {
         assertNull(bootstrap.nextPageToken)
         assertEquals(2, bootstrap.entities.size)
         assertEquals(1L, bootstrap.entities[0].changedAt)
+        // Zephyr Link must carry the main end's probe-backed system icon and
+        // its provenance; One renders this payload instead of a protocol monogram.
+        assertEquals("debian", bootstrap.entities[0].payload["icon"]?.toString()?.trim('"'))
+        assertEquals("probed", bootstrap.entities[0].payload["iconSource"]?.toString()?.trim('"'))
         assertEquals("oneUserSettings", bootstrap.entities[1].entityType)
         assertTrue(bootstrap.entities[1].fieldMask.isEmpty())
         assertTrue(bootstrap.entities[1].payload.containsKey("appearance.customCss"))

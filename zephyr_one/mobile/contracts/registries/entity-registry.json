@@ -36,6 +36,7 @@
         "jumpHostId",
         "jumpHostIds",
         "sshKeyId",
+        "icon",
         "rdpSoundMode",
         "rdpClipboard",
         "rdpMicrophone",
@@ -61,6 +62,7 @@
         "createdAt",
         "updatedAt",
         "lastConnectedAt",
+        "iconSource",
         "visibility"
       ],
       "opaquePreserveFields": [

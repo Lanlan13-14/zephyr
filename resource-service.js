@@ -233,6 +233,37 @@ class ResourceService {
     }
 
     /**
+     * Server-authority OS probe write. Unlike a raw storage update, this runs
+     * through the mobile change bridge so the next Zephyr Link pull sees the
+     * new icon on every bound device. Manual choices are never overwritten.
+     */
+    updateProbedConnectionIcon(id, icon) {
+        const before = this.storage.getConnectionById(id);
+        if (!before) return null;
+        if (before.iconSource === 'manual' && before.icon && before.icon !== 'auto') return before;
+        const nextIcon = String(icon || '').trim();
+        if (!nextIcon) return before;
+        if (before.icon === nextIcon && before.iconSource === 'probed') return before;
+        return this._runMobileMutation({
+            entityType: 'connection',
+            entityId: id,
+            action: 'upsert',
+            before,
+            after: () => this.storage.getConnectionById(id),
+            forceChange: before.icon !== nextIcon,
+        }, () => {
+            const fresh = this.storage.getConnectionById(id);
+            if (!fresh) return null;
+            if (fresh.iconSource === 'manual' && fresh.icon && fresh.icon !== 'auto') return fresh;
+            fresh.icon = nextIcon;
+            fresh.iconSource = 'probed';
+            fresh.updatedAt = Date.now();
+            fresh.revision = Math.max(1, Number(fresh.revision) || 1) + 1;
+            return this.storage.updateConnectionRow(fresh);
+        });
+    }
+
+    /**
      * Resolve a connection for an actual server-side connect attempt.
      * Requires `use`; returns decrypted secrets to the SERVER ONLY — callers
      * must never forward this object to the browser.

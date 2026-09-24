@@ -18,7 +18,15 @@ const registry = JSON.parse(fs.readFileSync(
 const connectionSpec = registry.entities.find((entity) => entity.type === 'connection');
 const user = { userId: 'owner-1', username: 'owner' };
 const device = { device_id: 'device-1', owner_user_id: user.userId, refresh_generation: 1 };
-const row = { id: 'connection-1', ownerUserId: user.userId, revision: 1, name: 'fixture', updatedAt: 1 };
+const row = {
+  id: 'connection-1',
+  ownerUserId: user.userId,
+  revision: 1,
+  name: 'fixture',
+  icon: 'debian',
+  iconSource: 'probed',
+  updatedAt: 1,
+};
 const settingsRow = {
   sectionKey: 'appearance',
   userId: user.userId,
