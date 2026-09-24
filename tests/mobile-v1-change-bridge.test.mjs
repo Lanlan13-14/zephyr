@@ -337,6 +337,14 @@ test('resource service mutations used by Web and AI enter the same feed', () => 
     );
     assert.equal(storage.getConnectionById(connection.id).password, 'replacement-password-canary');
     assert.equal(storage.getConnectionById(connection.id).revision, 2);
+
+    // Server-side SSH probing must use the same canonical mutation boundary:
+    // the next Link pull receives both the icon and its server-owned source.
+    const probed = resources.updateProbedConnectionIcon(connection.id, 'debian');
+    assert.equal(probed.icon, 'debian');
+    assert.equal(probed.iconSource, 'probed');
+    assert.equal(probed.revision, 3);
+
     const proxy = resources.createOwned(user, 'proxy', {
       id: 'proxy-ai', name: 'AI proxy', host: '127.0.0.1', port: 1080,
       type: 'socks5', username: '', password: 'never-in-feed',
@@ -362,6 +370,10 @@ test('resource service mutations used by Web and AI enter the same feed', () => 
     const store = resources.mobileChangeBridge.store;
     const changes = store.changePage(user.userId, 0, 20).changes;
     assert.equal(changes.find((change) => change.entityType === 'connection' && change.revision === 2).fieldMask.length, 0);
+    const probeChange = changes.find((change) => change.entityType === 'connection' && change.revision === 3);
+    assert.deepEqual(probeChange.fieldMask, ['icon']);
+    assert.equal(store.fieldRevisions(user.userId, 'connection', connection.id).get('icon'), 3);
+    assert.equal(storage.getConnectionById(connection.id).iconSource, 'probed');
     assert.equal(changes.find((change) => change.entityType === 'proxy' && change.revision === 2).fieldMask.length, 0);
     assert.equal(changes.find((change) => change.entityType === 'sshKey' && change.revision === 2).fieldMask.length, 0);
     assert.equal(changes.find((change) => change.entityId === jumpHost.id).revision, 1);

@@ -3642,7 +3642,10 @@ function probeRemoteOSAndPersist(conn) {
                 if (!fresh) return resolve(null);
                 if (fresh.iconSource === 'manual' && fresh.icon && fresh.icon !== 'auto') return resolve(fresh.icon);
                 if (fresh.icon === iconKey && fresh.iconSource === 'probed') return resolve(iconKey);
-                storage.updateConnectionRow({ ...fresh, icon: iconKey, iconSource: 'probed', updatedAt: new Date().toISOString() });
+                /* Canonical service boundary, not a raw storage write: this
+                   increments revision and appends the mobile/Link change-feed
+                   event so every bound One receives it on the next sync. */
+                resourceService.updateProbedConnectionIcon(conn.id, iconKey);
                 console.info('[os-probe]', 'detected remote os', { connectionId: conn.id, icon: iconKey, changed: fresh.icon !== iconKey });
                 resolve(iconKey);
             } catch (err) {
