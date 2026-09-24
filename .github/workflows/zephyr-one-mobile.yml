@@ -214,6 +214,33 @@ jobs:
           check_runtime zephyr-ai ./cmd/zephyr-ai-android libzephyr_ai_runtime.so
           check_runtime zephyr-link ./cmd/zephyr-link-android libzephyr_link.so
 
+      - name: Build JNI c-shared AI runtime into jniLibs
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          # libzephyr_ai_runtime_jni.so is the true -buildmode=c-shared library
+          # EmbeddedAiRuntimeJni loads via System.loadLibrary. Built fresh on
+          # every CI run with the NDK toolchain; the CGO-less executable above
+          # remains the committed fallback path.
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          export ANDROID_NDK_HOME="$sdk/ndk/27.2.12479018"
+          test -d "$ANDROID_NDK_HOME"
+          export CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          test -x "$CC"
+          out="zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_ai_runtime_jni.so"
+          (cd zephyr-ai && CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
+            go build -buildmode=c-shared -trimpath -ldflags='-s -w' -o "../${out}" ./cmd/zephyr-ai-jni)
+          test -s "$out"
+          # Must be a shared object with the JNI exports Kotlin binds.
+          if file "$out" | grep -q 'pie executable'; then
+            echo "::error::${out} is an executable, not a shared library"; exit 1
+          fi
+          if ! go version -m "$out" >/dev/null 2>&1 && ! strings "$out" | grep -q 'Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeInit'; then
+            echo "::error::${out} carries no EmbeddedAiRuntimeJni JNI exports"; exit 1
+          fi
+          echo "JNI library built: $(ls -la "$out")"
+
       # Keep the Gradle daemon between these two steps (setup-gradle starts it).
       # Do not merge assemble + tests into one invocation: the combined command
       # sat on `:app:assemblePrerelease` with no further task lines because tee
