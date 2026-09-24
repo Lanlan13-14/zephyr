@@ -1,20 +1,17 @@
-package openai
+package openai_responses
 
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/adapters"
 )
 
-// TestResponsesOmitsChatOnlyParams guards against OpenAI Responses API
-// InvalidParameter errors caused by Chat-Completions-only fields leaking into
-// the payload. presence_penalty, frequency_penalty, max_completion_tokens,
-// top-level reasoning_effort, response_format, stop, and n are rejected by
-// /v1/responses.
 func TestResponsesOmitsChatOnlyParams(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,70 +80,90 @@ func TestResponsesOmitsChatOnlyParams(t *testing.T) {
 	}
 }
 
-// TestChatOmitsResponsesOnlyParams is the symmetric guard for Chat Completions:
-// max_output_tokens is not a chat field and must be aliased to max_tokens.
-func TestChatOmitsResponsesOnlyParams(t *testing.T) {
+func TestResponsesSerializesImageParts(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chat_1","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		_, _ = w.Write([]byte("event: response.output_text.delta\ndata: {\"delta\":\"ok\"}\n\nevent: response.completed\ndata: {}\n\n"))
 	}))
 	defer srv.Close()
-
-	c := New(provider.Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "gpt-4o", APIMode: "chat"})
-	req := provider.Request{
-		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
-		Options: map[string]any{
-			"max_tokens":           1000,
-			"max_output_tokens":    2000,
-			"reasoning_effort":     "high",
-			"presence_penalty":     0.1,
-			"reasoning":            map[string]any{"effort": "high"},
+	c := New(provider.Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "gpt-4o", APIMode: "responses"})
+	req := provider.Request{Messages: []provider.Message{{
+		Role:    provider.RoleUser,
+		Content: "观察图片",
+		Parts: []provider.ContentPart{
+			{Type: "text", Text: "观察图片"},
+			{Type: "image_url", ImageURL: "data:image/png;base64,AA=="},
 		},
-	}
+	}}}
 	ch, err := c.Stream(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for chunk := range ch {
-		if chunk.Err != nil {
-			t.Fatalf("chunk error: %v", chunk.Err)
+	for range ch {
+	}
+	input, ok := body["input"].([]any)
+	if !ok || len(input) != 1 {
+		t.Fatalf("input missing: %v", body)
+	}
+	item, _ := input[0].(map[string]any)
+	content, ok := item["content"].([]any)
+	if !ok {
+		t.Fatalf("content should be array: %v", item)
+	}
+	foundImage := false
+	for _, part := range content {
+		pm, _ := part.(map[string]any)
+		if pm["type"] == "input_image" {
+			foundImage = true
 		}
 	}
-	// Chat Completions uses max_tokens, not max_output_tokens.
-	if body["max_tokens"] == nil {
-		t.Fatal("max_tokens missing on chat payload")
-	}
-	if _, present := body["max_output_tokens"]; present {
-		t.Fatalf("max_output_tokens should not appear on chat payload: %#v", body["max_output_tokens"])
-	}
-	if body["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort should be passed through on chat: %v", body["reasoning_effort"])
+	if !foundImage {
+		t.Fatalf("input_image part missing: %v", content)
 	}
 }
 
-// TestEmptyOptionValuesAreOitted ensures -1/empty-string convention does not
-// produce illegal zero-ish params that some upstreams reject.
-func TestEmptyOptionValuesAreOmitted(t *testing.T) {
-	payload := map[string]any{}
-	applyOptions(payload, map[string]any{
-		"temperature":     -1,
-		"top_p":           "",
-		"max_tokens":      0,
-		"reasoning_effort": "",
-	}, "chat")
-	for _, k := range []string{"temperature", "top_p", "reasoning_effort"} {
-		if _, present := payload[k]; present {
-			t.Fatalf("%q should be omitted for empty/-1 value: %#v", k, payload[k])
+func TestResponsesReasoningEffortDowngradesInsideObject(t *testing.T) {
+	var efforts []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
 		}
+		reasoning, _ := body["reasoning"].(map[string]any)
+		effort, _ := reasoning["effort"].(string)
+		efforts = append(efforts, effort)
+		if effort == "max" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"Unsupported value: max for reasoning.effort"}}`)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer upstream.Close()
+
+	client := New(provider.Config{BaseURL: upstream.URL})
+	payload := map[string]any{"model": "m", "input": []any{}, "reasoning": map[string]any{"effort": "max"}}
+	res, err := client.postWithReasoningFallback(context.Background(), upstream.URL, "openai responses", payload)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// max_tokens:0 is a legitimate explicit value (not -1/empty), keep it.
-	if v, ok := payload["max_tokens"]; !ok {
-		t.Fatalf("max_tokens 0 should be kept, got absent: %#v", payload)
-	} else if n, _ := v.(int); n != 0 {
-		if f, _ := v.(float64); f != 0 {
-			t.Fatalf("max_tokens 0 should be kept, got: %#v", v)
-		}
+	res.Body.Close()
+	if len(efforts) != 2 || efforts[0] != "max" || efforts[1] != "xhigh" {
+		t.Fatalf("unexpected efforts: %#v", efforts)
+	}
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "xhigh" {
+		t.Fatalf("nested effort was not downgraded: %#v", payload)
+	}
+}
+
+func TestApplyOptionsCarriesResponsesReasoning(t *testing.T) {
+	payload := map[string]any{}
+	adapters.ApplyOptions(payload, map[string]any{"reasoning": map[string]any{"effort": "max"}}, "responses")
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "max" {
+		t.Fatalf("reasoning object missing: %#v", payload)
 	}
 }

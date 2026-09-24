@@ -1,4 +1,4 @@
-package openai
+package openai_chat
 
 import (
 	"context"
@@ -55,49 +55,6 @@ func TestChatCompletionSerializesImageParts(t *testing.T) {
 	}
 }
 
-func TestResponsesSerializesImageParts(t *testing.T) {
-	var body map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("event: response.output_text.delta\ndata: {\"delta\":\"ok\"}\n\nevent: response.completed\ndata: {}\n\n"))
-	}))
-	defer srv.Close()
-	c := New(provider.Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "gpt-4o", APIMode: "responses"})
-	req := provider.Request{Messages: []provider.Message{{
-		Role:    provider.RoleUser,
-		Content: "观察图片",
-		Parts: []provider.ContentPart{
-			{Type: "text", Text: "观察图片"},
-			{Type: "image_url", ImageURL: "data:image/png;base64,AA=="},
-		},
-	}}}
-	ch, err := c.Stream(context.Background(), req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range ch {
-	}
-	input, ok := body["input"].([]any)
-	if !ok || len(input) != 1 {
-		t.Fatalf("input missing: %v", body)
-	}
-	item, _ := input[0].(map[string]any)
-	content, ok := item["content"].([]any)
-	if !ok {
-		t.Fatalf("content should be array: %v", item)
-	}
-	foundImage := false
-	for _, part := range content {
-		pm, _ := part.(map[string]any)
-		if pm["type"] == "input_image" {
-			foundImage = true
-		}
-	}
-	if !foundImage {
-		t.Fatalf("input_image part missing: %v", content)
-	}
-}
 
 func TestVisionRequestEndsStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

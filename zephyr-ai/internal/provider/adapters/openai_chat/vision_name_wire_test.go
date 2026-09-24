@@ -1,4 +1,4 @@
-package openai
+package openai_chat
 
 import (
 	"testing"

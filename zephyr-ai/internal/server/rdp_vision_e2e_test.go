@@ -17,6 +17,7 @@ import (
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/config"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/event"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
+	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/adapters/openai_chat"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/session"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool"
 )
