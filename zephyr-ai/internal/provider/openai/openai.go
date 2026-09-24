@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/transport"
 )
 
 func init() {
@@ -36,11 +37,19 @@ func New(cfg provider.Config) *Client {
 		timeout = 120 * time.Second
 	}
 	return &Client{
-		cfg: cfg,
-		client: &http.Client{
-			Timeout: timeout,
-		},
+		cfg:    cfg,
+		client: transport.NewClient(cfg.Transport, transport.DefaultPolicy(), timeout),
 	}
+}
+
+// do sends req through the pre-resolved dial target when present: the URL
+// host is rewritten to the dial IP while TLS SNI and the Host header keep
+// the original provider hostname.
+func (c *Client) do(req *http.Request) (*http.Response, error) {
+	if len(c.cfg.Transport.DialTargets) > 0 {
+		req = c.cfg.Transport.RewriteRequest(req)
+	}
+	return c.client.Do(req)
 }
 
 func (c *Client) Name() string        { return c.cfg.Name }
@@ -332,7 +341,7 @@ func (c *Client) postWithReasoningFallback(ctx context.Context, url, label strin
 			return nil, err
 		}
 		httpReq.Header = c.headers()
-		res, err := c.client.Do(httpReq)
+		res, err := c.do(httpReq)
 		if err != nil {
 			return nil, err
 		}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/transport"
 )
 
 func init() {
@@ -77,7 +78,14 @@ func New(cfg provider.Config) *Client {
 	if to <= 0 {
 		to = 120 * time.Second
 	}
-	return &Client{cfg: cfg, client: &http.Client{Timeout: to}}
+	return &Client{cfg: cfg, client: transport.NewClient(cfg.Transport, transport.DefaultPolicy(), to)}
+}
+
+func (c *Client) do(req *http.Request) (*http.Response, error) {
+	if len(c.cfg.Transport.DialTargets) > 0 {
+		req = c.cfg.Transport.RewriteRequest(req)
+	}
+	return c.client.Do(req)
 }
 
 func (c *Client) Name() string        { return c.cfg.Name }
@@ -263,7 +271,7 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	out := make(chan provider.Chunk, 8)
 	go func() {
 		defer close(out)
-		res, err := c.client.Do(httpReq)
+		res, err := c.do(httpReq)
 		if err != nil {
 			out <- provider.Chunk{Type: "error", Err: err, ErrorMsg: err.Error()}
 			return
