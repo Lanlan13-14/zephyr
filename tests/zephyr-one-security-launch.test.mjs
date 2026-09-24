@@ -126,10 +126,11 @@ test('Windows packaged boot shows the overlay before the product window', () => 
     assert.ok(loadAt >= 0 && enterAt > loadAt);
 });
 
-test('the product window reserves an unlock before the OS prompt so the watcher cannot fail it', () => {
-    assert.match(UI, /\/reserve/);
+test('the product window atomically reserves an unlock so the watcher cannot race it', () => {
+    assert.match(UI, /reserveForIpc: !!bridge/);
+    assert.doesNotMatch(UI, /unlock\/' \+ encodeURIComponent\(id\) \+ '\/reserve/);
     const security = read('zephyr-one-security.js');
-    assert.match(security, /reserve\(id\)/);
+    assert.match(security, /body\.reserveForIpc === true && !unlocks\.reserve\(id\)/);
     assert.match(security, /unlock\/:id\/reserve/);
     assert.match(security, /!entry\.reservedBy/);
 });
@@ -195,6 +196,12 @@ test('bastion candidates come from the bound main via device-proof relay', () =>
     assert.doesNotMatch(app, /api\('\/api\/rdp\/agent-bastions'\)/);
     /* Offline or non-bastion Agents must not appear as selectable hops. */
     assert.match(app, /a\.online !== false && a\.bastionEnabled !== false/);
+    /* Opening the connection editor must refresh remote candidates. A list
+     * fetched only during startup stays empty if One binds or Agent connects
+     * later in the session. */
+    const openModal = app.slice(app.indexOf('function openModal'), app.indexOf('function closeModal'));
+    assert.match(openModal, /loadNetwork\(\)/);
+    assert.match(openModal, /renderJumpOptions\(\)/);
     const server = read('server.js');
     assert.match(server, /listLocalBastionAgents/);
     assert.match(server, /mountZephyrOneLinkRoutes\(app, \{/);

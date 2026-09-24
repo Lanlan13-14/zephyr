@@ -526,7 +526,13 @@ function mountRoutes(app, {
             purpose: body.purpose || 'reveal_secret',
             reason: body.reason,
         });
-        return res.json({ ok: true, id });
+        /* Electron's product window owns the prompt. Reserve atomically with
+         * creation so the 300ms fallback watcher can never claim the request
+         * in the gap between two browser requests. */
+        if (body.reserveForIpc === true && !unlocks.reserve(id)) {
+            return res.status(500).json({ ok: false, code: 'unlock_reserve_failed', error: '无法预留系统解锁请求' });
+        }
+        return res.json({ ok: true, id, reserved: body.reserveForIpc === true });
     });
 
     app.get('/api/one/security/unlock/:id', requireUser, (req, res) => {

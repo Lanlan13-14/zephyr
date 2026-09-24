@@ -4024,6 +4024,15 @@ function openModal(conn = null, trigger = null, options = {}) {
     const cycle = ++connectionModalCycle;
     const source = trigger || $('#addConnectionBtn');
     prepareConnectionModalForm(conn, options);
+    /* Agent bastions live on the bound main and can change independently of
+     * local connections. Refresh them whenever the editor opens; startup-only
+     * loading left the picker permanently empty when binding/Agent login
+     * completed after the page was first rendered. */
+    loadNetwork().then(() => {
+        if (modal.classList.contains('show')) renderJumpOptions();
+    }).catch((err) => {
+        console.warn('[route-ui]', 'failed to refresh Agent bastions', err);
+    });
     connectionModalTrigger = source;
     connectionModalMotion.trigger = source;
     connectionModalMotion.originRect = stableConnectionSourceRect(source);
