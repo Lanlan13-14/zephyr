@@ -21,6 +21,7 @@ import (
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/permission"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/session"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/streamnorm"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool/platform"
 )
@@ -99,6 +100,9 @@ type Config struct {
 
 	// ProviderConfig is stored into ResumeState (api key stripped by server).
 	ProviderConfig provider.Config
+	// NormalizedSink receives Contract v2 stream frames alongside the legacy
+	// event emitter. Nil disables: the agent loop never depends on it.
+	NormalizedSink func(streamnorm.Event)
 	// Permission policy snapshot for resume state.
 	PermissionPolicy   permission.Policy
 	AutoConfirm        bool
@@ -465,6 +469,18 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			respID    string
 			callUsage provider.Usage
 		)
+		// Normalized frames ride alongside legacy events. The sink is
+		// observation-only: classification errors here must never fail the run.
+		norm := streamnorm.New(cfg.RunID, cfg.Model, cfg.ProviderConfig.ID)
+		emitNorm := func(events ...streamnorm.Event) {
+			if cfg.NormalizedSink == nil {
+				return
+			}
+			for _, e := range events {
+				cfg.NormalizedSink(e)
+			}
+		}
+		emitNorm(norm.Start())
 		for chunk := range ch {
 			if chunk.Err != nil || chunk.ErrorMsg != "" {
 				msg := chunk.ErrorMsg
@@ -473,6 +489,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				}
 				metrics.ProviderMs += time.Since(started).Milliseconds()
 				metrics.ProviderCalls++
+				emitNorm(norm.Fail("ai_upstream_unavailable")...)
 				_ = r.emit(cfg, event.TypeRunFailed, event.RunTerminal{Error: msg, Code: "provider_error"})
 				if cfg.Store != nil {
 					_ = cfg.Store.UpdateRunStatus(cfg.RunID, "failed", msg, metrics)
@@ -481,17 +498,21 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			}
 			switch chunk.Type {
 			case "text":
+				emitNorm(norm.Push(chunk)...)
 				if chunk.Text != "" {
 					text.WriteString(chunk.Text)
 					_ = r.emit(cfg, event.TypeTextDelta, event.TextDelta{Text: chunk.Text})
 				}
 			case "reasoning":
+				emitNorm(norm.Push(chunk)...)
 				if chunk.Text != "" {
 					_ = r.emit(cfg, event.TypeReasoningDelta, event.ReasoningDelta{Text: chunk.Text})
 				}
 			case "tool_calls":
+				emitNorm(norm.Push(chunk)...)
 				toolCalls = append(toolCalls, chunk.ToolCalls...)
 			case "usage":
+				emitNorm(norm.Push(chunk)...)
 				if chunk.Usage != nil {
 					// Usage events are provider-specific snapshots. Gemini may send
 					// repeated cumulative snapshots; Anthropic may split input and
@@ -530,6 +551,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 		}
 
 		if len(toolCalls) == 0 {
+			emitNorm(norm.Finish(streamnorm.StopStop)...)
 			_ = r.emit(cfg, event.TypeMessageCompleted, event.MessageCompleted{
 				Role: "assistant", Content: assistant.Content,
 			})
