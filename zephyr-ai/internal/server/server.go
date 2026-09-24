@@ -28,8 +28,9 @@ import (
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/mcp"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/permission"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
-	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/anthropic"
-	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/openai"
+	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/adapters/anthropic_messages"
+	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/adapters/openai_chat"
+	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/adapters/openai_responses"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/session"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool/builtin"
@@ -321,7 +322,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := provider.New(req.Provider)
+	p, err := provider.NewAdapter(req.Provider)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -609,7 +610,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 	if body.Provider.Kind != "" {
 		pcfg.Kind = body.Provider.Kind
 	}
-	p, err := provider.New(pcfg)
+	p, err := provider.NewAdapter(pcfg)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -792,7 +793,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 	if body.Provider.BaseURL != "" {
 		pcfg.BaseURL = body.Provider.BaseURL
 	}
-	p, err := provider.New(pcfg)
+	p, err := provider.NewAdapter(pcfg)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error()})
 		return

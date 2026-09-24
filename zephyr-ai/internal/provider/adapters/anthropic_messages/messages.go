@@ -1,4 +1,4 @@
-package anthropic
+package anthropic_messages
 
 import (
 	"bytes"
@@ -8,22 +8,26 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
-	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/transport"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/adapters"
 )
 
 func init() {
-	provider.Register(provider.KindAnthropic, func(cfg provider.Config) (provider.Provider, error) {
+	provider.RegisterAdapter(provider.APIAnthropicMessages, func(cfg provider.Config) (provider.Provider, error) {
 		return New(cfg), nil
 	})
 }
 
+// Client speaks exactly one wire protocol: Anthropic Messages.
 type Client struct {
-	cfg    provider.Config
-	client *http.Client
+	adapters.Base
 }
+
+func New(cfg provider.Config) *Client { return &Client{Base: adapters.NewBase(cfg)} }
+
+func (c *Client) Name() string        { return c.Cfg.Name }
+func (c *Client) Kind() provider.Kind { return c.Cfg.Kind }
 
 func normalizeThinkingEffort(value any) string {
 	v := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
@@ -73,24 +77,6 @@ func thinkingBudget(maxTokens int, effort string) int {
 	return target
 }
 
-func New(cfg provider.Config) *Client {
-	to := time.Duration(cfg.TimeoutMs) * time.Millisecond
-	if to <= 0 {
-		to = 120 * time.Second
-	}
-	return &Client{cfg: cfg, client: transport.NewClient(cfg.Transport, transport.DefaultPolicy(), to)}
-}
-
-func (c *Client) do(req *http.Request) (*http.Response, error) {
-	if len(c.cfg.Transport.DialTargets) > 0 {
-		req = c.cfg.Transport.RewriteRequest(req)
-	}
-	return c.client.Do(req)
-}
-
-func (c *Client) Name() string        { return c.cfg.Name }
-func (c *Client) Kind() provider.Kind { return provider.KindAnthropic }
-
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Message, provider.Usage, error) {
 	req.Stream = false
 	ch, err := c.Stream(ctx, req)
@@ -121,7 +107,7 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.M
 }
 
 func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	base := strings.TrimRight(c.cfg.BaseURL, "/")
+	base := strings.TrimRight(c.Cfg.BaseURL, "/")
 	if base == "" {
 		base = "https://api.anthropic.com/v1"
 	}
@@ -261,17 +247,17 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	if c.cfg.APIKey != "" {
-		httpReq.Header.Set("x-api-key", c.cfg.APIKey)
+	if c.Cfg.APIKey != "" {
+		httpReq.Header.Set("x-api-key", c.Cfg.APIKey)
 	}
-	for k, v := range c.cfg.ExtraHeaders {
+	for k, v := range c.Cfg.ExtraHeaders {
 		httpReq.Header.Set(k, v)
 	}
 
 	out := make(chan provider.Chunk, 8)
 	go func() {
 		defer close(out)
-		res, err := c.do(httpReq)
+		res, err := c.Do(httpReq)
 		if err != nil {
 			out <- provider.Chunk{Type: "error", Err: err, ErrorMsg: err.Error()}
 			return

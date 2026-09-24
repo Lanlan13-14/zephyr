@@ -38,12 +38,18 @@ test('Kotlin DTOs carry the contract field names verbatim', () => {
   assert.ok(source.includes('class EmbeddedTransportTarget') || source.includes('data class EmbeddedTransportTarget'));
 });
 
-test('provider Config exposes transport for both wire adapters', () => {
-  for (const file of ['openai/openai.go', 'anthropic/anthropic.go']) {
+test('provider Config exposes transport for all three wire adapters', () => {
+  for (const file of ['adapters/openai_chat/chat.go', 'adapters/openai_responses/responses.go', 'adapters/anthropic_messages/messages.go']) {
     const source = fs.readFileSync(path.join(root, 'zephyr-ai/internal/provider', file), 'utf8');
-    assert.ok(source.includes('transport.NewClient(cfg.Transport'), file + ' does not build from cfg.Transport');
-    assert.ok(source.includes('RewriteRequest'), file + ' does not rewrite to the dial IP');
+    assert.ok(source.includes('adapters.NewBase(cfg)'), file + ' does not build from cfg');
+    assert.ok(source.includes('c.Do('), file + ' does not send through the shared dialing base');
   }
+  const shared = fs.readFileSync(path.join(root, 'zephyr-ai/internal/provider/adapters/shared.go'), 'utf8');
+  assert.ok(shared.includes('RewriteRequest'), 'shared base does not rewrite to the dial IP');
+  const registry = fs.readFileSync(path.join(root, 'zephyr-ai/internal/provider/registry.go'), 'utf8');
+  assert.ok(registry.includes('func ResolveAPI'), 'ResolveAPI missing');
+  assert.ok(registry.includes('func NewAdapter'), 'NewAdapter missing');
+  assert.ok(registry.includes('func ResolveAPI(kind Kind, apiMode string) (API, error)'), 'ResolveAPI signature missing');
 });
 
 test('MCP HTTP path carries the same transport target', () => {

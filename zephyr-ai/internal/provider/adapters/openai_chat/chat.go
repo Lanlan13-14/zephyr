@@ -1,6 +1,4 @@
-// Package openai implements OpenAI chat/completions and responses APIs,
-// and is also used for openai-compatible endpoints.
-package openai
+package openai_chat
 
 import (
 	"bufio"
@@ -11,89 +9,26 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
-	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/transport"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/adapters"
 )
 
 func init() {
-	f := func(cfg provider.Config) (provider.Provider, error) {
+	provider.RegisterAdapter(provider.APIOpenAIChat, func(cfg provider.Config) (provider.Provider, error) {
 		return New(cfg), nil
-	}
-	provider.Register(provider.KindOpenAI, f)
-	provider.Register(provider.KindOpenAIComp, f)
+	})
 }
 
+// Client speaks exactly one wire protocol: OpenAI Chat Completions.
 type Client struct {
-	cfg    provider.Config
-	client *http.Client
+	adapters.Base
 }
 
-func New(cfg provider.Config) *Client {
-	timeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
-	if timeout <= 0 {
-		timeout = 120 * time.Second
-	}
-	return &Client{
-		cfg:    cfg,
-		client: transport.NewClient(cfg.Transport, transport.DefaultPolicy(), timeout),
-	}
-}
+func New(cfg provider.Config) *Client { return &Client{Base: adapters.NewBase(cfg)} }
 
-// do sends req through the pre-resolved dial target when present: the URL
-// host is rewritten to the dial IP while TLS SNI and the Host header keep
-// the original provider hostname.
-func (c *Client) do(req *http.Request) (*http.Response, error) {
-	if len(c.cfg.Transport.DialTargets) > 0 {
-		req = c.cfg.Transport.RewriteRequest(req)
-	}
-	return c.client.Do(req)
-}
-
-func (c *Client) Name() string        { return c.cfg.Name }
-func (c *Client) Kind() provider.Kind { return provider.NormalizeKind(c.cfg.Kind) }
-
-func (c *Client) apiMode() string {
-	m := strings.ToLower(strings.TrimSpace(c.cfg.APIMode))
-	if m == "chat" || m == "responses" {
-		return m
-	}
-	return "chat"
-}
-
-func joinURL(base, suffix string) string {
-	b := strings.TrimRight(base, "/")
-	if b == "" {
-		b = "https://api.openai.com/v1"
-	}
-	if strings.HasSuffix(b, suffix) {
-		return b
-	}
-	// If base already ends with /v1, just append path
-	s := suffix
-	if !strings.HasPrefix(s, "/") {
-		s = "/" + s
-	}
-	return b + s
-}
-
-func (c *Client) headers() http.Header {
-	h := make(http.Header)
-	h.Set("Content-Type", "application/json")
-	if c.cfg.APIKey != "" {
-		h.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	}
-	if c.cfg.Organization != "" {
-		h.Set("OpenAI-Organization", c.cfg.Organization)
-	}
-	for k, v := range c.cfg.ExtraHeaders {
-		if k != "" && v != "" {
-			h.Set(k, v)
-		}
-	}
-	return h
-}
+func (c *Client) Name() string        { return c.Cfg.Name }
+func (c *Client) Kind() provider.Kind { return c.Cfg.Kind }
 
 type chatMessage struct {
 	Role       string         `json:"role"`
@@ -120,7 +55,6 @@ type chatTool struct {
 		Parameters  json.RawMessage `json:"parameters"`
 	} `json:"function"`
 }
-
 func toChatMessages(msgs []provider.Message) []chatMessage {
 	out := make([]chatMessage, 0, len(msgs))
 	for _, m := range msgs {
@@ -163,7 +97,6 @@ func toChatMessages(msgs []provider.Message) []chatMessage {
 	}
 	return out
 }
-
 func toChatTools(tools []provider.ToolSchema) []chatTool {
 	out := make([]chatTool, 0, len(tools))
 	for _, t := range tools {
@@ -179,85 +112,6 @@ func toChatTools(tools []provider.ToolSchema) []chatTool {
 	}
 	return out
 }
-
-func applyOptions(payload map[string]any, opts map[string]any, mode string) {
-	if opts == nil {
-		return
-	}
-	responses := mode == "responses"
-
-	// Number-valued sampling keys shared by both modes. temperature/top_p
-	// are accepted by both, but OpenAI rejects them for reasoning models;
-	// callers already omit via sanitizeThinkingOptions, and -1/empty is
-	// dropped here as well.
-	for _, k := range []string{"temperature", "top_p"} {
-		if v, ok := opts[k]; ok && !isEmptyOption(v) {
-			payload[k] = v
-		}
-	}
-	if responses {
-		// Responses API uses max_output_tokens (not max_tokens /
-		// max_completion_tokens).
-		if v, ok := opts["max_output_tokens"]; ok && !isEmptyOption(v) {
-			payload["max_output_tokens"] = v
-		} else if v, ok := opts["max_tokens"]; ok && !isEmptyOption(v) {
-			payload["max_output_tokens"] = v
-		}
-		// reasoning is an object {effort} on Responses; never a top-level
-		// string.
-		if v, ok := opts["reasoning"]; ok && !isEmptyOption(v) {
-			if r, ok := v.(map[string]any); ok {
-				payload["reasoning"] = r
-			}
-		}
-		// seed is accepted by Responses; response_format, stop, n,
-		// presence/frequency penalty, and max_completion_tokens are NOT.
-		if v, ok := opts["seed"]; ok && !isEmptyOption(v) {
-			payload["seed"] = v
-		}
-		return
-	}
-
-	// Chat Completions mode.
-	for _, k := range []string{
-		"max_tokens", "max_completion_tokens",
-		"presence_penalty", "frequency_penalty",
-		"reasoning_effort", "response_format", "seed", "stop", "n",
-	} {
-		if v, ok := opts[k]; ok && !isEmptyOption(v) {
-			payload[k] = v
-		}
-	}
-	if v, ok := opts["reasoning"]; ok && !isEmptyOption(v) {
-		payload["reasoning"] = v
-	}
-	// max_output_tokens -> max_tokens alias
-	if _, ok := payload["max_tokens"]; !ok {
-		if v, ok := opts["max_output_tokens"]; ok && !isEmptyOption(v) {
-			payload["max_tokens"] = v
-		}
-	}
-}
-
-// isEmptyOption reports whether an option value should be omitted from the
-// wire payload: nil, empty string, or JSON null. Numeric -1 is a Zephyr
-// convention meaning "do not send" for temperature/top_p and is also dropped.
-func isEmptyOption(v any) bool {
-	switch x := v.(type) {
-	case nil:
-		return true
-	case string:
-		return x == ""
-	case float64:
-		return x == -1
-	case int:
-		return x == -1
-	case int64:
-		return x == -1
-	}
-	return false
-}
-
 func normalizeEffort(value any) string {
 	v := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
 	switch v {
@@ -269,7 +123,6 @@ func normalizeEffort(value any) string {
 		return ""
 	}
 }
-
 func nextEffortFallback(level string) string {
 	switch normalizeEffort(level) {
 	case "max":
@@ -286,7 +139,6 @@ func nextEffortFallback(level string) string {
 		return ""
 	}
 }
-
 func rejectedEffort(message string) string {
 	text := strings.ToLower(message)
 	if !strings.Contains(text, "reason") && !strings.Contains(text, "thinking") && !strings.Contains(text, "effort") {
@@ -299,7 +151,6 @@ func rejectedEffort(message string) string {
 	}
 	return ""
 }
-
 func downgradeReasoningPayload(payload map[string]any, rejected string) bool {
 	rejected = normalizeEffort(rejected)
 	if rejected == "" {
@@ -328,7 +179,6 @@ func downgradeReasoningPayload(payload map[string]any, rejected string) bool {
 	}
 	return changed
 }
-
 func (c *Client) postWithReasoningFallback(ctx context.Context, url, label string, payload map[string]any) (*http.Response, error) {
 	for attempt := 0; attempt < 7; attempt++ {
 		body, err := json.Marshal(payload)
@@ -339,8 +189,8 @@ func (c *Client) postWithReasoningFallback(ctx context.Context, url, label strin
 		if err != nil {
 			return nil, err
 		}
-		httpReq.Header = c.headers()
-		res, err := c.do(httpReq)
+		httpReq.Header = adapters.Headers(c.Cfg)
+		res, err := c.Do(httpReq)
 		if err != nil {
 			return nil, err
 		}
@@ -357,7 +207,6 @@ func (c *Client) postWithReasoningFallback(ctx context.Context, url, label strin
 	}
 	return nil, fmt.Errorf("%s reasoning fallback exhausted", label)
 }
-
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Message, provider.Usage, error) {
 	req.Stream = false
 	ch, err := c.Stream(ctx, req)
@@ -398,21 +247,13 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.M
 		ResponseID: respID,
 	}, usage, nil
 }
-
-func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	if c.apiMode() == "responses" {
-		return c.streamResponses(ctx, req)
-	}
-	return c.streamChat(ctx, req)
-}
-
 func (c *Client) streamChat(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	payload := map[string]any{
 		"model":    req.Model,
 		"messages": toChatMessages(req.Messages),
 		"stream":   req.Stream,
 	}
-	applyOptions(payload, req.Options, "chat")
+	adapters.ApplyOptions(payload, req.Options, "chat")
 	if len(req.Tools) > 0 {
 		payload["tools"] = toChatTools(req.Tools)
 		payload["tool_choice"] = "auto"
@@ -421,7 +262,7 @@ func (c *Client) streamChat(ctx context.Context, req provider.Request) (<-chan p
 		payload["stream_options"] = map[string]any{"include_usage": true}
 	}
 
-	url := joinURL(c.cfg.BaseURL, "/chat/completions")
+	url := adapters.JoinURL(c.Cfg.BaseURL, "/chat/completions")
 
 	out := make(chan provider.Chunk, 16)
 	go func() {
@@ -440,7 +281,6 @@ func (c *Client) streamChat(ctx context.Context, req provider.Request) (<-chan p
 	}()
 	return out, nil
 }
-
 func (c *Client) readChatJSON(r io.Reader, out chan<- provider.Chunk) {
 	var data struct {
 		ID      string `json:"id"`
@@ -512,7 +352,6 @@ func (c *Client) readChatJSON(r io.Reader, out chan<- provider.Chunk) {
 	}
 	out <- provider.Chunk{Type: "done", ResponseID: data.ID}
 }
-
 func (c *Client) readChatSSE(r io.Reader, out chan<- provider.Chunk) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
@@ -658,211 +497,6 @@ func (c *Client) readChatSSE(r io.Reader, out chan<- provider.Chunk) {
 	emitTools()
 	out <- provider.Chunk{Type: "done", ResponseID: respID}
 }
-
-// streamResponses implements the OpenAI Responses API (non-stream first; stream optional).
-func (c *Client) streamResponses(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	// Build input from messages (skip system → instructions)
-	var instructions string
-	input := make([]map[string]any, 0, len(req.Messages))
-	for _, m := range req.Messages {
-		if m.Role == provider.RoleSystem {
-			if instructions != "" {
-				instructions += "\n\n"
-			}
-			instructions += m.Content
-			continue
-		}
-		if m.Role == provider.RoleTool {
-			input = append(input, map[string]any{
-				"type":    "function_call_output",
-				"call_id": m.ToolCallID,
-				"output":  m.Content,
-			})
-			continue
-		}
-		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
-			if m.Content != "" {
-				input = append(input, map[string]any{"role": "assistant", "content": m.Content})
-			}
-			for _, tc := range m.ToolCalls {
-				input = append(input, map[string]any{
-					"type":      "function_call",
-					"call_id":   tc.ID,
-					"name":      tc.Name,
-					"arguments": string(tc.Arguments),
-				})
-			}
-			continue
-		}
-		role := "user"
-		if m.Role == provider.RoleAssistant {
-			role = "assistant"
-		}
-		if len(m.Parts) > 0 {
-			content := make([]map[string]any, 0, len(m.Parts))
-			for _, part := range m.Parts {
-				switch part.Type {
-				case "text":
-					if part.Text != "" {
-						content = append(content, map[string]any{"type": "input_text", "text": part.Text})
-					}
-				case "image_url":
-					if part.ImageURL != "" {
-						content = append(content, map[string]any{"type": "input_image", "image_url": part.ImageURL})
-					}
-				}
-			}
-			input = append(input, map[string]any{"role": role, "content": content})
-		} else {
-			input = append(input, map[string]any{"role": role, "content": m.Content})
-		}
-	}
-
-	payload := map[string]any{
-		"model": req.Model,
-		"input": input,
-	}
-	if instructions != "" {
-		payload["instructions"] = instructions
-	}
-	applyOptions(payload, req.Options, "responses")
-	// max_tokens is not valid on Responses (applyOptions already mapped it to
-	// max_output_tokens); drop any stray alias that slipped through.
-	delete(payload, "max_tokens")
-	delete(payload, "max_completion_tokens")
-	delete(payload, "presence_penalty")
-	delete(payload, "frequency_penalty")
-	delete(payload, "response_format")
-	delete(payload, "stop")
-	delete(payload, "n")
-	if r, ok := payload["reasoning_effort"]; ok {
-		delete(payload, "reasoning_effort")
-		if effort, ok := r.(string); ok && effort != "" {
-			existing, _ := payload["reasoning"].(map[string]any)
-			if existing == nil {
-				existing = map[string]any{}
-			}
-			if _, set := existing["effort"]; !set {
-				existing["effort"] = effort
-			}
-			payload["reasoning"] = existing
-		}
-	}
-	if len(req.Tools) > 0 {
-		tools := make([]map[string]any, 0, len(req.Tools))
-		for _, t := range req.Tools {
-			params := t.Parameters
-			if len(params) == 0 {
-				params = json.RawMessage(`{"type":"object","properties":{}}`)
-			}
-			tools = append(tools, map[string]any{
-				"type":        "function",
-				"name":        t.Name,
-				"description": t.Description,
-				"parameters":  params,
-			})
-		}
-		payload["tools"] = tools
-		payload["tool_choice"] = "auto"
-	}
-
-	url := joinURL(c.cfg.BaseURL, "/responses")
-
-	out := make(chan provider.Chunk, 16)
-	go func() {
-		defer close(out)
-		res, err := c.postWithReasoningFallback(ctx, url, "openai responses", payload)
-		if err != nil {
-			out <- provider.Chunk{Type: "error", Err: err, ErrorMsg: err.Error()}
-			return
-		}
-		defer res.Body.Close()
-		b, err := io.ReadAll(io.LimitReader(res.Body, 8<<20))
-		if err != nil {
-			out <- provider.Chunk{Type: "error", Err: err, ErrorMsg: err.Error()}
-			return
-		}
-		var data struct {
-			ID     string `json:"id"`
-			Output []struct {
-				Type      string `json:"type"`
-				Name      string `json:"name"`
-				CallID    string `json:"call_id"`
-				ID        string `json:"id"`
-				Arguments string `json:"arguments"`
-				Content   []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"output"`
-			OutputText string `json:"output_text"`
-			Usage      *struct {
-				InputTokens        int `json:"input_tokens"`
-				OutputTokens       int `json:"output_tokens"`
-				TotalTokens        int `json:"total_tokens"`
-				InputTokensDetails *struct {
-					CachedTokens int `json:"cached_tokens"`
-				} `json:"input_tokens_details"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal(b, &data); err != nil {
-			out <- provider.Chunk{Type: "error", Err: err, ErrorMsg: err.Error()}
-			return
-		}
-		text := data.OutputText
-		if text == "" {
-			var parts []string
-			for _, item := range data.Output {
-				for _, c := range item.Content {
-					if c.Text != "" {
-						parts = append(parts, c.Text)
-					}
-				}
-			}
-			text = strings.Join(parts, "\n")
-		}
-		if text != "" {
-			out <- provider.Chunk{Type: "text", Text: text, ResponseID: data.ID}
-		}
-		var calls []provider.ToolCall
-		for _, item := range data.Output {
-			if item.Type == "function_call" && item.Name != "" {
-				id := item.CallID
-				if id == "" {
-					id = item.ID
-				}
-				args := item.Arguments
-				if args == "" {
-					args = "{}"
-				}
-				calls = append(calls, provider.ToolCall{
-					ID:        id,
-					Name:      item.Name,
-					Arguments: json.RawMessage(args),
-				})
-			}
-		}
-		if len(calls) > 0 {
-			out <- provider.Chunk{Type: "tool_calls", ToolCalls: calls, ResponseID: data.ID}
-		}
-		if data.Usage != nil {
-			cached := 0
-			if data.Usage.InputTokensDetails != nil {
-				cached = data.Usage.InputTokensDetails.CachedTokens
-			}
-			fresh := data.Usage.InputTokens
-			if cached > 0 && cached <= fresh {
-				fresh -= cached
-			}
-			out <- provider.Chunk{Type: "usage", Usage: &provider.Usage{
-				InputTokens:         fresh,
-				OutputTokens:        data.Usage.OutputTokens,
-				TotalTokens:         data.Usage.TotalTokens,
-				CacheReadTokens:     cached,
-				LatestContextTokens: data.Usage.InputTokens,
-			}}
-		}
-		out <- provider.Chunk{Type: "done", ResponseID: data.ID}
-	}()
-	return out, nil
+func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	return c.streamChat(ctx, req)
 }
