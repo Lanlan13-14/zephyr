@@ -63,8 +63,14 @@ internal data class QuarantineItem(
 internal fun <T : SyncedRow> planRowPush(
     local: List<T>,
     mirror: List<T>,
-    quarantinedIds: Set<String> = emptySet(),
     contentEquals: (a: T, b: T) -> Boolean,
+): PushPlan<T> = planRowPush(local, mirror, contentEquals, emptySet())
+
+internal fun <T : SyncedRow> planRowPush(
+    local: List<T>,
+    mirror: List<T>,
+    contentEquals: (a: T, b: T) -> Boolean,
+    quarantinedIds: Set<String>,
 ): PushPlan<T> {
     val mirrorById = mirror.associateBy { it.syncId }
     val upserts = local.filter { row ->

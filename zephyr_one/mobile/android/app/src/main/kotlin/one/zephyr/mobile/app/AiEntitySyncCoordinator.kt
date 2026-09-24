@@ -115,8 +115,8 @@ internal class AiEntitySyncCoordinator(
         val plan = planRowPush(
             local = local,
             mirror = mirror,
-            quarantinedIds = quarantinedForType,
             contentEquals = binding::contentEquals,
+            quarantinedIds = quarantinedForType,
         )
 
         // Per-operation isolation: failure of one row does not crash or abort remaining rows

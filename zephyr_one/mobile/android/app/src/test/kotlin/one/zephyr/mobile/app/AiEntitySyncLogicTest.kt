@@ -102,7 +102,7 @@ class AiEntitySyncLogicTest {
         )
         val mirror = emptyList<Row>()
         val quarantined = setOf("bad-2")
-        val plan = planRowPush(local, mirror, quarantinedIds = quarantined, contentEquals = ::same)
+        val plan = planRowPush(local, mirror, contentEquals = ::same, quarantinedIds = quarantined)
 
         assertEquals(2, plan.upserts.size)
         assertEquals(listOf("ok-1", "ok-3"), plan.upserts.map { it.id })
@@ -117,7 +117,7 @@ class AiEntitySyncLogicTest {
             Row("d2", "rem-2"),
         )
         val quarantined = setOf("d1")
-        val plan = planRowPush(local, mirror, quarantinedIds = quarantined, contentEquals = ::same)
+        val plan = planRowPush(local, mirror, contentEquals = ::same, quarantinedIds = quarantined)
 
         assertEquals(listOf("d2"), plan.deletes)
     }
