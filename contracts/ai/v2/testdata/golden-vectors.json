@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 2,
+  "vectors": [
+    {
+      "name": "provider-account-private",
+      "schema": "provider-account.schema.json",
+      "document": {
+        "schemaVersion": 2,
+        "id": "openai-main",
+        "name": "OpenAI Main",
+        "family": "openai",
+        "api": "openai-responses",
+        "endpoint": { "baseUrl": "https://api.openai.com/v1", "region": null },
+        "auth": { "kind": "api-key", "secretRef": "secret:openai-main" },
+        "defaultModelId": "gpt-5",
+        "transportPolicyId": "default",
+        "enabled": true,
+        "sharing": { "visibility": "private", "shareWithUsers": false, "shareWithAdmins": false, "sharedUserIds": [] },
+        "revision": 3
+      }
+    },
+    {
+      "name": "model-descriptor-reasoning",
+      "schema": "model-descriptor.schema.json",
+      "document": {
+        "schemaVersion": 2,
+        "id": "gemini-2.5-flash",
+        "providerAccountId": "google-main",
+        "displayName": "Gemini 2.5 Flash",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536,
+        "modalities": {
+          "input": { "text": true, "image": true, "pdf": true, "audio": true, "video": true },
+          "output": { "text": true, "image": false, "pdf": false, "audio": false, "video": false }
+        },
+        "capabilities": {
+          "tools": true,
+          "parallelToolCalls": true,
+          "strictJson": true,
+          "promptCache": "auto",
+          "reasoning": true
+        },
+        "reasoningConfig": {
+          "supportedLevels": ["minimal", "low", "medium", "high"],
+          "defaultLevel": "medium",
+          "disallowsTemperature": true
+        },
+        "performanceTier": "fast",
+        "provenance": "catalog-remote",
+        "verifiedAt": 1774438400000
+      }
+    },
+    {
+      "name": "request-profile-omit-sampling",
+      "schema": "request-profile.schema.json",
+      "document": {
+        "schemaVersion": 2,
+        "id": "default-request",
+        "temperature": { "mode": "omit" },
+        "maxOutputTokens": { "mode": "inherit" },
+        "topP": { "mode": "omit" },
+        "presencePenalty": { "mode": "omit" },
+        "frequencyPenalty": { "mode": "omit" },
+        "reasoningLevel": "medium",
+        "revision": 1
+      }
+    },
+    {
+      "name": "transport-target-android-dns",
+      "schema": "transport-policy.schema.json#/$defs/transportTarget",
+      "document": {
+        "requestUrl": "https://api.openai.com/v1/chat/completions",
+        "effectiveHost": "api.openai.com",
+        "effectivePort": 443,
+        "dialTargets": [
+          { "ip": "104.18.7.192", "family": "ipv4", "ttl": 300 },
+          { "ip": "2606:4700::6812:7c0", "family": "ipv6", "ttl": 300 }
+        ],
+        "tlsServerName": "api.openai.com",
+        "resolutionSource": "android-jvm-dns",
+        "dialTimeoutMs": 8000
+      }
+    },
+    {
+      "name": "stream-done-tool-use",
+      "schema": "stream-event.schema.json",
+      "document": {
+        "schemaVersion": 2,
+        "type": "done",
+        "runId": "run-1",
+        "sequence": 8,
+        "stopReason": "tool_use"
+      }
+    },
+    {
+      "name": "execution-policy-local-cell",
+      "schema": "execution-policy.schema.json",
+      "document": {
+        "schemaVersion": 2,
+        "modelRoute": "main-relay",
+        "cellRoute": "local-only",
+        "fallback": "ask",
+        "pinForRun": true
+      }
+    },
+    {
+      "name": "cell-binding-conversation",
+      "schema": "cell-binding.schema.json",
+      "document": {
+        "schemaVersion": 2,
+        "bindingId": "bind-1",
+        "scope": "conversation",
+        "conversationId": "conv-1",
+        "groupId": null,
+        "cellId": "cell-1",
+        "generation": 1,
+        "profileId": "default-cell",
+        "createdAt": 1774438400000,
+        "lastActiveAt": 1774438400000,
+        "retentionPolicy": "retain",
+        "status": "active"
+      }
+    },
+    {
+      "name": "sync-envelope-quarantine-domain",
+      "schema": "sync-envelope.schema.json",
+      "document": {
+        "schemaVersion": 2,
+        "entityType": "aiProviderAccount",
+        "entityId": "openai-main",
+        "conversationId": null,
+        "revision": 4,
+        "deviceId": "dev-one",
+        "keyEpoch": 2,
+        "ciphertext": "AQI=",
+        "nonce": "nonce-1",
+        "contentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "tombstone": false,
+        "updatedAt": "2026-09-24T09:00:00Z"
+      }
+    }
+  ],
+  "rejected": [
+    { "schema": "provider-account.schema.json", "reason": "sentinel-temperature-is-not-an-account-field", "document": { "schemaVersion": 2, "id": "x", "name": "X", "family": "openai", "api": "openai-responses", "endpoint": { "baseUrl": "https://api.openai.com/v1" }, "auth": { "kind": "api-key", "secretRef": "s" }, "enabled": true, "revision": 1, "temperature": -1 } },
+    { "schema": "request-profile.schema.json", "reason": "numeric-sentinel-is-not-a-tristate", "document": { "schemaVersion": 2, "id": "bad", "temperature": -1, "maxOutputTokens": { "mode": "omit" }, "topP": { "mode": "omit" }, "presencePenalty": { "mode": "omit" }, "frequencyPenalty": { "mode": "omit" }, "revision": 1 } },
+    { "schema": "stream-event.schema.json", "reason": "done-requires-stop-reason", "document": { "schemaVersion": 2, "type": "done", "runId": "run-1", "sequence": 1 } },
+    { "schema": "cell-binding.schema.json", "reason": "group-scope-cannot-carry-conversation", "document": { "schemaVersion": 2, "bindingId": "bind-2", "scope": "group", "conversationId": "conv-1", "groupId": "group-1", "cellId": "cell-1", "generation": 1, "profileId": "default-cell", "createdAt": 1, "lastActiveAt": 1, "retentionPolicy": "retain", "status": "active" } },
+    { "schema": "execution-policy.schema.json", "reason": "unknown-cell-route", "document": { "schemaVersion": 2, "modelRoute": "auto", "cellRoute": "cloud", "fallback": "automatic", "pinForRun": false } }
+  ]
+}

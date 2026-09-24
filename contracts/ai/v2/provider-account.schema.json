@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/ai/v2/provider-account.schema.json",
+  "title": "ProviderAccountV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "family", "api", "endpoint", "auth", "enabled", "revision"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "id": { "$ref": "common.schema.json#/$defs/id" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "family": {
+      "enum": ["openai", "anthropic", "google", "deepseek", "ollama", "custom"]
+    },
+    "api": {
+      "enum": ["openai-responses", "openai-chat-completions", "anthropic-messages", "google-generative-ai", "ollama-openai"]
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseUrl"],
+      "properties": {
+        "baseUrl": { "$ref": "common.schema.json#/$defs/uri" },
+        "region": { "type": ["string", "null"], "maxLength": 64 }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "secretRef"],
+      "properties": {
+        "kind": { "enum": ["api-key", "bearer-token", "device-envelope", "none"] },
+        "secretRef": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "defaultModelId": { "type": ["string", "null"], "maxLength": 128 },
+    "transportPolicyId": { "type": "string", "minLength": 1, "maxLength": 128, "default": "default" },
+    "enabled": { "type": "boolean", "default": true },
+    "sharing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["visibility", "shareWithUsers", "shareWithAdmins", "sharedUserIds"],
+      "properties": {
+        "visibility": { "enum": ["private", "shared"] },
+        "shareWithUsers": { "type": "boolean", "default": false },
+        "shareWithAdmins": { "type": "boolean", "default": false },
+        "sharedUserIds": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/id" }
+        }
+      }
+    },
+    "revision": { "$ref": "common.schema.json#/$defs/revision" }
+  }
+}

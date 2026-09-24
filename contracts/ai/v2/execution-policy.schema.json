@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/ai/v2/execution-policy.schema.json",
+  "title": "ExecutionPolicyV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "modelRoute", "cellRoute", "fallback", "pinForRun"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "modelRoute": {
+      "type": "string",
+      "pattern": "^(auto|local-direct|main-relay|device:[A-Za-z0-9][A-Za-z0-9._:-]*)$"
+    },
+    "cellRoute": {
+      "type": "string",
+      "pattern": "^(ask|local-preferred|local-only|remote-preferred|remote-only|device:[A-Za-z0-9][A-Za-z0-9._:-]*)$"
+    },
+    "fallback": { "enum": ["ask", "deny", "automatic"] },
+    "pinForRun": { "type": "boolean" }
+  }
+}

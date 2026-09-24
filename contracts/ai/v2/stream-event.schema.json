@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/ai/v2/stream-event.schema.json",
+  "title": "NormalizedStreamEventV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "type", "runId", "sequence"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "type": {
+      "enum": [
+        "start",
+        "text_start",
+        "text_delta",
+        "text_end",
+        "reasoning_start",
+        "reasoning_delta",
+        "reasoning_end",
+        "tool_call_start",
+        "tool_call_delta",
+        "tool_call_end",
+        "usage",
+        "done",
+        "error"
+      ]
+    },
+    "runId": { "$ref": "common.schema.json#/$defs/id" },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "modelId": { "type": "string", "maxLength": 128 },
+    "providerAccountId": { "type": "string", "maxLength": 128 },
+    "text": { "type": "string" },
+    "toolCallId": { "type": "string", "maxLength": 128 },
+    "toolName": { "type": "string", "maxLength": 128 },
+    "argumentsDelta": { "type": "string" },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens"],
+      "properties": {
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "cacheCreationTokens": { "type": "integer", "minimum": 0 },
+        "cacheReadTokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "stopReason": { "enum": ["stop", "length", "tool_use", "content_filter", "cancelled", "error"] },
+    "errorCode": { "type": "string", "maxLength": 80 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "start" } }, "required": ["type"] },
+      "then": { "required": ["modelId", "providerAccountId"] }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["text_delta", "reasoning_delta"] } }, "required": ["type"] },
+      "then": { "required": ["text"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "tool_call_start" } }, "required": ["type"] },
+      "then": { "required": ["toolCallId", "toolName"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "tool_call_delta" } }, "required": ["type"] },
+      "then": { "required": ["toolCallId", "argumentsDelta"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "tool_call_end" } }, "required": ["type"] },
+      "then": { "required": ["toolCallId"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "usage" } }, "required": ["type"] },
+      "then": { "required": ["usage"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "done" } }, "required": ["type"] },
+      "then": { "required": ["stopReason"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "error" } }, "required": ["type"] },
+      "then": { "required": ["errorCode"] }
+    }
+  ]
+}
