@@ -78,23 +78,18 @@
     }
 
     async function runSystemUnlock(reason) {
+        var bridge = nativeUnlock();
         var filed = await api('/api/one/security/unlock', {
             method: 'POST',
-            body: JSON.stringify({ reason: reason || '' })
+            /* Creation and reservation must be one server operation. The old
+             * create-then-reserve pair had a real race with the 300ms watcher,
+             * which explains the changing 409/expired/failed errors. */
+            body: JSON.stringify({ reason: reason || '', reserveForIpc: !!bridge })
         });
         var id = filed && filed.id;
         if (!id) throw new Error('\u65e0\u6cd5\u53d1\u8d77\u7cfb\u7edf\u89e3\u9501');
 
-        var bridge = nativeUnlock();
         if (bridge) {
-            /* Reserve before the invoke. The invoke does not return until the
-             * OS prompt does, and the watcher polls every 300ms — without this
-             * it claims the request and reports failure while Hello is still
-             * on screen. */
-            await api('/api/one/security/unlock/' + encodeURIComponent(id) + '/reserve', {
-                method: 'POST',
-                body: '{}'
-            });
             var verdict = await bridge.invoke('security_complete_unlock', { id: id, reason: reason || '' });
             if (!verdict || !verdict.ok) {
                 throw new Error((verdict && verdict.error) || '\u7cfb\u7edf\u89e3\u9501\u5931\u8d25\u6216\u5df2\u53d6\u6d88');
