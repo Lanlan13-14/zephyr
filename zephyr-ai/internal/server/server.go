@@ -22,6 +22,7 @@ import (
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/agent"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/archive"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/cell"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/compose"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/config"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/event"
@@ -32,6 +33,7 @@ import (
 	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/adapters/openai_chat"
 	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/adapters/openai_responses"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/session"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/streamnorm"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool/builtin"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool/platform"
@@ -48,12 +50,14 @@ type Server struct {
 	runner   *agent.Runner
 	archive  *archive.Store
 	captures *agent.CaptureStore
+	cell     *cell.WorkspaceAdapter
 
-	mu       sync.Mutex
-	tickets  map[string]*runTicket
-	cancels  map[string]context.CancelFunc
-	runDone  map[string]chan struct{}
-	emitters map[string]*sseHub
+	mu        sync.Mutex
+	tickets   map[string]*runTicket
+	cancels   map[string]context.CancelFunc
+	runDone   map[string]chan struct{}
+	emitters  map[string]*sseHub
+	frameHubs map[string]*frameHub
 }
 
 type runTicket struct {
@@ -77,18 +81,20 @@ func New(cfg config.Config, store *session.Store, log *slog.Logger) *Server {
 		log.Warn("archive open failed", "err", err)
 	}
 	return &Server{
-		cfg:      cfg,
-		store:    store,
-		log:      log,
-		mcp:      mcp.NewManager(),
-		host:     host,
-		runner:   agent.NewRunner(),
-		archive:  arch,
-		captures: agent.NewCaptureStore(filepath.Join(os.TempDir(), "zephyr-ai-captures")),
-		tickets:  make(map[string]*runTicket),
-		cancels:  make(map[string]context.CancelFunc),
-		runDone:  make(map[string]chan struct{}),
-		emitters: make(map[string]*sseHub),
+		cfg:       cfg,
+		store:     store,
+		log:       log,
+		mcp:       mcp.NewManager(),
+		host:      host,
+		runner:    agent.NewRunner(),
+		archive:   arch,
+		captures:  agent.NewCaptureStore(filepath.Join(os.TempDir(), "zephyr-ai-captures")),
+		cell:      cell.NewWorkspaceAdapter(nil),
+		tickets:   make(map[string]*runTicket),
+		cancels:   make(map[string]context.CancelFunc),
+		runDone:   make(map[string]chan struct{}),
+		emitters:  make(map[string]*sseHub),
+		frameHubs: make(map[string]*frameHub),
 	}
 }
 
@@ -119,7 +125,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/runs/{id}", s.admin(s.handleGetRun))
 	mux.HandleFunc("POST /admin/mcp/connect", s.admin(s.handleMCPConnect))
 	mux.HandleFunc("POST /admin/providers/models", s.admin(s.handleProviderModels))
-	mux.HandleFunc("GET /v1/runs/{id}/events", s.handleSSE) // ticket or admin
+	mux.HandleFunc("GET /v1/runs/{id}/events", s.handleSSE)    // ticket or admin
+	mux.HandleFunc("GET /v1/runs/{id}/frames", s.handleFrames) // ticket or admin; Contract v2 normalized stream
 	return mux
 }
 
@@ -334,10 +341,13 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SSE hub + ticket for browser
+	// SSE hub + ticket for browser. The frame hub carries Contract v2
+	// normalized frames on the same run lifecycle.
 	hub := newSSEHub()
+	fhub := newFrameHub()
 	s.mu.Lock()
 	s.emitters[run.ID] = hub
+	s.frameHubs[run.ID] = fhub
 	s.mu.Unlock()
 
 	ticket := s.issueTicket(req.UserID, run.ID, req.SessionID)
@@ -391,6 +401,8 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		Permission:          eng,
 		Store:               s.store,
 		Emitter:             hub,
+		FrameStore:          s.store,
+		NormSink:            fhub.Publish,
 		SystemPrompt:        system,
 		VolatilePrompt:      volatile,
 		ExtraMessages:       extra,
@@ -461,12 +473,15 @@ func (s *Server) launchRun(runID string, hub *sseHub, cfg agent.Config) {
 			s.log.Error("run failed", "runId", runID, "err", err)
 		}
 		// Terminal: keep emitter briefly for late subscribers then close.
+		// The frame hub closes itself on the terminal frame; the timer only
+		// drops the map entry.
 		time.AfterFunc(2*time.Minute, func() {
 			s.mu.Lock()
 			if s.emitters[runID] == hub {
 				delete(s.emitters, runID)
 				hub.Close()
 			}
+			delete(s.frameHubs, runID)
 			s.mu.Unlock()
 		})
 	}()
@@ -490,6 +505,10 @@ func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID
 	_ = builtin.RegisterHistoryTools(reg, &builtin.HistoryDeps{
 		Archive: s.archive, UserID: userID, SessionID: sessionID,
 	})
+	if s.cell != nil && runID != "" {
+		s.cell.IssueLease(runID, sessionID, "binding_"+sessionID, "local", 30*time.Minute)
+		_ = reg.Register(s.cell.AsExecTool(runID))
+	}
 	return reg, nil
 }
 
@@ -646,6 +665,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	hub := s.emitters[runID]
+	fhub := s.frameHubs[runID]
 	s.mu.Unlock()
 	if hub == nil {
 		hub = newSSEHub()
@@ -669,6 +689,8 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		Permission:          eng,
 		Store:               s.store,
 		Emitter:             hub,
+		FrameStore:          s.store,
+		NormSink:            fhubSink(fhub),
 		SystemPrompt:        st.SystemPrompt,
 		VolatilePrompt:      st.VolatilePrompt,
 		Options:             st.Options,
@@ -817,6 +839,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	hub := s.emitters[runID]
+	fhub := s.frameHubs[runID]
 	s.mu.Unlock()
 	if hub == nil {
 		hub = newSSEHub()
@@ -832,6 +855,8 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		Permission:          eng,
 		Store:               s.store,
 		Emitter:             hub,
+		FrameStore:          s.store,
+		NormSink:            fhubSink(fhub),
 		SystemPrompt:        st.SystemPrompt,
 		VolatilePrompt:      st.VolatilePrompt,
 		Options:             st.Options,
@@ -945,6 +970,80 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleFrames replays Contract v2 normalized frames with the same cursor
+// semantics as the legacy event stream: frames after Last-Event-ID replay
+// from the store, then live frames follow until the terminal done/error.
+func (s *Server) handleFrames(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("id")
+	ticket := r.URL.Query().Get("ticket")
+	if !s.checkAdmin(r) {
+		if !s.consumeOrValidateTicket(ticket, runID) {
+			writeJSON(w, 401, map[string]any{"ok": false, "error": "invalid ticket"})
+			return
+		}
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "stream unsupported", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	afterSeq := -1
+	if raw := strings.TrimSpace(r.Header.Get("Last-Event-ID")); raw != "" {
+		_, _ = fmt.Sscanf(raw, "%d", &afterSeq)
+	}
+	if frames, err := s.store.ListFrames(runID, afterSeq); err == nil {
+		for _, f := range frames {
+			fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", f.Seq, f.Type, string(f.Frame))
+		}
+		flusher.Flush()
+	}
+
+	s.mu.Lock()
+	hub := s.frameHubs[runID]
+	s.mu.Unlock()
+	if hub == nil {
+		return
+	}
+	ch := hub.Subscribe()
+	defer hub.Unsubscribe(ch)
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeat.C:
+			fmt.Fprintf(w, "event: heartbeat\ndata: {\"ts\":%d}\n\n", time.Now().UnixMilli())
+			flusher.Flush()
+		case fr, ok := <-ch:
+			if !ok {
+				return
+			}
+			b, _ := json.Marshal(fr)
+			fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", fr.Sequence, fr.Type, string(b))
+			flusher.Flush()
+			if fr.Type == "done" || fr.Type == "error" {
+				return
+			}
+		}
+	}
+}
+
+// fhubSink adapts a possibly-nil frame hub to the NormSink signature.
+func fhubSink(h *frameHub) func(streamnorm.Event) {
+	if h == nil {
+		return nil
+	}
+	return h.Publish
+}
+
 func (s *Server) issueTicket(userID, runID, sessionID string) string {
 	tok := fmt.Sprintf("tkt_%d_%s", time.Now().UnixNano(), runID[len(runID)-6:])
 	s.mu.Lock()
@@ -1011,6 +1110,11 @@ func (h *sseHub) Emit(ev event.Event) error {
 func (h *sseHub) Subscribe() chan event.Event {
 	ch := make(chan event.Event, 64)
 	h.mu.Lock()
+	if h.done {
+		close(ch)
+		h.mu.Unlock()
+		return ch
+	}
 	h.subs[ch] = struct{}{}
 	h.mu.Unlock()
 	return ch
@@ -1018,9 +1122,12 @@ func (h *sseHub) Subscribe() chan event.Event {
 
 func (h *sseHub) Unsubscribe(ch chan event.Event) {
 	h.mu.Lock()
+	_, ok := h.subs[ch]
 	delete(h.subs, ch)
 	h.mu.Unlock()
-	close(ch)
+	if ok {
+		close(ch)
+	}
 }
 
 func (h *sseHub) Close() {

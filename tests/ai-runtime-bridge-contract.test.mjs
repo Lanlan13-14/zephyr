@@ -81,3 +81,76 @@ test('runtime catalog applies per-user notes.enabled when identity is present', 
 test('executeAiToolForHost requires deps', async () => {
     await assert.rejects(() => executeAiToolForHost('connection_list_v1', {}, {}), /deps required/);
 });
+
+test('_consumeHistoryEvents consumes streamnorm frames and feeds historyController', async () => {
+    const observedFrames = [];
+    const observedEvents = [];
+    const mockController = {
+        observeFrame: (runId, frame) => observedFrames.push({ runId, frame }),
+        observeEvent: (runId, event) => observedEvents.push({ runId, event }),
+    };
+
+    const bridge = new AiRuntimeBridge({ baseUrl: 'http://127.0.0.1:9999', adminToken: 'test' });
+    bridge.setHistoryController(mockController);
+
+    // Mock fetchImpl to return /frames SSE stream
+    const sseLines = [
+        'id: 0\nevent: start\ndata: {"schemaVersion":2,"type":"start","runId":"r1","sequence":0}\n\n',
+        'id: 1\nevent: text_start\ndata: {"schemaVersion":2,"type":"text_start","runId":"r1","sequence":1}\n\n',
+        'id: 2\nevent: text_delta\ndata: {"schemaVersion":2,"type":"text_delta","runId":"r1","sequence":2,"text":"Hello "}\n\n',
+        'id: 3\nevent: text_delta\ndata: {"schemaVersion":2,"type":"text_delta","runId":"r1","sequence":3,"text":"world!"}\n\n',
+        'id: 4\nevent: done\ndata: {"schemaVersion":2,"type":"done","runId":"r1","sequence":4,"stopReason":"stop"}\n\n',
+    ];
+
+    bridge.fetchImpl = async (url) => {
+        if (url.includes('/frames')) {
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream({
+                start(controller) {
+                    for (const line of sseLines) {
+                        controller.enqueue(encoder.encode(line));
+                    }
+                    controller.close();
+                },
+            });
+            return {
+                ok: true,
+                status: 200,
+                body: stream,
+            };
+        }
+        return { ok: false, status: 404 };
+    };
+
+    const result = await bridge._consumeHistoryEvents('r1', 'tkt1', new AbortController().signal);
+    assert.equal(result, true);
+    assert.equal(observedFrames.length, 5);
+    assert.equal(observedFrames[0].frame.type, 'start');
+    assert.equal(observedFrames[4].frame.type, 'done');
+
+    // Verify converted events
+    const msgCompleted = observedEvents.find((e) => e.event.type === 'message.completed');
+    assert.ok(msgCompleted);
+    assert.equal(msgCompleted.event.data.content, 'Hello world!');
+
+    const runCompleted = observedEvents.find((e) => e.event.type === 'run.completed');
+    assert.ok(runCompleted);
+    assert.equal(runCompleted.event.data.stopReason, 'stop');
+});
+
+test('_fetchUnchecked normalizes network error via toContractError', async () => {
+    const bridge = new AiRuntimeBridge({ baseUrl: 'http://127.0.0.1:9999', adminToken: 'test' });
+    bridge.fetchImpl = async () => {
+        const err = new Error('getaddrinfo ENOTFOUND api.openai.com');
+        err.code = 'ENOTFOUND';
+        throw err;
+    };
+
+    try {
+        await bridge._fetchUnchecked('/v1/test');
+        assert.fail('should have thrown');
+    } catch (err) {
+        assert.equal(err.code, 'ai_dns_failed');
+        assert.equal(err.retryable, true);
+    }
+});

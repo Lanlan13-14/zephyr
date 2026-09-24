@@ -55,7 +55,6 @@ func TestChatCompletionSerializesImageParts(t *testing.T) {
 	}
 }
 
-
 func TestVisionRequestEndsStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

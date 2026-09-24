@@ -10,7 +10,7 @@ var (
 	regMu     sync.RWMutex
 	factories = map[Kind]Factory{}
 
-	adapterMu       sync.RWMutex
+	adapterMu        sync.RWMutex
 	adapterFactories = map[API]Factory{}
 )
 

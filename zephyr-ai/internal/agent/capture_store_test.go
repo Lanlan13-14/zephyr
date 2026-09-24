@@ -48,10 +48,16 @@ func TestRemoteDesktopObservationMetadataDoesNotContainImage(t *testing.T) {
 func TestStripCaptureImageData(t *testing.T) {
 	input := map[string]any{"captureId": "cap-1", "dataUrl": "data:image/png;base64,secret", "screenshots": []any{map[string]any{"imageData": "secret", "width": float64(10)}}}
 	clean := stripCaptureImageData(input).(map[string]any)
-	if _, ok := clean["dataUrl"]; ok { t.Fatal("dataUrl leaked") }
+	if _, ok := clean["dataUrl"]; ok {
+		t.Fatal("dataUrl leaked")
+	}
 	shot := clean["screenshots"].([]any)[0].(map[string]any)
-	if _, ok := shot["imageData"]; ok { t.Fatal("imageData leaked") }
-	if clean["captureId"] != "cap-1" || shot["width"] != float64(10) { t.Fatal("metadata lost") }
+	if _, ok := shot["imageData"]; ok {
+		t.Fatal("imageData leaked")
+	}
+	if clean["captureId"] != "cap-1" || shot["width"] != float64(10) {
+		t.Fatal("metadata lost")
+	}
 }
 
 func TestCaptureStoreRejectsForgedImage(t *testing.T) {
@@ -186,7 +192,13 @@ func TestCaptureStoreOwnsExactBinding(t *testing.T) {
 	store := NewCaptureStore(t.TempDir())
 	png := append([]byte("\x89PNG\r\n\x1a\n"), []byte("test")...)
 	asset, err := store.Put("u", "r", "c", "image/png", png)
-	if err != nil { t.Fatal(err) }
-	if !store.Owns(asset.ID, "u", "r", "c") { t.Fatal("expected exact owner binding") }
-	if store.Owns(asset.ID, "u2", "r", "c") || store.Owns(asset.ID, "u", "r2", "c") || store.Owns(asset.ID, "u", "r", "c2") { t.Fatal("binding must be exact") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.Owns(asset.ID, "u", "r", "c") {
+		t.Fatal("expected exact owner binding")
+	}
+	if store.Owns(asset.ID, "u2", "r", "c") || store.Owns(asset.ID, "u", "r2", "c") || store.Owns(asset.ID, "u", "r", "c2") {
+		t.Fatal("binding must be exact")
+	}
 }

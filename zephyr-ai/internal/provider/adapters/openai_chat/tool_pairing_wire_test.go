@@ -29,10 +29,15 @@ func TestChatWireKeepsCompleteToolBatchBeforeVisualObservation(t *testing.T) {
 		{Role: provider.RoleUser, Parts: []provider.ContentPart{{Type: "text", Text: "screen"}, {Type: "image_url", ImageURL: "data:image/png;base64,AA=="}}},
 	}}
 	ch, err := client.Stream(context.Background(), req)
-	if err != nil { t.Fatal(err) }
-	for range ch {}
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range ch {
+	}
 	messages, _ := body["messages"].([]any)
-	if len(messages) != 4 { t.Fatalf("messages=%#v", messages) }
+	if len(messages) != 4 {
+		t.Fatalf("messages=%#v", messages)
+	}
 	for i, id := range []string{"c1", "c2"} {
 		m, _ := messages[i+1].(map[string]any)
 		if m["role"] != "tool" || m["tool_call_id"] != id {
@@ -40,5 +45,7 @@ func TestChatWireKeepsCompleteToolBatchBeforeVisualObservation(t *testing.T) {
 		}
 	}
 	visual, _ := messages[3].(map[string]any)
-	if visual["role"] != "user" { t.Fatalf("visual precedes tool batch: %#v", messages) }
+	if visual["role"] != "user" {
+		t.Fatalf("visual precedes tool batch: %#v", messages)
+	}
 }

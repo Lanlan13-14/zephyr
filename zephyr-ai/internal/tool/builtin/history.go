@@ -64,14 +64,14 @@ func RegisterHistoryTools(reg *tool.Registry, deps *HistoryDeps) error {
 			out := make([]map[string]any, 0, len(hits))
 			for _, h := range hits {
 				out = append(out, map[string]any{
-					"id":        h.ID,
-					"kind":      h.Kind,
-					"role":      h.Role,
-					"name":      h.Name,
-					"score":     h.Score,
-					"snippet":   h.Snippet,
-					"sessionId": h.SessionID,
-					"createdAt": h.CreatedAt,
+					"id":         h.ID,
+					"kind":       h.Kind,
+					"role":       h.Role,
+					"name":       h.Name,
+					"score":      h.Score,
+					"snippet":    h.Snippet,
+					"sessionId":  h.SessionID,
+					"createdAt":  h.CreatedAt,
 					"toolCallId": h.ToolCallID,
 				})
 			}

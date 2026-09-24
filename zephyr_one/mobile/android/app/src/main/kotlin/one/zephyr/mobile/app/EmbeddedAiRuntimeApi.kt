@@ -80,10 +80,10 @@ internal class EmbeddedAiRuntimeApi(
         post("/admin/runs/${encode(runId)}/abort", JsonObject(emptyMap()), JsonObject.serializer(), AiAbortResponseDto.serializer())
 
     suspend fun providerModels(provider: EmbeddedProvider): ApiResult<List<EmbeddedDiscoveredModel>> {
-        val target = buildTransportTarget(provider.baseUrl)
+        val (rewritten, serverName) = rewriteProviderEndpoint(provider.baseUrl)
         val request = EmbeddedProviderModelsRequest(
-            provider = provider.copy(baseUrl = target.requestUrl, serverName = target.tlsServerName, transport = target),
-            serverName = target.tlsServerName,
+            provider = provider.copy(baseUrl = rewritten, serverName = serverName),
+            serverName = serverName,
         )
         return when (val result = post("/admin/providers/models", request, EmbeddedProviderModelsRequest.serializer(), EmbeddedProviderModelsResponse.serializer())) {
             is ApiResult.Success -> ApiResult.Success(result.value.models, result.requestId)
@@ -91,39 +91,8 @@ internal class EmbeddedAiRuntimeApi(
         }
     }
 
-    suspend fun startWithTransport(body: EmbeddedStartRun): ApiResult<AiRunStartDto> {
-        val target = buildTransportTarget(body.provider.baseUrl)
-        return start(body.copy(provider = body.provider.copy(transport = target)))
-    }
-
     companion object {
         private val JSON = "application/json; charset=utf-8".toMediaType(); private const val MAX_LINE = 1024L * 1024L
-
-        /**
-         * Builds a Contract v2 TransportTarget with the JVM resolver, because the embedded Go
-         * runtime is built CGO_ENABLED=0 and has no DNS on Android. All resolved IPs travel
-         * (IPv4 first); Go dials them in order while TLS SNI and Host keep the original name.
-         * On resolution failure the target carries no dial IPs so the runtime surfaces the
-         * original DNS error instead of a rewritten one.
-         */
-        internal fun buildTransportTarget(
-            baseUrl: String,
-            resolver: (String) -> Array<java.net.InetAddress> = { java.net.InetAddress.getAllByName(it) },
-        ): EmbeddedTransportTarget {
-            val parsed = runCatching { java.net.URI(baseUrl) }.getOrNull()
-            val host = parsed?.host?.removePrefix("[")?.removeSuffix("]") ?: ""
-            val port = parsed?.port?.takeIf { it != -1 } ?: if (parsed?.scheme == "http") 80 else 443
-            val targets = runCatching { LinkPeerResolver.resolveAll(baseUrl, resolver) }.getOrNull().orEmpty()
-            if (targets.isEmpty()) {
-                return EmbeddedTransportTarget(baseUrl, host, port, emptyList(), host, "android-jvm-dns", 8000)
-            }
-            val first = targets.first()
-            val dialTargets = targets.map { peer ->
-                val ip = java.net.URI(peer.url).host?.removePrefix("[")?.removeSuffix("]") ?: ""
-                EmbeddedDialTarget(ip, if (ip.contains(':')) "ipv6" else "ipv4", 300)
-            }
-            return EmbeddedTransportTarget(first.url, host, port, dialTargets, first.serverName, "android-jvm-dns", 8000)
-        }
 
         /**
          * Pre-resolves the provider host with the JVM resolver, because the embedded Go runtime
@@ -177,6 +146,18 @@ internal class EmbeddedAiRuntimeApi(
         bs: SerializationStrategy<B>,
         rs: DeserializationStrategy<R>,
     ): ApiResult<R> = runtimeCall("embedded_ai_start_failed", "本机 AI Runtime 启动失败") {
+        if (EmbeddedAiRuntimeJni.isAvailable()) {
+            val json = MobileJson.instance.encodeToString(bs, body)
+            val res = EmbeddedAiRuntimeJni.dispatch("POST", path, mapOf("Content-Type" to "application/json"), json)
+            if (res.statusCode in 200..299) {
+                return@runtimeCall runCatching {
+                    MobileJson.instance.decodeFromString(rs, res.body)
+                }.fold(
+                    { ApiResult.Success(it, null) },
+                    { failure("malformed_embedded_ai_response", it.message ?: "本机 AI 响应无效") }
+                )
+            }
+        }
         val endpoint = endpoint()
         val json = MobileJson.instance.encodeToString(bs, body)
         val request = Request.Builder().url(endpoint.baseUrl + path)
@@ -186,6 +167,17 @@ internal class EmbeddedAiRuntimeApi(
 
     private suspend fun <R> get(path: String, serializer: DeserializationStrategy<R>): ApiResult<R> =
         runtimeCall("embedded_ai_start_failed", "本机 AI Runtime 启动失败") {
+            if (EmbeddedAiRuntimeJni.isAvailable()) {
+                val res = EmbeddedAiRuntimeJni.dispatch("GET", path)
+                if (res.statusCode in 200..299) {
+                    return@runtimeCall runCatching {
+                        MobileJson.instance.decodeFromString(serializer, res.body)
+                    }.fold(
+                        { ApiResult.Success(it, null) },
+                        { failure("malformed_embedded_ai_response", it.message ?: "本机 AI 响应无效") }
+                    )
+                }
+            }
             val endpoint = endpoint()
             val request = Request.Builder().url(endpoint.baseUrl + path).get().build()
             execute(authorized(request, endpoint), serializer)
@@ -247,9 +239,7 @@ internal class EmbeddedAiRuntimeApi(
 @kotlinx.serialization.Serializable internal data class EmbeddedSessionsResponse(val ok: Boolean = true, val sessions: List<EmbeddedSession> = emptyList())
 @kotlinx.serialization.Serializable internal data class EmbeddedMessage(val id: Long, val role: String, val content: String = "", val createdAt: Long = 0)
 @kotlinx.serialization.Serializable internal data class EmbeddedMessagesResponse(val ok: Boolean = true, val messages: List<EmbeddedMessage> = emptyList())
-@kotlinx.serialization.Serializable internal data class EmbeddedDialTarget(val ip: String, val family: String, val ttl: Int)
-@kotlinx.serialization.Serializable internal data class EmbeddedTransportTarget(val requestUrl: String, val effectiveHost: String, val effectivePort: Int, val dialTargets: List<EmbeddedDialTarget>, val tlsServerName: String, val resolutionSource: String, val dialTimeoutMs: Int)
-@kotlinx.serialization.Serializable internal data class EmbeddedProvider(val id: String, val name: String, val kind: String, val baseUrl: String, val apiKey: String, val defaultModel: String, val models: List<String>, val apiMode: String = "auto", val organization: String = "", val extraHeaders: Map<String,String> = emptyMap(), val options: JsonObject = JsonObject(emptyMap()), val serverName: String = "", val transport: EmbeddedTransportTarget? = null)
+@kotlinx.serialization.Serializable internal data class EmbeddedProvider(val id: String, val name: String, val kind: String, val baseUrl: String, val apiKey: String, val defaultModel: String, val models: List<String>, val apiMode: String = "auto", val organization: String = "", val extraHeaders: Map<String,String> = emptyMap(), val options: JsonObject = JsonObject(emptyMap()), val serverName: String = "")
 @kotlinx.serialization.Serializable internal data class EmbeddedProviderModelsRequest(val provider: EmbeddedProvider, val serverName: String = "")
 @kotlinx.serialization.Serializable internal data class EmbeddedDiscoveredModel(val id: String, val label: String = "")
 @kotlinx.serialization.Serializable internal data class EmbeddedProviderModelsResponse(val ok: Boolean = true, val models: List<EmbeddedDiscoveredModel> = emptyList())
@@ -258,7 +248,7 @@ internal class EmbeddedAiRuntimeApi(
 @kotlinx.serialization.Serializable internal data class EmbeddedSkill(val id: String, val name: String, val description: String, val prompt: String, val enabled: Boolean)
 @kotlinx.serialization.Serializable internal data class EmbeddedMemory(val title: String, val content: String, val scope: String, val project: String, val tags: List<String>)
 @kotlinx.serialization.Serializable internal data class EmbeddedEnv(val name: String, val description: String, val value: String, val valueVisibleToAi: Boolean)
-@kotlinx.serialization.Serializable internal data class EmbeddedMcpServer(val name: String, val type: String, val command: String = "", val args: List<String> = emptyList(), val env: Map<String,String> = emptyMap(), val url: String = "", val headers: Map<String,String> = emptyMap(), val callTimeoutSeconds: Int = 300, val trustedReadOnlyTools: List<String> = emptyList(), val transport: EmbeddedTransportTarget? = null)
+@kotlinx.serialization.Serializable internal data class EmbeddedMcpServer(val name: String, val type: String, val command: String = "", val args: List<String> = emptyList(), val env: Map<String,String> = emptyMap(), val url: String = "", val headers: Map<String,String> = emptyMap(), val callTimeoutSeconds: Int = 300, val trustedReadOnlyTools: List<String> = emptyList())
 @kotlinx.serialization.Serializable internal data class EmbeddedStartRun(val userId: String, val sessionId: String, val provider: EmbeddedProvider, val model: String, val message: String, val options: JsonObject, val maxSteps: Int, val permission: EmbeddedPermission, val autoConfirm: Boolean, val autoConfirmDelayMs: Int, val mode: String, val systemCompose: EmbeddedCompose, val context: JsonObject, val mcpServers: List<EmbeddedMcpServer> = emptyList(), val databaseGeneration: String, val runNonce: String, val contextWindowTokens: Int, val outputReserveTokens: Int, val providerId: String = "")
 @kotlinx.serialization.Serializable internal data class EmbeddedPermissionDecision(val userId: String, val sessionId: String, val callId: String, val tool: String, val approve: Boolean, val scope: String = "once", val provider: EmbeddedProvider)
 @kotlinx.serialization.Serializable internal data class EmbeddedPermissionResponse(val ok: Boolean = true, val approved: Boolean = false, val resumed: Boolean = false, val runId: String = "", val callId: String = "", val ticket: String = "")

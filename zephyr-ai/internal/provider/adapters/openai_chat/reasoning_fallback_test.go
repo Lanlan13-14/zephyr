@@ -11,7 +11,6 @@ import (
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
 )
 
-
 func TestChatReasoningEffortDowngradesOnExplicitRejection(t *testing.T) {
 	var efforts []string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +43,6 @@ func TestChatReasoningEffortDowngradesOnExplicitRejection(t *testing.T) {
 		t.Fatalf("payload was not downgraded: %#v", payload)
 	}
 }
-
 
 func TestUnrelatedBadRequestDoesNotRetry(t *testing.T) {
 	attempts := 0

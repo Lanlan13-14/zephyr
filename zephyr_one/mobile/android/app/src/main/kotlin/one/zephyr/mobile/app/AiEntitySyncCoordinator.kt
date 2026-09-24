@@ -37,6 +37,16 @@ internal class AiEntitySyncCoordinator(
     /** Ids ever observed locally, per entity type; guard mirror deletes. */
     private val seenIds = HashMap<String, MutableSet<String>>()
 
+    /** Quarantined entity entries that failed verification or push, isolated from stalling sync. */
+    private val quarantine = java.util.concurrent.ConcurrentHashMap<String, QuarantineItem>()
+
+    fun getQuarantinedItems(): List<QuarantineItem> = quarantine.values.toList()
+
+    fun retryQuarantined(entityType: String, entityId: String) {
+        quarantine.remove("$entityType:$entityId")
+        reconcile()
+    }
+
     fun start() {
         if (started) return
         started = true
@@ -50,9 +60,26 @@ internal class AiEntitySyncCoordinator(
             try {
                 val owner = ownerUserId()
                 if (owner.isBlank()) return@launch
-                for (binding in bindings) mergeBinding(binding, owner)
+                // Per-binding isolation: one binding failing to merge does not block others
+                for (binding in bindings) {
+                    try {
+                        mergeBinding(binding, owner)
+                    } catch (err: CancellationException) {
+                        throw err
+                    } catch (err: Exception) {
+                        Log.w(TAG, "mergeBinding failed for ${binding.entityType}", err)
+                    }
+                }
                 if (syncEnabled()) {
-                    for (binding in bindings) pushBinding(binding, owner)
+                    for (binding in bindings) {
+                        try {
+                            pushBinding(binding, owner)
+                        } catch (err: CancellationException) {
+                            throw err
+                        } catch (err: Exception) {
+                            Log.w(TAG, "pushBinding failed for ${binding.entityType}", err)
+                        }
+                    }
                 }
             } catch (err: CancellationException) {
                 throw err
@@ -78,10 +105,62 @@ internal class AiEntitySyncCoordinator(
         val local = binding.localRows()
         seenIds.getOrPut(binding.entityType) { mutableSetOf() } += local.map { it.syncId }
         val mirror = binding.mirrorRows(owner)
-        val plan = planRowPush(local = local, mirror = mirror, contentEquals = binding::contentEquals)
-        for (upsert in plan.upserts) binding.pushUpsert(upsert, owner)
+
+        // Exclude quarantined IDs for this entity type
+        val quarantinedForType = quarantine.values
+            .filter { it.entityType == binding.entityType }
+            .map { it.entityId }
+            .toSet()
+
+        val plan = planRowPush(
+            local = local,
+            mirror = mirror,
+            quarantinedIds = quarantinedForType,
+            contentEquals = binding::contentEquals,
+        )
+
+        // Per-operation isolation: failure of one row does not crash or abort remaining rows
+        for (upsert in plan.upserts) {
+            try {
+                binding.pushUpsert(upsert, owner)
+                // If it was in quarantine and succeeded, clear it
+                quarantine.remove("${binding.entityType}:${upsert.syncId}")
+            } catch (err: CancellationException) {
+                throw err
+            } catch (err: Exception) {
+                val key = "${binding.entityType}:${upsert.syncId}"
+                val prev = quarantine[key]
+                val retries = (prev?.retryCount ?: 0) + 1
+                quarantine[key] = QuarantineItem(
+                    entityType = binding.entityType,
+                    entityId = upsert.syncId,
+                    reason = err.message ?: "push upsert error",
+                    retryCount = retries,
+                )
+                Log.w(TAG, "pushUpsert failed for $key (quarantined)", err)
+            }
+        }
+
         val seen = seenIds[binding.entityType] ?: emptySet()
-        for (id in plan.deletes.filter { it in seen }) binding.pushDelete(id, owner)
+        for (id in plan.deletes.filter { it in seen }) {
+            try {
+                binding.pushDelete(id, owner)
+                quarantine.remove("${binding.entityType}:$id")
+            } catch (err: CancellationException) {
+                throw err
+            } catch (err: Exception) {
+                val key = "${binding.entityType}:$id"
+                val prev = quarantine[key]
+                val retries = (prev?.retryCount ?: 0) + 1
+                quarantine[key] = QuarantineItem(
+                    entityType = binding.entityType,
+                    entityId = id,
+                    reason = err.message ?: "push delete error",
+                    retryCount = retries,
+                )
+                Log.w(TAG, "pushDelete failed for $key (quarantined)", err)
+            }
+        }
     }
 
     private fun startObserving() {
@@ -92,13 +171,21 @@ internal class AiEntitySyncCoordinator(
                     if (syncEnabled()) {
                         val owner = ownerUserId()
                         if (owner.isNotBlank()) {
-                            for (binding in bindings) pushBinding(binding, owner)
+                            for (binding in bindings) {
+                                try {
+                                    pushBinding(binding, owner)
+                                } catch (err: CancellationException) {
+                                    throw err
+                                } catch (err: Exception) {
+                                    Log.w(TAG, "push failed for ${binding.entityType}", err)
+                                }
+                            }
                         }
                     }
                 } catch (err: CancellationException) {
                     throw err
                 } catch (err: Exception) {
-                    Log.w(TAG, "push failed", err)
+                    Log.w(TAG, "observe push loop failed", err)
                 }
             }
         }

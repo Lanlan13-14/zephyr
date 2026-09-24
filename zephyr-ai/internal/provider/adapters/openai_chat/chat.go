@@ -55,6 +55,7 @@ type chatTool struct {
 		Parameters  json.RawMessage `json:"parameters"`
 	} `json:"function"`
 }
+
 func toChatMessages(msgs []provider.Message) []chatMessage {
 	out := make([]chatMessage, 0, len(msgs))
 	for _, m := range msgs {

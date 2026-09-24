@@ -20,9 +20,9 @@ import (
 type Risk string
 
 const (
-	RiskLow          Risk = "low"
-	RiskHigh         Risk = "high"
-	RiskDestructive  Risk = "destructive"
+	RiskLow         Risk = "low"
+	RiskHigh        Risk = "high"
+	RiskDestructive Risk = "destructive"
 )
 
 // Tool is the execute surface. Args are raw JSON from the model.
@@ -39,13 +39,13 @@ type Tool interface {
 
 // Result is a structured tool outcome the agent feeds back.
 type Result struct {
-	OK                   bool   `json:"ok"`
-	Data                 any    `json:"data,omitempty"`
-	Error                string `json:"error,omitempty"`
-	ConfirmationRequired bool   `json:"confirmationRequired,omitempty"`
-	Confirmation         any    `json:"confirmation,omitempty"`
-	ClientCapture        any    `json:"clientCapture,omitempty"`
-	ClientCaptureRequired bool  `json:"clientCaptureRequired,omitempty"`
+	OK                    bool   `json:"ok"`
+	Data                  any    `json:"data,omitempty"`
+	Error                 string `json:"error,omitempty"`
+	ConfirmationRequired  bool   `json:"confirmationRequired,omitempty"`
+	Confirmation          any    `json:"confirmation,omitempty"`
+	ClientCapture         any    `json:"clientCapture,omitempty"`
+	ClientCaptureRequired bool   `json:"clientCaptureRequired,omitempty"`
 }
 
 // FuncTool adapts plain functions.
@@ -59,10 +59,10 @@ type FuncTool struct {
 	Fn              func(ctx context.Context, args json.RawMessage) (any, error)
 }
 
-func (t *FuncTool) Name() string              { return t.ToolName }
-func (t *FuncTool) Description() string       { return t.ToolDescription }
-func (t *FuncTool) Schema() json.RawMessage   { return t.ToolSchema }
-func (t *FuncTool) ReadOnly() bool            { return t.IsReadOnly }
+func (t *FuncTool) Name() string            { return t.ToolName }
+func (t *FuncTool) Description() string     { return t.ToolDescription }
+func (t *FuncTool) Schema() json.RawMessage { return t.ToolSchema }
+func (t *FuncTool) ReadOnly() bool          { return t.IsReadOnly }
 func (t *FuncTool) Risk() Risk {
 	if t.ToolRisk == "" {
 		if t.IsReadOnly {
@@ -82,7 +82,7 @@ func (t *FuncTool) Execute(ctx context.Context, args json.RawMessage) (any, erro
 
 // Registry is assembled per run (builtins + MCP + filtered).
 type Registry struct {
-	mu    sync.RWMutex
+	mu     sync.RWMutex
 	byName map[string]Tool
 }
 

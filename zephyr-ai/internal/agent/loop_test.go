@@ -143,9 +143,9 @@ func TestDetectCanonicalClientCapture(t *testing.T) {
 		"data": map[string]any{
 			"clientCaptureRequired": true,
 			"clientCapture": map[string]any{
-				"type": "remote_desktop_capture_v1",
-				"tabId": "rdp-1",
-				"maxWidth": float64(720),
+				"type":           "remote_desktop_capture_v1",
+				"tabId":          "rdp-1",
+				"maxWidth":       float64(720),
 				"afterCaptureId": "old-cap",
 			},
 		},
@@ -196,13 +196,13 @@ func TestPermissionPauseAndResume(t *testing.T) {
 	_, err = r.Run(ctx, Config{
 		RunID: run.ID, SessionID: sess.ID, UserID: "u",
 		Provider: mp, Model: "m", Tools: reg,
-		Permission:    permission.NewEngine(permission.Policy{Mode: permission.ModeAsk}),
-		Store:         st,
-		Emitter:       em,
-		SystemPrompt:  "sys",
-		ExtraMessages: []provider.Message{{Role: provider.RoleUser, Content: "write it"}},
-		MaxSteps:      8,
-		SkipCompact:   true,
+		Permission:     permission.NewEngine(permission.Policy{Mode: permission.ModeAsk}),
+		Store:          st,
+		Emitter:        em,
+		SystemPrompt:   "sys",
+		ExtraMessages:  []provider.Message{{Role: provider.RoleUser, Content: "write it"}},
+		MaxSteps:       8,
+		SkipCompact:    true,
 		ProviderConfig: provider.Config{Name: "mock", Kind: provider.KindOpenAIComp},
 	})
 	pe, ok := err.(*PauseError)
