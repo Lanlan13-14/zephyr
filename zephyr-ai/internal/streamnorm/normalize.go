@@ -21,19 +21,19 @@ const (
 
 // Event is one normalized frame.
 type Event struct {
-	SchemaVersion     int            `json:"schemaVersion"`
-	Type              string         `json:"type"`
-	RunID             string         `json:"runId"`
-	Sequence          int            `json:"sequence"`
-	ModelID           string         `json:"modelId,omitempty"`
-	ProviderAccountID string         `json:"providerAccountId,omitempty"`
-	Text              string         `json:"text,omitempty"`
-	ToolCallID        string         `json:"toolCallId,omitempty"`
-	ToolName          string         `json:"toolName,omitempty"`
-	ArgumentsDelta    string         `json:"argumentsDelta,omitempty"`
+	SchemaVersion     int             `json:"schemaVersion"`
+	Type              string          `json:"type"`
+	RunID             string          `json:"runId"`
+	Sequence          int             `json:"sequence"`
+	ModelID           string          `json:"modelId,omitempty"`
+	ProviderAccountID string          `json:"providerAccountId,omitempty"`
+	Text              string          `json:"text,omitempty"`
+	ToolCallID        string          `json:"toolCallId,omitempty"`
+	ToolName          string          `json:"toolName,omitempty"`
+	ArgumentsDelta    string          `json:"argumentsDelta,omitempty"`
 	Usage             *provider.Usage `json:"usage,omitempty"`
-	StopReason        string         `json:"stopReason,omitempty"`
-	ErrorCode         string         `json:"errorCode,omitempty"`
+	StopReason        string          `json:"stopReason,omitempty"`
+	ErrorCode         string          `json:"errorCode,omitempty"`
 }
 
 // Normalizer accumulates one provider stream into frames with a monotonic sequence.

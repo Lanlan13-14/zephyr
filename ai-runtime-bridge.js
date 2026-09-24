@@ -13,6 +13,11 @@
 const crypto = require('crypto');
 const { HttpError } = require('./authz');
 const {
+    toContractError,
+    classifyUpstreamError,
+    AI_ERROR_TAXONOMY,
+} = require('./ai-contract-errors');
+const {
     DEFAULT_ZEPHYR_SYSTEM_PROMPT,
     DEFAULT_ZEPHYR_SKILLS,
     buildUnifiedZephyrSkill,
@@ -238,14 +243,31 @@ class AiRuntimeBridge {
                 signal,
             });
         });
-        const res = await this._awaitAbortable(fetchPromise, signal, deadline);
+        let res;
+        try {
+            res = await this._awaitAbortable(fetchPromise, signal, deadline);
+        } catch (fetchErr) {
+            const contractErr = toContractError(fetchErr);
+            const err = new HttpError(contractErr.httpStatus || 503, contractErr.code, contractErr.message, contractErr.retryable);
+            err.retryable = contractErr.retryable;
+            err.clientAction = contractErr.clientAction;
+            throw err;
+        }
         const data = await this._awaitAbortable(
             Promise.resolve().then(() => res.json()).catch(() => ({})),
             signal,
             deadline,
         );
         if (!res.ok) {
-            throw new HttpError(res.status, data.code || 'ai_runtime_error', data.error || data.message || 'AI runtime error', res.status >= 500);
+            const rawCode = data.code || (res.status >= 500 ? 'ai_upstream_unavailable' : 'ai_upstream_error');
+            const contractErr = toContractError(
+                { code: data.code, message: data.error || data.message || 'AI runtime error' },
+                rawCode,
+            );
+            const err = new HttpError(res.status, contractErr.code, contractErr.message, res.status >= 500);
+            err.retryable = contractErr.retryable;
+            err.clientAction = contractErr.clientAction;
+            throw err;
         }
         return data;
     }
@@ -401,13 +423,32 @@ class AiRuntimeBridge {
 
     async _consumeHistoryEvents(runId, ticket, signal) {
         this._throwIfAborted(signal);
-        const response = await this._awaitAbortable(
-            Promise.resolve().then(() => this.fetchImpl(
-                `${this.baseUrl}/v1/runs/${encodeURIComponent(runId)}/events?ticket=${encodeURIComponent(ticket)}`,
-                { headers: { accept: 'text/event-stream' }, signal },
-            )),
-            signal,
-        );
+        // Contract v2: prefer /frames endpoint for normalized stream frames;
+        // fall back to legacy /events endpoint if Go runtime does not expose /frames.
+        const framesUrl = `${this.baseUrl}/v1/runs/${encodeURIComponent(runId)}/frames?ticket=${encodeURIComponent(ticket)}`;
+        const legacyEventsUrl = `${this.baseUrl}/v1/runs/${encodeURIComponent(runId)}/events?ticket=${encodeURIComponent(ticket)}`;
+
+        let response;
+        let isFramesMode = true;
+        try {
+            response = await this._awaitAbortable(
+                Promise.resolve().then(() => this.fetchImpl(framesUrl, { headers: { accept: 'text/event-stream' }, signal })),
+                signal,
+            );
+            if (response.status === 404) {
+                isFramesMode = false;
+                response = await this._awaitAbortable(
+                    Promise.resolve().then(() => this.fetchImpl(legacyEventsUrl, { headers: { accept: 'text/event-stream' }, signal })),
+                    signal,
+                );
+            }
+        } catch (fetchErr) {
+            const contractErr = toContractError(fetchErr);
+            const error = new Error(`AI runtime history monitor failed: ${contractErr.message}`);
+            error.code = contractErr.code;
+            throw error;
+        }
+
         if (!response.ok) {
             const error = new Error(`AI runtime history monitor failed (${response.status})`);
             error.code = 'ai_runtime_history_monitor_failed';
@@ -416,6 +457,49 @@ class AiRuntimeBridge {
         const reader = response.body?.getReader?.();
         if (!reader) throw Object.assign(new Error('AI runtime SSE body unavailable'), { code: 'ai_runtime_sse_unavailable' });
         const decoder = new TextDecoder();
+
+        if (isFramesMode) {
+            let assistantText = '';
+            const parser = createRuntimeSseParser((rawEnvelope) => {
+                // In /frames endpoint, the payload is the streamnorm event JSON
+                const frame = (rawEnvelope?.data && typeof rawEnvelope.data === 'object' && Object.keys(rawEnvelope.data).length > 0)
+                    ? rawEnvelope.data
+                    : rawEnvelope;
+                const type = String(frame?.type || rawEnvelope?.type || '');
+                if (typeof this.historyController?.observeFrame === 'function') {
+                    try { this.historyController.observeFrame(runId, frame); } catch (_) {}
+                }
+                if (type === 'text_delta' && typeof frame.text === 'string') {
+                    assistantText += frame.text;
+                } else if (type === 'done') {
+                    this.historyController?.observeEvent?.(runId, {
+                        type: 'message.completed',
+                        data: { role: 'assistant', content: assistantText },
+                    });
+                    this.historyController?.observeEvent?.(runId, {
+                        type: 'run.completed',
+                        data: { stopReason: frame.stopReason || 'stop' },
+                    });
+                    this._forgetRun(runId);
+                } else if (type === 'error') {
+                    this.historyController?.observeEvent?.(runId, {
+                        type: 'run.failed',
+                        data: { code: frame.code || 'ai_upstream_unavailable' },
+                    });
+                    this._forgetRun(runId);
+                }
+            });
+            for (;;) {
+                const { done, value } = await this._awaitAbortable(reader.read(), signal);
+                if (done) break;
+                parser.push(typeof value === 'string' ? value : decoder.decode(value, { stream: true }));
+            }
+            parser.push(decoder.decode());
+            parser.end();
+            return true;
+        }
+
+        // Legacy /events fallback mode
         const parser = createRuntimeSseParser((event) => {
             this.historyController?.observeEvent(runId, event);
             if (['run.completed', 'run.failed', 'run.aborted'].includes(String(event?.type || ''))) {

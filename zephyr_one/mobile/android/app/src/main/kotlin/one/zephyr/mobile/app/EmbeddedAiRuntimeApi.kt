@@ -177,6 +177,18 @@ internal class EmbeddedAiRuntimeApi(
         bs: SerializationStrategy<B>,
         rs: DeserializationStrategy<R>,
     ): ApiResult<R> = runtimeCall("embedded_ai_start_failed", "本机 AI Runtime 启动失败") {
+        if (EmbeddedAiRuntimeJni.isAvailable()) {
+            val json = MobileJson.instance.encodeToString(bs, body)
+            val res = EmbeddedAiRuntimeJni.dispatch("POST", path, mapOf("Content-Type" to "application/json"), json)
+            if (res.statusCode in 200..299) {
+                return@runtimeCall runCatching {
+                    MobileJson.instance.decodeFromString(rs, res.body)
+                }.fold(
+                    { ApiResult.Success(it, null) },
+                    { failure("malformed_embedded_ai_response", it.message ?: "本机 AI 响应无效") },
+                )
+            }
+        }
         val endpoint = endpoint()
         val json = MobileJson.instance.encodeToString(bs, body)
         val request = Request.Builder().url(endpoint.baseUrl + path)
@@ -186,6 +198,17 @@ internal class EmbeddedAiRuntimeApi(
 
     private suspend fun <R> get(path: String, serializer: DeserializationStrategy<R>): ApiResult<R> =
         runtimeCall("embedded_ai_start_failed", "本机 AI Runtime 启动失败") {
+            if (EmbeddedAiRuntimeJni.isAvailable()) {
+                val res = EmbeddedAiRuntimeJni.dispatch("GET", path)
+                if (res.statusCode in 200..299) {
+                    return@runtimeCall runCatching {
+                        MobileJson.instance.decodeFromString(serializer, res.body)
+                    }.fold(
+                        { ApiResult.Success(it, null) },
+                        { failure("malformed_embedded_ai_response", it.message ?: "本机 AI 响应无效") },
+                    )
+                }
+            }
             val endpoint = endpoint()
             val request = Request.Builder().url(endpoint.baseUrl + path).get().build()
             execute(authorized(request, endpoint), serializer)

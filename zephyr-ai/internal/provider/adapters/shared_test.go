@@ -2,13 +2,12 @@ package adapters
 
 import "testing"
 
-
 func TestEmptyOptionValuesAreOmitted(t *testing.T) {
 	payload := map[string]any{}
 	ApplyOptions(payload, map[string]any{
-		"temperature":     -1,
-		"top_p":           "",
-		"max_tokens":      0,
+		"temperature":      -1,
+		"top_p":            "",
+		"max_tokens":       0,
 		"reasoning_effort": "",
 	}, "chat")
 	for _, k := range []string{"temperature", "top_p", "reasoning_effort"} {

@@ -374,4 +374,3 @@ func (c *Client) postWithReasoningFallback(ctx context.Context, url, label strin
 func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	return c.streamResponses(ctx, req)
 }
-

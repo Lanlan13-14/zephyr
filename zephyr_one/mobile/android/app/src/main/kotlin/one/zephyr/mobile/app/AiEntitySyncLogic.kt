@@ -50,14 +50,31 @@ internal data class PushPlan<T>(val upserts: List<T>, val deletes: List<String>)
     val isEmpty: Boolean get() = upserts.isEmpty() && deletes.isEmpty()
 }
 
+/** Record of an entity operation that failed verification or push and is isolated. */
+internal data class QuarantineItem(
+    val entityType: String,
+    val entityId: String,
+    val reason: String,
+    val quarantinedAt: Long = System.currentTimeMillis(),
+    val retryCount: Int = 0,
+)
+
 /** Diff local rows against the mirror (tombstones included) into a push plan. */
 internal fun <T : SyncedRow> planRowPush(
     local: List<T>,
     mirror: List<T>,
     contentEquals: (a: T, b: T) -> Boolean,
+): PushPlan<T> = planRowPush(local, mirror, contentEquals, emptySet())
+
+internal fun <T : SyncedRow> planRowPush(
+    local: List<T>,
+    mirror: List<T>,
+    contentEquals: (a: T, b: T) -> Boolean,
+    quarantinedIds: Set<String>,
 ): PushPlan<T> {
     val mirrorById = mirror.associateBy { it.syncId }
     val upserts = local.filter { row ->
+        if (row.syncId in quarantinedIds) return@filter false
         val remote = mirrorById[row.syncId]
         when {
             remote == null -> true
@@ -66,7 +83,9 @@ internal fun <T : SyncedRow> planRowPush(
         }
     }
     val localIds = local.mapTo(mutableSetOf()) { it.syncId }
-    val deletes = mirror.filter { it.syncDeletedAt == null && it.syncId !in localIds }.map { it.syncId }
+    val deletes = mirror.filter {
+        it.syncDeletedAt == null && it.syncId !in localIds && it.syncId !in quarantinedIds
+    }.map { it.syncId }
     return PushPlan(upserts = upserts, deletes = deletes)
 }
 

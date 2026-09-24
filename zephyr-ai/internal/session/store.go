@@ -24,19 +24,19 @@ type Store struct {
 }
 
 type Session struct {
-	ID             string         `json:"id"`
-	UserID         string         `json:"userId"`
-	Title          string         `json:"title"`
-	ProviderID     string         `json:"providerId,omitempty"`
-	Model          string         `json:"model,omitempty"`
-	Mode           string         `json:"mode,omitempty"` // standard|plan|goal
-	PermissionMode string         `json:"permissionMode,omitempty"`
-	ConnectionIDs  []string       `json:"connectionIds,omitempty"`
-	Metadata       map[string]any `json:"metadata,omitempty"`
-	DatabaseGeneration string     `json:"-"`
-	CreatedAt      int64          `json:"createdAt"`
-	UpdatedAt      int64          `json:"updatedAt"`
-	ArchivedAt     int64          `json:"archivedAt,omitempty"`
+	ID                 string         `json:"id"`
+	UserID             string         `json:"userId"`
+	Title              string         `json:"title"`
+	ProviderID         string         `json:"providerId,omitempty"`
+	Model              string         `json:"model,omitempty"`
+	Mode               string         `json:"mode,omitempty"` // standard|plan|goal
+	PermissionMode     string         `json:"permissionMode,omitempty"`
+	ConnectionIDs      []string       `json:"connectionIds,omitempty"`
+	Metadata           map[string]any `json:"metadata,omitempty"`
+	DatabaseGeneration string         `json:"-"`
+	CreatedAt          int64          `json:"createdAt"`
+	UpdatedAt          int64          `json:"updatedAt"`
+	ArchivedAt         int64          `json:"archivedAt,omitempty"`
 }
 
 type Message struct {
@@ -156,6 +156,17 @@ CREATE TABLE IF NOT EXISTS ai_events (
   UNIQUE(run_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_ai_events_run ON ai_events(run_id, seq);
+
+CREATE TABLE IF NOT EXISTS ai_frames (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  frame_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(run_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_frames_run ON ai_frames(run_id, seq);
 
 CREATE TABLE IF NOT EXISTS ai_quota (
   user_id TEXT NOT NULL,

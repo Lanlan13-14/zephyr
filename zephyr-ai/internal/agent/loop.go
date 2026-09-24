@@ -100,9 +100,12 @@ type Config struct {
 
 	// ProviderConfig is stored into ResumeState (api key stripped by server).
 	ProviderConfig provider.Config
-	// NormalizedSink receives Contract v2 stream frames alongside the legacy
-	// event emitter. Nil disables: the agent loop never depends on it.
-	NormalizedSink func(streamnorm.Event)
+	// FrameStore persists Contract v2 frames for replay. Nil disables
+	// persistence (memory-only runs); delivery still flows to NormSink.
+	FrameStore streamnorm.FrameStore
+	// NormSink receives Contract v2 stream frames alongside the legacy event
+	// emitter. Nil disables delivery.
+	NormSink func(streamnorm.Event)
 	// Permission policy snapshot for resume state.
 	PermissionPolicy   permission.Policy
 	AutoConfirm        bool
@@ -130,12 +133,24 @@ func mergeUsageSnapshot(dst *provider.Usage, src *provider.Usage) {
 	if dst == nil || src == nil {
 		return
 	}
-	if src.InputTokens > 0 { dst.InputTokens = src.InputTokens }
-	if src.OutputTokens > 0 { dst.OutputTokens = src.OutputTokens }
-	if src.TotalTokens > 0 { dst.TotalTokens = src.TotalTokens }
-	if src.CacheCreationTokens > 0 { dst.CacheCreationTokens = src.CacheCreationTokens }
-	if src.CacheReadTokens > 0 { dst.CacheReadTokens = src.CacheReadTokens }
-	if src.LatestContextTokens > 0 { dst.LatestContextTokens = src.LatestContextTokens }
+	if src.InputTokens > 0 {
+		dst.InputTokens = src.InputTokens
+	}
+	if src.OutputTokens > 0 {
+		dst.OutputTokens = src.OutputTokens
+	}
+	if src.TotalTokens > 0 {
+		dst.TotalTokens = src.TotalTokens
+	}
+	if src.CacheCreationTokens > 0 {
+		dst.CacheCreationTokens = src.CacheCreationTokens
+	}
+	if src.CacheReadTokens > 0 {
+		dst.CacheReadTokens = src.CacheReadTokens
+	}
+	if src.LatestContextTokens > 0 {
+		dst.LatestContextTokens = src.LatestContextTokens
+	}
 }
 
 // Runner executes agent loops. Event sequence counters are scoped per run;
@@ -172,6 +187,20 @@ func (r *Runner) counter(runID string) *atomic.Int64 {
 }
 
 func (r *Runner) nextSeq(runID string) int64 { return r.counter(runID).Add(1) }
+
+// emitNormFail stores then delivers a classified error frame.
+func emitNormFail(rec interface {
+	Fail(string) error
+}, code string) {
+	_ = rec.Fail(code)
+}
+
+// emitNormFinish stores then delivers the terminal done frame.
+func emitNormFinish(rec interface {
+	Finish(string) error
+}, reason string) {
+	_ = rec.Finish(reason)
+}
 
 func (r *Runner) emit(cfg Config, t event.Type, data any) error {
 	ev := event.New(cfg.RunID, r.nextSeq(cfg.RunID), t, data)
@@ -469,18 +498,33 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			respID    string
 			callUsage provider.Usage
 		)
-		// Normalized frames ride alongside legacy events. The sink is
-		// observation-only: classification errors here must never fail the run.
-		norm := streamnorm.New(cfg.RunID, cfg.Model, cfg.ProviderConfig.ID)
-		emitNorm := func(events ...streamnorm.Event) {
-			if cfg.NormalizedSink == nil {
-				return
+		// Normalized frames persist before delivery: a crash between store
+		// and emit cannot create a replay gap. Store failure fails the run
+		// loudly; a silent gap would render a partial tool call as complete.
+		rec := streamnorm.NewRecorder(cfg.RunID, cfg.Model, cfg.ProviderConfig.ID, cfg.FrameStore, func(e streamnorm.Event) {
+			if cfg.NormSink != nil {
+				cfg.NormSink(e)
 			}
-			for _, e := range events {
-				cfg.NormalizedSink(e)
+		})
+		normPush := func(c provider.Chunk) bool {
+			if err := rec.Push(c); err != nil {
+				metrics.ProviderMs += time.Since(started).Milliseconds()
+				_ = r.emit(cfg, event.TypeRunFailed, event.RunTerminal{Error: err.Error(), Code: "frame_store"})
+				if cfg.Store != nil {
+					_ = cfg.Store.UpdateRunStatus(cfg.RunID, "failed", err.Error(), metrics)
+				}
+				return false
 			}
+			return true
 		}
-		emitNorm(norm.Start())
+		if err := rec.Start(); err != nil {
+			metrics.ProviderMs += time.Since(started).Milliseconds()
+			_ = r.emit(cfg, event.TypeRunFailed, event.RunTerminal{Error: err.Error(), Code: "frame_store"})
+			if cfg.Store != nil {
+				_ = cfg.Store.UpdateRunStatus(cfg.RunID, "failed", err.Error(), metrics)
+			}
+			return metrics, err
+		}
 		for chunk := range ch {
 			if chunk.Err != nil || chunk.ErrorMsg != "" {
 				msg := chunk.ErrorMsg
@@ -489,30 +533,30 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				}
 				metrics.ProviderMs += time.Since(started).Milliseconds()
 				metrics.ProviderCalls++
-				emitNorm(norm.Fail("ai_upstream_unavailable")...)
+				emitNormFail(rec, "ai_upstream_unavailable")
 				_ = r.emit(cfg, event.TypeRunFailed, event.RunTerminal{Error: msg, Code: "provider_error"})
 				if cfg.Store != nil {
 					_ = cfg.Store.UpdateRunStatus(cfg.RunID, "failed", msg, metrics)
 				}
 				return metrics, fmt.Errorf("%s", msg)
 			}
+			storeOK := normPush(chunk)
+			if !storeOK {
+				return metrics, fmt.Errorf("frame store failed")
+			}
 			switch chunk.Type {
 			case "text":
-				emitNorm(norm.Push(chunk)...)
 				if chunk.Text != "" {
 					text.WriteString(chunk.Text)
 					_ = r.emit(cfg, event.TypeTextDelta, event.TextDelta{Text: chunk.Text})
 				}
 			case "reasoning":
-				emitNorm(norm.Push(chunk)...)
 				if chunk.Text != "" {
 					_ = r.emit(cfg, event.TypeReasoningDelta, event.ReasoningDelta{Text: chunk.Text})
 				}
 			case "tool_calls":
-				emitNorm(norm.Push(chunk)...)
 				toolCalls = append(toolCalls, chunk.ToolCalls...)
 			case "usage":
-				emitNorm(norm.Push(chunk)...)
 				if chunk.Usage != nil {
 					// Usage events are provider-specific snapshots. Anthropic may split
 					// input and output across events. Keep the latest non-zero value
@@ -550,7 +594,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 		}
 
 		if len(toolCalls) == 0 {
-			emitNorm(norm.Finish(streamnorm.StopStop)...)
+			emitNormFinish(rec, streamnorm.StopStop)
 			_ = r.emit(cfg, event.TypeMessageCompleted, event.MessageCompleted{
 				Role: "assistant", Content: assistant.Content,
 			})

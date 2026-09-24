@@ -51,13 +51,13 @@ func Defaults() Config {
 }
 
 type Result struct {
-	Messages       []provider.Message
-	OriginalChars  int
-	FinalChars     int
-	Snipped        int
-	Pruned         int
-	Compacted      bool
-	DroppedTurns   int
+	Messages      []provider.Message
+	OriginalChars int
+	FinalChars    int
+	Snipped       int
+	Pruned        int
+	Compacted     bool
+	DroppedTurns  int
 	// Archived holds messages removed/folded so callers can persist them.
 	Archived []provider.Message
 	// SnippedTools holds tool messages after snip (full original in Archived if set).

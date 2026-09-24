@@ -260,15 +260,15 @@ func RegisterFromHost(ctx context.Context, reg *tool.Registry, h *Host, userID, 
 			IsParallelSafe:  d.ParallelSafe && d.ReadOnly,
 			Fn: func(ctx context.Context, args json.RawMessage) (any, error) {
 				return h.Call(ctx, CallRequest{
-					Tool:      d.Name,
-					Args:      args,
-					UserID:    userID,
-					SessionID: sessionID,
-					RunID:     runID,
+					Tool:               d.Name,
+					Args:               args,
+					UserID:             userID,
+					SessionID:          sessionID,
+					RunID:              runID,
 					DatabaseGeneration: databaseGeneration,
 					RunNonce:           runNonce,
-					Context:   contextJSON,
-					Confirmed: confirmedCallFromContext(ctx, d.Name),
+					Context:            contextJSON,
+					Confirmed:          confirmedCallFromContext(ctx, d.Name),
 				})
 			},
 		}

@@ -47,8 +47,8 @@ type ResumeState struct {
 	SystemPrompt   string         `json:"systemPrompt"`
 	VolatilePrompt string         `json:"volatilePrompt,omitempty"`
 	Options        map[string]any `json:"options,omitempty"`
-	MaxSteps     int            `json:"maxSteps"`
-	StepsDone    int            `json:"stepsDone"`
+	MaxSteps       int            `json:"maxSteps"`
+	StepsDone      int            `json:"stepsDone"`
 	// Provider skeleton without key — Node fills apiKey on resume.
 	Provider provider.Config `json:"provider"`
 	// Permission policy snapshot.

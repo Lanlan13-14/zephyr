@@ -8,10 +8,10 @@ const SchemaVersion = 2
 type ProviderFamily string
 
 const (
-	ProviderFamilyOpenAI ProviderFamily = "openai"
-	ProviderFamilyAnthropic ProviderFamily = "anthropic"
+	ProviderFamilyOpenAI           ProviderFamily = "openai"
+	ProviderFamilyAnthropic        ProviderFamily = "anthropic"
 	ProviderFamilyOpenAICompatible ProviderFamily = "openai-compatible"
-	ProviderFamilyCustom ProviderFamily = "custom"
+	ProviderFamilyCustom           ProviderFamily = "custom"
 )
 
 func (v ProviderFamily) Valid() bool {
@@ -26,9 +26,9 @@ func (v ProviderFamily) Valid() bool {
 type ProviderAPI string
 
 const (
-	ProviderAPIOpenAIResponses ProviderAPI = "openai-responses"
+	ProviderAPIOpenAIResponses       ProviderAPI = "openai-responses"
 	ProviderAPIOpenAIChatCompletions ProviderAPI = "openai-chat-completions"
-	ProviderAPIAnthropicMessages ProviderAPI = "anthropic-messages"
+	ProviderAPIAnthropicMessages     ProviderAPI = "anthropic-messages"
 )
 
 func (v ProviderAPI) Valid() bool {
@@ -43,10 +43,10 @@ func (v ProviderAPI) Valid() bool {
 type AuthKind string
 
 const (
-	AuthKindAPIKey AuthKind = "api-key"
-	AuthKindBearerToken AuthKind = "bearer-token"
+	AuthKindAPIKey         AuthKind = "api-key"
+	AuthKindBearerToken    AuthKind = "bearer-token"
 	AuthKindDeviceEnvelope AuthKind = "device-envelope"
-	AuthKindNone AuthKind = "none"
+	AuthKindNone           AuthKind = "none"
 )
 
 func (v AuthKind) Valid() bool {
@@ -62,7 +62,7 @@ type SharingVisibility string
 
 const (
 	SharingVisibilityPrivate SharingVisibility = "private"
-	SharingVisibilityShared SharingVisibility = "shared"
+	SharingVisibilityShared  SharingVisibility = "shared"
 )
 
 func (v SharingVisibility) Valid() bool {
@@ -78,8 +78,8 @@ type PromptCache string
 
 const (
 	PromptCacheUnsupported PromptCache = "unsupported"
-	PromptCacheAuto PromptCache = "auto"
-	PromptCacheExplicit PromptCache = "explicit"
+	PromptCacheAuto        PromptCache = "auto"
+	PromptCacheExplicit    PromptCache = "explicit"
 )
 
 func (v PromptCache) Valid() bool {
@@ -95,9 +95,9 @@ type ReasoningLevel string
 
 const (
 	ReasoningLevelMinimal ReasoningLevel = "minimal"
-	ReasoningLevelLow ReasoningLevel = "low"
-	ReasoningLevelMedium ReasoningLevel = "medium"
-	ReasoningLevelHigh ReasoningLevel = "high"
+	ReasoningLevelLow     ReasoningLevel = "low"
+	ReasoningLevelMedium  ReasoningLevel = "medium"
+	ReasoningLevelHigh    ReasoningLevel = "high"
 )
 
 func (v ReasoningLevel) Valid() bool {
@@ -112,9 +112,9 @@ func (v ReasoningLevel) Valid() bool {
 type PerformanceTier string
 
 const (
-	PerformanceTierFast PerformanceTier = "fast"
+	PerformanceTierFast     PerformanceTier = "fast"
 	PerformanceTierBalanced PerformanceTier = "balanced"
-	PerformanceTierQuality PerformanceTier = "quality"
+	PerformanceTierQuality  PerformanceTier = "quality"
 )
 
 func (v PerformanceTier) Valid() bool {
@@ -129,9 +129,9 @@ func (v PerformanceTier) Valid() bool {
 type ModelProvenance string
 
 const (
-	ModelProvenanceBuiltin ModelProvenance = "builtin"
+	ModelProvenanceBuiltin       ModelProvenance = "builtin"
 	ModelProvenanceCatalogRemote ModelProvenance = "catalog-remote"
-	ModelProvenanceUser ModelProvenance = "user"
+	ModelProvenanceUser          ModelProvenance = "user"
 )
 
 func (v ModelProvenance) Valid() bool {
@@ -146,9 +146,9 @@ func (v ModelProvenance) Valid() bool {
 type DNSMode string
 
 const (
-	DNSModeSystem DNSMode = "system"
+	DNSModeSystem       DNSMode = "system"
 	DNSModeHostResolved DNSMode = "host-resolved"
-	DNSModeLiteral DNSMode = "literal"
+	DNSModeLiteral      DNSMode = "literal"
 )
 
 func (v DNSMode) Valid() bool {
@@ -195,10 +195,10 @@ func (v IPFamily) Valid() bool {
 type ResolutionSource string
 
 const (
-	ResolutionSourceAndroidJVMDNS ResolutionSource = "android-jvm-dns"
-	ResolutionSourceIOSSystemDNS ResolutionSource = "ios-system-dns"
+	ResolutionSourceAndroidJVMDNS    ResolutionSource = "android-jvm-dns"
+	ResolutionSourceIOSSystemDNS     ResolutionSource = "ios-system-dns"
 	ResolutionSourceDesktopSystemDNS ResolutionSource = "desktop-system-dns"
-	ResolutionSourceLiteral ResolutionSource = "literal"
+	ResolutionSourceLiteral          ResolutionSource = "literal"
 )
 
 func (v ResolutionSource) Valid() bool {
@@ -213,12 +213,12 @@ func (v ResolutionSource) Valid() bool {
 type StopReason string
 
 const (
-	StopReasonStop StopReason = "stop"
-	StopReasonLength StopReason = "length"
-	StopReasonToolUse StopReason = "tool_use"
+	StopReasonStop          StopReason = "stop"
+	StopReasonLength        StopReason = "length"
+	StopReasonToolUse       StopReason = "tool_use"
 	StopReasonContentFilter StopReason = "content_filter"
-	StopReasonCancelled StopReason = "cancelled"
-	StopReasonError StopReason = "error"
+	StopReasonCancelled     StopReason = "cancelled"
+	StopReasonError         StopReason = "error"
 )
 
 func (v StopReason) Valid() bool {
@@ -233,19 +233,19 @@ func (v StopReason) Valid() bool {
 type StreamEventType string
 
 const (
-	StreamEventTypeStart StreamEventType = "start"
-	StreamEventTypeTextStart StreamEventType = "text_start"
-	StreamEventTypeTextDelta StreamEventType = "text_delta"
-	StreamEventTypeTextEnd StreamEventType = "text_end"
+	StreamEventTypeStart          StreamEventType = "start"
+	StreamEventTypeTextStart      StreamEventType = "text_start"
+	StreamEventTypeTextDelta      StreamEventType = "text_delta"
+	StreamEventTypeTextEnd        StreamEventType = "text_end"
 	StreamEventTypeReasoningStart StreamEventType = "reasoning_start"
 	StreamEventTypeReasoningDelta StreamEventType = "reasoning_delta"
-	StreamEventTypeReasoningEnd StreamEventType = "reasoning_end"
-	StreamEventTypeToolCallStart StreamEventType = "tool_call_start"
-	StreamEventTypeToolCallDelta StreamEventType = "tool_call_delta"
-	StreamEventTypeToolCallEnd StreamEventType = "tool_call_end"
-	StreamEventTypeUsage StreamEventType = "usage"
-	StreamEventTypeDone StreamEventType = "done"
-	StreamEventTypeError StreamEventType = "error"
+	StreamEventTypeReasoningEnd   StreamEventType = "reasoning_end"
+	StreamEventTypeToolCallStart  StreamEventType = "tool_call_start"
+	StreamEventTypeToolCallDelta  StreamEventType = "tool_call_delta"
+	StreamEventTypeToolCallEnd    StreamEventType = "tool_call_end"
+	StreamEventTypeUsage          StreamEventType = "usage"
+	StreamEventTypeDone           StreamEventType = "done"
+	StreamEventTypeError          StreamEventType = "error"
 )
 
 func (v StreamEventType) Valid() bool {
@@ -261,8 +261,8 @@ type TristateMode string
 
 const (
 	TristateModeInherit TristateMode = "inherit"
-	TristateModeOmit TristateMode = "omit"
-	TristateModeValue TristateMode = "value"
+	TristateModeOmit    TristateMode = "omit"
+	TristateModeValue   TristateMode = "value"
 )
 
 func (v TristateMode) Valid() bool {
@@ -277,8 +277,8 @@ func (v TristateMode) Valid() bool {
 type ExecutionFallback string
 
 const (
-	ExecutionFallbackAsk ExecutionFallback = "ask"
-	ExecutionFallbackDeny ExecutionFallback = "deny"
+	ExecutionFallbackAsk       ExecutionFallback = "ask"
+	ExecutionFallbackDeny      ExecutionFallback = "deny"
 	ExecutionFallbackAutomatic ExecutionFallback = "automatic"
 )
 
@@ -295,7 +295,7 @@ type CellScope string
 
 const (
 	CellScopeConversation CellScope = "conversation"
-	CellScopeGroup CellScope = "group"
+	CellScopeGroup        CellScope = "group"
 )
 
 func (v CellScope) Valid() bool {
@@ -310,7 +310,7 @@ func (v CellScope) Valid() bool {
 type RetentionPolicy string
 
 const (
-	RetentionPolicyRetain RetentionPolicy = "retain"
+	RetentionPolicyRetain        RetentionPolicy = "retain"
 	RetentionPolicyPurgeOnDelete RetentionPolicy = "purge-on-delete"
 )
 
@@ -326,7 +326,7 @@ func (v RetentionPolicy) Valid() bool {
 type CellBindingStatus string
 
 const (
-	CellBindingStatusActive CellBindingStatus = "active"
+	CellBindingStatusActive    CellBindingStatus = "active"
 	CellBindingStatusRetaining CellBindingStatus = "retaining"
 	CellBindingStatusMigrating CellBindingStatus = "migrating"
 	CellBindingStatusDestroyed CellBindingStatus = "destroyed"
@@ -344,19 +344,19 @@ func (v CellBindingStatus) Valid() bool {
 type AIEntityType string
 
 const (
-	AIEntityTypeAIConversation AIEntityType = "aiConversation"
+	AIEntityTypeAIConversation       AIEntityType = "aiConversation"
 	AIEntityTypeAIConversationBranch AIEntityType = "aiConversationBranch"
-	AIEntityTypeAIMessage AIEntityType = "aiMessage"
+	AIEntityTypeAIMessage            AIEntityType = "aiMessage"
 	AIEntityTypeAIAttachmentManifest AIEntityType = "aiAttachmentManifest"
-	AIEntityTypeAIToolRun AIEntityType = "aiToolRun"
-	AIEntityTypeAIConversationGroup AIEntityType = "aiConversationGroup"
-	AIEntityTypeAICellBinding AIEntityType = "aiCellBinding"
-	AIEntityTypeAIProviderAccount AIEntityType = "aiProviderAccount"
-	AIEntityTypeAISecretBinding AIEntityType = "aiSecretBinding"
-	AIEntityTypeAIModelOverride AIEntityType = "aiModelOverride"
-	AIEntityTypeAIBehaviorProfile AIEntityType = "aiBehaviorProfile"
-	AIEntityTypeAICellProfile AIEntityType = "aiCellProfile"
-	AIEntityTypeAIExecutionPolicy AIEntityType = "aiExecutionPolicy"
+	AIEntityTypeAIToolRun            AIEntityType = "aiToolRun"
+	AIEntityTypeAIConversationGroup  AIEntityType = "aiConversationGroup"
+	AIEntityTypeAICellBinding        AIEntityType = "aiCellBinding"
+	AIEntityTypeAIProviderAccount    AIEntityType = "aiProviderAccount"
+	AIEntityTypeAISecretBinding      AIEntityType = "aiSecretBinding"
+	AIEntityTypeAIModelOverride      AIEntityType = "aiModelOverride"
+	AIEntityTypeAIBehaviorProfile    AIEntityType = "aiBehaviorProfile"
+	AIEntityTypeAICellProfile        AIEntityType = "aiCellProfile"
+	AIEntityTypeAIExecutionPolicy    AIEntityType = "aiExecutionPolicy"
 )
 
 func (v AIEntityType) Valid() bool {
@@ -371,11 +371,11 @@ func (v AIEntityType) Valid() bool {
 type AIClientAction string
 
 const (
-	AIClientActionFixInput AIClientAction = "fix_input"
+	AIClientActionFixInput       AIClientAction = "fix_input"
 	AIClientActionReauthenticate AIClientAction = "reauthenticate"
-	AIClientActionRetry AIClientAction = "retry"
-	AIClientActionAbort AIClientAction = "abort"
-	AIClientActionUpgrade AIClientAction = "upgrade"
+	AIClientActionRetry          AIClientAction = "retry"
+	AIClientActionAbort          AIClientAction = "abort"
+	AIClientActionUpgrade        AIClientAction = "upgrade"
 )
 
 func (v AIClientAction) Valid() bool {
@@ -388,9 +388,9 @@ func (v AIClientAction) Valid() bool {
 }
 
 type AIErrorSpec struct {
-	Code string
-	HTTPStatus int
-	Retryable bool
+	Code         string
+	HTTPStatus   int
+	Retryable    bool
 	ClientAction AIClientAction
 }
 

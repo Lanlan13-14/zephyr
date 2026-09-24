@@ -92,6 +92,35 @@ class AiEntitySyncLogicTest {
         val mirror = ProviderRow("p1", "OpenAI", "https://api.openai.com", hasKey = false)
         assertTrue(providerContentEquals(local, mirror))
     }
+
+    @Test
+    fun `quarantined rows are excluded from push plan`() {
+        val local = listOf(
+            Row("ok-1", "normal"),
+            Row("bad-2", "fails-validation"),
+            Row("ok-3", "normal"),
+        )
+        val mirror = emptyList<Row>()
+        val quarantined = setOf("bad-2")
+        val plan = planRowPush(local, mirror, contentEquals = ::same, quarantinedIds = quarantined)
+
+        assertEquals(2, plan.upserts.size)
+        assertEquals(listOf("ok-1", "ok-3"), plan.upserts.map { it.id })
+        assertTrue("quarantined row must not be in plan", plan.upserts.none { it.id == "bad-2" })
+    }
+
+    @Test
+    fun `quarantined deletes are excluded from push plan`() {
+        val local = emptyList<Row>()
+        val mirror = listOf(
+            Row("d1", "rem-1"),
+            Row("d2", "rem-2"),
+        )
+        val quarantined = setOf("d1")
+        val plan = planRowPush(local, mirror, contentEquals = ::same, quarantinedIds = quarantined)
+
+        assertEquals(listOf("d2"), plan.deletes)
+    }
 }
 
 /* Local provider test rows — presence flag models apiKey=SecretPresence. */

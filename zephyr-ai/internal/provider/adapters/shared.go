@@ -145,4 +145,3 @@ func isEmptyOption(v any) bool {
 	}
 	return false
 }
-

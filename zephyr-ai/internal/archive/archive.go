@@ -22,23 +22,23 @@ type Store struct {
 }
 
 type Entry struct {
-	ID        string `json:"id"`
-	SessionID string `json:"sessionId"`
-	UserID    string `json:"userId"`
-	RunID     string `json:"runId,omitempty"`
-	Kind      string `json:"kind"` // tool_snip | tool_prune | fold | file_snapshot
-	Role      string `json:"role,omitempty"`
-	Name      string `json:"name,omitempty"`
+	ID         string `json:"id"`
+	SessionID  string `json:"sessionId"`
+	UserID     string `json:"userId"`
+	RunID      string `json:"runId,omitempty"`
+	Kind       string `json:"kind"` // tool_snip | tool_prune | fold | file_snapshot
+	Role       string `json:"role,omitempty"`
+	Name       string `json:"name,omitempty"`
 	ToolCallID string `json:"toolCallId,omitempty"`
-	Content   string `json:"content"`
-	MetaJSON  string `json:"meta,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
+	Content    string `json:"content"`
+	MetaJSON   string `json:"meta,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
 }
 
 type Hit struct {
 	Entry
-	Score float64 `json:"score"`
-	Snippet string `json:"snippet"`
+	Score   float64 `json:"score"`
+	Snippet string  `json:"snippet"`
 }
 
 func Open(dir string) (*Store, error) {

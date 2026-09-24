@@ -31,11 +31,11 @@ func TestChatOmitsResponsesOnlyParams(t *testing.T) {
 	req := provider.Request{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
 		Options: map[string]any{
-			"max_tokens":           1000,
-			"max_output_tokens":    2000,
-			"reasoning_effort":     "high",
-			"presence_penalty":     0.1,
-			"reasoning":            map[string]any{"effort": "high"},
+			"max_tokens":        1000,
+			"max_output_tokens": 2000,
+			"reasoning_effort":  "high",
+			"presence_penalty":  0.1,
+			"reasoning":         map[string]any{"effort": "high"},
 		},
 	}
 	ch, err := c.Stream(context.Background(), req)
