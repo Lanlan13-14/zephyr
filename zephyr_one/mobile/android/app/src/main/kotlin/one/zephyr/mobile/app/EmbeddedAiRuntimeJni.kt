@@ -1,6 +1,5 @@
 package one.zephyr.mobile.app
 
-import android.content.Context
 import org.json.JSONObject
 import java.io.Closeable
 import java.io.File
@@ -14,11 +13,16 @@ import java.security.SecureRandom
 internal object EmbeddedAiRuntimeJni : Closeable {
     private var isLoaded = false
     private var isInitialized = false
+    private var baseUrl = ""
+    private var adminToken = ""
     private val lock = Any()
 
     init {
         try {
-            System.loadLibrary("zephyr_ai_runtime")
+            // Prefer the true c-shared JNI library (built via -buildmode=c-shared,
+            // carries Java_one_..._nativeInit Dispatch symbols). The CGO-less
+            // libzephyr_ai_runtime.so is an executable and cannot be loaded here.
+            System.loadLibrary("zephyr_ai_runtime_jni")
             isLoaded = true
         } catch (t: Throwable) {
             isLoaded = false
@@ -35,14 +39,14 @@ internal object EmbeddedAiRuntimeJni : Closeable {
     )
 
     fun ensureStarted(
-        context: Context,
+        dataDir: File,
         platformHostUrl: String = "",
         platformHostToken: String = ""
     ): Boolean = synchronized(lock) {
         if (!isLoaded) return false
         if (isInitialized) return true
 
-        val data = File(context.noBackupFilesDir, "zephyr-ai-runtime").apply { mkdirs() }
+        val data = dataDir.apply { mkdirs() }
         val token = randomToken()
         val config = JSONObject().apply {
             put("dataDir", data.absolutePath)
@@ -55,10 +59,22 @@ internal object EmbeddedAiRuntimeJni : Closeable {
             val res = nativeInit(config.toString())
             val resObj = JSONObject(res)
             isInitialized = resObj.optBoolean("ok", false)
+            baseUrl = resObj.optString("baseUrl", "")
+            adminToken = resObj.optString("adminToken", "")
             isInitialized
         } catch (t: Throwable) {
             isInitialized = false
+            baseUrl = ""
+            adminToken = ""
             false
+        }
+    }
+
+    /** SSE endpoint of the in-process runtime; empty when JNI is not active. */
+    fun streamEndpoint(): Pair<String, String>? {
+        synchronized(lock) {
+            if (!isInitialized || baseUrl.isEmpty()) return null
+            return baseUrl to adminToken
         }
     }
 
@@ -105,6 +121,8 @@ internal object EmbeddedAiRuntimeJni : Closeable {
                 nativeClose()
             } catch (_: Throwable) {}
             isInitialized = false
+            baseUrl = ""
+            adminToken = ""
         }
     }
 

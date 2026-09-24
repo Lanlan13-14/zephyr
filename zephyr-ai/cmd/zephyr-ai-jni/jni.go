@@ -19,8 +19,7 @@ func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeInit(env *C.JNIEnv, c
 	cConfig := C.GetStringUTFChars(env, jConfig, nil)
 	defer C.ReleaseStringUTFChars(env, jConfig, cConfig)
 
-	configStr := C.GoString(cConfig)
-	res, err := embedded.InitGlobal(configStr)
+	res, err := embedded.InitGlobal(C.GoString(cConfig))
 	if err != nil {
 		res = `{"ok":false,"error":"` + err.Error() + `"}`
 	}
@@ -33,24 +32,27 @@ func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeInit(env *C.JNIEnv, c
 func Java_one_zephyr_mobile_app_EmbeddedAiRuntimeJni_nativeDispatch(env *C.JNIEnv, class C.jclass, jMethod, jPath, jHeaders, jBody C.jstring) C.jstring {
 	cMethod := C.GetStringUTFChars(env, jMethod, nil)
 	defer C.ReleaseStringUTFChars(env, jMethod, cMethod)
+	method := C.GoString(cMethod)
+
 	cPath := C.GetStringUTFChars(env, jPath, nil)
 	defer C.ReleaseStringUTFChars(env, jPath, cPath)
+	path := C.GoString(cPath)
 
-	var headersStr, bodyStr string
+	var headers, body string
 	if jHeaders != nil {
 		cHeaders := C.GetStringUTFChars(env, jHeaders, nil)
-		headersStr = C.GoString(cHeaders)
+		headers = C.GoString(cHeaders)
 		C.ReleaseStringUTFChars(env, jHeaders, cHeaders)
 	}
 	if jBody != nil {
 		cBody := C.GetStringUTFChars(env, jBody, nil)
-		bodyStr = C.GoString(cBody)
+		body = C.GoString(cBody)
 		C.ReleaseStringUTFChars(env, jBody, cBody)
 	}
 
-	res, err := embedded.DispatchGlobal(C.GoString(cMethod), C.GoString(cPath), headersStr, bodyStr)
+	res, err := embedded.DispatchGlobal(method, path, headers, body)
 	if err != nil {
-		res = `{"statusCode":500,"error":"` + err.Error() + `"}`
+		res = `{"ok":false,"error":"` + err.Error() + `"}`
 	}
 	cRes := C.CString(res)
 	defer C.free(unsafe.Pointer(cRes))

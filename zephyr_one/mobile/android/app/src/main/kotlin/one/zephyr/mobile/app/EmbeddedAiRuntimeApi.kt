@@ -145,7 +145,15 @@ internal class EmbeddedAiRuntimeApi(
 
     suspend fun stream(path: String, lastEventId: Long, onEvent: suspend (AiRuntimeEvent) -> Unit): ApiResult<Unit> {
         return runtimeCall("embedded_ai_stream_failed", "本机 AI 事件流中断") {
-            val endpoint = endpoint()
+            // Prefer the JNI runtime's own SSE endpoint: same in-process
+            // instance that started the run, so streams observe exactly what
+            // dispatch created — never a second runtime with its own token.
+            val jni = if (jniEnsureStarted()) EmbeddedAiRuntimeJni.streamEndpoint() else null
+            val endpoint = if (jni != null) {
+                EmbeddedAiRuntimeProcess.Endpoint(jni.first, jni.second)
+            } else {
+                endpoint()
+            }
             val request = authorized(
                 Request.Builder().url(endpoint.baseUrl + path).get()
                     .header("Accept", "text/event-stream")
@@ -177,7 +185,7 @@ internal class EmbeddedAiRuntimeApi(
         bs: SerializationStrategy<B>,
         rs: DeserializationStrategy<R>,
     ): ApiResult<R> = runtimeCall("embedded_ai_start_failed", "本机 AI Runtime 启动失败") {
-        if (EmbeddedAiRuntimeJni.isAvailable()) {
+        if (jniEnsureStarted()) {
             val json = MobileJson.instance.encodeToString(bs, body)
             val res = EmbeddedAiRuntimeJni.dispatch("POST", path, mapOf("Content-Type" to "application/json"), json)
             if (res.statusCode in 200..299) {
@@ -198,7 +206,7 @@ internal class EmbeddedAiRuntimeApi(
 
     private suspend fun <R> get(path: String, serializer: DeserializationStrategy<R>): ApiResult<R> =
         runtimeCall("embedded_ai_start_failed", "本机 AI Runtime 启动失败") {
-            if (EmbeddedAiRuntimeJni.isAvailable()) {
+            if (jniEnsureStarted()) {
                 val res = EmbeddedAiRuntimeJni.dispatch("GET", path)
                 if (res.statusCode in 200..299) {
                     return@runtimeCall runCatching {
@@ -213,6 +221,17 @@ internal class EmbeddedAiRuntimeApi(
             val request = Request.Builder().url(endpoint.baseUrl + path).get().build()
             execute(authorized(request, endpoint), serializer)
         }
+
+    /**
+     * Start the in-process JNI runtime when its library is present. Returns
+     * false when unavailable so callers fall back to the loopback process
+     * path without error (spec: seamless fallback when JNI is absent).
+     */
+    private fun jniEnsureStarted(): Boolean {
+        if (!EmbeddedAiRuntimeJni.isAvailable()) return false
+        val host = platformHost?.ensureStarted()
+        return EmbeddedAiRuntimeJni.ensureStarted(process.dataDir, host?.url.orEmpty(), host?.token.orEmpty())
+    }
 
     private suspend fun <R> execute(request: Request, serializer: DeserializationStrategy<R>): ApiResult<R> = try {
         await(client, request).use { response ->

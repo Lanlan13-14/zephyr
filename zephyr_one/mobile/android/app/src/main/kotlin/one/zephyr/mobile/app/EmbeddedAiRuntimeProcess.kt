@@ -14,6 +14,10 @@ import java.util.concurrent.TimeUnit
 internal class EmbeddedAiRuntimeProcess(private val context: Context) : Closeable {
     data class Endpoint(val baseUrl: String, val adminToken: String)
 
+    /** Shared runtime data directory — also used by the JNI in-process path. */
+    val dataDir: File
+        get() = File(context.noBackupFilesDir, "zephyr-ai-runtime").apply { mkdirs() }
+
     private val lock = Any()
     private var process: Process? = null
     private var endpoint: Endpoint? = null

@@ -2,6 +2,9 @@ package embedded
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -64,7 +67,15 @@ func TestEmbeddedEngineDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InitGlobal failed: %v", err)
 	}
-	if initResp != `{"ok":true}` {
+	var initOut struct {
+		OK         bool   `json:"ok"`
+		BaseURL    string `json:"baseUrl"`
+		AdminToken string `json:"adminToken"`
+	}
+	if err := json.Unmarshal([]byte(initResp), &initOut); err != nil {
+		t.Fatalf("parse init response: %v", err)
+	}
+	if !initOut.OK || initOut.BaseURL == "" || initOut.AdminToken != "test_secret" {
 		t.Fatalf("unexpected init response: %s", initResp)
 	}
 
@@ -74,6 +85,23 @@ func TestEmbeddedEngineDispatch(t *testing.T) {
 	}
 	if len(dispatchOut) == 0 {
 		t.Fatalf("empty dispatch output")
+	}
+
+	// 4. The SSE loopback serves the SAME runtime instance: a session created
+	// via dispatch must be visible over the HTTP endpoint it returned.
+	req, _ := http.NewRequest("GET", initOut.BaseURL+"/admin/sessions?userId=u_mobile&databaseGeneration=gen_1", nil)
+	req.Header.Set("X-AI-Admin", "test_secret")
+	sseResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("SSE endpoint request failed: %v", err)
+	}
+	defer sseResp.Body.Close()
+	if sseResp.StatusCode != 200 {
+		t.Fatalf("SSE endpoint status: %d", sseResp.StatusCode)
+	}
+	sseBody, _ := io.ReadAll(sseResp.Body)
+	if !strings.Contains(string(sseBody), sessionResp.Session.ID) {
+		t.Fatalf("SSE endpoint does not share runtime state: %s", string(sseBody))
 	}
 
 	CloseGlobal()

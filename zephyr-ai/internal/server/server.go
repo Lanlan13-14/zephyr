@@ -506,6 +506,17 @@ func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID
 		Archive: s.archive, UserID: userID, SessionID: sessionID,
 	})
 	if s.cell != nil && runID != "" {
+		if s.host != nil {
+			s.cell.SetBackend(&cell.PlatformL2Backend{
+				Host:              s.host,
+				UserID:            userID,
+				SessionID:         sessionID,
+				RunID:             runID,
+				DatabaseGeneration: databaseGeneration,
+				RunNonce:          runNonce,
+				Context:           contextJSON,
+			})
+		}
 		s.cell.IssueLease(runID, sessionID, "binding_"+sessionID, "local", 30*time.Minute)
 		_ = reg.Register(s.cell.AsExecTool(runID))
 	}

@@ -30,6 +30,7 @@ internal class AiEntitySyncCoordinator(
     private val ownerUserId: () -> String,
     private val syncEnabled: suspend () -> Boolean,
     private val bindings: List<EntityBinding>,
+    private val journal: QuarantineJournal? = null,
 ) {
     private var started = false
     private var observeJob: Job? = null
@@ -44,14 +45,26 @@ internal class AiEntitySyncCoordinator(
 
     fun retryQuarantined(entityType: String, entityId: String) {
         quarantine.remove("$entityType:$entityId")
+        persistQuarantine()
         reconcile()
     }
 
     fun start() {
         if (started) return
         started = true
+        restoreQuarantine()
         reconcile()
         startObserving()
+    }
+
+    /** Reload persisted quarantine so failures survive process restarts (spec §5.2). */
+    private fun restoreQuarantine() {
+        val stored = journal?.load() ?: return
+        for ((key, item) in stored) quarantine[key] = item
+    }
+
+    private fun persistQuarantine() {
+        journal?.save(quarantine.values)
     }
 
     /** Merge mirror → local for every binding, then push what changed. */
@@ -124,7 +137,7 @@ internal class AiEntitySyncCoordinator(
             try {
                 binding.pushUpsert(upsert, owner)
                 // If it was in quarantine and succeeded, clear it
-                quarantine.remove("${binding.entityType}:${upsert.syncId}")
+                if (quarantine.remove("${binding.entityType}:${upsert.syncId}") != null) persistQuarantine()
             } catch (err: CancellationException) {
                 throw err
             } catch (err: Exception) {
@@ -137,6 +150,7 @@ internal class AiEntitySyncCoordinator(
                     reason = err.message ?: "push upsert error",
                     retryCount = retries,
                 )
+                persistQuarantine()
                 Log.w(TAG, "pushUpsert failed for $key (quarantined)", err)
             }
         }
@@ -145,7 +159,7 @@ internal class AiEntitySyncCoordinator(
         for (id in plan.deletes.filter { it in seen }) {
             try {
                 binding.pushDelete(id, owner)
-                quarantine.remove("${binding.entityType}:$id")
+                if (quarantine.remove("${binding.entityType}:$id") != null) persistQuarantine()
             } catch (err: CancellationException) {
                 throw err
             } catch (err: Exception) {
@@ -158,6 +172,7 @@ internal class AiEntitySyncCoordinator(
                     reason = err.message ?: "push delete error",
                     retryCount = retries,
                 )
+                persistQuarantine()
                 Log.w(TAG, "pushDelete failed for $key (quarantined)", err)
             }
         }

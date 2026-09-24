@@ -9965,6 +9965,13 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     overflow-y: auto;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
+.ai-cell-empty-state {
+    opacity: 0.55;
+    color: #8c97af;
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 8px 2px;
+}
 .ai-cell-workspace-tree {
     flex: 1 1 35%;
     padding: 10px 14px;
@@ -10151,14 +10158,23 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     gap: 4px;
     opacity: 0;
     pointer-events: none;
-    transform: scale(0.85);
-    transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1),
-                transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+    visibility: hidden;
 }
 .ai-thinking-popover.is-open {
     opacity: 1;
     pointer-events: auto;
-    transform: scale(1);
+    visibility: visible;
+}
+/* Interpolation is owned by the zephyr-motion aiPopover spring in app.js;
+   CSS holds only the rest states. */
+@media (prefers-reduced-motion: reduce) {
+    .ai-thinking-popover, .ai-cell-inspector, .ai-micro-island {
+        transition: none !important;
+        animation: none !important;
+    }
+    .ai-action-approval-card.pulse {
+        animation: none !important;
+    }
 }
 .ai-thinking-popover-title {
     font-size: 11px;

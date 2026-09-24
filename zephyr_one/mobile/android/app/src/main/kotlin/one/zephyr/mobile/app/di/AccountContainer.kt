@@ -328,6 +328,7 @@ class AccountContainer(
             EnvBinding(localAi, ownedAi),
             TodoBinding(localAi, ownedAi),
         ),
+        journal = QuarantineJournal(context),
     )
 
     internal val localAiWorkspace: LocalAiWorkspace = LocalAiWorkspace(
