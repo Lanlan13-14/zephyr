@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/ai/v2/request-profile.schema.json",
+  "title": "RequestProfileV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "temperature", "maxOutputTokens", "topP", "presencePenalty", "frequencyPenalty", "revision"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "id": { "$ref": "common.schema.json#/$defs/id" },
+    "temperature": { "$ref": "common.schema.json#/$defs/tristateNumber" },
+    "maxOutputTokens": { "$ref": "common.schema.json#/$defs/tristateInt" },
+    "topP": { "$ref": "common.schema.json#/$defs/tristateNumber" },
+    "presencePenalty": { "$ref": "common.schema.json#/$defs/tristateNumber" },
+    "frequencyPenalty": { "$ref": "common.schema.json#/$defs/tristateNumber" },
+    "reasoningLevel": {
+      "enum": ["inherit", "minimal", "low", "medium", "high"]
+    },
+    "revision": { "$ref": "common.schema.json#/$defs/revision" }
+  }
+}

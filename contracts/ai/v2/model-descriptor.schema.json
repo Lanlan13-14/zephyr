@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/ai/v2/model-descriptor.schema.json",
+  "title": "ModelDescriptorV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "providerAccountId",
+    "displayName",
+    "contextWindow",
+    "maxOutputTokens",
+    "modalities",
+    "capabilities",
+    "performanceTier",
+    "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "id": { "$ref": "common.schema.json#/$defs/id" },
+    "providerAccountId": { "$ref": "common.schema.json#/$defs/id" },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "contextWindow": { "type": "integer", "minimum": 1 },
+    "maxOutputTokens": { "type": "integer", "minimum": 1 },
+    "modalities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output"],
+      "properties": {
+        "input": { "$ref": "#/$defs/modalitySet" },
+        "output": { "$ref": "#/$defs/modalitySet" }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tools", "parallelToolCalls", "strictJson", "promptCache", "reasoning"],
+      "properties": {
+        "tools": { "type": "boolean" },
+        "parallelToolCalls": { "type": "boolean" },
+        "strictJson": { "type": "boolean" },
+        "promptCache": { "enum": ["unsupported", "auto", "explicit"] },
+        "reasoning": { "type": "boolean" }
+      }
+    },
+    "reasoningConfig": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["supportedLevels", "defaultLevel", "disallowsTemperature"],
+      "properties": {
+        "supportedLevels": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["minimal", "low", "medium", "high"] }
+        },
+        "defaultLevel": { "enum": ["minimal", "low", "medium", "high"] },
+        "disallowsTemperature": { "type": "boolean" }
+      }
+    },
+    "performanceTier": { "enum": ["fast", "balanced", "quality"] },
+    "provenance": { "enum": ["builtin", "catalog-remote", "user"] },
+    "verifiedAt": { "type": ["integer", "null"], "minimum": 0 }
+  },
+  "$defs": {
+    "modalitySet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "image", "pdf", "audio", "video"],
+      "properties": {
+        "text": { "type": "boolean" },
+        "image": { "type": "boolean" },
+        "pdf": { "type": "boolean" },
+        "audio": { "type": "boolean" },
+        "video": { "type": "boolean" }
+      }
+    }
+  }
+}

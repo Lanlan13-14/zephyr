@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/ai/v2/sync-envelope.schema.json",
+  "title": "AISyncEnvelopeV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "entityType",
+    "entityId",
+    "revision",
+    "deviceId",
+    "keyEpoch",
+    "ciphertext",
+    "nonce",
+    "contentHash",
+    "tombstone",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "entityType": {
+      "enum": [
+        "aiConversation",
+        "aiConversationBranch",
+        "aiMessage",
+        "aiAttachmentManifest",
+        "aiToolRun",
+        "aiConversationGroup",
+        "aiCellBinding",
+        "aiProviderAccount",
+        "aiSecretBinding",
+        "aiModelOverride",
+        "aiBehaviorProfile",
+        "aiCellProfile",
+        "aiExecutionPolicy"
+      ]
+    },
+    "entityId": { "$ref": "common.schema.json#/$defs/id" },
+    "conversationId": { "type": ["string", "null"], "maxLength": 128 },
+    "revision": { "$ref": "common.schema.json#/$defs/revision" },
+    "deviceId": { "$ref": "common.schema.json#/$defs/id" },
+    "keyEpoch": { "type": "integer", "minimum": 1 },
+    "ciphertext": { "type": "string", "minLength": 1, "contentEncoding": "base64" },
+    "nonce": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "contentHash": { "$ref": "common.schema.json#/$defs/sha256" },
+    "tombstone": { "type": "boolean" },
+    "updatedAt": { "type": "string", "minLength": 20, "maxLength": 40 }
+  }
+}

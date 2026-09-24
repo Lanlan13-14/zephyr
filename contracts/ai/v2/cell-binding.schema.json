@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/ai/v2/cell-binding.schema.json",
+  "title": "CellBindingV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "bindingId", "scope", "cellId", "generation", "profileId", "createdAt", "lastActiveAt", "retentionPolicy", "status"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "bindingId": { "$ref": "common.schema.json#/$defs/id" },
+    "scope": { "enum": ["conversation", "group"] },
+    "conversationId": { "type": ["string", "null"], "maxLength": 128 },
+    "groupId": { "type": ["string", "null"], "maxLength": 128 },
+    "cellId": { "$ref": "common.schema.json#/$defs/id" },
+    "generation": { "type": "integer", "minimum": 1 },
+    "profileId": { "$ref": "common.schema.json#/$defs/id" },
+    "createdAt": { "type": "integer", "minimum": 0 },
+    "lastActiveAt": { "type": "integer", "minimum": 0 },
+    "retentionPolicy": { "enum": ["retain", "purge-on-delete"] },
+    "status": { "enum": ["active", "retaining", "migrating", "destroyed"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "scope": { "const": "conversation" } }, "required": ["scope"] },
+      "then": {
+        "properties": {
+          "conversationId": { "type": "string", "minLength": 1 },
+          "groupId": { "type": "null" }
+        },
+        "required": ["conversationId"]
+      }
+    },
+    {
+      "if": { "properties": { "scope": { "const": "group" } }, "required": ["scope"] },
+      "then": {
+        "properties": {
+          "groupId": { "type": "string", "minLength": 1 },
+          "conversationId": { "type": "null" }
+        },
+        "required": ["groupId"]
+      }
+    }
+  ]
+}
