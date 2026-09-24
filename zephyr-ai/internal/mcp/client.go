@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/transport"
 )
 
 type TransportKind string
@@ -43,6 +44,8 @@ type ServerConfig struct {
 	URL                string            `json:"url,omitempty"`
 	Headers            map[string]string `json:"headers,omitempty"`
 	CallTimeoutSeconds int               `json:"callTimeoutSeconds,omitempty"`
+	// Transport carries the host-resolved dial target for CGO-less runtimes.
+	Transport transport.Target `json:"transport,omitempty"`
 	// TrustedReadOnlyTools: raw MCP tool names treated as read-only.
 	TrustedReadOnlyTools []string `json:"trustedReadOnlyTools,omitempty"`
 }
@@ -117,7 +120,7 @@ func Connect(ctx context.Context, cfg ServerConfig) (*Client, error) {
 			return nil, err
 		}
 	case TransportHTTP:
-		c.httpClient = &http.Client{Timeout: to}
+		c.httpClient = transport.NewClient(cfg.Transport, transport.DefaultPolicy(), to)
 	default:
 		return nil, fmt.Errorf("mcp: unsupported transport %q", kind)
 	}
@@ -276,6 +279,9 @@ func (c *Client) callHTTP(ctx context.Context, req rpcRequest) (json.RawMessage,
 	}
 	if c.sessionID != "" {
 		httpReq.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
+	if len(c.cfg.Transport.DialTargets) > 0 {
+		httpReq = c.cfg.Transport.RewriteRequest(httpReq)
 	}
 	res, err := c.httpClient.Do(httpReq)
 	if err != nil {

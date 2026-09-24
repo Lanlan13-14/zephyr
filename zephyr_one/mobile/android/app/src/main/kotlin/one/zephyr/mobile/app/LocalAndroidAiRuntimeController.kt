@@ -205,13 +205,14 @@ internal class LocalAndroidAiRuntimeController(
                     envVars = catalog.environment.filter { it.enabled && it.visibleToAi }.map { e -> EmbeddedEnv(e.name,e.description,envValues[e.id]?.concatToString().orEmpty(),e.valueVisibleToAi) },
                 ), context = context(), mcpServers = catalog.mcpServers.filter { it.enabled }.map { s ->
                     val headers = account.localAi.mcpHeaders(s.id)?.let { chars -> try { parseHeaders(chars.concatToString()) } finally { chars.fill('\u0000') } }.orEmpty()
-                    EmbeddedMcpServer(s.name,s.type,s.command,s.args,s.env,s.url,headers,s.timeoutSeconds,s.trustedReadOnly)
+                    val mcpTransport = if (s.type == "http" && s.url.isNotBlank()) EmbeddedAiRuntimeApi.buildTransportTarget(s.url) else null
+                    EmbeddedMcpServer(s.name,s.type,s.command,s.args,s.env,s.url,headers,s.timeoutSeconds,s.trustedReadOnly,mcpTransport)
                 }, databaseGeneration = account.generation, runNonce = UUID.randomUUID().toString(),
                 contextWindowTokens = modelRow.contextWindowTokens ?: provider.contextWindowTokens ?: catalog.context.windowTokens,
                 outputReserveTokens = modelRow.maxOutputTokens ?: provider.maxTokens,
             )
             append(AiTranscriptItem.User(prompt)); mutable.update { it.copy(running = true, runtimeSessionId = sessionId, conversationId = sessionId, error = null) }
-            when (val started = if (relay) api.startRelayed(account.aiRuntime, request) else api.start(request)) { is ApiResult.Failure -> failRun(started); is ApiResult.Success -> begin(started.value) }
+            when (val started = if (relay) api.startRelayed(account.aiRuntime, request) else api.startWithTransport(request)) { is ApiResult.Failure -> failRun(started); is ApiResult.Success -> begin(started.value) }
         } finally { apiKey?.fill('\u0000'); envValues.values.forEach { it.fill('\u0000') } }
     }
 

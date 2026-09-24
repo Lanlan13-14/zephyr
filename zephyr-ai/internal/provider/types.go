@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/transport"
 )
 
 // Kind identifies a wire protocol family.
@@ -33,6 +35,9 @@ type Config struct {
 	Options      map[string]any    `json:"options,omitempty"`
 	TimeoutMs    int               `json:"timeoutMs,omitempty"`
 	Retries      int               `json:"retries,omitempty"`
+	// Transport carries the host-resolved dial target for CGO-less runtimes
+	// (Android JVM pre-resolution). Empty means direct system DNS.
+	Transport transport.Target `json:"transport,omitempty"`
 }
 
 // Role for chat messages.

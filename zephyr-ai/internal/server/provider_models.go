@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
+	atransport "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/transport"
 )
 
 // providerModelsReq is the model-discovery payload. It carries a full provider config so the
@@ -89,19 +89,20 @@ func listProviderModels(ctx context.Context, cfg provider.Config, serverName str
 
 // modelsHTTPClient returns a client that restores the original Host header and TLS SNI when the
 // URL host is an IP literal rewritten by the caller's DNS pre-resolution.
+// New callers should prefer transport.NewClient with an explicit TransportTarget; this stays
+// for the legacy serverName-only path and delegates to the same dial logic.
 func modelsHTTPClient(serverName string) *http.Client {
 	name := strings.TrimSpace(serverName)
 	if name == "" {
 		return &http.Client{Timeout: 30 * time.Second}
 	}
-	transport := &http.Transport{
-		ForceAttemptHTTP2: false,
-		TLSClientConfig:   &tls.Config{ServerName: name, MinVersion: tls.VersionTLS12},
-	}
-	return &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
-	}
+	return atransport.NewClient(atransport.Target{
+		EffectiveHost:    name,
+		EffectivePort:    443,
+		TLSServerName:    name,
+		ResolutionSource: "literal",
+		DialTimeoutMs:    8000,
+	}, atransport.DefaultPolicy(), 30*time.Second)
 }
 
 func listOpenAIModels(ctx context.Context, cfg provider.Config, client *http.Client) ([]providerModel, error) {
