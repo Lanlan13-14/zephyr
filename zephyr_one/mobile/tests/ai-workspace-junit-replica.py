@@ -111,7 +111,7 @@ def main():
     d, p = back("HALF", picker=True)
     check(d == "HALF" and p is False, "picker first")
 
-    models = ["Claude Opus", "Claude Sonnet", "GPT-5", "Gemini 3 Pro"]
+    models = ["Claude Opus", "Claude Sonnet", "GPT-5"]
     check(next_opt("Claude Opus", models) == "Claude Sonnet", "cycle model")
     walking = "Claude Opus"
     for _ in models:

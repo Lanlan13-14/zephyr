@@ -10,9 +10,7 @@ public enum AIContractV2 {
 public enum ProviderFamily: String, Sendable, CaseIterable, Codable {
     case openai = "openai"
     case anthropic = "anthropic"
-    case google = "google"
-    case deepseek = "deepseek"
-    case ollama = "ollama"
+    case openaiCompatible = "openai-compatible"
     case custom = "custom"
 }
 
@@ -20,8 +18,6 @@ public enum ProviderAPI: String, Sendable, CaseIterable, Codable {
     case openaiResponses = "openai-responses"
     case openaiChatCompletions = "openai-chat-completions"
     case anthropicMessages = "anthropic-messages"
-    case googleGenerativeAi = "google-generative-ai"
-    case ollamaOpenai = "ollama-openai"
 }
 
 public enum AuthKind: String, Sendable, CaseIterable, Codable {

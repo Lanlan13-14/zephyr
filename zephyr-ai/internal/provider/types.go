@@ -16,8 +16,6 @@ const (
 	KindOpenAI     Kind = "openai"
 	KindOpenAIComp Kind = "openai-compatible"
 	KindAnthropic  Kind = "anthropic"
-	KindGemini     Kind = "gemini"
-	KindOllama     Kind = "ollama"
 )
 
 // Config is a resolved provider instance (secrets already filled by control plane).

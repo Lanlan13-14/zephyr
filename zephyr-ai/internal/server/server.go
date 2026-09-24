@@ -29,7 +29,6 @@ import (
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/permission"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
 	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/anthropic"
-	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/gemini"
 	_ "github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider/openai"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/session"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool"
@@ -295,12 +294,6 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 				"ok": false, "code": "invalid_bootstrap_messages", "error": err.Error(),
 			})
 			return
-		}
-	}
-	if req.Provider.APIKey == "" && req.Provider.Kind != provider.KindOllama {
-		// allow empty for local ollama; otherwise require key
-		if req.Provider.Kind != "" && req.Provider.Kind != provider.KindOllama {
-			// still allow — some gateways use headers only
 		}
 	}
 	// Quota

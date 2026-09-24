@@ -2,9 +2,9 @@
   "generator": "scripts/generate-ai-contracts.mjs",
   "schemaVersion": 2,
   "files": {
-    "src/generated/ai-contract-v2.js": "f5d5ed50259d928a8a239f2adf6240aae30797c599ee4be5674c82a7851d1e71",
-    "zephyr-ai/contracts/v2/contract.go": "689785f8259a129e7895c4bea2d36c74654db36810b0ff88ba37d7d4f9a063e1",
-    "zephyr_one/mobile/android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/aiv2/AIContractV2.kt": "0f69dd769dc32a22e247b9ce5bd06749c81141788af0e71f2855060972a59321",
-    "zephyr_one/mobile/ios/Sources/ZephyrContracts/Generated/AIV2/AIContractV2.swift": "3249ae340bc13594d347d983c42087fec5046d97add9f02bca986d58dbf51fab"
+    "src/generated/ai-contract-v2.js": "93c0a6ddec23ee4d03baad131fcc0ec65195f25ece7d749420505aad69b229c1",
+    "zephyr-ai/contracts/v2/contract.go": "0164a4e4dd08fd4df5c1847563ea398509a33bd89bc638457392de21a1414886",
+    "zephyr_one/mobile/android/core-contracts/src/main/kotlin/one/zephyr/mobile/contracts/aiv2/AIContractV2.kt": "119d411558ae52b3fc35dc39aad6ee6d5189670549b30607df609aadc59483da",
+    "zephyr_one/mobile/ios/Sources/ZephyrContracts/Generated/AIV2/AIContractV2.swift": "aefd27ec4edab0d491306e52bfede9d0b75309439961dc0729672f9886caa5ba"
   }
 }

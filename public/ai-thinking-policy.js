@@ -16,7 +16,6 @@ function providerKind(provider = {}) {
     const type = String(provider?.type || provider?.kind || '').toLowerCase();
     const base = String(provider?.baseUrl || '').toLowerCase();
     if (type === 'anthropic' || type === 'claude' || base.includes('anthropic.com')) return 'anthropic';
-    if (type === 'gemini' || type === 'google' || type === 'google-gemini' || base.includes('generativelanguage.googleapis.com')) return 'gemini';
     return 'openai';
 }
 
@@ -53,9 +52,7 @@ function inferredReasoningModel(modelId = '') {
         || id.includes('mimo')
         || id.includes('agnes')
         || id.includes('seed-')
-        || id.includes('bytedance-seed')
-        || id.includes('gemini-2.5')
-        || id.includes('gemini-3');
+        || id.includes('bytedance-seed');
 }
 
 function effectiveMaxLevel(provider = {}, modelId = '') {
@@ -91,12 +88,6 @@ function optionsForProvider(provider = {}, modelId = '') {
     const id = String(modelId || provider?.defaultModel || '').toLowerCase();
     const maxLevel = effectiveMaxLevel(provider, id);
     if (maxLevel === 'none') return [['', '默认']];
-    if (kind === 'gemini') {
-        if (/gemini-2\.5/i.test(id)) return [
-            ['', '默认'], ['0', '关闭思考'], ['-1', '动态思考'], ['1024', '浅度思考'], ['8192', '深度思考'],
-        ];
-        return [['', '默认'], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high']];
-    }
     const base = kind === 'anthropic'
         ? [['', '默认'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']]
         : [['', '默认'], ['none', 'none'], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
@@ -146,33 +137,6 @@ function sanitizeThinkingOptions(provider = {}, modelId = '', requestOptions = {
             delete options.reasoning;
             if (effort) options.reasoning_effort = effort;
             else delete options.reasoning_effort;
-        }
-        return options;
-    }
-    if (kind === 'gemini') {
-        const config = options.thinkingConfig ?? options.thinking_config;
-        delete options.thinking_config;
-        delete options.reasoning_effort;
-        delete options.reasoning;
-        delete options.effort;
-        if (config && typeof config === 'object' && Number.isFinite(Number(config.thinkingBudget))) {
-            options.thinkingConfig = { ...config, thinkingBudget: Number(config.thinkingBudget) };
-            return options;
-        }
-        const raw = config?.thinkingLevel;
-        const effort = clampLevel(raw, effectiveMaxLevel(provider, modelId));
-        const id = String(modelId || '').toLowerCase();
-        if (!effort) {
-            delete options.thinkingConfig;
-        } else if (/gemini-2\.5/i.test(id)) {
-            const budget = effort === 'none' ? 0
-                : (effort === 'minimal' || effort === 'low') ? 1024
-                    : effort === 'medium' ? -1 : 8192;
-            options.thinkingConfig = { thinkingBudget: budget };
-        } else {
-            const level = effort === 'none' || effort === 'minimal' ? 'minimal'
-                : (effort === 'xhigh' || effort === 'max') ? 'high' : effort;
-            options.thinkingConfig = { thinkingLevel: level };
         }
         return options;
     }

@@ -29,7 +29,6 @@ const MAX_TOOL_TEXT = 60 * 1024;
 const AI_TOOL_CACHE = new Map();
 const AI_OPENAI_TOOL_CACHE = new WeakMap();
 const AI_ANTHROPIC_TOOL_CACHE = new WeakMap();
-const AI_GEMINI_TOOL_CACHE = new WeakMap();
 const AI_PERF_SAMPLES = [];
 const MAX_AI_PERF_SAMPLES = 200;
 const AI_CONVERSATION_SUMMARY_PREFIX = '高轮次对话压缩摘要';
@@ -445,22 +444,6 @@ function normalizeAnthropicUserContent(content) {
     }).filter((part) => part.type === 'image' || part.type === 'tool_result' || part.text);
     return parts.length ? parts : '';
 }
-function normalizeGeminiUserParts(message = {}) {
-    if (Array.isArray(message.parts)) return message.parts;
-    const content = message.content;
-    if (!Array.isArray(content)) return [{ text: String(content || '') }];
-    const parts = content.map((part) => {
-        if (!part || typeof part !== 'object') return { text: String(part || '') };
-        if (part.text !== undefined) return { text: String(part.text || '') };
-        if (part.inlineData) return part;
-        if (part.type === 'image_url' && part.image_url?.url) {
-            const payload = dataUrlPayload(part.image_url.url);
-            return { inlineData: { mimeType: payload.mimeType || 'image/jpeg', data: payload.data } };
-        }
-        return { text: String(part.content || '') };
-    }).filter((part) => part.inlineData || part.text);
-    return parts.length ? parts : [{ text: '' }];
-}
 function normalizeResponsesContent(content) {
     if (!Array.isArray(content)) return String(content || '');
     return content.map((part) => {
@@ -484,14 +467,7 @@ function anthropicScreenshotParts(screenshots = []) {
     }
     return parts;
 }
-function geminiScreenshotParts(screenshots = []) {
-    const parts = [{ text: '下面是 remote_desktop_screenshot 工具返回的远程桌面截图。请直接观察图片内容，不要只根据 JSON 元数据回答。' }];
-    for (const shot of screenshots.slice(0, 3)) {
-        const payload = dataUrlPayload(shot.dataUrl);
-        if (payload.data) parts.push({ inlineData: { mimeType: payload.mimeType || 'image/jpeg', data: payload.data } });
-    }
-    return parts;
-}
+
 function parseExtraObject(value) {
     if (!value) return {};
     if (typeof value === 'object') return value;
@@ -548,16 +524,12 @@ function normalizeOptions(provider = {}, requestOptions = {}, mode = 'chat') {
         delete merged.presence_penalty;
         delete merged.frequency_penalty;
         delete merged.max_completion_tokens;
-    } else if (apiMode === 'anthropic' || apiMode === 'gemini') {
+    } else if (apiMode === 'anthropic') {
         if (merged.max_output_tokens && !merged.max_tokens) merged.max_tokens = merged.max_output_tokens;
         delete merged.max_output_tokens;
         delete merged.text;
         delete merged.response_format;
         delete merged.use_previous_response_id;
-        if (apiMode === 'gemini') {
-            delete merged.reasoning;
-            delete merged.output_config;
-        }
     } else {
         if (merged.max_output_tokens && !merged.max_tokens) merged.max_tokens = merged.max_output_tokens;
         delete merged.max_output_tokens;
@@ -602,18 +574,17 @@ function openAiApiMode(provider = {}) {
 function joinApiUrl(base, suffix) {
     const raw = String(base || '').trim().replace(/\/+$/, '');
     if (!raw) return suffix;
-    if (/\/chat\/completions$/i.test(raw) || /\/responses$/i.test(raw) || /\/messages$/i.test(raw) || /:generateContent$/i.test(raw)) return raw;
+    if (/\/chat\/completions$/i.test(raw) || /\/responses$/i.test(raw) || /\/messages$/i.test(raw)) return raw;
     return `${raw}${suffix}`;
 }
 function providerType(provider = {}) {
     const raw = String(provider.type || '').toLowerCase();
     const base = String(provider.baseUrl || '').toLowerCase();
     if (['anthropic', 'claude'].includes(raw) || base.includes('anthropic.com')) return 'anthropic';
-    if (['gemini', 'google', 'google-gemini'].includes(raw) || base.includes('generativelanguage.googleapis.com')) return 'gemini';
     if (['openai', 'openai-compatible'].includes(raw)) return raw;
     return raw || 'openai-compatible';
 }
-function providerSupportsTools(provider = {}) { return ['openai-compatible', 'openai', 'anthropic', 'gemini'].includes(providerType(provider)); }
+function providerSupportsTools(provider = {}) { return ['openai-compatible', 'openai', 'anthropic'].includes(providerType(provider)); }
 function selectProvider(ai = {}, body = {}) {
     const providers = Array.isArray(ai.providers) ? ai.providers.filter((p) => p && p.enabled !== false) : [];
     if (!providers.length) throw new Error('AI 助理尚未配置可用模型供应商');
@@ -634,7 +605,7 @@ function providerHeaders(provider = {}, contentType = 'application/json', model 
     if (type === 'anthropic') {
         if (provider.apiKey) headers['x-api-key'] = provider.apiKey;
         headers['anthropic-version'] = provider.anthropicVersion || '2023-06-01';
-    } else if (type !== 'gemini' && provider.apiKey) {
+    } else if (provider.apiKey) {
         headers.Authorization = `Bearer ${provider.apiKey}`;
     }
     if (provider.organization) {
@@ -668,12 +639,6 @@ async function listProviderModels(provider = {}) {
         // provider when discovery is unavailable.
         if (!official) return [];
         return ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-5-20250929', 'claude-opus-4-5-20251101'].map((id) => ({ id }));
-    }
-    if (type === 'gemini') {
-        const base = (provider.baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
-        const keyParam = provider.apiKey ? `?key=${encodeURIComponent(provider.apiKey)}` : '';
-        const data = await fetchJson(`${base}/models${keyParam}`, { method: 'GET', headers: providerHeaders({ ...provider, apiKey: '' }), timeoutMs: 30000, label: `${provider.name || provider.type || 'Gemini'}/models` });
-        return (data.models || []).map((m) => ({ id: String(m.name || '').replace(/^models\//, ''), name: m.displayName || m.name })).filter((m) => m.id && /generateContent/.test((m.supportedGenerationMethods || []).join(' ')));
     }
     const base = provider.baseUrl || 'https://api.openai.com/v1';
     const url = joinApiUrl(base.replace(/\/(chat\/completions|responses)$/i, ''), '/models');
@@ -975,184 +940,6 @@ function closeJsonSchema(schema = {}) {
     if ((out.type === 'object' || out.properties) && out.additionalProperties === undefined) out.additionalProperties = false;
     return out;
 }
-function flattenMultimodalPayloadForTextOnly(payload = {}) {
-    const clone = JSON.parse(JSON.stringify(payload || {}));
-    const summarizePart = (part) => {
-        if (!part || typeof part !== 'object') return String(part || '');
-        if (part.type === 'text' || part.type === 'input_text') return String(part.text || '');
-        if (part.type === 'image_url' || part.type === 'input_image' || part.image_url || part.inlineData) return '[图片附件：当前模型/接口不支持直接图片输入，请换用支持视觉的模型]';
-        return String(part.text || part.content || '');
-    };
-    if (Array.isArray(clone.messages)) clone.messages.forEach((m) => { if (Array.isArray(m.content)) m.content = m.content.map(summarizePart).filter(Boolean).join('\n'); });
-    if (Array.isArray(clone.input)) clone.input.forEach((m) => { if (Array.isArray(m.content)) m.content = m.content.map(summarizePart).filter(Boolean).map((text) => ({ type: 'input_text', text })); });
-    return clone;
-}
-function openAiChatTools(tools = []) {
-    if (AI_OPENAI_TOOL_CACHE.has(tools)) return AI_OPENAI_TOOL_CACHE.get(tools);
-    const converted = tools.map((tool) => ({
-        ...tool,
-        function: {
-            ...(tool.function || {}),
-            parameters: closeJsonSchema(tool.function?.parameters || { type: 'object', properties: {} }),
-        },
-    })).filter((tool) => tool.function?.name);
-    AI_OPENAI_TOOL_CACHE.set(tools, converted);
-    return converted;
-}
-function anthropicSchema(schema = {}) {
-    if (!schema || typeof schema !== 'object') return schema;
-    if (Array.isArray(schema)) return schema.map((item) => anthropicSchema(item));
-    const out = { ...schema };
-    if (out.properties && typeof out.properties === 'object') out.properties = Object.fromEntries(Object.entries(out.properties).map(([k, v]) => [k, anthropicSchema(v)]));
-    if (out.items) out.items = anthropicSchema(out.items);
-    if (out.anyOf) out.anyOf = out.anyOf.map((item) => anthropicSchema(item));
-    if (out.oneOf) out.oneOf = out.oneOf.map((item) => anthropicSchema(item));
-    if ((out.type === 'object' || out.properties) && out.additionalProperties === undefined) out.additionalProperties = false;
-    return out;
-}
-function toAnthropicTools(tools = []) {
-    if (AI_ANTHROPIC_TOOL_CACHE.has(tools)) return AI_ANTHROPIC_TOOL_CACHE.get(tools);
-    const converted = tools.map((tool) => ({
-        name: tool.function?.name,
-        description: tool.function?.description || '',
-        input_schema: anthropicSchema(tool.function?.parameters || { type: 'object', properties: {} }),
-        strict: true,
-    })).filter((tool) => tool.name);
-    AI_ANTHROPIC_TOOL_CACHE.set(tools, converted);
-    return converted;
-}
-function anthropicEffort(value = '') {
-    const v = String(value || '').toLowerCase();
-    if (['low', 'medium', 'high', 'max'].includes(v)) return v;
-    if (v === 'xhigh' || v === 'ultra') return 'max';
-    if (v === 'minimal') return 'low';
-    return '';
-}
-function anthropicAdaptiveThinkingModel(model = '') {
-    const name = String(model || '').toLowerCase();
-    return /claude-(fable|mythos)-5|claude-opus-4-(7|8)|claude-(opus|sonnet)-4-6/.test(name);
-}
-function anthropicBudgetForEffort(effort = '', maxTokens = 4096) {
-    const v = String(effort || '').toLowerCase();
-    if (!v || v === 'none') return 0;
-    const target = v === 'minimal' || v === 'low' ? 1024 : v === 'medium' ? 2048 : v === 'xhigh' ? 16000 : 8192;
-    const limit = Math.max(0, Number(maxTokens) - 1024);
-    return limit >= 1024 ? Math.max(1024, Math.min(target, limit)) : 0;
-}
-function anthropicThinkingForModel(model = '', opts = {}, maxTokens = 4096) {
-    if (opts.thinking && typeof opts.thinking === 'object') return opts.thinking;
-    const effort = anthropicEffort(opts.reasoning_effort || opts.effort || opts.output_config?.effort);
-    if (!effort) return null;
-    if (anthropicAdaptiveThinkingModel(model)) return { type: 'adaptive', display: opts.thinking_display || 'omitted' };
-    const budget = Math.max(
-        Number(opts.thinking_budget_tokens || opts.budget_tokens) || 0,
-        anthropicBudgetForEffort(effort, maxTokens),
-    );
-    return budget ? { type: 'enabled', budget_tokens: budget } : null;
-}
-function anthropicMessages(messages = []) {
-    const out = [];
-    for (const m of messages) {
-        if (m.role === 'system') continue;
-        if (m.role === 'tool') {
-            if (Array.isArray(m.content)) out.push({ role: 'user', content: normalizeAnthropicUserContent(m.content) });
-            else out.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: m.tool_call_id || m.name || 'tool', content: String(m.content || '') }] });
-        } else if (m.role === 'assistant') {
-            if (Array.isArray(m.parts) && m.parts.length) {
-                out.push({ role: 'assistant', content: m.parts });
-                continue;
-            }
-            const content = [];
-            if (m.content) content.push({ type: 'text', text: String(m.content) });
-            (m.tool_calls || []).forEach((call) => {
-                const parsed = parseToolCall(call);
-                if (parsed.name) content.push({ type: 'tool_use', id: parsed.id, name: parsed.name, input: parsed.args || {} });
-            });
-            out.push({ role: 'assistant', content: content.length ? content : [{ type: 'text', text: '' }] });
-        } else {
-            out.push({ role: 'user', content: normalizeAnthropicUserContent(m.content) });
-        }
-    }
-    return out;
-}
-function geminiSchema(schema = {}) {
-    if (!schema || typeof schema !== 'object') return schema;
-    if (Array.isArray(schema)) return schema.map((item) => geminiSchema(item));
-    const out = { ...schema };
-    const convertType = (value) => {
-        const map = { string: 'STRING', number: 'NUMBER', integer: 'INTEGER', boolean: 'BOOLEAN', array: 'ARRAY', object: 'OBJECT' };
-        return map[String(value || '').toLowerCase()] || String(value || '').toUpperCase();
-    };
-    if (Array.isArray(out.type)) {
-        const withoutNull = out.type.filter((t) => String(t).toLowerCase() !== 'null');
-        out.type = convertType(withoutNull[0] || 'string');
-        out.nullable = true;
-    } else if (typeof out.type === 'string') out.type = convertType(out.type);
-    if (out.properties) out.properties = Object.fromEntries(Object.entries(out.properties).map(([k, v]) => [k, geminiSchema(v)]));
-    if (out.items) out.items = geminiSchema(out.items);
-    if (out.anyOf) out.anyOf = out.anyOf.map((item) => geminiSchema(item));
-    delete out.oneOf;
-    delete out.additionalProperties;
-    return out;
-}
-function toGeminiTools(tools = []) {
-    if (AI_GEMINI_TOOL_CACHE.has(tools)) return AI_GEMINI_TOOL_CACHE.get(tools);
-    const functionDeclarations = tools.map((tool) => ({
-        name: tool.function?.name,
-        description: tool.function?.description || '',
-        parameters: geminiSchema(tool.function?.parameters || { type: 'object', properties: {} }),
-    })).filter((tool) => tool.name);
-    const converted = functionDeclarations.length ? [{ functionDeclarations }] : [];
-    AI_GEMINI_TOOL_CACHE.set(tools, converted);
-    return converted;
-}
-function geminiThinkingConfig(model = '', effort = '') {
-    const v = String(effort || '').toLowerCase();
-    if (!v) return null;
-    if (/gemini-(3|3\.)/i.test(String(model || ''))) {
-        const level = v === 'minimal' || v === 'none' ? 'minimal' : (['low', 'medium', 'high'].includes(v) ? v : 'medium');
-        return { thinkingLevel: level };
-    }
-    if (/gemini-2\.5/i.test(String(model || ''))) {
-        if (v === 'none') return { thinkingBudget: 0 };
-        if (v === 'minimal' || v === 'low') return { thinkingBudget: 1024 };
-        if (v === 'medium') return { thinkingBudget: -1 };
-        if (v === 'high' || v === 'xhigh') return { thinkingBudget: 8192 };
-    }
-    return null;
-}
-function geminiContents(messages = []) {
-    const out = [];
-    for (const m of messages) {
-        if (m.role === 'system') continue;
-        if (m.role === 'tool') {
-            const response = safeJsonParse(m.content, { result: typeof m.content === 'string' ? String(m.content || '') : m.content });
-            const fn = { name: m.name || 'tool', response: response && typeof response === 'object' && !Array.isArray(response) ? response : { result: response } };
-            if (m.tool_call_id) fn.id = String(m.tool_call_id);
-            out.push({ role: 'user', parts: [{ functionResponse: fn }] });
-            if (Array.isArray(m.parts) || Array.isArray(m.content)) out.push({ role: 'user', parts: normalizeGeminiUserParts(m) });
-        } else if (m.role === 'assistant') {
-            if (Array.isArray(m.parts) && m.parts.length) {
-                out.push({ role: 'model', parts: m.parts });
-                continue;
-            }
-            const parts = [];
-            if (m.content) parts.push({ text: String(m.content) });
-            (m.tool_calls || []).forEach((call) => {
-                const parsed = parseToolCall(call);
-                if (parsed.name) {
-                    const fn = { name: parsed.name, args: parsed.args || {} };
-                    if (parsed.id) fn.id = parsed.id;
-                    parts.push({ functionCall: fn });
-                }
-            });
-            out.push({ role: 'model', parts: parts.length ? parts : [{ text: '' }] });
-        } else {
-            out.push({ role: 'user', parts: normalizeGeminiUserParts(m) });
-        }
-    }
-    return out;
-}
 function responseOutputText(data = {}) {
     if (typeof data.output_text === 'string') return data.output_text;
     const chunks = [];
@@ -1274,39 +1061,11 @@ async function callAnthropic(provider, model, messages, options = {}, tools = []
     const toolCalls = blocks.filter((b) => b.type === 'tool_use' && b.name).map((b) => ({ id: b.id || crypto.randomUUID(), type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input || {}) } }));
     return { role: 'assistant', content, tool_calls: toolCalls, parts: blocks };
 }
-async function callGemini(provider, model, messages, options = {}, tools = [], signal = null) {
-    const base = (provider.baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
-    const keyParam = provider.apiKey ? `?key=${encodeURIComponent(provider.apiKey)}` : '';
-    const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
-    const contents = geminiContents(messages);
-    const opts = normalizeOptions(provider, options, 'gemini');
-    const generationConfig = { maxOutputTokens: opts.max_tokens };
-    if (opts.temperature !== undefined) generationConfig.temperature = opts.temperature;
-    if (opts.top_p !== undefined) generationConfig.topP = opts.top_p;
-    const thinkingConfig = opts.thinkingConfig || opts.thinking_config || geminiThinkingConfig(model, opts.reasoning_effort || opts.effort);
-    if (thinkingConfig && typeof thinkingConfig === 'object') generationConfig.thinkingConfig = thinkingConfig;
-    Object.keys(generationConfig).forEach((k) => generationConfig[k] === undefined && delete generationConfig[k]);
-    const body = { contents: contents.length ? contents : [{ role: 'user', parts: [{ text: '你好' }] }] };
-    if (Object.keys(generationConfig).length) body.generationConfig = generationConfig;
-    if (system) body.systemInstruction = { parts: [{ text: system }] };
-    const geminiTools = toGeminiTools(tools);
-    if (geminiTools.length) {
-        body.tools = geminiTools;
-        body.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
-    }
-    const modelPath = String(model || '').startsWith('models/') ? String(model) : `models/${encodeURIComponent(model)}`;
-    const data = await fetchJsonWithUnsupportedParamRetry(`${base}/${modelPath}:generateContent${keyParam}`, { method: 'POST', headers: providerHeaders({ ...provider, apiKey: '' }, 'application/json', model), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, body, `${provider.name || provider.type || 'Gemini'}/${model}`);
-    const parts = (data.candidates || []).flatMap((c) => c.content?.parts || []);
-    const content = parts.filter((p) => p.text).map((p) => p.text || '').join('\n');
-    const toolCalls = parts.filter((p) => p.functionCall?.name).map((p) => ({ id: p.functionCall.id || crypto.randomUUID(), type: 'function', function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) } }));
-    return { role: 'assistant', content, tool_calls: toolCalls, parts };
-}
 async function callProvider(provider, model, messages, options = {}, tools = [], signal = null) {
     throwIfAborted(signal);
     provider._selectedModel = model;
     const type = providerType(provider);
     if (type === 'anthropic') return callAnthropic(provider, model, messages, options, tools, signal);
-    if (type === 'gemini') return callGemini(provider, model, messages, options, tools, signal);
     if (openAiApiMode(provider) === 'responses') return callOpenAiResponses(provider, model, messages, options, tools, signal);
     return callOpenAiCompatible(provider, model, messages, options, tools, signal);
 }
@@ -3649,12 +3408,6 @@ function toolResultMessage(call, result, mode = 'chat', limits = {}, providerTyp
     if (screenshots.length && providerType === 'anthropic') {
         return { role: 'tool', tool_call_id: call.id, name: call.name, content: [{ type: 'tool_result', tool_use_id: call.id, content: safeJson() }, ...anthropicScreenshotParts(screenshots)] };
     }
-    if (screenshots.length && providerType === 'gemini') {
-        return [
-            { role: 'tool', tool_call_id: call.id, name: call.name || parseToolCall(call).name || '', content: safeJson() },
-            { role: 'user', parts: geminiScreenshotParts(screenshots) },
-        ];
-    }
     if (screenshots.length && (mode === 'chat' || mode === 'responses')) {
         return [
             { role: 'tool', tool_call_id: call.id, name: call.name, content: safeJson() },
@@ -3741,7 +3494,7 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
             return {
                 id: String(p.id || crypto.randomUUID()).slice(0, 120),
                 name: String(p.name || '未命名供应商').slice(0, 80),
-                type: ['openai-compatible', 'anthropic', 'gemini'].includes(providerType(p)) ? providerType(p) : 'openai-compatible',
+                type: ['openai-compatible', 'anthropic'].includes(providerType(p)) ? providerType(p) : 'openai-compatible',
                 enabled: p.enabled !== false,
                 baseUrl: String(p.baseUrl || '').slice(0, 500),
                 apiMode: ['openai-compatible', 'openai'].includes(providerType(p))

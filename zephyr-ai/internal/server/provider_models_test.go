@@ -45,35 +45,11 @@ func TestListOpenAIModelsAcceptsModelsArray(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"models": []map[string]any{{"name": "llama3"}}})
 	}))
 	defer srv.Close()
-	models, err := listProviderModels(context.Background(), provider.Config{Kind: provider.KindOllama, BaseURL: srv.URL}, "")
+	models, err := listProviderModels(context.Background(), provider.Config{Kind: provider.KindOpenAIComp, BaseURL: srv.URL}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(models) != 1 || models[0].ID != "llama3" {
-		t.Fatalf("models=%+v", models)
-	}
-}
-
-func TestListGeminiModelsFiltersGenerateContent(t *testing.T) {
-	var gotKey string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotKey = r.URL.Query().Get("key")
-		_ = json.NewEncoder(w).Encode(map[string]any{"models": []map[string]any{
-			{"name": "models/gemini-2.0-flash", "displayName": "Gemini Flash", "supportedGenerationMethods": []string{"generateContent"}},
-			{"name": "models/embedding", "supportedGenerationMethods": []string{"embedContent"}},
-		}})
-	}))
-	defer srv.Close()
-	models, err := listProviderModels(context.Background(), provider.Config{
-		Kind: provider.KindGemini, BaseURL: srv.URL, APIKey: "gk",
-	}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotKey != "gk" {
-		t.Fatalf("key=%q", gotKey)
-	}
-	if len(models) != 1 || models[0].ID != "gemini-2.0-flash" || models[0].Label != "Gemini Flash" {
 		t.Fatalf("models=%+v", models)
 	}
 }

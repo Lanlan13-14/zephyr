@@ -8,9 +8,7 @@ const val AI_CONTRACT_SCHEMA_VERSION: Int = 2
 enum class ProviderFamily(val wire: String) {
     OPENAI("openai"),
     ANTHROPIC("anthropic"),
-    GOOGLE("google"),
-    DEEPSEEK("deepseek"),
-    OLLAMA("ollama"),
+    OPENAI_COMPATIBLE("openai-compatible"),
     CUSTOM("custom");
     companion object {
         fun fromWire(value: String): ProviderFamily =
@@ -21,9 +19,7 @@ enum class ProviderFamily(val wire: String) {
 enum class ProviderAPI(val wire: String) {
     OPENAI_RESPONSES("openai-responses"),
     OPENAI_CHAT_COMPLETIONS("openai-chat-completions"),
-    ANTHROPIC_MESSAGES("anthropic-messages"),
-    GOOGLE_GENERATIVE_AI("google-generative-ai"),
-    OLLAMA_OPENAI("ollama-openai");
+    ANTHROPIC_MESSAGES("anthropic-messages");
     companion object {
         fun fromWire(value: String): ProviderAPI =
             entries.firstOrNull { it.wire == value } ?: throw IllegalArgumentException("ProviderAPI has unsupported value: $value")

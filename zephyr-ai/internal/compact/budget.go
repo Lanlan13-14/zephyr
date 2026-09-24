@@ -48,8 +48,6 @@ func ModelWindowTokens(model string, explicit int) int {
 	}
 	name := strings.ToLower(model)
 	switch {
-	case strings.Contains(name, "gemini-2"), strings.Contains(name, "gemini-1.5"):
-		return 1000000
 	case strings.Contains(name, "claude-3"), strings.Contains(name, "claude-4"), strings.Contains(name, "claude-sonnet"), strings.Contains(name, "claude-opus"), strings.Contains(name, "claude-haiku"):
 		return 200000
 	case strings.Contains(name, "gpt-4.1"), strings.Contains(name, "gpt-4o"), strings.Contains(name, "gpt-5"), strings.Contains(name, "o1"), strings.Contains(name, "o3"), strings.Contains(name, "o4"), strings.Contains(name, "deepseek"), strings.Contains(name, "qwen"), strings.Contains(name, "glm-4"), strings.Contains(name, "kimi"), strings.Contains(name, "moonshot"), strings.Contains(name, "llama-3.1"), strings.Contains(name, "llama-3.2"), strings.Contains(name, "llama-3.3"):

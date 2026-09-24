@@ -10,10 +10,10 @@
     "id": { "$ref": "common.schema.json#/$defs/id" },
     "name": { "type": "string", "minLength": 1, "maxLength": 80 },
     "family": {
-      "enum": ["openai", "anthropic", "google", "deepseek", "ollama", "custom"]
+      "enum": ["openai", "anthropic", "openai-compatible", "custom"]
     },
     "api": {
-      "enum": ["openai-responses", "openai-chat-completions", "anthropic-messages", "google-generative-ai", "ollama-openai"]
+      "enum": ["openai-responses", "openai-chat-completions", "anthropic-messages"]
     },
     "endpoint": {
       "type": "object",

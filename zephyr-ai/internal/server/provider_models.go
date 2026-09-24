@@ -80,8 +80,6 @@ func listProviderModels(ctx context.Context, cfg provider.Config, serverName str
 	switch provider.NormalizeKind(cfg.Kind) {
 	case provider.KindAnthropic:
 		return listAnthropicModels(ctx, cfg, client)
-	case provider.KindGemini:
-		return listGeminiModels(ctx, cfg, client)
 	default:
 		return listOpenAIModels(ctx, cfg, client)
 	}
@@ -213,60 +211,6 @@ func listAnthropicModels(ctx context.Context, cfg provider.Config, client *http.
 	}
 	if len(out) == 0 {
 		return anthropicOfficialModels, nil
-	}
-	return out, nil
-}
-
-func listGeminiModels(ctx context.Context, cfg provider.Config, client *http.Client) ([]providerModel, error) {
-	base := strings.TrimRight(cfg.BaseURL, "/")
-	if base == "" {
-		base = "https://generativelanguage.googleapis.com/v1beta"
-	}
-	endpoint := base + "/models"
-	if cfg.APIKey != "" {
-		endpoint += "?key=" + url.QueryEscape(cfg.APIKey)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range cfg.ExtraHeaders {
-		if k != "" && v != "" {
-			req.Header.Set(k, v)
-		}
-	}
-	body, err := doModelsRequest(ctx, client, req)
-	if err != nil {
-		return nil, err
-	}
-	var parsed struct {
-		Models []struct {
-			Name                       string   `json:"name"`
-			DisplayName                string   `json:"displayName"`
-			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("models response not json: %w", err)
-	}
-	out := make([]providerModel, 0, len(parsed.Models))
-	for _, m := range parsed.Models {
-		generates := false
-		for _, method := range m.SupportedGenerationMethods {
-			if strings.Contains(method, "generateContent") {
-				generates = true
-				break
-			}
-		}
-		id := strings.TrimPrefix(m.Name, "models/")
-		if !generates || id == "" {
-			continue
-		}
-		label := m.DisplayName
-		if label == "" {
-			label = id
-		}
-		out = append(out, providerModel{ID: id, Label: label})
 	}
 	return out, nil
 }
