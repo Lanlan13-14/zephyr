@@ -13,6 +13,7 @@ import (
 // ExecRequest represents a unified command execution request in a Cell workspace.
 type ExecRequest struct {
 	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
 	Cwd     string            `json:"cwd,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	Timeout int               `json:"timeout,omitempty"` // seconds
@@ -108,6 +109,16 @@ func NewWorkspaceAdapter(backend Backend) *WorkspaceAdapter {
 }
 
 // RegisterBinding records a stable cell binding.
+// SetBackend replaces the execution backend. Nil keeps the current one.
+func (a *WorkspaceAdapter) SetBackend(backend Backend) {
+	if backend == nil {
+		return
+	}
+	a.mu.Lock()
+	a.backend = backend
+	a.mu.Unlock()
+}
+
 func (a *WorkspaceAdapter) RegisterBinding(b *CellBinding) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

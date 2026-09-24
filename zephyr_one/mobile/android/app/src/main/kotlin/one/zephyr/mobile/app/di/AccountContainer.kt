@@ -43,6 +43,7 @@ import one.zephyr.mobile.app.AiEntitySyncCoordinator
 import one.zephyr.mobile.app.EnvBinding
 import one.zephyr.mobile.app.MemoryBinding
 import one.zephyr.mobile.app.ProviderBinding
+import one.zephyr.mobile.app.QuarantineJournal
 import one.zephyr.mobile.app.SkillBinding
 import one.zephyr.mobile.app.TodoBinding
 import one.zephyr.mobile.data.repository.ResourceRepository
@@ -328,6 +329,7 @@ class AccountContainer(
             EnvBinding(localAi, ownedAi),
             TodoBinding(localAi, ownedAi),
         ),
+        journal = QuarantineJournal(context),
     )
 
     internal val localAiWorkspace: LocalAiWorkspace = LocalAiWorkspace(

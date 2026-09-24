@@ -138,6 +138,79 @@ test('_consumeHistoryEvents consumes streamnorm frames and feeds historyControll
     assert.equal(runCompleted.event.data.stopReason, 'stop');
 });
 
+test('_consumeHistoryEvents propagates observeFrame failures instead of swallowing them', async () => {
+    const bridge = new AiRuntimeBridge({ baseUrl: 'http://127.0.0.1:9999', adminToken: 'test' });
+    bridge.setHistoryController({
+        observeFrame: () => { throw new Error('history persistence failed'); },
+        observeEvent: () => {},
+    });
+
+    const sseLines = [
+        'id: 0\nevent: start\ndata: {"schemaVersion":2,"type":"start","runId":"r1","sequence":0}\n\n',
+        'id: 1\nevent: done\ndata: {"schemaVersion":2,"type":"done","runId":"r1","sequence":1,"stopReason":"stop"}\n\n',
+    ];
+
+    bridge.fetchImpl = async (url) => {
+        if (url.includes('/frames')) {
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream({
+                start(controller) {
+                    for (const line of sseLines) controller.enqueue(encoder.encode(line));
+                    controller.close();
+                },
+            });
+            return { ok: true, status: 200, body: stream };
+        }
+        return { ok: false, status: 404 };
+    };
+
+    await assert.rejects(
+        () => bridge._consumeHistoryEvents('r1', 'tkt1', new AbortController().signal),
+        /history persistence failed/,
+    );
+});
+
+test('_consumeHistoryEvents falls back to legacy events on 405, but not on network errors', async () => {
+    const observedEvents = [];
+    const bridge = new AiRuntimeBridge({ baseUrl: 'http://127.0.0.1:9999', adminToken: 'test' });
+    bridge.setHistoryController({
+        observeEvent: (runId, event) => observedEvents.push({ runId, event }),
+    });
+
+    bridge.fetchImpl = async (url) => {
+        if (url.includes('/frames')) {
+            return { ok: false, status: 405 };
+        }
+        if (url.includes('/events')) {
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream({
+                start(controller) {
+                    controller.enqueue(encoder.encode('id: 1\nevent: run.completed\ndata: {"type":"run.completed"}\n\n'));
+                    controller.close();
+                },
+            });
+            return { ok: true, status: 200, body: stream };
+        }
+        return { ok: false, status: 404 };
+    };
+
+    const result = await bridge._consumeHistoryEvents('r1', 'tkt1', new AbortController().signal);
+    assert.equal(result, true);
+    assert.ok(observedEvents.some((e) => e.event.type === 'run.completed'));
+});
+
+test('_consumeHistoryEvents does not fall back on non-availability errors', async () => {
+    const bridge = new AiRuntimeBridge({ baseUrl: 'http://127.0.0.1:9999', adminToken: 'test' });
+    bridge.setHistoryController({});
+
+    bridge.fetchImpl = async () => ({ ok: false, status: 500 });
+
+    await assert.rejects(
+        () => bridge._consumeHistoryEvents('r1', 'tkt1', new AbortController().signal),
+        (err) => err.code === 'ai_runtime_history_monitor_failed',
+    );
+});
+
 test('_fetchUnchecked normalizes network error via toContractError', async () => {
     const bridge = new AiRuntimeBridge({ baseUrl: 'http://127.0.0.1:9999', adminToken: 'test' });
     bridge.fetchImpl = async () => {

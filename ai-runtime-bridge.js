@@ -435,7 +435,10 @@ class AiRuntimeBridge {
                 Promise.resolve().then(() => this.fetchImpl(framesUrl, { headers: { accept: 'text/event-stream' }, signal })),
                 signal,
             );
-            if (response.status === 404) {
+            // Only explicit "endpoint not available" statuses fall back to the
+            // legacy /events surface; network and auth errors propagate so the
+            // monitor does not silently mask real failures.
+            if ([404, 405, 501].includes(response.status)) {
                 isFramesMode = false;
                 response = await this._awaitAbortable(
                     Promise.resolve().then(() => this.fetchImpl(legacyEventsUrl, { headers: { accept: 'text/event-stream' }, signal })),
@@ -466,8 +469,11 @@ class AiRuntimeBridge {
                     ? rawEnvelope.data
                     : rawEnvelope;
                 const type = String(frame?.type || rawEnvelope?.type || '');
+                // A throwing observer must fail the monitor loudly — history
+                // persistence errors cannot be silently dropped mid-stream or
+                // the run finalizes with incomplete history.
                 if (typeof this.historyController?.observeFrame === 'function') {
-                    try { this.historyController.observeFrame(runId, frame); } catch (_) {}
+                    this.historyController.observeFrame(runId, frame);
                 }
                 if (type === 'text_delta' && typeof frame.text === 'string') {
                     assistantText += frame.text;

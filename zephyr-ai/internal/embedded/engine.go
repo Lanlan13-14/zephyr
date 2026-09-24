@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,14 +26,17 @@ type Response struct {
 }
 
 // Runtime is the embedded Zephyr AI core running in-process.
-// It bypasses loopback sockets completely and dispatches HTTP requests
-// directly against the Go server.Handler() in memory.
+// Ordinary requests dispatch directly against server.Handler() in memory;
+// an internal loopback listener (127.0.0.1:0) serves SSE streams that
+// cannot be carried by a synchronous dispatch call.
 type Runtime struct {
 	mu         sync.Mutex
 	cfg        config.Config
 	store      *session.Store
 	srv        *server.Server
 	adminToken string
+	httpServer *http.Server
+	listener   net.Listener
 	closed     bool
 }
 
@@ -69,11 +73,24 @@ func Start(cfg Config) (*Runtime, error) {
 	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	srv := server.New(appCfg, store, log)
 
+	// Loopback listener for SSE streams: same runtime instance, same token,
+	// same SQLite — so streams observe exactly what dispatch created.
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		_ = store.Close()
+		srv.Close()
+		return nil, fmt.Errorf("loopback listen: %w", err)
+	}
+	httpServer := &http.Server{Handler: srv.Handler()}
+	go func() { _ = httpServer.Serve(listener) }()
+
 	return &Runtime{
 		cfg:        appCfg,
 		store:      store,
 		srv:        srv,
 		adminToken: cfg.AdminToken,
+		httpServer: httpServer,
+		listener:   listener,
 	}, nil
 }
 
@@ -124,6 +141,10 @@ func (r *Runtime) Close() error {
 		return nil
 	}
 	r.closed = true
+	if r.httpServer != nil {
+		_ = r.httpServer.Close()
+		r.httpServer = nil
+	}
 	if r.srv != nil {
 		r.srv.Close()
 	}
@@ -140,6 +161,8 @@ var (
 )
 
 // InitGlobal initializes or re-initializes the global singleton runtime.
+// The JSON result carries the SSE loopback endpoint and admin token so the
+// platform bridge can stream from the very same runtime instance.
 func InitGlobal(jsonConfig string) (string, error) {
 	var c Config
 	if err := json.Unmarshal([]byte(jsonConfig), &c); err != nil {
@@ -156,7 +179,15 @@ func InitGlobal(jsonConfig string) (string, error) {
 		return "", err
 	}
 	globalRuntime = rt
-	return `{"ok":true}`, nil
+	out, err := json.Marshal(map[string]any{
+		"ok":        true,
+		"baseUrl":   "http://" + rt.listener.Addr().String(),
+		"adminToken": rt.adminToken,
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // DispatchGlobal dispatches a request via the global singleton.

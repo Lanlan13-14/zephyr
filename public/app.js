@@ -11108,8 +11108,21 @@ function insertAiConfirmationCard(confirmation, messageIndex = -1) {
     if (messageIndex >= 0) div.dataset.aiMessageIndex = String(messageIndex);
     const summary = localizedAiConfirmationSummary(confirmation);
     div.dataset.aiMessageText = t('需要确认敏感操作：{summary}', { summary });
-    div.innerHTML = `<strong>${t('需要确认敏感操作')}</strong><p>${escapeHtml(summary)}</p><pre>${escapeHtml(JSON.stringify(confirmation?.args || {}, null, 2))}</pre><div class="form-actions"><button class="btn btn-primary" data-ai-confirm-approve="${escapeHtml(confirmation?.id || '')}">${t('确认执行')}</button><button class="btn danger" data-ai-confirm-deny="${escapeHtml(confirmation?.id || '')}">${t('拒绝')}</button></div>`;
-    div.title = '';
+    const tool = String(confirmation?.tool || '');
+    const isCell = tool === 'cell_exec_v1' || tool === 'session_exec_v1';
+    const badge = isCell ? '<span class="ai-badge ai-badge-cell">Cell</span>' : '<span class="ai-badge ai-badge-tools">Tool</span>';
+    const card = document.createElement('div');
+    card.className = `ai-action-approval-card${isCell ? ' pulse' : ''}`;
+    card.innerHTML = `
+        <div class="ai-action-card-header"><span>${badge}${escapeHtml(tool || t('敏感操作'))}</span></div>
+        <p style="margin:0;color:#c5d1e8;font-size:13px;">${escapeHtml(summary)}</p>
+        <div class="ai-action-card-command">${escapeHtml(JSON.stringify(confirmation?.args || {}, null, 2))}</div>
+        <div class="ai-action-card-actions">
+            <button class="ai-action-btn-reject" data-ai-confirm-deny="${escapeHtml(confirmation?.id || '')}">${t('拒绝')} (Esc)</button>
+            <button class="ai-action-btn-approve" data-ai-confirm-approve="${escapeHtml(confirmation?.id || '')}">${t('确认执行')} (Enter)</button>
+        </div>`;
+    card.title = '';
+    div.appendChild(card);
     area.insertBefore(div, typing);
 }
 function appendAiConfirmation(confirmation, pending = {}) {
@@ -11465,7 +11478,11 @@ function closeAiAssistantPanel() {
 }
 function bringAiPanelToFront() { const p = $('#aiAgentPanel'); if (!p) return; p.style.zIndex = String(10080 + Math.floor(Date.now() % 40)); p.style.setProperty('--panel-z', p.style.zIndex); }
 
+let aiPhase68InteractionsBound = false;
+
 function initZephyrAiPhase68Interactions() {
+    if (aiPhase68InteractionsBound) return;
+    aiPhase68InteractionsBound = true;
     const sendBtn = $('#aiSendBtn');
     const input = $('#aiUserInput');
     const popover = $('#aiThinkingPopover');
@@ -11481,13 +11498,14 @@ function initZephyrAiPhase68Interactions() {
         const hasText = input.value.trim().length > 0;
         sendBtn.classList.toggle('is-streaming', isRunning);
         sendBtn.classList.toggle('is-ready', !isRunning && hasText);
-        sendBtn.textContent = isRunning ? '■' : '▲';
+        sendBtn.querySelector('.ai-send-icon-idle')?.style.setProperty('display', isRunning ? 'none' : '');
+        sendBtn.querySelector('.ai-send-icon-stop')?.style.setProperty('display', isRunning ? '' : 'none');
     };
     input.addEventListener('input', updateSendBtnState);
 
     // 2. Long-press Send Button to open Obsidian Thinking Level Card (aiPopover)
     let longPressTimer = 0;
-    const openThinkingPopover = () => {
+    const openThinkingPopover = async () => {
         if (!popover) return;
         const rect = sendBtn.getBoundingClientRect();
         const capsule = $('#aiFloatingCapsule');
@@ -11495,9 +11513,23 @@ function initZephyrAiPhase68Interactions() {
         popover.style.bottom = `${window.innerHeight - capsuleRect.top + 10}px`;
         popover.style.right = `${window.innerWidth - rect.right}px`;
         popover.classList.add('is-open');
+        const Motion = await sshKeyMotion._ensure().catch(() => null);
+        if (!Motion) return;
+        Motion.stop(popover);
+        // Origin-aware scale: the popover grows out of the send button anchor.
+        popover.style.transformOrigin = 'bottom right';
+        Motion.set(popover, { opacity: 0, scaleX: 0.72, scaleY: 0.72 });
+        try { await Motion.to(popover, { opacity: 1, scaleX: 1, scaleY: 1 }, { preset: 'aiPopover' }); } catch { /* rest state already applied */ }
+        Motion.release(popover);
     };
-    const closeThinkingPopover = () => {
-        popover?.classList.remove('is-open');
+    const closeThinkingPopover = async () => {
+        if (!popover || !popover.classList.contains('is-open')) return;
+        const Motion = await sshKeyMotion._ensure().catch(() => null);
+        if (!Motion) { popover.classList.remove('is-open'); return; }
+        Motion.stop(popover);
+        try { await Motion.to(popover, { opacity: 0, scaleX: 0.72, scaleY: 0.72 }, { preset: 'aiPopover' }); } catch { /* fall through */ }
+        popover.classList.remove('is-open');
+        Motion.release(popover);
     };
 
     sendBtn.addEventListener('mousedown', (e) => {
@@ -11525,13 +11557,25 @@ function initZephyrAiPhase68Interactions() {
         const badge = $('#aiIslandThinkingBadge');
         if (badge && level) badge.textContent = level.charAt(0).toUpperCase() + level.slice(1);
         closeThinkingPopover();
-        if (level !== 'do-not-send' && input.value.trim().length > 0) {
-            sendAiMessage();
-        }
+        // Config-only action (spec: thinking level selection never sends).
+        // Sending remains an explicit click or Cmd+Enter.
     });
 
-    // 3. Zephyr Cell Inspector Toggle (Cmd+J / Button)
-    const toggleCell = () => cellInspector?.classList.toggle('is-collapsed');
+    // 3. Zephyr Cell Inspector Toggle (Cmd+J / Button) — driven by the
+    // aiDrawer physical spring preset, never a CSS transition.
+    const toggleCell = async () => {
+        if (!cellInspector) return;
+        const collapsing = !cellInspector.classList.contains('is-collapsed');
+        cellInspector.classList.toggle('is-collapsed', collapsing);
+        const Motion = await sshKeyMotion._ensure().catch(() => null);
+        if (!Motion) return;
+        Motion.stop(cellInspector);
+        // Spring from the drawer's parked position back to rest; the layout
+        // class does the final collapse, the spring supplies the feel.
+        Motion.set(cellInspector, { x: collapsing ? -380 : 380 });
+        try { await Motion.to(cellInspector, { x: 0 }, { preset: 'aiDrawer' }); } catch { /* motion failure must never break toggling */ }
+        Motion.release(cellInspector);
+    };
     $('#aiCellToggleBtn')?.addEventListener('click', toggleCell);
     $('#aiCellInspectorCloseBtn')?.addEventListener('click', () => cellInspector?.classList.add('is-collapsed'));
 
@@ -11568,6 +11612,15 @@ function initZephyrAiPhase68Interactions() {
         }
         if (e.key === 'Escape' && popover?.classList.contains('is-open')) {
             closeThinkingPopover();
+        }
+        // Approval card keyboard flow: Enter approves, Esc denies — only when
+        // a pending confirmation card is on screen and no text field is focused.
+        const pendingCard = document.querySelector('.ai-action-approval-card [data-ai-confirm-approve]');
+        if (pendingCard && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+            const approveBtn = document.querySelector('.ai-action-approval-card [data-ai-confirm-approve]');
+            const denyBtn = document.querySelector('.ai-action-approval-card [data-ai-confirm-deny]');
+            if (e.key === 'Enter') { e.preventDefault(); approveBtn?.click(); }
+            if (e.key === 'Escape') { e.preventDefault(); denyBtn?.click(); }
         }
     });
 

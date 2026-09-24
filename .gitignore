@@ -106,3 +106,4 @@ zephyr_one/vcpkg_installed/
 
 # Locally built Go Link server binary (CI builds it; see Dockerfile zephyr-link-builder)
 /bin/
+zephyr-ai/zephyr-ai-jni

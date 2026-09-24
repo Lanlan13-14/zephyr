@@ -85,4 +85,15 @@ func TestWorkspaceAdapterFallbackL2(t *testing.T) {
 	if toolInst.Name() != "cell_exec_v1" {
 		t.Fatalf("unexpected tool name: %s", toolInst.Name())
 	}
+	out, err := toolInst.Execute(context.Background(), []byte(`{"command":"uname -a"}`))
+	if err != nil {
+		t.Fatalf("tool execute: %v", err)
+	}
+	res2, ok := out.(ExecResult)
+	if !ok {
+		t.Fatalf("tool result type %T", out)
+	}
+	if res2.ExitCode != 0 || res2.Stdout != "hello from l2: uname -a" {
+		t.Fatalf("tool result %+v", res2)
+	}
 }
