@@ -3596,6 +3596,77 @@ function testSSHConnection(conn, timeout = 10000) {    return new Promise((resol
 
 function shellSingleQuote(value) { return "'" + String(value || '').replace(/'/g, "'\\''") + "'"; }
 
+/* ── 远端系统探测：SSH ready 后 exec 一条轻量命令读 os-release/uname，
+   把识别出的图标 key 写回连接（仅当用户未手动指定时）。 ─────────────── */
+function mapOsReleaseToIconKey(text) {
+    const t = String(text || '').toLowerCase();
+    const id = /ID="?([a-z0-9_.-]+)"?/m.exec(t)?.[1] || '';
+    const pretty = /PRETTY_NAME="?([^"\n]+)"?/m.exec(t)?.[1] || '';
+    const probe = `${id} ${pretty} ${t}`;
+    if (/windows|\bwin\b/.test(probe)) return 'windows';
+    if (/darwin|macos|osx/.test(probe)) return 'macos';
+    if (/ubuntu/.test(probe)) return 'ubuntu';
+    if (/debian/.test(probe)) return 'debian';
+    if (/\barch|manjaro/.test(probe)) return 'arch';
+    if (/alpine/.test(probe)) return 'alpine';
+    if (/raspberry|raspbian/.test(probe)) return 'raspberry';
+    if (/rhel|redhat|centos|fedora|rocky|alma/.test(probe)) return 'redhat';
+    if (/suse|opensuse|kali|gentoo|linux/.test(probe)) return 'linux';
+    return '';
+}
+
+function detectRemoteOSFromText(text) {
+    return mapOsReleaseToIconKey(text);
+}
+
+/* Fire-and-forget：探测远端系统并在 icon===auto 时写库。
+   不阻塞主流程，失败静默（探测只是展示增强，不影响连接本身）。 */
+function probeRemoteOSAndPersist(conn) {
+    if (!conn?.id) return Promise.resolve(null);
+    const current = storage.getConnectionById(conn.id);
+    if (!current) return Promise.resolve(null);
+    /* iconSource==='manual'：用户手动指定，探测永不覆盖。
+       auto / probed：每次探测都用最新远端事实校对，系统变了就更新。 */
+    if (current.iconSource === 'manual' && current.icon && current.icon !== 'auto') return Promise.resolve(current.icon);
+    return new Promise((resolve) => {
+        let routed = null;
+        let settled = false;
+        const done = (iconKey) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            (routed?.clients || []).reverse().forEach((client) => { try { client.end(); } catch {} });
+            if (!iconKey) return resolve(null);
+            try {
+                const fresh = storage.getConnectionById(conn.id);
+                if (!fresh) return resolve(null);
+                if (fresh.iconSource === 'manual' && fresh.icon && fresh.icon !== 'auto') return resolve(fresh.icon);
+                if (fresh.icon === iconKey && fresh.iconSource === 'probed') return resolve(iconKey);
+                storage.updateConnectionRow({ ...fresh, icon: iconKey, iconSource: 'probed', updatedAt: new Date().toISOString() });
+                console.info('[os-probe]', 'detected remote os', { connectionId: conn.id, icon: iconKey, changed: fresh.icon !== iconKey });
+                resolve(iconKey);
+            } catch (err) {
+                console.warn('[os-probe]', 'persist failed', err?.message || err);
+                resolve(null);
+            }
+        };
+        const timer = setTimeout(() => done(null), 15000);
+        const command = 'cat /etc/os-release 2>/dev/null; echo; uname -s';
+        createRoutedSSHConnection(conn, 10000).then((result) => {
+            routed = result;
+            const client = result.client;
+            client.exec(`/bin/sh -c ${shellSingleQuote(command)}`, (err, stream) => {
+                if (err) return done(null);
+                let out = '';
+                const finishSoon = setTimeout(() => done(detectRemoteOSFromText(out)), 3000);
+                stream.on('data', (chunk) => { out += chunk.toString('utf8'); });
+                stream.on('close', () => { clearTimeout(finishSoon); done(detectRemoteOSFromText(out)); });
+                stream.on('error', () => { clearTimeout(finishSoon); done(null); });
+            });
+        }).catch(() => done(null));
+    });
+}
+
 function runRemoteCommand(conn, command, timeoutSeconds = 30, options = {}) {
     return new Promise((resolve) => {
         const signal = options?.signal || null;
@@ -5493,6 +5564,8 @@ app.post('/api/connections', requireUser, (req, res) => {
         password: String(body.password || ''),
         privateKey: String(body.privateKey || ''),
         sshKeyId: String(body.sshKeyId || ''),
+        icon: String(body.icon || '').trim() || 'auto',
+        iconSource: String(body.icon || '').trim() && String(body.icon).trim() !== 'auto' ? 'manual' : 'auto',
         remark: String(body.remark || ''),
         tags: Array.isArray(body.tags) ? body.tags.map(String).filter(Boolean) : String(body.tags || '').split(',').map((v) => v.trim()).filter(Boolean),
         connectionMode: ['direct', 'proxy', 'jump'].includes(body.connectionMode) ? body.connectionMode : 'direct',
@@ -5548,7 +5621,13 @@ app.put('/api/connections/:id', requireUser, (req, res) => {
     const body = req.body || {};
     try {
         const saved = resourceService.updateConnection(req.user, req.params.id, (conn) => {
-            ['name', 'host', 'username', 'remark'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
+            ['name', 'host', 'username', 'remark', 'icon'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
+            /* iconSource 语义：用户提交非 auto 的 icon → manual（探测永不覆盖）；
+               改回 auto → 重置为 auto，允许后续探测重新接管。 */
+            if (body.icon !== undefined) {
+                const nextIcon = String(body.icon || '').trim();
+                conn.iconSource = nextIcon && nextIcon !== 'auto' ? 'manual' : 'auto';
+            }
             if (body.port !== undefined) conn.port = Number(body.port) || protocolDefaultPort(body.protocol || conn.protocol);
             if (body.protocol !== undefined) conn.protocol = String(body.protocol).toUpperCase();
             if (body.tags !== undefined) conn.tags = Array.isArray(body.tags) ? body.tags.map(String).filter(Boolean) : String(body.tags || '').split(',').map((v) => v.trim()).filter(Boolean);
@@ -6919,7 +6998,18 @@ app.post('/api/connections/test', requireUser, async (req, res) => {
                     ? await testTelnetConnection(conn, timeoutMs)
                     : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${protocol}`, durationMs: 0 };
     addActivity(`测试连接：${conn.name || conn.host} - ${result.message}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: result.ok ? '成功' : '失败', protocol, target: `${conn.host}:${conn.port}`, connectionId: conn.id || null, durationMs: result.durationMs }));
-    res.status(result.ok ? 200 : 400).json(result);
+    /* 测试成功后异步探测远端系统并回写 icon（auto → 实际系统）。
+       等待探测完成再把结果带给前端，编辑弹窗下拉与卡片可即时刷新；
+       探测失败不影响测试结论。 */
+    let detectedIcon = null;
+    if (result.ok && conn.id && conn.iconSource !== 'manual') {
+        try {
+            const probeConn = { ...conn };
+            delete probeConn[AUTHORIZED_CONNECTION_TEST_ROUTE];
+            detectedIcon = await probeRemoteOSAndPersist(probeConn);
+        } catch (_) { /* 探测静默 */ }
+    }
+    res.status(result.ok ? 200 : 400).json({ ...result, detectedIcon });
 });
 
 app.post('/api/remote-execute', requireUser, async (req, res) => {
@@ -11324,6 +11414,14 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 }
 
                 if (connectionId) console.log(`[SSH] 使用已保存路由连接 ${conn.name || conn.host}`);
+                /* 实际连接成功后后台探测远端系统并回写 icon（auto/probed → 实际系统）。
+                   探测完成后向终端 WS 推一帧 os-detected，前端据此同步卡片。 */
+                if (conn.id && conn.iconSource !== 'manual') {
+                    probeRemoteOSAndPersist(conn).then((iconKey) => {
+                        if (!iconKey) return;
+                        sendJSON({ type: 'os-detected', connectionId: conn.id, icon: iconKey });
+                    }).catch(() => {});
+                }
                 const routed = await createRoutedSSHConnection(conn, 10000);
                 if (connectGeneration !== terminalConnectGeneration || ws.readyState !== ws.OPEN) {
                     [...(routed.clients || [routed.client])].reverse().forEach((client) => {

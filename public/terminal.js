@@ -13507,6 +13507,12 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
             try {
                 const msg = JSON.parse(event.data);
                 if (msg.type === 'stats') { renderStatsSoon(msg.data); return; }
+                if (msg.type === 'os-detected') {
+                    /* 后端探测到远端系统并已回写连接 icon：通知宿主页（app.html）
+                       同步内存并重渲染卡片，编辑弹窗下拉下次打开自然带新值。 */
+                    try { parent.postMessage({ type: 'zephyr-os-detected', connectionId: msg.connectionId, icon: msg.icon }, '*'); } catch {}
+                    return;
+                }
                 if (msg.type === 'stats-error') {
                     if (infoModal?.classList?.contains('open') && infoBody && (!latestStatsData || infoBody.querySelector('.info-loading'))) {
                         infoBody.innerHTML = `<div class="info-loading error">实时监控数据加载失败：${escapeHtml(msg.message || t('未知错误'))}</div>`;

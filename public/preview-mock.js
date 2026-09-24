@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260919-direct-ssh-no-jump';
+import { t } from './i18n/runtime.js?v=20260924-os-probe';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 
