@@ -3510,13 +3510,21 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
                 options: {
                     temperature: p.options?.temperature ?? old.options?.temperature ?? -1,
                     top_p: p.options?.top_p ?? old.options?.top_p ?? -1,
-                    max_tokens: p.options?.max_tokens ?? old.options?.max_tokens ?? 4096,
-                    max_output_tokens: p.options?.max_output_tokens ?? old.options?.max_output_tokens ?? p.options?.max_tokens ?? old.options?.max_tokens ?? 4096,
+                    max_tokens: p.options?.max_tokens ?? old.options?.max_tokens ?? null,
+                    max_output_tokens: p.options?.max_output_tokens ?? old.options?.max_output_tokens ?? p.options?.max_tokens ?? old.options?.max_tokens ?? null,
                     presence_penalty: p.options?.presence_penalty ?? old.options?.presence_penalty ?? 0,
                     frequency_penalty: p.options?.frequency_penalty ?? old.options?.frequency_penalty ?? 0,
                     reasoning_effort: String(p.options?.reasoning_effort ?? old.options?.reasoning_effort ?? ''),
                     response_format: String(p.options?.response_format ?? old.options?.response_format ?? ''),
                     use_previous_response_id: !!(p.options?.use_previous_response_id ?? old.options?.use_previous_response_id ?? false),
+                    vision: (p.options?.vision ?? old.options?.vision) !== false,
+                    context: (() => {
+                        // Preserve the provider-level context window. An older
+                        // client that omits it must not wipe a saved value.
+                        const w = p.options?.context?.windowTokens ?? old.options?.context?.windowTokens ?? p.options?.windowTokens ?? old.options?.windowTokens;
+                        const n = Number(w);
+                        return { windowTokens: Number.isFinite(n) && n >= 1 ? Math.floor(n) : undefined };
+                    })(),
                     context: {
                         windowTokens: clampNumber(p.options?.context?.windowTokens ?? old.options?.context?.windowTokens ?? next.context.windowTokens, 1024, 1000000, next.context.windowTokens),
                         maxInputChars: clampNumber(p.options?.context?.maxInputChars ?? old.options?.context?.maxInputChars ?? next.context.maxInputChars, 8000, 1200000, next.context.maxInputChars),
