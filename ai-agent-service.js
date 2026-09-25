@@ -894,6 +894,7 @@ function toolDefinitions(ai = {}) {
     // parameters so the model never hits "must be array" on args.
     tools.push({ type: 'function', function: { name: 'cell_exec_v1', description: 'Zephyr Cell 沙箱执行（与 session_exec_v1 同一沙箱）。command 必填；args 为字符串数组，缺省为空。无 shell。需要确认。', parameters: { type: 'object', properties: { command: { type: 'string', minLength: 1, maxLength: 64 }, args: { type: 'array', items: { type: 'string', maxLength: 8192 }, maxItems: 128, default: [] }, cwd: { type: 'string', maxLength: 512, description: '相对会话根，默认 workspace' }, timeoutMs: { type: 'number', minimum: 1000, maximum: 300000 }, network: { type: 'boolean', description: '默认 false' } }, required: ['command'], additionalProperties: false } } });
     tools.push({ type: 'function', function: { name: 'session_sandbox_status_v1', description: '查看会话沙箱：隔离模式、环境矩阵（Python/Node/Go/Rust/FFmpeg）、白名单、配额。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
+    tools.push({ type: 'function', function: { name: 'session_exec_history_v1', description: '查看当前会话沙箱的最近执行记录（命令、退出码、耗时、输出预览）。', parameters: { type: 'object', properties: { sessionId: { type: 'string' }, limit: { type: 'number', minimum: 1, maximum: 50 } }, additionalProperties: false } } });
     return tools.map((tool) => {
         if (!tool.function) return tool;
         const parameters = tool.function.parameters || { type: 'object', properties: {} };
@@ -3364,6 +3365,23 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
         case 'session_sandbox_status_v1': {
             const { getSandboxStatus } = require('./ai-session-exec');
             return getSandboxStatus();
+        }
+        case 'session_exec_history_v1': {
+            // Read-only view of the session's visible exec history written by
+            // sessionExec into outputs/exec-history.ndjson. Owner-scoped via
+            // the session fs root, so no cross-session leak is possible.
+            if (!deps.sessionFs && !deps.DATA_DIR) throw new Error('会话沙箱服务不可用');
+            const sessionId = resolveAiSessionId(args, ctx);
+            if (!sessionId) throw new Error('sessionId required');
+            const limit = Math.max(1, Math.min(Number(args.limit) || 20, 50));
+            const { readSessionExecHistory } = require('./ai-session-exec');
+            return readSessionExecHistory({
+                userId: ctx.user.userId,
+                sessionId,
+                dataDir: deps.DATA_DIR,
+                sessionFs: deps.sessionFs,
+                limit,
+            });
         }
         case 'cell_exec_v1':
         case 'session_exec_v1': {
