@@ -7919,11 +7919,15 @@ function renderAiHeaderSelectors() {
     const modelSelect = $('#aiModelSelect');
     if (!providerSelect || !modelSelect) return;
     const providers = (ai.providers || []).filter((p) => p.enabled !== false);
-    const previousProviderId = providerSelect.value;
-    providerSelect.value = providers.some((p) => p.id === previousProviderId) ? previousProviderId : (ai.defaultProviderId || providers[0]?.id || '');
+    // A conversation's own choice wins over the global default, so switching
+    // chats restores what was picked instead of snapping back.
+    const sessionChoice = aiCurrentSession();
+    const wantedProviderId = sessionChoice?.providerId || providerSelect.value;
+    providerSelect.value = providers.some((p) => p.id === wantedProviderId) ? wantedProviderId : (ai.defaultProviderId || providers[0]?.id || '');
     const p = providers.find((x) => x.id === providerSelect.value) || providers[0];
     const models = aiModelNames(p);
-    const chosen = ((p?.id === ai.defaultProviderId ? ai.defaultModel : '') || p?.defaultModel || models[0] || ai.defaultModel || '').trim();
+    const wantedModel = sessionChoice?.providerId === providerSelect.value ? sessionChoice?.model : '';
+    const chosen = (wantedModel || (p?.id === ai.defaultProviderId ? ai.defaultModel : '') || p?.defaultModel || models[0] || ai.defaultModel || '').trim();
     modelSelect.value = chosen;
     const modelLabel = aiModelDisplayName(p, chosen) || chosen || t('自动选择模型');
     $('#aiProviderPickerBtn') && ($('#aiProviderPickerBtn').textContent = p ? (p.name || p.type || t('供应商')) : t('未配置模型'));
@@ -7936,9 +7940,9 @@ function renderAiHeaderSelectors() {
 function renderAiThinkingSelector(provider = null, model = '') {
     const select = $('#aiThinkIntensity');
     if (!select) return;
-    const previous = select.value;
     const options = aiThinkingOptionsForProvider(provider || {}, model);
-    select.value = options.some(([value]) => value === previous) ? previous : '';
+    const wanted = aiCurrentSession()?.thinking || select.value;
+    select.value = options.some(([value]) => value === wanted) ? wanted : '';
     const supported = options.some(([value]) => value !== '');
     const label = supported ? (options.find(([value]) => value === select.value)?.[1] || t('默认')) : t('不支持');
     const button = $('#aiThinkPickerBtn');
@@ -8242,8 +8246,37 @@ function applyAiPickerChoice(kind = '', value = '') {
             badge.textContent = map[value] || value || '均衡';
         }
     }
-    saveAiDraft();
+    persistAiSessionSelection(session);
     closeAiPickerPopover();
+}
+// Provider and model are canonical conversation columns; thinking intensity
+// has no column and stays in the device-local metadata cache. Called after
+// every picker change so a reload or device switch restores the choice.
+function persistAiSessionSelection(session) {
+    if (!session) return;
+    saveAiChats();
+    if (!(Number(session.revision) > 0)) return;
+    const patch = { providerId: session.providerId || null, model: session.model || null };
+    api(`/api/ai/history/conversations/${encodeURIComponent(session.id)}?expectedRevision=${encodeURIComponent(String(session.revision))}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+    }).then((data) => {
+        if (data?.conversation) Object.assign(session, data.conversation, { messages: session.messages });
+    }).catch((error) => {
+        // A concurrent edit bumped the revision. Refetch and retry once;
+        // never surface this to the user — the choice is already applied.
+        if (error?.status !== 409 && error?.code !== 'revision_conflict') return;
+        loadAiChats({ force: true }).then(() => {
+            const fresh = aiChatSessions.find((item) => item.id === session.id);
+            if (!fresh || !(Number(fresh.revision) > 0)) return;
+            return api(`/api/ai/history/conversations/${encodeURIComponent(fresh.id)}?expectedRevision=${encodeURIComponent(String(fresh.revision))}`, {
+                method: 'PATCH',
+                body: JSON.stringify(patch),
+            }).then((data) => {
+                if (data?.conversation) Object.assign(fresh, data.conversation, { messages: fresh.messages });
+            });
+        }).catch(() => {});
+    });
 }
 function formatTokenValue(n) {
     const v = Number(n) || 0;
@@ -9286,6 +9319,9 @@ function aiHistoryCacheMetadata(sessions = []) {
         collabMode: String(session?.collabMode || ''),
         runProfile: String(session?.runProfile || ''),
         permissionMode: String(session?.permissionMode || ''),
+        // Thinking intensity has no canonical column; it is device-local UI
+        // state, same as the segment modes above.
+        thinking: String(session?.thinking || ''),
     })).filter((session) => session.id);
 }
 function saveAiChats() {
