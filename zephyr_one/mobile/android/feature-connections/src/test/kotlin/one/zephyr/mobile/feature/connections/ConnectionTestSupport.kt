@@ -36,6 +36,7 @@ internal object Fixtures {
         password: SecretPresence = SecretPresence.absent,
         privateKey: SecretPresence = SecretPresence.absent,
         revision: Long = 3,
+        icon: String = "auto",
     ): Connection = Connection(
         id = id,
         ownerUserId = OWNER,
@@ -54,6 +55,7 @@ internal object Fixtures {
         password = password,
         privateKey = privateKey,
         revision = revision,
+        icon = icon,
     )
 
     /** Shared-to-me row: implicit grants only, so no EDIT/DELETE/SHARE. */
