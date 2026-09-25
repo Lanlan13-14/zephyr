@@ -114,6 +114,11 @@ class TerminalViewModel(
     private val clock: () -> Long = System::currentTimeMillis,
     private val emulatorDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val latencyRefreshMs: Long = LATENCY_REFRESH_MS,
+    /**
+     * Identifies the remote OS once the session is up and, when that changes the icon, writes it
+     * back. Null in builds and tests that have no icon store; the session works regardless.
+     */
+    private val osProbe: (suspend (sessionId: String, connection: Connection) -> Unit)? = null,
 ) : ViewModel() {
 
     /**
@@ -364,6 +369,7 @@ class TerminalViewModel(
                     startOutput()
                     startClosureWatch()
                     startLatencyProbe()
+                    probeRemoteOs(connection)
                 }
                 is TerminalOpenOutcome.HostKeyDecision -> {
                     // The session stays CONNECTING: nothing has been trusted, and a changed key
@@ -394,6 +400,19 @@ class TerminalViewModel(
                 registry.close(sessionId, clock(), error.message ?: REMOTE_CLOSED)
                 messages.tryEmit(REMOTE_CLOSED)
             }
+        }
+    }
+
+    /**
+     * Fire and forget, the way the main end probes after a session opens.
+     *
+     * Runs on its own coroutine so a slow or failed probe cannot delay the terminal, and a thrown
+     * probe never tears the session down.
+     */
+    private fun probeRemoteOs(connection: Connection) {
+        val probe = osProbe ?: return
+        viewModelScope.launch {
+            runCatching { probe(sessionId, connection) }
         }
     }
 
@@ -600,6 +619,7 @@ class TerminalViewModel(
         private val emulator: TerminalEmulator,
         private val secretProvider: suspend (Connection) -> TerminalCredentials,
         private val findConnection: suspend (String) -> Connection? = connections::find,
+        private val osProbe: (suspend (sessionId: String, connection: Connection) -> Unit)? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = TerminalViewModel(
@@ -610,6 +630,7 @@ class TerminalViewModel(
             host = host,
             emulator = emulator,
             secretProvider = secretProvider,
+            osProbe = osProbe,
         ) as T
     }
 

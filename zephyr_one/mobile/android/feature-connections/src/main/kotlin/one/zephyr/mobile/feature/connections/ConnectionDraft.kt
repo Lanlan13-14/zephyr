@@ -82,6 +82,19 @@ data class ConnectionDraft(
     val fileSyncIntentChanged: Boolean
         get() = original == null || original.fileSyncIntent != current.fileSyncIntent
 
+    /**
+     * True when the user picked a system icon during this edit.
+     *
+     * One does not store `iconSource`, so a saved icon cannot be told apart from one a probe wrote
+     * back — both stay replaceable, which is what the main end does for `auto` and `probed`. Only a
+     * change the user made in this session is known to be manual, and a probe must not undo it.
+     */
+    val iconChosenManually: Boolean
+        get() {
+            val saved = original?.icon ?: "auto"
+            return current.icon != saved && current.icon.isNotBlank() && current.icon != "auto"
+        }
+
     // ---- editing -------------------------------------------------------------------------------
 
     /**

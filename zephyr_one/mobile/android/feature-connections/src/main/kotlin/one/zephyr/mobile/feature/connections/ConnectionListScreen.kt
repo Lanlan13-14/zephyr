@@ -421,18 +421,24 @@ private fun ConnectionCard(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(RoundedCornerShape(11.dp))
-                    .background(protocolColor.copy(alpha = 0.16f)),
+                    /* One neutral wash for every protocol, matching the web
+                     * app's distro capsule (rgba(120,120,128,.08)) instead of a
+                     * different tint per protocol. */
+                    .background(Color(0xFF787880).copy(alpha = 0.08f)),
                 contentAlignment = Alignment.Center,
             ) {
-                /* Probe-backed system icon (same key as the Zephyr web app):
-                   resolved glyphs win; `auto` keeps the protocol monogram
-                   until the main end connects and probes the remote OS. */
-                val osGlyph = OsIcons.glyphFor(connection.icon)
+                /* Same glyph the web app draws for this connection: the stored
+                 * key when one exists, otherwise the same name/remark/tag/host
+                 * guess, with RDP falling back to Windows. */
+                val osGlyph = OsIcons.glyphFor(OsIcons.cardIconKey(connection))
                 if (osGlyph != null) {
                     Icon(
                         imageVector = osGlyph.vector,
                         contentDescription = null,
                         tint = osGlyph.brandColor ?: palette.onBackground,
+                        /* Web app draws the glyph at 16px inside a 28px capsule.
+                         * 22dp inside 40dp is the same ratio, so the artwork keeps
+                         * the same breathing room instead of filling the box. */
                         modifier = Modifier.size(22.dp),
                     )
                 } else {
