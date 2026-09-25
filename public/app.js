@@ -10959,9 +10959,11 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
     saveAiChats();
 
     let assistantText = '';
+    let reasoningText = '';
     const toolTrace = [];
     let assistantEl = null;
     let assistantMsgIndex = -1;
+    let reasoningEl = null;
     const ensureAssistantBubble = () => {
         if (assistantEl && document.contains(assistantEl)) return assistantEl;
         appendAiMessage(assistantText || '', 'assistant', {
@@ -11018,6 +11020,32 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                 case 'text.delta': {
                     const t = body?.text || payload?.text || '';
                     if (t) { assistantText += t; patchAssistant(); }
+                    break;
+                }
+                case 'reasoning_start': {
+                    reasoningText = '';
+                    break;
+                }
+                case 'reasoning_delta': {
+                    const t = body?.text || payload?.text || '';
+                    if (t) {
+                        reasoningText += t;
+                        ensureAssistantBubble();
+                        if (assistantEl && !reasoningEl) {
+                            reasoningEl = document.createElement('div');
+                            reasoningEl.className = 'ai-message-reasoning';
+                            reasoningEl.innerHTML = `<details open><summary>${t('思考过程')}</summary><div class="ai-reasoning-body"></div></details>`;
+                            assistantEl.prepend(reasoningEl);
+                        }
+                        const bodyEl = reasoningEl?.querySelector('.ai-reasoning-body');
+                        if (bodyEl) bodyEl.textContent = reasoningText;
+                    }
+                    break;
+                }
+                case 'reasoning_end': {
+                    const details = reasoningEl?.querySelector('details');
+                    if (details) details.open = false;
+                    reasoningEl = null;
                     break;
                 }
                 case 'tool.start':
