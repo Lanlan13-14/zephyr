@@ -38,6 +38,10 @@ export const PRESETS = {
   ui:      { response: 0.40, damping: 1.0 },  // default repositioning (Apple PiP move)
   gentle:  { response: 0.55, damping: 1.0 },  // large surfaces, slow pans
   sheet:   { response: 0.30, damping: 0.80 }, // drawers / sheets (gesture-driven)
+  // Sheet dismiss / resize: critically damped. Underdamped sheet (0.80)
+  // overshoots the off-screen target and the panel flashes back on screen.
+  sheetDismiss: { response: 0.42, damping: 1.0 },
+  sheetResize:  { response: 0.38, damping: 1.0 },
   morph:   { response: 0.45, damping: 0.92 }, // shared-element / generic morph
   // iOS SpringBoard — prefer critically damped (no bounce).
   // 对齐参考实现（iOS True Morph）：open 0.52s / close 0.42s 的"干脆退出"。
@@ -73,6 +77,10 @@ export const PRESETS = {
   aiMicroIsland:   { response: 0.30, damping: 0.85 }, // 顶栏双段微晶岛展开与状态指示切换
   aiApprovalPulse: { response: 0.40, damping: 0.68 }, // 高危工具审批卡片警示微脉冲动效
   aiSendMorph:     { response: 0.22, damping: 0.92 }, // 发送键由箭头平滑形变为旋转光环与中断方块
+
+  // Zephyr 西风之神品牌微风飞入飞出物理预设（轻盈、灵动、舒缓飘逸）
+  zephyrBreezeIn:  { response: 0.58, damping: 0.88 },
+  zephyrBreezeOut: { response: 0.46, damping: 0.94 },
 };
 
 /** Resolve a preset name or {response, damping} object to numbers. */

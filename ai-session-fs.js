@@ -85,10 +85,31 @@ class AiSessionFs {
     }
 
     async getAttachment(userId, sessionId, id) {
-        const list = await this._readIndex(userId, sessionId);
-        const item = list.find((x) => x.id === id);
-        if (!item) throw new HttpError(404, 'attachment_not_found', '附件不存在');
-        return item;
+        if (sessionId) {
+            try {
+                const list = await this._readIndex(userId, sessionId);
+                const item = list.find((x) => x.id === id);
+                if (item) return item;
+            } catch { /* ignore */ }
+        }
+        // Fallback: search across all sessions of this user
+        const u = String(userId || '').replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 80);
+        const userDir = path.join(this.dataDir, 'ai-sessions', u);
+        try {
+            const entries = await fsp.readdir(userDir, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory()) continue;
+                try {
+                    const list = await this._readIndex(userId, entry.name);
+                    const item = list.find((x) => x.id === id);
+                    if (item) {
+                        item._foundSessionId = entry.name;
+                        return item;
+                    }
+                } catch { /* ignore */ }
+            }
+        } catch { /* ignore */ }
+        throw new HttpError(404, 'attachment_not_found', '附件不存在');
     }
 
     async putAttachment(userId, sessionId, { name, mime, buffer }) {
@@ -142,7 +163,8 @@ class AiSessionFs {
 
     async readAttachmentBytes(userId, sessionId, id) {
         const item = await this.getAttachment(userId, sessionId, id);
-        const abs = path.join(this.root(userId, sessionId), item.path);
+        const effectiveSessionId = item._foundSessionId || sessionId;
+        const abs = path.join(this.root(userId, effectiveSessionId), item.path);
         const data = await fsp.readFile(abs);
         return { item, data };
     }

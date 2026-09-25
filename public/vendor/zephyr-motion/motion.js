@@ -158,6 +158,8 @@ function writerFor(st, ch, unit) {
   switch (ch) {
     case 'opacity':
       return v => { el.style.opacity = String(v); st.managed.add('opacity'); };
+    case 'scrollTop':
+      return v => { el.scrollTop = v; };
     case 'radius':
       return v => {
         // Channel stores VISUAL radius in px; optionally compensate by scale.
@@ -206,7 +208,61 @@ export const Motion = {
   PRESETS,
   STANDARDS: MOTION_STANDARDS,
 
-  /** Boot the engine (idempotent). Await before first frame-critical use. */
+  async zephyrFlyIn(panel, { fromX = 28, fromY = 20, fromScale = 0.92, preset = 'zephyrBreezeIn' } = {}) {
+    panel.style.display = 'flex';
+    panel.style.visibility = 'visible';
+    panel.style.pointerEvents = 'auto';
+    this.stop(panel);
+    this.set(panel, { opacity: 0, x: fromX, y: fromY, scaleX: fromScale, scaleY: fromScale });
+    await this.to(panel, { opacity: 1, x: 0, y: 0, scaleX: 1, scaleY: 1 }, { preset });
+  },
+
+  async zephyrFlyOut(panel, { toX = 22, toY = 16, toScale = 0.93, preset = 'zephyrBreezeOut' } = {}) {
+    this.stop(panel);
+    await this.to(panel, { opacity: 0, x: toX, y: toY, scaleX: toScale, scaleY: toScale }, { preset });
+    panel.style.display = 'none';
+    panel.style.visibility = 'hidden';
+    this.release(panel);
+  },
+
+  /**
+   * Apple UIKit-compliant fluid momentum inertial scroll (UIScrollView specification).
+   * Uses Apple's exact exponential deceleration equation: v(t) = v0 * d^dt
+   * with clean cutoff to ensure crisp, non-lingering resting states.
+   */
+  inertialScroll(el, initialVelocity = 0, { deceleration = 0.994, onUpdate = null, onDone = null } = {}) {
+    if (!el) return;
+    this.stop(el);
+
+    // 限制合理物理极值，防止猛甩时过冲
+    const maxV = 2.0; // px/ms
+    let v = Math.sign(initialVelocity) * Math.min(Math.abs(initialVelocity), maxV);
+    let lastTime = performance.now();
+    let animId = null;
+
+    const step = (now) => {
+      const dt = Math.min(Math.max(now - lastTime, 1), 32); // 限制在 1ms ~ 32ms 内，保证稳定步长
+      lastTime = now;
+
+      // 干净利落的静止阈值：当速度低于 0.05 px/ms (50 px/s) 时自然平稳停下，绝不长尾蠕动
+      if (Math.abs(v) < 0.05) {
+        if (animId) cancelAnimationFrame(animId);
+        onDone?.();
+        return;
+      }
+
+      el.scrollTop -= v * dt;
+      // Apple UIKit 核心指数衰减公式: v = v * d^dt (dt 单位为毫秒)
+      v *= Math.pow(deceleration, dt);
+
+      onUpdate?.(el.scrollTop);
+      animId = requestAnimationFrame(step);
+    };
+
+    animId = requestAnimationFrame(step);
+    return () => { if (animId) cancelAnimationFrame(animId); };
+  },
+
   init({ capacity = 256 } = {}) {
     pool.capacity = capacity;
     return engine.init(capacity).then(() => {
@@ -672,7 +728,13 @@ export const Motion = {
       activationThreshold = 0,
       handle = null,
       filter = null,
+      axis = null,
+      target = null,
     } = opts;
+    // `surface` is what moves. `listen` is what receives the pointer.
+    // Default keeps the old contract: the dragged node is both.
+    const surface = target || el;
+    const listen = target ? el : (handle || el);
     const threshold = Math.max(0, Number(activationThreshold) || 0);
     let grab = { x: 0, y: 0 };
     let active = threshold <= 0;
@@ -701,9 +763,8 @@ export const Motion = {
 
     // track() always binds the listener target. Prefer handle so nested
     // controls outside it never start a drag, while the transformed element
-    // remains `el` (the panel surface).
-    const target = handle || el;
-    return this.track(target, {
+    // remains `surface` (the panel).
+    return this.track(listen, {
       onStart: pt => {
         if (typeof filter === 'function' && filter(pt.event) === false) {
           active = false;
@@ -715,8 +776,8 @@ export const Motion = {
           const ok = path.includes?.(handle) || handle === pt.event.target || handle.contains?.(pt.event.target);
           if (!ok) { active = false; return false; }
         }
-        this.stop(el, ['x', 'y']);
-        grab = { x: this.value(el, 'x') || 0, y: this.value(el, 'y') || 0 };
+        this.stop(surface, ['x', 'y']);
+        grab = { x: this.value(surface, 'x') || 0, y: this.value(surface, 'y') || 0 };
         last = { ...grab };
         liveBounds = readBounds();
         active = threshold <= 0;
@@ -731,17 +792,19 @@ export const Motion = {
           if (Math.hypot(p.dx, p.dy) < threshold) return;
           active = true;
           // Re-sample grab at activation so threshold travel is not a jump.
-          this.stop(el, ['x', 'y']);
-          grab = { x: this.value(el, 'x') || 0, y: this.value(el, 'y') || 0 };
+          this.stop(surface, ['x', 'y']);
+          grab = { x: this.value(surface, 'x') || 0, y: this.value(surface, 'y') || 0 };
           liveBounds = readBounds();
           opts.onActivate?.({ ...p, x: grab.x, y: grab.y });
         }
         // Refresh bounds each frame so resize/viewport changes stay correct.
         liveBounds = readBounds();
-        const nx = clampH(grab.x + p.dx, false, liveBounds);
-        const ny = clampV(grab.y + p.dy, false, liveBounds);
+        let nx = clampH(grab.x + p.dx, false, liveBounds);
+        let ny = clampV(grab.y + p.dy, false, liveBounds);
+        if (axis === 'y') nx = grab.x;
+        if (axis === 'x') ny = grab.y;
         last = { x: nx, y: ny };
-        this.set(el, { x: nx, y: ny });
+        this.set(surface, { x: nx, y: ny });
         opts.onMove?.({ ...p, x: nx, y: ny, active: true });
       },
       onEnd: p => {
@@ -751,13 +814,13 @@ export const Motion = {
           liveBounds = null;
           return;
         }
-        const rx = this.value(el, 'x');
-        const ry = this.value(el, 'y');
+        const rx = this.value(surface, 'x');
+        const ry = this.value(surface, 'y');
         liveBounds = readBounds();
         // Project the resting point from the release velocity, THEN snap —
         // animate to where the gesture is going, not where it stopped.
-        let tx = rx + engine.project(p.vx, decelRate);
-        let ty = ry + engine.project(p.vy, decelRate);
+        let tx = rx + (axis === 'y' ? 0 : engine.project(p.vx, decelRate));
+        let ty = ry + (axis === 'x' ? 0 : engine.project(p.vy, decelRate));
         if (typeof snap === 'function') {
           const s = snap(tx, ty, { x: rx, y: ry, vx: p.vx, vy: p.vy }) || {};
           if (Number.isFinite(s.x)) tx = s.x;
@@ -769,10 +832,11 @@ export const Motion = {
         tx = clampH(tx, true, liveBounds);
         ty = clampV(ty, true, liveBounds);
         opts.onRelease?.({ ...p, x: rx, y: ry, targetX: tx, targetY: ty });
-        const promise = this.to(el, { x: tx, y: ty }, {
-          preset,
-          velocity: { x: p.vx, y: p.vy },
-        });
+        const props = {};
+        const velocity = {};
+        if (axis !== 'y') { props.x = tx; velocity.x = p.vx; }
+        if (axis !== 'x') { props.y = ty; velocity.y = p.vy; }
+        const promise = this.to(surface, props, { preset, velocity });
         const done = Promise.resolve(promise).then(() => {
           last = { x: tx, y: ty };
           liveBounds = null;
@@ -925,6 +989,173 @@ export const Motion = {
   },
 
   /**
+   * Resize a surface by dragging a handle. The gesture is 1:1 on a transform
+   * (compositor), and the layout height is committed once on release through
+   * a critically damped spring. Writing height every pointermove is what made
+   * the resize handle feel stuck.
+   *
+   *   Motion.resizeDrag(panel, {
+   *     handle, edge: 'bottom', axis: 'y',
+   *     min: 320, max: () => window.innerHeight - 24,
+   *     preset: 'sheetResize',
+   *   })
+   */
+  resizeDrag(el, opts = {}) {
+    if (!el || !opts.handle) return { destroy() {} };
+    const axis = opts.axis === 'x' ? 'x' : 'y';
+    const sign = opts.edge === 'top' || opts.edge === 'left' ? -1 : 1;
+    const minOf = () => Number(typeof opts.min === 'function' ? opts.min() : opts.min) || 0;
+    const maxOf = () => Number(typeof opts.max === 'function' ? opts.max() : opts.max) || 100000;
+    let base = 0;
+    const size = () => axis === 'y' ? el.offsetHeight : el.offsetWidth;
+    const apply = (px) => {
+      const v = `${Math.round(px)}px`;
+      if (axis === 'y') el.style.height = v;
+      else el.style.width = v;
+    };
+    return this.track(opts.handle, {
+      onStart: (pt) => {
+        if (typeof opts.filter === 'function' && opts.filter(pt.event) === false) return false;
+        this.stop(el, [axis]);
+        base = size();
+        this.set(el, { [axis]: 0 });
+        opts.onStart?.();
+        return true;
+      },
+      onMove: (p) => {
+        const delta = axis === 'y' ? p.dy : p.dx;
+        const raw = base + sign * delta;
+        const next = Math.min(maxOf(), Math.max(minOf(), raw));
+        // Top/left edge: translate by the size delta so the grabbed edge
+        // tracks the finger. No layout write during the gesture.
+        const shift = (opts.edge === 'top' || opts.edge === 'left') ? (base - next) : 0;
+        // Past the min/max, keep a short rubber band instead of sticking.
+        const over = raw - next;
+        const visualShift = shift + (opts.edge === 'bottom' || opts.edge === 'right' ? 0 : 0);
+        this.set(el, axis === 'y'
+          ? { y: visualShift + (opts.edge === 'bottom' ? Math.max(0, over) : over) }
+          : { x: visualShift + (opts.edge === 'right' ? Math.max(0, over) : over) });
+        opts.onMove?.({ ...p, size: next });
+      },
+      onEnd: (p) => {
+        const delta = axis === 'y' ? p.dy : p.dx;
+        const vel = axis === 'y' ? p.vy : p.vx;
+        const from = Math.min(maxOf(), Math.max(minOf(), base + sign * delta));
+        const target = Math.min(maxOf(), Math.max(minOf(), from + engine.project(sign * vel, 0.995)));
+        this.set(el, { x: 0, y: 0 });
+        apply(from);
+        const ch = axis === 'y' ? 'h' : 'w';
+        this.set(el, { [ch]: from });
+        const done = this.to(el, { [ch]: target }, {
+          preset: opts.preset || 'sheetResize',
+          velocity: { [ch]: sign * vel },
+        });
+        let last = from;
+        const paint = () => {
+          const v = this.value(el, ch);
+          if (Number.isFinite(v) && Math.abs(v - last) >= 0.5) {
+            last = v;
+            apply(v);
+          }
+          if (Math.abs(v - target) > 0.8) requestAnimationFrame(paint);
+        };
+        requestAnimationFrame(paint);
+        Promise.resolve(done).then(() => {
+          apply(target);
+          this.set(el, { [ch]: 0, x: 0, y: 0 });
+          opts.onEnd?.({ size: target });
+        });
+      },
+    });
+  },
+
+  /**
+   * Bottom sheet gesture owned by the motion engine.
+   * 1:1 follow on the handle, rubber-band only when pulling past the top,
+   * release velocity (px/s) handed to a critically damped spring.
+   * Dismiss travels downward only — the settle target is never above the
+   * release point, so the sheet cannot flash back up at the end.
+   *
+   *   Motion.sheetDrag(panel, {
+   *     handle,
+   *     travel: () => panel.offsetHeight,   // px to fully off-screen
+   *     enabled: () => window.innerWidth <= 760,
+   *     onDismiss: () => {},
+   *   })
+   */
+  sheetDrag(el, opts = {}) {
+    if (!el) return { destroy() {} };
+    const handle = opts.handle || el;
+    // Remaining px until the sheet is fully past the viewport bottom.
+    // offsetHeight is wrong for a bottom-anchored sheet: once the finger has
+    // already dragged it mostly off-screen, "travel = height" is ABOVE the
+    // finger, and the release spring yanks the sheet back up. That yank is
+    // the flash. Measure the live rect instead.
+    const travelOf = () => {
+      if (typeof opts.travel === 'function' || opts.travel != null) {
+        const n = Number(typeof opts.travel === 'function' ? opts.travel() : opts.travel);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      const rect = el.getBoundingClientRect();
+      const viewH = window.innerHeight || document.documentElement.clientHeight || rect.height;
+      const remain = viewH - rect.top;
+      return Math.max(1, remain);
+    };
+    const enabled = () => (typeof opts.enabled === 'function' ? opts.enabled() !== false : opts.enabled !== false);
+    let session = null;
+
+    return this.drag(handle, {
+      target: el,
+      axis: 'y',
+      preset: opts.preset || 'sheetDismiss',
+      rubberband: true,
+      decelRate: 0.998,
+      activationThreshold: opts.activationThreshold ?? 3,
+      filter: (e) => enabled() && (opts.filter ? opts.filter(e) !== false : true),
+      // Do not cap maxY at the remaining on-screen distance. That value is
+      // smaller than the live translation once the sheet has moved, and the
+      // clamp after snap pulls the dismiss target back up — the sheet leaves
+      // and then springs back in. The snap target is already one-directional.
+      bounds: () => ({ minY: 0, maxY: session?.limitY || 100000 }),
+      onStart: () => {
+        this.stop(el, ['y']);
+        const y0 = this.value(el, 'y') || 0;
+        const rect = el.getBoundingClientRect();
+        const viewH = window.innerHeight || document.documentElement.clientHeight || rect.height;
+        // Locked for the whole gesture. Recomputing from the live rect each
+        // frame shrinks the cap as the sheet moves down and clamps it backward.
+        session = { y0, limitY: y0 + Math.max(1, viewH - rect.top) + 24 };
+        opts.onStart?.();
+      },
+      onMove: (p) => {
+        if (!session) return;
+        opts.onMove?.(p);
+      },
+      snap: (ty, _tx, ctx) => {
+        const y = ctx.y;
+        const vy = ctx.vy; // px/s, +down
+        const dismiss = y > 64 || vy > 180;
+        if (!dismiss) return { y: session.y0 || 0 };
+        // limitY was measured at gesture start and is always beyond y.
+        const target = Math.max(y + 8, session.limitY || (y + 8));
+        session.dismiss = true;
+        session.target = target;
+        return { y: target };
+      },
+      onRelease: (info) => { opts.onRelease?.(info); },
+      onEnd: (info) => {
+        const dismissed = !!session?.dismiss;
+        const settled = info.settled || Promise.resolve();
+        settled.then(() => {
+          if (dismissed) opts.onDismiss?.();
+          else opts.onSettle?.();
+        });
+        session = null;
+      },
+    });
+  },
+
+  /**
    * Edge sheet on transform x/y (+ optional scrim opacity).
    * edge: 'bottom' | 'top' | 'left' | 'right'
    * open: true opens from edge→0; false dismisses 0→edge
@@ -951,7 +1182,17 @@ export const Motion = {
       if (!this.isAnimating(el)) this.set(el, { [channel]: off, opacity: 1 });
       body = this.to(el, { [channel]: 0, opacity: 1 }, { preset, delay: opts.delay ?? 0 });
     } else {
-      body = this.to(el, { [channel]: off }, { preset, delay: opts.delay ?? 0 });
+      // One target: the sheet's own size, straight off the anchored edge.
+      // Shadow fade must not share the sheet's critically-damped spring —
+      // that spring crawls through its last 10% for dozens of frames while
+      // the sheet itself is long gone, leaving a faint shadow smoldering at
+      // the viewport edge until settle. Fade fast and early on a tween that
+      // finishes with the slide, so both land together.
+      const slideDone = this.to(el, { [channel]: off }, { preset, delay: opts.delay ?? 0 });
+      // Same spring family, fast response: shadow lands with the slide but
+      // does not smolder. tween() would stop(el) and kill the slide spring.
+      const fadeDone = this.to(el, { opacity: 0 }, { response: 0.16, damping: 1.0 });
+      body = Promise.all([slideDone, fadeDone]);
     }
 
     const scrim = opts.scrim || null;
@@ -3148,9 +3389,8 @@ export const Motion = {
     panel.style.willChange = 'transform, opacity, filter, border-radius';
     panel.classList.add('ai-panel-motion-closing');
 
-    // 1) Kill readability first — content + traffic light / resize chrome.
+    // 1) Smoothly cross-fade content and handles into origin button (Seamless 一镜到底)
     const chrome = [
-      contentEl,
       panel.querySelector?.('.panel-drag-handle'),
       ...Array.from(panel.querySelectorAll?.('.panel-resize-handle') || []),
     ].filter(Boolean);
@@ -3159,10 +3399,11 @@ export const Motion = {
         this.stop(el);
         this.set(el, { opacity: 0 });
       } catch { /* ignore */ }
-      if (el?.style) {
-        el.style.opacity = '0';
-        el.style.visibility = 'hidden';
-      }
+    }
+    if (contentEl) {
+      try {
+        this.to(contentEl, { opacity: 0 }, { preset: contentPreset });
+      } catch { /* ignore */ }
     }
 
     try {
