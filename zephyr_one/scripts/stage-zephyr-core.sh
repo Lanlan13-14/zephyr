@@ -24,8 +24,13 @@ done
 cp "$REPO/package.json" "$OUT/package.json"
 [ -f "$REPO/package-lock.json" ] && cp "$REPO/package-lock.json" "$OUT/package-lock.json"
 
-# Runtime directories
-for d in public server preview; do
+# Runtime directories.
+#
+# `src` is not optional. ai-contract-errors.js (required by ai-runtime-bridge.js,
+# which server.js loads at startup) imports ./src/generated/ai-contract-v2.js,
+# the generated Contract v2 taxonomy. Staging only the root js files left the
+# packaged core unable to boot: "Cannot find module './src/generated/ai-contract-v2'".
+for d in public server preview src; do
   if [ -d "$REPO/$d" ]; then
     cp -a "$REPO/$d" "$OUT/$d"
   fi
@@ -145,4 +150,8 @@ test -d "$OUT/public"
 test -f "$OUT/public/app.html"
 test -f "$OUT/public/app.js"
 test -f "$OUT/mobile-contracts/registries/entity-registry.json"
+test -f "$OUT/src/generated/ai-contract-v2.js" || {
+  echo "ERROR: staged core is missing src/generated/ai-contract-v2.js; the embedded server cannot boot" >&2
+  exit 1
+}
 ls "$OUT" | wc -l
