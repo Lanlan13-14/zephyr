@@ -61,7 +61,8 @@ class StartupThemeTest {
         )
         assertTrue(source.contains("enableEdgeToEdge"))
         assertTrue(source.contains("app.ready"))
-        assertTrue(source.contains("CircularProgressIndicator"))
+        assertTrue(source.contains("FluidLaunchScreen"))
+        assertFalse(source.contains("CircularProgressIndicator"))
         assertFalse(source.contains("runBlocking"))
     }
 }
