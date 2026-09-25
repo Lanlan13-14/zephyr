@@ -1,133 +1,166 @@
-#  Zephyr
+<p align="center">
+  <img src="public/zephyr-mark.svg" width="96" height="96" alt="Zephyr Logo" />
+</p>
 
-> Zephyr 是一个基于 Node.js 的浏览器服务器管理平台，提供 WebSSH 终端、SSH / RDP / VNC 连接管理、SSH 跳板与代理路由、安全登录、多因素认证、远程批量执行、数据备份导入导出等能力。
+<h1 align="center">Zephyr</h1>
 
+<p align="center">
+  Unified Multi-Platform Remote Infrastructure & Agent Platform
+</p>
 
-> **项目当前处于维护冻结状态，暂不处理 Pull Request，不建议提交 PR。提交 Issue 请按 [Issue 模板](.github/ISSUE_TEMPLATE/bug_report.md) 格式填写。**
-
----
-
-## 目录
-
-- [功能特性](#功能特性)
-- [协议与路由能力](#协议与路由能力)
-- [快速开始](#快速开始)
-- [配置说明](#配置说明)
-- [AI 助理智能体](#ai-助理智能体)
-- [RDP / VNC / noVNC](#rdp--vnc--novnc)
-- [Zephyr Agent 文件磁盘映射](#zephyr-agent-文件磁盘映射)
-- [Docker Compose 部署](#docker-compose-部署)
-- [Docker 自行构建](#docker-自行构建)
-- [更新容器并保留数据](#更新容器并保留数据)
-- [项目结构](#项目结构)
-- [安全建议](#安全建议)
-- [依赖与数据说明](#依赖与数据说明)
-- [计划](#计划)
-- [赞助商](#赞助商)
-- [致谢](#致谢)
+<p align="center">
+  <a href="#english">English</a> | <a href="#chinese">中文</a>
+</p>
 
 ---
 
-## 功能特性
+<a name="english"></a>
+## English
 
-### 连接与终端
+### Notice on Project Status & Multi-Platform Scope
 
-- 🖥️ **WebSSH 终端**：基于 `ssh2` + WebSocket，在浏览器中打开 SSH Shell。
-- 🌊 **DOM 终端渲染**：基于 `@wterm/dom`，终端文本可像普通网页一样拖选复制。
-- 📱 **移动端友好**：支持移动端长按、拖拽选择和系统复制菜单。
-- 🗂️ **连接资产管理**：支持 SSH / RDP / VNC 连接管理、搜索、排序、标签和备注。
-- 🖥️ **RDP / VNC 远程桌面**：RDP 使用浏览器端 Go WASM（grdp）协议栈，不依赖服务端 FreeRDP、Python 或 native bridge；默认且首选 `worker-gpu-v2`，能力探测失败时使用页面线程 `gpu-v2-page`。两条管线共用 RDPGFX/classic-bitmap semantic、WebGL2 FBO compositor、WebCodecs AVC420/AVC444 双流、可靠 FRAME_ACK 和 WebSocket↔TCP 双向背压；旧 Canvas2D/raw-H264/单纹理 WebGL 管线已删除。
-- 💽 **Zephyr Agent 磁盘映射**：独立 Flutter Agent 应用主动连接 Zephyr 主端，把本机文件系统映射为 RDP 会话里的 `\\tsclient` 虚拟磁盘。支持 Android / Windows / Linux / macOS / iOS 构建；桌面端默认映射整盘/根目录，Android 默认映射 `/storage/emulated/0` 并引导授予“所有文件访问权限”，也支持 SAF 授权目录降级。
-- 🧭 **代理与跳板路由**：支持 SOCKS5 / HTTP CONNECT 代理、SSH 跳板机和多级 SSH 跳板链路。
-- ⚡ **远程批量执行**：可对多个 SSH 连接批量执行命令并查看结果。
-- 🧰 **远程运维能力**：支持远程状态监控、Docker 容器/镜像查看、日志查看、镜像拉取等 SSH 运维操作。
-- 🤖 **AI 助理智能体**：可在设置中启用独立 AI 助理入口，支持多模型供应商、自定义 API Base URL、模型参数、逐模型请求 User-Agent、Skills、内置 Chromium 浏览器自动化与截图嵌入预览、按连接/项目/标签关联的长期 Memory、可暂停/继续/重试的任务规划器、AI 专用加密环境变量、远程命令执行、远程文件读写、敏感操作确认和编辑器 AI 代码补全。
-- **AI Provider 所有权与共享**：每个 Provider 归属于创建者，可独立共享给所有管理员、所有用户，或指定一个/多个用户；共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。AI 笔记工具可分别控制读取权限与创建/修改/删除权限。
-- 🖼️ **图片类文件预览**：文件管理器支持图片预览，前端使用 Viewer.js 负责缩放/拖动/全屏，后端 Preview API 对浏览器不支持的 HEIC/TIFF/PSD/RAW/DDS/HDR 等格式通过 Sharp 优先、ImageMagick 兜底转为 WebP。
-- 🎨 **个性化终端**：设置页支持品牌名/图标、主题、自定义 CSS/JS、SSH 终端背景图与背景强度、自定义深色/浅色终端字体颜色；浅色字体未填写时会自动使用深色字体的反色。
-- 📋 **跨会话文件剪贴板**：支持本机 ↔ RDP、SSH ↔ RDP、RDP ↔ SSH、RDP ↔ RDP 的文件剪贴板桥接；RDP 侧使用 Windows 原生 CLIPRDR 文件剪贴板语义，远端 Ctrl+V 时按需拉取文件内容。
-- **笔记工作区**：支持分组、标签、搜索、Markdown 编辑/预览、关联连接、导入导出、软删除和回收站彻底删除；笔记开关与笔记数据按用户独立保存。
-- **连接与笔记共享**：可共享给所有用户、所有管理员，或指定一个/多个用户；连接共享不会向共享者暴露密码、私钥和其他凭据。
-- **工作区自动恢复**：按浏览器设备保存已打开连接、标签顺序、最小化状态、活动连接和当前页面；重新打开时会再次校验 ACL 并恢复可访问项目，不保存密码、命令、临时连接或 Deep Link 凭据。
-- **Deep Link 临时连接**：支持解析 `ssh://`、`telnet://` 和 `jms://`，一次性凭据仅在服务端短期保存并绑定当前用户消费。
-- **Go 会话数据面**：`zephyr-worker` 负责持久 SSH/Telnet 会话、PTY、输出回放和订阅分发；Node.js 负责认证、ACL、笔记、AI 和控制面 API。
-
-### 安全与账号
-
-- 🔐 **安全登录体系**：默认管理员、首次登录强制改密、登录会话、密码修改。
-- **多用户与角色管理**：首个账号为超级管理员，可创建用户、授权或撤销管理员、停用/启用账号、重置密码、强制下线、删除用户并转移资源；超级管理员可将权限转让给另一名已启用管理员。角色与不可变 `userId` 绑定，修改用户名不会改变权限。
-- 🧩 **MFA 多因素认证**：支持 TOTP 动态验证码与 Passkey / WebAuthn。
-- 🛡️ **登录防护**：支持 CAPTCHA、人机验证、登录失败记录、IP 防爆破封禁、IP 白名单。
-- ✉️ **邮件通知**：支持 SMTP 测试邮件、登录成功/失败通知、忘记密码邮箱验证码重置。
-- 🧾 **备案信息**：支持 ICP / 公安备案信息配置与登录页展示。
-
-### 数据与部署
-
-- 💾 **SQLite 数据存储**：使用 `better-sqlite3` 持久化用户、连接、设置、安全事件等数据。
-- 🔐 **敏感数据加密**：连接密码/私钥、代理密码、SSH 密钥、TOTP Secret、SMTP/CAPTCHA 密钥等字段使用 ML-KEM-768 + AES-256-GCM 混合加密后落盘。
-- 📦 **数据备份**：支持加密备份导出、备份导入，并在导入前自动生成本地数据库备份。
-- 🐳 **Docker 部署**：Docker 镜像内置 Node.js 运行时和 noVNC 所需运行依赖，RDP 使用浏览器端 Go WASM 无需服务端 native 组件，可直接部署使用。
+> **Important Notice on Implementation Status & Development Cadence**:  
+> Many modules across the Zephyr ecosystem (specifically cross-platform execution engines, isolated AI sandboxes, and native mobile client bindings) are currently in early, transitional, or partial completion states.  
+> Due to the physical limitations of individual developer bandwidth, progress across all platforms proceeds at a measured pace.  
+> However, the architectural objective remains absolute: to achieve rigorous convergence in functional parity, security guarantees, and user operational logic across web, desktop, and mobile environments.
 
 ---
 
-## 协议与路由能力
+### Table of Contents
 
-| 协议 | 作为目标连接 | 可通过代理访问 | 可通过 SSH 跳板访问 | 可作为跳板机 |
-| --- | --- | --- | --- | --- |
-| `SSH` | ✅ | ✅ | ✅ | ✅ |
-| `Telnet` | ✅ | ❌ | ❌ | ❌ |
-| `RDP` | ✅ | ✅ | ✅ | ❌ |
-| `VNC` | ✅ | ✅ | ✅ | ❌ |
+- [System Architecture](#system-architecture)
+- [Subsystem Breakdown](#subsystem-breakdown)
+  - [Zephyr Server (Control & Data Plane)](#zephyr-server-control--data-plane)
+  - [Zephyr One (Desktop & Mobile Clients)](#zephyr-one-desktop--mobile-clients)
+  - [Zephyr AI & Zephyr Cell (Agent & Sandbox)](#zephyr-ai--zephyr-cell-agent--sandbox)
+  - [Zephyr Link & Zephyr Agent (Transport & Edge)](#zephyr-link--zephyr-agent-transport--edge)
+- [Protocol & Routing Capabilities](#protocol--routing-capabilities)
+- [Deployment & Operations](#deployment--operations)
+  - [Production Docker Run](#production-docker-run)
+  - [Docker Compose](#docker-compose)
+  - [Environment Configuration Table](#environment-configuration-table)
+  - [Data Persistence & Upgrades](#data-persistence--upgrades)
+- [Building from Source](#building-from-source)
+- [Repository Layout](#repository-layout)
+- [Security Best Practices](#security-best-practices)
+- [Sponsorship & Upstream Credits](#sponsorship--upstream-credits)
+- [License](#license)
 
-说明：
+---
 
-- **SSH** 既可以作为目标连接，也可以作为跳板机。
-- **Telnet** 由 Go worker 提供 IAC、NAWS、TTYPE 与 WebSocket 双向转发，支持通过 Deep Link 创建临时连接。
-- **RDP / VNC** 可以作为目标连接，并且可以通过 SSH 跳板链路访问。
-- **RDP / VNC 不能作为跳板机**。跳板机只能选择 SSH 连接。
-- RDP / VNC 通过跳板访问时，Zephyr 会在服务端建立临时链路：RDP 由 Node.js WebSocket→TCP 代理将浏览器 WASM grdp 客户端的流量转发到目标 RDP 端口，VNC 由 Zephyr 的 noVNC WebSocket 代理直接完成 VNC 握手与转发。
+### System Architecture
 
-RDP 经 SSH 跳板访问链路：
+Zephyr decouples the administrative web interface, client runtimes, execution engines, and communication overlays into dedicated layers:
 
 ```text
-浏览器 (Go WASM grdp)
-  ── WebSocket ──► Zephyr Node.js /rdp-proxy
-  ── TCP ──► SSH 跳板链路
-  ──► 目标 RDP 主机:3389
-```
-
-VNC 经 SSH 跳板访问链路：
-
-```text
-浏览器 noVNC
-  -> Zephyr /novnc WebSocket
-  -> Zephyr VNC 代理（服务端完成 VNCAuth）
-  -> SSH 跳板链路或代理
-  -> 目标 VNC 主机
++-----------------------------------------------------------------------+
+|                           Zephyr One Clients                          |
+|  - Desktop (Electron + local Node core + node:sqlite on loopback)     |
+|  - Mobile Android (Kotlin + Jetpack Compose + Room + Keystore)        |
+|  - Mobile iOS (Swift + SwiftUI + Keychain + SQLiteSync)               |
++-----------------------------------------------------------------------+
+                                    |
+                                    | (HTTPS / WSS / ZSL-2 E2EE Overlay)
+                                    v
++-----------------------------------------------------------------------+
+|                       Zephyr Server (Main Host)                       |
+|  +-- Node.js Control Plane (Auth, ACL, Notes, Metadata, WebDAV)       |
+|  +-- zephyr-worker (Go PTY Supervisor, Stream Distribution, Telnet)   |
+|  +-- zephyr-link-server (Go ZSL/2 Engine, KEM Handshake, Tunnel Hub)  |
+|  +-- zephyr-ai (Go SSE Agent Loop, Tool Dispatcher, Reasoning Engine) |
++-----------------------------------------------------------------------+
+            |                                               |
+            | (Direct Dial / Chained SSH)                   | (Sealed Stream)
+            v                                               v
++-----------------------+                       +-----------------------+
+| Target Infrastructure |                       |     Zephyr Agent      |
+|  - SSH Servers        |                       |  - Flutter Daemon     |
+|  - Telnet Hosts       |                       |  - Reverse Bastion    |
+|  - RDP / VNC Desktops |                       |  - TSCLIENT Redir     |
++-----------------------+                       +-----------------------+
 ```
 
 ---
 
-## 快速开始
+### Subsystem Breakdown
 
-### 方式一：Docker 镜像运行
+#### Zephyr Server (Control & Data Plane)
+- **Node.js Core**: Manages HTTP/WebSocket ingress, authentication workflows, access control lists (ACL), encrypted database migrations, WebDAV backup synchronization, and static asset distribution.
+- **Go PTY Supervisor (`zephyr-worker`)**: Dedicated Go daemon handling interactive PTY lifecycles, ring-buffer output history caching, NAWS/IAC Telnet state machines, and WebSocket stream fan-out. Active terminal sessions survive network drops and browser refreshes without losing output.
+- **DOM-Based WebSSH (`@wterm/dom`)**: Replaces Canvas-based terminal renderers with true DOM text nodes, enabling native drag-selection, text copying, mobile contextual menus, and IME input composition.
+- **In-Browser WASM RDP (`rdp-wasm`)**: Client-side Go WASM build based on patched `grdp`. Decodes RDP graphics via WebCodecs (AVC420 / AVC444) and composites on WebGL2 FBOs. Implements Windows MS-RDPEFS and CLIPRDR virtual channels, supporting native clipboard file synchronization without server-side FreeRDP dependencies.
+- **Envelope Encryption at Rest**: Passwords, private keys, jump-host secrets, and MFA seeds are encrypted using hybrid post-quantum ML-KEM-768 + AES-256-GCM before disk persistence.
 
-> 生产部署请务必持久化 `/app/data`，并提前准备 `.env`。
+#### Zephyr One (Desktop & Mobile Clients)
+- **Desktop Client (`zephyr_one`)**:
+  - Built with **Electron 37** running a local embedded Zephyr Node.js instance on loopback (`127.0.0.1`).
+  - Utilizes Node 22 built-in `node:sqlite` (`ZEPHYR_ONE_USE_BUILTIN_SQLITE=1`), removing the need to compile native C++ addons (`better-sqlite3`) on end-user machines.
+  - Automatic local account adoption eliminates browser-era credential barriers.
+  - Optional OS biometric unlocking via native platform APIs (macOS LocalAuthentication via JXA, Windows UserConsentVerifier via PowerShell).
+  - Remote main servers act solely as sync endpoints; day-to-day SSH, RDP, VNC, and AI operations execute on the local core.
+- **Android Client (`zephyr_one/mobile/android`)**:
+  - Written in native Kotlin with Jetpack Compose UI.
+  - Custom Liquid Glass rendering via AGSL shaders.
+  - Hardware-backed key generation via Android Keystore; offline SQLite storage via Room.
+  - Runs an embedded `libzephyr_link.so` loopback process to handle ZSL/2 cryptographic tunneling.
+- **iOS Client (`zephyr_one/mobile/ios`)**:
+  - Implemented in native Swift with SwiftUI.
+  - Secure hardware credential management via iOS Keychain; structured synchronization engine via `SQLiteSyncRepository`.
 
-Zephyr 的 SQLite 数据库、运行配置和备份文件都在容器内 `/app/data`。如果没有挂载该目录，删除或重建容器会导致数据丢失。
+#### Zephyr AI & Zephyr Cell (Agent & Sandbox)
+- **Go AI Runtime (`zephyr-ai`)**:
+  - High-performance, streaming SSE agent loop supporting multi-provider LLMs (OpenAI, Anthropic, Gemini, DeepSeek, and custom OpenAI-compatible endpoints).
+  - Turn orchestration featuring reasoning token folding, dynamic thinking depth regulation, and context compaction.
+  - Tool execution harness supporting platform observation, file operations, web browsing, and human-in-the-loop permission prompts.
+- **Execution Sandbox (`zephyr-cell`)**:
+  - Replaces fragile command-name whitelists with an isolated Linux execution space.
+  - Utilizes Bubblewrap (`bwrap`) and kernel namespaces on Linux/Docker hosts for unprivileged process isolation.
+  - Enforces read-only root mounts, private session workspaces, default network isolation namespaces, 100KB automatic output truncation, and immutable NDJSON audit logs.
+  - Designed with an abstraction layer supporting Direct, PRoot, CellVM, and remote server routing.
 
-推荐使用宿主机目录挂载：
+#### Zephyr Link & Zephyr Agent (Transport & Edge)
+- **Zephyr Link Protocol (`zephyr-link`)**:
+  - Application-layer overlay protocol engineered to pass through standard CDNs (e.g., Cloudflare) over WebSocket (WSS) without exposing payload plaintext to intermediate TLS-terminating proxies.
+  - Employs ZSL/2 hybrid encryption: `X25519` + `ML-KEM-768` (FIPS 203) key exchange, HKDF-SHA256 key derivation, and AES-256-GCM AEAD framing.
+  - Passwordless device enrollment using out-of-band browser approval, Short Authentication String (SAS) verification, and hardware-attested transcript binding.
+  - Multiplexes isolated channels for sync operations, blob transfer, and encrypted TCP bastion tunneling (`KindAgentTunnel`).
+- **Zephyr Agent (`zephyr_agent`)**:
+  - Multi-platform companion daemon written in Flutter (supporting Android, macOS, Linux, and Windows).
+  - Connects outbound to Zephyr Server over Link, exposing target machines behind NAT as accessible bastion jump hosts.
+  - Implements MS-RDPEFS disk redirection, exposing edge storage as a `\\tsclient` network drive inside RDP sessions.
+
+---
+
+### Protocol & Routing Capabilities
+
+| Protocol | As Target Host | Through Proxy | Through SSH Jump Host | As Jump Host |
+|---|---|---|---|---|
+| `SSH` | [Supported] | [Supported] | [Supported] | [Supported] |
+| `Telnet` | [Supported] | [Supported] | [Supported] | [No] |
+| `RDP` | [Supported] | [Supported] | [Supported] | [No] |
+| `VNC` | [Supported] | [Supported] | [Supported] | [No] |
+
+- **Chained Bastion Traversal**: Supports arbitrary multi-tier SSH jump hops. Zephyr establishes dynamic port proxies at each intermediate hop to reach isolated internal subnets.
+- **Telnet Routing**: Telnet sessions utilize `createRoutedTcpForward` to tunnel raw Telnet streams through SOCKS5/HTTP proxies and SSH bastion chains (`direct-tcpip`). Telnet targets support encrypted-at-rest in-band auto-login, but cannot serve as jump hosts themselves.
+- **RDP over Bastion Pipeline**: Browser WASM RDP client -> WebSocket -> Zephyr Node.js proxy -> SSH jump chain -> Target RDP host:3389.
+- **VNC over Bastion Pipeline**: Browser noVNC client -> WebSocket -> Zephyr VNC proxy (handles VNCAuth) -> SSH jump chain -> Target VNC host:5900.
+
+---
+
+### Deployment & Operations
+
+#### Production Docker Run
+
+Bind-mount a persistent host directory to `/app/data`. The SQLite database, encryption keypairs, session logs, and local backups are stored here.
 
 ```bash
 mkdir -p ./zephyr-data
 
 cat > ./zephyr-data/.env <<'EOF'
-ENCRYPTION_KEY=请替换为足够长的随机密钥
-PUBLIC_ORIGIN=https://ssh.example.com
+ENCRYPTION_KEY=replace-with-a-secure-random-32-byte-base64-key
+PUBLIC_ORIGIN=https://zephyr.example.com
 PORT=3000
 EOF
-
-docker pull ghcr.io/lanlan13-14/zephyr-ssh:latest
 
 docker run -d \
   --name zephyr-ssh \
@@ -138,753 +171,441 @@ docker run -d \
   ghcr.io/lanlan13-14/zephyr-ssh:latest
 ```
 
-访问：
-
-```text
-http://your-server-ip:3000
-```
-
-默认账号：
-
-```text
-用户名：admin
-密码：admin
-```
-
-首次登录后系统会要求修改默认密码。
-
-### 方式二：本地开发运行
-
-```bash
-npm install
-npm start
-```
-
-浏览器访问：
-
-```text
-http://localhost:3000
-```
-
-本地开发运行 RDP 时，需要 Go 1.26+ 编译 `rdp-wasm/` 为 WASM（`GOOS=js GOARCH=wasm go build -o public/vendor/rdp-wasm/main.wasm .`）。Docker 镜像会在构建阶段自动完成编译。
-
----
-
-## 配置说明
-
-Zephyr 会读取 `data/.env`，也可以通过 Docker `--env-file` 注入环境变量。
-
-生产环境建议提前准备：
-
-```env
-ENCRYPTION_KEY=请替换为足够长的随机密钥
-PUBLIC_ORIGIN=https://ssh.example.com
-PORT=3000
-HTTPS_PORT=3443
-# 可选：挂载自有证书；未设置时 Zephyr 会自动生成 data/https/zephyr.{key,crt}
-# HTTPS_CERT_FILE=/app/data/https/fullchain.pem
-# HTTPS_KEY_FILE=/app/data/https/privkey.pem
-```
-
-| 变量 | 说明 | 默认值 |
-| --- | --- | --- |
-| `HTTP_ENABLED` | 是否启用明文 HTTP 服务；默认禁用，建议仅调试或可信内网临时开启 | `false` |
-| `PORT` | HTTP Web 服务监听端口；仅 `HTTP_ENABLED=true` 时生效 | `3000` |
-| `HTTPS_ENABLED` | 是否启用内置 HTTPS 服务；RDP/WebCodecs 建议保持开启 | `true` |
-| `HTTPS_PORT` / `ZEPHYR_HTTPS_PORT` | 内置 HTTPS 服务监听端口；Docker 默认暴露 `3443` | `3443` |
-| `HTTPS_CERT_FILE` / `SSL_CERT_FILE` | 可选：自有 TLS 证书路径；未设置时自动生成自签证书到 `data/https/zephyr.crt` | `data/https/zephyr.crt` |
-| `HTTPS_KEY_FILE` / `SSL_KEY_FILE` | 可选：自有 TLS 私钥路径；未设置时自动生成自签私钥到 `data/https/zephyr.key` | `data/https/zephyr.key` |
-| `ZEPHYR_DATA_DIR` | SQLite、加密密钥、会话和持久配置目录；Docker 建议挂载到 `/app/data` | `./data` |
-| `TERMINAL_HISTORY_DIR` | 可选：Go Worker 的终端历史目录；Worker 与 Node 分进程/容器运行时必须指向同一共享卷 `$ZEPHYR_DATA_DIR/terminal-history` | `$ZEPHYR_DATA_DIR/terminal-history` |
-| `TERMINAL_HISTORY_SESSION_BYTES` | 每个会话单个原始 PTY journal 分段的大小 | `16777216`（16 MiB） |
-| `TERMINAL_HISTORY_SEGMENTS` | 每个会话保留的 journal 分段数 | `8` |
-| `TERMINAL_HISTORY_USER_BYTES` | 每个用户所有终端历史制品的磁盘总额度 | `536870912`（512 MiB） |
-| `TERMINAL_HISTORY_RETENTION_MS` | 终端历史保留时间 | `604800000`（7 天） |
-| `TERMINAL_HISTORY_INDEX_INTERVAL_MS` | 服务端将原始 PTY journal 增量索引成逻辑行页的周期 | `5000` |
-| `ZEPHYR_HTTPS_DIR` | 自签证书默认生成目录；也可以单独挂载为自有证书目录 | `$ZEPHYR_DATA_DIR/https` |
-| `HTTPS_CERT_CN` / `PUBLIC_HOST` | 自动自签证书的 CN；SAN 会自动包含本机局域网 IPv4、`localhost`、`127.0.0.1`，也可用 `HTTPS_CERT_ALT_NAMES` 追加 | `localhost` |
-| `ENCRYPTION_KEY` | 备份导出/导入加密密钥；只接受 32 随机字节的规范 Base64URL（43 字符）或十六进制（64 字符）编码 | 新安装首启随机生成 256 位密钥 |
-| `ZEPHYR_BACKUP_KEY_PROVENANCE` | 外部注入备份密钥时必须显式声明 `operator-attested-csprng-v1`；这是运维声明，不是随机性证明 | 内部生成时自动写入 `zephyr-generated-csprng-v1` |
-| `ZEPHYR_ALLOW_LEGACY_BACKUP_IMPORT` | 仅用于一次性尝试解封 `ZEPHYR3` 旧备份；还必须在导入表单显式填写旧备份密码，完成后立即移除 | `false` |
-| `ZEPHYR_DATA_MLKEM768_PUBLIC_KEY_B64` / `ZEPHYR_DATA_MLKEM768_SECRET_KEY_B64` | 可选：外部注入 ML-KEM-768 数据字段加密密钥对；未设置时会自动生成到 `data/crypto/ml-kem-768-keypair.json` | 自动生成 |
-| `ZEPHYR_DATA_MLKEM768_KEY_FILE` | 可选：自动生成/读取 ML-KEM-768 数据字段加密密钥文件路径 | `data/crypto/ml-kem-768-keypair.json` |
-| `PUBLIC_ORIGIN` | Passkey / WebAuthn 使用的固定站点来源，也用于同源校验和 HTTPS Cookie 判断；应与浏览器访问地址一致 | `http://localhost:3000` |
-| `TRUST_PROXY` / `ZEPHYR_TRUST_PROXY` | 是否信任反向代理传入的 `X-Forwarded-For` / `X-Forwarded-Proto`；只有 Zephyr 仅暴露在可信 Nginx/Caddy 后方时才设为 `true` | `false` |
-| `SESSION_TTL_SECONDS` | 普通登录会话服务端有效期 | `86400` |
-| `REMEMBER_SESSION_TTL_SECONDS` | “记住我”会话服务端有效期 | `2592000` |
-| `ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN` | 是否允许默认密码账号从公网 IP 登录；生产环境不要开启 | `false` |
-
-注意：
-
-- RDP GFX 的 H.264/WebCodecs、Canvas、音频播放等能力在现代浏览器中体验最好，建议通过 HTTPS 访问（内置 HTTPS 默认开启）；HTTP 或未被浏览器信任的自签证书环境可能影响 WebCodecs、剪贴板、音频自动播放等浏览器能力。
-- 使用 Passkey / WebAuthn 时，生产环境建议启用 HTTPS。
-- `PUBLIC_ORIGIN` 必须与实际访问地址一致，例如 `https://ssh.example.com`。生产环境配置为 HTTPS 后，登录 Cookie 会自动带 `Secure`。
-- Zephyr 会校验非 GET 请求的 `Origin` / `Referer` 与 `PUBLIC_ORIGIN` 同源，反代后的公开域名、协议配置不一致会导致写操作返回 403。
-- 终端历史采用分层存储：浏览器/WASM 仅保留最近 1000 行实时窗口；Node/Go Worker 将原始 PTY 字节、resize 与 close 事件写入分段 journal，Node 后台增量索引为带样式 run 的逻辑行页。滚到本地窗口顶部时，浏览器按 200 行分页加载，客户端最多缓存 2000 行。Worker 作为独立容器运行时，必须把 `TERMINAL_HISTORY_DIR` 与 Node 的 `$ZEPHYR_DATA_DIR/terminal-history` 挂到同一持久卷。
-- `ENCRYPTION_KEY` 用于加密备份文件，必须是 32 随机字节的规范编码，普通文本口令、可识别重复值和公开默认口令摘要会被拒绝。外部密钥还必须设置 `ZEPHYR_BACKUP_KEY_PROVENANCE=operator-attested-csprng-v1`；应用无法仅凭 32 字节样本验证其随机来源。新导出使用每归档随机盐的 scrypt 派生密钥和 AES-256-GCM。`ZEPHYR3` 外层兼容默认禁用，只能通过一次性开关和显式旧备份密码尝试迁移；解密后仍必须通过当前版本化 manifest 校验。
-- Zephyr 首次启动会生成 ML-KEM-768 数据字段加密密钥对，默认保存在 `data/crypto/ml-kem-768-keypair.json`。数据库内的敏感字段会使用该密钥派生的混合加密方案落盘；迁移、备份或恢复时必须同时保留该密钥文件，或通过 `ZEPHYR_DATA_MLKEM768_PUBLIC_KEY_B64` / `ZEPHYR_DATA_MLKEM768_SECRET_KEY_B64` 外部注入同一密钥对。使用默认文件密钥时，后台导出的 `.zip.enc` 备份会把该密钥文件一起放入 `ENCRYPTION_KEY` 加密包中，便于跨机器恢复。
-- 程序首次启动如果发现 `data/.env` 不存在且未外部注入 `ENCRYPTION_KEY`，会原子创建配置文件并生成 256 位随机密钥；POSIX 必须验证为 `0600`，Windows 会锁定并验证数据目录和 `.env` 的 owner、文件身份与服务专属 DACL，再从同一文件句柄读取。已有的缺失、过短、弱密钥或公开默认值不会自动迁移；必须由管理员显式轮换，否则导入/导出会拒绝执行。详见 `docs/BACKUP_ENCRYPTION.md`。
-
----
-
-## AI 助理智能体
-
-Zephyr 内置可选 AI Agent 能力，默认关闭。登录后台后进入 **设置 → AI 助理** 可启用：
-
-- **多模型供应商**：支持 OpenAI 兼容接口、Anthropic Claude；可配置自定义 API Base URL、API Key、模型列表、默认模型、上下文窗口/最大输入长度、逐模型请求 User-Agent、额外请求头和常见模型参数（temperature、top_p、max_tokens/max_output_tokens、presence/frequency penalty、reasoning_effort、额外 JSON 参数等）。逐模型 User-Agent 以 `模型名=User-Agent` 形式配置，只对聊天/生成请求中精确匹配的模型生效；未配置的模型保持默认请求头。`auto` 默认按 Chat Completions 兼容路径发送，只有明确选择 Responses API 或 Base URL 以 `/responses` 结尾时才使用 Responses；`previous_response_id` 默认关闭，避免兼容网关报错。高轮次对话会自动做上下文压缩：早期轮次合并为摘要注入系统提示，最近消息保持原文，避免请求体随轮次线性膨胀导致响应变慢、超时或上游模型报错；这不是限制对话轮次。Zephyr 内置默认系统提示词，约束 AI 按当前连接、标签、备注、Memory、计划器和敏感确认流程工作。
-- **Provider 所有权与共享**：每个 Provider 绑定创建者，可独立共享给所有管理员、所有用户，或指定一个/多个用户；共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。
-- **独立入口与浮窗**：启用后顶部 AI 按钮会打开类似 SSH 文件/监控面板的浮窗；桌面端支持拖拽、缩放和布局，移动端优化为稳定的全屏/近全屏面板，保留顶部整条标题栏拖动、横向对话切换和内部滚动，避免浮窗导致页面无法滑动或画面消失。
-- **工具权限与透明过程**：可单独开关网页搜索、网页正文读取、内置 Chromium 浏览器自动化、远程执行、远程文件读取、远程文件写入、代码编辑/补全、长期 Memory 和 AI 环境变量。AI 还能列出/新增/修改/删除连接、代理、SSH 密钥库、跳板机和代码片段，测试 SSH/RDP/VNC 连通性，读取当前 SSH 终端屏幕/scrollback 输出，读取 RDP/VNC 远程桌面画面快照，并通过 `ui_action` 在当前 Zephyr 页面可见地切换视图、打开连接弹窗、排列终端窗口、点击 SSH 终端工具栏，或直接调整 RDP/VNC 工具栏（画质、视图/适应、缩放、剪贴板、软键盘、快捷键、视区/拖拽、Ctrl+Alt+Del、重连/断开、发送文本/快捷键/坐标点击）。AI 每次工具调用会在聊天中生成独立过程卡片，展示工具、参数摘要、耗时、结果摘要和可展开的完整参数/结果；敏感字段仍会打码。RDP/VNC 画面截图在支持视觉输入的模型供应商上会以多模态图片传给模型（Anthropic/OpenAI 均支持）。
-- **笔记工具权限**：笔记读取与笔记创建/修改/删除分别控制；用户关闭自己的笔记功能后，AI 不会获得该用户的笔记工具。
-- **内置 Chromium 浏览器自动化**：Docker 运行镜像内置 `chromium`，AI 可通过 CDP 执行页面导航、截图、点击、输入、滚动和正文读取；每次浏览器工具调用会返回 `/api/ai/browser/screenshots/...` 预览，AI 浮窗会把截图直接嵌入聊天流和顶部浏览器预览区。默认每个 Zephyr 进程使用独立运行 profile（`data/ai-browser/profile/runtime-<host>-<pid>`），避免容器重启、滚动更新或旧 Chromium 残留时触发 `profile appears to be in use` 锁冲突；如确实要多个进程共用同一个 profile，可设置 `AI_CHROMIUM_PROFILE_SHARED=true`，但不推荐。
-- **长期 Memory / 项目记忆**：可在设置页维护项目约定、服务器规则、用户偏好，也可由 AI 通过 `memory_save` 工具写入、`memory_search` 工具检索；Memory 支持按 SSH 连接 ID、项目/Scope、标签自动关联和排序，而不是只靠全文搜索。
-- **任务规划器**：AI 可用 `plan_task` 为复杂任务生成步骤、风险和状态，设置页会展示最近计划；后续可通过 `plan_update` 更新步骤状态、暂停/继续计划、标记失败并重试失败步骤，也可通过设置页按钮或 `plan_delete` 删除计划。
-- **AI 专用环境变量**：可在设置页保存加密变量，AI 默认只看到变量名；读取值必须调用 `get_env_var`，并触发敏感操作确认或自动确认延迟。
-- **敏感操作确认**：远程执行、远程写文件、读取 AI 环境变量默认需要用户在 AI 浮窗内手动确认；也可在设置中开启自动确认并设置延迟。
-- **Skills**：可在设置页添加/启用多个 Skill，把工作流、角色设定、工具使用规则和专用提示词注入 AI 上下文；Zephyr 会默认内置一个本地运维 Skill，让模型优先理解连接资产、当前终端上下文、远程文件/命令、Memory 和敏感确认流程。
-- **编辑器 AI 补全**：SSH 文件管理器的代码编辑器支持 `Ctrl/⌘ + Shift + Space`、命令面板“AI 代码补全”、顶部“AI补全”按钮和移动端工具栏 `AI` 按钮。
-- **性能监控基线**：服务端会记录最近 AI 请求的总耗时、模型供应商耗时、工具耗时、工具调用数量、上下文压缩条数等内存样本，可通过登录后的 `GET /api/ai/metrics` 查看。该接口用于压测和线上排障，不返回 API Key、环境变量值、密码、私钥等敏感内容。
-
-API Key、AI 环境变量等密钥会作为设置敏感字段使用 ML-KEM-768 + AES-256-GCM 混合加密后保存；前端读取设置时只返回 `******` 占位。需要再次查看 AI Provider API Key 时，可在模型供应商列表点击“查看 Key”，流程复用已保存密码查看逻辑：开启 TOTP 时输入动态验证码，否则输入当前登录密码。
-
-### Skill 怎么写
-
-Skill 不是插件代码，而是一段会被注入 AI 上下文的“操作规程 / 工具说明书”。适合把固定工作流、项目约定、服务器规则、工具调用顺序写清楚，让模型少猜、少摸索。
-
-建议一个 Skill 按下面结构写：
-
-```md
-# Skill 名称
-
-## 适用场景
-- 用户提到哪些关键词/任务时使用这个 Skill。
-- 不适用什么场景，避免模型误用。
-
-## 必须先确认的上下文
-- 当前连接 / 项目 / 标签怎么选。
-- 需要先调用哪些只读工具，例如 list_connections、list_zephyr_resources、memory_search、remote_read_file。
-
-## 工具调用流程
-1. 第一步调用什么工具，拿什么字段。
-2. 第二步如何根据结果分支。
-3. 修改类操作用哪些工具，哪些操作必须等待敏感确认。
-
-## 安全规则
-- 不复述密码、私钥、Token。
-- 删除 / 重启 / 写文件 / 执行命令前说明对象和风险。
-- 远程命令避免 top、vim、less、tail -f、watch 等交互/无界命令。
-
-## 输出格式
-- 已执行：列动作和结果。
-- 需要确认：列目标、命令/文件、风险。
-- 失败：列证据、原因、下一步。
-```
-
-Zephyr 自带的默认 Skill 已经写入了本地运维常用规则，重点包括：
-
-- **连接选择**：先 `list_connections` / `list_zephyr_resources`，按名称、Host、标签、备注匹配，不让用户手动复制 ID。
-- **本地资源管理**：连接用 `connection_create/update/delete/test`，代理用 `proxy_save/delete`，SSH 密钥用 `ssh_key_save/delete`，跳板机用 `jump_host_save/delete`，代码片段用 `snippet_save/delete`。
-- **当前页面 UI 代操作**：Zephyr 自身页面不要再用浏览器 DOM 自动化摸索，优先用 `ui_action`；打开 SSH/RDP/VNC 会话优先用 `open_connection`；RDP/VNC 画质、视图、缩放、剪贴板、软键盘、快捷键、Ctrl+Alt+Del、重连/断开和坐标点击也走 `ui_action` 的远程桌面动作。
-- **终端操作**：后台批量命令优先 `remote_execute`；读取当前 SSH 终端屏幕/scrollback 输出用 `terminal_read_output`，也会自动带入当前终端输出快照；如果用户明确要“在当前终端可见输入”，才用 `ui_action({ action:'terminal_send_input', run:false/true })`，其中 `run:true` 会触发敏感确认。
-- **远程运维**：RDP/VNC 只能打开会话或测试连通性，不能当 SSH 执行命令；SSH 修改前尽量备份，修改后验证。
-- **Memory**：长期记忆要带 `connectionIds`、`project/scope`、`tags`，不要只写一段散文。
-
-一个面向具体项目的 Skill 示例：
-
-```md
-# Zephyr 项目部署 Skill
-
-## 适用场景
-用户提到“部署 Zephyr / 更新 Zephyr / 检查 Zephyr 服务”时使用。
-
-## 上下文选择
-- 先 list_connections，优先选择 tags 包含 zephyr、prod、server 的 SSH 连接。
-- 再 memory_search，query 使用 zephyr deploy，connectionIds 使用当前连接。
-
-## 流程
-1. 用 remote_execute 查看当前目录、git 分支、服务管理方式：pwd; git status --short; docker ps; systemctl status zephyr --no-pager。
-2. 如果要改代码，先确认分支和未提交内容；不要直接覆盖用户改动。
-3. 部署前创建计划 plan_task，列出 pull/build/restart/verify。
-4. 重启或写文件属于敏感操作，等待用户确认。
-5. 完成后用 curl / health check / docker logs --tail 80 验证。
-
-## 输出
-- 先说当前版本、目标版本、服务状态。
-- 再列已执行命令和验证结果。
-- 失败时给下一步，不要重复盲跑。
-```
-
-写 Skill 时尽量写“何时用、先查什么、调用哪个工具、失败怎么处理”，少写抽象人格描述。不要把 API Key、密码、私钥直接写进 Skill；密钥应放在 AI 环境变量或连接/密钥库里，由工具按敏感确认流程读取。
-
----
-
-## RDP / VNC / noVNC
-
-RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zephyr：
-
-- **RDP**：使用浏览器端 **Go WASM (grdp)** 协议栈。NLA/CredSSP、RDPGFX/RemoteFX Progressive、CLIPRDR、RDPSND、RDPDR、RDPECAM、RDPEL 和 AUDIN 均在浏览器执行；服务端只提供带双向背压的 WebSocket→TCP 代理（`/rdp-proxy`）。
-  - **架构**：`rdp-wasm/` 编译为 `main.wasm`。默认 `worker-gpu-v2` 将 Go WASM、WebSocket、WebCodecs 和 OffscreenCanvas WebGL2 compositor 移入 Dedicated Worker；完整 compositor probe 失败时使用页面线程 `gpu-v2-page`，页面继续负责 DOM、输入、IME 和权限 API。
-  - **图形渲染**：两条管线共用按 `surfaceId/frameId` 建立的 WebGL2 texture/FBO 图；classic bitmap 也适配到统一 desktop surface。bitmap 使用 WASM linear-memory 同步上传与 GPU BGRA→RGBA，AVC420 使用 WebCodecs，AVC444/AVC444v2 处理 LC 与双流后按 BT.709 reference 规则重建。旧 Canvas2D、raw-H264 和单纹理 WebGL 管线已删除。
-  - **可靠性**：浏览器接收队列、Node WebSocket→TCP 与 TCP→WebSocket 均使用高/低水位和硬上限；协议字节与 FRAME_ACK 不允许静默丢弃。实验管线失败会明确断开并报告 reason code，不继续运行已损坏的流。
-  - **每连接设置**：每个 RDP 连接可独立配置分辨率（PPI 档位：1080p/2K/4K/8K/自动）、画质（平衡/性能/画质）、帧率（30/45/60/120/144 FPS）；默认平衡+1080p+30FPS。分辨率档位按屏幕容器实际宽高比计算远程分辨率（不是固定 16:9），适应模式零黑边。
-  - **文件传输**：上传文件到远程（CLIPRDR FileGroupDescriptorW + FileContents 协议，Windows 右键粘贴触发按需拉取）、从远程下载文件（异步 4MB 分块 FILECONTENTS_RANGE）、RDPDR 虚拟驱动器（`\\tsclient\WEBRDP`）。
-  - **跨标签文件桥接**：SSH ↔ RDP 双向文件传输通过服务端临时文件中转（`/api/clipboard/upload` + `/api/clipboard/download/:token`，流式传输，无大小限制）；复制时只发元数据，粘贴时才拉取真实数据。
-  - **剪贴板**：文本剪贴板双向同步（CF_UNICODETEXT）；文件剪贴板支持 Windows 复制文件→浏览器下载、浏览器上传→Windows 粘贴。
-  - **移动端**：软键盘支持退格/删除/回车 + IME 中文输入；支持直接触控/相对触控板、pen、三指快捷键和双指上下/左右惯性滚动。缩放横条是 viewport zoom 唯一入口，不提供 pinch zoom 或本地触控圆环。
-  - **连接稳定性**：12 秒连接看门狗、300ms 断开间隔防竞态、AudioContext 复用、重连互斥锁防循环。
-  - **壁纸与动效**：平衡+画质模式启用壁纸和桌面动效（清除 PERF_DISABLE_WALLPAPER/FULLWINDOWDRAG/MENUANIMATIONS/THEMING），仅性能模式禁用。
-- **VNC**：使用内置 **noVNC** 前端，浏览器通过 `/novnc` WebSocket 连接 Zephyr；Zephyr 在服务端直连/代理/SSH 跳板到目标 VNC Server，并在服务端使用保存的 VNC 密码完成 VNCAuth，密码不会下发到浏览器。
-
-### Docker 镜像内置运行依赖
-
-项目 Docker 镜像运行层基于 Alpine，已包含：
-
-- Node.js 运行时
-- Go WASM RDP 客户端（`main.wasm`，Dockerfile 构建阶段用 `golang:1.26-alpine` 从 `rdp-wasm/` 源码编译）
-- noVNC 前端依赖
-
-RDP 不需要服务端 native 组件（无 FreeRDP、无 Python bridge、无 libwebp/FFmpeg/Opus 依赖）。所有 RDP 协议处理在浏览器 WASM 中完成。
-
-### RDP 相关说明
-
-| 项目 | 说明 |
-| --- | --- |
-| RDP 协议栈 | 纯 Go WASM (grdp fork)，浏览器端运行 |
-| 服务端代理 | Node.js `/rdp-proxy` WebSocket→TCP 代理 |
-| 图形渲染 | 默认 Worker OffscreenCanvas WebGL2；页面线程 WebGL2 作为能力回退；AVC420/AVC444 WebCodecs |
-| 剪贴板 | MS-RDPECLIP (CLIPRDR) 文本 + 文件双向 |
-| 音频 | RDPSND PCM → Web Audio API |
-| 虚拟驱动器 | MS-RDPEFS (RDPDR) `\\tsclient\WEBRDP` |
-| 分辨率模型 | PPI 档位（1080p/2K/4K/8K），宽高比跟随屏幕 |
-| 跨标签文件中转 | `/api/clipboard/upload` + `/api/clipboard/download/:token` 流式 |
-
-### 默认端口
-
-| 协议 | 默认端口 | 说明 |
-| --- | --- | --- |
-| `SSH` | `22` | WebSSH 终端 |
-| `RDP` | `3389` | Windows 远程桌面，经浏览器 Go WASM grdp + Zephyr `/rdp-proxy` WebSocket→TCP 代理 |
-| `VNC` | `5900` | VNC Server，经 noVNC + Zephyr `/novnc` 代理 |
-
-### RDP/VNC 使用跳板
-
-RDP/VNC 本身不是 SSH 协议，也不能作为 SSH 跳板机；但 Zephyr 支持通过 SSH 跳板链路访问 RDP/VNC 目标端口。
-
-配置方式：
-
-1. 先创建一个 SSH 连接，作为跳板机。
-2. 在“网络 / 跳板机”中创建跳板机配置，并选择该 SSH 连接。
-3. 创建或编辑 RDP/VNC 连接。
-4. 在高级路由中选择“跳板机”，选择刚才创建的 SSH 跳板机。
-5. 保存并测试连接。
-
-限制说明：
-
-- 跳板机候选项只会显示 SSH 连接。
-- RDP/VNC 不能被选为跳板机。
-- RDP/VNC 可以作为最终目标，通过 SSH 跳板访问。
-- 多级跳板中的每一级都必须是 SSH 连接。
-
-### 常见排查
-
-RDP：
-
-- Windows 是否已开启“远程桌面”。
-- Windows 防火墙或云安全组是否允许访问 `3389`。
-- 账号是否允许远程桌面登录。
-- 如果使用自签名证书，Zephyr 默认设置 `ignore-cert=true`。
-
-VNC：
-
-- 目标主机是否已启动 VNC Server。
-- VNC 端口是否为 `5900` 或配置中的自定义端口。
-- VNC 密码是否正确。
-- Zephyr noVNC 代理当前支持标准 VNC `None` / `VNCAuth` 安全类型；RealVNC/VeNCrypt/RA2 等专有安全类型可能需要在 VNC Server 侧切换兼容模式。
-- 防火墙或安全组是否允许 Zephyr 服务端访问对应端口。
-
-服务端日志关键字：
-
-```text
-[rdp-wasm]
-[rdp-proxy]
-[cliprdr]
-[rdpefs]
-[novnc-ws]
-[novnc-test]
-[tcp-forward]
-[route-plan]
-```
-
----
-
-## Zephyr Agent 文件磁盘映射
-
-Zephyr Agent 是独立于 Web 服务端的跨平台 Flutter 应用，用于把运行 Agent 的设备文件系统映射到当前 WebRDP 会话中。它不是 RDP 客户端，也不是简单上传/下载工具；它的定位是 **RDP drive redirection 文件系统代理**。
-
-链路：
-
-```text
-Windows RDP 会话
-  -> \\tsclient\AgentDrive
-  -> 浏览器 Go WASM RDPEFS/RDPDR
-  -> Zephyr 主端 /api/rdp/file-agents RPC
-  -> Zephyr Agent WebSocket
-  -> 本机文件 provider（桌面 dart:io / Android SAF 或 All files access）
-```
-
-### 能力
-
-- **多设备映射**：多个 Agent 可同时在线，每个 Agent 可映射为一个独立 `\\tsclient\<设备名>` 磁盘。
-- **热插拔**：RDP 会话运行中 Agent 上线/下线后，可动态 attach/detach 对应 drive。
-- **文件系统 RPC**：支持 `list/stat/open/read/write/close/mkdir/delete/rename/truncate`。
-- **读写控制**：Agent 可切换只读 / 读写；只读模式会拒绝写入、删除、重命名等操作。
-- **自动关闭共享**：默认 10 分钟自动关闭，可在 Agent 内延长。
-- **连接信息保存**：主端地址、token、设备名、共享位置、权限和主题会保存在本机，下次打开自动恢复。
-- **Zephyr 主题一致**：Agent 使用 Zephyr 的 Frost / Lava / Asagi / Cyber 配色，并跟随系统自动切换深色/浅色。
-
-### 平台行为
-
-| 平台 | 默认映射 | 说明 |
-| --- | --- | --- |
-| Windows Agent | `C:\` | 默认映射系统盘，可改成任意本机路径 |
-| macOS Agent | `/` | 默认映射根目录，受 macOS 文件/隐私权限限制 |
-| Linux Agent | `/` | 默认映射根目录，实际可读写范围取决于当前用户权限 |
-| Android Agent | `/storage/emulated/0` | 默认请求 Android `MANAGE_EXTERNAL_STORAGE`（所有文件访问权限）；未授权时会打开系统授权页，也可降级到 SAF 授权目录 |
-| iOS Agent | 用户授权目录 | iOS 沙盒限制下不能无授权扫描全盘，需要用户选择/授权目录 |
-
-> Android 的“全目录”不是 root 全盘。它对应文件管理器常用的 `MANAGE_EXTERNAL_STORAGE`，可访问共享外部存储（如 `/storage/emulated/0`），但不能读取其他 App 私有目录（如 `/data/data/其他App`）。若要 root 级访问，需要设备 root/Shizuku/系统权限。
-
-### 安装包与 Release
-
-Zephyr Agent 由独立 GitHub Actions workflow 构建，发布 tag 形如 `agent-v1.0.12`。Release 会生成：
-
-- Android：`.apk`、`.aab`
-- Windows：安装包 `.exe`、便携版 `.zip`
-- Linux：`.tar.gz`
-- macOS：`.dmg`、`.zip`
-- iOS：unsigned `.ipa`、`.zip`
-
-Agent Release 会像服务端 Docker Release 一样生成更新日志；Agent tag 使用 `agent-*` 前缀，避免和服务端镜像 `v*` tag 混在一起。
-
-**不用再在 `v*` 与 `agent-v*` 发布页来回切：**
-
-1. 每次构建 Zephyr Docker 镜像时，CI / Dockerfile 会解析最新的 `agent-v*` Release，写入 `public/agent-release.json`。
-2. 服务端把该元数据注入设置接口；Web 端「设置 → 关于」和「设置 → Zephyr Agent」自动显示「下载 Zephyr Agent vX.Y.Z」直达链接。
-3. Agent App 底部居中灰色小字显示编译期版本（`agent-v1.0.12` → `v1.0.12`）。
-
-Agent 构建产物不会被打进 Zephyr 服务端 Docker 镜像；`.dockerignore` 已排除 `zephyr_agent/`。
-
----
-
-## Docker Compose 部署
-
-Docker Compose 适合长期部署和后续升级维护。下面示例使用官方镜像，并把运行数据持久化到宿主机 `./zephyr-data` 目录。
-
-### 1. 准备数据目录和环境变量
-
-```bash
-mkdir -p ./zephyr-data
-
-cat > ./zephyr-data/.env <<'EOF'
-ENCRYPTION_KEY=请替换为足够长的随机密钥
-PUBLIC_ORIGIN=https://ssh.example.com
-PORT=3000
-EOF
-```
-
-配置说明：
-
-- `ENCRYPTION_KEY`：生产环境必须改成强随机字符串，用于加密备份文件。
-- `PUBLIC_ORIGIN`：必须改成用户实际访问地址；如果通过域名和 HTTPS 访问，应填写 `https://你的域名`。
-- `PORT`：容器内 Web 服务监听端口，通常保持 `3000`。
-
-使用自有 TLS 证书时，可在 `.env` 中设置：
-
-```bash
-HTTPS_CERT_FILE=/certs/fullchain.pem
-HTTPS_KEY_FILE=/certs/privkey.pem
-ZEPHYR_HTTPS_DIR=/certs
-```
-
-并在 `compose.yaml` 的 `volumes` 中追加只读证书目录：
+Access the application at `http://your-server-ip:3000`.  
+Default Administrative Credentials:
+- **Username**: `admin`
+- **Password**: `admin` (Mandatory password change enforced upon initial login).
+
+#### Docker Compose
 
 ```yaml
-      - /etc/letsencrypt/live/ssh.example.com:/certs:ro
-```
+version: '3.8'
 
-### 2. 创建 compose.yaml
-
-在部署目录创建 `compose.yaml`：
-
-```yaml
 services:
-  zephyr-ssh:
+  zephyr:
     image: ghcr.io/lanlan13-14/zephyr-ssh:latest
-    container_name: zephyr-ssh
+    container_name: zephyr
     restart: unless-stopped
-    env_file:
-      - ./zephyr-data/.env
     ports:
       - "3000:3000"
     volumes:
       - ./zephyr-data:/app/data
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    environment:
+      - PORT=3000
+      - PUBLIC_ORIGIN=https://zephyr.example.com
+      - ENCRYPTION_KEY=replace-with-a-secure-random-32-byte-base64-key
 ```
 
-> Docker 镜像已内置 Go WASM RDP 客户端和 noVNC 前端依赖；RDP 协议处理完全在浏览器端完成，服务端只提供 WebSocket→TCP 代理；VNC 走 noVNC + Zephyr `/novnc` 代理，不需要额外启动远程桌面网关容器。
+#### Environment Configuration Table
 
-### 3. 启动服务
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | HTTP/WebSocket listening port | `3000` |
+| `PUBLIC_ORIGIN` | Public canonical origin URL (required for WebAuthn RP verification) | Mandatory in production |
+| `ENCRYPTION_KEY` | High-entropy 32-byte random key for credential envelope encryption | Mandatory |
+| `ZEPHYR_DATA_DIR` | Directory path for persistent storage | `/app/data` |
+| `ZEPHYR_AI_LISTEN` | Loopback address for the internal Go AI daemon | `127.0.0.1:8450` |
+| `ZEPHYR_AI_URL` | Upstream URL for Node to reach the Go AI runtime | `http://127.0.0.1:8450` |
+| `HTTPS_CERT_FILE` | Absolute path to custom PEM certificate file (optional) | Empty |
+| `HTTPS_KEY_FILE` | Absolute path to custom PEM private key file (optional) | Empty |
+
+#### Data Persistence & Upgrades
+
+To upgrade the Docker container while preserving all configurations, keys, and session records:
 
 ```bash
-docker compose up -d
-```
-
-查看容器状态：
-
-```bash
-docker compose ps
-```
-
-查看日志：
-
-```bash
-docker compose logs -f zephyr-ssh
-```
-
-访问：
-
-```text
-http://your-server-ip:3000
-```
-
-默认账号：
-
-```text
-用户名：admin
-密码：admin
-```
-
-首次登录后系统会要求修改默认密码。
-
-### 4. 停止、重启和删除容器
-
-停止服务：
-
-```bash
-docker compose stop
-```
-
-重启服务：
-
-```bash
-docker compose restart
-```
-
-删除容器但保留数据：
-
-```bash
-docker compose down
-```
-
-`./zephyr-data` 中的数据不会因为 `docker compose down` 被删除。不要删除该目录，否则会丢失数据库、配置和备份文件。
-
-### 5. 升级镜像
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-升级前建议先在后台导出加密备份，或备份整个 `./zephyr-data` 目录。
-
-### 6. 使用 HTTPS 反向代理
-
-如果通过 Nginx、Caddy、Traefik 等反向代理提供 HTTPS 访问：
-
-1. `PUBLIC_ORIGIN` 应设置为最终浏览器访问地址，例如 `https://ssh.example.com`。
-2. 反向代理必须支持 WebSocket 转发，否则 SSH 终端、RDP/VNC 远程桌面等实时连接会异常。
-3. 如果需要导入较大的备份文件或上传较大数据，反向代理需要放宽请求体大小限制。
-4. Passkey / WebAuthn 建议在 HTTPS 环境下使用。
-
-Nginx 代理关键配置示例：
-
-```nginx
-# 放在 http/server/location 块均可，按实际 Nginx 配置结构调整。
-# 如果需要更大的上传限制，可以继续调高，例如 1g。
-client_max_body_size 512m;
-
-location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-
-    # 保留真实访问来源和协议，便于 PUBLIC_ORIGIN、审计日志和安全策略正确工作。
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-    # 必须转发 WebSocket Upgrade 头。
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-
-    # 长连接场景建议调大超时时间，避免 SSH/RDP/VNC 会话被反向代理提前断开。
-    proxy_read_timeout 3600s;
-    proxy_send_timeout 3600s;
-}
-```
-
-### 7. 使用命名卷部署（可选）
-
-如果不想把数据目录放在当前部署目录，也可以使用 Docker 命名卷：
-
-```yaml
-services:
-  zephyr-ssh:
-    image: ghcr.io/lanlan13-14/zephyr-ssh:latest
-    container_name: zephyr-ssh
-    restart: unless-stopped
-    env_file:
-      - ./zephyr-data/.env
-    ports:
-      - "3000:3000"
-    volumes:
-      - zephyr-ssh-data:/app/data
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-volumes:
-  zephyr-ssh-data:
-```
-
-检查数据卷：
-
-```bash
-docker volume inspect zephyr-ssh-data
+docker pull ghcr.io/lanlan13-14/zephyr-ssh:latest
+docker stop zephyr-ssh
+docker rm zephyr-ssh
+# Re-run docker run with the existing host volume: -v "$(pwd)/zephyr-data:/app/data"
 ```
 
 ---
 
-## Docker 自行构建
+### Building from Source
+
+#### Prerequisites
+- Node.js >= 20.x, npm >= 10.x
+- Go >= 1.26
+- Build essentials (make, gcc / clang)
+- Bubblewrap, ImageMagick, Chromium (for headless browser automation)
+
+#### Compilation Steps
+
+```bash
+# 1. Install Node dependencies
+npm ci
+
+# 2. Build RDP client Go WASM
+cd rdp-wasm
+go mod tidy
+GOOS=js GOARCH=wasm go build -o ../public/vendor/rdp-wasm/main.wasm .
+cd ..
+
+# 3. Build terminal and editor bundles
+npm run build:terminal
+npm run build:editor
+
+# 4. Compile Go AI runtime and Link transport binaries
+cd zephyr-ai && go build -o /usr/local/bin/zephyr-ai ./cmd/zephyr-ai && cd ..
+cd zephyr-link && go build -o /usr/local/bin/zephyr-link-server ./cmd/zephyr-link-server && cd ..
+
+# 5. Launch service
+npm start
+```
+
+---
+
+### Repository Layout
+
+```text
+.
++-- server.js               # Node.js service entry & HTTP/WS reverse proxy
++-- ai-*.js                 # Node-side AI orchestration, tools, and session bridge
++-- link-v2-*.js            # Zephyr Link transport proxies, enrollment, and ZSL/2 bridge
++-- mobile-v1-*.js          # Mobile sync routes, blob manager, and crypto entity handlers
++-- public/                 # Static web assets, themes, and client scripts
+|   +-- app.html / app.js   # Main operations workbench SPA
+|   +-- terminal.*          # DOM-rendered WebSSH terminal surface (@wterm/dom)
+|   +-- rdp.*               # WebCodecs + WebGL2 WASM RDP display surface
+|   +-- vendor/             # Vendored frontend modules (wterm, xterm, monaco)
++-- zephyr-ai/              # Go AI Agent loop, MCP tools, and SSE execution server
++-- zephyr-cell/            # Go Linux sandbox execution framework (bwrap/direct)
++-- zephyr-link/            # Go ZSL/2 protocol core, hybrid KEM, and tunnel hub
++-- zephyr-worker/          # Go PTY session supervisor and stream distributor
++-- zephyr_one/             # Client applications
+|   +-- electron/           # Desktop One Electron main process and window lifecycle
+|   +-- src/                # Desktop One frontend UI (Vite + Vue/Vanilla)
+|   +-- mobile/android/     # Android One (Kotlin, Jetpack Compose, AGSL)
+|   +-- mobile/ios/         # iOS One (Swift, SwiftUI, Keychain)
++-- zephyr_agent/           # Edge host daemon for disk mapping and bastion hops (Flutter)
++-- rdp-wasm/               # Go WASM RDP client source and patched grdp engine
++-- Dockerfile              # Multi-stage production container build
+```
+
+---
+
+### Security Best Practices
+
+1. **Immediate Credential Reset**: Change default administrative passwords on initial launch.
+2. **Master Key Backup**: Safely backup `data/crypto/ml-kem-768-keypair.json`. Without this file, encrypted credentials and private keys cannot be decrypted.
+3. **Hardened Reverse Proxy**: Always run Zephyr behind an HTTPS reverse proxy (Caddy, Nginx, or Cloudflare) enforcing TLS 1.3.
+4. **Access Control Filtering**: Restrict management endpoints using the built-in IP whitelist.
+5. **Deterministic Dependencies**: Lock `package-lock.json` and `go.sum` to prevent upstream dependency hijacking.
+
+---
+
+### Sponsorship & Upstream Credits
+
+We express sincere gratitude to **[LightCone](https://www.lightcone.hk/)** for sponsoring this project.
+
+Special recognition to upstream libraries and foundational projects:
+- [wterm](https://github.com/vercel-labs/wterm)
+- [ssh2](https://github.com/mscdex/ssh2)
+- [SimpleWebAuthn](https://simplewebauthn.dev/)
+- [better-sqlite3](https://github.com/WiseLibs/better-sqlite3)
+
+---
+
+### License
+
+Zephyr is released under the **GNU General Public License v3.0** ([GPL-3.0](LICENSE)).
+
+---
+
+<a name="chinese"></a>
+## 中文
+
+### 项目现状与多端推进声明
+
+> **实现完成度重要说明**：  
+> Zephyr 生态体系中的多个底层模块（特别是跨平台沙箱执行引擎、AI 运维隔离层、以及移动端原生客户端绑定）目前仍处于早期演进与部分未完成状态。  
+> 受限于开发者个人精力的客观限制，全端特性的同步推进与交付速度相对平缓。  
+> 但项目的核心架构目标始终坚决贯彻：在网页端、桌面端与移动端形态中，追求功能能力、安全基准与交互逻辑的深度统一。
+
+---
+
+### 目录
+
+- [系统总体架构](#系统总体架构)
+- [生态组件划分](#生态组件划分)
+  - [Zephyr Server（主控端与数据面）](#zephyr-server主控端与数据面)
+  - [Zephyr One（桌面端与移动端）](#zephyr-one桌面端与移动端)
+  - [Zephyr AI 与 Zephyr Cell（智能体与沙箱）](#zephyr-ai-与-zephyr-cell智能体与沙箱)
+  - [Zephyr Link 与 Zephyr Agent（传输层与边缘跳板）](#zephyr-link-与-zephyr-agent传输层与边缘跳板)
+- [协议与动态路由矩阵](#协议与动态路由矩阵)
+- [快速开始与生产部署](#快速开始与生产部署)
+  - [Docker 标准运行](#docker-标准运行)
+  - [Docker Compose 部署](#docker-compose-部署)
+  - [环境参数配置表](#环境参数配置表)
+  - [持久化存储与镜像更新](#持久化存储与镜像更新)
+- [从源码构建](#从源码构建)
+- [代码仓库目录结构](#代码仓库目录结构)
+- [安全合规建议](#安全合规建议)
+- [赞助商与致谢](#赞助商与致谢)
+- [开源许可证](#开源许可证)
+
+---
+
+### 系统总体架构
+
+Zephyr 采用控制面与数据面解耦的分层设计，保障运维指令、图形界面和跳板数据流的高效流通：
+
+```text
++-----------------------------------------------------------------------+
+|                           Zephyr One 客户端                           |
+|  - 桌面端 (Electron + 本地 Node 核心 + 内置 node:sqlite 钉死在回环)    |
+|  - 安卓端 (Kotlin 原生 + Jetpack Compose + Room + Keystore 硬件密钥)   |
+|  - iOS 端 (Swift 原生 + SwiftUI + Keychain 凭据安全存储 + SQLiteSync)  |
++-----------------------------------------------------------------------+
+                                    |
+                                    | (HTTPS / WSS / ZSL-2 应用层加密通道)
+                                    v
++-----------------------------------------------------------------------+
+|                       Zephyr Server (主端服务)                        |
+|  +-- Node.js 控制面 (用户鉴权、ACL、笔记、元数据、WebDAV 备份)         |
+|  +-- zephyr-worker (持久 PTY 监管进程、增量流分发、RFC Telnet 状态机)  |
+|  +-- zephyr-link-server (Go ZSL/2 密码学协议核心与隧道 Hub)            |
+|  +-- zephyr-ai (Go 语言流式 SSE Agent Loop、工具分发与推演引擎)        |
++-----------------------------------------------------------------------+
+            |                                               |
+            | (直接拨号 / 多级 SSH 级联)                     | (密封流式信道)
+            v                                               v
++-----------------------+                       +-----------------------+
+| 目标运维基础设施      |                       |     Zephyr Agent      |
+|  - SSH 服务器         |                       |  - Flutter 守护进程   |
+|  - Telnet 主机        |                       |  - 反向跳板穿透       |
+|  - RDP / VNC 图形桌面 |                       |  - TSCLIENT 虚拟磁盘  |
++-----------------------+                       +-----------------------+
+```
+
+---
+
+### 生态组件划分
+
+#### Zephyr Server（主控端与数据面）
+- **Node.js 核心**：负责 HTTP/WebSocket 请求分发、用户身份认证、细粒度 ACL 访问控制、基于 SQLite 的数据持久化迁移、WebDAV 加密备份同步以及 Web 静态资源托管。
+- **持久 PTY 监管服务（`zephyr-worker`）**：独立的 Go 语言守护进程，管理交互式 PTY 的完整生命周期，维护环形缓冲区历史输出缓存，处理 RFC 标准的 IAC/NAWS/TTYPE Telnet 状态协商，并执行 WebSocket 数据分发。终端进程脱离浏览器独立存活，掉线或刷新页面即可无缝回显历史会话。
+- **DOM 高保真 WebSSH（`@wterm/dom`）**：废弃 Canvas 终端渲染方案，采用纯 DOM 文本节点排版。支持原生鼠标拖拽滑动选区、系统级复制粘贴、移动端长按上下文菜单与原生输入法无遮挡输入。
+- **纯前端 WASM RDP 引擎（`rdp-wasm`）**：基于打补丁的 `grdp` 编译出的 Go WASM 客户端，直接在浏览器内解码 RDP 协议，服务端彻底免除 FreeRDP、Python 或 X11 相关库的沉重依赖。利用 WebCodecs 进行 AVC420 / AVC444 硬件加速解码，基于 WebGL2 FBO 合成渲染，完整支持 MS-RDPEFS 与 Windows CLIPRDR 双向剪贴板文件同步。
+- **敏感数据静态信封加密**：服务器连接密码、SSH 私钥、代理认证凭据及 TOTP 种子在存入数据库前，全面采用后量子混合算法 ML-KEM-768 + AES-256-GCM 封装加密。
+
+#### Zephyr One（桌面端与移动端）
+- **桌面端（`zephyr_one`）**：
+  - 基于 **Electron 37** 构建，内嵌运行本地 Node.js Zephyr 核心，完全绑定在本地回环地址（`127.0.0.1`）。
+  - 全面使用 Node 22 原生内置的 `node:sqlite`（`ZEPHYR_ONE_USE_BUILTIN_SQLITE=1`），彻底消除了终端用户安装时对 C++ 本地编译工具链（`better-sqlite3`）的依赖。
+  - 启动时自动采纳本地管理员会话，移除浏览器时代的账号密码拦截壁垒。
+  - 可选接入操作系统原生安全认证（macOS 通过 JXA 调用 LocalAuthentication，Windows 通过 PowerShell 调用 UserConsentVerifier）。
+  - 远程主端仅用于账号数据双向同步，日常的 SSH、RDP、VNC 连接管理与 AI 交互均由本地核心就地处理。
+- **安卓端（`zephyr_one/mobile/android`）**：
+  - 采用现代原生 Kotlin 与 Jetpack Compose 开发。
+  - 基于 Android AGSL 自研着色器实现 Liquid Glass 动态材质。
+  - 依托 Android Keystore 生成硬件隔离密钥，通过 Room 进行离线数据持久化。
+  - 提取并启动轻量级 `libzephyr_link.so` 回环子进程，无缝处理 ZSL/2 加密与隧道通讯。
+- **iOS 端（`zephyr_one/mobile/ios`）**：
+  - 基于原生 Swift 与 SwiftUI 构建。
+  - 接入 iOS Keychain 硬件级保护存储 ML-KEM 设备凭据，基于 `SQLiteSyncRepository` 落地离线增量同步。
+
+#### Zephyr AI 与 Zephyr Cell（智能体与沙箱）
+- **Go 语言 AI 运行时（`zephyr-ai`）**：
+  - 高性能、流式 SSE 智能体调度核心，支持接入 OpenAI、Anthropic、Gemini、DeepSeek 及标准兼容格式的多模型供应商。
+  - 具备推演过程折叠、多档思考深度调节、上下文智能滑动压缩与子代理并行分工能力。
+  - 内置工具执行框架，覆盖远程命令执行、文件管理、无头浏览器观察与高危操作人工二次审批卡片。
+- **隔离执行沙箱（`zephyr-cell`）**：
+  - 替代易受绕过的传统命令名称白名单，向智能体提供具备真实 Linux 用户态的隔离执行环境。
+  - 在 Linux/Docker 宿主上基于 Bubblewrap（`bwrap`）与内核命名空间进行非特权隔离。
+  - 强制实行根文件系统只读挂载、独立工作区隔离、默认剥离网络命名空间、100KB 输出超限截断与不可篡改的 NDJSON 结构化审计流水。
+  - 架构上支持 Direct、PRoot、CellVM 引擎抽象与远端主端调度回退机制。
+
+#### Zephyr Link 与 Zephyr Agent（传输层与边缘跳板）
+- **Zephyr Link 安全覆盖网协议（`zephyr-link`）**：
+  - 专为穿透 Cloudflare 等普通商业 CDN 设计的应用层传输通道，依托 WebSocket（WSS）承载，杜绝 CDN 终止外层 TLS 时窥探内层业务明文。
+  - 采用 ZSL/2 混合后量子加密规范：`X25519` + `ML-KEM-768`（FIPS 203）密钥交换、HKDF-SHA256 密钥导出与 AES-256-GCM AEAD 密文封装。
+  - 免密码设备绑定流程：通过系统浏览器外带审批与短认证串（SAS）防篡改核验，将私钥牢固锚定在物理设备端。
+  - 多路复用数据通道，支持配置同步、大容量内容寻址分块传输（FastCDC）以及端到端加密的 TCP 跳板隧道（`KindAgentTunnel`）。
+- **Zephyr Agent 边缘伴生节点（`zephyr_agent`）**：
+  - 基于 Flutter 打造的跨端边缘服务（支持 Android、macOS、Linux、Windows）。
+  - 主动向 Zephyr Server 发起 Link 连接，将 NAT 内部受保护的局域网资源反向暴露为可访问的运维跳板。
+  - 实现 MS-RDPEFS 磁盘驱动器重定向协议，把边缘设备存储挂载为 RDP 远端桌面中的 `\\tsclient` 虚拟驱动器。
+
+---
+
+### 协议与动态路由矩阵
+
+| 协议类型 | 作为目标主机 | 支持代理穿透 | 支持 SSH 跳板机访问 | 支持作为跳板机 |
+|---|---|---|---|---|
+| `SSH` | [支持] | [支持] | [支持] | [支持] |
+| `Telnet` | [支持] | [支持] | [支持] | [不支持] |
+| `RDP` | [支持] | [支持] | [支持] | [不支持] |
+| `VNC` | [支持] | [支持] | [支持] | [不支持] |
+
+- **级联跳板机拓扑**：支持任意深度的多级 SSH 链式跳转，系统自动在各层中间节点建立动态转发代理与隧道保活机制。
+- **Telnet 路由实现**：Telnet 会话统一接入服务端的 `createRoutedTcpForward`，支持原始 TCP 流经由 SOCKS5/HTTP 代理或 SSH 跳板链（`direct-tcpip`）穿透访问。Telnet 目标支持静态加密的带内用户名/密码自动登录，但 Telnet 连接本身不能充当中间跳板机。
+- **RDP 跳板访问链路**：浏览器 WASM RDP 客户端 -> WebSocket -> Zephyr Node.js 代理 -> SSH 跳板链路 -> 目标 RDP 机器:3389。
+- **VNC 跳板访问链路**：浏览器 noVNC 客户端 -> WebSocket -> Zephyr VNC 代理（自动完成 VNCAuth）-> SSH 跳板链路 -> 目标 VNC 机器:5900。
+
+---
+
+### 快速开始与生产部署
+
+#### Docker 标准运行
+
+必须将宿主机的持久化数据目录挂载到容器内 `/app/data`，避免容器销毁引发数据库和加密主密钥丢失。
 
 ```bash
 mkdir -p ./zephyr-data
 
 cat > ./zephyr-data/.env <<'EOF'
-ENCRYPTION_KEY=请替换为足够长的随机密钥
-PUBLIC_ORIGIN=https://ssh.example.com
+ENCRYPTION_KEY=请在此生成并填写32字节Base64格式的高强度随机密钥
+PUBLIC_ORIGIN=https://zephyr.example.com
 PORT=3000
 EOF
 
-docker build -t zephyr-ssh:local .
-
 docker run -d \
   --name zephyr-ssh \
   --env-file ./zephyr-data/.env \
   -p 3000:3000 \
   -v "$(pwd)/zephyr-data:/app/data" \
   --restart unless-stopped \
-  zephyr-ssh:local
+  ghcr.io/lanlan13-14/zephyr-ssh:latest
 ```
 
-Dockerfile 说明：
+浏览器访问：`http://你的服务器IP:3000`  
+默认初始管理员：
+- **账号**：`admin`
+- **密码**：`admin`（首次成功认证后系统强制要求更改高强度密码）。
 
-- 构建阶段使用 `node:20-alpine3.20` 与 `alpine:3.20`。
-- 运行阶段基于 `node:20-alpine3.20`。
-- 镜像内复制应用代码和生产依赖。
-- 镜像内置 Go WASM RDP 客户端（构建阶段编译）和 noVNC 前端依赖；VNC 使用 noVNC + Zephyr `/novnc` 代理。
-- 构建时会验证 `node`、`npm` 是否可执行，并编译 Go WASM。
+#### Docker Compose 部署
 
----
+```yaml
+version: '3.8'
 
-## 更新容器并保留数据
+services:
+  zephyr:
+    image: ghcr.io/lanlan13-14/zephyr-ssh:latest
+    container_name: zephyr
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./zephyr-data:/app/data
+    environment:
+      - PORT=3000
+      - PUBLIC_ORIGIN=https://zephyr.example.com
+      - ENCRYPTION_KEY=请在此生成并填写32字节Base64格式的高强度随机密钥
+```
 
-更新时必须复用原来的数据目录或命名卷。
+#### 环境参数配置表
 
-宿主机目录挂载方式：
+| 变量名称 | 作用说明 | 默认值 |
+|---|---|---|
+| `PORT` | Web 界面与 HTTP API 监听端口 | `3000` |
+| `PUBLIC_ORIGIN` | 服务的公开访问域名（Passkey / WebAuthn 校验依赖） | 生产环境必填 |
+| `ENCRYPTION_KEY` | 静态凭据信封加密的主密钥（32 字节高熵随机值） | 必填 |
+| `ZEPHYR_DATA_DIR` | 容器内持久化数据挂载绝对路径 | `/app/data` |
+| `ZEPHYR_AI_LISTEN` | 内置 Go AI 核心的本地回环监听地址 | `127.0.0.1:8450` |
+| `ZEPHYR_AI_URL` | Node 主端向内部 Go AI 核心通信的反代目标 | `http://127.0.0.1:8450` |
+| `HTTPS_CERT_FILE` | 自定义 TLS 证书绝对路径（可选） | 空 |
+| `HTTPS_KEY_FILE` | 自定义 TLS 私钥绝对路径（可选） | 空 |
+
+#### 持久化存储与镜像更新
+
+在保持现有配置和数据完整的前提下更新服务版本：
 
 ```bash
 docker pull ghcr.io/lanlan13-14/zephyr-ssh:latest
-
-docker rm -f zephyr-ssh
-
-docker run -d \
-  --name zephyr-ssh \
-  --env-file ./zephyr-data/.env \
-  -p 3000:3000 \
-  -v "$(pwd)/zephyr-data:/app/data" \
-  --restart unless-stopped \
-  ghcr.io/lanlan13-14/zephyr-ssh:latest
-```
-
-命名卷方式：
-
-```bash
-docker rm -f zephyr-ssh
-
-docker run -d \
-  --name zephyr-ssh \
-  --env-file ./zephyr-data/.env \
-  -p 3000:3000 \
-  -v zephyr-ssh-data:/app/data \
-  --restart unless-stopped \
-  ghcr.io/lanlan13-14/zephyr-ssh:latest
-```
-
-检查持久化是否正确：
-
-```bash
-docker inspect zephyr-ssh --format '{{json .Mounts}}'
-ls -la ./zephyr-data
-docker volume inspect zephyr-ssh-data
+docker stop zephyr-ssh
+docker rm zephyr-ssh
+# 重新执行初始 docker run 命令，确保宿主机目录挂载保持为 -v "$(pwd)/zephyr-data:/app/data"
 ```
 
 ---
 
-## 项目结构
+### 从源码构建
+
+#### 环境准备
+- Node.js >= 20.x, npm >= 10.x
+- Go >= 1.26
+- GCC / Clang / Make 构建工具链
+- Bubblewrap, ImageMagick, Chromium 依赖
+
+#### 构建步骤
+
+```bash
+# 1. 安装 Node.js 运行时依赖
+npm ci
+
+# 2. 编译 RDP 前端 Go WASM 二进制
+cd rdp-wasm
+go mod tidy
+GOOS=js GOARCH=wasm go build -o ../public/vendor/rdp-wasm/main.wasm .
+cd ..
+
+# 3. 构建前端终端与 Monaco 编辑器打包资源
+npm run build:terminal
+npm run build:editor
+
+# 4. 编译 AI 智能体调度核心与 Link 传输二进制
+cd zephyr-ai && go build -o /usr/local/bin/zephyr-ai ./cmd/zephyr-ai && cd ..
+cd zephyr-link && go build -o /usr/local/bin/zephyr-link-server ./cmd/zephyr-link-server && cd ..
+
+# 5. 启动服务
+npm start
+```
+
+---
+
+### 代码仓库目录结构
 
 ```text
-zephyr-ssh/
-├── public/
-│   ├── index.html       # 登录页
-│   ├── client.js        # 登录页逻辑
-│   ├── app.html         # 管理后台页面
-│   ├── app.js           # 管理后台逻辑
-│   ├── terminal.html    # SSH 终端页面
-│   ├── terminal.js      # SSH 终端逻辑
-│   ├── preview/image/   # 图片预览前端模块（Viewer.js UI 接入与样式）
-│   ├── rdp.html          # RDP 远程桌面页面（Go WASM grdp）
-│   ├── rdp-wasm-client.js # RDP 前端逻辑（渲染、输入、文件、剪贴板）
-│   ├── rdp-fs-provider.js  # Zephyr Agent 文件 RPC / RDP drive bridge
-│   ├── rdp-touch.js       # RDP 移动端触控（单指/双指/三指手势）
-│   ├── novnc.html       # VNC noVNC 远程桌面页面
-│   ├── novnc.js         # VNC noVNC 前端逻辑
-│   └── style.css        # 全局样式
-├── data/                # 运行数据目录
-│   ├── .env             # 环境变量配置
-│   ├── crypto/          # ML-KEM-768 数据字段加密密钥（必须随数据目录持久化和备份）
-│   └── zephyr.db        # SQLite 数据库
-├── preview/image/       # 图片预览后端模块（Sharp 转码、ImageMagick 兜底、缓存）
-├── zephyr_agent/        # Zephyr Agent Flutter 应用（RDP 磁盘映射文件系统代理）
-│   ├── lib/             # Dart UI、状态机、文件 provider
-│   ├── android_host/    # Android SAF / MANAGE_EXTERNAL_STORAGE MethodChannel host
-│   ├── platform_assets/ # Agent 平台图标资源
-│   └── tool/            # CI 中注入平台 host code / 图标 / app metadata 的脚本
-├── server.js            # 后端服务、API、WebSocket、协议路由
-├── file-agent-manager.js # Zephyr Agent 注册、token、RPC 转发与 SSE 在线状态
-├── storage.js           # SQLite 存储层
-├── stats.js             # 远程状态采集
-├── authz.js             # 统一资源 ACL 与 capability 判定
-├── session-store.js     # SQLite 持久登录会话、滑动/绝对过期与撤销
-├── user-service.js      # 超级管理员、管理员和普通用户生命周期管理
-├── workspace-service.js # 用户/设备工作区保存、ACL 过滤恢复和版本冲突
-├── notes-service.js     # 用户笔记、分组、关联连接、共享、回收站和导入导出
-├── ai-agent-service.js  # AI 多模型调用、工具、浏览器自动化、Memory 与任务
-├── ai-provider-service.js # AI Provider 所有权、API Key 加密、共享矩阵和调用授权
-├── ai-policy.js         # 用户 AI 模式、模型白名单和工具策略
-├── zephyr-worker/       # Go SSH/Telnet 会话数据面、PTY、回放和 WebSocket 分发
-├── rdp-wasm/            # Go WASM RDP 客户端源码
-│   ├── main.go          # WASM 入口（JS↔Go 桥接）
-│   ├── rdpefs.go        # MS-RDPEFS 虚拟驱动器
-│   ├── grdp-patch/      # grdp fork（RDP 协议栈 + CLIPRDR 文件剪贴板）
-│   ├── Makefile         # WASM 编译（GOOS=js GOARCH=wasm）
-│   └── go.mod           # Go 模块（replace → ./grdp-patch）
-├── package.json         # 项目依赖与脚本
-├── package-lock.json    # 锁定依赖版本
-├── Dockerfile           # Docker 构建文件
-└── README.md            # 项目说明
+.
++-- server.js               # Node.js 主服务入口与 HTTP/WS 反向路由
++-- ai-*.js                 # Node 侧 AI 工具编排、会话持久化与策略控制
++-- link-v2-*.js            # Zephyr Link 传输代理与设备绑定管理
++-- mobile-v1-*.js          # 移动端同步通道、实体仓库与加解密桥接
++-- public/                 # 静态 Web 资产、交互页面与样式表
+|   +-- app.html / app.js   # 运维工作台单页应用核心
+|   +-- terminal.*          # 基于 DOM 渲染的高保真 WebSSH 交互页面 (@wterm/dom)
+|   +-- rdp.*               # WebCodecs + WebGL2 WASM 远程桌面页面
+|   +-- vendor/             # 预构建前端依赖库 (wterm, xterm, monaco 等)
++-- zephyr-ai/              # Go 语言编写的 AI Agent Loop、MCP 工具与运行时
++-- zephyr-cell/            # Go 语言 Linux 沙箱执行框架 (bwrap / 命名空间)
++-- zephyr-link/            # Go 语言 ZSL/2 后量子应用层加密协议核心与隧道 Hub
++-- zephyr-worker/          # Go 语言持久 PTY 会话监管与增量流分发服务
++-- zephyr_one/             # 第一方客户端集合
+|   +-- electron/           # Desktop One Electron 主进程与生命周期管理
+|   +-- src/                # Desktop One 界面实现代码 (Vite)
+|   +-- mobile/android/     # Android One 原生端 (Kotlin, Jetpack Compose, AGSL)
+|   +-- mobile/ios/         # iOS One 原生端 (Swift, SwiftUI, Keychain)
++-- zephyr_agent/           # 边缘主机反向穿透与虚拟磁盘映射守护进程 (Flutter)
++-- rdp-wasm/               # Go WASM RDP 客户端实现与定制打补丁的 grdp 引擎
++-- Dockerfile              # 多阶段容器化构建镜像蓝图
 ```
 
 ---
 
-## 安全建议
+### 安全合规建议
 
-1. 首次登录后立即修改默认管理员密码。
-2. 确保 `ENCRYPTION_KEY` 是 32 随机字节的规范 Base64URL/十六进制编码；外部密钥设置 `ZEPHYR_BACKUP_KEY_PROVENANCE=operator-attested-csprng-v1`，旧版公开默认值必须显式轮换。
-3. 妥善备份 `data/crypto/ml-kem-768-keypair.json`（或外部注入的 ML-KEM-768 密钥对）；丢失后已加密的连接密码、私钥、TOTP Secret 等敏感字段无法解密。
-4. 启用 Passkey / TOTP 前，确认服务器系统时间准确。
-5. Passkey / WebAuthn 推荐在 HTTPS 环境下使用。
-6. 开启 IP 白名单前，确认当前访问 IP 已包含在白名单内，避免误锁。
-7. 不要提交 `data/.env`、`data/crypto/`、数据库文件、备份文件和真实连接凭据。
-8. 不要把 Zephyr 直接暴露在不可信网络中，建议放在 HTTPS 反向代理之后。
-9. 定期导出加密备份，并妥善保存备份密钥。
-10. 删除或重建 Docker 容器前，确认 `/app/data` 已正确持久化。
+1. **凭据安全初始重置**：首次完成安装后，务必立即替换默认超级管理员密码。
+2. **根密钥灾备存储**：妥善离线备份 `data/crypto/ml-kem-768-keypair.json`。该密钥对是解开所有已保存密码和私钥的唯一根源，一旦遗失将造成不可逆的数据损坏。
+3. **前置反向代理**：严禁将 Zephyr 原生 HTTP 端口直接暴露于公网，生产环境必须置于配置了标准 TLS 1.3 证书的专业反向代理（如 Nginx、Caddy）后方。
+4. **管理网段限制**：生产部署强烈推荐开启内置的 IP 白名单拦截，仅允许运维专用内网网段访问管理页面。
+5. **构建物锁定**：严格提交并锁定 `package-lock.json` 与 `go.sum`，抵御供应链投毒与依赖漂移。
 
 ---
 
-## 依赖与数据说明
+### 赞助商与致谢
 
-### 可以删除的文件
+诚挚感谢 **[LightCone](https://www.lightcone.hk/)** 为本项目提供的持续赞助与技术支持。
 
-- `node_modules/`：本地依赖目录，可以删除；重新执行 `npm install` 即可恢复。
-
-### 不建议删除的文件
-
-- `package-lock.json`：锁定依赖版本，保证本地、CI、Docker 构建环境一致，建议提交到 Git。
-
-### 推荐 Git 忽略项
-
-```gitignore
-node_modules/
-data/.env
-data/crypto/
-data/*.db
-data/*.db-shm
-data/*.db-wal
-data/*.enc
-```
-
----
-
-## 备注
-
-阿里云验证码后端校验需要 AccessKey。当前实现支持两种方式：
-
-1. 在后台 Secret Key 中填写：
-
-```text
-AccessKeyId:AccessKeySecret
-```
-
-2. 通过环境变量提供 `ALIYUN_ACCESS_KEY_ID`，后台 Secret Key 填写 `AccessKeySecret`。
-
-如果仅需要最简单的webssh，使用v1.0.75即可
-```bash
-docker run -d \
-  --name zephyr-ssh \
-  -p 3000:3000 \
-  --restart unless-stopped \
-  ghcr.io/lanlan13-14/zephyr-ssh:v1.0.75
-```
-
----
-
-## 计划
-
-> **项目目前处于维护冻结状态，暂不接受功能请求，暂不处理 Pull Request。**  
-> 提交 Issue 请按 [Issue 模板](.github/ISSUE_TEMPLATE/ISSUE_TEMPLATE.md) 格式填写。
-
----
-
-## 赞助商
-
-<a href="https://www.lightcone.hk/">
-  <img src=".github/sponsors/lightcone.png" alt="LightCone" height="100">
-</a>
-
-感谢 **[LightCone](https://www.lightcone.hk/)** 对本项目的赞助。
-
----
-
-## 致谢
-
+致敬为本项目提供技术基石的优秀上游开源生态：
 - [wterm](https://github.com/vercel-labs/wterm)
 - [ssh2](https://github.com/mscdex/ssh2)
 - [SimpleWebAuthn](https://simplewebauthn.dev/)
 - [better-sqlite3](https://github.com/WiseLibs/better-sqlite3)
+
+---
+
+### 开源许可证
+
+Zephyr 基于 **GNU General Public License v3.0** ([GPL-3.0](LICENSE)) 协议开源。
