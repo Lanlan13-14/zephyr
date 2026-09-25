@@ -53,21 +53,18 @@ class FluidLaunchTest {
     @Test
     fun `ribbons cascade and the wordmark replaces the seed`() {
         val drawing = fluidLaunchFrame(elapsedMs = 520L, reducedMotion = false, ready = false)
-        assertTrue(
-            "ribbons ${drawing.ribbon1} ${drawing.ribbon2} ${drawing.ribbon3}",
-            drawing.ribbon1 > drawing.ribbon2 && drawing.ribbon2 > drawing.ribbon3,
-        )
+        assertTrue(drawing.ribbon1 > drawing.ribbon2 && drawing.ribbon2 > drawing.ribbon3)
         assertEquals(FluidLaunchTiming.CAPTION_CREDENTIALS, drawing.caption)
-        assertTrue(drawing.progressFraction in 0.01f..0.35f)
+        assertEquals(0.624f, drawing.progressFraction, 0.02f)
 
         val settled = fluidLaunchFrame(elapsedMs = 2_000L, reducedMotion = false, ready = false)
         assertEquals(1f, settled.ribbon1, 0.001f)
         assertEquals(1f, settled.ribbon2, 0.001f)
         assertEquals(1f, settled.ribbon3, 0.001f)
         assertEquals(0f, settled.seedAlpha, 0.001f)
-        assertTrue(settled.wordAlpha > 0.9f)
+        assertEquals(0.96f, settled.wordAlpha, 0.001f)
         assertEquals(FluidLaunchTiming.CAPTION_ALMOST, settled.caption)
-        assertTrue(settled.progressFraction in 0.75f..0.92f)
+        assertEquals(0.92f, settled.progressFraction, 0.001f)
     }
 
     @Test
