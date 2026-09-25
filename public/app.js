@@ -1,9 +1,9 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
-import { createNotesController } from './notes.js?v=20260924-os-probe';
+import { createNotesController } from './notes.js?v=20260925-ai-layout';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260924-os-probe';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260924-os-probe';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260925-ai-layout';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260925-ai-layout';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 const $ = (sel) => document.querySelector(sel);
@@ -7895,8 +7895,11 @@ function renderAiHeaderSelectors() {
     const models = aiModelNames(p);
     const chosen = ((p?.id === ai.defaultProviderId ? ai.defaultModel : '') || p?.defaultModel || models[0] || ai.defaultModel || '').trim();
     modelSelect.value = chosen;
+    const modelLabel = aiModelDisplayName(p, chosen) || chosen || t('自动选择模型');
     $('#aiProviderPickerBtn') && ($('#aiProviderPickerBtn').textContent = p ? (p.name || p.type || t('供应商')) : t('未配置模型'));
-    $('#aiModelPickerBtn') && ($('#aiModelPickerBtn').textContent = aiModelDisplayName(p, chosen) || t('自动选择模型'));
+    $('#aiModelPickerBtn') && ($('#aiModelPickerBtn').textContent = modelLabel);
+    const island = $('#aiIslandModelName');
+    if (island) island.textContent = modelLabel;
     renderAiThinkingSelector(p, modelSelect.value || chosen);
     renderAiCapabilityStrip();
 }
@@ -7918,14 +7921,55 @@ function renderAiThinkingSelector(provider = null, model = '') {
 function aiHeaderChoices(kind = '') {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const providers = (ai.providers || []).filter((p) => p.enabled !== false);
-    const provider = providers.find((p) => p.id === $('#aiProviderSelect')?.value) || providers[0] || {};
-    if (kind === 'provider') return providers.map((p) => ({ value: p.id, label: p.name || p.type || t('供应商') }));
-    if (kind === 'model') {
-        const entries = aiModelEntries(provider);
-        if (entries.length) return entries.map((m) => ({ value: m.id, label: m.label || m.id }));
-        return [$('#aiModelSelect')?.value || provider.defaultModel || ai.defaultModel || ''].filter(Boolean).map((m) => ({ value: m, label: m }));
+    const currentPId = $('#aiProviderSelect')?.value;
+    const provider = providers.find((p) => p.id === currentPId) || providers[0] || {};
+    if (kind === 'provider') {
+        const list = providers.map((p) => ({ value: p.id, label: p.name || p.type || t('供应商') }));
+        if (!list.length) list.push({ value: 'builtin', label: 'Zephyr 本地核心 (默认)' });
+        return list;
     }
-    if (kind === 'thinking') return aiThinkingOptionsForProvider(provider, $('#aiModelSelect')?.value || provider.defaultModel || '').map(([value, label]) => ({ value, label }));
+    if (kind === 'model') {
+        const list = [];
+        if (providers.length) {
+            providers.forEach((pr) => {
+                const entries = aiModelEntries(pr);
+                if (entries.length) {
+                    entries.forEach((m) => {
+                        list.push({
+                            value: `${pr.id}:::${m.id}`,
+                            label: `${pr.name || pr.type}: ${m.label || m.id}`
+                        });
+                    });
+                } else if (pr.defaultModel) {
+                    list.push({
+                        value: `${pr.id}:::${pr.defaultModel}`,
+                        label: `${pr.name || pr.type}: ${pr.defaultModel}`
+                    });
+                }
+            });
+        }
+        if (!list.length) {
+            const fallback = ($('#aiModelSelect')?.value || provider.defaultModel || ai.defaultModel || '').trim();
+            if (fallback) list.push({ value: fallback, label: fallback });
+            // Always offer core presets so user is never stuck
+            list.push({ value: 'zephyr-default', label: 'Zephyr Core (系统默认)' });
+            list.push({ value: 'openai:::gpt-4o', label: 'OpenAI: gpt-4o' });
+            list.push({ value: 'claude:::claude-3-5-sonnet', label: 'Anthropic: claude-3-5-sonnet' });
+            list.push({ value: 'deepseek:::deepseek-chat', label: 'DeepSeek: deepseek-chat' });
+        }
+        return list;
+    }
+    if (kind === 'thinking') {
+        const opts = aiThinkingOptionsForProvider(provider, $('#aiModelSelect')?.value || provider.defaultModel || '');
+        if (opts.length) return opts.map(([value, label]) => ({ value, label }));
+        return [
+            { value: 'off', label: '关闭 (0)' },
+            { value: 'low', label: '微推 (Low)' },
+            { value: 'med', label: '均衡 (Med)' },
+            { value: 'high', label: '高推 (High)' },
+            { value: 'max', label: '极深 (Max)' }
+        ];
+    }
     return [];
 }
 /** Custom segmented control (no native <select>). Value lives on data-value. */
@@ -8053,39 +8097,122 @@ function openAiInlineConfirm({ title = t('确认'), body = '', confirmLabel = t(
     });
     mask.querySelector('[data-ai-inline-ok]')?.focus?.();
 }
+function openAiChoiceModal({ title = '请选择', current = '', choices = [], onSelect = null } = {}) {
+    document.querySelectorAll('.ai-choice-modal-mask').forEach((el) => el.remove());
+    const isMobile = window.innerWidth <= 760;
+    const mask = document.createElement('div');
+    mask.className = 'ai-choice-modal-mask';
+    mask.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:10300;display:flex;align-items:${isMobile ? 'flex-end' : 'center'};justify-content:center;opacity:0;transition:opacity 0.22s ease;`;
+
+    const sheet = document.createElement('div');
+    sheet.className = 'ai-choice-modal-sheet';
+    sheet.style.cssText = isMobile
+        ? 'width:100%;max-width:500px;background:var(--surface,#1e1e24);border:1px solid color-mix(in srgb,var(--border,#333) 70%,transparent);border-radius:24px 24px 0 0;padding:16px 18px calc(24px + env(safe-area-inset-bottom,16px));box-shadow:0 -12px 48px rgba(0,0,0,0.5);transform:translate3d(0,100%,0);transition:transform 0.32s cubic-bezier(0.16,1,0.3,1);max-height:80dvh;display:flex;flex-direction:column;gap:12px;'
+        : 'width:440px;max-width:92vw;background:var(--surface,#1e1e24);border:1px solid color-mix(in srgb,var(--border,#333) 70%,transparent);border-radius:20px;padding:20px 22px;box-shadow:0 24px 70px rgba(0,0,0,0.6);transform:scale(0.94);transition:transform 0.22s cubic-bezier(0.16,1,0.3,1);max-height:76vh;display:flex;flex-direction:column;gap:12px;';
+
+    sheet.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid color-mix(in srgb,var(--border) 40%,transparent);">
+            <strong style="font-size:16px;color:var(--text);font-weight:600;">${escapeHtml(title)}</strong>
+            <button type="button" class="ai-choice-close-btn" style="border:0;background:color-mix(in srgb,var(--text) 8%,transparent);color:var(--text);width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;">×</button>
+        </div>
+        <div class="ai-choice-list" style="overflow-y:auto;flex:1 1 auto;display:flex;flex-direction:column;gap:6px;max-height:55dvh;">
+            ${choices.map((item) => `
+                <button type="button" class="ai-choice-row" data-value="${escapeHtml(item.value)}" style="border:0;width:100%;background:${item.value === current ? 'color-mix(in srgb, #007aff 15%, var(--surface))' : 'color-mix(in srgb, var(--text) 4%, transparent)'};color:var(--text);padding:12px 14px;border-radius:12px;font-size:14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;text-align:left;border:1px solid ${item.value === current ? '#007aff' : 'transparent'};">
+                    <span style="font-weight:${item.value === current ? '600' : '400'};">${escapeHtml(item.label)}</span>
+                    ${item.value === current ? '<span style="color:#007aff;font-weight:bold;">✓</span>' : ''}
+                </button>
+            `).join('')}
+        </div>
+    `;
+
+    mask.appendChild(sheet);
+    document.body.appendChild(mask);
+
+    const close = () => {
+        if (isMobile) sheet.style.transform = 'translate3d(0,100%,0)';
+        else sheet.style.transform = 'scale(0.94)';
+        mask.style.opacity = '0';
+        setTimeout(() => mask.remove(), 240);
+    };
+
+    mask.addEventListener('click', (e) => {
+        if (e.target === mask || e.target.closest('.ai-choice-close-btn')) close();
+    });
+
+    sheet.querySelectorAll('.ai-choice-row').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const val = btn.dataset.value;
+            close();
+            if (onSelect) onSelect(val);
+        });
+    });
+
+    void mask.offsetHeight;
+    requestAnimationFrame(() => {
+        mask.style.opacity = '1';
+        if (isMobile) sheet.style.transform = 'translate3d(0,0,0)';
+        else sheet.style.transform = 'scale(1)';
+    });
+}
+
 function openAiPicker(kind = '', anchor = null) {
-    const existing = document.querySelector('.ai-picker-popover');
-    if (existing && existing.dataset.pickerKind === kind
-        && (existing._anchorEl === anchor || (anchor?.id && existing.dataset.pickerAnchorId === anchor.id))) {
-        closeAiPickerPopover();
-        return;
-    }
     closeAiPickerPopover();
     const choices = aiHeaderChoices(kind);
-    if (!choices.length || !anchor) return;
+    if (!choices.length) {
+        if (kind === 'provider') toast(t('尚未配置任何 AI 供应商，请前往设置配置'));
+        else if (kind === 'model') toast(t('当前无可用模型'));
+        else if (kind === 'thinking') toast(t('当前模型不支持思考档位调节'));
+        else toast(t('无可用选项'));
+        return;
+    }
+
     const current = kind === 'provider' ? $('#aiProviderSelect')?.value : kind === 'model' ? $('#aiModelSelect')?.value : $('#aiThinkIntensity')?.value;
-    const pop = document.createElement('div');
-    pop.className = 'ai-picker-popover';
-    pop.dataset.pickerKind = String(kind || '');
-    pop.dataset.pickerAnchorId = anchor.id || '';
-    pop._anchorEl = anchor;
-    pop.innerHTML = choices.map((item) => `<button type="button" class="ai-picker-option${item.value === current ? ' active' : ''}" data-kind="${escapeHtml(kind)}" data-value="${escapeHtml(item.value)}"><span>${escapeHtml(item.label)}</span>${item.value === current ? '<b>✓</b>' : ''}</button>`).join('');
-    document.body.appendChild(pop);
-    const rect = anchor.getBoundingClientRect();
-    const pr = pop.getBoundingClientRect();
-    // origin near trigger (popover, not modal)
-    pop.style.transformOrigin = 'top left';
-    pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pr.width - 8, rect.left))}px`;
-    pop.style.top = `${Math.max(8, Math.min(window.innerHeight - pr.height - 8, rect.bottom + 8))}px`;
-    sshKeyMotion._ensure().then((Motion) => {
-        if (!pop.isConnected || !Motion) return;
-        Motion.popover(pop, anchor, { fromScale: 0.96, preset: 'mac' }).catch(() => {});
+
+    openAiChoiceModal({
+        title: kind === 'provider' ? t('选择供应商') : kind === 'model' ? t('选择模型') : t('调整推理深度'),
+        current,
+        choices,
+        onSelect: (value) => applyAiPickerChoice(kind, value),
     });
 }
 function applyAiPickerChoice(kind = '', value = '') {
-    if (kind === 'provider') { $('#aiProviderSelect').value = value; renderAiHeaderSelectors(); }
-    if (kind === 'model') { $('#aiModelSelect').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; $('#aiModelPickerBtn').textContent = aiModelDisplayName(p, value) || t('自动选择模型'); renderAiThinkingSelector(p, value); }
-    if (kind === 'thinking') { $('#aiThinkIntensity').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; renderAiThinkingSelector(p, $('#aiModelSelect')?.value || ''); }
+    const session = aiCurrentSession();
+    if (kind === 'provider') {
+        if ($('#aiProviderSelect')) $('#aiProviderSelect').value = value;
+        if (session) session.providerId = value;
+        renderAiHeaderSelectors();
+    }
+    if (kind === 'model') {
+        let actualModel = value;
+        if (value.includes(':::')) {
+            const [pId, mId] = value.split(':::');
+            if ($('#aiProviderSelect')) $('#aiProviderSelect').value = pId;
+            if (session) session.providerId = pId;
+            actualModel = mId;
+        }
+        if ($('#aiModelSelect')) $('#aiModelSelect').value = actualModel;
+        if (session) session.model = actualModel;
+        const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+        const provider = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {};
+        const label = aiModelDisplayName(provider, actualModel) || actualModel || t('自动选择模型');
+        if ($('#aiModelPickerBtn')) $('#aiModelPickerBtn').textContent = label;
+        const island = $('#aiIslandModelName');
+        if (island) island.textContent = label;
+        renderAiThinkingSelector(provider, actualModel);
+    }
+    if (kind === 'thinking') {
+        if ($('#aiThinkIntensity')) $('#aiThinkIntensity').value = value;
+        if (session) session.thinking = value;
+        const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+        const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {};
+        renderAiThinkingSelector(p, $('#aiModelSelect')?.value || '');
+        const badge = $('#aiThinkingActiveBadge');
+        if (badge) {
+            const map = { off: '关闭', low: '微推', med: '均衡', high: '高推', max: '极深' };
+            badge.textContent = map[value] || value || '均衡';
+        }
+    }
+    saveAiDraft();
     closeAiPickerPopover();
 }
 function formatTokenValue(n) {
@@ -9240,7 +9367,7 @@ function renderAiChat() {
     renderAiBrowserPreview();
     const area = $('#aiChatArea');
     const typing = $('#aiTypingIndicator');
-    area.querySelectorAll('.ai-message').forEach((el) => el.remove());
+    area.querySelectorAll('.ai-message, .ai-message-wrapper').forEach((el) => el.remove());
     session.messages.forEach((m, index) => {
         if (m.role === 'confirmation') {
             const pending = aiPendingConfirmations.get(m.confirmationId);
@@ -9248,7 +9375,14 @@ function renderAiChat() {
             else appendAiMessage(m.content, 'assistant', { store: false, messageIndex: index, sessionId: session.id });
             return;
         }
-        appendAiMessage(m.content, m.role, { store: false, rawHtml: m.role === 'trace', messageIndex: index, sessionId: session.id, metrics: m.metrics || null });
+        appendAiMessage(m.content, m.role, {
+            store: false,
+            rawHtml: m.role === 'trace',
+            messageIndex: index,
+            sessionId: session.id,
+            metrics: m.metrics || null,
+            attachments: m.attachments || []
+        });
     });
     area.appendChild(typing);
     updateAiRunUiForCurrentSession();
@@ -9258,13 +9392,75 @@ function renderAiChat() {
 }
 function summarizeAiUserMessageForDisplay(text = '') {
     return String(text || '')
-        .replace(/附件图片：([^\n]+)\n\s*data:image\/[^;\s]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '附件图片：$1\n[图片已发送]')
-        .replace(/data:image\/[A-Za-z0-9.+-]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '[图片已发送]');
+        .replace(/\[附件\][^\n]+(?:🖼️)?\n*/g, '')
+        .replace(/附件图片：([^\n]+)\n\s*data:image\/[^;\s]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '')
+        .replace(/data:image\/[A-Za-z0-9.+-]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '')
+        .trim();
 }
 function renderAiMessageContent(text = '', role = 'assistant', rawHtml = false) {
     if (rawHtml) return String(text || '');
     const source = role === 'user' ? summarizeAiUserMessageForDisplay(text) : String(text || '');
     return renderMarkdown(source, { enhancedCode: role !== 'trace' });
+}
+function renderAiMessageAttachmentsHtml(attachments = [], sessionId = '') {
+    if (!Array.isArray(attachments) || !attachments.length) return '';
+    return `<div class="ai-msg-attachments">${attachments.map((a) => {
+        const isImg = a.kind === 'image' || (a.mime && a.mime.startsWith('image/')) || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(a.name || '');
+        let previewUrl = a.previewUrl || '';
+        if (!previewUrl && a.id) {
+            previewUrl = `/api/ai/attachments/${encodeURIComponent(a.id)}/content?sessionId=${encodeURIComponent(sessionId || aiCurrentSessionId || '')}`;
+        }
+        if (isImg && previewUrl) {
+            return `
+                <div class="ai-msg-media-card" data-img-src="${escapeAttr(previewUrl)}" data-img-name="${escapeAttr(a.name || 'image')}" title="${escapeAttr(a.name || t('点击放大预览'))}">
+                    <img src="${escapeAttr(previewUrl)}" alt="${escapeAttr(a.name || 'image')}" loading="lazy">
+                </div>
+            `;
+        }
+        const downloadUrl = previewUrl || `/api/ai/attachments/${encodeURIComponent(a.id)}/content?sessionId=${encodeURIComponent(sessionId || aiCurrentSessionId || '')}`;
+        return `
+            <a class="ai-msg-file-card" href="${escapeAttr(downloadUrl)}" target="_blank" rel="noopener" download="${escapeAttr(a.name || 'attachment')}" title="${escapeAttr(a.name || t('下载附件'))}">
+                <div class="ai-attachment-file-icon">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                </div>
+                <div class="ai-attachment-meta">
+                    <span class="ai-attachment-filename">${escapeHtml(a.name || t('附件'))}</span>
+                    <small class="ai-attachment-sub">${escapeHtml(a.size ? formatBytes(a.size) : '文件')}</small>
+                </div>
+            </a>
+        `;
+    }).join('')}</div>`;
+}
+function aiShowImageLightbox(src, name = '') {
+    let lightbox = $('#aiImageLightbox');
+    if (!lightbox) {
+        lightbox = document.createElement('div');
+        lightbox.id = 'aiImageLightbox';
+        lightbox.className = 'ai-image-lightbox';
+        lightbox.innerHTML = `
+            <button type="button" class="ai-lightbox-close" aria-label="关闭预览">×</button>
+            <div class="ai-lightbox-content">
+                <img class="ai-lightbox-img" src="" alt="preview">
+            </div>
+        `;
+        document.body.appendChild(lightbox);
+        const close = () => { lightbox.classList.remove('open'); };
+        lightbox.addEventListener('click', (e) => {
+            if (e.target.closest('.ai-lightbox-close') || !e.target.closest('.ai-lightbox-img')) {
+                close();
+            }
+        });
+    }
+    const img = lightbox.querySelector('.ai-lightbox-img');
+    if (img) {
+        img.src = src;
+        img.alt = name || 'preview';
+    }
+    lightbox.classList.add('open');
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') lightbox.classList.remove('open'); }, { once: true });
 }
 function appendAiMessage(text, role = 'assistant', { store = true, meta = '', rawHtml = false, messageIndex = -1, sessionId = '', metrics = null, id = '', attachments = [] } = {}) {
     const targetSessionId = String(sessionId || aiCurrentSessionId || '');
@@ -9302,21 +9498,65 @@ function appendAiMessage(text, role = 'assistant', { store = true, meta = '', ra
     const area = $('#aiChatArea');
     const typing = $('#aiTypingIndicator');
     if (!area || !typing) return;
-    const div = document.createElement('div');
-    div.className = `ai-message ${role === 'user' ? 'user' : (role === 'system' || role === 'trace') ? 'system' : 'ai'}`;
-    div.dataset.aiMessageRole = normalizedRole;
-    if (storedIndex >= 0) div.dataset.aiMessageIndex = String(storedIndex);
-    div.dataset.aiMessageText = String(text || '');
-    if (metrics && typeof metrics === 'object') div.dataset.aiMetrics = JSON.stringify(metrics).slice(0, 6000);
-    div.innerHTML = `${meta ? `<small>${escapeHtml(meta)}</small>` : ''}${renderAiMessageContent(text, role, rawHtml)}`;
-    area.insertBefore(div, typing);
-    if ((role === 'system' || role === 'trace') && div.querySelector('.ai-tool-trace')) {
-        div.classList.add('ai-trace-message');
+
+    const effectiveAttachments = (Array.isArray(attachments) && attachments.length)
+        ? attachments
+        : (Array.isArray(storedRecord?.attachments) ? storedRecord.attachments : []);
+
+    let mountNode = null;
+    const cleanUserText = role === 'user' ? summarizeAiUserMessageForDisplay(text) : String(text || '');
+
+    if (role === 'user' && effectiveAttachments.length) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'ai-message-wrapper user';
+        if (storedIndex >= 0) wrapper.dataset.aiMessageIndex = String(storedIndex);
+
+        // 顶部独立的附件卡片托盘（图片卡片/文件卡片）
+        const attachHtml = renderAiMessageAttachmentsHtml(effectiveAttachments, session.id);
+
+        // 下方若有文本（如“做一下”），生成圆润对话气泡；若纯发附件，则不生成空白气泡
+        let bubbleHtml = '';
+        if (cleanUserText) {
+            bubbleHtml = `<div class="ai-message user" data-ai-message-role="user" data-ai-message-text="${escapeAttr(cleanUserText)}">${renderMarkdown(cleanUserText)}</div>`;
+        }
+        wrapper.innerHTML = `${attachHtml}${bubbleHtml}`;
+        mountNode = wrapper;
+    } else {
+        const div = document.createElement('div');
+        div.className = `ai-message ${role === 'user' ? 'user' : (role === 'system' || role === 'trace') ? 'system' : 'ai'}`;
+        div.dataset.aiMessageRole = normalizedRole;
+        if (storedIndex >= 0) div.dataset.aiMessageIndex = String(storedIndex);
+        div.dataset.aiMessageText = String(text || '');
+        if (metrics && typeof metrics === 'object') div.dataset.aiMetrics = JSON.stringify(metrics).slice(0, 6000);
+        div.innerHTML = `${meta ? `<small>${escapeHtml(meta)}</small>` : ''}${renderAiMessageContent(text, role, rawHtml)}`;
+        if ((role === 'system' || role === 'trace') && div.querySelector('.ai-tool-trace')) {
+            div.classList.add('ai-trace-message');
+        }
+        mountNode = div;
+    }
+
+    if (typing && typing.parentNode === area) {
+        area.insertBefore(mountNode, typing);
+    } else {
+        area.appendChild(mountNode);
     }
     scrollAiChat();
     return storedRecord;
 }
-function scrollAiChat() { requestAnimationFrame(() => { const a = $('#aiChatArea'); if (a) a.scrollTo({ top: a.scrollHeight, behavior: 'smooth' }); }); }
+function scrollAiChat() {
+    requestAnimationFrame(() => {
+        const a = $('#aiChatArea');
+        if (a) {
+            a.scrollTo({ top: a.scrollHeight, behavior: 'smooth' });
+            const btn = $('#aiScrollBottomBtn');
+            if (btn) {
+                btn.setAttribute('hidden', '');
+                btn.hidden = true;
+                btn.classList.add('is-hidden');
+            }
+        }
+    });
+}
 function aiIsSessionRunning(sessionId = '') { return aiSessionRuns.has(String(sessionId || '')); }
 function aiRunForSession(sessionId = '') { return aiSessionRuns.get(String(sessionId || '')) || null; }
 function registerAiSessionRun(sessionId, controller) {
@@ -9393,18 +9633,56 @@ function aiPreviewCode(item) {
 }
 function renderAiAttachmentChips() {
     if (!aiPendingInputAttachments.length) return '';
-    return `<div class="ai-attachment-strip">${aiPendingInputAttachments.map((a, idx) => {
-        const status = a.status === 'uploading' ? t('上传中') : (a.status === 'error' ? t('失败') : (a.kind === 'image' ? '🖼️' : ''));
-        const title = a.error || a.name || '';
-        return `<span class="ai-attachment-chip" title="${escapeAttr(title)}"><span class="ai-attachment-icon fm-button-icon" data-glyph="file" aria-hidden="true"></span><span class="ai-attachment-name">${escapeHtml(a.name || t('附件'))}</span>${status ? `<small class="ai-attachment-status">${escapeHtml(status)}</small>` : ''}<button type="button" data-ai-remove-attachment="${idx}" aria-label="${t('移除附件')}">×</button></span>`;
+    return `<div class="ai-attachments-scroll">${aiPendingInputAttachments.map((a, idx) => {
+        const isImg = a.kind === 'image' || (a.type && a.type.startsWith('image/')) || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(a.name || '');
+        const previewUrl = a.previewUrl || a.dataUrl || a.url || '';
+        const title = a.error || a.name || t('附件');
+
+        if (isImg && previewUrl) {
+            return `
+                <div class="ai-attachment-card image" title="${escapeAttr(title)}">
+                    <img src="${escapeAttr(previewUrl)}" alt="${escapeAttr(a.name || 'image')}" class="ai-attachment-img">
+                    <button type="button" class="ai-attachment-remove-btn" data-ai-remove-attachment="${idx}" aria-label="${t('移除附件')}">×</button>
+                    ${a.status === 'uploading' ? '<div class="ai-attachment-overlay uploading">...</div>' : ''}
+                </div>
+            `;
+        }
+
+        const ext = (a.name || '').split('.').pop()?.toUpperCase() || 'FILE';
+        return `
+            <div class="ai-attachment-card file" title="${escapeAttr(title)}">
+                <div class="ai-attachment-file-icon">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                    <span class="ai-attachment-ext">${escapeHtml(ext.slice(0, 4))}</span>
+                </div>
+                <div class="ai-attachment-meta">
+                    <span class="ai-attachment-filename">${escapeHtml(a.name || t('附件'))}</span>
+                    <small class="ai-attachment-sub">${escapeHtml(a.status === 'uploading' ? t('上传中…') : (a.size ? formatBytes(a.size) : '文件'))}</small>
+                </div>
+                <button type="button" class="ai-attachment-remove-btn" data-ai-remove-attachment="${idx}" aria-label="${t('移除附件')}">×</button>
+            </div>
+        `;
     }).join('')}</div>`;
 }
 function updateAiInputPreview() {
     const preview = $('#aiInputPreview');
+    const capsuleBox = preview?.closest('.ai-composer-box');
     if (!preview) return;
-    if (!aiPendingInputAttachments.length) { preview.hidden = true; preview.innerHTML = ''; return; }
+    if (!aiPendingInputAttachments.length) {
+        preview.setAttribute('hidden', '');
+        preview.hidden = true;
+        preview.innerHTML = '';
+        if (capsuleBox) capsuleBox.style.borderRadius = '28px';
+        return;
+    }
+    preview.removeAttribute('hidden');
     preview.hidden = false;
     preview.innerHTML = renderAiAttachmentChips();
+    // 当存在附件托盘时，卡片采用优雅的自适应大圆角（类似 ChatGPT 附件大卡片）
+    if (capsuleBox) capsuleBox.style.borderRadius = '24px';
 }
 function updateAiAttachmentDraftUi() {
     updateAiInputPreview();
@@ -9663,12 +9941,33 @@ function updateAiPanelResponsiveState() {
     const width = Math.max(220, rect?.width || panel.offsetWidth || 0);
     const isMobile = window.innerWidth <= 760;
     const compact = isMobile || width < 680;
-    const narrow = !isMobile && width < 560;
+    const narrow = isMobile || width < 600;
     panel.classList.toggle('ai-compact', compact);
     panel.classList.toggle('ai-narrow', narrow);
-    if (isMobile) { aiSidebarCollapsedBySize = false; panel.classList.remove('sidebar-collapsed'); return; }
-    if (narrow && !aiSidebarCollapsedBySize) { aiSidebarCollapsedBySize = true; panel.classList.add('sidebar-collapsed'); }
-    if (!narrow && aiSidebarCollapsedBySize) { aiSidebarCollapsedBySize = false; panel.classList.remove('sidebar-collapsed'); }
+    panel.classList.toggle('ai-mobile-mode', isMobile);
+
+    if (isMobile) {
+        // Mobile bottom drawer float
+        if (!panel.classList.contains('sidebar-open')) {
+            panel.classList.add('sidebar-collapsed');
+        }
+        return;
+    }
+
+    // Desktop mode: Only collapse sidebar when panel width is actually constrained (< 640px)
+    panel.classList.remove('sidebar-open');
+    if (width < 640) {
+        if (!panel.classList.contains('sidebar-collapsed')) {
+            panel.classList.add('sidebar-collapsed');
+            aiSidebarCollapsedBySize = true;
+        }
+    } else {
+        // Broad panel: Keep sidebar expanded unless explicitly collapsed by user
+        if (aiSidebarCollapsedBySize) {
+            panel.classList.remove('sidebar-collapsed');
+            aiSidebarCollapsedBySize = false;
+        }
+    }
 }
 function setAiTyping(show) {
     $('#aiTypingIndicator')?.classList.toggle('show', !!show);
@@ -10726,6 +11025,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                     toolTrace.push({ phase: evType, name: body?.name || '', callId: body?.callId || '' });
                     break;
                 case 'tool.result':
+                    if (data.tool === 'cell_exec_v1' || data.tool === 'session_exec_v1') refreshAiCellInspector();
                 case 'tool.error': {
                     const item = {
                         tool: body?.name || 'tool',
@@ -10915,11 +11215,9 @@ async function sendAiMessage() {
     }
     const readyAttachments = pending.filter((a) => a.id && a.status !== 'error');
     if (!typedText && !readyAttachments.length) return;
-    const displayBits = [typedText];
-    if (readyAttachments.length) {
-        displayBits.push(readyAttachments.map((a) => `[附件] ${a.name || a.id}${a.kind === 'image' ? ' 🖼️' : ''}`).join('\n'));
-    }
-    const text = displayBits.filter(Boolean).join('\n\n');
+
+    // 纯净文本，绝不拼接丑陋的 "[附件] xxx.jpg 🖼️"
+    const text = typedText;
     const editingIndex = aiEditingSessionId && aiEditingSessionId !== sessionId ? -1 : aiEditingMessageIndex;
     if (editingIndex >= 0) {
         try {
@@ -10945,7 +11243,14 @@ async function sendAiMessage() {
     // Persist only attachment refs in local history — never base64 payloads.
     const userMessage = appendAiMessage(text, 'user', {
         sessionId,
-        attachments: readyAttachments.map((a) => ({ id: a.id, name: a.name, kind: a.kind, mime: a.mime, size: a.size })),
+        attachments: readyAttachments.map((a) => ({
+            id: a.id,
+            name: a.name,
+            kind: a.kind,
+            mime: a.mime,
+            size: a.size,
+            previewUrl: a.previewUrl || (a.id ? `/api/ai/attachments/${encodeURIComponent(a.id)}/content?sessionId=${encodeURIComponent(session?.runtimeSessionId || sessionId)}` : '')
+        })),
     });
     const assistantMessageId = `message-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const abortController = new AbortController();
@@ -11021,14 +11326,20 @@ async function appendAiFiles(files = []) {
             toast(t('附件过大已跳过：{name}', { name: file.name }));
             continue;
         }
+        const isImage = /^image\//i.test(file.type) || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name || '');
+        const isText = /^text\//i.test(file.type) || /\.(txt|md|csv|json|ya?ml|log|conf|ini|sh|py|go|js|ts|css|html)$/i.test(file.name || '');
+        let initialPreviewUrl = '';
+        try {
+            if (isImage) initialPreviewUrl = URL.createObjectURL(file);
+        } catch { /* ignore */ }
         const draft = {
-            kind: /^image\//i.test(file.type) ? 'image' : (/^text\//i.test(file.type) ? 'text' : 'file'),
+            kind: isImage ? 'image' : (isText ? 'text' : 'file'),
             name: file.name,
-            mime: file.type || 'application/octet-stream',
+            mime: file.type || (isImage ? 'image/jpeg' : 'application/octet-stream'),
             size: file.size,
             status: 'uploading',
             id: '',
-            previewUrl: /^image\//i.test(file.type) ? URL.createObjectURL(file) : '',
+            previewUrl: initialPreviewUrl,
         };
         aiPendingInputAttachments = aiPendingInputAttachments.concat([draft]).slice(0, 6);
         updateAiAttachmentDraftUi();
@@ -11044,6 +11355,9 @@ async function appendAiFiles(files = []) {
             draft.mime = item.mime || draft.mime;
             draft.size = item.size || draft.size;
             draft.status = 'ready';
+            if (!draft.previewUrl && isImage && item.id) {
+                draft.previewUrl = `/api/ai/attachments/${encodeURIComponent(item.id)}/content?sessionId=${encodeURIComponent(serverSessionId)}`;
+            }
             added += 1;
         } catch (err) {
             draft.status = 'error';
@@ -11123,7 +11437,11 @@ function insertAiConfirmationCard(confirmation, messageIndex = -1) {
         </div>`;
     card.title = '';
     div.appendChild(card);
-    area.insertBefore(div, typing);
+    if (typing && typing.parentNode === area) {
+        area.insertBefore(div, typing);
+    } else {
+        area.appendChild(div);
+    }
 }
 function appendAiConfirmation(confirmation, pending = {}) {
     const sessionId = pending.sessionId || aiCurrentSessionId;
@@ -11315,16 +11633,36 @@ function startAiPanelWatchdog() {
 function stopAiPanelWatchdog() { window.clearInterval(aiPanelWatchdogTimer); aiPanelWatchdogTimer = 0; }
 function prepareAiPanelLayout(panel) {
     if (!panel || panel.dataset.positioned) return;
-    const compact = window.innerWidth <= 760;
+    const isMobile = window.innerWidth <= 760;
     const vvWidth = window.visualViewport?.width || window.innerWidth;
     const vvHeight = window.visualViewport?.height || window.innerHeight;
-    const width = compact ? Math.max(300, Math.min(vvWidth - 40, Math.round(vvWidth * 0.88))) : Math.min(980, window.innerWidth - 40);
-    const height = compact ? Math.max(360, Math.min(vvHeight - 96, Math.round(vvHeight * 0.78))) : Math.min(780, window.innerHeight - 80);
-    panel.style.left = compact ? `${Math.max(16, Math.round((vvWidth - width) / 2))}px` : `${Math.max(16, (window.innerWidth - width) / 2)}px`;
-    panel.style.top = compact ? `${Math.max(18, Math.round((vvHeight - height) * 0.16))}px` : '52px';
+
+    if (isMobile) {
+        // Mobile: Elegant bottom-docked floating panel (Apple HIG card)
+        panel.style.position = 'fixed';
+        panel.style.left = '0';
+        panel.style.right = '0';
+        panel.style.bottom = '0';
+        panel.style.top = 'auto';
+        panel.style.width = '100vw';
+        panel.style.height = `${Math.min(740, Math.round(vvHeight * 0.88))}px`;
+        panel.dataset.positioned = '1';
+        updateAiPanelResponsiveState();
+        return;
+    }
+
+    // Desktop: generous, elegant floating window (min 880px, max 1020px)
+    const width = Math.min(1020, Math.max(880, Math.round(vvWidth * 0.72)));
+    const height = Math.min(840, Math.max(620, Math.round(vvHeight * 0.8)));
+    const left = Math.max(20, Math.round((vvWidth - width) / 2));
+    const top = Math.max(30, Math.round((vvHeight - height) / 2));
+
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
     panel.style.width = `${width}px`;
     panel.style.height = `${height}px`;
     panel.dataset.positioned = '1';
+    updateAiPanelResponsiveState();
 }
 function resetAiPanelMotionStyles(panel) {
     if (!panel?.style) return;
@@ -11337,6 +11675,97 @@ function resetAiPanelMotionStyles(panel) {
     panel.style.willChange = '';
     panel.style.transformOrigin = '';
 }
+// ── Apple Physics Spring Engine for Mobile Sheet & Popover ──
+let aiMobileSpringAnimId = null;
+
+function stopAiMobileSpring() {
+    if (aiMobileSpringAnimId) {
+        cancelAnimationFrame(aiMobileSpringAnimId);
+        aiMobileSpringAnimId = null;
+    }
+}
+
+// Y 轴平移。收起（toY > fromY）必须单向滑出，禁止弹簧过冲把面板弹回来。
+function animateSpringTranslateY(el, fromY, toY, initialVelocity = 0, onDone = null) {
+    stopAiMobileSpring();
+    if (!el) { onDone?.(); return; }
+    const dismissing = toY > fromY + 1;
+    let current = fromY;
+    let velocity = dismissing ? Math.max(initialVelocity, 900) : initialVelocity; // px/s
+    const stiffness = dismissing ? 0 : 280;
+    const damping = dismissing ? 2.4 : 32;
+    let lastTime = performance.now();
+
+    el.style.transform = `translate3d(0, ${current}px, 0)`;
+
+    const tick = (now) => {
+        const dt = Math.min((now - lastTime) / 1000, 0.032);
+        lastTime = now;
+        if (dismissing) {
+            velocity *= Math.exp(-damping * dt);
+            if (velocity < 1400) velocity = 1400;
+            current += velocity * dt;
+            if (current >= toY) current = toY;
+        } else {
+            const force = -stiffness * (current - toY);
+            const dampingForce = -damping * velocity;
+            velocity += (force + dampingForce) * dt;
+            current += velocity * dt;
+            if (current < 0) current = 0;
+        }
+
+        el.style.transform = `translate3d(0, ${Math.round(current)}px, 0)`;
+
+        const settled = dismissing
+            ? current >= toY - 0.5
+            : (Math.abs(current - toY) < 0.6 && Math.abs(velocity) < 6);
+        if (settled) {
+            el.style.transform = toY === 0 ? 'translate3d(0, 0, 0)' : `translate3d(0, ${toY}px, 0)`;
+            aiMobileSpringAnimId = null;
+            onDone?.();
+            return;
+        }
+        aiMobileSpringAnimId = requestAnimationFrame(tick);
+    };
+    aiMobileSpringAnimId = requestAnimationFrame(tick);
+}
+
+// 物理弹簧驱动高度过渡（无极吸附 / 冲顶）
+function animateSpringHeight(el, fromH, toH, initialVelocity = 0, onDone = null) {
+    stopAiMobileSpring();
+    if (!el || Math.abs(fromH - toH) < 2) {
+        if (el) el.style.height = `${toH}px`;
+        onDone?.();
+        return;
+    }
+    let current = fromH;
+    let velocity = initialVelocity;
+    const stiffness = 240;
+    const damping = 26;
+    let lastTime = performance.now();
+
+    const tick = (now) => {
+        const dt = Math.min((now - lastTime) / 1000, 0.032);
+        lastTime = now;
+        const force = -stiffness * (current - toH);
+        const dampingForce = -damping * velocity;
+        const acceleration = force + dampingForce;
+        velocity += acceleration * dt;
+        current += velocity * dt;
+
+        el.style.height = `${Math.round(current)}px`;
+
+        if (Math.abs(current - toH) < 0.8 && Math.abs(velocity) < 8) {
+            el.style.height = `${toH}px`;
+            aiMobileSpringAnimId = null;
+            onDone?.();
+            return;
+        }
+        aiMobileSpringAnimId = requestAnimationFrame(tick);
+    };
+    aiMobileSpringAnimId = requestAnimationFrame(tick);
+}
+
 function openAiAssistantPanel(trigger = null) {
     const ai = normalizeAiSettings(settings.ai || {});
     if (!ai.enabled) { toast(t('请先在设置中启用 AI 助理')); return; }
@@ -11346,10 +11775,9 @@ function openAiAssistantPanel(trigger = null) {
     const sourceButton = trigger || aiPanelMorphOriginButton || $('#aiFloatingBtn') || $('#openAiAssistantBtn') || $('#openAiAssistantBtn2') || $('#aiNavTab');
     aiPanelMorphOriginButton = sourceButton || aiPanelMorphOriginButton;
     window.clearTimeout(aiPanelCloseTimer);
+    ++openAiAssistantPanel._cycle; // cancel any in-flight close hide
     aiPanelState = 'opening';
     panel.style.display = 'flex';
-    panel.style.visibility = 'hidden';
-    panel.style.pointerEvents = 'none';
     panel.classList.add('open');
     panel.setAttribute('aria-hidden', 'false');
     $('#aiFloatingBtn')?.classList.add('active');
@@ -11358,48 +11786,69 @@ function openAiAssistantPanel(trigger = null) {
     updateAiPanelResponsiveState();
     if (!aiChatSessions.length) createAiChat({ silent: true });
     renderAiHeaderSelectors(); renderAiBrowserPreview(); renderAiChat();
-    if (!wasHidden) {
+
+    const isMobile = window.innerWidth <= 760 || panel.classList.contains('ai-narrow');
+    if (isMobile) {
+        stopAiMobileSpring();
+        resetAiPanelMotionStyles(panel);
+        panel.style.top = 'auto';
+        panel.style.bottom = '0';
+        panel.style.left = '0';
+        panel.style.right = '0';
+        panel.style.width = '100vw';
+        panel.style.maxWidth = '100vw';
+        panel.style.margin = '0';
+        panel.style.display = 'flex';
         panel.style.visibility = 'visible';
         panel.style.pointerEvents = 'auto';
-        aiPanelState = 'open';
-        startAiPanelWatchdog();
-        scheduleWorkspaceSave('ai-panel-open');
+        if (!panel.style.height) panel.style.height = '88dvh';
+        panel.classList.add('open');
+        panel.setAttribute('aria-hidden', 'false');
+        $('#aiFloatingBtn')?.classList.add('active');
+
+        // Engine only. Do not write panel.style.transform here.
+        const cycle = openAiAssistantPanel._cycle; // already incremented on entry
+        sshKeyMotion._ensure().then(async (Motion) => {
+            if (!Motion || cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'opening') return;
+            Motion.stop(panel);
+            await Motion.sheet(panel, { edge: 'bottom', open: true, preset: 'sheetDismiss' });
+            if (cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'opening') return;
+            aiPanelState = 'open';
+            startAiPanelWatchdog();
+            scheduleWorkspaceSave('ai-panel-open');
+        }).catch(() => {
+            if (aiPanelState === 'opening') aiPanelState = 'open';
+        });
         return;
     }
+
+    // 桌面端：由触发按钮展开，呈现流畅的一镜到底共享元素物理动效 (macOS / iPadOS FLIP)
+    panel.style.visibility = 'visible';
+    panel.style.pointerEvents = 'auto';
+
     const cycle = ++openAiAssistantPanel._cycle;
+
     sshKeyMotion._ensure().then(async (Motion) => {
         if (cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'opening') return;
-        if (!Motion) {
-            resetAiPanelMotionStyles(panel);
-            panel.style.visibility = 'visible';
-            panel.style.pointerEvents = 'auto';
-            aiPanelState = 'open';
-            return;
-        }
-        try {
-            Motion.stop(panel);
-            Motion.release(panel);
-            const contentEl = panel.querySelector('.ai-agent-window');
-            if (contentEl) {
-                try { Motion.stop(contentEl); Motion.set(contentEl, { opacity: 1 }); } catch { /* ignore */ }
-                contentEl.style.opacity = '';
+        const contentEl = panel.querySelector('.ai-agent-window');
+        if (Motion && typeof Motion.aiPanelOpen === 'function') {
+            try {
+                await Motion.aiPanelOpen(panel, sourceButton, {
+                    contentEl,
+                    contentWithPanel: true,
+                    mode: sourceButton ? 'flip' : 'origin',
+                    preset: 'mac',
+                });
+            } catch (err) {
+                console.warn('[ai-panel-motion] open failed, fallback:', err);
+                panel.style.opacity = '1';
+                panel.style.transform = 'none';
             }
-            await Motion.aiPanelOpen(panel, sourceButton, {
-                contentEl,
-                mode: sourceButton ? 'flip' : 'origin',
-                hideSource: false,
-                // Grow as one surface; content stays visible during expand.
-                contentWithPanel: true,
-                radiusTo: parseFloat(getComputedStyle(panel).borderRadius) || 18,
-                preset: 'mac',
-            });
-        } catch (err) {
-            console.warn('[ai-panel-motion] open failed, using instant state:', err?.message || err);
+        } else {
+            panel.style.opacity = '1';
+            panel.style.transform = 'none';
         }
         if (cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'opening') return;
-        resetAiPanelMotionStyles(panel);
-        panel.style.visibility = 'visible';
-        panel.style.pointerEvents = 'auto';
         aiPanelState = 'open';
         startAiPanelWatchdog();
         if (window.innerWidth > 760) $('#aiUserInput')?.focus?.({ preventScroll: true });
@@ -11419,7 +11868,8 @@ function toggleAiAssistantPanel(trigger = null) {
 }
 function closeAiAssistantPanel() {
     const panel = $('#aiAgentPanel');
-    if (!panel || panel.style.display === 'none' || aiPanelState === 'closed') return;
+    if (!panel || panel.style.display === 'none' || aiPanelState === 'closed' || aiPanelState === 'closing') return;
+    stopAiPanelWatchdog();
     closeAiPanelLayoutMenu({ instant: true });
     window.clearTimeout(aiPanelCloseTimer);
     aiPanelState = 'closing';
@@ -11427,59 +11877,137 @@ function closeAiAssistantPanel() {
     panel.setAttribute('aria-hidden', 'true');
     closeAiBrowserForSession(aiCurrentSessionId);
     $('#aiFloatingBtn')?.classList.remove('active');
-    const trigger = aiPanelMorphOriginButton?.isConnected ? aiPanelMorphOriginButton : ($('#aiFloatingBtn') || $('#aiNavTab'));
-    const finishClose = (Motion = null) => {
-        if (cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'closing') return;
-        if (Motion) {
-            try { Motion.stop(panel); Motion.release(panel); } catch {}
+
+    const isMobile = window.innerWidth <= 760 || panel.classList.contains('ai-narrow');
+    if (isMobile) {
+        sshKeyMotion._ensure().then(async (Motion) => {
+            if (cycle !== openAiAssistantPanel._cycle) return;
+            if (!Motion) {
+                panel.style.display = 'none';
+                panel.style.visibility = 'hidden';
+                aiPanelState = 'closed';
+                return;
+            }
+            Motion.stop(panel);
+            // NEVER reset y here. A previous interrupted animation leaves the
+            // slot mid-flight; set(y:0) snaps the panel back on screen for one
+            // frame — the reported "flash up then slide down again". Retarget
+            // from the live value instead; sheet()'s to() animates from current.
+            Motion.set(panel, { scaleX: 1, scaleY: 1, opacity: 1 });
+            try {
+                await Motion.sheet(panel, { edge: 'bottom', open: false, preset: 'sheetDismiss' });
+            } catch { /* hide below */ }
+            if (cycle !== openAiAssistantPanel._cycle) return;
+            panel.style.display = 'none';
+            panel.style.visibility = 'hidden';
+            panel.classList.remove('open', 'sidebar-open');
+            try { Motion.release(panel); } catch { /* ignore */ }
+            aiPanelState = 'closed';
+            scheduleWorkspaceSave('ai-panel-close');
+        }).catch(() => {
+            panel.style.display = 'none';
+            aiPanelState = 'closed';
+        });
+        return;
+    }
+
+    // 桌面端：Zephyr 一镜到底收回至触发按钮
+    sshKeyMotion._ensure().then(async (Motion) => {
+        if (cycle !== openAiAssistantPanel._cycle) return;
+        const trigger = aiPanelMorphOriginButton?.isConnected ? aiPanelMorphOriginButton : ($('#aiFloatingBtn') || $('#aiNavTab'));
+        const contentEl = panel.querySelector('.ai-agent-window');
+        if (Motion && typeof Motion.aiPanelClose === 'function') {
+            try {
+                await Motion.aiPanelClose(panel, trigger, {
+                    contentEl,
+                    mode: trigger ? 'flip' : 'origin',
+                    preset: 'macClose',
+                    thenDisplayNone: true,
+                });
+            } catch (err) {
+                console.warn('[ai-panel-motion] close failed:', err);
+                panel.style.display = 'none';
+                panel.style.visibility = 'hidden';
+            }
+        } else {
+            panel.style.display = 'none';
+            panel.style.visibility = 'hidden';
         }
-        panel.style.display = 'none';
-        resetAiPanelMotionStyles(panel);
+        if (cycle !== openAiAssistantPanel._cycle) return;
         panel.classList.remove('open');
         aiPanelState = 'closed';
         stopAiPanelWatchdog();
         scheduleWorkspaceSave('ai-panel-close');
-    };
-    const Motion = sshKeyMotion.engine;
-    if (!Motion || sshKeyMotion.failed) {
-        finishClose(null);
-        return;
-    }
-    const contentEl = panel.querySelector('.ai-agent-window');
-    // Hide chrome instantly (also done in engine) so shrink is never a mini chat UI.
-    panel.classList.add('ai-panel-motion-closing');
-    Motion.aiPanelClose(panel, trigger, {
-        contentEl,
-        mode: trigger ? 'flip' : 'origin',
-        hideSource: false,
-        contentWithPanel: false,
-        // Engine hides before identity reset; we still display:none in finishClose.
-        thenHide: true,
-        thenDisplayNone: false,
-        preset: 'macClose',
-    }).then(() => {
-        panel.classList.remove('ai-panel-motion-closing');
-        if (contentEl) {
-            try { Motion.set(contentEl, { opacity: 1 }); } catch { /* ignore */ }
-            contentEl.style.opacity = '';
-            contentEl.style.visibility = '';
-        }
-        finishClose(Motion);
-    }).catch((err) => {
-        console.warn('[ai-panel-motion] close failed, using instant state:', err?.message || err);
-        panel.classList.remove('ai-panel-motion-closing');
-        if (contentEl) {
-            try { Motion.set(contentEl, { opacity: 1 }); } catch { /* ignore */ }
-            contentEl.style.opacity = '';
-            contentEl.style.visibility = '';
-        }
-        finishClose(Motion);
     });
 }
 function bringAiPanelToFront() { const p = $('#aiAgentPanel'); if (!p) return; p.style.zIndex = String(10080 + Math.floor(Date.now() % 40)); p.style.setProperty('--panel-z', p.style.zIndex); }
 
 let aiPhase68InteractionsBound = false;
 
+
+async function refreshAiCellInspector(sessionId = aiCurrentSessionId) {
+    const output = $('#aiCellTerminalContainer');
+    const files = $('#aiCellWorkspaceTree');
+    const statusText = $('#aiCellStatusText');
+    const authVal = $('#aiCellAuthorityVal');
+    const leaseVal = $('#aiCellLeaseVal');
+    const isoVal = $('#aiCellIsolationVal');
+    const filesCount = $('#aiCellFilesCount');
+    const session = aiChatSessions.find((item) => item.id === sessionId);
+    const runtimeSessionId = session?.runtimeSessionId || '';
+
+    if (!runtimeSessionId) {
+        if (statusText) statusText.textContent = 'Standby';
+        if (authVal) authVal.textContent = 'Cell Direct';
+        if (leaseVal) leaseVal.textContent = 'Pending';
+        if (isoVal) isoVal.textContent = 'Sandbox';
+        if (filesCount) filesCount.textContent = '0 个文件';
+        if (output && !output.querySelector('.ai-cell-terminal-line')) {
+            output.innerHTML = '<div class="ai-cell-empty-state">会话沙箱控制台已就绪，发送消息即可激活沙箱执行…</div>';
+        }
+        if (files) files.innerHTML = '<div class="ai-cell-empty-state">沙箱工作区根目录为空</div>';
+        return;
+    }
+
+    try {
+        const [statusResult, listResult] = await Promise.all([
+            api('/api/ai/tools/run', { method: 'POST', body: JSON.stringify({ sessionId: runtimeSessionId, tool: 'session_sandbox_status_v1', args: { sessionId: runtimeSessionId }, confirmed: true }) }).catch(() => ({})),
+            api('/api/ai/tools/run', { method: 'POST', body: JSON.stringify({ sessionId: runtimeSessionId, tool: 'workspace_list_v1', args: { sessionId: runtimeSessionId, dir: 'workspace' }, confirmed: true }) }).catch(() => ({})),
+        ]);
+        const status = statusResult.result || statusResult || {};
+        const list = listResult.result || listResult || {};
+
+        if (statusText) statusText.textContent = status.mode ? 'Active' : 'Ready';
+        if (authVal) authVal.textContent = status.mode || 'Cell Direct';
+        if (leaseVal) leaseVal.textContent = 'Active (Authoritative)';
+        if (isoVal) isoVal.textContent = status.canDenyNetwork ? 'Isolated (No Net)' : 'Sandbox';
+
+        const commands = Array.isArray(status.commands) ? status.commands.slice(0, 16).join('  ') : '';
+        if (output) {
+            output.innerHTML = `
+                <div class="ai-cell-terminal-line" style="color:#58a6ff;">[zephyr-cell] Session: ${escapeHtml(runtimeSessionId)}</div>
+                <div class="ai-cell-terminal-line" style="color:#34c759;">[zephyr-cell] Mode: ${escapeHtml(status.mode || 'Direct Sandbox')} | Ready</div>
+                <div class="ai-cell-terminal-line" style="color:#8b949e;margin-top:4px;">Available binaries: ${escapeHtml(commands || 'sh, python3, curl, git, jq')}</div>
+            `;
+        }
+        const items = Array.isArray(list.items) ? list.items : [];
+        if (filesCount) filesCount.textContent = `${items.length} 个文件`;
+        if (files) {
+            files.innerHTML = items.length ? items.map((item) => `
+                <div class="ai-cell-file" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;border-radius:6px;background:color-mix(in srgb,var(--text) 4%,transparent);margin-bottom:4px;">
+                    <span style="font-family:monospace;font-size:12px;color:var(--text);">${escapeHtml(item.name || item.path || '')}</span>
+                    <small style="color:var(--muted);font-size:11px;">${escapeHtml(item.type || 'file')}</small>
+                </div>
+            `).join('') : '<div class="ai-cell-empty-state">沙箱工作区根目录为空</div>';
+        }
+    } catch (error) {
+        if (statusText) statusText.textContent = 'Offline';
+        if (authVal) authVal.textContent = 'Cell Fallback';
+        if (leaseVal) leaseVal.textContent = 'Degraded';
+        if (isoVal) isoVal.textContent = 'Error';
+        if (output) output.innerHTML = `<div class="ai-cell-terminal-line fail" style="color:#ff7b72;">[zephyr-cell error] ${escapeHtml(error.message || String(error))}</div>`;
+    }
+}
 function initZephyrAiPhase68Interactions() {
     if (aiPhase68InteractionsBound) return;
     aiPhase68InteractionsBound = true;
@@ -11503,38 +12031,66 @@ function initZephyrAiPhase68Interactions() {
     };
     input.addEventListener('input', updateSendBtnState);
 
-    // 2. Long-press Send Button to open Obsidian Thinking Level Card (aiPopover)
+    // 2. Long-press Send Button to open Obsidian Thinking & Model Settings Card
     let longPressTimer = 0;
+    const syncThinkingPopoverState = () => {
+        if (!popover) return;
+        const currentLevel = $('#aiThinkIntensity')?.value || 'med';
+        popover.querySelectorAll('.ai-thinking-step').forEach((step) => {
+            step.classList.toggle('active', step.dataset.level === currentLevel);
+        });
+        const badge = $('#aiThinkingActiveBadge');
+        if (badge) {
+            const map = { off: '关闭', low: '微推', med: '均衡', high: '高推', max: '极深' };
+            badge.textContent = map[currentLevel] || currentLevel || '均衡';
+        }
+        popover.querySelectorAll('.ai-menu-choices').forEach((group) => {
+            const target = document.getElementById(group.dataset.target || '');
+            const curVal = target?.dataset.value || target?.querySelector('.ai-segment-btn.active')?.dataset.value || '';
+            group.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.value === curVal));
+        });
+    };
+
     const openThinkingPopover = async () => {
         if (!popover) return;
-        const rect = sendBtn.getBoundingClientRect();
-        const capsule = $('#aiFloatingCapsule');
-        const capsuleRect = capsule ? capsule.getBoundingClientRect() : rect;
-        popover.style.bottom = `${window.innerHeight - capsuleRect.top + 10}px`;
-        popover.style.right = `${window.innerWidth - rect.right}px`;
+        sendBtn._suppressClick = true;
+        syncThinkingPopoverState();
+        const isMobile = window.innerWidth <= 760;
+        popover.style.bottom = '';
+        popover.style.right = '';
+        popover.style.left = '';
+        popover.style.transformOrigin = isMobile ? 'bottom center' : 'bottom right';
+        popover.removeAttribute('hidden');
+        popover.hidden = false;
         popover.classList.add('is-open');
         const Motion = await sshKeyMotion._ensure().catch(() => null);
         if (!Motion) return;
         Motion.stop(popover);
-        // Origin-aware scale: the popover grows out of the send button anchor.
-        popover.style.transformOrigin = 'bottom right';
-        Motion.set(popover, { opacity: 0, scaleX: 0.72, scaleY: 0.72 });
-        try { await Motion.to(popover, { opacity: 1, scaleX: 1, scaleY: 1 }, { preset: 'aiPopover' }); } catch { /* rest state already applied */ }
+        Motion.set(popover, { opacity: 0, scaleX: 0.85, scaleY: 0.85 });
+        try { await Motion.to(popover, { opacity: 1, scaleX: 1, scaleY: 1 }, { preset: 'aiPopover' }); } catch { /* rest state */ }
         Motion.release(popover);
     };
+
     const closeThinkingPopover = async () => {
         if (!popover || !popover.classList.contains('is-open')) return;
         const Motion = await sshKeyMotion._ensure().catch(() => null);
-        if (!Motion) { popover.classList.remove('is-open'); return; }
+        if (!Motion) {
+            popover.classList.remove('is-open');
+            popover.setAttribute('hidden', '');
+            popover.hidden = true;
+            return;
+        }
         Motion.stop(popover);
-        try { await Motion.to(popover, { opacity: 0, scaleX: 0.72, scaleY: 0.72 }, { preset: 'aiPopover' }); } catch { /* fall through */ }
+        try { await Motion.to(popover, { opacity: 0, scaleX: 0.85, scaleY: 0.85 }, { preset: 'aiPopover' }); } catch {}
         popover.classList.remove('is-open');
+        popover.setAttribute('hidden', '');
+        popover.hidden = true;
         Motion.release(popover);
     };
 
     sendBtn.addEventListener('mousedown', (e) => {
         if (e.button === 2) return;
-        longPressTimer = window.setTimeout(openThinkingPopover, 260);
+        longPressTimer = window.setTimeout(openThinkingPopover, 280);
     });
     sendBtn.addEventListener('mouseup', () => window.clearTimeout(longPressTimer));
     sendBtn.addEventListener('mouseleave', () => window.clearTimeout(longPressTimer));
@@ -11544,40 +12100,52 @@ function initZephyrAiPhase68Interactions() {
     });
 
     sendBtn.addEventListener('touchstart', () => {
-        longPressTimer = window.setTimeout(openThinkingPopover, 260);
+        longPressTimer = window.setTimeout(openThinkingPopover, 280);
     }, { passive: true });
-    sendBtn.addEventListener('touchend', () => window.clearTimeout(longPressTimer));
-
-    popover?.addEventListener('click', (e) => {
-        const option = e.target.closest?.('.ai-thinking-option');
-        if (!option) return;
-        const level = option.dataset.level;
-        popover.querySelectorAll('.ai-thinking-option').forEach(el => el.classList.remove('is-selected'));
-        option.classList.add('is-selected');
-        const badge = $('#aiIslandThinkingBadge');
-        if (badge && level) badge.textContent = level.charAt(0).toUpperCase() + level.slice(1);
-        closeThinkingPopover();
-        // Config-only action (spec: thinking level selection never sends).
-        // Sending remains an explicit click or Cmd+Enter.
+    sendBtn.addEventListener('touchend', () => {
+        window.clearTimeout(longPressTimer);
+        setTimeout(() => { sendBtn._suppressClick = false; }, 200);
     });
 
-    // 3. Zephyr Cell Inspector Toggle (Cmd+J / Button) — driven by the
-    // aiDrawer physical spring preset, never a CSS transition.
+    popover?.addEventListener('click', (e) => {
+        const step = e.target.closest?.('.ai-thinking-step');
+        if (step) {
+            const level = step.dataset.level || 'med';
+            applyAiPickerChoice('thinking', level);
+            popover.querySelectorAll('.ai-thinking-step').forEach((s) => s.classList.toggle('active', s === step));
+            return;
+        }
+        const choiceBtn = e.target.closest?.('.ai-menu-choices button');
+        if (choiceBtn) {
+            const group = choiceBtn.closest('.ai-menu-choices');
+            const targetId = group?.dataset.target;
+            const val = choiceBtn.dataset.value;
+            if (targetId && val) {
+                const target = document.getElementById(targetId);
+                if (target) setAiSegmentValue(target, val);
+                group.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === choiceBtn));
+            }
+        }
+    });
+
+    // 3. Zephyr Cell Inspector Toggle & Controls
     const toggleCell = async () => {
         if (!cellInspector) return;
         const collapsing = !cellInspector.classList.contains('is-collapsed');
         cellInspector.classList.toggle('is-collapsed', collapsing);
-        const Motion = await sshKeyMotion._ensure().catch(() => null);
-        if (!Motion) return;
-        Motion.stop(cellInspector);
-        // Spring from the drawer's parked position back to rest; the layout
-        // class does the final collapse, the spring supplies the feel.
-        Motion.set(cellInspector, { x: collapsing ? -380 : 380 });
-        try { await Motion.to(cellInspector, { x: 0 }, { preset: 'aiDrawer' }); } catch { /* motion failure must never break toggling */ }
-        Motion.release(cellInspector);
+        if (!collapsing) refreshAiCellInspector();
     };
-    $('#aiCellToggleBtn')?.addEventListener('click', toggleCell);
+    $('#aiCellToggleBtn')?.addEventListener('click', () => {
+        setAiMenuOpen(false);
+        toggleCell();
+    });
     $('#aiCellInspectorCloseBtn')?.addEventListener('click', () => cellInspector?.classList.add('is-collapsed'));
+    $('#aiCellRefreshBtn')?.addEventListener('click', () => refreshAiCellInspector());
+    $('#aiCellClearTermBtn')?.addEventListener('click', () => {
+        const term = $('#aiCellTerminalContainer');
+        if (term) term.innerHTML = '<div class="ai-cell-empty-state">控制台已清屏</div>';
+    });
+    refreshAiCellInspector();
 
     // 4. Micro-Island Click -> Model/Cell Router
     microIsland?.addEventListener('click', () => {
@@ -11887,7 +12455,7 @@ function setupAiPanelChrome() {
     };
 
     const ensureAiPanelPhysicsDrag = async () => {
-        if (!panel || aiPanelPhysicsReady) return true;
+        if (!panel || aiPanelPhysicsReady || window.innerWidth <= 760) return false;
         const Motion = await sshKeyMotion._ensure().catch(() => null);
         if (!Motion || sshKeyMotion.failed || typeof Motion.drag !== 'function') return false;
         if (aiPanelDragController?.destroy) {
@@ -11970,7 +12538,7 @@ function setupAiPanelChrome() {
     // Precise 1:1 hard drag from the traffic-light (⋯) only — no rubberband/inertia.
     // Title bar / empty handle strip use Motion.drag physics instead.
     const startAiPanelHardDrag = (e, { suppressLayoutClick = false, threshold = 4 } = {}) => {
-        if (!panel) return;
+        if (!panel || window.innerWidth <= 760) return;
         if (e.button !== undefined && e.button !== 0) return;
         bringAiPanelToFront();
         // Kill any in-flight physics settle so hard drag owns left/top immediately.
@@ -12043,7 +12611,90 @@ function setupAiPanelChrome() {
         window.addEventListener('pointerup', up, { once: true });
         window.addEventListener('pointercancel', up, { once: true });
     });
-    // Physics drag only for the top gray handle strip. Hard drag remains for ⋯.
+    // Mobile handle resizes the sheet directly. No spring and no snap:
+    // the height stays where the finger releases. A fast downward flick
+    // still dismisses, by sliding the current height off screen.
+    const mobileHandle = panel.querySelector('.panel-drag-handle');
+    if (mobileHandle && !panel._zephyrSizeDrag) {
+        panel._zephyrSizeDrag = true;
+        let resizing = false;
+        let startY = 0;
+        let startH = 0;
+        let lastY = 0;
+        let lastT = 0;
+        let vy = 0;
+        const limits = () => {
+            const view = window.innerHeight || 800;
+            return { min: Math.round(view * 0.34), max: Math.round(view * 0.94) };
+        };
+        const onDown = (e) => {
+            if (window.innerWidth > 760) return;
+            if (e.target?.closest?.('button, a, input, textarea, select, [role="button"]')) return;
+            resizing = true;
+            startY = e.clientY;
+            lastY = e.clientY;
+            lastT = performance.now();
+            vy = 0;
+            startH = panel.getBoundingClientRect().height || panel.offsetHeight;
+            stopAiMobileSpring();
+            try { sshKeyMotion.engine?.stop?.(panel); } catch { /* ignore */ }
+            mobileHandle.setPointerCapture?.(e.pointerId);
+            e.preventDefault();
+        };
+        const onMove = (e) => {
+            if (!resizing) return;
+            const now = performance.now();
+            const dt = now - lastT;
+            if (dt > 0) vy = (e.clientY - lastY) / dt * 1000;
+            lastY = e.clientY;
+            lastT = now;
+            const { min, max } = limits();
+            const next = Math.min(max, Math.max(min, startH - (e.clientY - startY)));
+            panel.style.height = `${Math.round(next)}px`;
+            e.preventDefault();
+        };
+        const onUp = () => {
+            if (!resizing) return;
+            resizing = false;
+            const h = panel.getBoundingClientRect().height || startH;
+            const { min, max } = limits();
+            // Flick down, or dragged to the floor with downward speed: dismiss.
+            if (vy > 900 || (h <= min + 8 && vy > 200)) {
+                closeAiAssistantPanel();
+                return;
+            }
+            // Symmetric to the dismiss flick: one firm upward flick snaps the
+            // sheet to its full size.
+            if (vy < -900) {
+                sshKeyMotion._ensure().then((Motion) => {
+                    if (!Motion || typeof Motion.to !== 'function') {
+                        panel.style.height = `${max}px`;
+                        return;
+                    }
+                    // Engine's h channel writes style.height per frame; no
+                    // side paint loop needed. Retarget from the live height.
+                    const liveH = panel.getBoundingClientRect().height || h;
+                    Motion.stop(panel, ['h']);
+                    Motion.set(panel, { h: liveH });
+                    const done = Motion.to(panel, { h: max }, { preset: 'sheetResize' });
+                    Promise.resolve(done).then(() => {
+                        // Release FIRST, bake the final height SECOND.
+                        // release() wipes style.height to '' — if we baked
+                        // before releasing, the panel would snap from max
+                        // back to the CSS 88dvh default in one frame.
+                        try { Motion.stop(panel, ['h']); Motion.release(panel); } catch { /* ignore */ }
+                        panel.style.height = `${max}px`;
+                    });
+                }).catch(() => { panel.style.height = `${max}px`; });
+                return;
+            }
+            scheduleWorkspaceSave('ai-panel-resize');
+        };
+        mobileHandle.addEventListener('pointerdown', onDown);
+        mobileHandle.addEventListener('pointermove', onMove);
+        mobileHandle.addEventListener('pointerup', onUp);
+        mobileHandle.addEventListener('pointercancel', onUp);
+    }
     void ensureAiPanelPhysicsDrag().then((ok) => {
         if (ok || !panel) return;
         // Engine unavailable: hard-drag fallback is still limited to gray strip.
@@ -12060,14 +12711,50 @@ function setupAiPanelChrome() {
         panel._suppressHeaderClick = false;
     }, true);
     panel?.querySelectorAll('[data-ai-agent-resize]').forEach((h) => h.addEventListener('pointerdown', (e) => {
-        e.preventDefault(); bringAiPanelToFront(); panel.classList.add('resizing'); h.setPointerCapture?.(e.pointerId);
-        const sx = e.clientX, sy = e.clientY, sw = panel.offsetWidth, sh = panel.offsetHeight, sl = panel.offsetLeft, edge = h.dataset.aiAgentResize;
+        if (window.innerWidth <= 760) return;
+        e.preventDefault();
+        bringAiPanelToFront();
+        panel.classList.add('resizing');
+        h.setPointerCapture?.(e.pointerId);
+        const sx = e.clientX, sy = e.clientY;
+        const sw = panel.offsetWidth, sh = panel.offsetHeight, sl = panel.offsetLeft;
+        const edge = h.dataset.aiAgentResize;
         const parentRect = aiPanelParentRect(panel);
-        const compact = window.innerWidth <= 760;
-        const minWidth = compact ? 220 : 420, minHeight = compact ? 300 : 420;
-        const move = (ev) => { ev.preventDefault(); let nw = sw + ev.clientX - sx, nl = sl; if (edge === 'left') { nw = sw - (ev.clientX - sx); nl = sl + (ev.clientX - sx); if (nw < minWidth) { nl -= minWidth - nw; nw = minWidth; } if (nl < 8) { nw += nl - 8; nl = 8; } panel.style.left = `${nl}px`; } const maxWidth = edge === 'left' ? sl + sw - 8 : parentRect.width - panel.offsetLeft - 12; const maxHeight = parentRect.height - panel.offsetTop - 12; panel.style.width = `${Math.min(Math.max(minWidth, nw), maxWidth)}px`; panel.style.height = `${Math.min(Math.max(minHeight, sh + ev.clientY - sy), maxHeight)}px`; updateAiPanelResponsiveState(); };
-        const up = () => { panel.classList.remove('resizing'); updateAiPanelResponsiveState(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-        window.addEventListener('pointermove', move, { passive: false }); window.addEventListener('pointerup', up, { once: true });
+        const minWidth = 540;
+        const minHeight = 460;
+        const maxHeight = Math.max(minHeight, parentRect.height - panel.offsetTop - 12);
+        let nw = sw, nl = sl, nh = sh, raf = 0;
+        const paint = () => {
+            raf = 0;
+            if (edge === 'left') panel.style.left = `${Math.round(nl)}px`;
+            panel.style.width = `${Math.round(nw)}px`;
+            panel.style.height = `${Math.round(nh)}px`;
+        };
+        const move = (ev) => {
+            ev.preventDefault();
+            nw = sw + ev.clientX - sx;
+            nl = sl;
+            if (edge === 'left') {
+                nw = sw - (ev.clientX - sx);
+                nl = sl + (ev.clientX - sx);
+                if (nw < minWidth) { nl -= minWidth - nw; nw = minWidth; }
+                if (nl < 8) { nw += nl - 8; nl = 8; }
+            }
+            const maxWidth = edge === 'left' ? sl + sw - 8 : parentRect.width - panel.offsetLeft - 12;
+            nw = Math.min(Math.max(minWidth, nw), maxWidth);
+            nh = Math.min(maxHeight, Math.max(minHeight, sh + ev.clientY - sy));
+            if (!raf) raf = requestAnimationFrame(paint);
+        };
+        const up = () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            if (raf) cancelAnimationFrame(raf);
+            paint();
+            panel.classList.remove('resizing');
+            updateAiPanelResponsiveState();
+        };
+        window.addEventListener('pointermove', move, { passive: false });
+        window.addEventListener('pointerup', up, { once: true });
     }));
     if (panel) panel._layoutAnimationTimer = null;
     layoutBtn?.addEventListener('click', (e) => {
@@ -12131,6 +12818,7 @@ function updateAiProviderModalHints() {
     }
 }
 function setupAiAssistant() {
+    window.__aiSetupStarted = true;
     normalizeAiProviderModalLayout();
     setupAiPanelChrome();
     $('#aiSettingsForm')?.addEventListener('submit', saveAiSettings);
@@ -12245,9 +12933,16 @@ function setupAiAssistant() {
     $('#aiNavTab')?.addEventListener('click', (e) => { e.preventDefault(); openAiAssistantPanel(e.currentTarget); });
     $('#aiFloatingBtn')?.addEventListener('click', (e) => toggleAiAssistantPanel(e.currentTarget));
     $('#aiJumpSettingsBtn')?.addEventListener('click', () => { switchView('settings'); document.querySelector('.settings-tab[data-settings="ai"]')?.click(); });
-    $('#aiClosePanelBtn')?.addEventListener('click', closeAiAssistantPanel); $('#aiNewChatBtn')?.addEventListener('click', () => createAiChat());
+    $('#aiNewChatBtn')?.addEventListener('click', () => createAiChat());
     $('#aiChatList')?.addEventListener('click', (e) => { const del = e.target.closest?.('[data-ai-delete-chat]')?.dataset.aiDeleteChat; if (del) { e.preventDefault(); e.stopPropagation(); deleteAiChat(del); return; } const id = e.target.closest?.('[data-ai-chat]')?.dataset.aiChat || e.target.closest?.('[data-ai-chat-row]')?.dataset.aiChatRow; if (id) { cancelAiMessageEdit({ focus: false }); aiCurrentSessionId = id; saveAiChats(); renderAiChat(); } });
-    $('#aiSendBtn')?.addEventListener('click', () => { if (aiIsSessionRunning(aiCurrentSessionId)) stopAiResponse(aiCurrentSessionId); else sendAiMessage(); });
+    $('#aiSendBtn')?.addEventListener('click', () => {
+        if ($('#aiSendBtn')?._suppressClick) {
+            delete $('#aiSendBtn')._suppressClick;
+            return;
+        }
+        if (aiIsSessionRunning(aiCurrentSessionId)) stopAiResponse(aiCurrentSessionId);
+        else sendAiMessage();
+    });
     initZephyrAiPhase68Interactions();
     $('#aiCancelEditBtn')?.addEventListener('click', () => cancelAiMessageEdit());
     $('#aiUserInput')?.addEventListener('input', (e) => { autoResizeAiInput(e.target); updateAiInputPreview(); });
@@ -12257,6 +12952,7 @@ function setupAiAssistant() {
     $('#aiCompressChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast(t('请先停止当前对话的 AI 回复')); if (s.messages.length > 2) s.messages = [{ role: 'system', content: `历史已压缩：此前共有 ${s.messages.length} 条消息。` }, s.messages[s.messages.length - 1]]; renderAiChat(); });
     $('#aiProviderPickerBtn')?.addEventListener('click', (e) => openAiPicker('provider', e.currentTarget));
     $('#aiModelPickerBtn')?.addEventListener('click', (e) => openAiPicker('model', e.currentTarget));
+    $('#aiProviderPickerBtn')?.addEventListener('click', (e) => openAiPicker('provider', e.currentTarget));
     $('#aiThinkPickerBtn')?.addEventListener('click', (e) => openAiPicker('thinking', e.currentTarget));
     $('#aiUsageBtn')?.addEventListener('click', (e) => { e.stopPropagation(); openAiUsageSheet(null, e.currentTarget); });
     document.addEventListener('click', (e) => {
@@ -12265,7 +12961,7 @@ function setupAiAssistant() {
             applyAiPickerChoice(option.dataset.kind, option.dataset.value || '');
             return;
         }
-        if (!e.target.closest?.('.ai-picker-popover,.ai-picker-btn')) closeAiPickerPopover();
+        if (!e.target.closest?.('.ai-picker-popover, .ai-picker-btn, #aiMicroIsland, .ai-model-pill, #aiProviderPickerBtn, #aiModelPickerBtn, #aiThinkPickerBtn')) closeAiPickerPopover();
         if (!e.target.closest?.('.ai-usage-popover,#aiUsageBtn')) {
             const usage = document.querySelector('.ai-usage-popover');
             if (typeof usage?._closeAiUsage === 'function') usage._closeAiUsage();
@@ -12275,7 +12971,96 @@ function setupAiAssistant() {
     $('#aiBrowserPreviewToggleBtn')?.addEventListener('click', () => { const state = aiBrowserPreviewStateForSession(aiCurrentSessionId); state.visible = !state.visible; renderAiBrowserPreview(); });
     $('#aiBrowserPreviewRefreshBtn')?.addEventListener('click', refreshAiBrowserPreview);
     $('#aiRefreshStatusBtn')?.addEventListener('click', async () => { const r = await api('/api/ai/status'); settings.ai = normalizeAiSettings(r.ai || {}); renderAiSettingsForm(); toast(t('AI 配置已刷新')); });
-    $('#aiChatArea')?.addEventListener('click', handleAiChatAreaClick);
+    // Chat Area Apple-style Momentum Inertial Scroll & Scroll-to-Bottom Arrow
+    const chatArea = $('#aiChatArea');
+    const scrollBottomBtn = $('#aiScrollBottomBtn');
+
+    if (chatArea && scrollBottomBtn) {
+        let touchStartY = 0, lastTouchY = 0, lastTouchT = 0, touchHistory = [];
+        let stopInertia = null;
+
+        const updateScrollBottomBtn = () => {
+            const distanceToBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight;
+            if (distanceToBottom > 160) {
+                scrollBottomBtn.removeAttribute('hidden');
+                scrollBottomBtn.hidden = false;
+                scrollBottomBtn.classList.remove('is-hidden');
+            } else {
+                scrollBottomBtn.setAttribute('hidden', '');
+                scrollBottomBtn.hidden = true;
+                scrollBottomBtn.classList.add('is-hidden');
+            }
+        };
+
+        chatArea.addEventListener('scroll', updateScrollBottomBtn, { passive: true });
+
+        // 点击消息中的图片卡片，弹出全屏高清灯箱预览 (Apple / ChatGPT 交互)
+        chatArea.addEventListener('click', (e) => {
+            const card = e.target.closest('.ai-msg-media-card');
+            if (card && card.dataset.imgSrc) {
+                e.stopPropagation();
+                aiShowImageLightbox(card.dataset.imgSrc, card.dataset.imgName || '');
+            }
+        });
+
+        scrollBottomBtn.addEventListener('click', () => {
+            if (stopInertia) { stopInertia(); stopInertia = null; }
+            chatArea.scrollTo({ top: chatArea.scrollHeight, behavior: 'smooth' });
+        });
+
+        // 监听 Touch 物理滑动 (Apple fluid momentum decelerating scroll)
+        chatArea.addEventListener('touchstart', (e) => {
+            if (stopInertia) { stopInertia(); stopInertia = null; }
+            if (e.touches.length === 1) {
+                touchStartY = e.touches[0].clientY;
+                lastTouchY = touchStartY;
+                lastTouchT = performance.now();
+                touchHistory = [{ t: lastTouchT, y: touchStartY }];
+            }
+        }, { passive: true });
+
+        chatArea.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 1) {
+                const now = performance.now();
+                const y = e.touches[0].clientY;
+                touchHistory.push({ t: now, y });
+                while (touchHistory.length > 1 && now - touchHistory[0].t > 90) {
+                    touchHistory.shift();
+                }
+                lastTouchY = y;
+                lastTouchT = now;
+            }
+        }, { passive: true });
+
+        chatArea.addEventListener('touchend', () => {
+            const now = performance.now();
+            if (touchHistory.length >= 2) {
+                const last = touchHistory[touchHistory.length - 1];
+                // 如果用户手指在松手前已经停滞超过 60ms，判定为静止松手，不触发惯性
+                if (now - last.t > 60) {
+                    touchHistory = [];
+                    return;
+                }
+                const first = touchHistory[0];
+                const dt = Math.max(8, last.t - first.t);
+                const vy = (last.y - first.y) / dt; // px/ms
+
+                // 达到最小滑动速度阈值，触发 Apple 规范物理惯性滚动
+                if (Math.abs(vy) > 0.15) {
+                    sshKeyMotion._ensure().then((Motion) => {
+                        if (Motion && typeof Motion.inertialScroll === 'function') {
+                            stopInertia = Motion.inertialScroll(chatArea, vy, {
+                                deceleration: 0.993,
+                                onUpdate: updateScrollBottomBtn,
+                                onDone: () => { stopInertia = null; }
+                            });
+                        }
+                    });
+                }
+            }
+            touchHistory = [];
+        }, { passive: true });
+    }
     $('#aiChatArea')?.addEventListener('contextmenu', handleAiMessageContextMenu);
     $('#aiChatArea')?.addEventListener('touchstart', handleAiMessageTouchStart, { passive: true });
     $('#aiChatArea')?.addEventListener('touchend', clearAiMessageTouchTimer);
@@ -12299,9 +13084,201 @@ function setupAiAssistant() {
         if (!menu || menu.classList.contains('hidden')) return;
         if (!menu.contains(e.target) && !e.target.closest?.('.ai-message')) hideAiMessageMenu();
     }, { capture: true });
-    $('#aiUploadBtn')?.addEventListener('click', () => $('#aiFileUpload').click());
+    const placeAiFunctionSheet = () => {
+        const sheet = $('#aiComposerSheet');
+        const capsule = $('#aiFloatingCapsule');
+        if (!sheet || !capsule || sheet.parentElement === capsule) return;
+        capsule.appendChild(sheet);
+    };
+
+    const aiMenuHost = () => $('#aiComposerSheet');
+
+    const syncAiMenuState = () => {
+        const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+        const provider = (ai.providers || []).find((item) => item.id === $('#aiProviderSelect')?.value) || {};
+        const providerLabel = provider.name || provider.id || t('选择供应商');
+        const modelLabel = aiModelDisplayName(provider, $('#aiModelSelect')?.value || '') || t('选择模型');
+        const island = $('#aiIslandModelName');
+        if (island) island.textContent = modelLabel || `${providerLabel}`;
+    };
+
+    const showAiSheetPage = (name = 'root') => {
+        document.querySelectorAll('#aiComposerSheet .ai-sheet-page').forEach((page) => {
+            page.hidden = page.dataset.page !== name;
+        });
+    };
+
+    let aiSheetCloseTimer = null;
+    const setAiMenuOpen = (open) => {
+        placeAiFunctionSheet();
+        const sheet = $('#aiComposerSheet');
+        const capsule = $('#aiFloatingCapsule');
+        if (!sheet) return;
+        if (aiSheetCloseTimer) {
+            clearTimeout(aiSheetCloseTimer);
+            aiSheetCloseTimer = null;
+        }
+        if (open) {
+            sheet.removeAttribute('hidden');
+            sheet.hidden = false;
+            showAiSheetPage('root');
+            syncAiMenuState();
+            // Force browser layout reflow before triggering transition
+            void sheet.offsetHeight;
+            requestAnimationFrame(() => {
+                capsule?.classList.add('sheet-open');
+                sheet.classList.add('is-open');
+            });
+        } else {
+            capsule?.classList.remove('sheet-open');
+            sheet.classList.remove('is-open');
+            aiSheetCloseTimer = setTimeout(() => {
+                sheet.setAttribute('hidden', '');
+                sheet.hidden = true;
+                aiSheetCloseTimer = null;
+            }, 320);
+        }
+    };
+
+    $('#aiComposerSheetClose')?.addEventListener('click', () => setAiMenuOpen(false));
+    $('#aiSheetBackdrop')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setAiMenuOpen(false);
+    });
+
+    // Composer + Button (Apple HIG / ChatGPT style Action Sheet)
+    $('#aiUploadBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sheet = $('#aiComposerSheet');
+        if (!sheet) return;
+        setAiMenuOpen(sheet.hidden || !sheet.classList.contains('is-open'));
+    });
+
+    // Attachment direct trigger from sheet
+    $('#aiAttachFileBtn')?.addEventListener('click', () => {
+        $('#aiFileUpload')?.click();
+        setAiMenuOpen(false);
+    });
+
+    $('#aiCellToggleBtn')?.addEventListener('click', () => {
+        setAiMenuOpen(false);
+        const cell = $('#aiCellInspector');
+        if (cell) {
+            cell.classList.toggle('is-collapsed');
+            refreshAiCellInspector();
+        }
+    });
+
+    $('#aiUsageBtn')?.addEventListener('click', (e) => {
+        setAiMenuOpen(false);
+        openAiUsageSheet(null, e.currentTarget);
+    });
+
+    $('#aiBrowserPreviewToggleBtn')?.addEventListener('click', () => {
+        setAiMenuOpen(false);
+        const state = aiBrowserPreviewStateForSession(aiCurrentSessionId);
+        state.visible = !state.visible;
+        renderAiBrowserPreview();
+    });
+
+    $('#aiCompressChatBtn')?.addEventListener('click', () => {
+        setAiMenuOpen(false);
+        const s = aiCurrentSession();
+        if (aiIsSessionRunning(s?.id)) return toast(t('请先停止当前对话的 AI 回复'));
+        if (s.messages.length > 2) {
+            s.messages = [{ role: 'system', content: `历史已压缩：此前共有 ${s.messages.length} 条消息。` }, s.messages[s.messages.length - 1]];
+            renderAiChat();
+            toast(t('上下文已压缩'));
+        }
+    });
+
+    $('#aiClearChatBtn')?.addEventListener('click', () => {
+        setAiMenuOpen(false);
+        cancelAiMessageEdit({ focus: false });
+        clearCurrentAiChat().catch((error) => { toast(error.message || t('清空对话失败')); scheduleAiHistoryReload(0); });
+    });
+
+    // Navigation Drawer / Sidebar Toggle
+    $('#aiNavToggleBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const panel = $('#aiAgentPanel');
+        if (!panel) return;
+        const isMobile = window.innerWidth <= 760;
+        if (isMobile) {
+            panel.classList.remove('sidebar-collapsed');
+            panel.classList.toggle('sidebar-open');
+        } else {
+            panel.classList.remove('sidebar-open');
+            panel.classList.toggle('sidebar-collapsed');
+            aiSidebarCollapsedBySize = !!panel.classList.contains('sidebar-collapsed');
+        }
+    });
+
+    $('#aiSidebarBackdrop')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        $('#aiAgentPanel')?.classList.remove('sidebar-open');
+    });
+
+    $('#aiChatList')?.addEventListener('click', (e) => {
+        if (e.target.closest('.ai-chat-item, .ai-chat-row')) {
+            if (window.innerWidth <= 760) {
+                $('#aiAgentPanel')?.classList.remove('sidebar-open');
+            }
+        }
+    });
+
+    $('#aiNewChatBtn')?.addEventListener('click', () => {
+        createAiChat();
+        if (window.innerWidth <= 760) {
+            $('#aiAgentPanel')?.classList.remove('sidebar-open');
+        }
+    });
+
+    $('#aiMicroIsland')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openAiPicker('model', e.currentTarget);
+    });
+
+    $('#aiCellHeaderBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        $('#aiCellInspector')?.classList.toggle('is-collapsed');
+        refreshAiCellInspector();
+    });
+
+    $('#aiNewChatHeaderBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        createAiChat();
+    });
+
+    $('#aiClosePanelBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeAiAssistantPanel();
+    });
+
+    // Dismiss sheet when clicking outside
+    document.addEventListener('click', (event) => {
+        if (event.target.closest?.('#aiComposerSheet, #aiUploadBtn')) return;
+        setAiMenuOpen(false);
+    });
+
     $('#aiFileUpload')?.addEventListener('change', (e) => { const files = Array.from(e.target.files || []); if (!files.length) return; appendAiFiles(files).catch((err) => toast(err.message || '附件读取失败')).finally(() => { e.target.value = ''; }); });
-    $('#aiInputPreview')?.addEventListener('click', (e) => { const btn = e.target.closest?.('[data-ai-remove-attachment]'); if (!btn) return; aiPendingInputAttachments.splice(Number(btn.dataset.aiRemoveAttachment || -1), 1); updateAiAttachmentDraftUi(); });
+    const handleRemoveAttachment = (e) => {
+        const btn = e.target.closest?.('[data-ai-remove-attachment]');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const idx = Number(btn.dataset.aiRemoveAttachment ?? -1);
+        if (idx >= 0 && idx < aiPendingInputAttachments.length) {
+            aiPendingInputAttachments.splice(idx, 1);
+            updateAiAttachmentDraftUi();
+        }
+    };
+    $('#aiInputPreview')?.addEventListener('click', handleRemoveAttachment);
+    $('#aiInputPreview')?.addEventListener('pointerdown', (e) => {
+        if (e.target.closest?.('[data-ai-remove-attachment]')) {
+            handleRemoveAttachment(e);
+        }
+    });
     window.addEventListener('resize', () => { updateAiPanelResponsiveState(); if (aiPanelState === 'open') startAiPanelWatchdog(); });
     window.visualViewport?.addEventListener('resize', () => { updateAiPanelResponsiveState(); });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && aiPanelState === 'open') startAiPanelWatchdog(); });
@@ -14028,6 +15005,7 @@ function bindEvents() {
     $('#remoteExecForm').addEventListener('submit', remoteExecute); $('#beianForm').addEventListener('submit', saveBeian); $('#proxyForm').addEventListener('submit', saveProxy); $('#addProxyBtn')?.addEventListener('click', (e) => openProxyModal(null, e.currentTarget)); $('#proxyCloseBtn')?.addEventListener('click', closeProxyModal); $('#proxyCancelBtn')?.addEventListener('click', closeProxyModal); $('#proxyModal')?.addEventListener('click', (e) => { if (e.target.id === 'proxyModal') closeProxyModal(); }); $('#proxyModalScrim')?.addEventListener('click', () => { if ($('#proxyModal')?.classList.contains('show')) closeProxyModal(); }); document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#proxyModal')?.classList.contains('show')) closeProxyModal(); }); $('#sshKeyForm').addEventListener('submit', saveSshKey); $('#addSshKeyBtn')?.addEventListener('click', (e) => openSshKeyModal(null, e.currentTarget)); $('#sshKeyCloseBtn')?.addEventListener('click', closeSshKeyModal); $('#sshKeyCancelBtn')?.addEventListener('click', closeSshKeyModal); // 点模糊遮罩关闭（仅 target 为 backdrop 本身，点表单不关）。可打断飞行中动画。
 $('#sshKeyModal')?.addEventListener('click', (e) => { if (e.target.id === 'sshKeyModal') closeSshKeyModal(); });
 $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?.classList.contains('show')) closeSshKeyModal(); }); document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#sshKeyModal')?.classList.contains('show')) closeSshKeyModal(); });
+    window.__beforeAiSetup = true;
     setupAiAssistant();
     $('#brandIconFile').addEventListener('change', async (e) => { try { const dataUrl = await readImageAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; pendingBrandIcon = dataUrl; $('#brandIconPreview').innerHTML = iconHtml(dataUrl); console.debug('[appearance-client]', 'brand icon file loaded', { size: e.target.files?.[0]?.size || 0, type: e.target.files?.[0]?.type || '' }); } catch (err) { e.target.value = ''; toast(err.message); } });
     setupAppearanceControls();
@@ -14201,7 +15179,10 @@ function collectWorkspaceState() {
             tabs: collectTerminalFrameStates(),
         },
         panels: {
-            ai: aiPanelState !== 'closed' ? { open: true, sessionId: aiCurrentSessionId || '' } : { open: false },
+            // 'closing' must count as closed. A save snapshotted mid-close
+            // persisted open:true, and the next restore re-opened the panel —
+            // the "slides away then pops back up" ghost reopen.
+            ai: aiPanelState === 'open' || aiPanelState === 'opening' ? { open: true, sessionId: aiCurrentSessionId || '' } : { open: false },
         },
         notes: {
             selectedId: notesController?.state?.selectedId || '',
@@ -14375,7 +15356,10 @@ async function restoreLastWorkspace() {
                 console.warn('[workspace-restore] note unavailable', err);
             }
         }
-        if (state.panels?.ai?.open) {
+        if (state.panels?.ai?.open && aiPanelState !== 'closing') {
+            // Only restore-open when the panel is genuinely meant to be up.
+            // Restoring into a closing/closed session reopens a dismissed
+            // panel — the "bounce back" ghost.
             if (state.panels.ai.sessionId && aiChatSessions.some((session) => session.id === state.panels.ai.sessionId)) {
                 aiCurrentSessionId = state.panels.ai.sessionId;
             }

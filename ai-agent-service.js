@@ -3814,6 +3814,18 @@ function registerAiRoutes(app, deps) {
             res.json({ ok: true, attachment: item });
         } catch (err) { handleServiceError(res, err, 400); }
     });
+    app.get('/api/ai/attachments/:id/content', requireUser, async (req, res) => {
+        try {
+            if (!sessionFs) throw new HttpError(503, 'session_fs_unavailable', '附件服务不可用');
+            const sessionId = String(req.query?.sessionId || '').trim();
+            if (!sessionId) throw new HttpError(400, 'session_required', 'sessionId required');
+            const { item, data } = await sessionFs.readAttachmentBytes(req.user.userId, sessionId, String(req.params.id || ''));
+            res.setHeader('Content-Type', item.mime || 'application/octet-stream');
+            res.setHeader('Content-Length', data.length);
+            res.setHeader('Cache-Control', 'private, max-age=86400');
+            res.end(data);
+        } catch (err) { handleServiceError(res, err, 400); }
+    });
     app.delete('/api/ai/attachments/:id', requireUser, async (req, res) => {
         try {
             if (!sessionFs) throw new HttpError(503, 'session_fs_unavailable', '附件服务不可用');
