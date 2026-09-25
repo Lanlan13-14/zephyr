@@ -3389,18 +3389,20 @@ export const Motion = {
     panel.style.willChange = 'transform, opacity, filter, border-radius';
     panel.classList.add('ai-panel-motion-closing');
 
-    // 1) Smoothly cross-fade content and handles into origin button (Seamless 一镜到底)
-    const chrome = [
+    // With a trigger the surface shrinks back to the button, so content is
+    // blanked first. Without one the whole panel fades in place — blanking
+    // content here would flash an empty shell before the fade.
+    const chrome = btn ? [
       panel.querySelector?.('.panel-drag-handle'),
       ...Array.from(panel.querySelectorAll?.('.panel-resize-handle') || []),
-    ].filter(Boolean);
+    ].filter(Boolean) : [];
     for (const el of chrome) {
       try {
         this.stop(el);
         this.set(el, { opacity: 0 });
       } catch { /* ignore */ }
     }
-    if (contentEl) {
+    if (btn && contentEl) {
       try {
         this.to(contentEl, { opacity: 0 }, { preset: contentPreset });
       } catch { /* ignore */ }

@@ -11822,7 +11822,7 @@ function openAiAssistantPanel(trigger = null) {
         return;
     }
 
-    // 桌面端：由触发按钮展开，呈现流畅的一镜到底共享元素物理动效 (macOS / iPadOS FLIP)
+    // 桌面端：在面板自身位置缩放淡入。不从 AI 按钮 FLIP。
     panel.style.visibility = 'visible';
     panel.style.pointerEvents = 'auto';
 
@@ -11833,10 +11833,10 @@ function openAiAssistantPanel(trigger = null) {
         const contentEl = panel.querySelector('.ai-agent-window');
         if (Motion && typeof Motion.aiPanelOpen === 'function') {
             try {
-                await Motion.aiPanelOpen(panel, sourceButton, {
+                await Motion.aiPanelOpen(panel, null, {
                     contentEl,
                     contentWithPanel: true,
-                    mode: sourceButton ? 'flip' : 'origin',
+                    mode: 'origin',
                     preset: 'mac',
                 });
             } catch (err) {
@@ -11911,16 +11911,15 @@ function closeAiAssistantPanel() {
         return;
     }
 
-    // 桌面端：Zephyr 一镜到底收回至触发按钮
+    // 桌面端：在面板自身位置淡出。不收回 AI 按钮。
     sshKeyMotion._ensure().then(async (Motion) => {
         if (cycle !== openAiAssistantPanel._cycle) return;
-        const trigger = aiPanelMorphOriginButton?.isConnected ? aiPanelMorphOriginButton : ($('#aiFloatingBtn') || $('#aiNavTab'));
         const contentEl = panel.querySelector('.ai-agent-window');
         if (Motion && typeof Motion.aiPanelClose === 'function') {
             try {
-                await Motion.aiPanelClose(panel, trigger, {
+                await Motion.aiPanelClose(panel, null, {
                     contentEl,
-                    mode: trigger ? 'flip' : 'origin',
+                    mode: 'origin',
                     preset: 'macClose',
                     thenDisplayNone: true,
                 });
