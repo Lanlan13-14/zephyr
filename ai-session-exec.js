@@ -947,6 +947,18 @@ async function sessionExec(opts = {}) {
         stderrBytes: Buffer.byteLength(result.stderr),
     };
     await appendAudit(sessionRoot, audit);
+    // Visible execution history for the Cell inspector. Same append-only
+    // store as the audit log but with a stdout preview so the UI can show
+    // what the model actually ran and got back. Failure to write must not
+    // fail the completed exec.
+    try {
+        const preview = String(result.stdout || '').slice(0, 4000);
+        await fsp.appendFile(
+            path.join(sessionRoot, 'outputs', 'exec-history.ndjson'),
+            JSON.stringify({ ts: new Date().toISOString(), ...audit, stdoutPreview: preview, ok: result.exitCode === 0 }) + '\n',
+            { mode: 0o600 },
+        );
+    } catch { /* non-fatal */ }
 
     return {
         ok: !result.timedOut && result.exitCode === 0,
@@ -973,6 +985,38 @@ async function sessionExec(opts = {}) {
         truncated: result.truncated,
         auditPath: 'outputs/.exec-audit.ndjson',
     };
+}
+
+// Visible exec history for the Cell inspector: newest-first slice of
+// outputs/exec-history.ndjson. Owner-scoped because the path resolves through
+// the session fs root of the requesting user.
+async function readSessionExecHistory({ userId, sessionId, dataDir, sessionFs, limit = 20 }) {
+    const { AiSessionFs } = require('./ai-session-fs');
+    const fsApi = sessionFs || new AiSessionFs({ dataDir });
+    const root = await fsApi.ensure(String(userId || '').trim(), String(sessionId || '').trim());
+    const filePath = path.join(root, 'outputs', 'exec-history.ndjson');
+    let raw = '';
+    try { raw = await fsp.readFile(filePath, 'utf8'); } catch { return { items: [] }; }
+    const lines = raw.split('\n').filter(Boolean).slice(-Math.max(1, Math.min(Number(limit) || 20, 50)));
+    const items = [];
+    for (const line of lines.reverse()) {
+        try {
+            const rec = JSON.parse(line);
+            items.push({
+                ts: String(rec.ts || ''),
+                execId: String(rec.execId || ''),
+                command: String(rec.command || ''),
+                args: Array.isArray(rec.args) ? rec.args : [],
+                cwd: String(rec.cwd || ''),
+                exitCode: Number.isFinite(rec.exitCode) ? rec.exitCode : -1,
+                durationMs: Number(rec.durationMs) || 0,
+                timedOut: !!rec.timedOut,
+                ok: !!rec.ok,
+                stdoutPreview: String(rec.stdoutPreview || ''),
+            });
+        } catch { /* skip corrupt line */ }
+    }
+    return { items };
 }
 
 function listAllowedCommands() {
@@ -1064,6 +1108,7 @@ function _resetCapsCache() {
 
 module.exports = {
     sessionExec,
+    readSessionExecHistory,
     listAllowedCommands,
     getSandboxStatus,
     environmentMatrix,

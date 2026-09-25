@@ -31,6 +31,36 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const withEl = (sel, fn) => { const el = $(sel); if (el) fn(el); return el; };
 const setVal = (sel, value) => withEl(sel, (el) => { el.value = value; });
 const setChecked = (sel, checked) => withEl(sel, (el) => { el.checked = checked; });
+// Canonical history stores only user/assistant (DB CHECK constraint), so tool
+// traces and the reasoning transcript live only in the local session and would
+// vanish on every reload. Reinsert each local ephemeral message right after the
+// canonical message it followed (matched by anchorMessageId); ones whose anchor
+// is gone go at the end in original order.
+function mergeCanonicalWithEphemeral(conversation, prevSession, cachedMeta) {
+    const merged = {
+        ...cachedMeta || {},
+        ...conversation,
+        messages: Array.isArray(conversation.messages) ? conversation.messages.map((m) => ({ ...m })) : [],
+    };
+    const prevMessages = Array.isArray(prevSession?.messages) ? prevSession.messages : [];
+    const ephemeral = prevMessages.filter((m) => m && (m.role === 'trace' || m.role === 'system'));
+    if (!ephemeral.length) return merged;
+    const canonicalIds = new Set(merged.messages.map((m) => String(m.id || '')));
+    const unanchored = [];
+    for (const e of ephemeral) {
+        const anchorId = String(e.anchorMessageId || '');
+        if (anchorId && canonicalIds.has(anchorId)) {
+            const anchorIdx = merged.messages.findIndex((m) => String(m.id || '') === anchorId);
+            merged.messages.splice(anchorIdx + 1, 0, { ...e });
+            canonicalIds.add(String(e.id || ''));
+        } else {
+            unanchored.push(e);
+        }
+    }
+    if (unanchored.length) merged.messages.push(...unanchored.map((m) => ({ ...m })));
+    return merged;
+}
+
 function installClosestFallback() {
     const define = (proto, fn) => {
         if (!proto || proto.closest) return;
@@ -9291,11 +9321,10 @@ async function loadAiChats({ force = false } = {}) {
         const cache = readAiHistoryMetadataCache();
         const metadata = new Map(cache.sessions.map((session) => [session.id, session]));
         const data = await api('/api/ai/history/conversations?withMessages=1');
-        aiChatSessions = (Array.isArray(data.conversations) ? data.conversations : []).map((conversation) => ({
-            ...metadata.get(String(conversation.id)) || {},
-            ...conversation,
-            messages: Array.isArray(conversation.messages) ? conversation.messages : [],
-        }));
+        aiChatSessions = (Array.isArray(data.conversations) ? data.conversations : []).map((conversation) => {
+            const prev = aiChatSessions.find((s) => s.id === String(conversation.id));
+            return mergeCanonicalWithEphemeral(conversation, prev, metadata.get(String(conversation.id)));
+        });
         aiCurrentSessionId = aiChatSessions.some((session) => session.id === aiCurrentSessionId)
             ? aiCurrentSessionId
             : (aiChatSessions.some((session) => session.id === cache.current) ? cache.current : aiChatSessions[0]?.id || null);
@@ -9476,6 +9505,17 @@ function appendAiMessage(text, role = 'assistant', { store = true, meta = '', ra
             role: normalizedRole,
             content: String(text || ''),
         };
+        // Anchor ephemeral rows to the last canonical (user/assistant) message
+        // so loadAiChats can reinsert them after a canonical history reload.
+        if (normalizedRole === 'trace' || normalizedRole === 'system') {
+            for (let i = session.messages.length - 1; i >= 0; i -= 1) {
+                const prevRole = String(session.messages[i]?.role || '');
+                if (prevRole === 'user' || prevRole === 'assistant') {
+                    record.anchorMessageId = String(session.messages[i].id || '');
+                    break;
+                }
+            }
+        }
         if (Array.isArray(attachments) && attachments.length) {
             record.attachments = attachments.map((item) => ({
                 id: String(item?.id || ''), name: String(item?.name || ''),
@@ -10961,6 +11001,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
     let assistantText = '';
     let reasoningText = '';
     let reasoningClosed = false;
+    let reasoningPersisted = false;
     const toolTrace = [];
     let assistantEl = null;
     let assistantMsgIndex = -1;
@@ -11076,15 +11117,21 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                 case 'tool.start':
                 case 'tool.pending':
                     toolTrace.push({ phase: evType, name: body?.name || '', callId: body?.callId || '' });
+                    if (evType === 'tool.start' && (body?.name === 'cell_exec_v1' || body?.name === 'session_exec_v1')) {
+                        refreshAiCellInspector();
+                    }
                     break;
-                case 'tool.result':
-                    if (data.tool === 'cell_exec_v1' || data.tool === 'session_exec_v1') refreshAiCellInspector();
+                case 'tool.result': {
+                    const execToolName = body?.name || '';
+                    if (execToolName === 'cell_exec_v1' || execToolName === 'session_exec_v1') refreshAiCellInspector();
+                }
                 case 'tool.error': {
                     const item = {
                         tool: body?.name || 'tool',
                         args: body?.args || {},
                         result: body?.result,
                         status: body?.status || (evType === 'tool.error' ? 'error' : 'success'),
+                        durationMs: body?.durationMs,
                     };
                     toolTrace.push(item);
                     try { await syncAiToolSideEffects([item], { sessionId }); } catch {}
@@ -11216,6 +11263,24 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                         const last = s?.messages?.[s.messages.length - 1];
                         if (last?.role === 'assistant') last.metrics = body?.metrics || null;
                         saveAiChats();
+                    }
+                    // Persist the reasoning transcript as a display-only local
+                    // message so the canonical history reload scheduled below
+                    // does not erase the visible thinking process. Anchored to
+                    // the assistant message; renders collapsed.
+                    if (reasoningText && !reasoningPersisted) {
+                        reasoningPersisted = true;
+                        const s = aiChatSessions.find((x) => x.id === sessionId);
+                        const lastAssistant = s?.messages?.length
+                            ? [...s.messages].reverse().find((m) => m.role === 'assistant')
+                            : null;
+                        if (lastAssistant) {
+                            appendAiMessage(
+                                `<div class="ai-message-reasoning ai-reasoning-persisted"><details><summary>${t('思考过程')}</summary><div class="ai-reasoning-body">${escapeHtml(reasoningText)}</div></details></div>`,
+                                'system',
+                                { rawHtml: true, sessionId, id: `reasoning-${assistantMessageId || start.runId}` },
+                            );
+                        }
                     }
                     // Canonical persistence is performed by the independent
                     // Node completion monitor. Refresh after local run state is
@@ -12022,12 +12087,15 @@ async function refreshAiCellInspector(sessionId = aiCurrentSessionId) {
     }
 
     try {
-        const [statusResult, listResult] = await Promise.all([
+        const [statusResult, listResult, histResult] = await Promise.all([
             api('/api/ai/tools/run', { method: 'POST', body: JSON.stringify({ sessionId: runtimeSessionId, tool: 'session_sandbox_status_v1', args: { sessionId: runtimeSessionId }, confirmed: true }) }).catch(() => ({})),
             api('/api/ai/tools/run', { method: 'POST', body: JSON.stringify({ sessionId: runtimeSessionId, tool: 'workspace_list_v1', args: { sessionId: runtimeSessionId, dir: 'workspace' }, confirmed: true }) }).catch(() => ({})),
+            api('/api/ai/tools/run', { method: 'POST', body: JSON.stringify({ sessionId: runtimeSessionId, tool: 'session_exec_history_v1', args: { sessionId: runtimeSessionId, limit: 20 }, confirmed: true }) }).catch(() => ({})),
         ]);
         const status = statusResult.result || statusResult || {};
         const list = listResult.result || listResult || {};
+        const history = histResult?.result?.items ? histResult.result : (histResult?.items ? histResult : { items: [] });
+        const historyItems = Array.isArray(history.items) ? history.items : [];
 
         if (statusText) statusText.textContent = status.mode ? 'Active' : 'Ready';
         if (authVal) authVal.textContent = status.mode || 'Cell Direct';
@@ -12036,10 +12104,23 @@ async function refreshAiCellInspector(sessionId = aiCurrentSessionId) {
 
         const commands = Array.isArray(status.commands) ? status.commands.slice(0, 16).join('  ') : '';
         if (output) {
+            // Live execution history first: what the model ran, exit code and
+            // a stdout preview. This is the "what is the AI doing" feed.
+            const historyLines = historyItems.map((h) => {
+                const argv = [h.command, ...(Array.isArray(h.args) ? h.args : [])].filter(Boolean);
+                const dur = Number(h.durationMs) > 0 ? ` (${(Number(h.durationMs) / 1000).toFixed(1)}s)` : '';
+                const time = h.ts ? h.ts.replace('T', ' ').replace(/\..*/, '') : '';
+                const head = `<div class="ai-cell-terminal-line" style="color:#c9d1d9;">$ ${escapeHtml(argv.join(' '))}<span style="color:${h.ok ? '#34c759' : '#ff7b72'};"> [exit ${Number(h.exitCode)}]${dur}</span></div>`;
+                const preview = h.timedOut
+                    ? '<div class="ai-cell-terminal-line" style="color:#ff7b72;">  (timed out)</div>'
+                    : (h.stdoutPreview ? `<div class="ai-cell-terminal-line" style="color:#8b949e;white-space:pre-wrap;">${escapeHtml(h.stdoutPreview.slice(0, 600))}</div>` : '');
+                return `<div style="margin-bottom:6px;${time ? '' : ''}"><div class="ai-cell-terminal-line" style="color:#6e7681;font-size:11px;">${escapeHtml(time)}</div>${head}${preview}</div>`;
+            }).join('');
             output.innerHTML = `
                 <div class="ai-cell-terminal-line" style="color:#58a6ff;">[zephyr-cell] Session: ${escapeHtml(runtimeSessionId)}</div>
                 <div class="ai-cell-terminal-line" style="color:#34c759;">[zephyr-cell] Mode: ${escapeHtml(status.mode || 'Direct Sandbox')} | Ready</div>
                 <div class="ai-cell-terminal-line" style="color:#8b949e;margin-top:4px;">Available binaries: ${escapeHtml(commands || 'sh, python3, curl, git, jq')}</div>
+                ${historyLines ? `<div class="ai-cell-terminal-line" style="color:#58a6ff;margin-top:8px;">[exec history] ${historyItems.length} command(s)</div>${historyLines}` : '<div class="ai-cell-terminal-line" style="color:#6e7681;margin-top:8px;">[exec history] 尚无执行记录</div>'}
             `;
         }
         const items = Array.isArray(list.items) ? list.items : [];
