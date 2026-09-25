@@ -47,7 +47,7 @@ const EXTENDED_CAPABILITIES = Object.freeze([
     cap('subagent.parallel', 'Run parallel readonly subagent tasks', 'R1', 'never', ['subagent_parallel_v1'], 'capability-discovery-v1'),
     cap('subagent.fleet', 'Run subagent fleet with resource lock preflight', 'R2', 'never', ['subagent_fleet_v1'], 'capability-discovery-v1'),
     cap('sandbox.status', 'Inspect session sandbox isolation capabilities', 'R0', 'never', ['session_sandbox_status_v1'], 'asset-management-v1'),
-    cap('sandbox.exec', 'Run whitelist command in conversation sandbox', 'R2', 'always', ['session_exec_v1'], 'asset-management-v1'),
+    cap('sandbox.exec', 'Run whitelist command in conversation sandbox', 'R2', 'always', ['session_exec_v1', 'cell_exec_v1'], 'asset-management-v1'),
 ]);
 
 const TOOL_TO_CAPABILITY = new Map();

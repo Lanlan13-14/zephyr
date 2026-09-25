@@ -536,6 +536,16 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			}
 		}
 		normPush := func(c provider.Chunk) bool {
+			// A provider "done" chunk closes THIS STEP's stream, not the run:
+			// with pending tool calls the loop continues to a next step. The
+			// terminal done frame is emitted by emitNormFinish only when the
+			// model returns text without tool calls. Feeding "done" here made
+			// the Normalizer emit a terminal done frame after step 1 and drop
+			// every later text/reasoning frame — the UI and history monitor
+			// finalized the run and swallowed the post-tool answer.
+			if c.Type == "done" {
+				return true
+			}
 			if err := rec.Push(c); err != nil {
 				metrics.ProviderMs += time.Since(started).Milliseconds()
 				// Map the storage conflict to the contract error taxonomy.

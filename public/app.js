@@ -10960,6 +10960,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
 
     let assistantText = '';
     let reasoningText = '';
+    let reasoningClosed = false;
     const toolTrace = [];
     let assistantEl = null;
     let assistantMsgIndex = -1;
@@ -10986,7 +10987,29 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
         const metaHtml = assistantEl.querySelector('small')
             ? `<small>${assistantEl.querySelector('small').innerHTML}</small>`
             : (model ? `<small>${escapeHtml(model)}</small>` : '');
-        assistantEl.innerHTML = `${metaHtml}${renderAiMessageContent(assistantText, 'assistant', false)}`;
+        // A full innerHTML rewrite detaches the reasoning <details> and orphans
+        // reasoningEl's reference, so the post-tool answer erased the visible
+        // reasoning. Patch only the live content container; keep reasoning
+        // above it as a stable DOM node.
+        let contentEl = assistantEl.querySelector('.ai-message-content-live');
+        if (!contentEl) {
+            contentEl = document.createElement('div');
+            contentEl.className = 'ai-message-content-live';
+            contentEl.innerHTML = renderAiMessageContent(assistantText, 'assistant', false);
+            assistantEl.innerHTML = metaHtml;
+            if (reasoningEl && reasoningEl.isConnected) {
+                assistantEl.appendChild(reasoningEl);
+            } else if (reasoningText) {
+                reasoningEl = document.createElement('div');
+                reasoningEl.className = 'ai-message-reasoning';
+                reasoningEl.innerHTML = `<details${reasoningClosed ? '' : ' open'}><summary>${t('思考过程')}</summary><div class="ai-reasoning-body"></div></details>`;
+                reasoningEl.querySelector('.ai-reasoning-body').textContent = reasoningText;
+                assistantEl.appendChild(reasoningEl);
+            }
+            assistantEl.appendChild(contentEl);
+        } else {
+            contentEl.innerHTML = renderAiMessageContent(assistantText, 'assistant', false);
+        }
         assistantEl.dataset.aiMessageText = assistantText;
         const s = aiChatSessions.find((x) => x.id === sessionId);
         if (s?.messages?.length) {
@@ -11024,6 +11047,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                 }
                 case 'reasoning_start': {
                     reasoningText = '';
+                    reasoningClosed = false;
                     break;
                 }
                 case 'reasoning_delta': {
@@ -11043,6 +11067,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                     break;
                 }
                 case 'reasoning_end': {
+                    reasoningClosed = true;
                     const details = reasoningEl?.querySelector('details');
                     if (details) details.open = false;
                     reasoningEl = null;

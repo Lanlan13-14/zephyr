@@ -890,6 +890,9 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'subagent_fleet_v1', description: '多任务舰队：先预检 resource_claims，只读并行、写任务串行。tasks 同 parallel，可含写 profile。', parameters: { type: 'object', properties: { tasks: { type: 'array', items: { type: 'object', properties: { prompt: { type: 'string' }, profileId: { type: 'string' }, connectionId: { type: 'string' }, tabId: { type: 'string' }, workspacePath: { type: 'string' }, resourceClaims: { type: 'array', items: { type: 'object' } } }, required: ['prompt'] } } }, required: ['tasks'], additionalProperties: false } } });
     // L2 conversation sandbox — whitelist exec only; never shell.
     tools.push({ type: 'function', function: { name: 'session_exec_v1', description: '会话隔离沙箱执行。文本：jq/grep/sed/…。Python 完全支持（workspace/*.py 或 -m；推荐 uv run/sync）。Node 部分支持（仅 .js/.mjs，禁 -e）。Go/Rust：go/cargo build|run|test。FFmpeg/ffprobe 内置（本地媒体路径）。无 shell、禁 python/node -c/-e。默认无网；依赖安装需 network:true+策略。需要确认。', parameters: { type: 'object', properties: { sessionId: { type: 'string' }, command: { type: 'string', minLength: 1, maxLength: 64 }, args: { type: 'array', items: { type: 'string', maxLength: 8192 }, maxItems: 128 }, cwd: { type: 'string', maxLength: 512, description: '相对会话根，默认 workspace' }, timeoutMs: { type: 'number', minimum: 1000, maximum: 300000 }, network: { type: 'boolean', description: '默认 false；uv/npm/go mod 拉包时需 true+策略' } }, required: ['command'], additionalProperties: false } } });
+    // cell_exec_v1 is the Contract v2 name for the same sandbox. Same
+    // parameters so the model never hits "must be array" on args.
+    tools.push({ type: 'function', function: { name: 'cell_exec_v1', description: 'Zephyr Cell 沙箱执行（与 session_exec_v1 同一沙箱）。command 必填；args 为字符串数组，缺省为空。无 shell。需要确认。', parameters: { type: 'object', properties: { command: { type: 'string', minLength: 1, maxLength: 64 }, args: { type: 'array', items: { type: 'string', maxLength: 8192 }, maxItems: 128, default: [] }, cwd: { type: 'string', maxLength: 512, description: '相对会话根，默认 workspace' }, timeoutMs: { type: 'number', minimum: 1000, maximum: 300000 }, network: { type: 'boolean', description: '默认 false' } }, required: ['command'], additionalProperties: false } } });
     tools.push({ type: 'function', function: { name: 'session_sandbox_status_v1', description: '查看会话沙箱：隔离模式、环境矩阵（Python/Node/Go/Rust/FFmpeg）、白名单、配额。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
     return tools.map((tool) => {
         if (!tool.function) return tool;
@@ -3362,10 +3365,12 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             const { getSandboxStatus } = require('./ai-session-exec');
             return getSandboxStatus();
         }
+        case 'cell_exec_v1':
         case 'session_exec_v1': {
-            // L2: never allow nested subagent YOLO or unconfirmed network.
+            // cell_exec_v1 shares the L2 session sandbox with session_exec_v1.
+            // Args default to [] so a model call without args still runs.
             if (ctx?._subagent) {
-                throw Object.assign(new Error('子代理禁止调用 session_exec_v1；请回主代理确认后执行'), {
+                throw Object.assign(new Error('子代理禁止调用沙箱执行；请回主代理确认后执行'), {
                     code: 'subagent_exec_forbidden',
                     status: 403,
                 });
