@@ -465,7 +465,7 @@ private fun WindMark(
                 native.scale(frame.wordScale, frame.wordScale, 145f * scale, 120f * scale)
                 val oWidth = textPaint.measureText("O")
                 native.drawText("O", 145f * scale - oWidth / 2f, 120.7f * scale, textPaint)
-                native.drawText("ne", 152.4f * scale, 120.7f * scale, textPaint)
+                native.drawText("ne", 150.6f * scale, 120.7f * scale, textPaint)
                 native.restore()
             }
         }

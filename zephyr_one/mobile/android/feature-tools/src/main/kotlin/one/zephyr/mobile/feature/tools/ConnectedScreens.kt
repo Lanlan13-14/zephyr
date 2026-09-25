@@ -696,7 +696,7 @@ fun DiagnosticsLiveRoute(
                 )
             }
             Text(
-                "诊断只含错误码 / requestId / 本地阶段，不含 host / 用户 / 路径 / 密钥。版本、更新与许可证在「关于」。应用版本 One $appVersion。",
+                "应用版本 One $appVersion。",
                 color = ZephyrTheme.palette.onFloatingMuted,
                 fontSize = 12.sp,
             )

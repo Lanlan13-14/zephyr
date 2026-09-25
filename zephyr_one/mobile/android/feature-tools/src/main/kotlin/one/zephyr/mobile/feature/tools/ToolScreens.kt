@@ -91,7 +91,6 @@ import one.zephyr.mobile.ui.theme.ZephyrThemeId
 import one.zephyr.mobile.ui.icon.ZephyrIcons
 import java.util.UUID
 
-@Composable
 /**
  * Hex colors for one appearance field. The main end stores terminal colors as
  * `{ dark, light }` with these rules: blank light on font colors means "invert
@@ -126,6 +125,7 @@ data class TerminalLayoutState(
     val allowLigatures: Boolean = false,
 )
 
+@Composable
 fun AppearanceSettingsScreen(
     themeId: ZephyrThemeId,
     mode: String,
@@ -657,8 +657,7 @@ fun DiagnosticsScreen(
         Column(Modifier.padding(horizontal = ZephyrSpacing.lg), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("版本", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
             Text("One $appVersion")
-            TextButton(onClick = onExport) { Text("导出诊断日志") }
-            Text("诊断只含错误码 / requestId，不含 host / 用户 / 路径 / 密钥。", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
+TextButton(onClick = onExport) { Text("导出诊断日志") }
         }
     }
 }

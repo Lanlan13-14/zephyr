@@ -92,7 +92,7 @@ fun BatchExecutionScreen(
                     bottom = 190.dp,
                 ),
             ) {
-                item("targets-label") { DemoSectionLabel("目标（需 execute · 未连接会自动拨号）", compact = true) }
+                item("targets-label") { DemoSectionLabel("目标", compact = true) }
                 item("targets") {
                     GroupCard {
                         content.targets.forEachIndexed { index, target ->
