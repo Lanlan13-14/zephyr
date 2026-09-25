@@ -9930,7 +9930,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     border-left: 1px solid var(--border) !important;
     box-sizing: border-box !important;
     z-index: 50 !important;
-    font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
 }
 :root[data-theme="light"] .ai-cell-inspector {
     background: #fbfbfd !important;
@@ -9954,9 +9954,11 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     display: flex !important;
     align-items: center !important;
     gap: 8px !important;
-    font-size: 14px !important;
+    font-size: 15px !important;
     color: var(--text) !important;
-    font-weight: 600 !important;
+    font-weight: 500 !important;
+    -webkit-font-smoothing: antialiased !important;
+    text-rendering: optimizeLegibility !important;
 }
 .ai-cell-head-title svg {
     color: #007aff !important;
