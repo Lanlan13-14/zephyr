@@ -424,8 +424,8 @@ private fun readTerminalBackground(
         type = if (type in listOf("upload", "url")) type else "none",
         url = bg?.let { codec.string(it, "url") }.orEmpty(),
         fit = bg?.let { codec.string(it, "fit") } ?: "cover",
-        opacity = (bg?.get("opacity") as? kotlinx.serialization.json.JsonPrimitive)?.doubleOrNull?.toFloat() ?: 0.35f,
-        blurPx = (bg?.get("blur") as? kotlinx.serialization.json.JsonPrimitive)?.doubleOrNull?.toFloat() ?: 0f,
+        opacity = one.zephyr.mobile.data.EntityCodec.doubleOrNull(bg ?: kotlinx.serialization.json.JsonObject(emptyMap()), "opacity")?.toFloat() ?: 0.35f,
+        blurPx = one.zephyr.mobile.data.EntityCodec.doubleOrNull(bg ?: kotlinx.serialization.json.JsonObject(emptyMap()), "blur")?.toFloat() ?: 0f,
     )
 }
 
