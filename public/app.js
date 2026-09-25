@@ -1709,7 +1709,8 @@ function fmtTime(ts) { return ts ? new Date(ts).toLocaleString() : t('从未连�
  * In One the account password is a value the shell generated and the user never
  * chose, and there is no second factor, so prompting for it protects nothing
  * while training the user to type a meaningless secret. The switch in One's
- * Settings > Security decides instead: on -> Windows Hello / Touch ID / PIN,
+ * Settings > Security decides instead: on -> the OS credential dialog
+ * (Windows Security prompt / Touch ID), off -> no challenge.
  * off -> no challenge. See zephyr-one-security.js for the server half.
  *
  * `window.__zephyrOneUnlock` is installed by the One overlay script. Its absence

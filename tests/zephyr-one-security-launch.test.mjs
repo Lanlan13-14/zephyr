@@ -28,15 +28,23 @@ test('auth_unlock unwraps the renderer { reason } payload', () => {
     assert.match(SHELL, /safeInvoke\('auth_unlock', \{ reason:/);
 });
 
-test('Windows Hello uses a STA helper file instead of an inline -Command script', () => {
+test('Windows unlock uses the official desktop CredentialPicker, not a hand-rolled dialog', () => {
     assert.equal(existsSync(path.join(root, 'zephyr_one/electron/windows-hello.ps1')), true);
     assert.match(AUTH, /windows-hello\.ps1/);
     assert.match(AUTH, /'-STA'/);
     assert.match(AUTH, /'-File', WINDOWS_HELLO_SCRIPT/);
-    assert.match(HELLO, /CheckAvailabilityAsync/);
-    assert.match(HELLO, /RequestVerificationAsync/);
+    /* Microsoft documents the CredentialPickerOptions overload as UWP-only and
+     * requires desktop apps to call the three-parameter PickAsync. */
+    assert.match(HELLO, /Windows\.Security\.Credentials\.UI\.CredentialPicker/);
+    assert.match(HELLO, /CredentialPicker\]::PickAsync\(\s*'Zephyr One',\s*\$reason,\s*'Zephyr One'\s*\)/);
+    assert.doesNotMatch(HELLO, /CredentialPickerOptions/);
+    assert.doesNotMatch(HELLO, /UserConsentVerifier/);
+    /* The dialog verifies the credential; the secret must never reach stdout. */
+    assert.doesNotMatch(HELLO, /Write-Output \$result\.Credential/);
+    assert.match(HELLO, /Write-Output 'Verified'/);
     assert.match(HELLO, /exit 0/);
-    assert.match(HELLO, /exit 2/);
+    assert.match(HELLO, /exit 1/);
+    assert.match(AUTH, /windows_credential_picker/);
     assert.doesNotMatch(AUTH, /\$asTaskGeneric = \(\[System\.WindowsRuntimeSystemExtensions\]/);
 });
 

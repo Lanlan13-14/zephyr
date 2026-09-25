@@ -54,7 +54,7 @@ export function capabilities() {
     return {
       available: true,
       biometry: true,
-      reason: 'Windows Hello / 设备 PIN',
+      reason: 'Windows 安全性凭据对话框（密码 / PIN / Windows Hello）',
     };
   }
   return {
@@ -71,25 +71,13 @@ function mapWindowsHello(code, stdout) {
    * is surfaced as-is (it is already a readable cause after the UTF-8 fix). */
   const name = String(stdout || '').replace(/^\uFEFF/, '').replace(/[\x00-\x1f]+/g, ' ').trim() || String(code);
   if (code === 0 || name === 'Verified') {
-    return { ok: true, method: 'windows_hello' };
+    return { ok: true, method: 'windows_credential_picker' };
   }
-  if (code === 1 || name === 'Canceled' || name === 'RetriesExhausted') {
+  if (code === 1 || name === 'Canceled') {
     return { ok: false, error: '系统解锁失败或已取消' };
   }
-  if (name === 'NotConfiguredForUser') {
-    return { ok: false, error: '未配置 Windows Hello / 设备 PIN。请在系统设置中添加指纹、面容或 PIN，或保持此开关关闭。' };
-  }
-  if (name === 'DeviceNotPresent') {
-    return { ok: false, error: '此设备没有可用的 Windows Hello 硬件。请保持此开关关闭。' };
-  }
-  if (name === 'DisabledByPolicy') {
-    return { ok: false, error: 'Windows Hello 已被策略禁用。请保持此开关关闭。' };
-  }
-  if (name === 'DeviceBusy') {
-    return { ok: false, error: 'Windows Hello 正忙，请稍后重试。' };
-  }
   if (code === 2) {
-    return { ok: false, error: 'Windows Hello 不可用。请在系统中配置指纹/面容/PIN，或保持此开关关闭。' };
+    return { ok: false, error: '系统凭据对话框不可用。请保持此开关关闭。' };
   }
   return { ok: false, error: name || '系统解锁失败或已取消' };
 }
