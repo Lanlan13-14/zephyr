@@ -35,6 +35,7 @@ fun ConnectionListRoute(
     onTestConnection: ((Connection) -> Unit)?,
     onShareConnection: ((Connection) -> Unit)?,
     onCreate: () -> Unit,
+    onOpenActivity: () -> Unit = {},
     onOpenAccount: (() -> Unit)?,
     localMode: Boolean,
     onMessage: suspend (String) -> Unit,
@@ -83,6 +84,7 @@ fun ConnectionListRoute(
             }
         },
         onCreate = onCreate,
+        onOpenActivity = onOpenActivity,
         onSyncNow = if (localMode) null else viewModel::syncNow,
         onOpenAccount = onOpenAccount,
         onRetry = viewModel::syncNow,

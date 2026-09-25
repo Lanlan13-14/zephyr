@@ -15,6 +15,8 @@ import java.nio.charset.Charset
  */
 enum class FileEncoding(val charsetName: String, val label: String) {
     UTF8("UTF-8", "UTF-8"),
+    UTF16LE("UTF-16LE", "UTF-16 LE"),
+    UTF16BE("UTF-16BE", "UTF-16 BE"),
     GBK("GBK", "GBK"),
     BIG5("Big5", "Big5"),
     SHIFT_JIS("Shift_JIS", "Shift_JIS"),

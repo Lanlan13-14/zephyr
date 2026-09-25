@@ -19,6 +19,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +36,8 @@ import one.zephyr.mobile.ui.component.AlertDialog
 import one.zephyr.mobile.ui.component.DropdownMenu
 import one.zephyr.mobile.ui.component.DropdownMenuItem
 import one.zephyr.mobile.ui.component.Icon
+import one.zephyr.mobile.ui.component.Markdown
+import one.zephyr.mobile.ui.component.MarkdownView
 import one.zephyr.mobile.ui.component.Surface
 import one.zephyr.mobile.ui.component.Text
 import one.zephyr.mobile.ui.component.TextButton
@@ -44,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -91,6 +99,7 @@ fun ConnectionListScreen(
     onToggleFavourite: (String) -> Unit,
     onAction: (ConnectionAction, Connection) -> Unit,
     onCreate: () -> Unit,
+    onOpenActivity: () -> Unit = {},
     onSyncNow: (() -> Unit)?,
     onOpenAccount: (() -> Unit)?,
     onRetry: () -> Unit,
@@ -144,7 +153,7 @@ fun ConnectionListScreen(
                     )
                 }
                 item(key = "activity-summary") {
-                    ActivitySummary(rows = rows, activity = activity, nowMs = nowMs)
+                    ActivitySummary(rows = rows, activity = activity, nowMs = nowMs, onOpen = onOpenActivity)
                 }
             }
         }
@@ -395,6 +404,8 @@ private fun ConnectionCard(
     onAction: (ConnectionAction) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var remarkOpen by remember(connection.id) { mutableStateOf(false) }
+    val remark = connection.remark.trim()
     val interaction = remember { MutableInteractionSource() }
     val moreActionDescription = stringResource(R.string.connection_action_more)
     val palette = ZephyrTheme.palette
@@ -413,8 +424,9 @@ private fun ConnectionCard(
         shape = RoundedCornerShape(14.dp),
         color = palette.surfaces.content,
     ) {
+        Column(Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = if (remark.isEmpty()) 14.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -482,6 +494,37 @@ private fun ConnectionCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (remark.isNotEmpty()) {
+                    val capsuleInteraction = remember { MutableInteractionSource() }
+                    Row(
+                        modifier = Modifier
+                            .padding(top = 5.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF787880).copy(alpha = 0.08f))
+                            .clickable(interactionSource = capsuleInteraction, indication = null) {
+                                remarkOpen = !remarkOpen
+                            }
+                            .padding(horizontal = 7.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Icon(ZephyrIcons.Notes, contentDescription = null, tint = palette.onFloatingSubtle, modifier = Modifier.size(11.dp))
+                        Text(
+                            text = Markdown.plainSummary(remark, maxChars = 24),
+                            color = palette.onFloatingMuted,
+                            fontSize = 11.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Text(
+                            text = "⌄",
+                            color = palette.onFloatingSubtle,
+                            fontSize = 12.sp,
+                            modifier = Modifier.graphicsLayer { rotationZ = if (remarkOpen) 180f else 0f },
+                        )
+                    }
+                }
                 val labels = cardLabels(connection)
                 if (labels.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
@@ -542,6 +585,24 @@ private fun ConnectionCard(
                     )
                 }
             }
+        }
+        if (remark.isNotEmpty()) {
+            AnimatedVisibility(
+                visible = remarkOpen,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                MarkdownView(
+                    source = remark,
+                    modifier = Modifier
+                        .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (palette.dark) Color(0xFF252528) else Color(0xFFF8F8FA))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                )
+            }
+        }
         }
     }
 }
@@ -651,12 +712,22 @@ private fun actionLabel(action: ConnectionAction): String = when (action) {
 }
 
 @Composable
-private fun ActivitySummary(rows: List<Connection>, activity: List<ActivityEvent>, nowMs: Long) {
+private fun ActivitySummary(
+    rows: List<Connection>,
+    activity: List<ActivityEvent>,
+    nowMs: Long,
+    onOpen: () -> Unit,
+) {
     Column(Modifier.padding(top = 10.dp)) {
         SectionTitle(stringResource(R.string.connections_activity_summary))
         Spacer(Modifier.height(9.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatCard(activity.size.toString(), stringResource(R.string.connections_activity_count), Modifier.weight(1f))
+            StatCard(
+                activity.size.toString(),
+                stringResource(R.string.connections_activity_count),
+                Modifier.weight(1f),
+                onClick = onOpen,
+            )
             StatCard(
                 rows.count { it.syncState == SyncState.PENDING_LOCAL }.toString(),
                 stringResource(R.string.connections_pending_count),
@@ -691,9 +762,15 @@ private fun ActivitySummary(rows: List<Connection>, activity: List<ActivityEvent
 }
 
 @Composable
-private fun StatCard(value: String, label: String, modifier: Modifier, valueColor: Color? = null) {
+private fun StatCard(
+    value: String,
+    label: String,
+    modifier: Modifier,
+    valueColor: Color? = null,
+    onClick: (() -> Unit)? = null,
+) {
     Surface(
-        modifier = modifier,
+        modifier = modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         color = ZephyrTheme.palette.surfaces.content,
         shape = RoundedCornerShape(14.dp),
     ) {

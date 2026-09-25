@@ -46,13 +46,14 @@ enum class TerminalDockItem {
     FILES,
     SNIPPETS,
     NOTES,
+    DOCKER,
     STATS,
     THEME,
     DISCONNECT,
     ;
 
     companion object {
-        /** Demo `.context-dock` order. Telnet hides 文件 rather than greying it out. */
+        /** Demo `.context-dock` order. Telnet hides 文件 and Docker: neither exists without SSH. */
         fun forProtocol(protocol: Protocol): List<TerminalDockItem> = listOf(
             KEYBOARD,
             COPY,
@@ -60,10 +61,11 @@ enum class TerminalDockItem {
             FILES,
             SNIPPETS,
             NOTES,
+            DOCKER,
             STATS,
             THEME,
             DISCONNECT,
-        ).filter { it != FILES || protocol.supportsFiles }
+        ).filter { (it != FILES && it != DOCKER) || protocol.supportsFiles }
     }
 }
 

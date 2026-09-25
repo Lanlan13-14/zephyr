@@ -192,6 +192,7 @@ internal fun TerminalToolSheet(
                     connectionId = connectionId,
                     port = sftpPort,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
+                    surfaceColor = colors.chrome,
                     onMessage = onMessage,
                 )
             } else if (current == TerminalToolKind.STATS || current == TerminalToolKind.DOCKER) {

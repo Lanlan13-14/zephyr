@@ -69,6 +69,7 @@
     <string name="terminal_dock_files">文件</string>
     <string name="terminal_dock_snippets">片段</string>
     <string name="terminal_dock_notes">笔记</string>
+    <string name="terminal_dock_docker">Docker</string>
     <string name="terminal_dock_stats">监控</string>
     <string name="terminal_dock_theme">外观</string>
     <string name="terminal_dock_sessions">会话</string>

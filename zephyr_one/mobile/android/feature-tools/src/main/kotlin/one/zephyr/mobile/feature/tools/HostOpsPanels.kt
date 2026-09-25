@@ -91,6 +91,7 @@ fun HostMonitorPanel(
     modifier: Modifier = Modifier,
     onOpenDocker: (() -> Unit)? = null,
     onMessage: (String) -> Unit = {},
+    latencyProbe: (suspend () -> Int?)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
@@ -103,6 +104,7 @@ fun HostMonitorPanel(
     var sort by remember { mutableStateOf(ProcessSort.CPU) }
     var pendingKill by remember { mutableStateOf<HostProcessInfo?>(null) }
     var tick by remember { mutableIntStateOf(0) }
+    var latencyMs by remember { mutableStateOf<Int?>(null) }
 
     suspend fun refresh() {
         val client = shell
@@ -122,6 +124,7 @@ fun HostMonitorPanel(
             snapshot = it
             sample = it.sample
             error = null
+            latencyMs = runCatching { latencyProbe?.invoke() }.getOrNull()
         }.onFailure {
             if (snapshot == null) error = it.message ?: "读取远端监控失败"
             else onMessage(it.message ?: "刷新监控失败")
@@ -155,6 +158,7 @@ fun HostMonitorPanel(
             error != null && snapshot == null -> HostOpsEmpty(error ?: "监控失败")
             snapshot != null && tab == 0 -> MonitorOverview(
                 snapshot = snapshot!!,
+                latencyMs = latencyMs,
                 onCopy = { value ->
                     clipboard.setText(AnnotatedString(value))
                     onMessage("已复制")
@@ -460,6 +464,7 @@ fun HostDockerPanel(
 @Composable
 private fun MonitorOverview(
     snapshot: HostStatsSnapshot,
+    latencyMs: Int?,
     onCopy: (String) -> Unit,
     onOpenDocker: (() -> Unit)?,
 ) {
@@ -501,7 +506,7 @@ private fun MonitorOverview(
             OverviewCard(
                 disk.mountpoint,
                 "${"%.1f".format(disk.usedGb)} / ${"%.1f".format(disk.totalGb)} GB",
-                "已用 ${disk.percent}% · 读 ${"%.1f".format(disk.readKBps)} KB/s · 写 ${"%.1f".format(disk.writeKBps)} KB/s",
+                "${disk.filesystem.ifBlank { "—" }} · 已用 ${disk.percent}% · 读 ${"%.1f".format(disk.readKBps)} KB/s · 写 ${"%.1f".format(disk.writeKBps)} KB/s",
                 disk.percent / 100f,
                 warn = disk.percent >= 80,
             )
@@ -511,6 +516,9 @@ private fun MonitorOverview(
                 Box(Modifier.weight(1f)) { OverviewCard("下载", "${"%.1f".format(snapshot.network.rxMbps)} Mbps") }
                 Box(Modifier.weight(1f)) { OverviewCard("上传", "${"%.1f".format(snapshot.network.txMbps)} Mbps") }
             }
+        }
+        item("latency") {
+            OverviewCard("连接延迟", if (latencyMs == null) "-- ms" else "$latencyMs ms", "空命令往返，与测试连接同一口径")
         }
         item("ip") {
             Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

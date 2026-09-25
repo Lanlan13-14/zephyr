@@ -72,6 +72,7 @@ import one.zephyr.mobile.app.di.AppContainer
 import one.zephyr.mobile.data.repository.ActivityRepository
 import one.zephyr.mobile.data.session.SessionRow
 import one.zephyr.mobile.data.session.SessionTransport
+import one.zephyr.mobile.feature.connections.ActivityScreen
 import one.zephyr.mobile.feature.connections.ConnectionEditorRoute
 import one.zephyr.mobile.feature.connections.ConnectionEditorViewModel
 import one.zephyr.mobile.feature.connections.DriveMappingSnapshot
@@ -269,6 +270,9 @@ private sealed interface RootRoute {
 
     data object ProtocolPicker : RootRoute
 
+    /** Activity log opened from the home summary card. */
+    data object Activity : RootRoute
+
     data class SessionDetails(val sessionId: String) : RootRoute
 
     data object BatchExecution : RootRoute
@@ -352,6 +356,7 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
             is RootRoute.Ops -> listOf(TAG_OPS, route.section.name)
             is RootRoute.ResourceList -> listOf(TAG_RESOURCE_LIST, route.kind.name)
             is RootRoute.ResourceEditor -> listOf(TAG_RESOURCE_EDITOR, route.kind.name, route.entityId ?: "")
+            RootRoute.Activity -> listOf(TAG_ACTIVITY)
         }
     },
     restore = { saved ->
@@ -370,6 +375,7 @@ private val RootRouteSaver = listSaver<RootRoute, String>(
             )
 
             TAG_PROTOCOL -> RootRoute.ProtocolPicker
+            TAG_ACTIVITY -> RootRoute.Activity
 
             TAG_NOTES -> RootRoute.Notes
             TAG_NOTE_EDITOR -> RootRoute.NoteEditor(saved.getOrNull(1)?.takeIf { it.isNotEmpty() })
@@ -635,7 +641,18 @@ private fun BoundRoot(
                 },
                 vncEngine = vncEngine,
                 rdpEngine = rdpEngine,
+                onOpenActivity = { route = RootRoute.Activity },
             )
+
+            RootRoute.Activity -> {
+                val events by remember(account) { ActivityRepository(account.database).observeRecent(ownerUserId) }
+                    .collectAsState(initial = emptyList())
+                ActivityScreen(
+                    events = events,
+                    nowMs = System.currentTimeMillis(),
+                    onBack = { route = RootRoute.Root(IslandDestination.HOME) },
+                )
+            }
 
             is RootRoute.ConnectionEditor -> {
                 val editorConnectionId = current.connectionId
@@ -1193,16 +1210,17 @@ private fun RootDestination(
     onLibraryAction: (LibraryAction) -> Unit,
     onOpenTool: (ToolEntry) -> Unit,
     onOpenBinding: () -> Unit,
+    onOpenActivity: () -> Unit,
     vncEngine: one.zephyr.mobile.protocol.vnc.VncEngine,
     rdpEngine: one.zephyr.mobile.protocol.rdp.RdpEngine,
 ) {
     val nowMs = System.currentTimeMillis()
+    val activity by remember(account) { ActivityRepository(account.database) }
+        .observeRecent(ownerUserId)
+        .collectAsState(initial = emptyList())
 
     when (destination) {
         IslandDestination.HOME -> {
-            val activityRepository = remember(account) { ActivityRepository(account.database) }
-            val activity by activityRepository.observeRecent(ownerUserId)
-                .collectAsState(initial = emptyList())
             /* Local mode has no server, so the honest sync status is "unbound" and the sync
              * action is a no-op; the banner above the list explains the mode. */
             val listSyncStatus: Flow<SyncStatus> =
@@ -1241,6 +1259,7 @@ private fun RootDestination(
                 onTestConnection = onTestConnection,
                 onShareConnection = integrations.onShareConnection,
                 onCreate = { onOpenEditor(null) },
+                onOpenActivity = onOpenActivity,
                 onOpenAccount = null,
                 localMode = account.isLocalMode,
                 onMessage = onMessage,
@@ -1725,7 +1744,8 @@ private fun NoticeScreen(text: String) {
 
 private fun popRoute(route: RootRoute): RootRoute = when (route) {
     is RootRoute.Root -> route
-    is RootRoute.ConnectionEditor, RootRoute.ProtocolPicker -> RootRoute.Root(IslandDestination.HOME)
+    is RootRoute.ConnectionEditor, RootRoute.ProtocolPicker, RootRoute.Activity ->
+        RootRoute.Root(IslandDestination.HOME)
     is RootRoute.Terminal, is RootRoute.Remote, is RootRoute.SessionDetails ->
         RootRoute.Root(IslandDestination.SESSIONS)
     is RootRoute.NoteEditor -> RootRoute.Notes
@@ -1998,6 +2018,7 @@ internal fun secretRefForPresence(
 private const val TAG_ROOT = "root"
 private const val TAG_EDITOR = "editor"
 private const val TAG_PROTOCOL = "protocol"
+private const val TAG_ACTIVITY = "activity"
 private const val TAG_SESSION_DETAILS = "session-details"
 private const val TAG_BATCH = "batch"
 private const val TAG_TERMINAL = "terminal"

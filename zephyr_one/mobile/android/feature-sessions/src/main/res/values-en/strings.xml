@@ -50,6 +50,7 @@
     <string name="terminal_dock_files">Files</string>
     <string name="terminal_dock_snippets">Snippets</string>
     <string name="terminal_dock_notes">Notes</string>
+    <string name="terminal_dock_docker">Docker</string>
     <string name="terminal_dock_stats">Monitor</string>
     <string name="terminal_dock_theme">Look</string>
     <string name="terminal_dock_sessions">Sessions</string>
