@@ -104,10 +104,10 @@ object SftpEditorSupport {
      */
     fun diagnostics(text: String, path: String): List<Diagnostic> {
         if (languageOf(path) != "JSON") return emptyList()
-        return runCatching {
+        return runCatching<List<Diagnostic>> {
             Json.parseToJsonElement(text)
             emptyList()
-        }.getOrElse { error ->
+        }.getOrElse { error: Throwable ->
             val offset = Regex("""offset (\d+)""").find(error.message.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
             val line = if (offset == null) 1 else text.take(offset.coerceIn(0, text.length)).count { it == '\n' } + 1
             val message = error.message?.lineSequence()?.firstOrNull()?.trim().orEmpty().ifBlank { "JSON 无法解析" }

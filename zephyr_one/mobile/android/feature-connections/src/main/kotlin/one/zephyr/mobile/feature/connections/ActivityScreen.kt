@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import one.zephyr.mobile.model.ActivityEvent
+import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.ui.chrome.PushedPageHeader
 import one.zephyr.mobile.ui.component.Surface
 import one.zephyr.mobile.ui.component.Text
@@ -146,6 +147,15 @@ private fun RangeTabs(selected: ActivityRange, onSelect: (ActivityRange) -> Unit
     }
 }
 
+private fun activityTitle(event: ActivityEvent, connections: List<Connection>): String {
+    val name = event.connectionId?.let { id -> connections.firstOrNull { it.id == id }?.name }?.takeIf { it.isNotBlank() }
+    val label = event.message.takeIf { it.isNotBlank() }
+        ?: event.category.takeIf { it.isNotBlank() }
+        ?: event.type.takeIf { it.isNotBlank() }
+        ?: "操作"
+    return if (name == null) label else "$name · $label"
+}
+
 @Composable
 private fun ActivityCard(event: ActivityEvent, connections: List<Connection>) {
     val palette = ZephyrTheme.palette
@@ -186,8 +196,9 @@ private fun ActivityCard(event: ActivityEvent, connections: List<Connection>) {
                 MetaCell("事件类型", event.category.ifBlank { "操作" }, Modifier.weight(1f))
                 MetaCell("协议", event.protocol?.ifBlank { "—" } ?: "—", Modifier.weight(1f))
             }
-            if (!event.target.isNullOrBlank()) {
-                MetaCell("目标地址", event.target, Modifier.padding(top = 8.dp))
+            val target = event.target
+            if (!target.isNullOrBlank()) {
+                MetaCell("目标地址", target, Modifier.padding(top = 8.dp))
             }
             Text(
                 "事件 ID  ${event.id}",
