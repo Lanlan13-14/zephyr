@@ -80,6 +80,10 @@ function createMainWindow() {
 }
 
 function createProductWindow() {
+  // macOS keeps the native traffic lights, inset into the page header.
+  // Windows and Linux drop the OS title bar: the page header is the window
+  // chrome. That removes the "browser wrapped around the app" double bar.
+  const mac = process.platform === 'darwin';
   const window = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -90,6 +94,9 @@ function createProductWindow() {
     autoHideMenuBar: true,
     backgroundColor: '#101114',
     icon: path.join(oneRoot, 'src-tauri', 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+    frame: mac,
+    titleBarStyle: mac ? 'hiddenInset' : 'default',
+    trafficLightPosition: mac ? { x: 14, y: 14 } : undefined,
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,
@@ -97,6 +104,7 @@ function createProductWindow() {
       sandbox: false,
     },
   });
+  wireWindowChrome(window);
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://127.0.0.1:') || url.startsWith('https://') || url.startsWith('http://')) {
       shell.openExternal(url);
@@ -199,12 +207,41 @@ async function openProductWindow() {
   return info;
 }
 
+// Page-drawn window buttons (Windows/Linux). The renderer asks; the main
+// process owns the window, so the buttons can never act on the wrong one.
+function wireWindowChrome(window) {
+  const send = () => {
+    if (window.isDestroyed()) return;
+    window.webContents.send('zephyr-one:window-state', { maximized: window.isMaximized() });
+  };
+  window.on('maximize', send);
+  window.on('unmaximize', send);
+  window.on('enter-full-screen', send);
+  window.on('leave-full-screen', send);
+}
+
 function wireIpc() {
   ipcMain.handle('get_platform', () => ({
     os: process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
     arch: process.arch,
+    // Native traffic lights exist only on macOS; everywhere else the page
+    // draws the window buttons itself.
+    windowControls: process.platform === 'darwin' ? 'native' : 'overlay',
     family: process.platform === 'win32' ? 'windows' : 'unix',
   }));
+  ipcMain.handle('window_minimize', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.handle('window_toggle_maximize', (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return { maximized: false };
+    if (window.isMaximized()) window.unmaximize();
+    else window.maximize();
+    return { maximized: window.isMaximized() };
+  });
+  ipcMain.handle('window_close', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
   ipcMain.handle('get_app_version', () => app.getVersion());
   ipcMain.handle('auth_capabilities', () => capabilities());
   ipcMain.handle('auth_unlock', async (_event, payload) => unlock(unlockReason(payload)));

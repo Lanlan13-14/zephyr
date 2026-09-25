@@ -53,6 +53,7 @@ const EMBED_STYLESHEET = '/zephyr-one-embed.css';
 const EMBED_RDP_SETTINGS_SCRIPT = '/zephyr-one-rdp-settings.js';
 const EMBED_SECURITY_SCRIPT = '/zephyr-one-security-ui.js';
 const EMBED_LINK_SCRIPT = '/zephyr-one-link-ui.js';
+const EMBED_WINDOW_SCRIPT = '/zephyr-one-window-chrome.js';
 
 /** Exact markup fragments this transform depends on existing in app.html. */
 const SECURITY_TAB_BUTTON = '<button class="settings-tab active" data-settings="security" data-i18n="安全设置">安全设置</button>';
@@ -203,6 +204,23 @@ function dropAgentPanel(html) {
     return html.slice(0, open) + html.slice(next);
 }
 
+/* Window chrome drawn into the page header, so Windows/Linux need no OS
+ * title bar. Hidden by default; zephyr-one-embed.css reveals it only where
+ * the shell reports overlay controls (never on macOS, which keeps its
+ * traffic lights, and never in a plain browser). */
+const WINDOW_CONTROLS = ''
+    + '<div class="one-window-controls" hidden>'
+    + '<button type="button" class="one-window-btn" data-one-window="minimize" aria-label="最小化" title="最小化">'
+    + '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>'
+    + '</button>'
+    + '<button type="button" class="one-window-btn" data-one-window="maximize" aria-label="最大化" title="最大化">'
+    + '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.25" y="2.25" width="7.5" height="7.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>'
+    + '</button>'
+    + '<button type="button" class="one-window-btn one-window-btn-close" data-one-window="close" aria-label="关闭" title="关闭">'
+    + '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>'
+    + '</button>'
+    + '</div>';
+
 const EDITS = [
     {
         name: 'drop-logout-button',
@@ -252,6 +270,21 @@ const EDITS = [
         to: ONE_FOLDER_STORAGE_CONTROLS,
     },
 ];
+/* Not an EDITS entry: its anchor ('<div class="nav-actions">') still matches
+ * after the first insertion, so the generic from/to pass would insert the
+ * buttons again. A marker check makes the second pass a no-op. */
+function addWindowControls(html) {
+    if (html.includes('class="one-window-controls"')) return { html, applied: false };
+    const anchor = '<div class="nav-actions">';
+    const at = html.indexOf(anchor);
+    if (at < 0) {
+        throw new Error('zephyr-one embedded surface: could not find .nav-actions for window controls');
+    }
+    return {
+        html: html.slice(0, at + anchor.length) + WINDOW_CONTROLS + html.slice(at + anchor.length),
+        applied: true,
+    };
+}
 
 /**
  * Count non-overlapping occurrences of a literal substring.
@@ -390,6 +423,11 @@ function applyEmbeddedSurface(source) {
     else skipped.push('drop-agent-panel');
     html = withoutAgent;
 
+    const withControls = addWindowControls(html);
+    if (withControls.applied) applied.push('add-window-controls');
+    else skipped.push('add-window-controls');
+    html = withControls.html;
+
     return {
         /* Two overlays, injected in dependency order. The security script
          * installs `window.__zephyrOneUnlock`, which app.js consults on every
@@ -398,10 +436,13 @@ function applyEmbeddedSurface(source) {
          * a module and therefore deferred. */
         html: injectOverlayScript(
             injectOverlayScript(
-                injectOverlayScript(injectStylesheet(html), EMBED_SECURITY_SCRIPT),
-                EMBED_RDP_SETTINGS_SCRIPT,
+                injectOverlayScript(
+                    injectOverlayScript(injectStylesheet(html), EMBED_SECURITY_SCRIPT),
+                    EMBED_RDP_SETTINGS_SCRIPT,
+                ),
+                EMBED_LINK_SCRIPT,
             ),
-            EMBED_LINK_SCRIPT,
+            EMBED_WINDOW_SCRIPT,
         ),
         applied,
         skipped,
@@ -409,6 +450,7 @@ function applyEmbeddedSurface(source) {
 }
 
 module.exports = {
+    WINDOW_CONTROLS,
     applyEmbeddedSurface,
     countOccurrences,
     /* Exported so the contract test asserts uniqueness against the *same*
@@ -421,6 +463,7 @@ module.exports = {
     EMBED_RDP_SETTINGS_SCRIPT,
     EMBED_SECURITY_SCRIPT,
     EMBED_LINK_SCRIPT,
+    EMBED_WINDOW_SCRIPT,
     ONE_SECURITY_PANEL_BODY,
     BROWSER_AGENT_STORAGE_ROW,
     ONE_FOLDER_STORAGE_CONTROLS,

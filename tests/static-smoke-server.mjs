@@ -30,7 +30,7 @@ http.createServer((req, res) => {
         });
         return;
     }
-    if (pathname === '/zephyr-one-embed.css' || pathname === '/zephyr-one-rdp-settings.js') {
+    if (pathname === '/zephyr-one-embed.css' || pathname === '/zephyr-one-rdp-settings.js' || pathname === '/zephyr-one-window-chrome.js') {
         const file = path.join(root, pathname.slice(1));
         fs.readFile(file, (error, data) => {
             if (error) { res.writeHead(404).end(); return; }

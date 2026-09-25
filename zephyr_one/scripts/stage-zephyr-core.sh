@@ -125,6 +125,7 @@ fi
 # password (wrong password -> 403), which is what contract §8 requires of a
 # sensitive operation.
 cp "$REPO/zephyr-one-embed.css" "$OUT/public/zephyr-one-embed.css"
+cp "$REPO/zephyr-one-window-chrome.js" "$OUT/public/zephyr-one-window-chrome.js"
 
 cat > "$OUT/ZEPHYR_ONE_CORE.json" <<EOF
 {
