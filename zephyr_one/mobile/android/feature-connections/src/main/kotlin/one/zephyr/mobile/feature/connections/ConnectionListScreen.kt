@@ -741,23 +741,6 @@ private fun ActivitySummary(
                 ZephyrTheme.palette.status.conflict,
             )
         }
-        activity.take(ACTIVITY_PREVIEW).forEach { event ->
-            Row(Modifier.fillMaxWidth().padding(top = 9.dp, start = 4.dp, end = 4.dp)) {
-                Text(
-                    event.message,
-                    color = ZephyrTheme.palette.onFloatingMuted,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    RelativeTime.format(nowMs, event.occurredAt),
-                    color = ZephyrTheme.palette.onFloatingSubtle,
-                    fontSize = 11.sp,
-                )
-            }
-        }
     }
 }
 
@@ -787,4 +770,3 @@ private val ConnectionFilter.hasFacets: Boolean
 private val DEFAULT_ACTIONS = setOf(ConnectionAction.USE, ConnectionAction.EDIT, ConnectionAction.DELETE)
 private val PAGE_GUTTER = 16.dp
 private const val MAX_CARD_LABELS = 3
-private const val ACTIVITY_PREVIEW = 3

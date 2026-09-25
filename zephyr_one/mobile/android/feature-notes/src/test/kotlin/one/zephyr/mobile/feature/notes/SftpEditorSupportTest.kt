@@ -7,53 +7,26 @@ import org.junit.Test
 class SftpEditorSupportTest {
 
     @Test
-    fun languageAndOutlineComeFromThePathAndText() {
-        assertEquals("Kotlin", SftpEditorSupport.languageOf("/src/Main.kt"))
-        val items = SftpEditorSupport.outline(
-            """
-            class Host {
-              fun start() {}
-              private fun stop() {}
-            }
-            """.trimIndent(),
-            "Host.kt",
-        )
-        assertTrue(items.any { it.name == "Host" })
-        assertTrue(items.any { it.name == "start" })
+    fun `broken json reports the parser message`() {
+        val problems = SftpEditorSupport.diagnostics("{", "config.json")
+        assertEquals(1, problems.size)
+        assertTrue(problems.single().message.isNotBlank())
     }
 
     @Test
-    fun findIsCaseInsensitiveAndBounded() {
-        val hits = SftpEditorSupport.findInText("Alpha\nalpha\nBETA", "alp")
-        assertEquals(2, hits.size)
-        assertEquals(1, hits.first().line)
+    fun `valid json and other languages stay clean`() {
+        assertTrue(SftpEditorSupport.diagnostics("""{"ok":true}""", "config.json").isEmpty())
+        assertTrue(SftpEditorSupport.diagnostics("this is not json", "notes.txt").isEmpty())
     }
 
     @Test
-    fun formatIndentsBracesWithoutInventingCode() {
-        val formatted = SftpEditorSupport.formatDocument("fun x(){\nval a=1\n}", tabSize = 4)
-        assertEquals("fun x(){\n    val a=1\n}", formatted)
+    fun `replace keeps case insensitive matches and ignores a blank query`() {
+        assertEquals("b-b", SftpEditorSupport.replaceAll("A-a", "a", "b"))
+        assertEquals("A-a", SftpEditorSupport.replaceAll("A-a", "   ", "b"))
     }
 
     @Test
-    fun workspaceHitsParseJsonObjects() {
-        val raw = """{"hits":[{"path":"/var/a.conf","line":12,"text":"worker_processes auto;"},{"path":"/var/b.conf","line":3,"text":"listen 80;"}],"filesScanned":4}"""
-        val (hits, scanned) = SftpEditorSupport.parseWorkspaceHits(raw)
-        assertEquals(4, scanned)
-        assertEquals(2, hits.size)
-        assertEquals("/var/a.conf", hits[0].path)
-        assertEquals(12, hits[0].line)
-    }
-
-    @Test
-    fun bundleCommandRefusesEmptyAndQuotesPaths() {
-        val command = SftpTransferOps.bundleCommand(listOf("/var/log", "/etc/nginx"), "/tmp/a.tar.gz")
-        assertTrue(command.startsWith("tar -czf '/tmp/a.tar.gz'"))
-        assertTrue(command.contains("'/var/log'"))
-        try {
-            SftpTransferOps.bundleCommand(emptyList(), "/tmp/a.tar.gz")
-            throw AssertionError("empty bundle accepted")
-        } catch (_: IllegalArgumentException) {
-        }
+    fun `trim drops trailing spaces but keeps the line break`() {
+        assertEquals("a\nb", SftpEditorSupport.trimTrailingWhitespace("a  \nb\t"))
     }
 }

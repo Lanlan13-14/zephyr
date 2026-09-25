@@ -1,7 +1,9 @@
 package one.zephyr.mobile.feature.connections
 
 import java.util.Calendar
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -29,5 +31,20 @@ class ActivityRangeTest {
     @Test
     fun `all keeps the oldest row`() {
         assertTrue(1L in rangeWindow(ActivityRange.ALL, noon))
+    }
+
+    @Test
+    fun `custom range stops at the end of the chosen day`() {
+        val start = parseDayStart("2026-09-25")!!
+        val window = rangeWindow(ActivityRange.CUSTOM, noon, "2026-09-25", "2026-09-25")
+        assertEquals(start, window.first)
+        assertTrue(start + 12L * 60L * 60L * 1000L in window)
+        assertFalse(start + 24L * 60L * 60L * 1000L in window)
+    }
+
+    @Test
+    fun `impossible dates are rejected`() {
+        assertNull(parseDayStart("2026-02-31"))
+        assertNull(parseDayStart("09-25"))
     }
 }

@@ -1,5 +1,6 @@
 package one.zephyr.mobile.feature.notes
 
+import kotlinx.serialization.json.Json
 import one.zephyr.mobile.protocol.ssh.SshRemoteOps
 
 /**
@@ -13,6 +14,10 @@ object SftpEditorSupport {
     data class FindHit(val line: Int, val column: Int, val text: String)
 
     data class WorkspaceHit(val path: String, val line: Int, val text: String)
+
+    data class Diagnostic(val line: Int, val message: String)
+
+    data class EditorCommand(val label: String, val id: String)
 
     fun languageOf(path: String): String {
         val ext = RemotePath.extensionOf(path)
@@ -91,6 +96,46 @@ object SftpEditorSupport {
         }
         return hits
     }
+
+    /**
+     * Diagnostics the device can compute itself. The main end's language server is a
+     * browser WebSocket, so only JSON syntax — which that editor also checks locally —
+     * is reported here. Other languages stay empty rather than inventing errors.
+     */
+    fun diagnostics(text: String, path: String): List<Diagnostic> {
+        if (languageOf(path) != "JSON") return emptyList()
+        return runCatching {
+            Json.parseToJsonElement(text)
+            emptyList()
+        }.getOrElse { error ->
+            val offset = Regex("""offset (\d+)""").find(error.message.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
+            val line = if (offset == null) 1 else text.take(offset.coerceIn(0, text.length)).count { it == '\n' } + 1
+            val message = error.message?.lineSequence()?.firstOrNull()?.trim().orEmpty().ifBlank { "JSON 无法解析" }
+            listOf(Diagnostic(line, message))
+        }
+    }
+
+    fun replaceAll(text: String, query: String, replacement: String, ignoreCase: Boolean = true): String {
+        val needle = query.trim()
+        if (needle.isEmpty() || needle.equals(replacement, ignoreCase = ignoreCase)) return text
+        val pattern = Regex(Regex.escape(needle), if (ignoreCase) setOf(RegexOption.IGNORE_CASE) else emptySet())
+        return pattern.replace(text, replacement)
+    }
+
+    fun commands(): List<EditorCommand> = listOf(
+        EditorCommand("查找", "find"),
+        EditorCommand("查找下一个", "find-next"),
+        EditorCommand("替换", "replace"),
+        EditorCommand("格式化文档", "format"),
+        EditorCommand("删除尾随空格", "trim"),
+        EditorCommand("跳转到行", "goto"),
+        EditorCommand("显示大纲", "outline"),
+        EditorCommand("显示问题", "problems"),
+        EditorCommand("搜目录", "workspace"),
+    )
+
+    fun trimTrailingWhitespace(text: String): String =
+        text.lineSequence().joinToString("\n") { it.trimEnd() }
 
     fun formatDocument(text: String, tabSize: Int, useTabs: Boolean = false): String {
         val indent = if (useTabs) "\t" else " ".repeat(tabSize.coerceIn(2, 8))
