@@ -12572,12 +12572,70 @@ async function startServer() {
     console.log(`   RDP 路径: /rdp-proxy -> WASM grdp (browser-side RDP)`);
     console.log(`   VNC/noVNC 路径: /novnc -> VNC Server`);
     console.log(`   Agent 文件重定向: /agent/files -> Flutter Agent WebSocket`);
+    // Docker restart must not require opening the settings page: refresh the
+    // model catalog once in the background for every enabled provider that
+    // already has a key. Failures are logged only, never fatal.
+    setImmediate(() => refreshAiModelCatalogs().catch((err) => {
+        console.warn('[ai-models] startup refresh failed:', err?.message || err);
+    }));
 }
 
 /* Terminal error middleware — registered after every route so the rejections
  * funnelled here by installAsyncHandlerGuard become a uniform JSON response
  * instead of a hung request. Must stay last. */
 app.use(jsonErrorMiddleware);
+
+/** Refresh model catalogs once at boot for every enabled provider with a key.
+ * Writes back through mergeFetchedModels so per-model capabilities survive.
+ * Best-effort: per-provider timeout, failures logged only. */
+async function refreshAiModelCatalogs() {
+    const owners = new Map();
+    try {
+        const rows = storage.rawDb().prepare(
+            "SELECT owner_user_id FROM ai_providers WHERE enabled=1 AND deleted_at IS NULL"
+        ).all();
+        for (const row of rows) {
+            if (row?.owner_user_id && !owners.has(row.owner_user_id)) {
+                const user = storage.getUserBrief?.(row.owner_user_id);
+                if (user?.userId || row.owner_user_id) {
+                    owners.set(row.owner_user_id, { userId: row.owner_user_id });
+                }
+            }
+        }
+    } catch (err) {
+        console.warn('[ai-models] cannot enumerate providers:', err?.message || err);
+        return { refreshed: 0, failed: 0 };
+    }
+    const { listProviderModels } = require('./ai-agent-service');
+    let refreshed = 0, failed = 0;
+    for (const [ownerId, user] of owners) {
+        let providers = [];
+        try {
+            providers = aiProviderService.listOwned(ownerId, { includeSecret: true })
+                .filter((p) => p?.enabled !== false && p?.apiKey);
+        } catch {
+            continue;
+        }
+        for (const provider of providers) {
+            try {
+                const remote = await Promise.race([
+                    listProviderModels(provider),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('model refresh timeout')), 25000)),
+                ]);
+                const ids = (Array.isArray(remote) ? remote : []).map((m) => m?.id || m?.name).filter(Boolean);
+                if (ids.length) {
+                    aiProviderService.mergeFetchedModels({ userId: ownerId }, provider.id, ids);
+                    refreshed += 1;
+                }
+            } catch (err) {
+                failed += 1;
+                console.warn(`[ai-models] refresh failed for provider ${provider.id}:`, err?.message || err);
+            }
+        }
+    }
+    console.log(`[ai-models] startup refresh done: ${refreshed} refreshed, ${failed} failed`);
+    return { refreshed, failed };
+}
 
 startServer()
     .then(() => {

@@ -38,6 +38,33 @@ func NewRecorder(runID, modelID, providerAccountID string, store FrameStore, sin
 	return &Recorder{n: New(runID, modelID, providerAccountID), store: store, sink: sink}
 }
 
+// Resume reseeds the sequence after the last persisted frame so a resumed
+// run continues appending instead of rewriting seq 0 (UNIQUE violation).
+func (r *Recorder) Resume(afterSeq int) {
+	if r != nil && r.n != nil {
+		r.n.Resume(afterSeq)
+	}
+}
+
+// LastFrameSeq reports the highest persisted frame sequence for a run.
+// Returns -1 when nothing is stored yet.
+func LastFrameSeq(store FrameStore, runID string) int {
+	if store == nil || runID == "" {
+		return -1
+	}
+	frames, err := store.ListFrames(runID, -1)
+	if err != nil || len(frames) == 0 {
+		return -1
+	}
+	max := frames[0].Seq
+	for _, f := range frames[1:] {
+		if f.Seq > max {
+			max = f.Seq
+		}
+	}
+	return max
+}
+
 // RunID reports the owning run.
 func (r *Recorder) RunID() string { return r.n.RunID }
 

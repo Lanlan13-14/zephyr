@@ -9930,7 +9930,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     border-left: 1px solid var(--border) !important;
     box-sizing: border-box !important;
     z-index: 50 !important;
-    font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
 }
 :root[data-theme="light"] .ai-cell-inspector {
     background: #fbfbfd !important;
@@ -9954,9 +9954,11 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     display: flex !important;
     align-items: center !important;
     gap: 8px !important;
-    font-size: 14px !important;
+    font-size: 15px !important;
     color: var(--text) !important;
-    font-weight: 600 !important;
+    font-weight: 500 !important;
+    -webkit-font-smoothing: antialiased !important;
+    text-rendering: optimizeLegibility !important;
 }
 .ai-cell-head-title svg {
     color: #007aff !important;
@@ -19001,4 +19003,31 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
 .ai-lightbox-close:hover {
     background: rgba(255, 255, 255, 0.35);
     transform: scale(1.1);
+}
+
+/* Reasoning fold: streams into the assistant bubble, collapses on done. */
+.ai-message-reasoning {
+    margin: 0 0 8px;
+    border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--muted, #8e8e93);
+}
+.ai-message-reasoning details { padding: 6px 10px; }
+.ai-message-reasoning summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    list-style: none;
+    user-select: none;
+}
+.ai-message-reasoning summary::-webkit-details-marker { display: none; }
+.ai-message-reasoning .ai-reasoning-body {
+    margin-top: 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 220px;
+    overflow: auto;
 }

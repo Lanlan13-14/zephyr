@@ -518,6 +518,14 @@ func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID
 			})
 		}
 		s.cell.IssueLease(runID, sessionID, "binding_"+sessionID, "local", 30*time.Minute)
+		// Register the per-session binding before issuing the lease so
+		// ExecuteCommand resolves a real cell instead of "default".
+		s.cell.RegisterBinding(&cell.CellBinding{
+			BindingID:      "binding_" + sessionID,
+			Scope:          cell.ScopeConversation,
+			ConversationID: sessionID,
+			CellID:         "session_" + sessionID,
+		})
 		_ = reg.Register(s.cell.AsExecTool(runID))
 	}
 	return reg, nil

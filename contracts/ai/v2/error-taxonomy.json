@@ -1,20 +1,101 @@
 {
   "version": 2,
   "errors": [
-    { "code": "ai_invalid_request", "httpStatus": 400, "retryable": false, "clientAction": "fix_input" },
-    { "code": "ai_auth_failed", "httpStatus": 401, "retryable": false, "clientAction": "reauthenticate" },
-    { "code": "ai_forbidden", "httpStatus": 403, "retryable": false, "clientAction": "abort" },
-    { "code": "ai_dns_failed", "httpStatus": 503, "retryable": true, "clientAction": "retry" },
-    { "code": "ai_tls_hostname_mismatch", "httpStatus": 502, "retryable": false, "clientAction": "abort" },
-    { "code": "ai_rate_limited", "httpStatus": 429, "retryable": true, "clientAction": "retry" },
-    { "code": "ai_upstream_unavailable", "httpStatus": 503, "retryable": true, "clientAction": "retry" },
-    { "code": "ai_context_length_exceeded", "httpStatus": 400, "retryable": false, "clientAction": "fix_input" },
-    { "code": "ai_content_filtered", "httpStatus": 400, "retryable": false, "clientAction": "abort" },
-    { "code": "ai_tool_timeout", "httpStatus": 504, "retryable": true, "clientAction": "retry" },
-    { "code": "ai_cell_unavailable", "httpStatus": 503, "retryable": true, "clientAction": "retry" },
-    { "code": "ai_lease_rejected", "httpStatus": 409, "retryable": false, "clientAction": "abort" },
-    { "code": "ai_contract_version_unsupported", "httpStatus": 400, "retryable": false, "clientAction": "upgrade" },
-    { "code": "ai_sync_quarantined", "httpStatus": 409, "retryable": false, "clientAction": "fix_input" },
-    { "code": "ai_cancelled", "httpStatus": 499, "retryable": false, "clientAction": "abort" }
+    {
+      "code": "ai_invalid_request",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "fix_input"
+    },
+    {
+      "code": "ai_auth_failed",
+      "httpStatus": 401,
+      "retryable": false,
+      "clientAction": "reauthenticate"
+    },
+    {
+      "code": "ai_forbidden",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "abort"
+    },
+    {
+      "code": "ai_dns_failed",
+      "httpStatus": 503,
+      "retryable": true,
+      "clientAction": "retry"
+    },
+    {
+      "code": "ai_tls_hostname_mismatch",
+      "httpStatus": 502,
+      "retryable": false,
+      "clientAction": "abort"
+    },
+    {
+      "code": "ai_rate_limited",
+      "httpStatus": 429,
+      "retryable": true,
+      "clientAction": "retry"
+    },
+    {
+      "code": "ai_upstream_unavailable",
+      "httpStatus": 503,
+      "retryable": true,
+      "clientAction": "retry"
+    },
+    {
+      "code": "ai_context_length_exceeded",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "fix_input"
+    },
+    {
+      "code": "ai_content_filtered",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "abort"
+    },
+    {
+      "code": "ai_tool_timeout",
+      "httpStatus": 504,
+      "retryable": true,
+      "clientAction": "retry"
+    },
+    {
+      "code": "ai_cell_unavailable",
+      "httpStatus": 503,
+      "retryable": true,
+      "clientAction": "retry"
+    },
+    {
+      "code": "ai_lease_rejected",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "abort"
+    },
+    {
+      "code": "ai_contract_version_unsupported",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "upgrade"
+    },
+    {
+      "code": "ai_sync_quarantined",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "fix_input"
+    },
+    {
+      "code": "ai_cancelled",
+      "httpStatus": 499,
+      "retryable": false,
+      "clientAction": "abort"
+    },
+    {
+      "code": "ai_frame_seq_conflict",
+      "httpStatus": 500,
+      "retryable": false,
+      "clientAction": "abort"
+    }
   ]
 }

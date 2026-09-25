@@ -120,8 +120,14 @@ func (a *WorkspaceAdapter) SetBackend(backend Backend) {
 }
 
 func (a *WorkspaceAdapter) RegisterBinding(b *CellBinding) {
+	if b == nil || b.BindingID == "" {
+		return
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if _, ok := a.bindings[b.BindingID]; ok {
+		return
+	}
 	a.bindings[b.BindingID] = b
 }
 
