@@ -280,8 +280,15 @@ function addWindowControls(html) {
     if (at < 0) {
         throw new Error('zephyr-one embedded surface: could not find .nav-actions for window controls');
     }
+    const close = html.indexOf('</div>', at);
+    if (close < 0) {
+        throw new Error('zephyr-one embedded surface: .nav-actions has no closing tag');
+    }
+    /* After every product control, never before. The window buttons are the
+     * rightmost thing in the header; on macOS the traffic lights stay at the
+     * left edge and the product controls must not slide past them. */
     return {
-        html: html.slice(0, at + anchor.length) + WINDOW_CONTROLS + html.slice(at + anchor.length),
+        html: html.slice(0, close) + WINDOW_CONTROLS + html.slice(close),
         applied: true,
     };
 }

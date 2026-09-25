@@ -11,7 +11,26 @@
         if (mode !== 'overlay' && mode !== 'native') return;
         document.documentElement.dataset.zephyrWindowControls = mode;
         if (mode === 'overlay') controls.hidden = false;
+        if (mode === 'native') placeTrafficLights();
     }).catch(function () {});
+
+    /* The three traffic lights are about 54px wide and must sit immediately
+     * left of the product controls, which move whenever the window resizes.
+     * A fixed position in the main process cannot track that, so the page
+     * measures and reports it. */
+    function placeTrafficLights() {
+        var actions = document.querySelector('.main-nav .nav-actions');
+        var nav = document.querySelector('.main-nav');
+        if (!actions || !nav || typeof bridge.invoke !== 'function') return;
+        var navBox = nav.getBoundingClientRect();
+        var box = actions.getBoundingClientRect();
+        var x = Math.round(box.left - navBox.left - 62);
+        var y = Math.round((navBox.height - 14) / 2);
+        bridge.invoke('window_place_traffic_lights', { x: x, y: y }).catch(function () {});
+    }
+    window.addEventListener('resize', function () {
+        if (document.documentElement.dataset.zephyrWindowControls === 'native') placeTrafficLights();
+    });
 
 
     controls.addEventListener('click', function (event) {

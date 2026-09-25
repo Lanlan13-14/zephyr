@@ -40,6 +40,10 @@ test('the embedded surface injects the window controls exactly once', async () =
     const controls = first.html.indexOf('class="one-window-controls"');
     const navEnd = first.html.indexOf('</header>', nav);
     assert.ok(nav < controls && controls < navEnd);
+    /* Rightmost in the header: the controls are appended at the end of
+     * .nav-actions, so every product control stays to their left. */
+    const navClose = first.html.indexOf('</div>', nav);
+    assert.ok(controls < navClose, 'window buttons must be the last thing in .nav-actions');
 
     const second = applyEmbeddedSurface(first.html);
     assert.equal(second.html.match(/class="one-window-controls"/g).length, 1);
@@ -52,7 +56,9 @@ test('overlay controls are hidden unless the shell opts in', () => {
     assert.match(css, /\[data-zephyr-window-controls="overlay"\] \.one-window-controls \{\s*display: flex;/);
     assert.match(css, /-webkit-app-region: drag;/);
     assert.match(css, /-webkit-app-region: no-drag;/);
-    assert.match(css, /\[data-zephyr-window-controls="native"\] \.main-nav/);
+    /* macOS reserves the gap on the left of the product controls, which is
+     * where the traffic lights are placed, not on the left of the whole bar. */
+    assert.match(css, /\[data-zephyr-window-controls="native"\] \.nav-actions \{\s*padding-left: 78px;/);
 });
 
 test('the chrome script never shows buttons without an overlay shell', () => {

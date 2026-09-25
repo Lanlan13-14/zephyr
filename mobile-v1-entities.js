@@ -558,6 +558,11 @@ function connectionDefaults(id, patch) {
         privateKey: typeof patch.privateKey === 'string' ? patch.privateKey : '',
         sshKeyId: String(patch.sshKeyId || ''),
         icon: String(patch.icon || '').trim() || 'auto',
+        /* Server-authority, but the row is unreadable without it: the web
+         * renderer trusts `icon` only when iconSource is manual or probed, and
+         * falls back to guessing from the name otherwise. Dropping the column
+         * here made every synced connection render the guessed glyph on One. */
+        iconSource: ['manual', 'probed', 'auto'].includes(patch.iconSource) ? patch.iconSource : 'auto',
         remark: String(patch.remark || ''),
         tags: Array.isArray(patch.tags) ? patch.tags.map(String).filter(Boolean) : [],
         connectionMode: ['direct', 'proxy', 'jump'].includes(patch.connectionMode) ? patch.connectionMode : 'direct',

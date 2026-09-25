@@ -357,3 +357,41 @@ test('a second bootstrap after a 429 does not restart from page one when a token
     assert.equal(sync.publicState().bootstrapResume, true);
 });
 
+
+test('a probe update keeps iconSource even though the field mask lists only icon', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const { ZephyrOneLinkSync } = mod;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'one-link-icon-'));
+    const rows = new Map([['c1', { id: 'c1', icon: 'auto', iconSource: 'auto', revision: 1 }]]);
+    const adapter = {
+        read: (_user, id) => rows.get(id) || null,
+        update: (_user, id, patch) => { rows.set(id, { ...rows.get(id), ...patch }); },
+        create: () => { throw new Error('create should not run for an existing row'); },
+        revisionOf: (row) => row.revision,
+    };
+    const spec = {
+        secretFields: [],
+        serverAuthorityFields: ['iconSource', 'revision'],
+    };
+    const sync = new ZephyrOneLinkSync({
+        dataDir: dir,
+        storage: { getFirstUser: () => ({ userId: 'u1', username: 'local' }) },
+        log: () => {},
+    });
+    sync.binding = { deviceId: 'dev-1' };
+    sync.mobileV1Api = {
+        adapters: new Map([['connection', adapter]]),
+        entityByType: new Map([['connection', spec]]),
+    };
+    await sync._applyRemoteChange({
+        entityType: 'connection',
+        entityId: 'c1',
+        action: 'upsert',
+        revision: 3,
+        fieldMask: ['icon'],
+        payload: { icon: 'debian', iconSource: 'probed', revision: 3 },
+    });
+    assert.equal(rows.get('c1').icon, 'debian');
+    assert.equal(rows.get('c1').iconSource, 'probed');
+});

@@ -18,9 +18,9 @@ const NAMES = {
     windows: 'OsWindows', macos: 'OsMacos', ubuntu: 'OsUbuntu', debian: 'OsDebian',
     arch: 'OsArch', alpine: 'OsAlpine', raspberry: 'OsRaspberry', redhat: 'OsRedhat', linux: 'OsLinux',
 };
-/* Measured extents of the web paths that are not drawn on a 24 square. Forcing
- * them into a 24 viewport is what stretched the glyphs on One's cards. */
-const VIEWPORTS = { debian: '20.2', arch: '23.395' };
+/* Every glyph is authored in the 0..24 box the web app declares as its viewBox.
+ * The artwork inside that box is not square, and shrinking the viewport to the
+ * artwork's extent is what cropped and stretched the glyphs on One's cards. */
 
 function webPath(key) {
     const block = WEB.match(/const CONNECTION_OS_ICONS = \{[\s\S]*?\n\};/)[0];
@@ -39,11 +39,7 @@ test('One system glyphs use the web path verbatim and the path real viewport', (
         assert.ok(line, `${name} missing`);
         const path = line.match(/fill\("[^"]+", "(.*?)"/)[1].replace(/\s+/g, ' ').trim();
         assert.equal(path, webPath(key), `${key} path drifted from the web app`);
-        if (VIEWPORTS[key]) {
-            assert.match(line, new RegExp(`viewport = ${VIEWPORTS[key]}f\\)`), `${key} viewport`);
-        } else {
-            assert.doesNotMatch(line, /viewport/, `${key} is a 24 square and must keep the default viewport`);
-        }
+        assert.doesNotMatch(line, /viewport/, `${key} must keep the shared 24 viewport`);
     }
 });
 

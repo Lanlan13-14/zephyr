@@ -16,9 +16,11 @@ html[data-zephyr-product="one"] .main-nav a {
     app-region: no-drag;
 }
 
-/* macOS traffic lights sit inset over the header's left edge. */
-html[data-zephyr-product="one"][data-zephyr-window-controls="native"] .main-nav {
-    padding-left: 84px;
+/* macOS traffic lights are moved to sit immediately left of the product
+ * controls, so the header's right edge reserves their width instead of the
+ * left edge. The page measures .nav-actions and reports the spot. */
+html[data-zephyr-product="one"][data-zephyr-window-controls="native"] .nav-actions {
+    padding-left: 78px;
 }
 
 .one-window-controls {
