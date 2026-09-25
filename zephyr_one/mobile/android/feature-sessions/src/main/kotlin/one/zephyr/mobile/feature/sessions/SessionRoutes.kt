@@ -223,6 +223,12 @@ private fun openDockTool(
     onDock: (TerminalDockItem) -> Unit,
 ) {
     if (item == null) return
+    // The appearance dock opens the real SSH terminal customization page, not a
+    // local demo panel: same destination as the THEME host fallback.
+    if (item == TerminalDockItem.THEME) {
+        onDock(item)
+        return
+    }
     val kind = TerminalToolKind.fromDock(item)
     if (kind != null && workspace != null) {
         onWorkspace(TerminalWorkspace.openTool(workspace, kind, phone = true))

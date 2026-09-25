@@ -515,14 +515,6 @@ private fun SftpHostPicker(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 140.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item {
-            Text(
-                "先选一台主机。打开后会自动连接，不必先去首页连上。点加号可以再开一台，从 A 复制到 B。",
-                color = ZephyrTheme.palette.onFloatingSubtle,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-        }
         items(hosts, key = { it.id }) { host ->
             Column(
                 Modifier

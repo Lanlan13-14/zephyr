@@ -426,8 +426,8 @@ private fun ConnectionCard(
     ) {
         Column(Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = if (remark.isEmpty()) 14.dp else 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.Top,
         ) {
             Box(
                 modifier = Modifier
@@ -517,11 +517,11 @@ private fun ConnectionCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )
-                        Text(
-                            text = "⌄",
-                            color = palette.onFloatingSubtle,
-                            fontSize = 12.sp,
-                            modifier = Modifier.graphicsLayer { rotationZ = if (remarkOpen) 180f else 0f },
+                        Icon(
+                            ZephyrIcons.ArrowDown,
+                            contentDescription = null,
+                            tint = palette.onFloatingSubtle,
+                            modifier = Modifier.size(11.dp).graphicsLayer { rotationZ = if (remarkOpen) 180f else 0f },
                         )
                     }
                 }
@@ -598,7 +598,7 @@ private fun ConnectionCard(
                         .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (palette.dark) Color(0xFF252528) else Color(0xFFF8F8FA))
+                        .background(palette.surfaces.background)
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                 )
             }

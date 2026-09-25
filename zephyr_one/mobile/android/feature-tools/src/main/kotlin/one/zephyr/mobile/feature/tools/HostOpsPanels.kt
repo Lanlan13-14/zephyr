@@ -518,7 +518,7 @@ private fun MonitorOverview(
             }
         }
         item("latency") {
-            OverviewCard("连接延迟", if (latencyMs == null) "-- ms" else "$latencyMs ms", "空命令往返，与测试连接同一口径")
+            OverviewCard("连接延迟", if (latencyMs == null) "-- ms" else "$latencyMs ms")
         }
         item("ip") {
             Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -532,14 +532,6 @@ private fun MonitorOverview(
                     Text("打开 Docker 管理")
                 }
             }
-        }
-        item("note") {
-            Text(
-                "每 5 秒刷新一次 · 速率需要至少两帧采样",
-                color = palette.onFloatingSubtle,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(top = 14.dp),
-            )
         }
     }
 }

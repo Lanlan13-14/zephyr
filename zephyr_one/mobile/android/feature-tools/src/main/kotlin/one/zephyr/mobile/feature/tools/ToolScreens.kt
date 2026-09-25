@@ -91,6 +91,40 @@ import one.zephyr.mobile.ui.theme.ZephyrThemeId
 import one.zephyr.mobile.ui.icon.ZephyrIcons
 import java.util.UUID
 
+/**
+ * Hex colors for one appearance field. The main end stores terminal colors as
+ * `{ dark, light }` with these rules: blank light on font colors means "invert
+ * dark"; blank light on solid background means "invert dark"; blank light on
+ * selection means "reuse dark". This state mirrors those rules.
+ */
+data class TerminalHexPair(
+    val dark: String = "",
+    val light: String = "",
+    val enabled: Boolean = false,
+)
+
+data class TerminalSelectionColors(
+    val background: TerminalHexPair = TerminalHexPair(),
+    val foreground: TerminalHexPair = TerminalHexPair(),
+)
+
+data class TerminalBackgroundState(
+    val type: String = "none",
+    val url: String = "",
+    val fit: String = "cover",
+    val opacity: Float = 0.35f,
+    val blurPx: Float = 0f,
+)
+
+/** Terminal workbench layout. Mirrors the main end's terminal layout form. */
+data class TerminalLayoutState(
+    val maxWindows: Int = 3,
+    val minimizedKeepAlive: Int = 0,
+    val smartbarOrder: String = "old-first",
+    val shortcutPlatform: String = "auto",
+    val allowLigatures: Boolean = false,
+)
+
 @Composable
 fun AppearanceSettingsScreen(
     themeId: ZephyrThemeId,
@@ -98,14 +132,23 @@ fun AppearanceSettingsScreen(
     onTheme: (ZephyrThemeId) -> Unit,
     onMode: (String) -> Unit,
     onBack: () -> Unit,
+    fontColors: TerminalHexPair = TerminalHexPair(),
+    solidBackground: TerminalHexPair = TerminalHexPair(),
+    selection: TerminalSelectionColors = TerminalSelectionColors(),
+    terminalBackground: TerminalBackgroundState = TerminalBackgroundState(),
+    terminalLayout: TerminalLayoutState = TerminalLayoutState(),
+    onSaveFontColors: ((TerminalHexPair) -> Unit)? = null,
+    onSaveSolidBackground: ((TerminalHexPair) -> Unit)? = null,
+    onSaveSelection: ((TerminalSelectionColors) -> Unit)? = null,
+    onSaveTerminalBackground: ((TerminalBackgroundState) -> Unit)? = null,
+    onSaveTerminalLayout: ((TerminalLayoutState) -> Unit)? = null,
 ) {
     val palette = ZephyrTheme.palette
-    var terminalFont by remember { mutableStateOf(13) }
-    var ligatures by remember { mutableStateOf(false) }
-    var customBackground by remember { mutableStateOf(false) }
-    var customSelection by remember { mutableStateOf(false) }
-    var splitMode by remember { mutableStateOf(0) }
-    var terminalBackgroundSource by remember { mutableStateOf(0) }
+    var fontUi by remember(fontColors) { mutableStateOf(fontColors) }
+    var solidUi by remember(solidBackground) { mutableStateOf(solidBackground) }
+    var selectionUi by remember(selection) { mutableStateOf(selection) }
+    var backgroundUi by remember(terminalBackground) { mutableStateOf(terminalBackground) }
+    var layoutUi by remember(terminalLayout) { mutableStateOf(terminalLayout) }
     Column(Modifier.fillMaxSize()) {
         PushedPageHeader(title = stringResource(R.string.tools_appearance), onBack = onBack)
         Column(
@@ -165,54 +208,298 @@ fun AppearanceSettingsScreen(
                     )
                 }
             }
-            SectionLabel("终端")
+            SectionLabel("SSH 终端自定义")
             one.zephyr.mobile.ui.component.GroupCard {
                 one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "终端字号",
-                    trailing = {
-                        one.zephyr.mobile.ui.component.SegmentedControl(
-                            options = listOf("12", "13", "14", "15"),
-                            selectedIndex = (terminalFont - 12).coerceIn(0, 3),
-                            onSelect = { terminalFont = it + 12 },
-                            modifier = Modifier.width(141.dp),
+                    title = "终端背景来源",
+                    value = when (backgroundUi.type) {
+                        "upload" -> "上传图片"
+                        "url" -> "图片 URL"
+                        else -> "不使用自定义背景"
+                    },
+                    showChevron = true,
+                    onClick = {
+                        backgroundUi = backgroundUi.copy(
+                            type = when (backgroundUi.type) {
+                                "none" -> "upload"
+                                "upload" -> "url"
+                                else -> "none"
+                            },
                         )
                     },
                 )
+                if (backgroundUi.type == "url") {
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "图片 URL",
+                        showDivider = false,
+                        trailing = {
+                            one.zephyr.mobile.ui.component.OutlinedTextField(
+                                value = backgroundUi.url,
+                                onValueChange = { backgroundUi = backgroundUi.copy(url = it) },
+                                singleLine = true,
+                                placeholder = { Text("https://…", color = palette.onFloatingSubtle, fontSize = 13.sp) },
+                                modifier = Modifier.width(190.dp),
+                            )
+                        },
+                    )
+                } else if (backgroundUi.type == "upload") {
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "上传图片",
+                        subtitle = "最高 12MB，在主端上传后同步到本机",
+                        showDivider = false,
+                    )
+                }
                 one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "终端背景来源",
-                    value = if (terminalBackgroundSource == 0) "纯黑 #07090C" else "跟随配色",
-                    showChevron = true,
-                    onClick = { terminalBackgroundSource = (terminalBackgroundSource + 1) % 2 },
-                )
-                one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "允许终端字体连字",
-                    subtitle = "仅同样式 run 内",
-                    trailing = { Switch(ligatures, { ligatures = it }) },
-                )
-                one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "自定义终端背景色",
-                    subtitle = "所有配色模式生效",
-                    trailing = { Switch(customBackground, { customBackground = it }) },
-                )
-                one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "自定义选中色",
-                    subtitle = "选中背景 + 选中文字",
-                    trailing = { Switch(customSelection, { customSelection = it }) },
-                )
-                one.zephyr.mobile.ui.component.SettingsRow(
-                    title = "分屏",
-                    subtitle = "双终端共享底部按钮 · 或一侧停靠工具",
-                    showDivider = false,
-                    verticalAlignment = Alignment.Top,
+                    title = "背景适配",
                     trailing = {
                         one.zephyr.mobile.ui.component.SegmentedControl(
-                            options = listOf("关", "双终端", "工具左", "工具右"),
-                            selectedIndex = splitMode,
-                            onSelect = { splitMode = it },
+                            options = listOf("覆盖", "完整显示", "原始尺寸"),
+                            selectedIndex = listOf("cover", "contain", "auto").indexOf(backgroundUi.fit).coerceAtLeast(0),
+                            onSelect = {
+                                backgroundUi = backgroundUi.copy(fit = listOf("cover", "contain", "auto")[it])
+                            },
                             modifier = Modifier.width(205.dp),
                         )
                     },
                 )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "背景强度 ${(backgroundUi.opacity * 100f).toInt()}%",
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Slider(
+                            value = backgroundUi.opacity,
+                            onValueChange = { backgroundUi = backgroundUi.copy(opacity = it) },
+                            valueRange = 0f..1f,
+                            modifier = Modifier.width(150.dp),
+                        )
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "模糊强度 ${backgroundUi.blurPx.toInt()}px",
+                    showDivider = false,
+                    trailing = {
+                        one.zephyr.mobile.ui.component.Slider(
+                            value = backgroundUi.blurPx,
+                            onValueChange = { backgroundUi = backgroundUi.copy(blurPx = it) },
+                            valueRange = 0f..20f,
+                            modifier = Modifier.width(150.dp),
+                        )
+                    },
+                )
+            }
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "启用自定义 SSH 终端字体颜色",
+                    trailing = { Switch(fontUi.enabled, { fontUi = fontUi.copy(enabled = it) }) },
+                )
+                if (fontUi.enabled) {
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "深色终端字体颜色",
+                        trailing = {
+                            one.zephyr.mobile.ui.component.OutlinedTextField(
+                                value = fontUi.dark,
+                                onValueChange = { fontUi = fontUi.copy(dark = normalizeHex(it)) },
+                                singleLine = true,
+                                placeholder = { Text("#f4f4f6", color = palette.onFloatingSubtle, fontSize = 13.sp) },
+                                modifier = Modifier.width(110.dp),
+                            )
+                        },
+                    )
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "浅色终端字体颜色",
+                        subtitle = "留空自动取反色",
+                        showDivider = false,
+                        trailing = {
+                            one.zephyr.mobile.ui.component.OutlinedTextField(
+                                value = fontUi.light,
+                                onValueChange = { fontUi = fontUi.copy(light = normalizeHex(it)) },
+                                singleLine = true,
+                                placeholder = { Text("留空取反色", color = palette.onFloatingSubtle, fontSize = 13.sp) },
+                                modifier = Modifier.width(110.dp),
+                            )
+                        },
+                    )
+                } else {
+                    one.zephyr.mobile.ui.component.SettingsRow(title = "深色终端字体颜色", value = "#f4f4f6", showDivider = false)
+                }
+            }
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "启用自定义终端背景色",
+                    subtitle = "所有配色模式生效",
+                    trailing = { Switch(solidUi.enabled, { solidUi = solidUi.copy(enabled = it) }) },
+                )
+                if (solidUi.enabled) {
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "深色终端背景色",
+                        trailing = {
+                            one.zephyr.mobile.ui.component.OutlinedTextField(
+                                value = solidUi.dark,
+                                onValueChange = { solidUi = solidUi.copy(dark = normalizeHex(it)) },
+                                singleLine = true,
+                                placeholder = { Text("#0a0a0a", color = palette.onFloatingSubtle, fontSize = 13.sp) },
+                                modifier = Modifier.width(110.dp),
+                            )
+                        },
+                    )
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "浅色终端背景色",
+                        subtitle = "留空自动取反色",
+                        showDivider = false,
+                        trailing = {
+                            one.zephyr.mobile.ui.component.OutlinedTextField(
+                                value = solidUi.light,
+                                onValueChange = { solidUi = solidUi.copy(light = normalizeHex(it)) },
+                                singleLine = true,
+                                placeholder = { Text("留空取反色", color = palette.onFloatingSubtle, fontSize = 13.sp) },
+                                modifier = Modifier.width(110.dp),
+                            )
+                        },
+                    )
+                }
+            }
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "启用自定义选中色",
+                    subtitle = "选中背景 + 选中文字，所有配色模式生效",
+                    trailing = {
+                        Switch(selectionUi.background.enabled || selectionUi.foreground.enabled, {
+                            selectionUi = selectionUi.copy(
+                                background = selectionUi.background.copy(enabled = it),
+                                foreground = selectionUi.foreground.copy(enabled = it),
+                            )
+                        })
+                    },
+                )
+                if (selectionUi.background.enabled || selectionUi.foreground.enabled) {
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "深色 · 选中背景",
+                        trailing = {
+                            one.zephyr.mobile.ui.component.OutlinedTextField(
+                                value = selectionUi.background.dark,
+                                onValueChange = {
+                                    selectionUi = selectionUi.copy(background = selectionUi.background.copy(dark = normalizeHex(it)))
+                                },
+                                singleLine = true,
+                                placeholder = { Text("#0a84ff", color = palette.onFloatingSubtle, fontSize = 13.sp) },
+                                modifier = Modifier.width(110.dp),
+                            )
+                        },
+                    )
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "深色 · 选中文字",
+                        trailing = {
+                            one.zephyr.mobile.ui.component.OutlinedTextField(
+                                value = selectionUi.foreground.dark,
+                                onValueChange = {
+                                    selectionUi = selectionUi.copy(foreground = selectionUi.foreground.copy(dark = normalizeHex(it)))
+                                },
+                                singleLine = true,
+                                placeholder = { Text("#ffffff", color = palette.onFloatingSubtle, fontSize = 13.sp) },
+                                modifier = Modifier.width(110.dp),
+                            )
+                        },
+                    )
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "浅色 · 选中背景",
+                        subtitle = "留空沿用深色",
+                        trailing = {
+                            one.zephyr.mobile.ui.component.OutlinedTextField(
+                                value = selectionUi.background.light,
+                                onValueChange = {
+                                    selectionUi = selectionUi.copy(background = selectionUi.background.copy(light = normalizeHex(it)))
+                                },
+                                singleLine = true,
+                                placeholder = { Text("留空沿用深色", color = palette.onFloatingSubtle, fontSize = 13.sp) },
+                                modifier = Modifier.width(110.dp),
+                            )
+                        },
+                    )
+                    one.zephyr.mobile.ui.component.SettingsRow(
+                        title = "浅色 · 选中文字",
+                        subtitle = "留空沿用深色",
+                        showDivider = false,
+                        trailing = {
+                            one.zephyr.mobile.ui.component.OutlinedTextField(
+                                value = selectionUi.foreground.light,
+                                onValueChange = {
+                                    selectionUi = selectionUi.copy(foreground = selectionUi.foreground.copy(light = normalizeHex(it)))
+                                },
+                                singleLine = true,
+                                placeholder = { Text("留空沿用深色", color = palette.onFloatingSubtle, fontSize = 13.sp) },
+                                modifier = Modifier.width(110.dp),
+                            )
+                        },
+                    )
+                }
+            }
+            SectionLabel("终端工作台")
+            one.zephyr.mobile.ui.component.GroupCard {
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "终端页面最多显示窗口数",
+                    trailing = {
+                        one.zephyr.mobile.ui.component.SegmentedControl(
+                            options = listOf("单窗", "双窗", "三窗"),
+                            selectedIndex = (layoutUi.maxWindows - 1).coerceIn(0, 2),
+                            onSelect = { layoutUi = layoutUi.copy(maxWindows = it + 1) },
+                            modifier = Modifier.width(205.dp),
+                        )
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "最小化窗口保持连接数",
+                    subtitle = "0 不保留 · -1 不限制",
+                    trailing = {
+                        one.zephyr.mobile.ui.component.OutlinedTextField(
+                            value = layoutUi.minimizedKeepAlive.toString(),
+                            onValueChange = { layoutUi = layoutUi.copy(minimizedKeepAlive = it.toIntOrNull()?.coerceIn(-1, 99) ?: layoutUi.minimizedKeepAlive) },
+                            singleLine = true,
+                            modifier = Modifier.width(80.dp),
+                        )
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "顶部终端栏排序",
+                    trailing = {
+                        one.zephyr.mobile.ui.component.SegmentedControl(
+                            options = listOf("从最早到最新", "从最新到最早"),
+                            selectedIndex = if (layoutUi.smartbarOrder == "new-first") 1 else 0,
+                            onSelect = { layoutUi = layoutUi.copy(smartbarOrder = if (it == 1) "new-first" else "old-first") },
+                            modifier = Modifier.width(205.dp),
+                        )
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "文件菜单快捷键提示",
+                    trailing = {
+                        one.zephyr.mobile.ui.component.SegmentedControl(
+                            options = listOf("自动识别", "Windows", "macOS"),
+                            selectedIndex = listOf("auto", "windows", "mac").indexOf(layoutUi.shortcutPlatform).coerceAtLeast(0),
+                            onSelect = { layoutUi = layoutUi.copy(shortcutPlatform = listOf("auto", "windows", "mac")[it]) },
+                            modifier = Modifier.width(205.dp),
+                        )
+                    },
+                )
+                one.zephyr.mobile.ui.component.SettingsRow(
+                    title = "允许终端字体连字",
+                    subtitle = "仅同样式 run 内；默认关闭避免破坏等宽网格",
+                    showDivider = false,
+                    trailing = { Switch(layoutUi.allowLigatures, { layoutUi = layoutUi.copy(allowLigatures = it) }) },
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                one.zephyr.mobile.ui.component.Button(
+                    onClick = {
+                        onSaveTerminalBackground?.invoke(backgroundUi)
+                        onSaveFontColors?.invoke(fontUi)
+                        onSaveSolidBackground?.invoke(solidUi)
+                        onSaveSelection?.invoke(selectionUi)
+                        onSaveTerminalLayout?.invoke(layoutUi)
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text("保存外观") }
             }
             Text(
                 stringResource(R.string.tools_appearance_note),
@@ -223,6 +510,13 @@ fun AppearanceSettingsScreen(
             )
         }
     }
+}
+
+private fun normalizeHex(raw: String): String {
+    val value = raw.trim().lowercase()
+    if (value.isEmpty()) return ""
+    val hex = if (value.startsWith("#")) value else "#$value"
+    return if (Regex("^#[0-9a-f]{6}$").matches(hex)) hex else raw
 }
 
 @Composable
@@ -363,8 +657,7 @@ fun DiagnosticsScreen(
         Column(Modifier.padding(horizontal = ZephyrSpacing.lg), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("版本", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
             Text("One $appVersion")
-            TextButton(onClick = onExport) { Text("导出诊断日志") }
-            Text("诊断只含错误码 / requestId，不含 host / 用户 / 路径 / 密钥。", color = ZephyrTheme.palette.onFloatingMuted, fontSize = 12.sp)
+TextButton(onClick = onExport) { Text("导出诊断日志") }
         }
     }
 }

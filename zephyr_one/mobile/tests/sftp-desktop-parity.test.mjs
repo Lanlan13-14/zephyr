@@ -34,7 +34,6 @@ test('library SFTP opens hosts like the terminal rail', () => {
   assert.match(notes, /SftpHostPicker/);
   assert.match(notes, /SftpHostRail/);
   assert.match(notes, /再开一台主机/);
-  assert.match(notes, /不必先去首页连上/);
   assert.match(notes, /ActionSheet/);
 });
 

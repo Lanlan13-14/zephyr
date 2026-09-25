@@ -200,9 +200,14 @@ internal fun DownloadsDestination(onBack: () -> Unit) {
 @Composable
 internal fun AppearanceDestination(account: AccountContainer, onBack: () -> Unit) {
     val prefs by account.settings.observePreferences().collectAsState(initial = emptyMap())
+    val serverSettings by account.settings.observeSection("serverSettings", "default").collectAsState(initial = kotlinx.serialization.json.JsonObject(emptyMap()))
+    val personal by account.settings.observeSection("oneUserSettings", "default").collectAsState(initial = kotlinx.serialization.json.JsonObject(emptyMap()))
     val scope = rememberCoroutineScope()
     val themeId = ZephyrThemeId.fromWire(prefs[SettingsRepository.PREF_THEME]?.let { one.zephyr.mobile.data.EntityCodec.string(it, "value") })
     val mode = prefs[SettingsRepository.PREF_AUTO_THEME]?.let { one.zephyr.mobile.data.EntityCodec.string(it, "value") } ?: "auto"
+    val appearance = one.zephyr.mobile.data.EntityCodec.obj(personal, "appearance")
+        ?: one.zephyr.mobile.data.EntityCodec.obj(serverSettings, "appearance")
+    val terminal = one.zephyr.mobile.data.EntityCodec.obj(personal, "terminal")
     AppearanceSettingsScreen(
         themeId = themeId,
         mode = mode,
@@ -244,6 +249,196 @@ internal fun AppearanceDestination(account: AccountContainer, onBack: () -> Unit
             }
         },
         onBack = onBack,
+        fontColors = readTerminalHexPair(appearance, "terminalFontColors", "terminalFontColor"),
+        solidBackground = readTerminalHexPair(appearance, "terminalSolidBgColors", ""),
+        selection = readTerminalSelection(appearance),
+        terminalBackground = readTerminalBackground(appearance),
+        terminalLayout = readTerminalLayout(terminal),
+        onSaveFontColors = { pair ->
+            scope.launch {
+                saveAppearanceFields(
+                    account,
+                    listOf("appearance.terminalFontColor", "appearance.terminalFontColors"),
+                    kotlinx.serialization.json.buildJsonObject {
+                        put("appearance.terminalFontColor", kotlinx.serialization.json.JsonPrimitive(pair.dark))
+                        put(
+                            "appearance.terminalFontColors",
+                            kotlinx.serialization.json.buildJsonObject {
+                                put("dark", kotlinx.serialization.json.JsonPrimitive(pair.dark))
+                                put("light", kotlinx.serialization.json.JsonPrimitive(pair.light))
+                            },
+                        )
+                    },
+                )
+            }
+        },
+        onSaveSolidBackground = { pair ->
+            scope.launch {
+                saveAppearanceFields(
+                    account,
+                    listOf("appearance.terminalSolidBgColors"),
+                    kotlinx.serialization.json.buildJsonObject {
+                        put(
+                            "appearance.terminalSolidBgColors",
+                            kotlinx.serialization.json.buildJsonObject {
+                                put("dark", kotlinx.serialization.json.JsonPrimitive(pair.dark))
+                                put("light", kotlinx.serialization.json.JsonPrimitive(pair.light))
+                            },
+                        )
+                    },
+                )
+            }
+        },
+        onSaveSelection = { colors ->
+            scope.launch {
+                saveAppearanceFields(
+                    account,
+                    listOf("appearance.terminalSelection"),
+                    kotlinx.serialization.json.buildJsonObject {
+                        put(
+                            "appearance.terminalSelection",
+                            kotlinx.serialization.json.buildJsonObject {
+                                put(
+                                    "bg",
+                                    kotlinx.serialization.json.buildJsonObject {
+                                        put("dark", kotlinx.serialization.json.JsonPrimitive(colors.background.dark))
+                                        put("light", kotlinx.serialization.json.JsonPrimitive(colors.background.light))
+                                    },
+                                )
+                                put(
+                                    "fg",
+                                    kotlinx.serialization.json.buildJsonObject {
+                                        put("dark", kotlinx.serialization.json.JsonPrimitive(colors.foreground.dark))
+                                        put("light", kotlinx.serialization.json.JsonPrimitive(colors.foreground.light))
+                                    },
+                                )
+                            },
+                        )
+                    },
+                )
+            }
+        },
+        onSaveTerminalBackground = { background ->
+            scope.launch {
+                saveAppearanceFields(
+                    account,
+                    listOf("appearance.terminalBackground"),
+                    kotlinx.serialization.json.buildJsonObject {
+                        put(
+                            "appearance.terminalBackground",
+                            kotlinx.serialization.json.buildJsonObject {
+                                put("type", kotlinx.serialization.json.JsonPrimitive(background.type))
+                                put("url", kotlinx.serialization.json.JsonPrimitive(background.url))
+                                put("fit", kotlinx.serialization.json.JsonPrimitive(background.fit))
+                                put("opacity", kotlinx.serialization.json.JsonPrimitive(background.opacity))
+                                put("blur", kotlinx.serialization.json.JsonPrimitive(background.blurPx))
+                            },
+                        )
+                    },
+                )
+            }
+        },
+        onSaveTerminalLayout = { layout ->
+            scope.launch {
+                saveAppearanceFields(
+                    account,
+                    listOf(
+                        "terminal.maxWindows",
+                        "terminal.minimizedKeepAlive",
+                        "terminal.smartbarOrder",
+                        "terminal.shortcutPlatform",
+                        "terminal.allowLigatures",
+                    ),
+                    kotlinx.serialization.json.buildJsonObject {
+                        put("terminal.maxWindows", kotlinx.serialization.json.JsonPrimitive(layout.maxWindows))
+                        put("terminal.minimizedKeepAlive", kotlinx.serialization.json.JsonPrimitive(layout.minimizedKeepAlive))
+                        put("terminal.smartbarOrder", kotlinx.serialization.json.JsonPrimitive(layout.smartbarOrder))
+                        put("terminal.shortcutPlatform", kotlinx.serialization.json.JsonPrimitive(layout.shortcutPlatform))
+                        put("terminal.allowLigatures", kotlinx.serialization.json.JsonPrimitive(layout.allowLigatures))
+                    },
+                )
+            }
+        },
+    )
+}
+
+private suspend fun saveAppearanceFields(
+    account: AccountContainer,
+    dottedKeys: List<String>,
+    values: kotlinx.serialization.json.JsonObject,
+) {
+    runCatching {
+        account.settings.updateSection(
+            entityType = "oneUserSettings",
+            sectionKey = "default",
+            dottedKeys = dottedKeys,
+            values = values,
+            ownerUserId = account.binding.userId,
+        )
+    }
+}
+
+private fun appearanceHex(value: String?): String {
+    val text = value?.trim()?.lowercase().orEmpty()
+    if (text.isEmpty()) return ""
+    val hex = if (text.startsWith("#")) text else "#$text"
+    return if (Regex("^#[0-9a-f]{6}$").matches(hex)) hex else ""
+}
+
+private fun readTerminalHexPair(
+    appearance: kotlinx.serialization.json.JsonObject?,
+    pairKey: String,
+    legacyKey: String,
+): one.zephyr.mobile.feature.tools.TerminalHexPair {
+    val codec = one.zephyr.mobile.data.EntityCodec
+    val pair = appearance?.let { codec.obj(it, pairKey) }
+    val dark = appearanceHex(pair?.let { codec.string(it, "dark") } ?: appearance?.let { codec.string(it, legacyKey) })
+    val light = appearanceHex(pair?.let { codec.string(it, "light") })
+    return one.zephyr.mobile.feature.tools.TerminalHexPair(dark = dark, light = light, enabled = dark.isNotEmpty() || light.isNotEmpty())
+}
+
+private fun readTerminalSelection(
+    appearance: kotlinx.serialization.json.JsonObject?,
+): one.zephyr.mobile.feature.tools.TerminalSelectionColors {
+    val codec = one.zephyr.mobile.data.EntityCodec
+    val root = appearance?.let { codec.obj(it, "terminalSelection") }
+    val bg = root?.let { codec.obj(it, "bg") }
+    val fg = root?.let { codec.obj(it, "fg") }
+    val bgDark = appearanceHex(bg?.let { codec.string(it, "dark") })
+    val bgLight = appearanceHex(bg?.let { codec.string(it, "light") })
+    val fgDark = appearanceHex(fg?.let { codec.string(it, "dark") })
+    val fgLight = appearanceHex(fg?.let { codec.string(it, "light") })
+    return one.zephyr.mobile.feature.tools.TerminalSelectionColors(
+        background = one.zephyr.mobile.feature.tools.TerminalHexPair(dark = bgDark, light = bgLight, enabled = bgDark.isNotEmpty() || bgLight.isNotEmpty()),
+        foreground = one.zephyr.mobile.feature.tools.TerminalHexPair(dark = fgDark, light = fgLight, enabled = fgDark.isNotEmpty() || fgLight.isNotEmpty()),
+    )
+}
+
+private fun readTerminalBackground(
+    appearance: kotlinx.serialization.json.JsonObject?,
+): one.zephyr.mobile.feature.tools.TerminalBackgroundState {
+    val codec = one.zephyr.mobile.data.EntityCodec
+    val bg = appearance?.let { codec.obj(it, "terminalBackground") }
+    val type = bg?.let { codec.string(it, "type") } ?: "none"
+    return one.zephyr.mobile.feature.tools.TerminalBackgroundState(
+        type = if (type in listOf("upload", "url")) type else "none",
+        url = bg?.let { codec.string(it, "url") }.orEmpty(),
+        fit = bg?.let { codec.string(it, "fit") } ?: "cover",
+        opacity = one.zephyr.mobile.data.EntityCodec.doubleOrNull(bg ?: kotlinx.serialization.json.JsonObject(emptyMap()), "opacity")?.toFloat() ?: 0.35f,
+        blurPx = one.zephyr.mobile.data.EntityCodec.doubleOrNull(bg ?: kotlinx.serialization.json.JsonObject(emptyMap()), "blur")?.toFloat() ?: 0f,
+    )
+}
+
+private fun readTerminalLayout(
+    terminal: kotlinx.serialization.json.JsonObject?,
+): one.zephyr.mobile.feature.tools.TerminalLayoutState {
+    val codec = one.zephyr.mobile.data.EntityCodec
+    return one.zephyr.mobile.feature.tools.TerminalLayoutState(
+        maxWindows = terminal?.let { codec.int(it, "maxWindows", 3) }?.coerceIn(1, 3) ?: 3,
+        minimizedKeepAlive = terminal?.let { codec.int(it, "minimizedKeepAlive", 0) } ?: 0,
+        smartbarOrder = terminal?.let { codec.string(it, "smartbarOrder") } ?: "old-first",
+        shortcutPlatform = terminal?.let { codec.string(it, "shortcutPlatform") } ?: "auto",
+        allowLigatures = terminal?.let { codec.bool(it, "allowLigatures", false) } ?: false,
     )
 }
 

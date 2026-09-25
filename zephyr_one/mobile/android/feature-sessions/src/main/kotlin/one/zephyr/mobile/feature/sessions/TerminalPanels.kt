@@ -251,14 +251,17 @@ private fun ThemeToolBody(
             letterSpacing = 0.8.sp,
             modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
         )
-        BgRow(colors, stringResource(R.string.terminal_bg_none), workspace.background == TermBackgroundKind.NONE) {
+        BgRow(colors, "不使用自定义背景", workspace.background == TermBackgroundKind.NONE) {
             onWorkspace(workspace.copy(background = TermBackgroundKind.NONE))
         }
-        BgRow(colors, stringResource(R.string.terminal_bg_image), workspace.background == TermBackgroundKind.IMAGE) {
+        BgRow(colors, "上传图片（主端上传同步）", workspace.background == TermBackgroundKind.IMAGE) {
             onWorkspace(workspace.copy(background = TermBackgroundKind.IMAGE))
         }
-        BgRow(colors, stringResource(R.string.terminal_bg_big), workspace.background == TermBackgroundKind.BIG) {
+        BgRow(colors, "图片 URL（外观页填写）", workspace.background == TermBackgroundKind.BIG) {
             onWorkspace(workspace.copy(background = TermBackgroundKind.BIG))
+        }
+        BgRow(colors, "完整外观设置", false) {
+            onMessage("终端背景来源、字体颜色、选中色请到 外观 页设置，与主端同一份设置")
         }
         SliderRow(
             colors,
