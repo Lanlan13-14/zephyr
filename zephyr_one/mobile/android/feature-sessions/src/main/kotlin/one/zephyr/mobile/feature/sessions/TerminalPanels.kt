@@ -189,6 +189,12 @@ private fun StatsToolBody(
         modifier = Modifier.fillMaxSize(),
         onOpenDocker = onOpenDocker,
         onMessage = onMessage,
+        latencyProbe = viewModel?.let { model ->
+            {
+                val started = System.currentTimeMillis()
+                model.executeRemote("true").getOrNull()?.let { (System.currentTimeMillis() - started).toInt() }
+            }
+        },
     )
 }
 

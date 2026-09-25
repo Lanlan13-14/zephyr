@@ -26,6 +26,7 @@ enum class TerminalToolKind {
             TerminalDockItem.FILES -> FILES
             TerminalDockItem.SNIPPETS -> SNIPPET
             TerminalDockItem.NOTES -> NOTES
+            TerminalDockItem.DOCKER -> DOCKER
             TerminalDockItem.STATS -> STATS
             TerminalDockItem.THEME -> THEME
             else -> null

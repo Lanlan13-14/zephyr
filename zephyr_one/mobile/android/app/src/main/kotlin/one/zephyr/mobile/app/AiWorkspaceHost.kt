@@ -22,6 +22,22 @@ import one.zephyr.mobile.feature.ai.AiWorkspaceCopy
 import one.zephyr.mobile.feature.ai.AiWorkspaceOverlay
 import one.zephyr.mobile.ui.island.IslandDestination
 
+/**
+ * The server stores the switch as a nested `ai.enabled`. Older rows and the
+ * settings screen also write the flat key, so both shapes count. A payload with
+ * neither is treated as off: the main end's own launcher stays hidden until AI
+ * is explicitly enabled.
+ */
+internal fun serverAiEnabled(payload: JsonObject): Boolean {
+    val nested = (payload["ai"] as? JsonObject)?.get("enabled")
+    if (nested is JsonPrimitive) return nested.content.equals("true", ignoreCase = true)
+    return if (payload.containsKey("ai.enabled") || payload.containsKey("ai")) {
+        dottedBoolCompat(payload, "ai.enabled", fallback = false)
+    } else {
+        false
+    }
+}
+
 internal fun dottedBoolCompat(payload: JsonObject, path: String, fallback: Boolean): Boolean {
     val direct = payload[path]
     if (direct is JsonPrimitive) return direct.content.equals("true", ignoreCase = true)
@@ -46,7 +62,7 @@ internal fun BoundAiWorkspace(
     )
     val serverSettings by account.settings.observeSection("serverSettings", "default")
         .collectAsState(initial = JsonObject(emptyMap()))
-    val serverAiEnabled = account.isLocalMode || dottedBoolCompat(serverSettings, "ai.enabled", fallback = true)
+    val serverAiEnabled = account.isLocalMode || serverAiEnabled(serverSettings)
     if (!account.isLocalMode && !serverAiEnabled) return
     val chrome = AiWorkspaceBinding.chrome(
         prefs = prefs,

@@ -15,9 +15,8 @@ import java.nio.charset.Charset
  */
 enum class FileEncoding(val charsetName: String, val label: String) {
     UTF8("UTF-8", "UTF-8"),
-    GBK("GBK", "GBK"),
-    BIG5("Big5", "Big5"),
-    SHIFT_JIS("Shift_JIS", "Shift_JIS"),
+    UTF16LE("UTF-16LE", "UTF-16 LE"),
+    UTF16BE("UTF-16BE", "UTF-16 BE"),
     LATIN1("ISO-8859-1", "Latin-1"),
     ;
 
@@ -45,7 +44,7 @@ enum class FileEncoding(val charsetName: String, val label: String) {
          * mangles text. Anything that is not valid UTF-8 is left for the user to choose, which is
          * why the editor always shows the encoding control.
          */
-        fun guess(bytes: ByteArray): FileEncoding = if (isValidUtf8(bytes)) UTF8 else GBK
+        fun guess(bytes: ByteArray): FileEncoding = if (isValidUtf8(bytes)) UTF8 else LATIN1
 
         /** Full UTF-8 well-formedness check, including surrogate and overlong rejection. */
         fun isValidUtf8(bytes: ByteArray): Boolean {

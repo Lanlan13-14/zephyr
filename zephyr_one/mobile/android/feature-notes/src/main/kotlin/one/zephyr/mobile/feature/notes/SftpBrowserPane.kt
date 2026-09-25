@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -30,6 +31,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -87,6 +89,7 @@ fun SftpBrowserPane(
     port: SftpPort,
     connectionId: String,
     modifier: Modifier = Modifier,
+    surfaceColor: Color? = null,
     connectionName: String = "",
     clipboard: SftpClipboard? = null,
     onClipboard: (SftpClipboard?) -> Unit = {},
@@ -644,12 +647,14 @@ fun SftpBrowserPane(
                     val name = RemotePath.nameOf(pathToOpen)
                     openEntry(RemoteEntry(name, pathToOpen, false, 0L, 0L))
                 },
+                surfaceColor = surfaceColor,
             )
             preview != null -> SftpPreviewPane(
                 preview = preview!!,
                 cacheDir = context.cacheDir,
                 onBack = { preview = null },
                 onMessage = onMessage,
+                surfaceColor = surfaceColor,
             )
             else -> Column(Modifier.fillMaxSize()) {
                 SftpPathBar(
@@ -674,8 +679,15 @@ fun SftpBrowserPane(
                     onUpload = { moreOpen = false; uploadLauncher.launch("*/*") },
                     canPaste = localClipboard != null,
                     onPaste = { moreOpen = false; pasteClipboard() },
+                    surfaceColor = surfaceColor,
                 )
-                SftpSearchBar(query = query, onQuery = { query = it }, selecting = selecting, selectedCount = selected.size)
+                SftpSearchBar(
+                    query = query,
+                    onQuery = { query = it },
+                    selecting = selecting,
+                    selectedCount = selected.size,
+                    surfaceColor = surfaceColor,
+                )
                 SftpActionBar(
                     selecting = selecting,
                     selectedCount = selected.size,
@@ -946,8 +958,12 @@ private fun SftpPathBar(
     onUpload: () -> Unit,
     canPaste: Boolean,
     onPaste: () -> Unit,
+    surfaceColor: Color? = null,
 ) {
-    Column(Modifier.fillMaxWidth().background(ZephyrTheme.palette.surfaces.content)) {
+    val barColor = surfaceColor ?: ZephyrTheme.palette.surfaces.content
+    val fieldColor = ZephyrTheme.palette.surfaces.background
+    val fieldBorder = ZephyrTheme.palette.surfaces.outlineSoft
+    Column(Modifier.fillMaxWidth().background(barColor)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -966,7 +982,8 @@ private fun SftpPathBar(
                 modifier = Modifier
                     .weight(1f)
                     .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                    .background(ZephyrTheme.palette.surfaces.elevated)
+                    .background(fieldColor)
+                    .border(1.dp, fieldBorder, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
                     .padding(horizontal = 8.dp, vertical = 7.dp),
             )
             TextButton(onClick = onGo, enabled = !busy) { Text("跳转") }
@@ -991,9 +1008,15 @@ private fun SftpPathBar(
 }
 
 @Composable
-private fun SftpSearchBar(query: String, onQuery: (String) -> Unit, selecting: Boolean, selectedCount: Int) {
+private fun SftpSearchBar(
+    query: String,
+    onQuery: (String) -> Unit,
+    selecting: Boolean,
+    selectedCount: Int,
+    surfaceColor: Color? = null,
+) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+        Modifier.fillMaxWidth().background(surfaceColor ?: Color.Transparent).padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         OutlinedTextField(
@@ -1112,11 +1135,18 @@ private fun SftpTextEditor(
     onSave: (String) -> Unit,
     onWorkspaceSearch: (String) -> Unit,
     onOpenHit: (String) -> Unit,
+    surfaceColor: Color? = null,
 ) {
     val file = files.getOrNull(activeIndex) ?: return
     var findQuery by remember { mutableStateOf("") }
+    var replaceText by remember { mutableStateOf("") }
     var findOpen by remember { mutableStateOf(false) }
     var outlineOpen by remember { mutableStateOf(false) }
+    var problemsOpen by remember { mutableStateOf(false) }
+    var paletteOpen by remember { mutableStateOf(false) }
+    var paletteQuery by remember { mutableStateOf("") }
+    var gotoText by remember { mutableStateOf("") }
+    var findCursor by remember { mutableStateOf(0) }
     var workspaceQuery by remember { mutableStateOf("") }
     var workspaceOpen by remember { mutableStateOf(false) }
     var draft by remember(file.path) { mutableStateOf(file.text) }
@@ -1135,8 +1165,18 @@ private fun SftpTextEditor(
     val hits = remember(analysisText, findQuery, findOpen) {
         if (!findOpen || findQuery.isBlank()) emptyList() else SftpEditorSupport.findInText(analysisText, findQuery)
     }
+    val editorScroll = rememberScrollState()
+    var jumpLine by remember { mutableStateOf<Int?>(null) }
     val outline = remember(analysisText, file.path, outlineOpen) {
         if (!outlineOpen) emptyList() else SftpEditorSupport.outline(analysisText, file.path)
+    }
+    val problems = remember(analysisText, file.path, problemsOpen) {
+        if (!problemsOpen) emptyList() else SftpEditorSupport.diagnostics(analysisText, file.path)
+    }
+    val palette = remember(paletteQuery, paletteOpen) {
+        if (!paletteOpen) emptyList() else SftpEditorSupport.commands().filter {
+            paletteQuery.isBlank() || it.label.contains(paletteQuery, ignoreCase = true)
+        }
     }
     fun commitDraft() {
         if (draft != file.text) {
@@ -1152,7 +1192,7 @@ private fun SftpTextEditor(
     }
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().background(ZephyrTheme.palette.surfaces.content).padding(8.dp),
+            Modifier.fillMaxWidth().background(surfaceColor ?: ZephyrTheme.palette.surfaces.content).padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -1202,12 +1242,15 @@ private fun SftpTextEditor(
             FilterChip(selected = file.lineEnding == "crlf", onClick = { onChange(draft, file.encoding, "crlf", file.tabSize, file.wrap) }, label = { Text("CRLF", fontSize = 11.sp) })
             FilterChip(selected = file.tabSize == 2, onClick = { onChange(draft, file.encoding, file.lineEnding, 2, file.wrap) }, label = { Text("Tab 2", fontSize = 11.sp) })
             FilterChip(selected = file.tabSize == 4, onClick = { onChange(draft, file.encoding, file.lineEnding, 4, file.wrap) }, label = { Text("Tab 4", fontSize = 11.sp) })
+            FilterChip(selected = file.tabSize == 8, onClick = { onChange(draft, file.encoding, file.lineEnding, 8, file.wrap) }, label = { Text("Tab 8", fontSize = 11.sp) })
             FilterChip(selected = file.wrap, onClick = { onChange(draft, file.encoding, file.lineEnding, file.tabSize, !file.wrap) }, label = { Text("换行", fontSize = 11.sp) })
             AssistChip(onClick = { commitDraft(); onUndo(draft) }, label = { Text("撤回", fontSize = 11.sp) })
             AssistChip(onClick = { commitDraft(); onRedo(draft) }, label = { Text("前进", fontSize = 11.sp) })
             AssistChip(onClick = { commitDraft(); onFormat(draft) }, label = { Text("格式化", fontSize = 11.sp) })
             AssistChip(onClick = { findOpen = !findOpen }, label = { Text("查找", fontSize = 11.sp) })
             AssistChip(onClick = { outlineOpen = !outlineOpen }, label = { Text("大纲", fontSize = 11.sp) })
+            AssistChip(onClick = { problemsOpen = !problemsOpen }, label = { Text("问题", fontSize = 11.sp) })
+            AssistChip(onClick = { paletteOpen = !paletteOpen }, label = { Text("命令", fontSize = 11.sp) })
             AssistChip(onClick = { workspaceOpen = !workspaceOpen }, label = { Text("搜目录", fontSize = 11.sp) })
         }
         if (findOpen) {
@@ -1215,11 +1258,77 @@ private fun SftpTextEditor(
                 OutlinedTextField(value = findQuery, onValueChange = { findQuery = it }, modifier = Modifier.weight(1f), singleLine = true, placeholder = { Text("在文件中查找") })
                 Text("${hits.size}", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp))
             }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = replaceText, onValueChange = { replaceText = it }, modifier = Modifier.weight(1f), singleLine = true, placeholder = { Text("替换为") })
+                TextButton(onClick = {
+                    if (findQuery.isNotBlank()) draft = SftpEditorSupport.replaceAll(draft, findQuery, replaceText)
+                }) { Text("全部替换") }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = gotoText, onValueChange = { gotoText = it.filter(Char::isDigit).take(7) }, modifier = Modifier.width(96.dp), singleLine = true, placeholder = { Text("行号") })
+                TextButton(onClick = { gotoText.toIntOrNull()?.let { jumpLine = it } }) { Text("跳转") }
+            }
             if (hits.isNotEmpty()) {
                 Column(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
                     hits.take(40).forEach { hit ->
-                        Text("L${hit.line}:${hit.column}  ${hit.text}", color = ZephyrTheme.palette.onFloatingMuted, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                        Text(
+                            "L${hit.line}:${hit.column}  ${hit.text}",
+                            color = ZephyrTheme.palette.onFloatingMuted,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            modifier = Modifier.fillMaxWidth().clickable { findCursor = hit.line; jumpLine = hit.line }.padding(vertical = 2.dp),
+                        )
                     }
+                }
+            }
+        }
+        if (problemsOpen) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp)) {
+                if (problems.isEmpty()) {
+                    Text("没有可在本机检查的问题", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp)
+                }
+                problems.forEach { problem ->
+                    Text(
+                        "L${problem.line}  ${problem.message}",
+                        color = ZephyrTheme.palette.status.error,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        modifier = Modifier.fillMaxWidth().clickable { jumpLine = problem.line }.padding(vertical = 2.dp),
+                    )
+                }
+            }
+        }
+        if (paletteOpen) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                OutlinedTextField(value = paletteQuery, onValueChange = { paletteQuery = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("输入命令") })
+                palette.forEach { command ->
+                    Text(
+                        command.label,
+                        color = ZephyrTheme.palette.onFloating,
+                        fontSize = 13.sp,
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            when (command.id) {
+                                "find", "replace" -> findOpen = true
+                                "find-next" -> {
+                                    findOpen = true
+                                    val found = SftpEditorSupport.findInText(draft, findQuery)
+                                    val next = found.firstOrNull { it.line > findCursor } ?: found.firstOrNull()
+                                    if (next != null) {
+                                        findCursor = next.line
+                                        jumpLine = next.line
+                                    }
+                                }
+                                "format" -> { commitDraft(); onFormat(draft) }
+                                "trim" -> draft = SftpEditorSupport.trimTrailingWhitespace(draft)
+                                "goto" -> findOpen = true
+                                "outline" -> outlineOpen = true
+                                "problems" -> problemsOpen = true
+                                "workspace" -> workspaceOpen = true
+                            }
+                            paletteOpen = false
+                            paletteQuery = ""
+                        }.padding(vertical = 6.dp),
+                    )
                 }
             }
         }
@@ -1230,6 +1339,12 @@ private fun SftpTextEditor(
             }
         }
         Row(Modifier.fillMaxSize()) {
+            val lineHeightPx = with(LocalDensity.current) { 19.dp.roundToPx() }
+            LaunchedEffect(jumpLine) {
+                val line = jumpLine ?: return@LaunchedEffect
+                editorScroll.animateScrollTo(((line - 1).coerceAtLeast(0)) * lineHeightPx)
+                jumpLine = null
+            }
             BasicTextField(
                 value = draft,
                 onValueChange = { draft = it },
@@ -1237,7 +1352,7 @@ private fun SftpTextEditor(
                     .weight(1f)
                     .fillMaxSize()
                     .background(ZephyrTheme.palette.surfaces.background)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(editorScroll)
                     .then(if (file.wrap) Modifier else Modifier.horizontalScroll(rememberScrollState()))
                     .padding(14.dp),
                 textStyle = androidx.compose.ui.text.TextStyle(
@@ -1256,7 +1371,13 @@ private fun SftpTextEditor(
                     Text("大纲", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp)
                     if (outline.isEmpty()) Text("暂无符号", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp)
                     outline.forEach { item ->
-                        Text("L${item.line}  ${item.name}", color = ZephyrTheme.palette.onFloating, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(vertical = 3.dp))
+                        Text(
+                            "L${item.line}  ${item.name}",
+                            color = ZephyrTheme.palette.onFloating,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            modifier = Modifier.fillMaxWidth().clickable { jumpLine = item.line }.padding(vertical = 3.dp),
+                        )
                     }
                     @Suppress("UNUSED_VARIABLE")
                     val keepOpen = onOpenHit
@@ -1272,10 +1393,11 @@ private fun SftpPreviewPane(
     cacheDir: File,
     onBack: () -> Unit,
     onMessage: (String) -> Unit,
+    surfaceColor: Color? = null,
 ) {
     Column(Modifier.fillMaxSize().background(ZephyrTheme.palette.surfaces.background)) {
         Row(
-            Modifier.fillMaxWidth().background(ZephyrTheme.palette.surfaces.content).padding(8.dp),
+            Modifier.fillMaxWidth().background(surfaceColor ?: ZephyrTheme.palette.surfaces.content).padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) { Icon(ZephyrIcons.Back, "关闭预览") }

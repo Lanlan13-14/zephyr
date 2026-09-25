@@ -407,6 +407,7 @@ internal fun demoDockLabel(item: TerminalDockItem): String = when (item) {
     TerminalDockItem.FILES -> stringResource(R.string.terminal_dock_files)
     TerminalDockItem.SNIPPETS -> stringResource(R.string.terminal_dock_snippets)
     TerminalDockItem.NOTES -> stringResource(R.string.terminal_dock_notes)
+    TerminalDockItem.DOCKER -> stringResource(R.string.terminal_dock_docker)
     TerminalDockItem.STATS -> stringResource(R.string.terminal_dock_stats)
     TerminalDockItem.THEME -> stringResource(R.string.terminal_dock_theme)
     TerminalDockItem.DISCONNECT -> stringResource(R.string.terminal_dock_disconnect)
@@ -419,6 +420,7 @@ internal fun demoDockIcon(item: TerminalDockItem): ImageVector = when (item) {
     TerminalDockItem.FILES -> ZephyrIcons.File
     TerminalDockItem.SNIPPETS -> ZephyrIcons.Bolt
     TerminalDockItem.NOTES -> ZephyrIcons.Notes
+    TerminalDockItem.DOCKER -> ZephyrIcons.Docker
     TerminalDockItem.STATS -> ZephyrIcons.Stats
     TerminalDockItem.THEME -> ZephyrIcons.Theme
     TerminalDockItem.DISCONNECT -> ZephyrIcons.Disconnect
