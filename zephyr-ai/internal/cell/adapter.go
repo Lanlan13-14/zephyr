@@ -195,6 +195,7 @@ func (a *WorkspaceAdapter) AsExecTool(runID string) tool.Tool {
 			"type": "object",
 			"properties": {
 				"command": {"type": "string", "description": "The shell command to execute"},
+				"args": {"type": "array", "items": {"type": "string"}, "description": "Command arguments, defaults to empty"},
 				"cwd": {"type": "string", "description": "Working directory inside Cell"},
 				"timeout": {"type": "integer", "description": "Timeout in seconds"}
 			},
