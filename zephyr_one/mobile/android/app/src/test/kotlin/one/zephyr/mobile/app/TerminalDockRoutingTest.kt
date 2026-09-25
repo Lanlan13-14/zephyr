@@ -23,6 +23,7 @@ class TerminalDockRoutingTest {
             TerminalDockItem.FILES to TerminalDockLeave.FILES,
             TerminalDockItem.SNIPPETS to TerminalDockLeave.SNIPPETS,
             TerminalDockItem.NOTES to TerminalDockLeave.NOTES,
+            TerminalDockItem.DOCKER to TerminalDockLeave.DOCKER,
             TerminalDockItem.STATS to TerminalDockLeave.STATS,
             TerminalDockItem.THEME to TerminalDockLeave.APPEARANCE,
             TerminalDockItem.DISCONNECT to TerminalDockLeave.STAY,

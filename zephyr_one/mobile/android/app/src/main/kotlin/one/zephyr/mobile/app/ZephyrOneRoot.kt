@@ -1778,6 +1778,7 @@ internal enum class TerminalDockLeave {
     FILES,
     SNIPPETS,
     NOTES,
+    DOCKER,
     STATS,
     APPEARANCE,
 }
@@ -1786,6 +1787,7 @@ internal fun terminalDockLeave(item: TerminalDockItem): TerminalDockLeave = when
     TerminalDockItem.FILES -> TerminalDockLeave.FILES
     TerminalDockItem.SNIPPETS -> TerminalDockLeave.SNIPPETS
     TerminalDockItem.NOTES -> TerminalDockLeave.NOTES
+    TerminalDockItem.DOCKER -> TerminalDockLeave.DOCKER
     TerminalDockItem.STATS -> TerminalDockLeave.STATS
     TerminalDockItem.THEME -> TerminalDockLeave.APPEARANCE
     TerminalDockItem.COPY,
@@ -1809,7 +1811,8 @@ private fun onTerminalDock(
         TerminalDockLeave.FILES -> navigate(RootRoute.Files)
         TerminalDockLeave.SNIPPETS -> navigate(RootRoute.Snippets)
         TerminalDockLeave.NOTES -> navigate(RootRoute.Notes)
-        TerminalDockLeave.STATS -> navigate(RootRoute.Ops(OpsSection.DOCKER))
+        TerminalDockLeave.DOCKER -> navigate(RootRoute.Ops(OpsSection.DOCKER))
+        TerminalDockLeave.STATS -> navigate(RootRoute.Ops(OpsSection.METRICS))
         TerminalDockLeave.APPEARANCE -> navigate(RootRoute.Appearance)
     }
 }

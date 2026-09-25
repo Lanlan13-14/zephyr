@@ -40,7 +40,7 @@ const routesSource = read(
 
 const dockItems = enumEntries(dockSource, 'TerminalDockItem');
 
-test('the demo dock is the nine-item set, not the old SESSIONS row', () => {
+test('the demo dock is the ten-item set, not the old SESSIONS row', () => {
   assert.deepEqual(dockItems, [
     'KEYBOARD',
     'COPY',
@@ -48,6 +48,7 @@ test('the demo dock is the nine-item set, not the old SESSIONS row', () => {
     'FILES',
     'SNIPPETS',
     'NOTES',
+    'DOCKER',
     'STATS',
     'THEME',
     'DISCONNECT',
