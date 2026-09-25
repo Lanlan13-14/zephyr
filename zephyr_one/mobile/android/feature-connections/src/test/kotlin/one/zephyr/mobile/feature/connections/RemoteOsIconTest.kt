@@ -54,7 +54,21 @@ class RemoteOsIconTest {
     }
 
     @Test
-    fun aDerivativeFallsBackToTheGenericLinuxGlyph() {
+    fun aDerivativeWithNoOwnGlyphFallsBackToGenericLinux() {
+        // No ID_LIKE: a debian base would win first, which is what the main end does too.
+        val text = """
+            NAME="Gentoo Linux"
+            ID=gentoo
+
+            Linux
+        """.trimIndent()
+
+        assertEquals("linux", RemoteOsIcon.iconKeyFromProbe(text))
+    }
+
+    @Test
+    fun aDebianDerivativeIsReportedAsDebian() {
+        // Kali ships ID_LIKE=debian and has no glyph of its own, so both ends land on debian.
         val text = """
             NAME="Kali GNU/Linux"
             ID=kali
@@ -63,7 +77,7 @@ class RemoteOsIconTest {
             Linux
         """.trimIndent()
 
-        assertEquals("linux", RemoteOsIcon.iconKeyFromProbe(text))
+        assertEquals("debian", RemoteOsIcon.iconKeyFromProbe(text))
     }
 
     @Test
