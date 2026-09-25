@@ -53,6 +53,15 @@ func New(runID, modelID, providerAccountID string) *Normalizer {
 	return &Normalizer{RunID: runID, ModelID: modelID, ProviderAccountID: providerAccountID, toolIDs: map[string]bool{}}
 }
 
+// Resume continues a run after the last persisted sequence. A permission or
+// capture resume re-enters Run with the same runID: without reseeding, the
+// new Recorder restarts at seq 0 and collides with UNIQUE(run_id, seq).
+func (n *Normalizer) Resume(afterSeq int) {
+	if afterSeq+1 > n.seq {
+		n.seq = afterSeq + 1
+	}
+}
+
 func (n *Normalizer) next(t string) Event {
 	e := Event{SchemaVersion: 2, Type: t, RunID: n.RunID, Sequence: n.seq}
 	n.seq++

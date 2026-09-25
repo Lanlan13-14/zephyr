@@ -188,6 +188,16 @@ func (r *Runner) counter(runID string) *atomic.Int64 {
 
 func (r *Runner) nextSeq(runID string) int64 { return r.counter(runID).Add(1) }
 
+// isFrameSeqConflict reports SQLite UNIQUE(run_id, seq) collisions so the
+// failure surfaces as a contract code instead of raw driver text.
+func isFrameSeqConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "ai_frames") && strings.Contains(msg, "unique")
+}
+
 // emitNormFail stores then delivers a classified error frame.
 func emitNormFail(rec interface {
 	Fail(string) error
@@ -230,6 +240,8 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 	if cfg.Resume != nil {
 		metrics = cfg.Resume.Metrics
 	}
+	// Loop-level frame sequence is declared below (after the resume-state
+	// section) so a single declaration covers the step loop.
 	maxSteps := cfg.MaxSteps
 	if maxSteps <= 0 {
 		maxSteps = DefaultMaxSteps
@@ -435,6 +447,13 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 		metrics.Steps = st.StepsDone
 	}
 
+	// Loop-level frame sequence: a fresh Recorder is built every step, so
+	// track the running sequence here and reseed each Recorder. Without
+	// this, step 2+ rewrites seq 0 and hits UNIQUE(run_id, seq).
+	frameSeq := -1
+	if cfg.Resume != nil {
+		frameSeq = streamnorm.LastFrameSeq(cfg.FrameStore, cfg.RunID)
+	}
 	startStep := metrics.Steps
 	for step := startStep; step < maxSteps; step++ {
 		if err := ctx.Err(); err != nil {
@@ -506,12 +525,31 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				cfg.NormSink(e)
 			}
 		})
+		// Fresh Recorder per step: reseed from the loop's running sequence
+		// so this run's frames stay append-only instead of restarting at 0.
+		rec.Resume(frameSeq)
+		trackFrames := func() {
+			// Frames are append-only: advance the running sequence to the
+			// highest persisted seq. Single query per step, bounded by frames.
+			if s := streamnorm.LastFrameSeq(cfg.FrameStore, cfg.RunID); s > frameSeq {
+				frameSeq = s
+			}
+		}
 		normPush := func(c provider.Chunk) bool {
 			if err := rec.Push(c); err != nil {
 				metrics.ProviderMs += time.Since(started).Milliseconds()
-				_ = r.emit(cfg, event.TypeRunFailed, event.RunTerminal{Error: err.Error(), Code: "frame_store"})
+				// Map the storage conflict to the contract error taxonomy.
+				// Raw driver text (UNIQUE constraint failed: ai_frames...)
+				// must never reach the UI.
+				code := "frame_store"
+				msg := err.Error()
+				if isFrameSeqConflict(err) {
+					code = "ai_frame_seq_conflict"
+					msg = "ai_frame_seq_conflict"
+				}
+				_ = r.emit(cfg, event.TypeRunFailed, event.RunTerminal{Error: msg, Code: code})
 				if cfg.Store != nil {
-					_ = cfg.Store.UpdateRunStatus(cfg.RunID, "failed", err.Error(), metrics)
+					_ = cfg.Store.UpdateRunStatus(cfg.RunID, "failed", msg, metrics)
 				}
 				return false
 			}
@@ -694,6 +732,9 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				messages = append(messages, *w.observation)
 			}
 		}
+		// End of step: advance the running frame sequence so the next
+		// step's Recorder continues appending instead of rewriting seq 0.
+		trackFrames()
 	}
 
 	msg := "已达到工具调用轮次上限，请根据上方工具结果继续。"
