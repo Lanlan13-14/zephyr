@@ -9124,6 +9124,16 @@ app.get('/zephyr-one-link-ui.js', (req, res, next) => {
         if (error) next(error);
     });
 });
+app.get('/zephyr-one-window-chrome.js', (req, res, next) => {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    res.type('application/javascript');
+    res.setHeader('Cache-Control', 'no-store');
+    const sourcePath = path.join(__dirname, 'zephyr-one-window-chrome.js');
+    const stagedPath = path.join(__dirname, 'public', 'zephyr-one-window-chrome.js');
+    res.sendFile(fs.existsSync(sourcePath) ? sourcePath : stagedPath, (error) => {
+        if (error) next(error);
+    });
+});
 app.get('/zephyr-one-recovery.js', (req, res, next) => {
     if (!ZEPHYR_ONE_EMBEDDED) return next();
     res.type('application/javascript');

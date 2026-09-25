@@ -1,4 +1,51 @@
 /* Zephyr One local product surface */
+
+/* The page header doubles as the window title bar once the OS frame is gone.
+ * Only the header is draggable; everything clickable opts back out, otherwise
+ * buttons under the drag region never receive the click. */
+html[data-zephyr-product="one"] .main-nav {
+    -webkit-app-region: drag;
+    app-region: drag;
+}
+html[data-zephyr-product="one"] .main-nav .brand,
+html[data-zephyr-product="one"] .main-nav .nav-tabs,
+html[data-zephyr-product="one"] .main-nav .nav-actions,
+html[data-zephyr-product="one"] .main-nav button,
+html[data-zephyr-product="one"] .main-nav a {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+}
+
+/* macOS traffic lights sit inset over the header's left edge. */
+html[data-zephyr-product="one"][data-zephyr-window-controls="native"] .main-nav {
+    padding-left: 84px;
+}
+
+.one-window-controls {
+    display: none;
+    align-items: center;
+    margin-left: 6px;
+}
+html[data-zephyr-product="one"][data-zephyr-window-controls="overlay"] .one-window-controls {
+    display: flex;
+}
+.one-window-btn {
+    width: 36px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary, #8b919a);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+.one-window-btn svg { width: 12px; height: 12px; }
+.one-window-btn:hover { background: var(--hover, rgba(255, 255, 255, 0.08)); color: var(--text, #e7eaee); }
+.one-window-btn-close:hover { background: #e5484d; color: #fff; }
+.one-window-controls.is-maximized [data-one-window="maximize"] svg { transform: scale(0.82); }
 #adminSettingsTab,
 #settings-admin,
 .settings-tab[data-settings="admin"],

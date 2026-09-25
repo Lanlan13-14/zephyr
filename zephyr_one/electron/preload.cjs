@@ -16,4 +16,10 @@ contextBridge.exposeInMainWorld('zephyrOne', {
     ipcRenderer.on('zephyr-one:shown', handler);
     return () => ipcRenderer.removeListener('zephyr-one:shown', handler);
   },
+  onWindowState(listener) {
+    if (typeof listener !== 'function') return () => {};
+    const handler = (_event, payload) => listener(payload);
+    ipcRenderer.on('zephyr-one:window-state', handler);
+    return () => ipcRenderer.removeListener('zephyr-one:window-state', handler);
+  },
 });
