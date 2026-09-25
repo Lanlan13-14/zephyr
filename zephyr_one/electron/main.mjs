@@ -242,6 +242,17 @@ function wireIpc() {
   ipcMain.handle('window_close', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
   });
+  /* macOS only. The traffic lights have to sit immediately left of the
+   * product controls, which move as the window resizes, so the page measures
+   * and reports the spot. A fixed trafficLightPosition cannot follow them. */
+  ipcMain.handle('window_place_traffic_lights', (event, position) => {
+    if (process.platform !== 'darwin') return;
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const x = Math.round(Number(position?.x));
+    const y = Math.round(Number(position?.y));
+    if (!window || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    window.setWindowButtonPosition({ x: Math.max(0, x), y: Math.max(0, y) });
+  });
   ipcMain.handle('get_app_version', () => app.getVersion());
   ipcMain.handle('auth_capabilities', () => capabilities());
   ipcMain.handle('auth_unlock', async (_event, payload) => unlock(unlockReason(payload)));

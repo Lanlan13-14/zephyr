@@ -1086,6 +1086,13 @@ class ZephyrOneLinkSync {
             for (const field of mask) {
                 if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
             }
+            /* Server-authority columns travel in the payload but never in the
+             * editable field mask, so a mask-only patch silently drops them.
+             * `iconSource` is one: without it the renderer treats the synced
+             * `icon` as unset and guesses a glyph from the connection name. */
+            for (const field of spec.serverAuthorityFields || []) {
+                if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
+            }
             for (const field of spec.secretFields || []) {
                 if (Object.prototype.hasOwnProperty.call(opened, field)) patch[field] = opened[field];
             }
