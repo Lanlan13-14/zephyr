@@ -469,3 +469,15 @@ test('the stage script ships the mobile contracts into the core', () => {
         'the post-copy check must abort rather than warn',
     );
 });
+
+test('the stage script ships the generated AI contract the core boots with', () => {
+    /* ai-contract-errors.js requires ./src/generated/ai-contract-v2.js and
+     * server.js loads it at startup. Staging only the root js files made the
+     * packaged core fail with "Cannot find module './src/generated/ai-contract-v2'". */
+    assert.match(STAGE_SH, /for d in public server preview src; do/);
+    assert.match(
+        STAGE_SH,
+        /test -f "\$OUT\/src\/generated\/ai-contract-v2\.js" \|\| \{/,
+        'a missing generated contract must abort the stage, not ship a core that cannot boot',
+    );
+});
