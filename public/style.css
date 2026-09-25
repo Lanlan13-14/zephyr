@@ -10693,11 +10693,9 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 .ai-send-btn:active { transform: scale(.9); }
 .ai-send-btn { width: 46px; height: 46px; font-size: 20px; box-shadow: 0 8px 20px var(--accent-glow, rgba(10,132,255,.24)); }
 .ai-input-box { min-height: 46px; border-radius: 23px; padding: 12px 15px; }
-.ai-agent-panel .panel-resize-handle { z-index: 4; opacity: .46; pointer-events: auto; }
-.ai-agent-panel .panel-resize-handle.right { right: 2px; }
-.ai-agent-panel .panel-resize-handle.left { left: 2px; }
-.ai-agent-panel .panel-resize-handle::before { width: 22px; height: 22px; border-width: 0 2px 2px 0; }
-.ai-agent-panel .panel-resize-handle.left::before { border-width: 0 0 2px 2px; }
+/* Resize handles are fully styled at the shared .panel-resize-handle block
+   and the .ai-agent-panel block further down. This legacy micro-variant
+   (22px notch, offset 2px) fought the 31px rounded one — two handles. */
 .ai-message { overflow-wrap: anywhere; }
 .ai-message.system { word-break: break-word; }
 .ai-message.system pre,
@@ -18487,46 +18485,16 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
         border-radius: 18px !important;
         box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
     }
+    /* Desktop resize handles: reuse the global .panel-resize-handle style
+       (same as the SSH file-manager panel). No second ::after corner — an
+       earlier block drew both ::before and ::after, which read as two
+       handles. One rounded corner notch, bottom-left + bottom-right. */
     .ai-agent-panel .panel-resize-handle {
-        display: block !important;
-        position: absolute !important;
-        bottom: 0 !important;
-        width: 18px !important;
-        height: 18px !important;
-        z-index: 100 !important;
-        cursor: nwse-resize !important;
-        background: transparent !important;
-        touch-action: none !important;
-    }
-    .ai-agent-panel .panel-resize-handle.left {
-        left: 0 !important;
-        cursor: nesw-resize !important;
-    }
-    .ai-agent-panel .panel-resize-handle.right {
-        right: 0 !important;
-        cursor: nwse-resize !important;
+        display: block;
+        z-index: 100;
     }
     .ai-agent-panel .panel-resize-handle::after {
-        content: '' !important;
-        position: absolute !important;
-        width: 8px !important;
-        height: 8px !important;
-        bottom: 4px !important;
-        border-bottom: 2px solid color-mix(in srgb, var(--text) 32%, transparent) !important;
-        opacity: 0.7 !important;
-        transition: opacity 0.15s ease, border-color 0.15s ease !important;
-    }
-    .ai-agent-panel .panel-resize-handle.right::after {
-        right: 4px !important;
-        border-right: 2px solid color-mix(in srgb, var(--text) 32%, transparent) !important;
-    }
-    .ai-agent-panel .panel-resize-handle.left::after {
-        left: 4px !important;
-        border-left: 2px solid color-mix(in srgb, var(--text) 32%, transparent) !important;
-    }
-    .ai-agent-panel .panel-resize-handle:hover::after {
-        opacity: 1 !important;
-        border-color: #007aff !important;
+        content: none;
     }
 
     /* Desktop Sidebar: 260px wide, sleek divider */
@@ -18684,6 +18652,11 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
     :root[data-theme="light"] .ai-agent-panel.file-manager {
         border-color: rgba(0, 0, 0, 0.12) !important;
         box-shadow: 0 -16px 60px rgba(0, 0, 0, 0.25) !important;
+    }
+    /* Mobile: no chat title in the top bar. Screen estate goes to the
+       controls; the title already lives in the sidebar list. */
+    .ai-agent-panel .ai-titlebar-center {
+        display: none !important;
     }
     .ai-agent-panel .panel-drag-handle {
         display: flex !important;
