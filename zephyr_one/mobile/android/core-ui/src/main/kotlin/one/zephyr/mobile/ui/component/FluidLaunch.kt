@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlurEffect
@@ -409,7 +410,7 @@ fun FluidLaunchScreen(
 
 private fun Modifier.graphicsLaunch(alpha: Float, scale: Float, blur: Dp): Modifier =
     this.then(
-        androidx.compose.ui.graphics.graphicsLayer {
+        Modifier.graphicsLayer {
             this.alpha = alpha
             scaleX = scale
             scaleY = scale
