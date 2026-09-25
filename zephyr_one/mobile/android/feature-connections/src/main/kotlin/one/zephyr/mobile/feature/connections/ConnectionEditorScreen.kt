@@ -188,6 +188,7 @@ fun ConnectionEditorScreen(
 /** One user action on the editor. An interface rather than 20 lambdas keeps the screen signature usable. */
 sealed interface EditorIntent {
     data class Name(val value: String) : EditorIntent
+    data class Icon(val value: String) : EditorIntent
     data class Host(val value: String) : EditorIntent
     data class Port(val value: String) : EditorIntent
     data class Username(val value: String) : EditorIntent
@@ -292,6 +293,9 @@ private fun BasicSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent) -
         keyboardType = KeyboardType.Number,
         onChange = { onIntent(EditorIntent.Port(it)) },
     )
+
+    HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
+    SystemIconRow(icon = draft.current.icon, onPick = { onIntent(EditorIntent.Icon(it)) })
 
     HorizontalDivider(color = ZephyrTheme.palette.surfaces.outlineSoft)
     Field(
@@ -609,6 +613,77 @@ private fun FileSyncSection(ui: ConnectionEditorUiState, onIntent: (EditorIntent
         text = stringResource(R.string.editor_file_sync_note),
         style = ZephyrTheme.typography.caption,
         color = ZephyrTheme.palette.onFloatingMuted,
+    )
+}
+
+/* Same choices as the Zephyr web editor's 系统图标 select, in the same order.
+ * `auto` is the probe-or-guess default; the rest are explicit picks. */
+/* Keys are the wire values the Zephyr web editor stores; labels are resolved
+ * per locale. Order matches the web select exactly. */
+private val SYSTEM_ICON_OPTIONS = listOf(
+    "auto" to R.string.editor_icon_auto,
+    "windows" to null,
+    "macos" to null,
+    "ubuntu" to null,
+    "debian" to null,
+    "arch" to null,
+    "alpine" to null,
+    "raspberry" to null,
+    "redhat" to null,
+    "linux" to R.string.editor_icon_linux,
+    "unknown" to R.string.editor_icon_unknown,
+)
+
+private val SYSTEM_ICON_LITERALS = mapOf(
+    "windows" to "Windows",
+    "macos" to "macOS",
+    "ubuntu" to "Ubuntu",
+    "debian" to "Debian",
+    "arch" to "Arch Linux",
+    "alpine" to "Alpine Linux",
+    "raspberry" to "Raspberry Pi",
+    "redhat" to "Red Hat / CentOS / Fedora",
+)
+
+@Composable
+private fun systemIconLabel(key: String): String {
+    val res = SYSTEM_ICON_OPTIONS.firstOrNull { it.first == key }?.second
+    return when {
+        res != null -> stringResource(res)
+        else -> SYSTEM_ICON_LITERALS[key] ?: key
+    }
+}
+
+@Composable
+private fun SystemIconRow(icon: String, onPick: (String) -> Unit) {
+    var open by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    val current = systemIconLabel(icon)
+    SettingsRow(
+        title = stringResource(R.string.editor_field_icon),
+        value = current,
+        showChevron = true,
+        showDivider = false,
+        onClick = { open = true },
+    )
+    ActionSheet(
+        visible = open,
+        onDismiss = { open = false },
+        groups = listOf(
+            ActionSheetGroup(
+                title = stringResource(R.string.editor_field_icon),
+                items = SYSTEM_ICON_OPTIONS.map { (key, _) ->
+                    ActionSheetItem(
+                        label = systemIconLabel(key),
+                        subtitle = if (key == icon) "当前" else null,
+                        onClick = {
+                            open = false
+                            onPick(key)
+                        },
+                    )
+                },
+            ),
+            ActionSheetGroup(items = listOf(ActionSheetItem(label = "取消", cancel = true, onClick = { open = false }))),
+        ),
     )
 }
 

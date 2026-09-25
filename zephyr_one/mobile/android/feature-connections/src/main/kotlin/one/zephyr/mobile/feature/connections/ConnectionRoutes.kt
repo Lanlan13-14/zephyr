@@ -155,6 +155,7 @@ private fun dispatch(
 ) {
     when (intent) {
         is EditorIntent.Name -> viewModel.setName(intent.value)
+        is EditorIntent.Icon -> viewModel.setIcon(intent.value)
         is EditorIntent.Host -> viewModel.setHost(intent.value)
         is EditorIntent.Port -> viewModel.setPort(intent.value)
         is EditorIntent.Username -> viewModel.setUsername(intent.value)

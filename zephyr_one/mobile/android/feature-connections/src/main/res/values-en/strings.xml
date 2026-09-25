@@ -57,6 +57,10 @@
     <string name="editor_field_host">Host</string>
     <string name="editor_field_port">Port</string>
     <string name="editor_field_username">Username</string>
+    <string name="editor_field_icon">System icon</string>
+    <string name="editor_icon_auto">Detect automatically</string>
+    <string name="editor_icon_unknown">Unrecognised</string>
+    <string name="editor_icon_linux">Linux (generic)</string>
     <string name="editor_field_domain">Windows domain</string>
     <string name="editor_field_encoding">Encoding</string>
     <string name="editor_field_remark">Notes</string>

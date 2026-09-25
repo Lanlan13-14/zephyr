@@ -218,6 +218,9 @@ class ConnectionEditorViewModel(
     fun setHost(value: String) = edit { it.withHost(value) }
     fun setUsername(value: String) = edit { it.withUsername(value) }
     fun setRemark(value: String) = edit { it.withRemark(value) }
+
+    /** System icon key. `auto` lets the main end probe; anything else is the user's pick. */
+    fun setIcon(value: String) = edit { it.copy(current = it.current.copy(icon = value)) }
     fun setTags(value: List<String>) = edit { it.withTags(value) }
     fun setProtocol(value: Protocol) = edit { it.withProtocol(value) }
     fun setConnectionMode(value: one.zephyr.mobile.model.ConnectionMode) = edit { it.withConnectionMode(value) }

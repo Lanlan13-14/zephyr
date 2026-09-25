@@ -69,6 +69,10 @@
     <string name="editor_field_host">主机</string>
     <string name="editor_field_port">端口</string>
     <string name="editor_field_username">用户名</string>
+    <string name="editor_field_icon">系统图标</string>
+    <string name="editor_icon_auto">自动识别</string>
+    <string name="editor_icon_unknown">未识别</string>
+    <string name="editor_icon_linux">Linux（通用）</string>
     <string name="editor_field_domain">Windows 域</string>
     <string name="editor_field_encoding">编码</string>
     <string name="editor_field_remark">备注</string>

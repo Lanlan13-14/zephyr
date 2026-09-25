@@ -461,6 +461,9 @@ data class ConnectionDraft(
          */
         private val FIELD_READERS: Map<String, (Connection) -> Any?> = linkedMapOf(
             "name" to { c: Connection -> c.name },
+            // Same key set as the Zephyr web editor's 系统图标 select. Without a reader
+            // here a change made on One never enters the field mask, so it cannot sync back.
+            "icon" to { c: Connection -> c.icon },
             "host" to { c: Connection -> c.host },
             "port" to { c: Connection -> c.port },
             "protocol" to { c: Connection -> c.protocol },

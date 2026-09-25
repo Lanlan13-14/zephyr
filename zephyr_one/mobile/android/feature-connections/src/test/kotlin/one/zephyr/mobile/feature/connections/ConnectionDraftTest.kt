@@ -354,6 +354,22 @@ class ConnectionDraftTest {
     }
 
     @Test
+    fun changingTheSystemIconEntersTheFieldMask() {
+        // The web editor's 系统图标 select writes the same `icon` key. One has to mask it or the
+        // pick never syncs back to the main end.
+        val draft = ConnectionDraft.edit(Fixtures.connection()).let {
+            it.copy(current = it.current.copy(icon = "debian"))
+        }
+        assertEquals(listOf("icon"), draft.changedFields())
+    }
+
+    @Test
+    fun leavingTheIconUntouchedMasksNothing() {
+        val draft = ConnectionDraft.edit(Fixtures.connection(icon = "ubuntu"))
+        assertFalse(draft.changedFields().contains("icon"))
+    }
+
+    @Test
     fun jumpChainEditMasksBothChainAndLegacyField() {
         val draft = ConnectionDraft.edit(Fixtures.connection())
             .withConnectionMode(ConnectionMode.JUMP)
