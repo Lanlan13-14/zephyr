@@ -370,6 +370,30 @@ class ConnectionDraftTest {
     }
 
     @Test
+    fun aStoredIconIsNotTreatedAsAManualChoice() {
+        // A probe wrote this. The next probe must still be allowed to replace it, because One
+        // cannot tell a probed icon from a picked one once it is saved.
+        val draft = ConnectionDraft.edit(Fixtures.connection(icon = "debian"))
+        assertFalse(draft.iconChosenManually)
+    }
+
+    @Test
+    fun anIconTheUserPicksInThisEditIsManual() {
+        val draft = ConnectionDraft.edit(Fixtures.connection(icon = "auto")).let {
+            it.copy(current = it.current.copy(icon = "ubuntu"))
+        }
+        assertTrue(draft.iconChosenManually)
+    }
+
+    @Test
+    fun resettingTheIconToAutoIsNotAManualChoice() {
+        val draft = ConnectionDraft.edit(Fixtures.connection(icon = "debian")).let {
+            it.copy(current = it.current.copy(icon = "auto"))
+        }
+        assertFalse(draft.iconChosenManually)
+    }
+
+    @Test
     fun jumpChainEditMasksBothChainAndLegacyField() {
         val draft = ConnectionDraft.edit(Fixtures.connection())
             .withConnectionMode(ConnectionMode.JUMP)

@@ -5,6 +5,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import one.zephyr.mobile.model.Connection
+import one.zephyr.mobile.model.Protocol
 
 /**
  * Remote-system icon for a connection, matching the Zephyr web app's
@@ -33,6 +35,41 @@ object OsIcons {
     }
 
     fun isResolved(iconKey: String?): Boolean = glyphFor(iconKey) != null
+
+        /**
+         * Which glyph a connection card draws.
+         *
+         * Same rule as the web app's `detectConnectionIconKey`: a stored key is
+         * trusted as-is, because the main end writes `icon` only when the user
+         * picked it or a probe confirmed it. `auto` falls back to the same text
+         * guess the web app uses, and RDP with nothing else to go on is Windows.
+         * A key no glyph exists for stays unresolved so the card keeps its
+         * protocol monogram instead of inventing one.
+         */
+        fun cardIconKey(connection: Connection): String? {
+            val explicit = connection.icon.lowercase().trim()
+            if (explicit.isNotEmpty() && explicit != "auto" && glyphFor(explicit) != null) return explicit
+            val text = listOf(
+                connection.name,
+                connection.remark,
+                connection.tags.joinToString(" "),
+                connection.host,
+            ).joinToString(" ").lowercase()
+            val guessed = when {
+                text.contains(Regex("""windows|win11|win10|winserver|\bwin\b""")) -> "windows"
+                text.contains(Regex("""macos|osx|darwin|apple|macbook|macmini|imac|macstudio|\bmac\b""")) -> "macos"
+                text.contains("ubuntu") -> "ubuntu"
+                text.contains("debian") -> "debian"
+                text.contains(Regex("""arch|archlinux|manjaro""")) -> "arch"
+                text.contains(Regex("""alpine|alpinelinux""")) -> "alpine"
+                text.contains(Regex("""raspberry|rpi|raspbian|\bpi\s?[2-5]\w*\b""")) -> "raspberry"
+                text.contains(Regex("""redhat|rhel|centos|fedora|rocky|alma""")) -> "redhat"
+                text.contains(Regex("""linux|kali|gentoo|suse|opensuse""")) -> "linux"
+                connection.protocol == Protocol.RDP -> "windows"
+                else -> null
+            }
+            return guessed?.takeIf { glyphFor(it) != null }
+    }
 }
 
 /**

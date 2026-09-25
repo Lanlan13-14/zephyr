@@ -432,6 +432,28 @@ class ConnectionEditorViewModel(
             } finally {
                 credentials.wipe()
             }
+            val detected = result.detectedIcon
+            if (detected != null) {
+                /* Same write the main end makes after a successful test: the stored icon becomes
+                 * the detected system unless the user picked one themselves. The save is what
+                 * carries it back to the main end on the next sync. */
+                val fresh = (page.value as? PageState.Content)?.value?.draft ?: content.value.draft
+                val update = RemoteOsIcon.updateFor(fresh.normalized(), detected, manual = fresh.iconChosenManually)
+                if (update != null) {
+                    runCatching {
+                        connections.save(
+                            connection = update.connection,
+                            mask = update.mask,
+                            ownerUserId = ownerUserId,
+                        )
+                    }.onSuccess {
+                        mutate { state ->
+                            state.copy(draft = state.draft.copy(current = state.draft.current.copy(icon = update.icon)))
+                        }
+                        messages.tryEmit("已识别系统：" + update.icon)
+                    }
+                }
+            }
             mutate { it.copy(testing = false, testResult = result) }
         }
     }

@@ -11,9 +11,12 @@ import one.zephyr.mobile.model.MobileError
  * telling the user "失败" for both is the anti-pattern MOBILE_EXPERIENCE.md 6 calls out.
  */
 sealed interface ConnectionTestResult {
-    data class Reachable(val roundTripMs: Long) : ConnectionTestResult
+    /** Icon key identified while testing, when the probe could tell. */
+    val detectedIcon: String? get() = null
 
-    data class Authenticated(val roundTripMs: Long) : ConnectionTestResult
+    data class Reachable(val roundTripMs: Long, override val detectedIcon: String? = null) : ConnectionTestResult
+
+    data class Authenticated(val roundTripMs: Long, override val detectedIcon: String? = null) : ConnectionTestResult
 
     data class Failed(val error: MobileError) : ConnectionTestResult
 }

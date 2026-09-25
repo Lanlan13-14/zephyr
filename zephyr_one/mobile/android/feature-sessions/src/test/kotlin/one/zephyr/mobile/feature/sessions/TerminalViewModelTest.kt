@@ -166,6 +166,45 @@ class TerminalViewModelTest {
 
     // ---- harness ---------------------------------------------------------------------------------
 
+    @Test
+    fun aConnectedSessionProbesTheRemoteSystemOnce() = runTest(mainDispatcher) {
+        val probed = mutableListOf<String>()
+        val subject = subject(osProbe = { sessionId, _ -> probed += sessionId })
+        subscribe(subject)
+
+        subject.connect()
+        runCurrent()
+
+        assertEquals(listOf(SESSION), probed)
+    }
+
+    @Test
+    fun aFailedSessionDoesNotProbe() = runTest(mainDispatcher) {
+        val probed = mutableListOf<String>()
+        val subject = subject(
+            host = FakeHost(outcome = TerminalOpenOutcome.Failed(one.zephyr.mobile.model.MobileError.local("auth_failed", "认证失败"))),
+            osProbe = { sessionId, _ -> probed += sessionId },
+        )
+        subscribe(subject)
+
+        subject.connect()
+        runCurrent()
+
+        assertTrue(probed.isEmpty())
+    }
+
+    @Test
+    fun aProbeThatThrowsLeavesTheSessionConnected() = runTest(mainDispatcher) {
+        val registry = SessionRegistry()
+        val subject = subject(registry = registry, osProbe = { _, _ -> error("probe failed") })
+        subscribe(subject)
+
+        subject.connect()
+        runCurrent()
+
+        assertEquals(SessionTransport.CONNECTED, registry.find(SESSION)?.transport)
+    }
+
     private fun subject(
         registry: SessionRegistry = SessionRegistry(),
         connection: Connection? = SessionFixtures.connection(),
@@ -173,6 +212,7 @@ class TerminalViewModelTest {
         emulator: TerminalEmulator = FakeEmulator(),
         credentials: TerminalCredentials = TerminalCredentials(),
         latencyRefreshMs: Long = 0L,
+        osProbe: (suspend (String, Connection) -> Unit)? = null,
     ): TerminalViewModel = TerminalViewModel(
         sessionId = SESSION,
         connectionId = "c1",
@@ -186,6 +226,7 @@ class TerminalViewModelTest {
         // A connected ViewModel deliberately owns a repeating production probe. A non-positive
         // test interval keeps the immediate measurement but disables recurrence.
         latencyRefreshMs = latencyRefreshMs,
+        osProbe = osProbe,
     )
 
     /** stateIn(WhileSubscribed) produces nothing without a collector. */

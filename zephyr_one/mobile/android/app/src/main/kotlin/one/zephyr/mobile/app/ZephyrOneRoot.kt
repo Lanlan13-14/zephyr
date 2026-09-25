@@ -77,6 +77,7 @@ import one.zephyr.mobile.feature.connections.ConnectionEditorViewModel
 import one.zephyr.mobile.feature.connections.DriveMappingSnapshot
 import one.zephyr.mobile.feature.connections.ConnectionDraft
 import one.zephyr.mobile.feature.connections.ConnectionTestCredentials
+import one.zephyr.mobile.feature.connections.RemoteOsIcon
 import one.zephyr.mobile.feature.connections.ConnectionListRoute
 import one.zephyr.mobile.feature.connections.ConnectionListViewModel
 import one.zephyr.mobile.feature.connections.ConnectionTestResult
@@ -496,16 +497,44 @@ private fun BoundRoot(
     /* Non-suspend entry point for callbacks that are not suspend (island taps, click handlers). */
     val notice: (String) -> Unit = { message -> scope.launch { messages.emit(message) } }
     val reachability = remember { TcpReachabilityTester() }
+    val connectionTester = remember(account, sshEngine) {
+        ProtocolConnectionTester(
+            ssh = DirectSshConnectionTester(
+                engine = sshEngine,
+                routePlanner = { connection ->
+                    accountRoutePlanner(account).plan(connection)
+                        ?: SshRoute(listOf(RouteHop.Target(connection.host, connection.port)))
+                },
+                hopAuthProvider = { route -> account.hopAuthFor(route) },
+            ),
+            fallback = reachability,
+        )
+    }
     val testConnection: (Connection) -> Unit = { connection ->
         scope.launch {
-            when (val result = reachability.test(connection)) {
-                is ConnectionTestResult.Reachable ->
-                    messages.emit(connection.host + ":" + connection.port + " · " + result.roundTripMs + " ms")
-                is ConnectionTestResult.Authenticated ->
-                    messages.emit(connection.host + ":" + connection.port + " · " + result.roundTripMs + " ms")
-                is ConnectionTestResult.Failed ->
-                    messages.emit(result.error.message)
+            val credentials = account.connectionTestCredentials(connection, ConnectionDraft.edit(connection))
+            val result = try {
+                connectionTester.test(connection, credentials)
+            } finally {
+                credentials.wipe()
             }
+            val detected = result.detectedIcon
+            if (detected != null && (connection.icon.isBlank() || connection.icon == "auto")) {
+                val update = RemoteOsIcon.updateFor(connection, detected, manual = false)
+                if (update != null) {
+                    runCatching {
+                        account.connections.save(update.connection, update.mask, ownerUserId = ownerUserId)
+                    }
+                }
+            }
+            val text = when (result) {
+                is ConnectionTestResult.Reachable ->
+                    connection.host + ":" + connection.port + " · " + result.roundTripMs + " ms"
+                is ConnectionTestResult.Authenticated ->
+                    connection.host + ":" + connection.port + " · " + result.roundTripMs + " ms"
+                is ConnectionTestResult.Failed -> result.error.message
+            }
+            messages.emit(if (detected != null) text + " · 已识别 " + detected else text)
         }
     }
 
@@ -898,6 +927,15 @@ private fun BoundRoot(
                             } else {
                                 account.terminalCredentials(connection)
                             }
+                        },
+                        osProbe = { sessionId, connection ->
+                            ConnectionOsProbe(
+                                host = terminalHost,
+                                findConnection = account.connections::find,
+                                saveIcon = { updated, mask ->
+                                    account.connections.save(updated, mask, ownerUserId = ownerUserId)
+                                },
+                            ).probe(sessionId, connection)
                         },
                         findConnection = { id ->
                             account.connections.find(id)

@@ -5,6 +5,7 @@ import kotlin.system.measureNanoTime
 import one.zephyr.mobile.feature.connections.ConnectionTestCredentials
 import one.zephyr.mobile.feature.connections.ConnectionTestResult
 import one.zephyr.mobile.feature.connections.ConnectionTester
+import one.zephyr.mobile.feature.connections.RemoteOsIcon
 import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.MobileError
 import one.zephyr.mobile.protocol.ssh.HostKeyPolicy
@@ -81,12 +82,32 @@ internal class DirectSshConnectionTester(
         val elapsedMs = (elapsedNanos / 1_000_000L).coerceAtLeast(1L)
         return try {
             when (val value = outcome) {
-                is SshConnectOutcome.Connected -> ConnectionTestResult.Authenticated(elapsedMs)
+                is SshConnectOutcome.Connected -> ConnectionTestResult.Authenticated(
+                    elapsedMs,
+                    detectedIcon = probeOs(sessionId),
+                )
                 is SshConnectOutcome.HostKeyDecisionRequired -> ConnectionTestResult.Reachable(elapsedMs)
                 is SshConnectOutcome.Failed -> ConnectionTestResult.Failed(value.error)
             }
         } finally {
             engine.disconnect(sessionId)
         }
+    }
+
+    /**
+     * Reads `/etc/os-release` on the session the test just authenticated.
+     *
+     * A probe that fails, prints nothing recognisable, or overruns its budget returns null: the
+     * test result stands either way, exactly as the main end treats a failed probe.
+     */
+    private suspend fun probeOs(sessionId: String): String? = runCatching {
+        kotlinx.coroutines.withTimeout(PROBE_TIMEOUT_MS) {
+            val output = engine.exec(sessionId, RemoteOsIcon.PROBE_COMMAND).getOrNull() ?: return@withTimeout null
+            RemoteOsIcon.iconKeyFromProbe(output.stdout.toString(Charsets.UTF_8))
+        }
+    }.getOrNull()
+
+    private companion object {
+        const val PROBE_TIMEOUT_MS = 8_000L
     }
 }
