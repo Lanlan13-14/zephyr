@@ -306,6 +306,8 @@ fun AiWorkspaceOverlay(
             )
         }
 
+        confirmDeleteTargetId?.let { targetId ->
+            one.zephyr.mobile.ui.component.AlertDialog(
                 onDismissRequest = { confirmDeleteTargetId = null },
                 title = { Text("删除对话") },
                 text = { Text("将从同账号的所有设备删除此对话及其消息。") },
@@ -984,4 +986,53 @@ private fun AiThinkingSection(label: String, onClick: () -> Unit) {
         fontSize = 13.sp,
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
     )
+}
+
+@Composable
+private fun AiPickerOverlay(
+    picker: AiPicker,
+    chrome: AiWorkspaceChrome,
+    runtime: AiRuntimeState,
+    onDismiss: () -> Unit,
+    onSelected: (String) -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    val provider = runtime.providers.firstOrNull { it.id == chrome.providerId } ?: runtime.providers.firstOrNull()
+    val choices = when (picker) {
+        AiPicker.PROVIDER -> runtime.providers.map { it.id to it.name }
+        AiPicker.MODEL -> provider?.models.orEmpty().map { it.id to it.label }
+        AiPicker.MODE -> listOf("standard" to "标准", "plan" to "计划", "goal" to "Goal")
+        AiPicker.RUN_PROFILE -> listOf("economy" to "省 token", "balanced" to "均衡", "delivery" to "交付")
+        AiPicker.PERMISSION -> listOf("ask" to "Ask", "auto" to "Auto", "yolo" to "Yolo")
+        AiPicker.THINKING -> listOf("off" to "关闭", "low" to "微推", "med" to "均衡", "high" to "高推", "max" to "极深")
+    }
+    val current = when (picker) {
+        AiPicker.PROVIDER -> chrome.providerId
+        AiPicker.MODEL -> chrome.model
+        AiPicker.MODE -> chrome.collaboration
+        AiPicker.RUN_PROFILE -> chrome.runProfile
+        AiPicker.PERMISSION -> chrome.permission
+        AiPicker.THINKING -> chrome.thinking
+    }
+    Box(Modifier.fillMaxSize().background(palette.surfaces.scrim).clickable(onClick = onDismiss)) {
+        Column(
+            Modifier.align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(palette.surfaces.elevated)
+                .clickable(enabled = false) {}
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            choices.forEach { (value, label) ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { onSelected(value) }.padding(vertical = 10.dp, horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(label, color = palette.onBackground, fontSize = 14.sp)
+                    if (value == current) Text("✓", color = palette.brand.accent, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
 }
