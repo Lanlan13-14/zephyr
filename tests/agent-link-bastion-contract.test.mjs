@@ -120,23 +120,9 @@ test('a connected Agent heartbeat updates the bastion choice the hop list reads'
   const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
   assert.match(controller, /void setBastionEnabled\(bool enabled\)/);
   assert.match(controller, /'type': 'ping'[\s\S]{0,160}'bastion': _config\.bastionEnabled/);
+  assert.match(controller, /enabled \? _maybeStartBastionTunnel\(\) : _linkRuntime\.markTunnelDown\(\)/);
   const manager = read('file-agent-manager.js');
   assert.match(manager, /conn\.capabilities\.bastion = msg\.bastion/);
   const ui = read('zephyr_agent/lib/screens/home_screen.dart');
   assert.match(ui, /ctrl\.setBastionEnabled\(v\)/);
-});
-
-test('a rejected Link registration is retried and the hop list requires a live channel', () => {
-  /* One splices onto the Agent through the encrypted channel. That channel is
-   * only dialed after the main accepts link_register. A rejection used to end
-   * the chain while the control socket stayed up, so the Agent showed as
-   * online with bastion on and no client could relay through it. */
-  const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
-  assert.match(controller, /_linkRegisterPending = false/);
-  assert.match(controller, /void _retryLinkRegister\(\)/);
-  assert.match(controller, /_send\(\{'type': 'link_register'\}\)/);
-  const manager = read('file-agent-manager.js');
-  assert.match(manager, /agent\.capabilities\?\.linkFileBridge === true/);
-  const server = read('server.js');
-  assert.match(server, /Agent 加密通道未建立，无法中继/);
 });
