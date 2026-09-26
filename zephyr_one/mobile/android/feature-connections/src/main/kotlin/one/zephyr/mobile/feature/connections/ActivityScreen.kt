@@ -34,7 +34,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import one.zephyr.mobile.model.ActivityEvent
-import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.ui.chrome.PushedPageHeader
 import one.zephyr.mobile.ui.component.Surface
 import one.zephyr.mobile.ui.component.Text
@@ -61,7 +60,6 @@ fun ActivityScreen(
     events: List<ActivityEvent>,
     nowMs: Long,
     onBack: () -> Unit,
-    connections: List<Connection> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     var range by remember { mutableStateOf(ActivityRange.WEEK) }
@@ -108,7 +106,7 @@ fun ActivityScreen(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = islandContentBottomInset()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(shown, key = { it.id }) { event -> ActivityCard(event, connections) }
+                items(shown, key = { it.id }) { event -> ActivityCard(event) }
             }
         }
     }
@@ -147,17 +145,18 @@ private fun RangeTabs(selected: ActivityRange, onSelect: (ActivityRange) -> Unit
     }
 }
 
-private fun activityTitle(event: ActivityEvent, connections: List<Connection>): String {
-    val name = event.connectionId?.let { id -> connections.firstOrNull { it.id == id }?.name }?.takeIf { it.isNotBlank() }
-    val label = event.message.takeIf { it.isNotBlank() }
+/**
+ * The main end renders the raw activity message as the title and never folds the
+ * connection name into it, so neither does this page.
+ */
+private fun activityTitle(event: ActivityEvent): String =
+    event.message.takeIf { it.isNotBlank() }
         ?: event.category.takeIf { it.isNotBlank() }
         ?: event.type.takeIf { it.isNotBlank() }
-        ?: "操作"
-    return if (name == null) label else "$name · $label"
-}
+        ?: "未知活动"
 
 @Composable
-private fun ActivityCard(event: ActivityEvent, connections: List<Connection>) {
+private fun ActivityCard(event: ActivityEvent) {
     val palette = ZephyrTheme.palette
     val failed = event.outcome.contains("失败") || event.outcome.contains("拒绝") || event.outcome.contains("错误")
     val mark = if (failed) palette.status.error else palette.status.warning
@@ -166,7 +165,7 @@ private fun ActivityCard(event: ActivityEvent, connections: List<Connection>) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.size(9.dp).clip(CircleShape).background(mark))
                 Text(
-                    activityTitle(event, connections),
+                    activityTitle(event),
                     color = palette.onBackground,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
@@ -194,11 +193,16 @@ private fun ActivityCard(event: ActivityEvent, connections: List<Connection>) {
             )
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 MetaCell("事件类型", event.category.ifBlank { "操作" }, Modifier.weight(1f))
-                MetaCell("协议", event.protocol?.ifBlank { "—" } ?: "—", Modifier.weight(1f))
+                MetaCell("操作者", event.actor?.ifBlank { "—" } ?: "—", Modifier.weight(1f))
             }
-            val target = event.target
-            if (!target.isNullOrBlank()) {
-                MetaCell("目标地址", target, Modifier.padding(top = 8.dp))
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                MetaCell("协议", event.protocol?.ifBlank { "—" } ?: "—", Modifier.weight(1f))
+                val target = event.target
+                if (!target.isNullOrBlank()) MetaCell("目标地址", target, Modifier.weight(1f))
+            }
+            val sourceIp = event.sourceIp
+            if (!sourceIp.isNullOrBlank()) {
+                MetaCell("来源 IP", sourceIp, Modifier.padding(top = 8.dp))
             }
             Text(
                 "事件 ID  ${event.id}",

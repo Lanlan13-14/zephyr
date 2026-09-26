@@ -85,6 +85,16 @@ interface AiRuntimeController {
     fun selectConversation(id: String)
     fun newConversation()
     suspend fun deleteConversation(id: String)
+
+    /** Drops the messages shown for the open conversation. The conversation itself stays. */
+    fun clearConversation()
+
+    /**
+     * Collapses the open transcript to a one-line summary plus the last message,
+     * matching the main end's 压缩上下文.
+     */
+    fun compressConversation()
+
     suspend fun send(text: String)
     suspend fun stop()
     suspend fun decide(approve: Boolean)

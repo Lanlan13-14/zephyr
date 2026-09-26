@@ -1789,7 +1789,9 @@ internal fun terminalDockLeave(item: TerminalDockItem): TerminalDockLeave = when
     TerminalDockItem.NOTES -> TerminalDockLeave.NOTES
     TerminalDockItem.DOCKER -> TerminalDockLeave.DOCKER
     TerminalDockItem.STATS -> TerminalDockLeave.STATS
-    TerminalDockItem.THEME -> TerminalDockLeave.APPEARANCE
+    // 外观 flips the terminal canvas inside the session, so the host must not
+    // navigate away to the appearance settings page.
+    TerminalDockItem.THEME -> TerminalDockLeave.STAY
     TerminalDockItem.COPY,
     TerminalDockItem.PASTE,
     TerminalDockItem.KEYBOARD,

@@ -80,7 +80,7 @@ class TerminalToolSheetTest {
         assertTrue(TerminalToolKind.FILES.keepsIme)
         assertTrue(TerminalToolKind.STATS.keepsIme)
         assertTrue(TerminalToolKind.DOCKER.keepsIme)
-        assertTrue(!TerminalToolKind.THEME.keepsIme)
+        assertTrue(!TerminalToolKind.NOTES.keepsIme)
         val opened = TerminalWorkspace.openTool(state(), TerminalToolKind.DOCKER, phone = true)
         assertEquals(TerminalToolKind.DOCKER, opened.sheetCurrent)
     }

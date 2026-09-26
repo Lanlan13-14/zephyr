@@ -81,6 +81,8 @@ import one.zephyr.mobile.ui.glass.liquidGlass
 import one.zephyr.mobile.ui.glass.Highlight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -116,7 +118,6 @@ fun AiWorkspaceOverlay(
     var handlePressed by remember { mutableStateOf(false) }
     var seedHeightPx by remember { mutableStateOf<Float?>(null) }
     var picker by remember { mutableStateOf<AiPicker?>(null) }
-    var showConversationList by remember { mutableStateOf(false) }
     var confirmDeleteTargetId by remember { mutableStateOf<String?>(null) }
     var fabOffset by remember { mutableStateOf(Offset.Zero) }
     val heightAnim = remember { Animatable(0f) }
@@ -240,8 +241,27 @@ fun AiWorkspaceOverlay(
                 .shadow(24.dp, phoneShape).clip(phoneShape).background(palette.surfaces.elevated)
         }
 
-        Column(sheetModifier) {
-            if (layout == AiLayout.PHONE) {
+        AiMainEndPanel(
+            modifier = sheetModifier,
+            chrome = chrome,
+            runtime = runtime,
+            onClose = { sheet = AiSheetMotion.hidePanel(sheet) },
+            onOpenSettings = onOpenSettings,
+            onNotice = onNotice,
+            onPick = { picker = it },
+            onAttach = { filePicker.launch(arrayOf("*/*")) },
+            onNew = { controller.newConversation() },
+            onSelectConversation = { controller.selectConversation(it) },
+            onDeleteConversation = { confirmDeleteTargetId = it },
+            onClear = { controller.clearConversation() },
+            onCompress = { controller.compressConversation() },
+            onTogglePlan = { controller.setPlanEnabled(!chrome.planEnabled) },
+            onStop = { scope.launch { controller.stop() } },
+            onDecide = { scope.launch { controller.decide(it) } },
+            onRemoveAttachment = { id -> scope.launch { controller.removeAttachment(id) } },
+            onSend = { text -> scope.launch { controller.send(text) } },
+            dragHandle = if (layout == AiLayout.PHONE) {
+                {
                 AiHandle(
                     containerHeightPx = containerHeightPx,
                     pressed = handlePressed,
@@ -262,59 +282,9 @@ fun AiWorkspaceOverlay(
                         ),
                     )
                 }
-            } else Spacer(Modifier.height(AiSheetGeometry.HANDLE_TOP_PAD_DP.dp))
-
-            AiContextBanner(context, true)
-            AiConversationBar(
-                title = runtime.conversationTitle,
-                onOpenList = { showConversationList = true },
-                onNew = { controller.newConversation() },
-                onDelete = {
-                    runtime.conversationId?.let { confirmDeleteTargetId = it }
-                },
-            )
-            AiToolStrip(
-                chrome = chrome,
-                runtime = runtime,
-                onPick = { picker = it },
-                onAttach = { filePicker.launch(arrayOf("*/*")) },
-                onPlan = { controller.setPlanEnabled(!chrome.planEnabled) },
-                onOpenSettings = onOpenSettings,
-            )
-            if (runtime.attachments.isNotEmpty()) {
-                AiAttachmentStrip(runtime.attachments) { id -> scope.launch { controller.removeAttachment(id) } }
-            }
-            if (runtime.running || runtime.loading) {
-                AiRunBar(onStop = { scope.launch { controller.stop() } })
-            }
-            runtime.waitingPermission?.let { pending ->
-                AiPermissionCard(
-                    pending = pending,
-                    onApprove = { scope.launch { controller.decide(true) } },
-                    onDeny = { scope.launch { controller.decide(false) } },
-                )
-            }
-
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 2.dp),
-            ) {
-                if (runtime.conversation.isEmpty) item { AiEmptyTranscript(runtime.runtimeEnabled) }
-                itemsIndexed(runtime.conversation.items, key = { index, item -> "$index:${item::class.simpleName}" }) { _, item ->
-                    when (item) {
-                        is AiTranscriptItem.User -> AiMessage(item.text, true, Modifier.fillMaxWidth())
-                        is AiTranscriptItem.Assistant -> AiMessage(item.text, false, Modifier.fillMaxWidth(), item.caption)
-                        is AiTranscriptItem.ToolTrace -> AiToolTraceCard(item)
-                    }
                 }
-            }
-
-            AiComposer(
-                model = chrome.model,
-                enabled = !runtime.running && runtime.waitingPermission == null,
-                onSend = { text -> scope.launch { controller.send(text) } },
-            )
-        }
+            } else null,
+        )
 
         picker?.let { active ->
             AiPickerOverlay(
@@ -333,25 +303,6 @@ fun AiWorkspaceOverlay(
                     }
                     picker = null
                 },
-            )
-        }
-
-        if (showConversationList) {
-            AiConversationListOverlay(
-                conversations = runtime.conversations,
-                currentId = runtime.conversationId,
-                onSelect = { id ->
-                    controller.selectConversation(id)
-                    showConversationList = false
-                },
-                onNew = {
-                    controller.newConversation()
-                    showConversationList = false
-                },
-                onDelete = { id ->
-                    confirmDeleteTargetId = id
-                },
-                onDismiss = { showConversationList = false },
             )
         }
 
@@ -517,293 +468,6 @@ private fun AiHandle(
 }
 
 @Composable
-private fun AiContextBanner(context: AiContextHeader, runtime: Boolean) {
-    val palette = ZephyrTheme.palette
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 10.dp)
-            .clip(RoundedCornerShape(ZephyrRadius.sm)).background(palette.brand.accent.copy(alpha = 0.10f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(ZephyrIcons.Sessions, null, tint = palette.brand.accent, modifier = Modifier.size(13.dp))
-        Text(if (runtime) "已连接" else "Runtime 离线", color = if (runtime) palette.status.success else palette.status.error, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Text(context.label, color = palette.brand.accent, fontSize = 12.5.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun AiConversationBar(
-    title: String,
-    onOpenList: () -> Unit,
-    onNew: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    val palette = ZephyrTheme.palette
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .padding(bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Surface(
-            modifier = Modifier
-                .weight(1f)
-                .height(34.dp)
-                .clickable(onClick = onOpenList),
-            shape = RoundedCornerShape(10.dp),
-            color = palette.surfaces.content,
-            border = BorderStroke(1.dp, palette.surfaces.outlineSoft),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(ZephyrIcons.Notes, null, tint = palette.brand.accent, modifier = Modifier.size(13.dp))
-                Text(
-                    text = title.ifBlank { "新对话" },
-                    color = palette.onBackground,
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(ZephyrIcons.Chevron, null, tint = palette.onFloatingSubtle, modifier = Modifier.size(12.dp))
-            }
-        }
-        Surface(
-            modifier = Modifier
-                .size(34.dp)
-                .clickable(onClick = onNew),
-            shape = RoundedCornerShape(10.dp),
-            color = palette.surfaces.content,
-            border = BorderStroke(1.dp, palette.surfaces.outlineSoft),
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(ZephyrIcons.Plus, contentDescription = "新建对话", tint = palette.brand.accent, modifier = Modifier.size(15.dp))
-            }
-        }
-        Surface(
-            modifier = Modifier
-                .size(34.dp)
-                .clickable(onClick = onDelete),
-            shape = RoundedCornerShape(10.dp),
-            color = palette.surfaces.content,
-            border = BorderStroke(1.dp, palette.surfaces.outlineSoft),
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(ZephyrIcons.Delete, contentDescription = "删除对话", tint = palette.status.error, modifier = Modifier.size(14.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun AiConversationListOverlay(
-    conversations: List<AiConversationBrief>,
-    currentId: String?,
-    onSelect: (String) -> Unit,
-    onNew: () -> Unit,
-    onDelete: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val palette = ZephyrTheme.palette
-    BackHandler(onBack = onDismiss)
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(palette.surfaces.scrim)
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.65f)
-                .clip(RoundedCornerShape(topStart = ZephyrRadius.xl, topEnd = ZephyrRadius.xl))
-                .background(palette.surfaces.elevated)
-                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}
-                .padding(top = 16.dp, bottom = 20.dp),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("历史对话", color = palette.onBackground, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        modifier = Modifier
-                            .height(30.dp)
-                            .clickable(onClick = onNew),
-                        shape = RoundedCornerShape(15.dp),
-                        color = palette.brand.accent,
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Icon(ZephyrIcons.Plus, null, tint = Color.White, modifier = Modifier.size(13.dp))
-                            Text("新建", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                    Icon(
-                        ZephyrIcons.Close,
-                        contentDescription = "关闭",
-                        tint = palette.onFloatingSubtle,
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clickable(onClick = onDismiss),
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            if (conversations.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("暂无历史对话", color = palette.onFloatingSubtle, fontSize = 13.sp)
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                ) {
-                    items(conversations.size, key = { conversations[it].id }) { index ->
-                        val item = conversations[index]
-                        val isSelected = item.id == currentId
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSelect(item.id) }
-                                .background(if (isSelected) palette.brand.accent.copy(alpha = 0.12f) else Color.Transparent)
-                                .padding(horizontal = 18.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                ZephyrIcons.Notes,
-                                null,
-                                tint = if (isSelected) palette.brand.accent else palette.onFloatingSubtle,
-                                modifier = Modifier.size(15.dp),
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    item.title.ifBlank { "新对话" },
-                                    color = if (isSelected) palette.brand.accent else palette.onBackground,
-                                    fontSize = 13.5.sp,
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            Icon(
-                                ZephyrIcons.Delete,
-                                contentDescription = "删除",
-                                tint = palette.onFloatingSubtle,
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clickable { onDelete(item.id) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AiToolStrip(
-    chrome: AiWorkspaceChrome,
-    runtime: AiRuntimeState,
-    onPick: (AiPicker) -> Unit,
-    onAttach: () -> Unit,
-    onPlan: () -> Unit,
-    onOpenSettings: () -> Unit,
-) {
-    val provider = runtime.providers.firstOrNull { it.id == chrome.providerId } ?: runtime.providers.firstOrNull()
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        AiChip("Provider", provider?.name ?: chrome.provider) { onPick(AiPicker.PROVIDER) }
-        AiChip("模型", chrome.model) { onPick(AiPicker.MODEL) }
-        AiChip("协作", chrome.collaboration) { onPick(AiPicker.MODE) }
-        AiChip("运行", chrome.runProfile) { onPick(AiPicker.RUN_PROFILE) }
-        AiChip("权限", chrome.permission) { onPick(AiPicker.PERMISSION) }
-        AiChip("思考", chrome.thinking) { onPick(AiPicker.THINKING) }
-        AiChip("附件", runtime.attachments.size.takeIf { it > 0 }?.toString(), onAttach)
-        AiChip("计划", if (chrome.planEnabled) "开启" else "关闭", onPlan)
-        AiChip("设置", null, onOpenSettings)
-    }
-}
-
-@Composable
-private fun AiChip(label: String, value: String?, onClick: () -> Unit) {
-    val palette = ZephyrTheme.palette
-    val interaction = remember { MutableInteractionSource() }
-    Row(
-        Modifier.height(AiSheetGeometry.CHIP_HEIGHT_DP.dp).pressScale(AiSheetGeometry.CHIP_PRESS_SCALE, interaction = interaction)
-            .clip(RoundedCornerShape(14.dp)).background(palette.surfaces.content)
-            .border(BorderStroke(1.dp, palette.surfaces.outlineSoft), RoundedCornerShape(14.dp))
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick).padding(horizontal = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Text(label, color = palette.onFloatingMuted, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-        value?.let { Text(it, color = palette.onBackground, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
-    }
-}
-
-@Composable
-private fun AiAttachmentStrip(attachments: List<AiAttachment>, onRemove: (String) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 9.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        attachments.forEach { attachment ->
-            AiChip("${attachment.name} · ${formatBytes(attachment.size)}", "×") { onRemove(attachment.id) }
-        }
-    }
-}
-
-@Composable
-private fun AiRunBar(onStop: () -> Unit) {
-    val palette = ZephyrTheme.palette
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 10.dp)
-            .clip(RoundedCornerShape(ZephyrRadius.sm)).background(palette.status.pendingSync.copy(alpha = 0.10f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        AiSpinner(palette.status.pendingSync)
-        Text("AI 正在执行", color = palette.status.pendingSync, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-        AiInlineAction("停止", palette.status.error, onStop)
-    }
-}
-
-@Composable
 private fun AiPermissionCard(pending: AiPendingPermission, onApprove: () -> Unit, onDeny: () -> Unit) {
     val palette = ZephyrTheme.palette
     Column(
@@ -909,61 +573,425 @@ private fun AiToolTraceCard(item: AiTranscriptItem.ToolTrace) {
     }
 }
 
+
 @Composable
-private fun AiComposer(model: String, enabled: Boolean, onSend: (String) -> Unit) {
+private fun AiMainEndPanel(
+    modifier: Modifier,
+    chrome: AiWorkspaceChrome,
+    runtime: AiRuntimeState,
+    onClose: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onNotice: (String) -> Unit,
+    onPick: (AiPicker) -> Unit,
+    onAttach: () -> Unit,
+    onNew: () -> Unit,
+    onSelectConversation: (String) -> Unit,
+    onDeleteConversation: (String) -> Unit,
+    onClear: () -> Unit,
+    onCompress: () -> Unit,
+    onTogglePlan: () -> Unit,
+    onStop: () -> Unit,
+    onDecide: (Boolean) -> Unit,
+    onRemoveAttachment: (String) -> Unit,
+    onSend: (String) -> Unit,
+    dragHandle: (@Composable () -> Unit)?,
+) {
+    val palette = ZephyrTheme.palette
+    var drawerOpen by remember { mutableStateOf(false) }
+    var sheetOpen by remember { mutableStateOf(false) }
+    var thinkingOpen by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Column(Modifier.fillMaxSize()) {
+            dragHandle?.invoke()
+            AiTitleBar(
+                title = runtime.conversationTitle,
+                model = chrome.model.ifBlank { "模型" },
+                onOpenDrawer = { drawerOpen = true },
+                onPickModel = { onPick(AiPicker.MODEL) },
+                onNew = onNew,
+                onClose = onClose,
+            )
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (runtime.conversation.isEmpty) item { AiEmptyTranscript(runtime.runtimeEnabled) }
+                    itemsIndexed(runtime.conversation.items, key = { index, item -> "$index:${item::class.simpleName}" }) { _, item ->
+                        when (item) {
+                            is AiTranscriptItem.User -> AiMessage(item.text, true, Modifier.fillMaxWidth())
+                            is AiTranscriptItem.Assistant -> AiMessage(item.text, false, Modifier.fillMaxWidth(), item.caption)
+                            is AiTranscriptItem.ToolTrace -> AiToolTraceCard(item)
+                        }
+                    }
+                    if (runtime.running || runtime.loading) item { AiTypingRow() }
+                }
+            }
+            runtime.waitingPermission?.let { pending ->
+                AiPermissionCard(pending, { onDecide(true) }, { onDecide(false) })
+            }
+            if (runtime.attachments.isNotEmpty()) {
+                AiAttachmentTray(runtime.attachments, onRemoveAttachment)
+            }
+            AiCapsuleComposer(
+                model = chrome.model,
+                running = runtime.running,
+                enabled = runtime.waitingPermission == null,
+                thinkingOpen = thinkingOpen,
+                onSend = onSend,
+                onStop = onStop,
+                onOpenSheet = { sheetOpen = true },
+                onToggleThinking = { thinkingOpen = !thinkingOpen },
+            )
+        }
+        if (drawerOpen) {
+            AiHistoryDrawer(
+                conversations = runtime.conversations,
+                currentId = runtime.conversationId,
+                onSelect = { onSelectConversation(it); drawerOpen = false },
+                onNew = { onNew(); drawerOpen = false },
+                onDelete = onDeleteConversation,
+                onDismiss = { drawerOpen = false },
+            )
+        }
+        if (sheetOpen) {
+            AiActionSheet(
+                onAttach = { sheetOpen = false; onAttach() },
+                onUsage = { sheetOpen = false; onNotice("Token 用量在主端统计，移动端暂不单独计算") },
+                onCompress = { sheetOpen = false; onCompress(); onNotice("上下文已压缩") },
+                onClear = { sheetOpen = false; onClear() },
+                onSettings = { sheetOpen = false; onOpenSettings() },
+                onDismiss = { sheetOpen = false },
+            )
+        }
+        if (thinkingOpen) {
+            AiThinkingPopover(
+                chrome = chrome,
+                onPick = onPick,
+                onTogglePlan = onTogglePlan,
+                onDismiss = { thinkingOpen = false },
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiTitleBar(
+    title: String,
+    model: String,
+    onOpenDrawer: () -> Unit,
+    onPickModel: () -> Unit,
+    onNew: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    Row(
+        Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AiRoundButton(ZephyrIcons.More, "对话列表", onOpenDrawer)
+        Row(
+            Modifier
+                .padding(start = 4.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(palette.surfaces.content)
+                .clickable(onClick = onPickModel)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(model, color = palette.onBackground, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(ZephyrIcons.Chevron, null, tint = palette.onFloatingSubtle, modifier = Modifier.size(12.dp))
+        }
+        Text(
+            title.ifBlank { "新对话" },
+            color = palette.onBackground,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+        )
+        AiRoundButton(ZephyrIcons.Plus, "新建对话", onNew)
+        AiRoundButton(ZephyrIcons.Close, "关闭", onClose)
+    }
+}
+
+@Composable
+private fun AiRoundButton(icon: ImageVector, description: String, onClick: () -> Unit) {
+    val palette = ZephyrTheme.palette
+    Box(
+        Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, description, tint = palette.onBackground, modifier = Modifier.size(18.dp))
+    }
+}
+
+@Composable
+private fun AiHistoryDrawer(
+    conversations: List<AiConversationBrief>,
+    currentId: String?,
+    onSelect: (String) -> Unit,
+    onNew: () -> Unit,
+    onDelete: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    Row(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.fillMaxHeight().fillMaxWidth(0.78f).background(palette.surfaces.elevated),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("对话历史", color = palette.onBackground, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                AiRoundButton(ZephyrIcons.Plus, "新建对话", onNew)
+            }
+            if (conversations.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("暂无历史对话", color = palette.onFloatingSubtle, fontSize = 13.sp)
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(conversations.size, key = { conversations[it].id }) { index ->
+                        val item = conversations[index]
+                        val selected = item.id == currentId
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .background(if (selected) palette.brand.accent else Color.Transparent)
+                                .clickable { onSelect(item.id) }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                item.title.ifBlank { "新对话" },
+                                color = if (selected) Color.White else palette.onBackground,
+                                fontSize = 13.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Icon(
+                                ZephyrIcons.Delete,
+                                "删除",
+                                tint = if (selected) Color.White else palette.onFloatingSubtle,
+                                modifier = Modifier.size(16.dp).clickable { onDelete(item.id) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Box(
+            Modifier.weight(1f).fillMaxHeight().background(palette.surfaces.scrim).clickable(onClick = onDismiss),
+        )
+    }
+}
+
+@Composable
+private fun AiTypingRow() {
+    val palette = ZephyrTheme.palette
+    Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+        repeat(3) { AiSpinner(palette.brand.accent) }
+        Text("正在回复", color = palette.onFloatingSubtle, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun AiAttachmentTray(attachments: List<AiAttachment>, onRemove: (String) -> Unit) {
+    val palette = ZephyrTheme.palette
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        attachments.forEach { attachment ->
+            Row(
+                Modifier.clip(RoundedCornerShape(12.dp)).background(palette.surfaces.content)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("${attachment.name} · ${formatBytes(attachment.size)}", color = palette.onBackground, fontSize = 12.sp, maxLines = 1)
+                Icon(ZephyrIcons.Close, "移除", tint = palette.onFloatingSubtle, modifier = Modifier.size(14.dp).clickable { onRemove(attachment.id) })
+            }
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / 1024f / 1024f)
+    bytes >= 1024 -> "%.1f KB".format(bytes / 1024f)
+    else -> "$bytes B"
+}
+
+@Composable
+private fun AiCapsuleComposer(
+    model: String,
+    running: Boolean,
+    enabled: Boolean,
+    thinkingOpen: Boolean,
+    onSend: (String) -> Unit,
+    onStop: () -> Unit,
+    onOpenSheet: () -> Unit,
+    onToggleThinking: () -> Unit,
+) {
     val palette = ZephyrTheme.palette
     var text by remember { mutableStateOf("") }
-    val sendInteraction = remember { MutableInteractionSource() }
-    Box(
+    val canSend = enabled && text.isNotBlank() && !running
+    Row(
         Modifier.fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
             .navigationBarsPadding().imePadding()
-            .liquidGlass(
-                shape = RoundedCornerShape(26.dp),
-                blurRadius = 16.dp,
-                refractionHeight = 14.dp,
-                refractionAmount = 18.dp,
-                chromaticAberration = true,
-                highlight = Highlight.Default,
-            )
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(26.dp))
+            .background(palette.surfaces.content.copy(alpha = 0.92f))
+            .border(BorderStroke(1.dp, palette.surfaces.outlineSoft), RoundedCornerShape(26.dp))
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BasicTextField(
-                value = text,
-                onValueChange = { text = it.take(40_000) },
-                enabled = enabled,
-                modifier = Modifier.weight(1f).height(AiSheetGeometry.INPUT_HEIGHT_DP.dp)
-                    .clip(RoundedCornerShape(20.dp)).background(palette.surfaces.content.copy(alpha = 0.65f))
-                    .border(BorderStroke(1.dp, palette.surfaces.outlineSoft.copy(alpha = 0.5f)), RoundedCornerShape(20.dp))
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                textStyle = TextStyle(color = palette.onBackground, fontSize = 14.sp),
-                cursorBrush = SolidColor(palette.brand.accent),
-                singleLine = true,
-                decorationBox = { input ->
-                    Box(contentAlignment = Alignment.CenterStart) {
-                        if (text.isEmpty()) Text(AiWorkspaceCopy.askPlaceholder(model), color = palette.onFloatingSubtle, fontSize = 14.sp, maxLines = 1)
-                        input()
-                    }
-                },
-            )
-            val canSend = enabled && text.isNotBlank()
-            Box(
-                Modifier.size(AiSheetGeometry.SEND_SIZE_DP.dp).pressScale(AiSheetGeometry.SEND_PRESS_SCALE, interaction = sendInteraction)
-                    .clip(CircleShape).background(if (canSend) palette.brand.accent else palette.surfaces.outlineSoft)
-                    .clickable(enabled = canSend, interactionSource = sendInteraction, indication = null) {
+        AiRoundButton(ZephyrIcons.Plus, "功能与附件", onOpenSheet)
+        BasicTextField(
+            value = text,
+            onValueChange = { text = it.take(40_000) },
+            enabled = enabled && !running,
+            modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+            textStyle = TextStyle(color = palette.onBackground, fontSize = 14.sp),
+            cursorBrush = SolidColor(palette.brand.accent),
+            maxLines = 6,
+            decorationBox = { input ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (text.isEmpty()) Text(AiWorkspaceCopy.askPlaceholder(model), color = palette.onFloatingSubtle, fontSize = 14.sp, maxLines = 1)
+                    input()
+                }
+            },
+        )
+        val buttonColor = when {
+            running -> palette.status.error
+            canSend -> palette.brand.accent
+            else -> palette.surfaces.outlineSoft
+        }
+        Box(
+            Modifier.size(36.dp).clip(CircleShape).background(buttonColor)
+                .pointerInput(running, thinkingOpen) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { onToggleThinking() },
+                        onDrag = { _, _ -> },
+                        onDragEnd = {},
+                    )
+                }
+                .clickable {
+                    if (running) onStop()
+                    else if (canSend) {
                         val prompt = text.trim()
                         text = ""
                         onSend(prompt)
-                    },
-                contentAlignment = Alignment.Center,
-            ) { Icon(ZephyrIcons.ArrowUp, "发送", tint = Color.White, modifier = Modifier.size(16.dp)) }
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (running) {
+                Box(Modifier.size(12.dp).clip(RoundedCornerShape(2.dp)).background(Color.White))
+            } else {
+                Icon(ZephyrIcons.ArrowUp, "发送", tint = Color.White, modifier = Modifier.size(16.dp))
+            }
         }
     }
+}
+
+@Composable
+private fun AiActionSheet(
+    onAttach: () -> Unit,
+    onUsage: () -> Unit,
+    onCompress: () -> Unit,
+    onClear: () -> Unit,
+    onSettings: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        Box(Modifier.fillMaxSize().background(palette.surfaces.scrim).clickable(onClick = onDismiss))
+        Column(
+            Modifier.fillMaxWidth().navigationBarsPadding()
+                .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                .background(palette.surfaces.elevated)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Box(Modifier.align(Alignment.CenterHorizontally).padding(bottom = 8.dp).size(width = 38.dp, height = 5.dp).clip(RoundedCornerShape(999.dp)).background(palette.surfaces.outlineSoft))
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("工具与能力", color = palette.onBackground, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                AiRoundButton(ZephyrIcons.Close, "关闭", onDismiss)
+            }
+            AiSheetRow("添加附件", "图片与文件", onAttach)
+            AiSheetRow("Token 用量统计", "查看消耗", onUsage)
+            AiSheetRow("压缩上下文摘要", "节省 Token", onCompress)
+            AiSheetRow("AI 设置", "供应商与模型", onSettings)
+            AiSheetRow("清空当前对话", "不可撤销", onClear, danger = true)
+        }
+    }
+}
+
+@Composable
+private fun AiSheetRow(title: String, hint: String, onClick: () -> Unit, danger: Boolean = false) {
+    val palette = ZephyrTheme.palette
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, color = if (danger) palette.status.error else palette.onBackground, fontSize = 14.sp)
+        Text(hint, color = palette.onFloatingSubtle, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun AiThinkingPopover(
+    chrome: AiWorkspaceChrome,
+    onPick: (AiPicker) -> Unit,
+    onTogglePlan: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = ZephyrTheme.palette
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().clickable(onClick = onDismiss))
+        Column(
+            Modifier.align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 72.dp)
+                .width(300.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(palette.surfaces.elevated)
+                .border(BorderStroke(1.dp, palette.surfaces.outlineSoft), RoundedCornerShape(20.dp))
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("模型推理与模式配置", color = palette.onBackground, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text(chrome.thinking, color = palette.brand.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            AiThinkingSection("思考深度") { onPick(AiPicker.THINKING) }
+            AiThinkingSection("协作模式 · ${chrome.collaboration}") { onPick(AiPicker.MODE) }
+            AiThinkingSection("运行模式 · ${chrome.runProfile}") { onPick(AiPicker.RUN_PROFILE) }
+            AiThinkingSection("权限模式 · ${chrome.permission}") { onPick(AiPicker.PERMISSION) }
+            AiThinkingSection("计划 · ${if (chrome.planEnabled) "开启" else "关闭"}") { onTogglePlan() }
+            AiThinkingSection("供应商与模型") { onPick(AiPicker.PROVIDER) }
+        }
+    }
+}
+
+@Composable
+private fun AiThinkingSection(label: String, onClick: () -> Unit) {
+    val palette = ZephyrTheme.palette
+    Text(
+        label,
+        color = palette.onBackground,
+        fontSize = 13.sp,
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
+    )
 }
 
 @Composable
@@ -976,56 +1004,41 @@ private fun AiPickerOverlay(
 ) {
     val palette = ZephyrTheme.palette
     val provider = runtime.providers.firstOrNull { it.id == chrome.providerId } ?: runtime.providers.firstOrNull()
-    val choices: List<Pair<String, String>> = when (picker) {
-        AiPicker.PROVIDER -> runtime.providers.map { it.id to (it.name + if (it.owned) "" else " · Shared") }
+    val choices = when (picker) {
+        AiPicker.PROVIDER -> runtime.providers.map { it.id to it.name }
         AiPicker.MODEL -> provider?.models.orEmpty().map { it.id to it.label }
         AiPicker.MODE -> listOf("standard" to "标准", "plan" to "计划", "goal" to "Goal")
         AiPicker.RUN_PROFILE -> listOf("economy" to "省 token", "balanced" to "均衡", "delivery" to "交付")
-        AiPicker.PERMISSION -> listOf("ask" to "Ask · 写操作询问", "auto" to "Auto · 只读自动", "yolo" to "Yolo · 高风险")
-        AiPicker.THINKING -> listOf("none", "minimal", "low", "medium", "high", "xhigh").map { it to it }
+        AiPicker.PERMISSION -> listOf("ask" to "Ask", "auto" to "Auto", "yolo" to "Yolo")
+        AiPicker.THINKING -> listOf("off" to "关闭", "low" to "微推", "med" to "均衡", "high" to "高推", "max" to "极深")
     }
-    Box(
-        Modifier.fillMaxSize().background(palette.surfaces.scrim)
-            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }, onClick = onDismiss),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
+    val current = when (picker) {
+        AiPicker.PROVIDER -> chrome.providerId
+        AiPicker.MODEL -> chrome.model
+        AiPicker.MODE -> chrome.collaboration
+        AiPicker.RUN_PROFILE -> chrome.runProfile
+        AiPicker.PERMISSION -> chrome.permission
+        AiPicker.THINKING -> chrome.thinking
+    }
+    Box(Modifier.fillMaxSize().background(palette.surfaces.scrim).clickable(onClick = onDismiss)) {
         Column(
-            Modifier.fillMaxWidth().padding(14.dp).navigationBarsPadding().clip(RoundedCornerShape(ZephyrRadius.xl))
-                .background(palette.surfaces.elevated).clickable(enabled = false) {}.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            Modifier.align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(palette.surfaces.elevated)
+                .clickable(enabled = false) {}
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(
-                when (picker) { AiPicker.PROVIDER -> "选择 Provider"; AiPicker.MODEL -> "选择模型"; AiPicker.MODE -> "协作模式"; AiPicker.RUN_PROFILE -> "运行模式"; AiPicker.PERMISSION -> "权限模式"; AiPicker.THINKING -> "思考强度" },
-                color = palette.onBackground,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(4.dp),
-            )
             choices.forEach { (value, label) ->
                 Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onSelected(value) }.padding(horizontal = 12.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { onSelected(value) }.padding(vertical = 10.dp, horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text(label, color = palette.onBackground, fontSize = 13.5.sp, modifier = Modifier.weight(1f))
-                    if (value == currentValue(picker, chrome)) Text("✓", color = palette.brand.accent, fontWeight = FontWeight.Bold)
+                    Text(label, color = palette.onBackground, fontSize = 14.sp)
+                    if (value == current) Text("✓", color = palette.brand.accent, fontWeight = FontWeight.Bold)
                 }
             }
-            if (choices.isEmpty()) Text("没有可用选项", color = palette.onFloatingMuted, modifier = Modifier.padding(12.dp))
         }
     }
-}
-
-private fun currentValue(picker: AiPicker, chrome: AiWorkspaceChrome): String = when (picker) {
-    AiPicker.PROVIDER -> chrome.providerId
-    AiPicker.MODEL -> chrome.model
-    AiPicker.MODE -> chrome.collaboration
-    AiPicker.RUN_PROFILE -> chrome.runProfile
-    AiPicker.PERMISSION -> chrome.permission
-    AiPicker.THINKING -> chrome.thinking
-}
-
-private fun formatBytes(bytes: Long): String = when {
-    bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / 1024f / 1024f)
-    bytes >= 1024 -> "%.1f KB".format(bytes / 1024f)
-    else -> "$bytes B"
 }

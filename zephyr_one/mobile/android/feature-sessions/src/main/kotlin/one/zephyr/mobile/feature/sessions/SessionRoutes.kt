@@ -16,6 +16,7 @@ import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.Note
 import one.zephyr.mobile.model.PageState
 import one.zephyr.mobile.model.Snippet
+import one.zephyr.mobile.ui.theme.ZephyrTheme
 
 /**
  * Route bindings for S20 and S21.
@@ -101,6 +102,8 @@ fun TerminalRoute(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val remoteTitle by viewModel.title.collectAsStateWithLifecycle()
+    // Read once per composition: the dock collector below runs outside composition.
+    val appDark = ZephyrTheme.palette.dark
     val clipboard = LocalClipboardManager.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -144,10 +147,12 @@ fun TerminalRoute(
 
     LaunchedEffect(viewModel, workspace) {
         viewModel.dockEvent.collect { item ->
-            if (item == TerminalDockItem.KEYBOARD) {
-                keyboardVisible = !keyboardVisible
-            } else {
-                openDockTool(item, workspace, onWorkspace, onDock)
+            when (item) {
+                TerminalDockItem.KEYBOARD -> keyboardVisible = !keyboardVisible
+                // 外观 toggles the terminal canvas in place. It never leaves the
+                // session and never opens the appearance settings page.
+                TerminalDockItem.THEME -> workspace?.let { onWorkspace(it.toggleCanvas(appDark)) }
+                else -> openDockTool(item, workspace, onWorkspace, onDock)
             }
         }
     }

@@ -162,6 +162,8 @@ data class ActivityEvent(
     val target: String? = null,
     val connectionId: String? = null,
     val durationMs: Long? = null,
+    val actor: String? = null,
+    val sourceIp: String? = null,
     val occurredAt: Long,
 ) {
     companion object { const val ENTITY_TYPE = "activityEvent" }

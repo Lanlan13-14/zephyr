@@ -96,6 +96,14 @@ class ManagedSshSessionPool(
                 rows = 24,
             )
             var outcome = engine.connect(request)
+            if (outcome is SshConnectOutcome.HostKeyDecisionRequired && outcome.known == null) {
+                // First sight of this host: the same trust-on-first-use the main
+                // end applies, so SFTP and batch can open a session without the
+                // user having connected from the home screen first. A key that
+                // changed still falls through to the prompt below.
+                engine.acceptHostKey(sessionId, connection.host, connection.port, outcome.presented)
+                outcome = engine.connect(request)
+            }
             if (outcome is SshConnectOutcome.HostKeyDecisionRequired) {
                 val decision = CompletableDeferred<Boolean>()
                 val prompt = ManagedHostKeyPrompt(

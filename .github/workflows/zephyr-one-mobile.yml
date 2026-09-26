@@ -268,7 +268,13 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          stdbuf -oL -eL gradle --stacktrace --console=plain :app:assemblePrerelease \
+          # The pre number lives in the release tag, never in versionName (asserted
+          # below to stay "1.0.0"). Pass it through so the diagnostics page can
+          # show it. Pull requests have no label and build as plain "1.0.0".
+          pre="${{ github.event.inputs.prerelease_label }}"
+          pre_arg=""
+          if [ -n "$pre" ]; then pre_arg="-Pzephyr.preLabel=$pre"; fi
+          stdbuf -oL -eL gradle --stacktrace --console=plain $pre_arg :app:assemblePrerelease \
             2>&1 | stdbuf -oL -eL tee /tmp/gradle-assemble.log || status=$?
           if [ "$status" -ne 0 ]; then
             bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \

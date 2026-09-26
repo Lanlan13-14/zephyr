@@ -165,6 +165,8 @@ object ResourceMappers {
             target = EntityCodec.string(payload, "target"),
             connectionId = EntityCodec.string(payload, "connectionId"),
             durationMs = EntityCodec.longOrNull(payload, "durationMs"),
+            actor = EntityCodec.string(payload, "actor"),
+            sourceIp = EntityCodec.string(payload, "sourceIp"),
             occurredAt = EntityCodec.long(payload, "time", 0L),
         )
     }

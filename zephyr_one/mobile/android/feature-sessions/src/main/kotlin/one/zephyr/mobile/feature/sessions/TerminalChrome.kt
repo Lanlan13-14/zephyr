@@ -432,7 +432,6 @@ internal fun toolIcon(kind: TerminalToolKind): ImageVector = when (kind) {
     TerminalToolKind.NOTES -> ZephyrIcons.Notes
     TerminalToolKind.STATS -> ZephyrIcons.Stats
     TerminalToolKind.DOCKER -> ZephyrIcons.Docker
-    TerminalToolKind.THEME -> ZephyrIcons.Theme
 }
 
 @Composable
@@ -442,7 +441,6 @@ internal fun toolTitle(kind: TerminalToolKind, hostName: String): String = when 
     TerminalToolKind.NOTES -> "笔记 · 关联 $hostName"
     TerminalToolKind.STATS -> "监控 · $hostName"
     TerminalToolKind.DOCKER -> "Docker · $hostName"
-    TerminalToolKind.THEME -> stringResource(R.string.terminal_theme_title)
 }
 
 @Composable

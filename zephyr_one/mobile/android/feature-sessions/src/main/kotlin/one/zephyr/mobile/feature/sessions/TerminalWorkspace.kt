@@ -14,7 +14,6 @@ enum class TerminalToolKind {
     NOTES,
     STATS,
     DOCKER,
-    THEME,
     ;
 
     /** Drawers that embed a text field must stay composed while the system IME is open. */
@@ -28,7 +27,8 @@ enum class TerminalToolKind {
             TerminalDockItem.NOTES -> NOTES
             TerminalDockItem.DOCKER -> DOCKER
             TerminalDockItem.STATS -> STATS
-            TerminalDockItem.THEME -> THEME
+            // 外观 flips the terminal canvas between light and dark in place.
+            // It is not a panel, so it must not open the tool sheet.
             else -> null
         }
     }
@@ -59,6 +59,9 @@ data class TerminalWorkspaceState(
     val backgroundOpacity: Float = 0.55f,
     val customBackgroundColor: Boolean = false,
     val customSelectionColor: Boolean = false,
+    /* The SSH canvas's own light/dark, independent of the app theme. The dock's
+     * 外观 button flips it; null means "follow the app". */
+    val canvasDark: Boolean? = null,
     val addSheetOpen: Boolean = false,
     val disconnectSheetOpen: Boolean = false,
 ) {
@@ -68,6 +71,10 @@ data class TerminalWorkspaceState(
 
     fun assignToFocused(sessionId: String): TerminalWorkspaceState =
         copy(activeSessionId = sessionId)
+
+    /** Flips only the SSH canvas. Light becomes dark and dark becomes light. */
+    fun toggleCanvas(appDark: Boolean): TerminalWorkspaceState =
+        copy(canvasDark = !(canvasDark ?: appDark))
 
     fun closeSession(sessionId: String, remaining: List<String>): TerminalWorkspaceState? {
         val next = remaining.filterNot { it == sessionId }

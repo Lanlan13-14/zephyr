@@ -168,6 +168,19 @@ internal class AndroidAiRuntimeController(
         }
     }
 
+    override fun clearConversation() {
+        mutable.update { it.copy(conversation = AiConversation(), error = null) }
+    }
+
+    override fun compressConversation() {
+        mutable.update { state ->
+            val items = state.conversation.items
+            if (items.size <= 2) return@update state
+            val summary = AiTranscriptItem.Assistant("历史已压缩：此前共有 ${items.size} 条消息。")
+            state.copy(conversation = AiConversation(listOf(summary, items.last())))
+        }
+    }
+
     override fun selectProvider(providerId: String) {
         val provider = mutable.value.providers.firstOrNull { it.id == providerId } ?: return
         selectedProviderId = provider.id

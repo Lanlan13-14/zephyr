@@ -65,12 +65,14 @@ internal fun TerminalToolBody(
     viewModel: TerminalViewModel? = null,
 ) {
     when (kind) {
-        TerminalToolKind.FILES -> FilesToolBody(colors, viewModel, onMessage)
+        TerminalToolKind.FILES -> {
+            FilesToolBody(colors, viewModel, onMessage)
+            ThemeToolBody(colors, workspace, onWorkspace, onMessage)
+        }
         TerminalToolKind.SNIPPET -> SnippetToolBody(colors, snippets, onInsert)
         TerminalToolKind.NOTES -> NotesToolBody(colors, notes, onOpenNote)
         TerminalToolKind.STATS -> StatsToolBody(viewModel, onOpenDocker, onMessage)
         TerminalToolKind.DOCKER -> DockerToolBody(viewModel, onMessage)
-        TerminalToolKind.THEME -> ThemeToolBody(colors, workspace, onWorkspace, onMessage)
     }
 }
 

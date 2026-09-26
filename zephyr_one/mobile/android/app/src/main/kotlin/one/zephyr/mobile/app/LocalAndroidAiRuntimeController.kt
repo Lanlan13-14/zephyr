@@ -139,6 +139,19 @@ internal class LocalAndroidAiRuntimeController(
         mutable.update { it.copy(loading = false, conversations = briefList) }
     }
 
+    override fun clearConversation() {
+        mutable.update { it.copy(conversation = one.zephyr.mobile.feature.ai.AiConversation(), error = null) }
+    }
+
+    override fun compressConversation() {
+        mutable.update { state ->
+            val items = state.conversation.items
+            if (items.size <= 2) return@update state
+            val summary = one.zephyr.mobile.feature.ai.AiTranscriptItem.Assistant("历史已压缩：此前共有 ${items.size} 条消息。")
+            state.copy(conversation = one.zephyr.mobile.feature.ai.AiConversation(listOf(summary, items.last())))
+        }
+    }
+
     override fun selectProvider(providerId: String) { if (catalog.providers.any { it.id == providerId && it.enabled }) { this.providerId = providerId; modelId = catalog.providers.first { it.id == providerId }.models.firstOrNull { !it.hidden }?.id.orEmpty(); persistAsync() } }
     override fun selectModel(modelId: String) { if (catalog.providers.firstOrNull { it.id == providerId }?.models?.any { it.id == modelId && !it.hidden } == true) { this.modelId = modelId; persistAsync() } }
     override fun selectMode(mode: String) { this.mode = mode.takeIf { it in setOf("standard","plan","goal") } ?: "standard"; persistAsync() }
