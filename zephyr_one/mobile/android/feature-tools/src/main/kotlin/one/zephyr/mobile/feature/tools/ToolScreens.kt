@@ -1089,6 +1089,9 @@ fun DockerMonitorScreen(
         val activeShell = selected?.id?.let(shellFor)
         when (section) {
             OpsSection.DOCKER -> HostDockerPanel(shell = activeShell, modifier = Modifier.fillMaxSize(), onMessage = onMessage)
+            /* Metrics/logs pages expose no Docker entry: the bottom-dock Docker
+             * tab owns that route now. The in-terminal STATS tool keeps its own
+             * jump because there is no dock while a session is focused. */
             OpsSection.METRICS, OpsSection.LOGS -> HostMonitorPanel(
                 shell = activeShell,
                 modifier = Modifier.fillMaxSize(),

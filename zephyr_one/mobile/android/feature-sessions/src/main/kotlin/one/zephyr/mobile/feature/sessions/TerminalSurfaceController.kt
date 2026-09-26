@@ -192,6 +192,30 @@ class TerminalSurfaceController(
     }
 
     /**
+     * The real grid reported by the attached terminal view, which measured its
+     * own font. This is the authoritative size for a live session: it updates
+     * the surface state and schedules the PTY resize through the same debounced
+     * path as [onGeometry], so the remote sees exactly what the view renders.
+     */
+    fun onViewportGeometry(columns: Int, rows: Int) {
+        /* TerminalSize's own floor is 4x4 (TerminalGeometry.MIN_*); a view that
+         * reports something smaller collapses to the floor instead of throwing
+         * inside a resize callback. */
+        val size = TerminalSize(
+            columns.coerceAtLeast(TerminalGeometry.MIN_COLUMNS),
+            rows.coerceAtLeast(TerminalGeometry.MIN_ROWS),
+        )
+        val current = stateFlow.value
+        if (current.size == size) return
+        /* SSH window-change carries pixel dimensions; keep the viewport fields
+         * roughly proportional so the remote never sees cols*0 px. */
+        if (viewportWidthPx <= 0f) viewportWidthPx = size.columns * 8f
+        if (viewportHeightPx <= 0f) viewportHeightPx = size.rows * 16f
+        stateFlow.value = current.copy(size = size, topRow = viewport.topRow)
+        scheduleResize(size)
+    }
+
+    /**
      * Debounced PTY resize.
      *
      * TERMINAL_EXPERIENCE.md 6 requires the debounce *and* requires the last value to arrive: a drag

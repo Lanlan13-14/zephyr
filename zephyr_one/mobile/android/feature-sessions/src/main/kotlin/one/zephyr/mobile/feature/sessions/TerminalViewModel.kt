@@ -188,9 +188,22 @@ class TerminalViewModel(
                 val size = surface.size
                 if (size != lastSize && size.columns > 0 && size.rows > 0) {
                     lastSize = size
-                    synchronized(emulatorLock) { emulator.resize(size.columns, size.rows) }
+                    /* Only the Termux view's own measurement may resize the live
+                     * session: the surface size here comes from the fake
+                     * 0.6/1.55 cell arithmetic, and applying it fought the view's
+                     * real resize, so every layout change reflowed the buffer
+                     * twice and painted prompts mid-word (see onViewportResize). */
+                    if (termux == null) {
+                        synchronized(emulatorLock) { emulator.resize(size.columns, size.rows) }
+                    }
                 }
             }
+        }
+        /* The single size authority for a live bridge: the TerminalView reports
+         * the grid it measured from its real font, and that exact grid goes to
+         * the surface state (subtitle, dock math) and to the remote PTY. */
+        termux?.setOnViewportResize { columns, rows ->
+            controller.onViewportGeometry(columns, rows)
         }
     }
     @Volatile private var opening = false

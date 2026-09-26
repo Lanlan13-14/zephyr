@@ -191,14 +191,24 @@ private fun ActivityCard(event: ActivityEvent) {
                 fontSize = 13.sp,
                 modifier = Modifier.padding(top = 8.dp),
             )
+            /* Mirror the hosted grid: a missing detail is absent, not a bare "—"
+             * row, so a sparse event reads as a short card instead of dashes. */
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 MetaCell("事件类型", event.category.ifBlank { "操作" }, Modifier.weight(1f))
-                MetaCell("操作者", event.actor?.ifBlank { "—" } ?: "—", Modifier.weight(1f))
+                val actor = event.actor
+                if (!actor.isNullOrBlank()) MetaCell("操作者", actor, Modifier.weight(1f))
             }
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                MetaCell("协议", event.protocol?.ifBlank { "—" } ?: "—", Modifier.weight(1f))
+                val protocol = event.protocol
+                if (!protocol.isNullOrBlank()) MetaCell("协议", protocol, Modifier.weight(1f))
                 val target = event.target
                 if (!target.isNullOrBlank()) MetaCell("目标地址", target, Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                val duration = event.durationMs
+                if (duration != null && duration > 0) MetaCell("耗时", formatDuration(duration), Modifier.weight(1f))
+                val connectionId = event.connectionId
+                if (!connectionId.isNullOrBlank()) MetaCell("连接", shortId(connectionId), Modifier.weight(1f))
             }
             val sourceIp = event.sourceIp
             if (!sourceIp.isNullOrBlank()) {
@@ -321,5 +331,13 @@ internal fun parseDayStart(text: String): Long? {
 
 private fun formatStamp(epochMs: Long): String =
     if (epochMs <= 0L) "—" else SimpleDateFormat("yyyy/M/d HH:mm:ss", Locale.CHINA).format(Date(epochMs))
+
+private fun formatDuration(ms: Long): String = when {
+    ms >= 60_000L -> "${"%.1f".format(ms / 60_000.0)} 分钟"
+    ms >= 1_000L -> "${"%.1f".format(ms / 1_000.0)} 秒"
+    else -> "$ms ms"
+}
+
+private fun shortId(id: String): String = if (id.length > 12) id.take(12) else id
 
 private const val DAY_MS = 24L * 60L * 60L * 1000L

@@ -304,20 +304,26 @@ function projectActivityEvent(row, user) {
     const id = String(row.id || '');
     if (!id) return null;
     const type = String(row.type || 'info').slice(0, 80);
+    /* Message text can embed arbitrary server output or command bodies, so it
+     * still transports the fixed allow-list label (the canary test pins this).
+     * The structured detail grid fields the hosted page renders - actor, source
+     * address, target, duration - are separate columns, listed in the registry's
+     * serverAuthorityFields, and are what the mobile card was missing: without
+     * them every card printed bare "—" rows the main end fills in. */
     return {
         id,
         userId: bound,
         time: Math.max(0, Number(row.time) || 0),
-        /* Activity text can include arbitrary server output or old command
-         * bodies. Mobile transports a fixed label from this allow-list, never
-         * the persisted message, so the bootstrap, change feed, and outbox
-         * share the same non-heuristic boundary. */
         message: MOBILE_ACTIVITY_MESSAGES[type] || MOBILE_ACTIVITY_MESSAGES.info,
         type,
         category: String(row.category || '').slice(0, 80),
         outcome: String(row.outcome || '').slice(0, 80),
         protocol: String(row.protocol || '').slice(0, 40),
+        target: String(row.target || '').slice(0, 200),
         connectionId: String(row.connectionId || '').slice(0, 200),
+        actor: String(row.actor || '').slice(0, 120),
+        sourceIp: String(row.sourceIp || '').slice(0, 64),
+        durationMs: Number.isFinite(Number(row.durationMs)) ? Math.max(0, Math.round(Number(row.durationMs))) : null,
     };
 }
 
@@ -553,16 +559,17 @@ class CanonicalActivityEventService {
         const keys = this.ownerKeys(userId);
         if (!keys.length) return [];
         const placeholders = keys.map(() => '?').join(', ');
-        return this.db.prepare(`SELECT id, userId, time, message, type, category, outcome, protocol, connectionId
-            FROM activities WHERE userId IN (${placeholders}) ORDER BY time DESC LIMIT ?`).all(...keys, capped);
+        /* SELECT * keeps the query working against historical schemas that
+         * predate the target/actor/sourceIp columns; the projection defaults
+         * every missing field itself. */
+        return this.db.prepare(`SELECT * FROM activities WHERE userId IN (${placeholders}) ORDER BY time DESC LIMIT ?`).all(...keys, capped);
     }
 
     readActivityEventForUser(userId, eventId) {
         const keys = this.ownerKeys(userId);
         if (!keys.length) return null;
         const placeholders = keys.map(() => '?').join(', ');
-        return this.db.prepare(`SELECT id, userId, time, message, type, category, outcome, protocol, connectionId
-            FROM activities WHERE userId IN (${placeholders}) AND id = ?`).get(...keys, String(eventId || '')) || null;
+        return this.db.prepare(`SELECT * FROM activities WHERE userId IN (${placeholders}) AND id = ?`).get(...keys, String(eventId || '')) || null;
     }
 
     /**

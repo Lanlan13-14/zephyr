@@ -36,6 +36,14 @@ object SshRemoteOps {
     val dockerListImagesCommand: String =
         "docker image ls --no-trunc --format '{{json .}}'"
 
+    /** Same command the hosted main end runs for its overview card. */
+    val dockerSystemDfCommand: String =
+        "docker system df --format '{{json .}}' 2>/dev/null || true"
+
+    /** Same command the hosted main end polls for per-container CPU/mem. */
+    val dockerContainerStatsCommand: String =
+        "docker stats --no-stream --format '{{json .}}' 2>/dev/null || true"
+
     val dockerMirrorsGetCommand: String =
         "if [ -f /etc/docker/daemon.json ]; then cat /etc/docker/daemon.json; else printf '{}'; fi"
 
@@ -219,6 +227,52 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             .filter { it.startsWith("http://") || it.startsWith("https://") }
             .distinct()
     }
+
+    /** One `docker system df --format '{{json .}}'` row. */
+    data class DockerSystemDfRow(
+        val type: String,
+        val total: Int,
+        val size: String,
+        val reclaimable: String,
+    )
+
+    fun parseDockerSystemDf(raw: String): List<DockerSystemDfRow> =
+        parseJsonLines(raw).mapNotNull { row ->
+            val type = first(row, "Type", "type")
+            if (type.isBlank()) return@mapNotNull null
+            DockerSystemDfRow(
+                type = type,
+                total = first(row, "TotalCount", "total", "Count").toIntOrNull() ?: 0,
+                size = first(row, "Size", "size").ifBlank { "—" },
+                reclaimable = first(row, "Reclaimable", "reclaimable").ifBlank { "—" },
+            )
+        }
+
+    /** One `docker stats --no-stream --format '{{json .}}'` row. */
+    data class DockerContainerStats(
+        val containerId: String,
+        val name: String,
+        val cpuPercent: String,
+        val memUsage: String,
+        val memPercent: String,
+        val netIo: String,
+        val blockIo: String,
+    )
+
+    fun parseDockerContainerStats(raw: String): List<DockerContainerStats> =
+        parseJsonLines(raw).mapNotNull { row ->
+            val id = first(row, "ID", "ID", "Container")
+            if (id.isBlank() && first(row, "Name", "ContainerName").isBlank()) return@mapNotNull null
+            DockerContainerStats(
+                containerId = id,
+                name = first(row, "Name", "ContainerName"),
+                cpuPercent = first(row, "CPUPerc", "cpu").ifBlank { "—" },
+                memUsage = first(row, "MemUsage", "mem").ifBlank { "—" },
+                memPercent = first(row, "MemPerc").ifBlank { "—" },
+                netIo = first(row, "NetIO").ifBlank { "—" },
+                blockIo = first(row, "BlockIO").ifBlank { "—" },
+            )
+        }
 
     fun parseRemoteStats(raw: String, previous: HostStatsSample? = null, nowMs: Long = System.currentTimeMillis()): HostStatsSnapshot {
         val sections = splitStatsSections(raw)

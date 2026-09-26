@@ -149,9 +149,13 @@ test('server metadata is fail-closed and allow-list projections contain no crede
   const serialized = JSON.stringify({ server, activity });
   for (const canary of [
     'canary-smtp', 'canary-ai-token', 'canary-security', 'canary-mail', 'canary-captcha',
-    'canary-permission-token', 'canary-context-key', 'canary-icon', 'C:/private', 'C:/hidden',
-    '192.0.2.8', 'canary-sid', 'canary-token', 'canary-bearer', 'canary-ua', 'user:pass',
+    'canary-permission-token', 'canary-context-key', 'canary-icon', 'C:/private',
+    'canary-sid', 'canary-token', 'canary-bearer', 'canary-ua', 'user:pass',
   ]) {
+    /* '192.0.2.8' (sourceIp) and 'C:/hidden' (target) left the canary list on
+     * purpose: those structured columns are operator metadata the hosted page
+     * shows the same user, and the mobile card now fills them. Credential-ish
+     * material still only ever lives in `message`, which stays label-only. */
     assert.ok(!serialized.includes(canary), `must not project ${canary}`);
   }
   assert.equal(server[0].sectionKey, 'default');
@@ -159,10 +163,17 @@ test('server metadata is fail-closed and allow-list projections contain no crede
   assert.equal(server[0].appearance.customCss, undefined);
   assert.equal(server[0].appearance.terminalBackground.url, undefined);
   assert.deepEqual(activity.map((row) => row.id), ['alice-event']);
-  assert.equal(activity[0].sourceIp, undefined);
-  assert.equal(activity[0].actor, undefined);
-  assert.equal(activity[0].target, undefined);
-  assert.equal(activity[0].durationMs, undefined);
+  /* The message body stays on the fixed allow-list label, but the structured
+   * grid columns (registry serverAuthorityFields) now project so the mobile
+   * card fills the same detail cells the hosted page renders. */
+  assert.equal(activity[0].message, '活动已记录');
+  assert.equal(activity[0].sourceIp, '192.0.2.8');
+  assert.equal(activity[0].actor, 'bob');
+  assert.equal(activity[0].target, 'C:/hidden');
+  assert.equal(activity[0].durationMs, 4);
+  assert.equal(activity[0].protocol, 'SSH');
+  assert.equal(activity[0].category, 'account');
+  assert.equal(activity[0].outcome, 'ok');
   assert.equal(ctx.adapters.get('activityEvent').read(bob, 'alice-event'), null, 'cross-account reads are absent');
   assert.deepEqual(ctx.adapters.get('serverSettings').list(bob), [], 'missing capability is not inferred from role');
 });
@@ -296,8 +307,12 @@ test('canonical settings and activity services write fixture owner feed rows ato
       type: 'info', sourceIp: '203.0.113.9', actor: 'alice', target: 'server.internal',
     });
     const safeEvent = services.activityEvents.readActivityEventForUser('alice', 'event-1');
-    assert.equal(safeEvent.sourceIp, undefined, 'narrow service query never retrieves source IP');
-    assert.equal(safeEvent.actor, undefined, 'narrow service query never retrieves actor/UA-adjacent identity');
+    /* The narrow query now returns the structured grid columns (sourceIp,
+     * actor, target) the projection allow-lists; the raw message with its
+     * canary token is still replaced by the fixed label in projectActivityEvent. */
+    assert.equal(safeEvent.sourceIp, '203.0.113.9');
+    assert.equal(safeEvent.actor, 'alice');
+    assert.equal(safeEvent.target, 'server.internal');
     assert.equal(bridge.store.changePage('alice', 0, 10).changes.length, 2);
     assert.equal(bridge.store.changePage('bob', 0, 10).changes.length, 0);
 

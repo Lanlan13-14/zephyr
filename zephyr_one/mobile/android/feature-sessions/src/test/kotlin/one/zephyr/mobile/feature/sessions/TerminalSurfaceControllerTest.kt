@@ -138,9 +138,55 @@ class TerminalSurfaceControllerTest {
 
     // ---- reverse test 2: output must not steal the viewport -------------------------------------
 
+    // ---- viewport geometry: the Termux view is the size authority ------------------------------
+
     @Test
-    fun outputFollowsTheBottomWhenTheUserIsAlreadyThere() = runTest {
+    fun viewportGeometryUpdatesStateAndResizesThePtyOnce() = runTest {
         val transport = RecordingTransport()
+        val subject = controller(backgroundScope, transport)
+
+        subject.onViewportGeometry(columns = 104, rows = 37)
+        runCurrent()
+        advanceTimeBy(TerminalGeometry.RESIZE_DEBOUNCE_MAX_MS + 1)
+        runCurrent()
+
+        assertEquals(TerminalSize(104, 37), subject.state.value.size)
+        assertEquals(1, transport.resizes.size)
+        assertEquals(104, transport.resizes.single().columns)
+        assertEquals(37, transport.resizes.single().rows)
+    }
+
+    @Test
+    fun repeatedViewportGeometryCollapsesToOneResize() = runTest {
+        val transport = RecordingTransport()
+        val subject = controller(backgroundScope, transport)
+
+        subject.onViewportGeometry(columns = 100, rows = 30)
+        subject.onViewportGeometry(columns = 100, rows = 30)
+        subject.onViewportGeometry(columns = 100, rows = 30)
+        advanceTimeBy(TerminalGeometry.RESIZE_DEBOUNCE_MAX_MS + 1)
+        runCurrent()
+
+        assertEquals(1, transport.resizes.size)
+    }
+
+    @Test
+    fun viewportGeometryNeverDropsBelowTheFrozenFloor() = runTest {
+        val transport = RecordingTransport()
+        val subject = controller(backgroundScope, transport)
+
+        subject.onViewportGeometry(columns = 1, rows = 1)
+        advanceTimeBy(TerminalGeometry.RESIZE_DEBOUNCE_MAX_MS + 1)
+        runCurrent()
+
+        assertEquals(
+            TerminalSize(TerminalGeometry.MIN_COLUMNS, TerminalGeometry.MIN_ROWS),
+            subject.state.value.size,
+        )
+    }
+
+    @Test
+    fun outputFollowsTheBottomWhenTheUserIsAlreadyThere() = runTest {        val transport = RecordingTransport()
         val subject = controller(backgroundScope, transport)
         subject.measure()
 
