@@ -1760,10 +1760,13 @@ class FileAgentManager {
      * cannot accidentally treat every online file share as a network hop.
      */
     listBastionAgentsForUser(ownerId) {
+        /* Only the operator's bastion opt-in gates candidacy. Never gate on
+         * linkFileBridge/linkSessionId here: both are captured at hello,
+         * before the Agent dials its Link channel, so every healthy online
+         * Agent reports linkFileBridge=false and such a filter empties the
+         * picker on every client. */
         return this.listAgentsForUser(ownerId).filter((agent) =>
-            agent.capabilities?.bastion === true && agent.bastionEnabled === true
-            && typeof agent.linkSessionId === 'string' && agent.linkSessionId.length > 0
-            && agent.capabilities?.linkFileBridge === true);
+            agent.capabilities?.bastion === true && agent.bastionEnabled === true);
     }
 
     /** Get a specific agent's info. */
