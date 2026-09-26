@@ -497,6 +497,9 @@ class SshjEngine internal constructor(
         sftp.rmdir(path)
     }
 
+    /** True while [sessionId] still names a live engine session. The pool uses this to drop stale cached leases. */
+    override fun isSessionLive(sessionId: String): Boolean = sessions.containsKey(sessionId)
+
     override suspend fun exec(sessionId: String, command: String): Result<SshExecResult> = withContext(io) {
         runCatching {
             require(command.isNotBlank()) { "远程命令不能为空" }
@@ -516,8 +519,11 @@ class SshjEngine internal constructor(
     override fun execStream(sessionId: String, command: String): Flow<SshExecEvent> = callbackFlow {
         require(command.isNotBlank()) { "远程命令不能为空" }
         val live = sessions[sessionId] ?: error("SSH 会话已断开")
+        /* The hosted main end runs tool commands through `sh -lc`; matching it
+         * keeps PATH and login-shell behaviour identical between ends. */
+        val wrapped = "sh -lc " + one.zephyr.mobile.protocol.ssh.SshRemoteOps.shellQuote(command)
         val commandSession = live.client.startSession()
-        val remote = commandSession.exec(command)
+        val remote = commandSession.exec(wrapped)
         val stdoutJob = scope.launch {
             val buffer = ByteArray(16 * 1024)
             val input = remote.inputStream
@@ -537,9 +543,16 @@ class SshjEngine internal constructor(
             }
         }
         val joinJob = scope.launch {
-            runCatching { remote.join() }
+            val joinError: Throwable? = runCatching { remote.join() }.exceptionOrNull()
             stdoutJob.join()
             stderrJob.join()
+            if (joinError != null) {
+                /* Surface the transport failure instead of silently reporting a
+                 * clean exit - "docker logs" ending with no output and exit -1
+                 * was indistinguishable from a finished log. */
+                close(joinError)
+                return@launch
+            }
             trySend(SshExecEvent.Closed(remote.exitStatus ?: -1))
             close()
         }

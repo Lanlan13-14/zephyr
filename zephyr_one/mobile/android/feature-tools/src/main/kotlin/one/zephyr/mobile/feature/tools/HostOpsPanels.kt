@@ -306,6 +306,7 @@ fun HostDockerPanel(
             }
         }.onFailure { failure ->
             logFollow = false
+            logText = (logText + "\n[读取失败] " + (failure.message ?: "日志流中断")).takeLast(80_000)
             onMessage(failure.message ?: "日志流中断")
         }
     }

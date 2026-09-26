@@ -53,9 +53,16 @@ class ManagedSshSessionPool(
     suspend fun acquire(connectionId: String): ManagedSshLease {
         val lock = locks.getOrPut(connectionId) { Mutex() }
         return lock.withLock {
-            live[connectionId]?.let {
-                it.references += 1
-                return@withLock ManagedSshLease(connectionId, it.sessionId, this)
+            /* A cached Live can point at a session the engine already dropped
+             * (remote close, failed write). Handing that sessionId to exec or
+             * execStream fails instantly with "SSH 会话已断开" - the "日志流已
+             * 结束" with no output. Drop the stale row and redial. */
+            live[connectionId]?.let { cached ->
+                if (engine.isSessionLive(cached.sessionId)) {
+                    cached.references += 1
+                    return@withLock ManagedSshLease(connectionId, cached.sessionId, this)
+                }
+                live.remove(connectionId, cached)
             }
             val connection = connectionProvider(connectionId) ?: error("连接不存在")
             /* wireName is "SSH" (uppercase). A literal "ssh" comparison is

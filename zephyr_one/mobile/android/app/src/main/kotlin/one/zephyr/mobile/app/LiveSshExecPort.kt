@@ -1,5 +1,6 @@
 package one.zephyr.mobile.app
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -67,21 +68,35 @@ internal class LiveSshExecPort(
      * Long-lived tool streams must never borrow the interactive PTY. A Docker
      * log uses its own managed SSH lease, so cancelling it cannot close the
      * terminal shell underneath the user.
+     *
+     * The acquire runs inside the flow, so a flow that is collected but then
+     * cancelled before the dial completes releases the lease exactly once via
+     * the CompletableDeferred - the previous "lease?.close()" raced between
+     * acquire-not-yet-finished and awaitClose, leaking or double-dropping the
+     * reference count.
      */
     fun execStreamEvents(connectionId: String, command: String): Flow<SshExecEvent> = callbackFlow {
-        val lease = managed.acquire(connectionId)
+        val leaseSlot = CompletableDeferred<ManagedSshLease>()
         val job = launch {
             try {
+                val lease = managed.acquire(connectionId)
+                leaseSlot.complete(lease)
                 engine.execStream(lease.sessionId, command).collect { event ->
                     trySend(event)
                 }
+            } catch (error: Throwable) {
+                close(error)
             } finally {
                 close()
             }
         }
         awaitClose {
             job.cancel()
-            launch { lease.close() }
+            launch {
+                leaseSlot.await().let { lease ->
+                    runCatching { lease.close() }
+                }
+            }
         }
     }
 
