@@ -58,7 +58,11 @@ class ManagedSshSessionPool(
                 return@withLock ManagedSshLease(connectionId, it.sessionId, this)
             }
             val connection = connectionProvider(connectionId) ?: error("连接不存在")
-            require(connection.protocol.wireName == "ssh") { "仅 SSH 连接支持此操作" }
+            /* wireName is "SSH" (uppercase). A literal "ssh" comparison is
+             * case-sensitive and failed for every connection, including SSH
+             * itself, which made SFTP and batch exec demand a manual home-
+             * screen connection before they could work at all. */
+            require(connection.protocol == one.zephyr.mobile.model.Protocol.SSH) { "仅 SSH 连接支持此操作" }
             require(connection.capabilities.canUse) { "没有使用此连接的权限" }
             val sessionId = "managed-${connection.id}-${UUID.randomUUID()}"
             open(sessionId, connection)
