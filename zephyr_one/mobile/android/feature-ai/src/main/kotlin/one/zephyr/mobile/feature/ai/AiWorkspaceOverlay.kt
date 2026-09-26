@@ -255,6 +255,7 @@ fun AiWorkspaceOverlay(
             onDeleteConversation = { confirmDeleteTargetId = it },
             onClear = { controller.clearConversation() },
             onCompress = { controller.compressConversation() },
+            onTogglePlan = { controller.setPlanEnabled(!chrome.planEnabled) },
             onStop = { scope.launch { controller.stop() } },
             onDecide = { scope.launch { controller.decide(it) } },
             onRemoveAttachment = { id -> scope.launch { controller.removeAttachment(id) } },
@@ -586,6 +587,7 @@ private fun AiMainEndPanel(
     onDeleteConversation: (String) -> Unit,
     onClear: () -> Unit,
     onCompress: () -> Unit,
+    onTogglePlan: () -> Unit,
     onStop: () -> Unit,
     onDecide: (Boolean) -> Unit,
     onRemoveAttachment: (String) -> Unit,
@@ -665,6 +667,7 @@ private fun AiMainEndPanel(
             AiThinkingPopover(
                 chrome = chrome,
                 onPick = onPick,
+                onTogglePlan = onTogglePlan,
                 onDismiss = { thinkingOpen = false },
             )
         }
@@ -942,6 +945,7 @@ private fun AiSheetRow(title: String, hint: String, onClick: () -> Unit, danger:
 private fun AiThinkingPopover(
     chrome: AiWorkspaceChrome,
     onPick: (AiPicker) -> Unit,
+    onTogglePlan: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val palette = ZephyrTheme.palette
@@ -965,6 +969,7 @@ private fun AiThinkingPopover(
             AiThinkingSection("协作模式 · ${chrome.collaboration}") { onPick(AiPicker.MODE) }
             AiThinkingSection("运行模式 · ${chrome.runProfile}") { onPick(AiPicker.RUN_PROFILE) }
             AiThinkingSection("权限模式 · ${chrome.permission}") { onPick(AiPicker.PERMISSION) }
+            AiThinkingSection("计划 · ${if (chrome.planEnabled) "开启" else "关闭"}") { onTogglePlan() }
             AiThinkingSection("供应商与模型") { onPick(AiPicker.PROVIDER) }
         }
     }
