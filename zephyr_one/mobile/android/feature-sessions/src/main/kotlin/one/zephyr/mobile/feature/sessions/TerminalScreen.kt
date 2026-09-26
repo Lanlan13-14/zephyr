@@ -214,8 +214,14 @@ private fun DemoTerminalSurface(
         connection.protocol.isTerminal && connection.id !in openConnectionIds
     }
 
-    LaunchedEffect(containerW, containerH, focusedSurface.fontSp) {
+    LaunchedEffect(containerW, containerH, focusedSurface.fontSp, focusedVm?.termux) {
         if (containerW <= 0 || containerH <= 0) return@LaunchedEffect
+        /* A live Termux bridge measures its own font inside the view and pushes
+         * the real grid through onViewportGeometry. Feeding the fake 0.6/1.55
+         * cell size alongside it made two owners resize the same emulator, and
+         * the screen reflowed twice per layout change, breaking lines mid-word
+         * and painting the prompt in the wrong place. */
+        if (focusedVm?.termux != null) return@LaunchedEffect
         val cellW = (focusedSurface.fontSp * 0.6f) * density.density
         val lineH = (focusedSurface.fontSp * 1.55f) * density.density
         onIntent(

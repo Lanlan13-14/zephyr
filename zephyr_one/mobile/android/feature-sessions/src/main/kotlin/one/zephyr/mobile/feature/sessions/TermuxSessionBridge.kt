@@ -35,6 +35,15 @@ class TermuxSessionBridge(
     private val onBell: () -> Unit = {},
     private val onScreenChanged: () -> Unit = {},
     private val onFinished: () -> Unit = {},
+    /**
+     * Fired with the columns/rows the attached [TerminalView] actually committed.
+     *
+     * The view measures its own monospace font, so it is the only size authority.
+     * The host subscribes here to forward the real grid to the remote PTY (and
+     * to its own surface state), replacing the fake `fontSp * 0.6 / 1.55`
+     * arithmetic that fought the view and reflowed the buffer twice per layout.
+     */
+    private val onViewportResize: ((columns: Int, rows: Int) -> Unit)? = null,
 ) : TerminalEmulator {
 
     override val isAvailable: Boolean = true
@@ -45,6 +54,14 @@ class TermuxSessionBridge(
     fun bindWriteBytes(writer: (ByteArray) -> Unit) {
         writeBytes = writer
     }
+
+    /** The host's hook for the real grid the Termux view measured. */
+    fun setOnViewportResize(listener: ((columns: Int, rows: Int) -> Unit)?) {
+        viewportResizeListener = listener
+    }
+
+    @Volatile
+    private var viewportResizeListener: ((columns: Int, rows: Int) -> Unit)? = onViewportResize
 
     private val client = BridgeSessionClient()
 
@@ -67,6 +84,7 @@ class TermuxSessionBridge(
             val emulator = created.emulator ?: return@setOnResizeCallback
             lastColumns = emulator.mColumns
             lastRows = emulator.mRows
+            viewportResizeListener?.invoke(lastColumns, lastRows)
         }
         // SSH banners arrive before the first layout. Without an emulator they are dropped and
         // the first paint is an empty grid on Frost's term background.

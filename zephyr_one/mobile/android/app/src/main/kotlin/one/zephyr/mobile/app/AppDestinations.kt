@@ -681,24 +681,30 @@ internal fun OpsDestination(
     onMessage: (String) -> Unit,
 ) {
     val connections by account.connections.observeAll(ownerUserId).collectAsState(initial = emptyList())
+    /* A stable per-connection port: DockerMonitorScreen keys its LaunchedEffects
+     * on this shell, so a fresh anonymous object per recomposition restarted the
+     * `docker logs -f` stream on every log chunk and the pane never filled. */
+    val execPorts = remember(exec) { mutableMapOf<String, one.zephyr.mobile.feature.tools.RemoteShell>() }
     DockerMonitorScreen(
         connections = connections,
         section = section,
         onBack = onBack,
         shellFor = { connectionId ->
-            object : one.zephyr.mobile.feature.tools.RemoteShell {
-                override suspend fun run(command: String): one.zephyr.mobile.feature.tools.RemoteShellResult {
-                    return when (val outcome = exec.exec(connectionId, command, timeoutSeconds = 300)) {
-                        is one.zephyr.mobile.feature.tools.ExecOutcome.Completed ->
-                            one.zephyr.mobile.feature.tools.RemoteShellResult(outcome.exitCode, outcome.stdout, outcome.stderr)
-                        one.zephyr.mobile.feature.tools.ExecOutcome.TimedOut ->
-                            error("远程命令超时")
-                        is one.zephyr.mobile.feature.tools.ExecOutcome.Failed ->
-                            error(outcome.error.message)
+            execPorts.getOrPut(connectionId) {
+                object : one.zephyr.mobile.feature.tools.RemoteShell {
+                    override suspend fun run(command: String): one.zephyr.mobile.feature.tools.RemoteShellResult {
+                        return when (val outcome = exec.exec(connectionId, command, timeoutSeconds = 300)) {
+                            is one.zephyr.mobile.feature.tools.ExecOutcome.Completed ->
+                                one.zephyr.mobile.feature.tools.RemoteShellResult(outcome.exitCode, outcome.stdout, outcome.stderr)
+                            one.zephyr.mobile.feature.tools.ExecOutcome.TimedOut ->
+                                error("远程命令超时")
+                            is one.zephyr.mobile.feature.tools.ExecOutcome.Failed ->
+                                error(outcome.error.message)
+                        }
                     }
-                }
 
-                override fun stream(command: String) = exec.execStream(connectionId, command)
+                    override fun stream(command: String) = exec.execStream(connectionId, command)
+                }
             }
         },
         onMessage = onMessage,

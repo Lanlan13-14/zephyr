@@ -42,6 +42,8 @@ import one.zephyr.mobile.protocol.ssh.DockerContainerAction
 import one.zephyr.mobile.protocol.ssh.DockerContainerInfo
 import one.zephyr.mobile.protocol.ssh.DockerEngineStatus
 import one.zephyr.mobile.protocol.ssh.DockerImageInfo
+import one.zephyr.mobile.protocol.ssh.SshRemoteOps.DockerContainerStats
+import one.zephyr.mobile.protocol.ssh.SshRemoteOps.DockerSystemDfRow
 import one.zephyr.mobile.protocol.ssh.HostProcessInfo
 import one.zephyr.mobile.protocol.ssh.HostStatsSample
 import one.zephyr.mobile.protocol.ssh.HostStatsSnapshot
@@ -222,6 +224,10 @@ fun HostDockerPanel(
     var pendingRemove by remember { mutableStateOf<DockerContainerInfo?>(null) }
     var pendingImage by remember { mutableStateOf<Pair<DockerImageInfo, String?>?>(null) }
     var confirmRestart by remember { mutableStateOf(false) }
+    /* Desktop-parity overview: system df rows and the per-container stats poll. */
+    var systemDf by remember { mutableStateOf<List<DockerSystemDfRow>>(emptyList()) }
+    var containerStats by remember { mutableStateOf<Map<String, DockerContainerStats>>(emptyMap()) }
+    var statsTick by remember { mutableIntStateOf(0) }
 
     suspend fun loadAll(forceCheck: Boolean = false) {
         val client = shell
@@ -244,6 +250,17 @@ fun HostDockerPanel(
             images = SshRemoteOps.parseDockerImages(imageRaw.stdout)
             val mirrorRaw = client.run(SshRemoteOps.dockerMirrorsGetCommand)
             mirrors = SshRemoteOps.parseDockerMirrors(mirrorRaw.stdout)
+            /* Desktop-parity reads; failures degrade the cards, not the panel. */
+            runCatching {
+                val dfRaw = client.run(SshRemoteOps.dockerSystemDfCommand)
+                systemDf = SshRemoteOps.parseDockerSystemDf(dfRaw.stdout)
+            }
+            runCatching {
+                val statsRaw = client.run(SshRemoteOps.dockerContainerStatsCommand)
+                containerStats = SshRemoteOps.parseDockerContainerStats(statsRaw.stdout)
+                    .filter { it.name.isNotBlank() }
+                    .associateBy { it.name }
+            }
         }.onFailure {
             error = it.message ?: "Docker 操作失败"
         }
@@ -252,9 +269,32 @@ fun HostDockerPanel(
 
     LaunchedEffect(shell) { loadAll(forceCheck = true) }
 
-    LaunchedEffect(shell, logTarget, logFollow) {
+    /* Desktop parity: poll docker stats --no-stream while the panel is open, at
+     * the same cadence the hosted panel uses for its live cells. */
+    LaunchedEffect(shell, statsTick) {
+        val client = shell ?: return@LaunchedEffect
+        if (statsTick == 0 || status?.installed != true) return@LaunchedEffect
+        runCatching {
+            val statsRaw = client.run(SshRemoteOps.dockerContainerStatsCommand)
+            containerStats = SshRemoteOps.parseDockerContainerStats(statsRaw.stdout)
+                .filter { it.name.isNotBlank() }
+                .associateBy { it.name }
+        }
+    }
+    LaunchedEffect(shell) {
+        if (shell == null) return@LaunchedEffect
+        while (isActive) {
+            delay(5_000)
+            statsTick++
+        }
+    }
+
+    LaunchedEffect(shell, logTarget?.target, logFollow) {
         val client = shell
         val container = logTarget
+        /* Key on the container id, not the info object: the list refresh
+         * replaces every DockerContainerInfo instance, which cancelled and
+         * restarted the log stream mid-follow. */
         if (client == null || container == null || !logFollow) return@LaunchedEffect
         runCatching {
             client.stream(SshRemoteOps.dockerLogsCommand(container.target, tail = 200, follow = true)).collect { chunk ->
@@ -329,8 +369,11 @@ fun HostDockerPanel(
                     FilterChip(selected = tab == DockerTab.MIRRORS, onClick = { tab = DockerTab.MIRRORS }, label = { Text("镜像加速器") })
                 }
                 when (tab) {
-                    DockerTab.CONTAINERS -> DockerContainerList(
+                    DockerTab.CONTAINERS -> {
+                        if (systemDf.isNotEmpty()) DockerSystemDfOverview(systemDf)
+                        DockerContainerList(
                         containers = containers,
+                        stats = containerStats,
                         onStart = { run("已启动 ${it.name}", SshRemoteOps.dockerContainerActionCommand(DockerContainerAction.START, it.target)) },
                         onStop = { run("已停止 ${it.name}", SshRemoteOps.dockerContainerActionCommand(DockerContainerAction.STOP, it.target)) },
                         onRestart = { run("已重启 ${it.name}", SshRemoteOps.dockerContainerActionCommand(DockerContainerAction.RESTART, it.target)) },
@@ -341,7 +384,8 @@ fun HostDockerPanel(
                             logPaused = false
                         },
                         onRemove = { pendingRemove = it },
-                    )
+                        )
+                    }
                     DockerTab.IMAGES -> DockerImageList(
                         images = images,
                         pullImage = pullImage,
@@ -606,9 +650,33 @@ private fun ProcessList(
     }
 }
 
+/** The hosted main end's overview row, drawn with One surfaces. */
+@Composable
+private fun DockerSystemDfOverview(rows: List<DockerSystemDfRow>) {
+    fun sizeOf(type: String) = rows.firstOrNull { it.type.equals(type, ignoreCase = true) }?.size ?: "—"
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(ZephyrTheme.palette.surfaces.content)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("运行 / 全部", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp)
+            Text("存储（镜像 / 容器 / 卷）", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("镜像 ${rows.firstOrNull { it.type.equals("images", true) }?.total ?: 0} · 容器 ${rows.firstOrNull { it.type.equals("containers", true) }?.total ?: 0} · 卷 ${rows.firstOrNull { it.type.equals("local volumes", true) }?.total ?: 0}", color = ZephyrTheme.palette.onFloating, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("${sizeOf("Images")} / ${sizeOf("Containers")} / ${sizeOf("Local Volumes")}", color = ZephyrTheme.palette.onFloating, fontSize = 12.sp)
+        }
+    }
+}
+
 @Composable
 private fun DockerContainerList(
     containers: List<DockerContainerInfo>,
+    stats: Map<String, DockerContainerStats> = emptyMap(),
     onStart: (DockerContainerInfo) -> Unit,
     onStop: (DockerContainerInfo) -> Unit,
     onRestart: (DockerContainerInfo) -> Unit,
@@ -621,6 +689,7 @@ private fun DockerContainerList(
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
         items(containers, key = { it.id.ifBlank { it.name } }) { container ->
+            val stat = stats[container.name]
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -635,6 +704,16 @@ private fun DockerContainerList(
                         container.status,
                         color = if (container.running) ZephyrTheme.palette.status.success else ZephyrTheme.palette.onFloatingSubtle,
                         fontSize = 11.sp,
+                    )
+                }
+                if (stat != null) {
+                    Text(
+                        "CPU ${stat.cpuPercent} · 内存 ${stat.memUsage} (${stat.memPercent}) · 网络 ${stat.netIo} · 磁盘 ${stat.blockIo}",
+                        color = ZephyrTheme.palette.brand.accent,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
                 Text(container.image, color = ZephyrTheme.palette.onFloatingMuted, fontSize = 11.sp, maxLines = 1)

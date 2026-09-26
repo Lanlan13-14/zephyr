@@ -186,8 +186,9 @@ private fun StatsToolBody(
     onOpenDocker: () -> Unit,
     onMessage: (String) -> Unit,
 ) {
+    val shell = viewModel?.rememberRemoteShell()
     one.zephyr.mobile.feature.tools.HostMonitorPanel(
-        shell = viewModel?.asRemoteShell(),
+        shell = shell,
         modifier = Modifier.fillMaxSize(),
         onOpenDocker = onOpenDocker,
         onMessage = onMessage,
@@ -205,14 +206,17 @@ private fun DockerToolBody(
     viewModel: TerminalViewModel?,
     onMessage: (String) -> Unit,
 ) {
+    val shell = viewModel?.rememberRemoteShell()
     one.zephyr.mobile.feature.tools.HostDockerPanel(
-        shell = viewModel?.asRemoteShell(),
+        shell = shell,
         modifier = Modifier.fillMaxSize(),
         onMessage = onMessage,
     )
 }
 
-private fun TerminalViewModel.asRemoteShell(): one.zephyr.mobile.feature.tools.RemoteShell =
+/** A stable adapter per ViewModel; recomposition must not restart Docker streams. */
+@Composable
+private fun TerminalViewModel.rememberRemoteShell(): one.zephyr.mobile.feature.tools.RemoteShell = remember(this) {
     object : one.zephyr.mobile.feature.tools.RemoteShell {
         override suspend fun run(command: String): one.zephyr.mobile.feature.tools.RemoteShellResult {
             val result = executeRemote(command).getOrThrow()
@@ -236,6 +240,7 @@ private fun TerminalViewModel.asRemoteShell(): one.zephyr.mobile.feature.tools.R
             }
         }
     }
+}
 
 @Composable
 private fun ThemeToolBody(

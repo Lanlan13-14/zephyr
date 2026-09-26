@@ -73,8 +73,42 @@ class SshRemoteOpsTest {
     }
 
     @Test
-    fun containerActionAndSignalsRefuseDangerousTargets() {
-        assertEquals("docker start 'web'", SshRemoteOps.dockerContainerActionCommand(DockerContainerAction.START, "web"))
+    fun systemDfRowsMatchTheHostedCommandShape() {
+        val rows = SshRemoteOps.parseDockerSystemDf(
+            """
+            {"Type":"Images","TotalCount":12,"Size":"1.2GB","Reclaimable":"0B (0%)"}
+            {"Type":"Containers","TotalCount":4,"Active":3,"Size":"180MB","Reclaimable":"12MB (6%)"}
+            {"Type":"Local Volumes","TotalCount":2,"Size":"340MB","Reclaimable":"0B (0%)"}
+            not-json
+            """.trimIndent(),
+        )
+        assertEquals(3, rows.size)
+        assertEquals(12, rows[0].total)
+        assertEquals("Containers", rows[1].type)
+        assertEquals("Local Volumes", rows[2].type)
+        assertTrue(SshRemoteOps.dockerSystemDfCommand.startsWith("docker system df --format"))
+        assertTrue(SshRemoteOps.dockerSystemDfCommand.endsWith("|| true"))
+    }
+
+    @Test
+    fun containerStatsUseDockerStatsFieldNames() {
+        val stats = SshRemoteOps.parseDockerContainerStats(
+            """
+            {"BlockIO":"0B / 0B","CPUPerc":"0.12%","Container":"abc123","ID":"abc123","MemPerc":"1.84%","MemUsage":"38.6MiB / 2GiB","Name":"nginx","NetIO":"656B / 0B"}
+            not-json
+            {"BlockIO":"8.19MB / 0B","CPUPerc":"2.31%","Container":"deadbeef","ID":"deadbeef","MemPerc":"0.9%","MemUsage":"17.2MiB / 2GiB","Name":"worker","NetIO":"1.1kB / 0B"}
+            """.trimIndent(),
+        )
+        assertEquals(2, stats.size)
+        assertEquals("nginx", stats[0].name)
+        assertEquals("0.12%", stats[0].cpuPercent)
+        assertEquals("38.6MiB / 2GiB", stats[0].memUsage)
+        assertEquals("worker", stats[1].name)
+        assertTrue(SshRemoteOps.dockerContainerStatsCommand.startsWith("docker stats --no-stream --format"))
+    }
+
+    @Test
+    fun containerActionAndSignalsRefuseDangerousTargets() {        assertEquals("docker start 'web'", SshRemoteOps.dockerContainerActionCommand(DockerContainerAction.START, "web"))
         assertEquals("docker rm -f 'web'", SshRemoteOps.dockerContainerActionCommand(DockerContainerAction.REMOVE, "web"))
         assertEquals("kill -s TERM 42", SshRemoteOps.processSignalCommand(42, ProcessSignal.TERM))
         try {

@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -41,6 +44,7 @@ fun TermuxTerminalPane(
 ) {
     val latches by viewModel.controller.state.collectAsStateWithLifecycle()
     val bridge = viewModel.termux
+    var committedTextPx by remember(bridge) { mutableStateOf(-1) }
     val client = remember(viewModel) {
         ZephyrTerminalViewClient(
             latches = { viewModel.controller.state.value.latches },
@@ -79,7 +83,9 @@ fun TermuxTerminalPane(
             factory = { context ->
                 TerminalView(context).also { view ->
                     view.setBackgroundColor(colors.termBg.toArgb())
-                    view.setTextSize(spToPx(view, latches.fontSp))
+                    val initialPx = spToPx(view, latches.fontSp)
+                    committedTextPx = initialPx
+                    view.setTextSize(initialPx)
                     view.setTypeface(Typeface.MONOSPACE)
                     view.setTerminalViewClient(client)
                     view.isFocusable = true
@@ -97,7 +103,14 @@ fun TermuxTerminalPane(
             },
             update = { view ->
                 view.setBackgroundColor(colors.termBg.toArgb())
-                view.setTextSize(spToPx(view, latches.fontSp))
+                /* setTextSize rebuilds the renderer and re-runs updateSize; doing
+                 * it on every recomposition reset the grid mid-draw. Only commit
+                 * when the size actually moved. */
+                val nextTextPx = spToPx(view, latches.fontSp)
+                if (committedTextPx != nextTextPx) {
+                    committedTextPx = nextTextPx
+                    view.setTextSize(nextTextPx)
+                }
                 view.setTerminalViewClient(client)
                 if (view.currentSession !== bridge.session) bridge.attach(view)
                 if (focused && keyboardVisible) {
