@@ -564,7 +564,7 @@ class _HomeScreenState extends State<HomeScreen> {
       SettingsToggleRow(
         icon: Icons.alt_route, iconColor: accent, title: s.rowBastion,
         value: ctrl.config.bastionEnabled,
-        onChanged: isActive ? null : (v) { setState(() => ctrl.config.bastionEnabled = v); _saveConfig(ctrl); },
+        onChanged: (v) { setState(() => ctrl.setBastionEnabled(v)); _saveConfig(ctrl); },
       ),
       SettingsToggleRow(
         icon: Icons.timer_outlined, iconColor: _palette.warning, title: s.rowAutoShutdownAccess,

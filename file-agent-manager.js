@@ -1577,6 +1577,12 @@ class FileAgentManager {
         const conn = this.agents.get(agentId);
         if (!conn) return;
         conn.lastSeenAt = Date.now();
+        // Hello records the bastion choice once. The switch can be changed
+        // after that, so the heartbeat carries the operator's current choice
+        // and the hop list follows it without a reconnect.
+        if (typeof msg?.bastion === 'boolean' && conn.capabilities) {
+            conn.capabilities.bastion = msg.bastion;
+        }
         this._recordAgentSeen(conn);
         try {
             ws.send(JSON.stringify({ type: 'pong', time: Date.now() }));
