@@ -69,6 +69,9 @@ class AgentController extends ChangeNotifier {
   /// mints a new session, which is exactly when the tunnel must be started
   /// again, so the guard tracks the session instead of a one-shot flag.
   String? _bastionTunnelSessionId;
+  /// True between sending link_register and receiving its ack, so the
+  /// heartbeat retry cannot pile up registrations while one is in flight.
+  bool _linkRegisterPending = false;
   Zft2LinkLaneClient? _zft2Lane;
   final Map<int, Future<void>> _zft2Tasks = {};
   /// Per-path serial queues for mutating ops. Write/close/truncate/open on the
@@ -133,6 +136,18 @@ class AgentController extends ChangeNotifier {
       'time': DateTime.now().millisecondsSinceEpoch,
       'bastion': _config.bastionEnabled,
     });
+    _retryLinkRegister();
+  }
+
+  /// Re-sends the Link key registration while the encrypted channel is still
+  /// down. The main rejects it when its Link service is not ready yet, and
+  /// nothing else retries, so the bastion relay stays unspliceable.
+  void _retryLinkRegister() {
+    if (_status != AgentStatus.online) return;
+    if (_config.linkSigningJwk == null) return;
+    if (_linkRuntime.ready || _linkRegisterPending) return;
+    _linkRegisterPending = true;
+    _send({'type': 'link_register'});
   }
 
   // ─── Device enrollment ────────────────────────────────────────
@@ -674,6 +689,7 @@ class AgentController extends ChangeNotifier {
       _startHeartbeat();
       _startShutdownTimer();
       if (_config.linkSigningJwk != null) {
+        _linkRegisterPending = true;
         _send({'type': 'link_register'});
       } else {
         _maybeStartBastionTunnel();
@@ -689,12 +705,20 @@ class AgentController extends ChangeNotifier {
 
   void _handleLinkRegisterAck(Map<String, dynamic> msg) {
     if (msg['ok'] != true) {
+      // One reaches this Agent only through the encrypted channel, and that
+      // channel is dialed from here. A rejected registration used to stop the
+      // chain for good: the control socket stayed up, so the main kept
+      // advertising the Agent as online with bastion on, while no relay could
+      // ever be spliced. Retrying on the heartbeat converges once the Link
+      // service is ready instead of staying broken until a manual reconnect.
       _linkError = (msg['error'] as String?) ?? AgentStrings.system.errorLinkRejected;
       if (kDebugMode) print('[agent-link] register rejected: $_linkError');
+      _linkRegisterPending = false;
       notifyListeners();
       return;
     }
     _linkError = '';
+    _linkRegisterPending = false;
     final deviceId = _config.linkDeviceId ?? _legacyDeterministicDeviceId();
     unawaited(() async {
       try {

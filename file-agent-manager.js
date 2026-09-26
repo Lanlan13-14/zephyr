@@ -1761,7 +1761,9 @@ class FileAgentManager {
      */
     listBastionAgentsForUser(ownerId) {
         return this.listAgentsForUser(ownerId).filter((agent) =>
-            agent.capabilities?.bastion === true && agent.bastionEnabled === true);
+            agent.capabilities?.bastion === true && agent.bastionEnabled === true
+            && typeof agent.linkSessionId === 'string' && agent.linkSessionId.length > 0
+            && agent.capabilities?.linkFileBridge === true);
     }
 
     /** Get a specific agent's info. */
