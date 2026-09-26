@@ -192,13 +192,17 @@ test('windows-hello.ps1 ships outside app.asar and is resolved on disk', () => {
 test('bastion candidates come from the bound main via device-proof relay', () => {
     /* Desktop One has no locally connected Agents; the dropdown must pull
      * /api/mobile/v1/agent-bastions from the bound main end, and only fall
-     * back to local Agents when unbound (hosted main keeps direct ones). */
+     * back to local Agents when unbound. A hosted main must not take that
+     * path: its Agents connect to it directly, and a leftover binding file
+     * would otherwise make the route request itself and return an error
+     * instead of the local registry. */
     const sync = read('zephyr-one-link-sync.js');
     assert.match(sync, /async agentBastions\(\)/);
     assert.match(sync, /\/api\/mobile\/v1\/agent-bastions/);
     assert.match(sync, /app\.get\('\/api\/one\/link\/agent-bastions'/);
     assert.match(sync, /source: 'main'/);
     assert.match(sync, /source: 'local'/);
+    assert.match(sync, /ZEPHYR_ONE_EMBEDDED !== '1'/);
     const app = read('public/app.js');
     assert.match(app, /api\('\/api\/one\/link\/agent-bastions'\)/);
     assert.doesNotMatch(app, /api\('\/api\/rdp\/agent-bastions'\)/);

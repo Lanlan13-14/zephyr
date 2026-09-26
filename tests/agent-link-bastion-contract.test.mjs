@@ -106,7 +106,9 @@ test('server resolveRoutePlan accepts agent bastion prefix in jump chain', () =>
   assert.match(server, /firstProxy \= agentBastion/);
 
   const app = read('public/app.js');
-  assert.match(app, /api\('\/api\/rdp\/agent-bastions'\)/);
+  /* The picker reads the shared route. Hosted main resolves it from the
+   * local registry; embedded One relays it from the bound main. */
+  assert.match(app, /api\('\/api\/one\/link\/agent-bastions'\)/);
   assert.match(app, /agent:\$\{(?:a\.agentId|id)\}/);
   assert.match(app, /在线 Agent 跳板机/);
 });

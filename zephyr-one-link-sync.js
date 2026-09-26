@@ -1210,17 +1210,24 @@ function mountZephyrOneLinkRoutes(app, {
         }
     });
     app.get('/api/one/link/agent-bastions', requireUser, async (req, res) => {
-        /* Desktop One has no Agents of its own. When bound to a main end the
-         * candidates come from the main (the same device-proof route Android
-         * uses); unbound or failed probes fall back to local connections so
-         * a hosted main keeps its direct Agents. */
+        /* Hosted main and embedded One share this route, but they do not
+         * share a source. A hosted main's Agents are connected to it
+         * directly, so the local registry is authoritative — relaying
+         * through the device-proof client here loops back into this same
+         * process whenever a stale binding file exists, and that failure is
+         * not `unbound`, so the picker comes back empty. Only the embedded
+         * desktop core has no local Agents and must ask its bound main. */
+        const localAgents = () => (typeof listLocalBastionAgents === 'function' ? listLocalBastionAgents(req) : []);
+        if (process.env.ZEPHYR_ONE_EMBEDDED !== '1') {
+            res.json({ ok: true, source: 'local', agents: localAgents() });
+            return;
+        }
         try {
             const agents = await linkSync.agentBastions();
             res.json({ ok: true, source: 'main', agents });
         } catch (err) {
             if (err?.code === 'unbound') {
-                const local = typeof listLocalBastionAgents === 'function' ? listLocalBastionAgents(req) : [];
-                res.json({ ok: true, source: 'local', agents: local });
+                res.json({ ok: true, source: 'local', agents: localAgents() });
                 return;
             }
             sendErr(res, err);
