@@ -1,5 +1,9 @@
 package one.zephyr.mobile.app
 
+import java.lang.reflect.InvocationHandler
+import java.lang.reflect.Method
+import java.lang.reflect.Proxy
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,34 +13,33 @@ import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.Protocol
 import one.zephyr.mobile.model.Residency
 import one.zephyr.mobile.protocol.ssh.SshConnectOutcome
-import one.zephyr.mobile.protocol.ssh.SshConnectRequest
 import one.zephyr.mobile.protocol.ssh.SshEngine
 
 /**
- * The pool's protocol gate used the case-sensitive literal "ssh" against the
- * uppercase wireName "SSH", so acquire() rejected every connection — SSH
+ * The pool's protocol gate compared the case-sensitive literal "ssh" against
+ * the enum wireName "SSH", so acquire() rejected every connection — SSH
  * included — and SFTP / batch exec only worked after a manual home-screen
  * connection had left a live session to reuse.
+ *
+ * The engine is proxied: the interface has dozens of members and the pool
+ * only calls connect/disconnect on this path.
  */
 class ManagedSshSessionPoolGateTest {
 
     @Test
-    fun acquireAcceptsAnSshConnectionWithoutAPriorSession() {
+    fun acquireAcceptsAnSshConnectionWithoutAPriorSession() = runBlocking {
         val connection = sshConnection()
         var connected = false
-        val pool = pool(connection) { _, _ ->
-            connected = true
-            SshConnectOutcome.Connected(sessionId = "s", serverBanner = "")
-        }
+        val pool = pool(connection) { connected = true }
         val lease = pool.acquire("c1")
         assertTrue(connected)
         lease.close()
     }
 
     @Test
-    fun acquireRejectsNonSshWithTheProtocolMessage() {
+    fun acquireRejectsNonSshWithTheProtocolMessage() = runBlocking {
         val connection = sshConnection(protocol = Protocol.TELNET)
-        val pool = pool(connection) { _, _ -> SshConnectOutcome.Connected(sessionId = "s", serverBanner = "") }
+        val pool = pool(connection) {}
         val error = runCatching { pool.acquire("c1") }.exceptionOrNull()
         assertTrue(error is IllegalArgumentException)
         assertEquals("仅 SSH 连接支持此操作", error?.message)
@@ -54,15 +57,20 @@ class ManagedSshSessionPoolGateTest {
         residency = Residency.OWNED,
     )
 
-    private fun pool(
-        connection: Connection,
-        onConnect: suspend (String, SshConnectRequest) -> SshConnectOutcome,
-    ): ManagedSshSessionPool {
-        val engine = object : SshEngine {
-            override val isAvailable: Boolean get() = true
-            override suspend fun connect(request: SshConnectRequest): SshConnectOutcome = onConnect(request.sessionId, request)
-            override suspend fun disconnect(sessionId: String) {}
-        }
+    private fun pool(connection: Connection, onConnect: () -> Unit): ManagedSshSessionPool {
+        val loader = SshEngine::class.java.classLoader
+        val types = arrayOf<Class<*>>(SshEngine::class.java)
+        val engine = Proxy.newProxyInstance(loader, types, InvocationHandler { _: Any?, method: Method, args: Array<Any?>? ->
+            when (method.name) {
+                "isAvailable" -> true
+                "connect" -> {
+                    onConnect()
+                    SshConnectOutcome.Connected(sessionId = "s", serverBanner = "")
+                }
+                "disconnect" -> null
+                else -> throw UnsupportedOperationException(method.name)
+            }
+        }) as SshEngine
         return ManagedSshSessionPool(
             engine = engine,
             connectionProvider = { id -> if (id == connection.id) connection else null },
