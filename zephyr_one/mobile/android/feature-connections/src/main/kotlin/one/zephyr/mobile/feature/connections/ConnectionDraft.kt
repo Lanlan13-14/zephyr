@@ -338,6 +338,10 @@ data class ConnectionDraft(
      *
      * SCREEN_CATALOG.md 6 wants this surfaced as "路由需要修复" rather than as a save failure, so it
      * is reported per dependency and the editor can offer to clear each one.
+     *
+     * `agent:<id>` hops are excluded: their presence comes from an 8s-polled live list, so an
+     * emission that lands before the first poll reports a healthy route as dead. Treating "not
+     * loaded yet" as "revoked" is what made synced Agent routes look broken on open.
      */
     fun routeIssues(inventory: RouteInventory): List<DraftIssue> = buildList {
         val candidate = current
@@ -348,6 +352,7 @@ data class ConnectionDraft(
             if (id !in inventory.usableSshKeyIds) add(DraftIssue("sshKeyId", MSG_ROUTE_REPAIR))
         }
         for (id in candidate.jumpHostIds) {
+            if (id.startsWith("agent:")) continue
             if (id !in inventory.usableJumpHostIds) {
                 add(DraftIssue("jumpHostIds", MSG_ROUTE_REPAIR))
                 break
