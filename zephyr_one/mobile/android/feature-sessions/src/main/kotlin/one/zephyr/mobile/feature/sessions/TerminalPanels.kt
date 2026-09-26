@@ -190,7 +190,6 @@ private fun StatsToolBody(
     one.zephyr.mobile.feature.tools.HostMonitorPanel(
         shell = shell,
         modifier = Modifier.fillMaxSize(),
-        onOpenDocker = onOpenDocker,
         onMessage = onMessage,
         latencyProbe = viewModel?.let { model ->
             {
@@ -228,7 +227,7 @@ private fun TerminalViewModel.rememberRemoteShell(): one.zephyr.mobile.feature.t
         }
 
         override fun stream(command: String) = kotlinx.coroutines.flow.flow {
-            executeRemoteStream(command).collect { event ->
+            executeRemoteIsolatedStream(command).collect { event ->
                 when (event) {
                     is one.zephyr.mobile.protocol.ssh.SshExecEvent.Stdout ->
                         emit(one.zephyr.mobile.feature.tools.RemoteShellChunk.Output(event.bytes.toString(Charsets.UTF_8)))

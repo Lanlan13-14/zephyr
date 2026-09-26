@@ -566,6 +566,9 @@ class TerminalViewModel(
 
     fun executeRemoteStream(command: String) = host.execStream(sessionId, command)
 
+    fun executeRemoteIsolatedStream(command: String) =
+        host.execStreamIsolated(sessionId, connectionId, command)
+
     suspend fun remoteMetrics(): Result<RemoteMetrics> = host.exec(
         sessionId,
         one.zephyr.mobile.protocol.ssh.SshRemoteOps.statsCommand,

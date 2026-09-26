@@ -192,6 +192,10 @@ internal class SharedRelayTerminalHost(
     override fun execStream(sessionId: String, command: String) =
         if (relays.containsKey(sessionId)) emptyFlow() else owned.execStream(sessionId, command)
 
+    override fun execStreamIsolated(sessionId: String, connectionId: String, command: String) =
+        if (relays.containsKey(sessionId)) emptyFlow()
+        else owned.execStreamIsolated(sessionId, connectionId, command)
+
     override suspend fun trustHostKey(sessionId: String) {
         if (!relays.containsKey(sessionId)) owned.trustHostKey(sessionId)
     }

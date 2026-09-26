@@ -200,6 +200,17 @@ interface TerminalHost {
         command: String,
     ): Flow<one.zephyr.mobile.protocol.ssh.SshExecEvent> = emptyFlow()
 
+    /**
+     * Opens a command stream without sharing the interactive terminal PTY.
+     * Hosts that have a managed SSH pool should override this for long-lived
+     * commands such as `docker logs -f`; the default preserves old hosts.
+     */
+    fun execStreamIsolated(
+        sessionId: String,
+        connectionId: String,
+        command: String,
+    ): Flow<one.zephyr.mobile.protocol.ssh.SshExecEvent> = execStream(sessionId, command)
+
     /** Accepts and remembers a presented host key after the user confirmed it. */
     suspend fun trustHostKey(sessionId: String) = Unit
 }

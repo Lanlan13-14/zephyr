@@ -462,13 +462,14 @@ private fun WindMark(
                 textPaint.textSize = 15f * scale
                 textPaint.alpha = (frame.wordAlpha * 255f).toInt().coerceIn(0, 255)
                 native.save()
-                native.scale(frame.wordScale, frame.wordScale, 145f * scale, 120f * scale)
+                native.scale(frame.wordScale, frame.wordScale, 142.6f * scale, 120f * scale)
                 val oWidth = textPaint.measureText("O")
-                native.drawText("O", 145f * scale - oWidth / 2f, 120.7f * scale, textPaint)
-                // Same anchors as the desktop launch SVG: "O" centred on x=145,
-                // "ne" starting at x=152.4. Pulling "ne" left opens a white gap
-                // between the blue "O" and the grey ribbons behind it.
-                native.drawText("ne", 152.4f * scale, 120.7f * scale, textPaint)
+                native.drawText("O", 142.6f * scale - oWidth / 2f, 120.7f * scale, textPaint)
+                // The Android launch mark follows the desktop anchors, but the
+                // whole One wordmark sits 2.4 viewBox units left so the blue O
+                // closes the small gap to the grey ribbon instead of floating
+                // beside it. `ne` moves by the same amount, keeping One intact.
+                native.drawText("ne", 150f * scale, 120.7f * scale, textPaint)
                 native.restore()
             }
         }
