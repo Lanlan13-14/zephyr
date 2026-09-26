@@ -29,6 +29,8 @@ class SshTerminalHost(
         SshRoute(listOf(RouteHop.Target(connection.host, connection.port)))
     },
     private val hopAuthProvider: suspend (SshRoute) -> Map<String, HopAuth> = { emptyMap() },
+    /** Opens long-lived tool streams on a separate managed SSH lease. */
+    private val isolatedExecStream: (connectionId: String, command: String) -> Flow<one.zephyr.mobile.protocol.ssh.SshExecEvent> = { _, _ -> emptyFlow() },
 ) : TerminalHost {
 
     private val lastTarget = LinkedHashMap<String, RememberedTarget>()
@@ -130,6 +132,9 @@ class SshTerminalHost(
     override suspend fun exec(sessionId: String, command: String) = engine.exec(sessionId, command)
 
     override fun execStream(sessionId: String, command: String) = engine.execStream(sessionId, command)
+
+    override fun execStreamIsolated(sessionId: String, connectionId: String, command: String) =
+        isolatedExecStream(connectionId, command)
 
     override suspend fun trustHostKey(sessionId: String) {
         val remembered = lastTarget[sessionId]

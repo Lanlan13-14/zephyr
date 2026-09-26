@@ -3,6 +3,8 @@ package one.zephyr.mobile.app
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import one.zephyr.mobile.data.session.SessionRegistry
@@ -61,20 +63,17 @@ internal class LiveSshExecPort(
         )
     }
 
-    override fun execStream(connectionId: String, command: String): Flow<RemoteShellChunk> = callbackFlow {
-        val existing = sessions.rows.value.firstOrNull {
-            it.connectionId == connectionId && it.transport == SessionTransport.CONNECTED
-        }
-        val lease = if (existing == null) managed.acquire(connectionId) else null
-        val sessionId = existing?.sessionId ?: lease!!.sessionId
+    /**
+     * Long-lived tool streams must never borrow the interactive PTY. A Docker
+     * log uses its own managed SSH lease, so cancelling it cannot close the
+     * terminal shell underneath the user.
+     */
+    fun execStreamEvents(connectionId: String, command: String): Flow<SshExecEvent> = callbackFlow {
+        val lease = managed.acquire(connectionId)
         val job = launch {
             try {
-                engine.execStream(sessionId, command).collect { event ->
-                    when (event) {
-                        is SshExecEvent.Stdout -> trySend(RemoteShellChunk.Output(event.bytes.toString(Charsets.UTF_8)))
-                        is SshExecEvent.Stderr -> trySend(RemoteShellChunk.Output(event.bytes.toString(Charsets.UTF_8)))
-                        is SshExecEvent.Closed -> trySend(RemoteShellChunk.Closed(event.exitCode))
-                    }
+                engine.execStream(lease.sessionId, command).collect { event ->
+                    trySend(event)
                 }
             } finally {
                 close()
@@ -82,7 +81,20 @@ internal class LiveSshExecPort(
         }
         awaitClose {
             job.cancel()
-            launch { lease?.close() }
+            launch { lease.close() }
         }
     }
+
+    override fun execStream(connectionId: String, command: String): Flow<RemoteShellChunk> =
+        execStreamEvents(connectionId, command).let { events ->
+            kotlinx.coroutines.flow.flow {
+                events.collect { event ->
+                    when (event) {
+                        is SshExecEvent.Stdout -> emit(RemoteShellChunk.Output(event.bytes.toString(Charsets.UTF_8)))
+                        is SshExecEvent.Stderr -> emit(RemoteShellChunk.Output(event.bytes.toString(Charsets.UTF_8)))
+                        is SshExecEvent.Closed -> emit(RemoteShellChunk.Closed(event.exitCode))
+                    }
+                }
+            }
+        }
 }

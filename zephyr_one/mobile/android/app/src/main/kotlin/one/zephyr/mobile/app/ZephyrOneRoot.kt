@@ -482,6 +482,10 @@ private fun BoundRoot(
                     ?: SshRoute(listOf(RouteHop.Target(connection.host, connection.port)))
             },
             hopAuthProvider = { route -> account.hopAuthFor(route) },
+            isolatedExecStream = { connectionId, command ->
+                LiveSshExecPort(sshEngine, account.sessions, managedSsh)
+                    .execStreamEvents(connectionId, command)
+            },
         )
         SharedRelayTerminalHost(account, ownedHost)
     }

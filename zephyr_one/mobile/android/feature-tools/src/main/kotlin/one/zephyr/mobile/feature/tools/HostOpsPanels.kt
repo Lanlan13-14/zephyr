@@ -91,7 +91,6 @@ private enum class ProcessSort { CPU, MEM, PID }
 fun HostMonitorPanel(
     shell: RemoteShell?,
     modifier: Modifier = Modifier,
-    onOpenDocker: (() -> Unit)? = null,
     onMessage: (String) -> Unit = {},
     latencyProbe: (suspend () -> Int?)? = null,
 ) {
@@ -165,7 +164,6 @@ fun HostMonitorPanel(
                     clipboard.setText(AnnotatedString(value))
                     onMessage("已复制")
                 },
-                onOpenDocker = onOpenDocker,
             )
             snapshot != null -> ProcessList(
                 processes = snapshot!!.processes,
@@ -292,16 +290,14 @@ fun HostDockerPanel(
     LaunchedEffect(shell, logTarget?.target, logFollow) {
         val client = shell
         val container = logTarget
-        /* Key on the container id, not the info object: the list refresh
-         * replaces every DockerContainerInfo instance, which cancelled and
-         * restarted the log stream mid-follow. */
         if (client == null || container == null || !logFollow) return@LaunchedEffect
         runCatching {
+            /* This remains real-time like the hosted main end. The shell
+             * implementation below uses a separate managed SSH lease, never
+             * the interactive terminal's PTY session. */
             client.stream(SshRemoteOps.dockerLogsCommand(container.target, tail = 200, follow = true)).collect { chunk ->
                 when (chunk) {
-                    is RemoteShellChunk.Output -> {
-                        logText = (logText + chunk.text).takeLast(80_000)
-                    }
+                    is RemoteShellChunk.Output -> logText = (logText + chunk.text).takeLast(80_000)
                     is RemoteShellChunk.Closed -> {
                         logFollow = false
                         if (chunk.exitCode != 0) onMessage("日志流结束（exit ${chunk.exitCode}）")
@@ -510,7 +506,6 @@ private fun MonitorOverview(
     snapshot: HostStatsSnapshot,
     latencyMs: Int?,
     onCopy: (String) -> Unit,
-    onOpenDocker: (() -> Unit)?,
 ) {
     val palette = ZephyrTheme.palette
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp, 4.dp, 8.dp, 24.dp)) {
@@ -568,13 +563,6 @@ private fun MonitorOverview(
             Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 IpRow("IPv4", snapshot.ipv4, onCopy)
                 IpRow("IPv6", snapshot.ipv6, onCopy)
-            }
-        }
-        if (onOpenDocker != null) {
-            item("docker") {
-                PrimaryButton(onClick = onOpenDocker, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                    Text("打开 Docker 管理")
-                }
             }
         }
     }
