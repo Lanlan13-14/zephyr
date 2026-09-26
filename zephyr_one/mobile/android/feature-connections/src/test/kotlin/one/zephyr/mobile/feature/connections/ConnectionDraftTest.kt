@@ -572,6 +572,31 @@ class ConnectionDraftTest {
     }
 
     @Test
+    fun anAgentHopIsNotReportedAsRevokedWhileTheCandidateListHasNotLoaded() {
+        /* agent: hops come from an 8s-polled live list. An emission before the
+         * first poll must not turn a healthy synced route into "路由需要修复". */
+        val stored = Fixtures.connection().copy(
+            connectionMode = ConnectionMode.JUMP,
+            jumpHostIds = listOf("agent:agent_55b4fea6a8c8"),
+        )
+        assertEquals(
+            emptyList<DraftIssue>(),
+            ConnectionDraft.edit(stored).routeIssues(RouteInventory()),
+        )
+    }
+
+    @Test
+    fun aMixedChainStillReportsOnlyTheGoneNonAgentHop() {
+        val stored = Fixtures.connection().copy(
+            connectionMode = ConnectionMode.JUMP,
+            jumpHostIds = listOf("agent:agent_55b4fea6a8c8", "j-gone"),
+        )
+        val issues = ConnectionDraft.edit(stored).routeIssues(Fixtures.inventory())
+        assertEquals(1, issues.size)
+        assertEquals(DraftIssue("jumpHostIds", ConnectionDraft.MSG_ROUTE_REPAIR), issues.first())
+    }
+
+    @Test
     fun `blank sshKeyId from the main-end TEXT column is not a missing dependency`() {
         val stored = Fixtures.connection().copy(sshKeyId = "")
         val draft = ConnectionDraft.edit(stored)
