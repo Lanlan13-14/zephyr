@@ -29,6 +29,45 @@ test('local product navigation and window lifecycle fail closed', () => {
   assert.match(main, /app\.quit\(\)/);
 });
 
+test('the product session is partitioned and external links fail closed', () => {
+  /* Electron official hardening: the loopback core's cookie lives on a
+   * dedicated partition (never defaultSession), and only https:// leaves
+   * via shell.openExternal. Plain http:// and the loopback origin itself
+   * are denied without launching. */
+  const main = read('electron/main.mjs');
+  assert.match(main, /fromPartition\('persist:zephyr-one'/);
+  assert.match(main, /partition: 'persist:zephyr-one'/);
+  assert.match(main, /setPermissionRequestHandler/);
+  assert.match(main, /callback\(false\)/);
+  assert.match(main, /url\.startsWith\('https:\/\/'\)/);
+  assert.doesNotMatch(main, /url\.startsWith\('http:\/\/127\.0\.0\.1:'\) \|\| url\.startsWith\('https:\/\/'\) \|\| url\.startsWith\('http:\/\/'\)/);
+});
+
+test('window-bound IPC acts only on the sender window', () => {
+  /* Official guidance is to validate the sender of every IPC message: each
+   * window command resolves its window from event.sender and refuses
+   * orphaned senders instead of touching a global window handle. */
+  const main = read('electron/main.mjs');
+  assert.match(main, /function senderWindow\(event\)/);
+  assert.match(main, /senderWindow\(event\)\?\.minimize/);
+  assert.match(main, /senderWindow\(event\)\?\.close/);
+  assert.match(main, /const window = senderWindow\(event\);/);
+});
+
+test('About shows the full display build including the pre suffix', () => {
+  /* one-v0.1.20pre15 must read 0.1.20pre15 in About, not bare 0.1.20.
+   * app.getVersion() is marketing-only; the suffix travels on
+   * ZEPHYR_ONE_FULL_VERSION / ZEPHYR_ONE_PRERELEASE. */
+  const main = read('electron/main.mjs');
+  const runtime = read('electron/runtime.mjs');
+  assert.match(main, /function displayVersion/);
+  assert.match(main, /ZEPHYR_ONE_FULL_VERSION/);
+  assert.match(main, /ZEPHYR_ONE_PRERELEASE/);
+  assert.match(main, /ipcMain\.handle\('get_app_version', \(\) => displayVersion\(\)\)/);
+  assert.match(runtime, /ZEPHYR_ONE_FULL_VERSION/);
+  assert.match(runtime, /ZEPHYR_ONE_PRERELEASE/);
+});
+
 test('trusted shell explicitly enters only after runtime_start returns', () => {
   const renderer = read('src/main.js');
   const main = read('electron/main.mjs');

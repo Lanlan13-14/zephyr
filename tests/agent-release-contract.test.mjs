@@ -62,13 +62,21 @@ test('set_version.py parses agent-v tags into semver and keeps tag getter', () =
   assert.match(src, /render_agent_version_dart/);
 });
 
-test('About and Agent settings pages expose release link slots', () => {
+test('About and Agent settings pages expose release link slots', async () => {
+  /* Browser Zephyr still ships both slots in its own HTML host; desktop One
+   * drops the Agent panel and the About Client block via its transform, so
+   * the One surface must NOT contain them (see zephyr-one-embed-surface). */
+  const { createRequire } = await import('node:module');
+  const { applyEmbeddedSurface } = createRequire(import.meta.url)('../zephyr-one-embed-surface.js');
   const html = read('public/app.html');
   const js = read('public/app.js');
   assert.match(html, /id="aboutAgentReleaseLink"/);
   assert.match(html, /id="agentReleaseLink"/);
   assert.match(js, /function applyAgentReleaseLinks/);
   assert.match(js, /applyAgentReleaseLinks\(settings\.agentRelease\)/);
+  const { html: one } = applyEmbeddedSurface(html);
+  assert.doesNotMatch(one, /id="aboutAgentReleaseLink"/);
+  assert.doesNotMatch(one, /Zephyr Client/);
 });
 
 test('Docker image build resolves agent release metadata', () => {

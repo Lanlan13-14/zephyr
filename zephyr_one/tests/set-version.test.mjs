@@ -111,6 +111,7 @@ describe('set-version.py', () => {
     for (const rel of [
       'scripts/set-version.py',
       'package.json',
+      'src/js/shell/version.js',
     ]) copy(rel);
   });
 
@@ -152,6 +153,26 @@ describe('set-version.py', () => {
     assertManifestVersions('0.1.20');
     assert.match(r.stdout, /ZEPHYR_ONE_VERSION_NAME=0\.1\.20/);
     assert.doesNotMatch(r.stdout, /pre1/);
+  });
+
+  it('carries the pre suffix on its own channel for the About display build', () => {
+    /* one-v0.1.20pre15 stamps marketing 0.1.20 into package.json (installer
+     * shape unchanged) while FULL carries the display build for About. */
+    let r = runSetVersion('one-v0.1.20pre15');
+    assert.equal(r.status, 0, resultMessage(r));
+    assertManifestVersions('0.1.20');
+    assert.match(r.stdout, /ZEPHYR_ONE_VERSION_NAME=0\.1\.20\n/);
+    assert.match(r.stdout, /ZEPHYR_ONE_FULL_VERSION=0\.1\.20pre15/);
+    assert.match(r.stdout, /ZEPHYR_ONE_PRERELEASE=pre15/);
+    const shellVersion = fs.readFileSync(path.join(root, 'src/js/shell/version.js'), 'utf8');
+    assert.match(shellVersion, /APP_VERSION = '0\.1\.20'/);
+    assert.match(shellVersion, /APP_PRERELEASE = 'pre15'/);
+
+    r = runSetVersion('one-v0.1.20');
+    assert.equal(r.status, 0, resultMessage(r));
+    assert.match(r.stdout, /ZEPHYR_ONE_PRERELEASE=\n/);
+    const stableShell = fs.readFileSync(path.join(root, 'src/js/shell/version.js'), 'utf8');
+    assert.match(stableShell, /APP_PRERELEASE = ''/);
   });
 
   it('rejects unparseable tags', () => {

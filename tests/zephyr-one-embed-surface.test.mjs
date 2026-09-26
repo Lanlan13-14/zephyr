@@ -83,14 +83,22 @@ test('desktop One settings has Zephyr Link and no Agent management', () => {
     assert.doesNotMatch(html, /id="settings-agent"/);
     assert.doesNotMatch(html, /id="agentDeviceList"/);
     assert.doesNotMatch(html, /已绑定的 Zephyr Agent/);
-    assert.match(html, /id="aboutAgentReleaseLink"/);
+    /* The Agent settings panel's own download row stays for browser Zephyr
+     * (its HTML host), but the One surface drops the whole panel above. */
+    assert.doesNotMatch(html, /id="aboutAgentReleaseLink"/);
+    assert.doesNotMatch(html, /Zephyr Client/);
 });
 
-test('the About panel keeps the Zephyr Client download name', () => {
+test('the About panel drops the Zephyr Client download block in One', () => {
+    /* Browser Zephyr still ships the download block (its HTML host); the One
+     * surface removes it because One IS the desktop client. */
     const heading = '<h2 data-i18n="Zephyr Client">Zephyr Client</h2>';
     assert.equal(countOccurrences(APP_HTML, heading), 1, 'the About heading is unique now');
     const { html } = applyEmbeddedSurface(APP_HTML);
-    assert.match(html, /id="settings-about"[\s\S]*Zephyr Client/);
+    assert.match(html, /id="settings-about"/);
+    assert.match(html, /id="versionText"/);
+    assert.doesNotMatch(html, /aboutAgentReleaseLine/);
+    assert.doesNotMatch(html, /Zephyr Client/);
     assert.doesNotMatch(html, /data-settings="agent"/);
     assert.doesNotMatch(html, /id="settings-agent"/);
     assert.match(html, /id="linkSettingsTab"[^>]*data-i18n="文件同步"/);
@@ -99,9 +107,9 @@ test('the About panel keeps the Zephyr Client download name', () => {
 test('transform replaces the security panel body and removes logout', () => {
     const { html, applied } = applyEmbeddedSurface(APP_HTML);
 
-    // Every structural edit fired against real markup, plus the panel rebuild
-    // and the Agent-settings drop.
-    assert.deepEqual(applied, [...EDITS.map((e) => e.name), 'replace-security-panel', 'drop-agent-panel']);
+    // Every structural edit fired against real markup, plus the panel rebuild,
+    // the Agent-settings drop, and the About Client-block drop.
+    assert.deepEqual(applied, [...EDITS.map((e) => e.name), 'replace-security-panel', 'drop-agent-panel', 'drop-about-client-block', 'add-window-controls']);
 
     /* The tab stays. It is a valid landing target again, and app.js falls back
      * to clicking `[data-settings="security"]` in two places when the active tab
@@ -180,7 +188,9 @@ test('transform is idempotent', () => {
     // rebuild detects its own marker and reports itself skipped for the same
     // reason, so a double-applied transform cannot nest two switches.
     assert.deepEqual(twice.applied, []);
-    assert.deepEqual(twice.skipped, [...EDITS.map((e) => e.name), 'replace-security-panel', 'drop-agent-panel']);
+    // add-window-controls uses a marker check (not EDITS), so it reports
+    // skipped on the second pass like the panel rebuilds.
+    assert.deepEqual(twice.skipped, [...EDITS.map((e) => e.name), 'replace-security-panel', 'drop-agent-panel', 'drop-about-client-block', 'add-window-controls']);
     assert.equal(countOccurrences(twice.html, 'id="oneRevealRequiresUnlock"'), 1);
 });
 

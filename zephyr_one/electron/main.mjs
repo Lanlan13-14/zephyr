@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { capabilities, unlock, unlockReason } from './auth.mjs';
+import { capabilities, unlock, unlockReason, unlockWindows } from './auth.mjs';
 import {
   appendRuntimeLog,
   currentBaseUrl,
@@ -18,6 +18,23 @@ import {
 } from './runtime.mjs';
 import { createShellIdentity } from './shell-auth.mjs';
 import { applyThemeIcon, completeQueuedUnlock, spawnPickerWatcher, spawnThemeWatcher, spawnUnlockWatcher } from './watchers.mjs';
+
+/* Display build for About: marketing version plus the pre suffix
+ * (0.1.20pre15). app.getVersion() is the marketing version only (0.1.20);
+ * CI stamps the suffix on ZEPHYR_ONE_FULL_VERSION / ZEPHYR_ONE_PRERELEASE
+ * via set-version.py (workflow passes tag + prerelease_label), and
+ * runtime.mjs forwards both into the core. Stable builds have no suffix,
+ * so this degrades to app.getVersion() exactly. */
+function displayVersion() {
+  const marketing = String(app.getVersion() || '').trim();
+  const full = String(process.env.ZEPHYR_ONE_FULL_VERSION || '').trim();
+  if (full) return full;
+  const pre = String(process.env.ZEPHYR_ONE_PRERELEASE || '').trim().toLowerCase();
+  if (/^pre\d+$/.test(pre) && marketing && !marketing.toLowerCase().endsWith(pre)) {
+    return `${marketing}${pre}`;
+  }
+  return marketing;
+}
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const oneRoot = path.resolve(here, '..');
@@ -102,12 +119,20 @@ function createProductWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      partition: 'persist:zephyr-one',
     },
   });
   wireWindowChrome(window);
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://127.0.0.1:') || url.startsWith('https://') || url.startsWith('http://')) {
-      shell.openExternal(url);
+    /* The product window may only ever show the loopback core origin.
+     * External pages (help, releases) open in the OS browser via
+     * shell.openExternal; anything else is denied without launching. */
+    const origin = currentBaseUrl();
+    if (origin && url.startsWith(origin)) {
+      return { action: 'deny' };
+    }
+    if (url.startsWith('https://')) {
+      shell.openExternal(url).catch(() => {});
     }
     return { action: 'deny' };
   });
@@ -185,10 +210,11 @@ async function openProductWindow() {
     productWindow = createProductWindow();
   }
   const cookie = sessionCookie();
+  const oneSession = session.fromPartition('persist:zephyr-one', { cache: true });
   try {
-    await session.defaultSession.cookies.remove(cookie.url, cookie.name);
+    await oneSession.cookies.remove(cookie.url, cookie.name);
   } catch { /* first launch has nothing to remove */ }
-  await session.defaultSession.cookies.set(cookie);
+  await oneSession.cookies.set(cookie);
   const target = localAppUrl();
   try {
     const health = await fetch(`${info.baseUrl.replace(/\/+$/, '')}/healthz`);
@@ -229,33 +255,63 @@ function wireIpc() {
     windowControls: process.platform === 'darwin' ? 'native' : 'overlay',
     family: process.platform === 'win32' ? 'windows' : 'unix',
   }));
+  /* Window-bound commands act only on the sender's own window.
+   * event.senderFrame is the authoritative sender: a null frame or a frame
+   * whose window is gone means the caller is not one of our windows, so the
+   * handler refuses instead of touching mainWindow/productWindow. */
+  function senderWindow(event) {
+    try {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (!window || window.isDestroyed()) return null;
+      return window;
+    } catch { return null; }
+  }
   ipcMain.handle('window_minimize', (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.minimize();
+    senderWindow(event)?.minimize();
   });
   ipcMain.handle('window_toggle_maximize', (event) => {
-    const window = BrowserWindow.fromWebContents(event.sender);
+    const window = senderWindow(event);
     if (!window) return { maximized: false };
     if (window.isMaximized()) window.unmaximize();
     else window.maximize();
     return { maximized: window.isMaximized() };
   });
   ipcMain.handle('window_close', (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close();
+    senderWindow(event)?.close();
   });
   /* macOS only. The traffic lights have to sit immediately left of the
    * product controls, which move as the window resizes, so the page measures
    * and reports the spot. A fixed trafficLightPosition cannot follow them. */
   ipcMain.handle('window_place_traffic_lights', (event, position) => {
     if (process.platform !== 'darwin') return;
-    const window = BrowserWindow.fromWebContents(event.sender);
+    const window = senderWindow(event);
     const x = Math.round(Number(position?.x));
     const y = Math.round(Number(position?.y));
     if (!window || !Number.isFinite(x) || !Number.isFinite(y)) return;
     window.setWindowButtonPosition({ x: Math.max(0, x), y: Math.max(0, y) });
   });
-  ipcMain.handle('get_app_version', () => app.getVersion());
+  ipcMain.handle('get_app_version', () => displayVersion());
   ipcMain.handle('auth_capabilities', () => capabilities());
-  ipcMain.handle('auth_unlock', async (_event, payload) => unlock(unlockReason(payload)));
+  /* System unlock must be modal to a real window (Chromium cui.hwndParent):
+   * pass the caller's native handle so the OS dialog centers on One and
+   * cannot be orphaned behind it. getNativeWindowHandle() is Electron-only;
+   * failure degrades to 0, which the script treats as "no parent". */
+  ipcMain.handle('auth_unlock', async (event, payload) => {
+    let parentHwnd = 0;
+    try {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const handle = window && !window.isDestroyed() ? window.getNativeWindowHandle() : null;
+      if (handle) {
+        const bytes = Buffer.from(handle);
+        parentHwnd = bytes.length >= 4 ? bytes.readInt32LE(0) : Number(handle) || 0;
+        if (!Number.isSafeInteger(parentHwnd) || parentHwnd < 0) parentHwnd = 0;
+      }
+    } catch { parentHwnd = 0; }
+    if (process.platform === 'win32') {
+      return unlockWindows(unlockReason(payload), { parentHwnd });
+    }
+    return unlock(unlockReason(payload));
+  });
   ipcMain.handle('get_launch_appearance', () => readLaunchAppearance(app.getPath('userData')));
   ipcMain.handle('set_launch_appearance', (_event, appearance) => (
     writeLaunchAppearance(app.getPath('userData'), appearance)
@@ -289,6 +345,17 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     wireIpc();
+    /* Default-deny permission requests from loaded content. The loopback
+     * product never needs device permissions; the shell grants none, so a
+     * compromised renderer cannot escalate into notifications/media. */
+    try {
+      session.fromPartition('persist:zephyr-one').setPermissionRequestHandler(
+        (_webContents, _permission, callback) => callback(false),
+      );
+      session.defaultSession.setPermissionRequestHandler(
+        (_webContents, _permission, callback) => callback(false),
+      );
+    } catch { /* sessions may be unavailable in smoke harnesses */ }
     mainWindow = createMainWindow();
     const index = path.join(oneRoot, 'index.html');
     if (app.isPackaged) {

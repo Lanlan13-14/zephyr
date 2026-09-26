@@ -92,7 +92,7 @@ jobs:
           ref: ${{ github.sha }}
       - name: Stamp package version from release version
         shell: bash
-        run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
+        run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}${{ github.event.inputs.prerelease_label }}"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -153,7 +153,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Stamp package version from release version
-        run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
+        run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}${{ github.event.inputs.prerelease_label }}"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -191,7 +191,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Stamp package version from release version
-        run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
+        run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}${{ github.event.inputs.prerelease_label }}"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

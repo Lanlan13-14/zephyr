@@ -321,7 +321,18 @@ async function startCore({
     [STARTUP_CHALLENGE_ENV]: encodeHex(challenge),
     ZEPHYR_ONE_SHELL_SECRET: shellSecret,
     ZEPHYR_ONE_SHELL_INSTANCE: shellInstance,
-    ZEPHYR_VERSION: appVersion || '0.1.0',
+    ZEPHYR_VERSION: (process.env.ZEPHYR_ONE_FULL_VERSION && String(process.env.ZEPHYR_ONE_FULL_VERSION).trim())
+      || (process.env.ZEPHYR_ONE_PRERELEASE
+        ? `${String(appVersion || '0.1.0').trim()}${String(process.env.ZEPHYR_ONE_PRERELEASE).trim().toLowerCase()}`
+        : (appVersion || '0.1.0')),
+    /* Pass the pre suffix through explicitly too: version.js re-derives the
+     * display build from these two when the shell itself was stamped without
+     * the suffix (dev runs, older CI). Stable builds send '' and no-op. */
+    ZEPHYR_ONE_FULL_VERSION: (process.env.ZEPHYR_ONE_FULL_VERSION && String(process.env.ZEPHYR_ONE_FULL_VERSION).trim())
+      || (process.env.ZEPHYR_ONE_PRERELEASE
+        ? `${String(appVersion || '0.1.0').trim()}${String(process.env.ZEPHYR_ONE_PRERELEASE).trim().toLowerCase()}`
+        : ''),
+    ZEPHYR_ONE_PRERELEASE: String(process.env.ZEPHYR_ONE_PRERELEASE || '').trim().toLowerCase(),
     ZEPHYR_ONE_USE_BUILTIN_SQLITE: '1',
     ...(linkEmbed ? { ZEPHYR_LINK_EMBED_BIN: linkEmbed } : {}),
   };
