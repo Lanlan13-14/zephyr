@@ -102,6 +102,8 @@ fun TerminalRoute(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val remoteTitle by viewModel.title.collectAsStateWithLifecycle()
+    // Read once per composition: the dock collector below runs outside composition.
+    val appDark = ZephyrTheme.palette.dark
     val clipboard = LocalClipboardManager.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -149,7 +151,7 @@ fun TerminalRoute(
                 TerminalDockItem.KEYBOARD -> keyboardVisible = !keyboardVisible
                 // 外观 toggles the terminal canvas in place. It never leaves the
                 // session and never opens the appearance settings page.
-                TerminalDockItem.THEME -> workspace?.let { onWorkspace(it.toggleCanvas(ZephyrTheme.palette.dark)) }
+                TerminalDockItem.THEME -> workspace?.let { onWorkspace(it.toggleCanvas(appDark)) }
                 else -> openDockTool(item, workspace, onWorkspace, onDock)
             }
         }
