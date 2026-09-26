@@ -24,7 +24,7 @@ const HELLO = read('zephyr_one/electron/windows-hello.ps1');
 test('auth_unlock unwraps the renderer { reason } payload', () => {
     assert.match(AUTH, /export function unlockReason\(payload/);
     assert.match(AUTH, /payload\.reason/);
-    assert.match(MAIN, /unlock\(unlockReason\(payload\)\)/);
+    assert.match(MAIN, /unlockWindows\(unlockReason\(payload\), \{ parentHwnd \}\)/);
     assert.match(SHELL, /safeInvoke\('auth_unlock', \{ reason:/);
 });
 
@@ -36,7 +36,7 @@ test('Windows unlock uses the official desktop CredentialPicker, not a hand-roll
     /* Microsoft documents the CredentialPickerOptions overload as UWP-only and
      * requires desktop apps to call the three-parameter PickAsync. */
     assert.match(HELLO, /Windows\.Security\.Credentials\.UI\.CredentialPicker/);
-    assert.match(HELLO, /CredentialPicker\]::PickAsync\(\s*'Zephyr One',\s*\$reason,\s*'Zephyr One'\s*\)/);
+    assert.match(HELLO, /PickAsync\(\s*\$targetName,\s*\$reason,\s*\$caption\s*\)/);
     assert.doesNotMatch(HELLO, /CredentialPickerOptions/);
     assert.doesNotMatch(HELLO, /UserConsentVerifier/);
     /* The dialog verifies the credential; the secret must never reach stdout. */

@@ -10,7 +10,14 @@ Updates (in-place, under zephyr_one/):
   - package.json              "version"
 
 Also writes GITHUB_ENV keys when present:
-  ZEPHYR_ONE_VERSION_NAME, ZEPHYR_ONE_VERSION_CODE
+  ZEPHYR_ONE_VERSION_NAME, ZEPHYR_ONE_VERSION_CODE,
+  ZEPHYR_ONE_FULL_VERSION, ZEPHYR_ONE_PRERELEASE
+
+The desktop release flow appends the pre label OUTSIDE this script
+(workflow_dispatch inputs tag + prerelease_label), so the raw tag arriving
+here is already the full one-v0.1.20pre15. package.json keeps the marketing
+version only (0.1.20, installer-safe); the full display build travels on
+ZEPHYR_ONE_FULL_VERSION and the suffix alone on ZEPHYR_ONE_PRERELEASE.
 """
 from __future__ import annotations
 
@@ -39,6 +46,26 @@ def parse_version(raw: str | None) -> str:
     if not match:
         raise SystemExit(f"Cannot derive semantic version from: {value!r}")
     return match.group(1).split("+", 1)[0]
+
+
+def split_prerelease(raw: str | None) -> str:
+    """Recover the `preN` suffix from the raw release tag ('' when stable).
+
+    Matches the desktop release convention one-v0.1.20pre15 -> pre15.
+    parse_version() intentionally strips it for the marketing version; this
+    keeps it on a separate channel so About can show it without changing
+    package.json shape.
+    """
+    text = (raw or os.environ.get("ZEPHYR_ONE_VERSION") or "").strip()
+    match = re.search(r"(pre\d+)\s*$", text, re.IGNORECASE)
+    return match.group(1).lower() if match else ""
+
+
+def full_display_version(version: str, prerelease: str) -> str:
+    """Marketing version plus pre suffix for display (0.1.20 + pre15)."""
+    if prerelease and not version.lower().endswith(prerelease.lower()):
+        return f"{version}{prerelease}"
+    return version
 
 
 def version_code(version: str, fallback: str | None = None) -> str:
@@ -97,30 +124,57 @@ def atomic_write_text(path: Path, text: str) -> None:
             pass
 
 
-def patch_package_json(version: str) -> None:
+def patch_package_json(version: str, prerelease: str = "") -> None:
     path = ROOT / "package.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["version"] = version
     atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    # Shell-side display slot. package.json keeps the marketing version only;
+    # the full display build (marketing + pre) lives in
+    # src/js/shell/version.js as APP_VERSION + APP_PRERELEASE, stamped here
+    # so CI is the single source of truth.
+    shell_version = ROOT / "src" / "js" / "shell" / "version.js"
+    if shell_version.exists():
+        text = shell_version.read_text(encoding="utf-8")
+        text = re.sub(
+            r"export const APP_VERSION = '[^']*';",
+            f"export const APP_VERSION = '{version}';",
+            text,
+            count=1,
+        )
+        if "export const APP_PRERELEASE" in text:
+            text = re.sub(
+                r"export const APP_PRERELEASE = '[^']*';",
+                f"export const APP_PRERELEASE = '{prerelease}';",
+                text,
+                count=1,
+            )
+        atomic_write_text(shell_version, text)
 
 
 def main() -> None:
     raw = sys.argv[1] if len(sys.argv) > 1 else None
     version = parse_version(raw)
+    prerelease = split_prerelease(raw)
+    full = full_display_version(version, prerelease)
     # Prefer explicit ZEPHYR_ONE_VERSION_CODE only — never GITHUB_RUN_NUMBER
     # (run id is not a product version; one-v0.1.8 must become 108, not 27).
     code = version_code(version, os.environ.get("ZEPHYR_ONE_VERSION_CODE"))
-    patch_package_json(version)
+    patch_package_json(version, prerelease)
 
     env_file = os.environ.get("GITHUB_ENV")
     if env_file:
         with open(env_file, "a", encoding="utf-8") as f:
             f.write(f"ZEPHYR_ONE_VERSION_NAME={version}\n")
             f.write(f"ZEPHYR_ONE_VERSION_CODE={code}\n")
+            f.write(f"ZEPHYR_ONE_FULL_VERSION={full}\n")
+            f.write(f"ZEPHYR_ONE_PRERELEASE={prerelease}\n")
 
     # ASCII only: Windows runners default to cp1252 and choke on arrows/CJK.
     print(f"ZEPHYR_ONE_VERSION_NAME={version}")
     print(f"ZEPHYR_ONE_VERSION_CODE={code}")
+    print(f"ZEPHYR_ONE_FULL_VERSION={full}")
+    print(f"ZEPHYR_ONE_PRERELEASE={prerelease}")
     print(f"stamped package.json -> {version}")
 
 

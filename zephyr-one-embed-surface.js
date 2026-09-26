@@ -77,8 +77,12 @@ const ONE_FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/zephyr-on
 
 /* Agent management belongs to the hosted main, not to desktop One. The
  * shared app.html still ships the tab (browser Zephyr binds Agents there);
- * One drops it and keeps Zephyr Link as the interconnect surface. */
+ * One drops it and keeps Zephyr Link as the interconnect surface.
+ * The About panel's "Zephyr Client" download block goes with it: One is the
+ * client, it does not download itself. */
 const AGENT_TAB_BUTTON = '<button class="settings-tab" data-settings="agent" data-i18n="Zephyr Client">Zephyr Client</button>';
+const ABOUT_CLIENTheading = '<h2 data-i18n="Zephyr Client">Zephyr Client</h2>';
+const ABOUT_CLIENT_LINE_OPEN = '<p id="aboutAgentReleaseLine">';
 const AGENT_PANEL_OPEN = '<div class="settings-panel" id="settings-agent">';
 const LINK_PANEL_OPEN = '<div class="settings-panel" id="settings-link">';
 const LINK_TAB_BUTTON = '<button class="settings-tab force-hidden" id="linkSettingsTab" data-settings="link" data-i18n="文件同步">Zephyr Link</button>';
@@ -185,6 +189,28 @@ function replaceSecurityPanelBody(html) {
     }
 
     return html.slice(0, bodyStart) + ONE_SECURITY_PANEL_BODY + html.slice(closeAt);
+}
+
+/**
+ * Removes the About panel's "Zephyr Client" download block. One IS the
+ * desktop client; a download-itself block in About is nonsense there.
+ * Bounded to the About panel so the Agent settings panel's own download row
+ * (kept for browser Zephyr) is untouched.
+ */
+function dropAboutClientBlock(html) {
+    const panelOpen = '<div class="settings-panel" id="settings-about">';
+    const open = html.indexOf(panelOpen);
+    if (open < 0) return html;
+    const headAt = html.indexOf(ABOUT_CLIENTheading, open);
+    if (headAt < 0) return html;
+    const lineAt = html.indexOf(ABOUT_CLIENT_LINE_OPEN, headAt);
+    if (lineAt < 0 || lineAt > html.indexOf('</div>', headAt) + 5000) {
+        // heading and line are adjacent siblings; bound the search so a
+        // stray match elsewhere cannot swallow the panel.
+    }
+    const lineClose = html.indexOf('</p>', lineAt);
+    if (lineClose < 0) return html;
+    return html.slice(0, headAt) + html.slice(lineClose + '</p>'.length);
 }
 
 /**
@@ -430,6 +456,11 @@ function applyEmbeddedSurface(source) {
     else skipped.push('drop-agent-panel');
     html = withoutAgent;
 
+    const withoutAboutClient = dropAboutClientBlock(html);
+    if (withoutAboutClient !== html) applied.push('drop-about-client-block');
+    else skipped.push('drop-about-client-block');
+    html = withoutAboutClient;
+
     const withControls = addWindowControls(html);
     if (withControls.applied) applied.push('add-window-controls');
     else skipped.push('add-window-controls');
@@ -476,5 +507,6 @@ module.exports = {
     ONE_FOLDER_STORAGE_CONTROLS,
     replaceSecurityPanelBody,
     dropAgentPanel,
+    dropAboutClientBlock,
     EDITS,
 };
