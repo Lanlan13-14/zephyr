@@ -823,6 +823,12 @@ private fun AiAttachmentTray(attachments: List<AiAttachment>, onRemove: (String)
     }
 }
 
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / 1024f / 1024f)
+    bytes >= 1024 -> "%.1f KB".format(bytes / 1024f)
+    else -> "$bytes B"
+}
+
 @Composable
 private fun AiCapsuleComposer(
     model: String,
