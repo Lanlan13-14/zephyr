@@ -30,6 +30,11 @@ android {
         targetSdk = ZephyrBuild.TARGET_SDK
         versionCode = ZephyrBuild.VERSION_CODE
         versionName = ZephyrBuild.VERSION_NAME
+        // versionName stays "1.0.0": the release workflow asserts it, and the pre
+        // number lives only in the tag name. PRE_LABEL carries that number into
+        // the app so the diagnostics page can show "1.0.0pre97" instead of "1.0.0".
+        val preLabel = (project.findProperty("zephyr.preLabel") as? String).orEmpty().trim()
+        buildConfigField("String", "PRE_LABEL", "\"$preLabel\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // Declared here as well as in release so both variants resolve the manifest

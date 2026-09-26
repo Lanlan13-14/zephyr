@@ -725,11 +725,15 @@ internal fun BackupDestination(account: AccountContainer, onUnavailable: () -> U
     BackupRestoreScreen(localMode = account.isLocalMode, onUnavailable = onUnavailable, onBack = onBack)
 }
 
+/** "1.0.0" plus the pre-release label baked in at build time, e.g. "1.0.0pre97". */
+internal fun displayedAppVersion(): String =
+    BuildConfig.VERSION_NAME + BuildConfig.PRE_LABEL
+
 @Composable
 internal fun RuntimeDestination(account: AccountContainer, onBack: () -> Unit) {
     val status by account.syncEngine.status.collectAsState(initial = one.zephyr.mobile.model.SyncStatus.unbound())
     RuntimeStatusScreen(
-        appVersion = BuildConfig.VERSION_NAME,
+        appVersion = displayedAppVersion(),
         localMode = account.isLocalMode,
         pending = status.pendingCount,
         conflicts = status.conflictCount,
@@ -797,7 +801,7 @@ internal fun DiagnosticsLiveDestination(
     val status by account.syncEngine.status.collectAsState(initial = one.zephyr.mobile.model.SyncStatus.unbound())
     val lastRound by account.syncEngine.lastRoundResult.collectAsState(initial = null)
     one.zephyr.mobile.feature.tools.DiagnosticsLiveRoute(
-        appVersion = BuildConfig.VERSION_NAME,
+        appVersion = displayedAppVersion(),
         localMode = account.isLocalMode,
         bindingLabel = account.binding.username + " @ " + account.binding.deviceName,
         pending = status.pendingCount,

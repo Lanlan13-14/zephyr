@@ -25,7 +25,7 @@ class TerminalDockRoutingTest {
             TerminalDockItem.NOTES to TerminalDockLeave.NOTES,
             TerminalDockItem.DOCKER to TerminalDockLeave.DOCKER,
             TerminalDockItem.STATS to TerminalDockLeave.STATS,
-            TerminalDockItem.THEME to TerminalDockLeave.APPEARANCE,
+            TerminalDockItem.THEME to TerminalDockLeave.STAY,
             TerminalDockItem.DISCONNECT to TerminalDockLeave.STAY,
         )
         assertEquals(TerminalDockItem.entries.toSet(), expected.keys)

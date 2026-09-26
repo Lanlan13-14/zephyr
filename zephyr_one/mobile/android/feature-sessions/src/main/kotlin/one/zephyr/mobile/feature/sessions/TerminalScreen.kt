@@ -56,6 +56,7 @@ import one.zephyr.mobile.ui.theme.ZephyrRadius
 import one.zephyr.mobile.ui.component.CleartextProtocolWarning
 import one.zephyr.mobile.ui.state.PageStateScaffold
 import one.zephyr.mobile.ui.theme.ZephyrSpacing
+import one.zephyr.mobile.ui.theme.ZephyrPalette
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 
@@ -152,7 +153,24 @@ private fun DemoTerminalSurface(
     onCopy: () -> Unit,
     onPaste: () -> Unit,
 ) {
-    val palette = ZephyrTheme.palette
+    val appPalette = ZephyrTheme.palette
+    // 外观 flips the terminal canvas only. The rest of the app keeps its theme.
+    val canvasDark = workspace?.canvasDark ?: appPalette.dark
+    val palette = remember(appPalette, canvasDark) {
+        if (canvasDark == appPalette.dark) {
+            appPalette
+        } else {
+            val flipped = ZephyrPalette.of(appPalette.id, canvasDark)
+            appPalette.copy(
+                dark = canvasDark,
+                surfaces = flipped.surfaces,
+                onBackground = flipped.onBackground,
+                onFloating = flipped.onFloating,
+                onFloatingMuted = flipped.onFloatingMuted,
+                onFloatingSubtle = flipped.onFloatingSubtle,
+            )
+        }
+    }
     val baseColors = remember(palette) { terminalChromeColors(palette) }
     val colors = remember(baseColors, workspace?.customBackgroundColor, workspace?.customSelectionColor) {
         baseColors.copy(

@@ -426,8 +426,18 @@ private fun ConnectionCard(
     ) {
         Column(Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.Top,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 90.dp)
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            // A card with no remark and no badges is only two lines tall, so the
+            // row fills the card's minimum height and centres its content. With a
+            // remark or badges the row grows past the minimum and stays top-aligned.
+            verticalAlignment = if (remark.isEmpty() && connection.tags.isEmpty() &&
+                connection.syncState != SyncState.PENDING_LOCAL &&
+                connection.syncState != SyncState.CONFLICTED &&
+                connection.residency != Residency.SHARED_ONLINE_ONLY
+            ) Alignment.CenterVertically else Alignment.Top,
         ) {
             Box(
                 modifier = Modifier
