@@ -112,3 +112,16 @@ test('server resolveRoutePlan accepts agent bastion prefix in jump chain', () =>
   assert.match(app, /agent:\$\{(?:a\.agentId|id)\}/);
   assert.match(app, /在线 Agent 跳板机/);
 });
+
+test('a connected Agent heartbeat updates the bastion choice the hop list reads', () => {
+  /* Hello records the choice once, and the switch used to be locked while
+   * connected, so an Agent that was online never appeared. The heartbeat now
+   * carries the current choice and the server applies it in place. */
+  const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
+  assert.match(controller, /void setBastionEnabled\(bool enabled\)/);
+  assert.match(controller, /'type': 'ping'[\s\S]{0,160}'bastion': _config\.bastionEnabled/);
+  const manager = read('file-agent-manager.js');
+  assert.match(manager, /conn\.capabilities\.bastion = msg\.bastion/);
+  const ui = read('zephyr_agent/lib/screens/home_screen.dart');
+  assert.match(ui, /ctrl\.setBastionEnabled\(v\)/);
+});

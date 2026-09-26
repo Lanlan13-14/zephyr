@@ -118,6 +118,23 @@ class AgentController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The main end only learns the bastion choice from hello, so a change made
+  /// while connected never reached the hop list. Push the current choice
+  /// immediately; the periodic heartbeat keeps carrying it afterwards.
+  void setBastionEnabled(bool enabled) {
+    _config.bastionEnabled = enabled;
+    notifyListeners();
+    if (_status == AgentStatus.online) _sendControlPing();
+  }
+
+  void _sendControlPing() {
+    _send({
+      'type': 'ping',
+      'time': DateTime.now().millisecondsSinceEpoch,
+      'bastion': _config.bastionEnabled,
+    });
+  }
+
   // ─── Device enrollment ────────────────────────────────────────
 
   /// Starts a bind: creates the pending enrollment and surfaces bindId /
@@ -857,7 +874,7 @@ class AgentController extends ChangeNotifier {
         _maybeReconnect();
         return;
       }
-      _send({'type': 'ping', 'time': DateTime.now().millisecondsSinceEpoch});
+      _sendControlPing();
     });
   }
 
