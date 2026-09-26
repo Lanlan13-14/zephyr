@@ -120,11 +120,15 @@ class AgentController extends ChangeNotifier {
 
   /// The main end only learns the bastion choice from hello, so a change made
   /// while connected never reached the hop list. Push the current choice
-  /// immediately; the periodic heartbeat keeps carrying it afterwards.
+  /// immediately; the periodic heartbeat keeps carrying it afterwards. The
+  /// Agent-side tunnel must come up in the same motion: without it the hop
+  /// appears in the picker while every dial through it dies.
   void setBastionEnabled(bool enabled) {
     _config.bastionEnabled = enabled;
     notifyListeners();
-    if (_status == AgentStatus.online) _sendControlPing();
+    if (_status != AgentStatus.online) return;
+    _sendControlPing();
+    enabled ? _maybeStartBastionTunnel() : _linkRuntime.markTunnelDown();
   }
 
   void _sendControlPing() {

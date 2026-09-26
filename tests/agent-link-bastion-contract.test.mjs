@@ -120,6 +120,7 @@ test('a connected Agent heartbeat updates the bastion choice the hop list reads'
   const controller = read('zephyr_agent/lib/agent/agent_controller.dart');
   assert.match(controller, /void setBastionEnabled\(bool enabled\)/);
   assert.match(controller, /'type': 'ping'[\s\S]{0,160}'bastion': _config\.bastionEnabled/);
+  assert.match(controller, /enabled \? _maybeStartBastionTunnel\(\) : _linkRuntime\.markTunnelDown\(\)/);
   const manager = read('file-agent-manager.js');
   assert.match(manager, /conn\.capabilities\.bastion = msg\.bastion/);
   const ui = read('zephyr_agent/lib/screens/home_screen.dart');

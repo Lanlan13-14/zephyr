@@ -9607,9 +9607,6 @@ if (ZEPHYR_ONE_EMBEDDED) {
     mountZephyrOneLinkRoutes(app, {
         linkSync: oneLinkSync,
         requireUser,
-        listLocalBastionAgents: (req) => (fileAgentManager
-            ? fileAgentManager.listBastionAgentsForUser(req.user)
-            : []),
     });
     oneLinkInitiator = new OneLinkInitiator({
         getIdentity: () => {
@@ -9627,6 +9624,19 @@ if (ZEPHYR_ONE_EMBEDDED) {
     });
     oneLinkSync.start();
 }
+
+/* The hop picker reads /api/one/link/agent-bastions on every client, but the
+ * block above only exists inside the embedded desktop core. A hosted main
+ * never set ZEPHYR_ONE_EMBEDDED, so the route was never registered and the
+ * picker swallowed the resulting 404 as an empty list. Mount just that one
+ * route here; enrollment, sync and unbind stay desktop-only. */
+app.get('/api/one/link/agent-bastions', requireUser, (req, res, next) => {
+    if (ZEPHYR_ONE_EMBEDDED) return next();
+    const agents = fileAgentManager
+        ? fileAgentManager.listBastionAgentsForUser(req.user)
+        : [];
+    res.json({ ok: true, source: 'local', agents });
+});
 
 app.get('/healthz', (req, res) => {
     if (ZEPHYR_ONE_EMBEDDED) {
