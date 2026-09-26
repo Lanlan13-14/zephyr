@@ -71,6 +71,9 @@ interface SshEngine {
 
     suspend fun exec(sessionId: String, command: String): Result<SshExecResult>
 
+    /** True while [sessionId] still names a live engine session. */
+    fun isSessionLive(sessionId: String): Boolean = false
+
     /**
      * Streaming exec for `docker logs -f` / `docker pull`.
      * Completes after [SshExecEvent.Closed]. Cancel the collector to kill the remote process.
