@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/zephyr-mark.svg" width="96" height="96" alt="Zephyr Logo" />
+  <img src="../public/zephyr-mark.svg" width="96" height="96" alt="Zephyr Logo" />
 </p>
 
 <h1 align="center">Zephyr</h1>
@@ -9,12 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="#english">English</a> | <a href="#chinese">中文</a>
+  <a href="#english">English</a> | <a href="#中文">中文</a>
 </p>
 
 ---
 
-<a name="english"></a>
 ## English
 
 ### 1. The Crisis of Sovereignty & The Philosophy of the Wind
@@ -43,30 +42,32 @@ In fluid dynamics and classical mythology, **Zephyr** (*Zephyrus*) is the direct
 
 Zephyr realizes this vision through five strictly coordinated subsystems:
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        Zephyr One Clients                              │
-│   Desktop (Electron + Embedded Core) │ Android (Compose) │ iOS (Swift)  │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ ZSL/2 Post-Quantum Envelope
-┌───────────────────────────────────▼────────────────────────────────────┐
-│                       Zephyr Transport Plane                           │
-│     ZSL/2 (ML-KEM-768 + AES-GCM) │ WebSocket │ Mesh Tunnel Matrix      │
-└───────────────────┬─────────────────────────────────┬──────────────────┘
-                    │                                 │
-┌───────────────────▼───────────────┐ ┌───────────────▼──────────────────┐
-│      Zephyr Server Control        │ │      Zephyr Worker Data Plane   │
-│  Node.js Control Plane & APIs     │ │  Go High-Concurrency PTY Daemon │
-│  better-sqlite3 State Store       │ │  Ring-Buffer Session Persistence│
-│  ML-KEM-768 Credential Encryption │ │  Telnet IAC/NAWS Protocol Engine │
-└───────────────────┬───────────────┘ └───────────────┬──────────────────┘
-                    │                                 │
-┌───────────────────▼───────────────┐ ┌───────────────▼──────────────────┐
-│       Zephyr AI & Cell            │ │    Zephyr Agent & Edge Mesh     │
-│  Multi-Provider Agent Sandbox     │ │  Ephemeral Unidirectional Tunnel│
-│  Chromium Automation & Planner    │ │  MS-RDPEFS \\tsclient Bridge    │
-│  Connection-Scoped Memory Mesh    │ │  Strictly Ephemeral Piercing    │
-└───────────────────────────────────┘ └──────────────────────────────────┘
+```text
++-------------------------------------------------------------+
+|                     Zephyr One Clients                      |
+|  Desktop (Electron + Embedded Core) | Mobile (Compose/Swift)|
++------------------------------+------------------------------+
+                               | ZSL/2 Post-Quantum Envelope
++------------------------------v------------------------------+
+|                    Zephyr Transport Plane                   |
+|   ZSL/2 (ML-KEM-768 + AES-GCM) | Encrypted Transit Mesh     |
++------------------------------+------------------------------+
+                               |
+               +---------------+---------------+
+               |                               |
++--------------v---------------+ +-------------v--------------+
+|     Zephyr Server Control    | |   Zephyr Worker Data Plane  |
+|  Node.js Control Plane & API | |  Go Concurrent PTY Daemon   |
+|  better-sqlite3 Storage      | |  Ring-Buffer Persistence    |
+|  ML-KEM-768 At-Rest Crypto   | |  Telnet Protocol Engine     |
++--------------+---------------+ +-------------+--------------+
+               |                               |
++--------------v---------------+ +-------------v--------------+
+|       Zephyr AI & Cell       | |   Zephyr Agent & Edge Mesh  |
+|  Sandbox Execution Runtime   | |  Ephemeral Reverse Tunnel   |
+|  Chromium Automation Mesh    | |  MS-RDPEFS \\tsclient Bridge|
+|  Contextual Memory Network   | |  Strictly Non-Invasive Bast |
++------------------------------+ +----------------------------+
 ```
 
 #### I. Zephyr One: Absolute Multi-Platform Parity
@@ -116,7 +117,6 @@ The long-term endgame of Zephyr is to render the physical separation between mac
 
 ---
 
-<a name="chinese"></a>
 ## 中文
 
 ### 1. 主权危机与西风哲学
@@ -145,30 +145,32 @@ The long-term endgame of Zephyr is to render the physical separation between mac
 
 Zephyr 通过高度协同的五大核心子系统，将这一流体构想转化为严密的工程实现：
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        Zephyr One 统一客户端                            │
-│   桌面端 (Electron + 本地自持核心) │ 安卓端 (Compose) │ iOS端 (SwiftUI) │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ ZSL/2 抗量子端到端密文信道
-┌───────────────────────────────────▼────────────────────────────────────┐
-│                       Zephyr 传输层拓扑                                │
-│     ZSL/2 (ML-KEM-768 + AES-GCM) │ WebSocket │ 网格隧道路由矩阵        │
-└───────────────────┬─────────────────────────────────┬──────────────────┘
-                    │                                 │
-┌───────────────────▼───────────────┐ ┌───────────────▼──────────────────┐
-│      Zephyr Server 控制平面       │ │      Zephyr Worker 数据平面     │
-│  Node.js 策略调度与 REST/WS API   │ │  Go 语言底层高并发 PTY 守护进程 │
-│  better-sqlite3 状态存储引擎      │ │  定长内存环形缓冲区 (Ring Buffer)│
-│  敏感凭据 ML-KEM-768 落盘加密     │ │  Telnet IAC/NAWS/TTYPE 双向引擎 │
-└───────────────────┬───────────────┘ └───────────────┬──────────────────┘
-                    │                                 │
-┌───────────────────▼───────────────┐ ┌───────────────▼──────────────────┐
-│       Zephyr AI & Cell            │ │    Zephyr Agent & 边缘跳板      │
-│  多模型智能体沙盒与任务规划器     │ │  单向反向穿透轻量跳板            │
-│  Chromium 浏览器自动化与截图分析  │ │  MS-RDPEFS \\tsclient 磁盘桥接   │
-│  连接绑定的长期 Memory 知识网络   │ │  按需拉起，用完即隐              │
-└───────────────────────────────────┘ └──────────────────────────────────┘
+```text
++-------------------------------------------------------------+
+|                     Zephyr One 统一客户端                   |
+|   桌面端 (Electron + 本地核心) | 移动端 (Kotlin / Swift)    |
++------------------------------+------------------------------+
+                               | ZSL/2 抗量子端到端密文信道
++------------------------------v------------------------------+
+|                     Zephyr 传输层拓扑                       |
+|   ZSL/2 (ML-KEM-768 + AES-GCM) | 全密文网格隧道路由         |
++------------------------------+------------------------------+
+                               |
+               +---------------+---------------+
+               |                               |
++--------------v---------------+ +-------------v--------------+
+|    Zephyr Server 控制平面    | |   Zephyr Worker 数据平面   |
+|  Node.js 策略调度与 REST API | |  Go 语言底层高并发 PTY 守护|
+|  better-sqlite3 状态存储     | |  定长内存环形缓冲区持久化  |
+|  敏感凭据 ML-KEM-768 落盘加密| |  Telnet 协议解析与转发     |
++--------------+---------------+ +-------------+--------------+
+               |                               |
++--------------v---------------+ +-------------v--------------+
+|       Zephyr AI & Cell       | |   Zephyr Agent & 边缘跳板  |
+|  多模型智能体沙盒执行环境    | |  单向出站反向穿透轻量跳板  |
+|  Chromium 浏览器自动化       | |  MS-RDPEFS \\tsclient 桥接 |
+|  上下文绑定的长期 Memory 网络| |  严格非侵入式按需调用      |
++------------------------------+ +----------------------------+
 ```
 
 #### 一、 Zephyr One：全平台无差别的绝对趋同（Strict Parity）
