@@ -411,6 +411,16 @@
             </div>
         </div>
 
+        <!-- 分屏切换器与几何比例菜单 -->
+        <div class="splitter" id="splitter" title="拖动调整分屏比例，双击均分" data-i18n-title="拖动调整分屏比例，双击均分"><i></i>
+            <div class="ratio" id="ratioMenu">
+                <button type="button" data-c="minmax(0,1fr) 14px minmax(0,1fr)" class="on" title="均分" data-i18n-title="均分" aria-label="均分" data-i18n-aria-label="均分"><svg viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="16" height="10" rx="2.5"/><line x1="9" y1="1" x2="9" y2="11"/></svg></button>
+                <button type="button" data-c="minmax(0,2fr) 14px minmax(0,1fr)" title="左宽" data-i18n-title="左宽" aria-label="左宽" data-i18n-aria-label="左宽"><svg viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="16" height="10" rx="2.5"/><line x1="12" y1="1" x2="12" y2="11"/></svg></button>
+                <button type="button" data-c="minmax(0,1fr) 14px minmax(0,2fr)" title="右宽" data-i18n-title="右宽" aria-label="右宽" data-i18n-aria-label="右宽"><svg viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="16" height="10" rx="2.5"/><line x1="6" y1="1" x2="6" y2="11"/></svg></button>
+            </div>
+        </div>
+        <div class="focus-ring" id="focusRing"></div>
+
         <!-- 移动端底部固定栏：辅助键，位于原 CSS 图标栏和键盘之间 -->
         <div class="terminal-bottom-bar" id="terminalBottomBar" aria-label="移动端辅助键栏" data-i18n-aria-label="移动端辅助键栏">
             <div class="mobile-aux-keys" id="mobileAuxKeys" aria-label="移动端辅助键" data-i18n-aria-label="移动端辅助键">

@@ -48,6 +48,15 @@
     box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+/* 45° inclined pin button */
+.pinbtn svg {
+    transform: rotate(45deg);
+}
+.pinbtn.on {
+    background: rgba(10, 132, 255, .16);
+    color: var(--accent);
+}
+
 /* Every top-level secondary panel may be pinned. */
 /* Resting panels intentionally have `transition: none !important` so Motion.drag
    can bake geometry without a jump. Pinning is a discrete layout morph, not a

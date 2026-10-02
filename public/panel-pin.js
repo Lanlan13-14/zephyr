@@ -85,6 +85,99 @@ function halfInset(page) {
     }, 0);
 }
 
+function refreshDockState(page) {
+    if (typeof document === 'undefined') return;
+    const panels = panelGroup(page);
+    const sides = panels.map((x) => x.dataset.pinSide);
+    const hasL = sides.includes('left'), hasR = sides.includes('right'), hasB = sides.includes('bottom') || panels.some((x) => x.dataset.pinMode === 'half');
+    const n = panels.length;
+    delete document.body.dataset.fmdock;
+    if (page?.dataset) delete page.dataset.fmdock;
+    if (n === 0) return;
+    let mode = '';
+    if (hasB && n > 1) mode = 'bottom2';
+    else if (hasB) mode = 'bottom';
+    else if (hasL && hasR) mode = 'both';
+    else if (hasL) mode = 'left';
+    else if (hasR) mode = 'right';
+    if (mode) {
+        document.body.dataset.fmdock = mode;
+        if (page?.dataset) page.dataset.fmdock = mode;
+    }
+}
+
+let focusRing = null;
+function ensureFocusRing() {
+    if (typeof document === 'undefined') return null;
+    if (!focusRing) focusRing = document.getElementById('focusRing');
+    if (!focusRing && document.body) {
+        focusRing = document.createElement('div');
+        focusRing.id = 'focusRing';
+        focusRing.className = 'focus-ring';
+        document.body.appendChild(focusRing);
+    }
+    return focusRing;
+}
+
+function paneOfTerm(t) {
+    if (!t) return 'left';
+    return t.dataset?.pane || (t.closest?.('#paneRight, .slot-2') ? 'right' : 'left');
+}
+
+export function setActivePane(which) {
+    if (typeof document === 'undefined') return;
+    if (which) document.body.dataset.activePane = which;
+    else delete document.body.dataset.activePane;
+    if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+        window.requestAnimationFrame(updateFocusRing);
+    }
+}
+
+export function updateFocusRing() {
+    if (typeof document === 'undefined') return;
+    const ring = ensureFocusRing();
+    const which = document.body.dataset.activePane;
+    if (!which || !ring) {
+        if (ring) ring.style.display = 'none';
+        return;
+    }
+    const ws = document.getElementById('workspace') || document.getElementById('terminalWorkspace') || document.querySelector('.ws, .terminal-workspace');
+    if (!ws) {
+        ring.style.display = 'none';
+        return;
+    }
+    const wr = ws.getBoundingClientRect();
+    const rects = [];
+    const push = (el) => {
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return;
+        rects.push(r);
+    };
+    if (document.body.classList.contains('view-single') || ws.classList.contains('layout-1') || ws.classList.contains('layout-0')) {
+        push(document.querySelector('.ws > .term, .terminal-window.slot-1, .terminal-window:not(.minimized-keepalive)'));
+        document.querySelectorAll('.fm.docked, .pinned').forEach(push);
+    } else {
+        push(document.querySelector('.term[data-pane="' + which + '"], .terminal-window.slot-' + (which === 'right' ? '2' : '1')));
+        push(document.querySelector('.fm.docked[data-pane="' + which + '"], .pinned[data-pin-side="' + which + '"]'));
+        const bottom = document.querySelector('.fm.docked[data-side="bottom"], .pinned[data-pin-mode="half"]');
+        if (bottom && (bottom.dataset?.pane === which || !bottom.dataset?.pane)) push(bottom);
+    }
+    if (!rects.length) {
+        ring.style.display = 'none';
+        return;
+    }
+    const L = Math.min(...rects.map((r) => r.left)) - wr.left;
+    const T = Math.min(...rects.map((r) => r.top)) - wr.top;
+    const R = Math.max(...rects.map((r) => r.right)) - wr.left;
+    const B = Math.max(...rects.map((r) => r.bottom)) - wr.top;
+    ring.style.display = 'block';
+    ring.style.left = `${L - 3}px`;
+    ring.style.top = `${T - 3}px`;
+    ring.style.width = `${R - L + 4}px`;
+    ring.style.height = `${B - T + 4}px`;
+}
+
 function applyInsets(page, { bottomOverride = null } = {}) {
     const left = sideInset(page, 'left');
     const right = sideInset(page, 'right');
@@ -98,6 +191,10 @@ function applyInsets(page, { bottomOverride = null } = {}) {
     page.classList.toggle('pin-has-left', left > 0);
     page.classList.toggle('pin-has-right', right > 0);
     page.classList.toggle('pin-has-bottom', bottom > 0);
+    refreshDockState(page);
+    if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+        window.requestAnimationFrame(updateFocusRing);
+    }
 }
 
 function bringToFront(panel) {
@@ -212,6 +309,10 @@ function syncChrome(panel) {
         button.classList.toggle('on', active);
         button.setAttribute('aria-pressed', String(active));
     });
+    panel.querySelectorAll('.pinbtn').forEach((button) => {
+        button.classList.toggle('on', !!side);
+        button.setAttribute('aria-pressed', String(!!side));
+    });
     panel.querySelectorAll('.panel-resize-handle').forEach((handle) => {
         const edge = handle.dataset.resizeEdge || (handle.classList.contains('left') ? 'left' : 'right');
         handle.style.display = side && mode === 'side' && edge === side ? 'none' : '';
@@ -232,6 +333,7 @@ function pin(panel, side) {
     const width = stack[0]?.offsetWidth || quarterWidth(scopeFor(page));
     panel.dataset.pinSide = side;
     panel.dataset.pinMode = 'side';
+    panel.dataset.rememberedPinSide = side;
     panel.style.width = `${width}px`;
     pinned.add(panel);
     place(panel, 'side', { animate: true });
@@ -526,6 +628,19 @@ export function attachDesktopPanelPin(page, panel, { dragHandle, layoutButton, o
     handle.prepend(makeButton('left', '钉到左边'));
     handle.append(makeButton('right', '钉到右边'));
 
+    const existingSinglePin = panel.querySelector('.pinbtn:not(.panel-pin-btn), #pinBtn, #pinBtn2');
+    if (existingSinglePin) {
+        existingSinglePin.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (panel.dataset.pinSide) unpin(panel);
+            else {
+                const targetSide = panel.dataset.rememberedPinSide || (panel.dataset.pane === 'left' ? 'left' : 'right');
+                pin(panel, targetSide);
+            }
+        });
+    }
+
     handle.addEventListener('pointerdown', (event) => {
         if (event.target.closest('.panel-pin-btn')) event.stopPropagation();
     }, true);
@@ -599,5 +714,33 @@ export function refreshDesktopPanelPin(page) {
 }
 
 if (typeof window !== 'undefined') {
-    window.ZephyrDesktopPanelPin = { attach: attachDesktopPanelPin, refresh: refreshDesktopPanelPin };
+    window.ZephyrDesktopPanelPin = {
+        attach: attachDesktopPanelPin,
+        refresh: refreshDesktopPanelPin,
+        updateFocusRing,
+        setActivePane,
+    };
+    if (typeof document !== 'undefined') {
+        document.addEventListener('pointerdown', (e) => {
+            const input = e.target.closest?.('#cmdInput, .cmd-input, .cmdbar .box, .cmdbar input, .wterm-wrapper, .xterm');
+            if (!input) return;
+            const win = input.closest?.('.terminal-window, .term');
+            let pane = 'left';
+            if (win) {
+                if (win.classList?.contains('slot-2') || win.dataset?.pane === 'right' || win.closest?.('#paneRight')) {
+                    pane = 'right';
+                } else if (win.classList?.contains('slot-1') || win.dataset?.pane === 'left' || win.closest?.('#paneLeft')) {
+                    pane = 'left';
+                }
+            }
+            setActivePane(pane);
+        }, true);
+        window.addEventListener('resize', updateFocusRing);
+        if (typeof MutationObserver !== 'undefined' && document.body) {
+            new MutationObserver(updateFocusRing).observe(document.body, {
+                attributes: true,
+                attributeFilter: ['data-fmdock', 'data-active-pane', 'class'],
+            });
+        }
+    }
 }

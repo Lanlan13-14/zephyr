@@ -18,21 +18,21 @@
 </head>
 <body class="app-body">
     <div class="app-shell">
-        <header class="main-nav">
-            <a class="brand" href="#dashboard"><span id="brandIcon"></span><strong id="brandName">Zephyr</strong></a>
-            <nav class="nav-tabs" aria-label="主导航" data-i18n-aria-label="主导航">
-                <button class="nav-tab active" data-view="dashboard" data-i18n="仪表盘">仪表盘</button>
-                <button class="nav-tab" data-view="activity" data-i18n="活动">活动</button>
-                <button class="nav-tab" data-view="terminal" data-i18n="终端">终端</button>
-                <button class="nav-tab" data-view="remote" data-i18n="远程执行">远程执行</button>
-                <button class="nav-tab force-hidden" id="notesNavTab" data-view="notes" data-i18n="笔记">笔记</button>
+        <header class="main-nav hr-top">
+            <a class="brand" href="#dashboard"><span id="brandIcon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;color:var(--accent)"><path d="M17.5 19H9a7 7 0 116.71-9h1.79a4.5 4.5 0 110 9z"/></svg></span><strong id="brandName">Zephyr</strong></a>
+            <nav class="nav-tabs hr-nav" id="hrNav" aria-label="主导航" data-i18n-aria-label="主导航">
+                <button class="nav-tab active" data-view="dashboard" data-i18n="仪表盘"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg><span>仪表盘</span></button>
+                <button class="nav-tab" data-view="activity" data-i18n="活动"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg><span>活动</span></button>
+                <button class="nav-tab" data-view="terminal" data-i18n="终端"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg><span>终端</span></button>
+                <button class="nav-tab" data-view="remote" data-i18n="远程执行"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg><span>远程执行</span></button>
+                <button class="nav-tab force-hidden" id="notesNavTab" data-view="notes" data-i18n="笔记"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg><span>笔记</span></button>
                 <button class="nav-tab nav-tab-ai force-hidden" id="aiNavTab" data-view="ai">AI</button>
-                <button class="nav-tab" data-view="settings" data-i18n="设置">设置</button>
+                <button class="nav-tab" data-view="settings" data-i18n="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg><span>设置</span></button>
             </nav>
             <div class="nav-actions">
                 <button class="btn-sm ai-floating-btn force-hidden" id="aiFloatingBtn" title="打开 AI 助理" data-i18n-title="打开 AI 助理">AI</button>
                 <!-- Locale selection lives in Settings → Language. -->
-                <button class="btn-sm" id="appThemeToggle" title="切换深浅色" data-i18n-title="切换深浅色">🌓</button>
+                <button class="btn-sm moonbtn" id="appThemeToggle" title="切换深浅色" data-i18n-title="切换深浅色">🌓</button>
                 <button class="btn-sm danger" id="logoutBtn" data-i18n="登出">登出</button>
             </div>
         </header>
