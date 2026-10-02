@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+  <title>Zephyr</title>
+  <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
+  <style>
+    /* ================= Apple G2 Fluid & Liquid Glass Tokens ================= */
+    :root {
+      --sat: env(safe-area-inset-top, 0px);
+      --sab: env(safe-area-inset-bottom, 0px);
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+      --dur-fast: 160ms;
+      --dur-med: 280ms;
+    }
+    html[data-theme="dark"] {
+      --bg-app: #0A0C0F;
+      --surface: #14171A;
+      --surface-raised: #1C1F23;
+      --overlay: rgba(22, 25, 28, 0.85);
+      --chrome: rgba(20, 23, 26, 0.88);
+      --accent: #0A84FF;
+      --accent-hover: #389BFF;
+      --flow: #64D2FF;
+      --green: #30D158;
+      --amber: #FF9F0A;
+      --red: #FF453A;
+      --purple: #BF5AF2;
+      --t1: #FFFFFF;
+      --t2: rgba(255, 255, 255, 0.70);
+      --t3: rgba(255, 255, 255, 0.44);
+      --t4: rgba(255, 255, 255, 0.22);
+      --bd-sub: rgba(255, 255, 255, 0.08);
+      --bd-hi: rgba(255, 255, 255, 0.16);
+      --bd-acc: rgba(10, 132, 255, 0.55);
+      --edge-top: rgba(255, 255, 255, 0.18);
+      --input-bg: rgba(255, 255, 255, 0.05);
+      --badge-bg: rgba(255, 255, 255, 0.08);
+      --card-bg: #14171A;
+      --shadow-pill: 0 16px 40px -8px rgba(0,0,0,.60), inset 0 1px 0 rgba(255,255,255,.12);
+    }
+    html[data-theme="light"] {
+      --bg-app: #F4F6F9;
+      --surface: #FFFFFF;
+      --surface-raised: #F7F9FB;
+      --overlay: rgba(255, 255, 255, 0.88);
+      --chrome: rgba(255, 255, 255, 0.90);
+      --accent: #0A84FF;
+      --accent-hover: #389BFF;
+      --flow: #64D2FF;
+      --green: #1F9D46;
+      --amber: #B25E09;
+      --red: #D70015;
+      --purple: #7D2AC8;
+      --t1: #111418;
+      --t2: rgba(17, 20, 24, 0.72);
+      --t3: rgba(17, 20, 24, 0.48);
+      --t4: rgba(17, 20, 24, 0.28);
+      --bd-sub: rgba(17, 20, 24, 0.08);
+      --bd-hi: rgba(17, 20, 24, 0.16);
+      --bd-acc: rgba(10, 132, 255, 0.55);
+      --edge-top: rgba(255, 255, 255, 0.95);
+      --input-bg: rgba(17, 20, 24, 0.05);
+      --badge-bg: rgba(17, 20, 24, 0.06);
+      --card-bg: #FFFFFF;
+      --shadow-pill: 0 16px 36px -8px rgba(17,24,34,.16), inset 0 1px 0 rgba(255,255,255,.8);
+    }
+
+    * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    html, body { height:100%; overscroll-behavior:none; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+      background: var(--bg-app);
+      color: var(--t1);
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    /* Apple G2 Squircle Continuous Curvature */
+    .card, .conn-card, .sess-card, .sheet, .modal-card,
+    .btn, .tool-btn, .search-box, .input, .select, .textarea,
+    .badge, .chip, .os-badge, #island, #island-pill, .toast, .sess-pill {
+      corner-smoothing: 60%;
+      -webkit-corner-smoothing: 60%;
+    }
+
+    /* App View Container */
+    #app {
+      position: relative;
+      height: 100dvh;
+      width: 100%;
+      max-width: 500px;
+      margin: 0 auto;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Page Header */
+    .page-head {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: calc(var(--sat) + 14px) 18px 10px;
+      background: transparent;
+      z-index: 10;
+    }
+    .page-head h1 {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -.03em;
+      color: var(--t1);
+      flex: 1;
+    }
+    .head-action-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 9999px;
+      border: .5px solid var(--bd-sub);
+      background: var(--surface);
+      color: var(--t1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+      transition: transform var(--dur-fast) var(--ease-out);
+    }
+    .head-action-btn:active { transform: scale(0.92); }
+    .head-action-btn svg { width: 18px; height: 18px; }
+
+    /* Page View Stack */
+    .view-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    .view {
+      position: absolute;
+      inset: 0;
+      overflow-y: auto;
+      padding: 0 16px calc(var(--sab) + 90px);
+      display: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    .view.active { display: block; }
+
+    /* Search & Filter Bar */
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--input-bg);
+      border: .5px solid var(--bd-sub);
+      border-radius: 12px;
+      padding: 0 12px;
+      height: 42px;
+      margin-bottom: 12px;
+      color: var(--t1);
+    }
+    .search-box svg { width: 16px; height: 16px; color: var(--t3); flex: none; }
+    .search-box input {
+      border: 0;
+      background: transparent;
+      outline: none;
+      color: var(--t1);
+      font-size: 14px;
+      flex: 1;
+    }
+    .search-box input::placeholder { color: var(--t3); }
+
+    .chips-bar {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 12px;
+      scrollbar-width: none;
+    }
+    .chips-bar::-webkit-scrollbar { display: none; }
+    .chip {
+      flex: none;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 500;
+      background: var(--surface);
+      border: .5px solid var(--bd-sub);
+      color: var(--t2);
+      cursor: pointer;
+      transition: background var(--dur-fast), color var(--dur-fast);
+    }
+    .chip.on {
+      background: var(--accent);
+      color: #FFF;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Connection Card */
+    .conn-list { display: flex; flex-direction: column; gap: 10px; }
+    .conn-card {
+      background: var(--card-bg);
+      border: .5px solid var(--bd-sub);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: 0 4px 14px -4px rgba(0,0,0,.15);
+      transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast);
+    }
+    .conn-card:active { transform: scale(0.985); }
+    .conn-card-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .os-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 9999px;
+      background: var(--input-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: none;
+    }
+    .os-badge svg { width: 18px; height: 18px; }
+    .conn-title-box { flex: 1; min-width: 0; }
+    .conn-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--t1);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .conn-host {
+      font-size: 12px;
+      font-family: ui-monospace, Menlo, monospace;
+      color: var(--t3);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .proto-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(10, 132, 255, 0.12);
+      color: var(--accent);
+      border: .5px solid rgba(10, 132, 255, 0.24);
+      flex: none;
+    }
+    .conn-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .tag {
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--t3);
+    }
+    .conn-remark {
+      font-size: 12px;
+      color: var(--t2);
+      line-height: 1.4;
+      max-height: 34px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .conn-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+      border-top: .5px solid var(--bd-sub);
+      padding-top: 10px;
+    }
+    .btn-connect {
+      flex: 1;
+      height: 34px;
+      border-radius: 12px;
+      border: 0;
+      background: linear-gradient(180deg, #389BFF, #0A84FF);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px -2px rgba(10, 132, 255, 0.45);
+    }
+    .btn-connect:active { transform: scale(0.96); }
+    .btn-icon-action {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      border: .5px solid var(--bd-sub);
+      background: var(--surface);
+      color: var(--t2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .btn-icon-action:active { transform: scale(0.92); }
+    .btn-icon-action.danger { color: var(--red); }
+
+    /* Sessions View */
+    .sess-card {
+      background: var(--card-bg);
+      border: .5px solid var(--bd-sub);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 4px 14px -4px rgba(0,0,0,.15);
+      margin-bottom: 10px;
+    }
+    .sess-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 9999px;
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+      flex: none;
+    }
+    .sess-info { flex: 1; min-width: 0; }
+    .sess-name { font-size: 15px; font-weight: 600; color: var(--t1); }
+    .sess-meta { font-size: 12px; color: var(--t3); font-family: ui-monospace, Menlo, monospace; }
+
+    /* Activities View */
+    .activity-row {
+      display: flex;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: .5px solid var(--bd-sub);
+    }
+    .act-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 9999px;
+      background: var(--input-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+      flex: none;
+    }
+    .act-content { flex: 1; }
+    .act-msg { font-size: 13px; color: var(--t1); font-weight: 500; }
+    .act-time { font-size: 11px; color: var(--t3); margin-top: 2px; }
+
+    /* Settings View */
+    .settings-group {
+      background: var(--card-bg);
+      border: .5px solid var(--bd-sub);
+      border-radius: 14px;
+      margin-bottom: 14px;
+      overflow: hidden;
+    }
+    .settings-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: .5px solid var(--bd-sub);
+      font-size: 14px;
+      color: var(--t1);
+    }
+    .settings-row:last-child { border-bottom: 0; }
+    .settings-row .spacer { flex: 1; }
+    .btn-logout {
+      width: 100%;
+      height: 44px;
+      border-radius: 14px;
+      border: .5px solid rgba(255, 69, 58, 0.35);
+      background: rgba(255, 69, 58, 0.12);
+      color: #FF453A;
+      font-size: 15px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    /* Terminal Overlay View (Single Pane) */
+    #terminalView {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: #000;
+      display: none;
+      flex-direction: column;
+    }
+    #terminalView.active { display: flex; }
+    .term-topbar {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: calc(var(--sat) + 8px) 12px 8px;
+      background: var(--surface);
+      border-bottom: .5px solid var(--bd-sub);
+    }
+    .term-title {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--t1);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .sess-rail {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding: 4px 12px;
+      background: var(--chrome);
+      border-bottom: .5px solid var(--bd-sub);
+      scrollbar-width: none;
+    }
+    .sess-rail::-webkit-scrollbar { display: none; }
+    .sess-pill {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 11px;
+      background: var(--input-bg);
+      color: var(--t2);
+      cursor: pointer;
+    }
+    .sess-pill.active {
+      background: var(--accent);
+      color: #FFF;
+      font-weight: 600;
+    }
+    .sess-pill .close-tab {
+      width: 14px;
+      height: 14px;
+      border-radius: 9999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+    }
+    .term-frame-box {
+      flex: 1;
+      position: relative;
+      background: #000;
+    }
+    .term-frame {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+    }
+
+    /* Modal / Bottom Sheet */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.5);
+      z-index: 120;
+      display: none;
+      align-items: flex-end;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .modal-overlay.active { display: flex; }
+    .sheet-card {
+      width: 100%;
+      max-height: 85vh;
+      background: var(--overlay);
+      backdrop-filter: blur(32px) saturate(180%);
+      -webkit-backdrop-filter: blur(32px) saturate(180%);
+      border-top: .5px solid var(--edge-top);
+      border-radius: 18px 18px 0 0;
+      padding: 16px 20px calc(var(--sab) + 20px);
+      overflow-y: auto;
+      box-shadow: 0 -18px 48px rgba(0,0,0,.5);
+    }
+    .sheet-grab {
+      width: 36px;
+      height: 4px;
+      border-radius: 9999px;
+      background: var(--t4);
+      margin: 0 auto 12px;
+    }
+    .sheet-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--t1);
+      margin-bottom: 14px;
+    }
+    .form-group {
+      margin-bottom: 12px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: var(--t3);
+      margin-bottom: 4px;
+    }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      height: 40px;
+      background: var(--input-bg);
+      border: .5px solid var(--bd-sub);
+      border-radius: 12px;
+      padding: 0 12px;
+      color: var(--t1);
+      font-size: 14px;
+      outline: none;
+    }
+    .form-group textarea { height: 72px; padding: 8px 12px; resize: none; }
+    .btn-save {
+      width: 100%;
+      height: 42px;
+      border-radius: 12px;
+      border: 0;
+      background: linear-gradient(180deg, #389BFF, #0A84FF);
+      color: #FFF;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+
+    /* Floating Island Navigation (Liquid Glass) */
+    #island {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: calc(var(--sab) + 16px);
+      width: min(88%, 340px);
+      height: 60px;
+      background: var(--chrome);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: .5px solid var(--bd-sub);
+      border-top: .5px solid var(--edge-top);
+      border-radius: 9999px;
+      display: flex;
+      align-items: center;
+      padding: 4px;
+      box-shadow: var(--shadow-pill);
+      z-index: 50;
+      transition: transform var(--dur-med) var(--ease-out), opacity var(--dur-med);
+    }
+    #island.hidden {
+      transform: translate(-50%, 120%);
+      opacity: 0;
+      pointer-events: none;
+    }
+    #island-pill {
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      left: 4px;
+      width: calc((100% - 8px) / 4);
+      background: rgba(10, 132, 255, 0.16);
+      border: .5px solid rgba(10, 132, 255, 0.35);
+      border-radius: 9999px;
+      pointer-events: none;
+      transition: transform 320ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    .island-btn {
+      flex: 1;
+      height: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--t2);
+      font-size: 11px;
+      font-weight: 500;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      cursor: pointer;
+      position: relative;
+      z-index: 1;
+      transition: color var(--dur-fast);
+    }
+    .island-btn svg { width: 18px; height: 18px; }
+    .island-btn.active {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .island-badge {
+      position: absolute;
+      top: 6px;
+      right: 18px;
+      background: var(--red);
+      color: #fff;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      display: none;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      top: calc(var(--sat) + 20px);
+      left: 50%;
+      transform: translateX(-50%) translateY(-30px);
+      background: var(--overlay);
+      backdrop-filter: blur(20px);
+      border: .5px solid var(--bd-sub);
+      color: var(--t1);
+      padding: 8px 18px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 8px 24px rgba(0,0,0,.3);
+      z-index: 200;
+      opacity: 0;
+      pointer-events: none;
+      transition: transform var(--dur-med) var(--ease-out), opacity var(--dur-med);
+    }
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- Page Head (NO Desktop Topbar, NO Sync Pill!) -->
+    <header class="page-head" id="pageHead">
+      <h1 id="pageTitle">Zephyr</h1>
+      <button class="head-action-btn" id="headAddBtn" onclick="openAddModal()" aria-label="新建连接" title="新建连接">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </header>
+
+    <!-- Views Container -->
+    <div class="view-container">
+      <!-- 1. 首页连接视图 -->
+      <section class="view active" id="view-home">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input type="text" id="searchInput" placeholder="搜索名称、主机、标签..." autocomplete="off">
+        </div>
+        <div class="chips-bar" id="chipsBar">
+          <button class="chip on" data-proto="all">全部</button>
+          <button class="chip" data-proto="SSH">SSH</button>
+          <button class="chip" data-proto="RDP">RDP</button>
+          <button class="chip" data-proto="VNC">VNC</button>
+          <button class="chip" data-proto="TELNET">TELNET</button>
+        </div>
+        <div class="conn-list" id="connList">
+          <!-- 实时渲染连接卡片 -->
+        </div>
+      </section>
+
+      <!-- 2. 活跃会话视图 -->
+      <section class="view" id="view-sessions">
+        <div id="sessionList">
+          <!-- 实时渲染运行中会话 -->
+        </div>
+      </section>
+
+      <!-- 3. 活动日志视图 -->
+      <section class="view" id="view-activities">
+        <div class="chips-bar" id="actChipsBar">
+          <button class="chip on" data-range="today">今天</button>
+          <button class="chip" data-range="7d">近 7 天</button>
+          <button class="chip" data-range="30d">近 30 天</button>
+          <button class="chip" data-range="all">全部</button>
+        </div>
+        <div id="activityList">
+          <!-- 实时渲染活动日志 -->
+        </div>
+      </section>
+
+      <!-- 4. 设置视图 -->
+      <section class="view" id="view-settings">
+        <div class="settings-group">
+          <div class="settings-row">
+            <span>当前登录</span>
+            <span class="spacer"></span>
+            <b id="userDisplay">-</b>
+          </div>
+          <div class="settings-row">
+            <span>深浅主题</span>
+            <span class="spacer"></span>
+            <button class="chip on" id="themeToggleBtn" onclick="toggleTheme()">深色</button>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-row">
+            <span>系统架构</span>
+            <span class="spacer"></span>
+            <span style="color:var(--t3)">Zephyr Web (Alpine Linux aarch64)</span>
+          </div>
+          <div class="settings-row">
+            <span>界面规范</span>
+            <span class="spacer"></span>
+            <span style="color:var(--accent)">Apple Fluid G2 Squircle</span>
+          </div>
+        </div>
+        <button class="btn-logout" onclick="handleLogout()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          退出登录
+        </button>
+      </section>
+    </div>
+
+    <!-- Terminal Workstation Overlay (Single Pane) -->
+    <div id="terminalView">
+      <div class="term-topbar">
+        <button class="head-action-btn" onclick="exitTerminal()" title="返回主页">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <div class="term-title">
+          <span class="sess-dot"></span>
+          <span id="termTitleHost">terminal</span>
+        </div>
+        <button class="head-action-btn" onclick="closeCurrentTerminal()" title="断开会话" style="color:var(--red)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="sess-rail" id="sessRail" style="display:none;"></div>
+      <div class="term-frame-box">
+        <iframe id="terminalFrame" class="term-frame" src="about:blank"></iframe>
+      </div>
+    </div>
+
+    <!-- Add / Edit Connection Modal -->
+    <div class="modal-overlay" id="connModal">
+      <div class="sheet-card">
+        <div class="sheet-grab"></div>
+        <div class="sheet-title" id="modalTitle">新建连接</div>
+        <form id="connForm" onsubmit="saveConnection(event)">
+          <input type="hidden" id="connId">
+          <div class="form-group">
+            <label>连接名称 *</label>
+            <input type="text" id="formName" required placeholder="如: 生产 Web 服务器">
+          </div>
+          <div class="form-group">
+            <label>协议 *</label>
+            <select id="formProtocol" onchange="updatePortByProto()">
+              <option value="SSH">SSH</option>
+              <option value="TELNET">TELNET</option>
+              <option value="RDP">RDP</option>
+              <option value="VNC">VNC</option>
+            </select>
+          </div>
+          <div class="form-group" style="display:flex; gap:8px;">
+            <div style="flex:2">
+              <label>主机地址 *</label>
+              <input type="text" id="formHost" required placeholder="IP 或域名">
+            </div>
+            <div style="flex:1">
+              <label>端口 *</label>
+              <input type="number" id="formPort" value="22" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>用户名</label>
+            <input type="text" id="formUser" placeholder="root / ubuntu">
+          </div>
+          <div class="form-group">
+            <label>密码</label>
+            <input type="password" id="formPass" placeholder="留空则使用密钥">
+          </div>
+          <div class="form-group">
+            <label>标签 (逗号分隔)</label>
+            <input type="text" id="formTags" placeholder="生产, Web, 数据库">
+          </div>
+          <div class="form-group">
+            <label>备注 (Markdown)</label>
+            <textarea id="formRemark" placeholder="连接备忘与运维指引..."></textarea>
+          </div>
+          <button type="submit" class="btn-save">保存连接</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Floating Island Navigation (Liquid Glass) -->
+    <nav id="island">
+      <div id="island-pill"></div>
+      <button class="island-btn active" data-root="0" onclick="switchRoot(0)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5L12 3l9 7.5M5 9.5V21h14V9.5"/></svg>
+        <span>首页</span>
+      </button>
+      <button class="island-btn" data-root="1" onclick="switchRoot(1)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9l3 3-3 3M12 15h5"/></svg>
+        <span>会话</span>
+        <span class="island-badge" id="sessBadge">0</span>
+      </button>
+      <button class="island-btn" data-root="2" onclick="switchRoot(2)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span>活动</span>
+      </button>
+      <button class="island-btn" data-root="3" onclick="switchRoot(3)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        <span>设置</span>
+      </button>
+    </nav>
+
+    <!-- Global Toast -->
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script>
+    /* ================= Zephyr Web API Integration ================= */
+    async function api(path, options = {}) {
+      try {
+        const res = await fetch(path, {
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+          ...options
+        });
+        if (res.status === 401) {
+          location.href = '/index.html';
+          return null;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
+        return data;
+      } catch (err) {
+        toast(err.message || '网络请求失败');
+        throw err;
+      }
+    }
+
+    let allConnections = [];
+    let activeSessions = [];
+    let currentSessionId = null;
+    let selectedProto = 'all';
+
+    const OS_ICONS = {
+      windows: '<svg viewBox="0 0 24 24" fill="#0078D4"><path d="M0 0h11v11H0zM13 0h11v11H13zM0 13h11v11H0zM13 13h11v11H13z"/></svg>',
+      macos: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>',
+      ubuntu: '<svg viewBox="0 0 24 24" fill="#E95420"><path d="M17.61.455a3.41 3.41 0 0 0-3.41 3.41 3.41 3.41 0 0 0 3.41 3.41 3.41 3.41 0 0 0 3.41-3.41 3.41 3.41 0 0 0-3.41-3.41zM12.92.8C8.923.777 5.137 2.941 3.148 6.451a4.5 4.5 0 0 1 .26-.007 4.92 4.92 0 0 1 2.585.737A8.316 8.316 0 0 1 12.688 3.6 4.944 4.944 0 0 1 13.723.834 11.008 11.008 0 0 0 12.92.8zm9.226 4.994a4.915 4.915 0 0 1-1.918 2.246 8.36 8.36 0 0 1-.273 8.303 4.89 4.89 0 0 1 1.632 2.54 11.156 11.156 0 0 0 .559-13.089zM3.41 7.932A3.41 3.41 0 0 0 0 11.342a3.41 3.41 0 0 0 3.41 3.409 3.41 3.41 0 0 0 3.41-3.41 3.41 3.41 0 0 0-3.41-3.41zm2.027 7.866a4.908 4.908 0 0 1-2.915.358 11.1 11.1 0 0 0 7.991 6.698 11.234 11.234 0 0 0 2.422.249 4.879 4.879 0 0 1-.999-2.85 8.484 8.484 0 0 1-.836-.136 8.304 8.304 0 0 1-5.663-4.32zm11.405.928a3.41 3.41 0 0 0-3.41 3.41 3.41 3.41 0 0 0 3.41 3.41 3.41 3.41 0 0 0 3.41-3.41 3.41 3.41 0 0 0-3.41-3.41z"/></svg>',
+      debian: '<svg viewBox="0 0 24 24" fill="#D70A53"><circle cx="12" cy="12" r="10"/></svg>',
+      linux: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>'
+    };
+
+    function getOsIcon(c) {
+      const text = `${c.name || ''} ${c.remark || ''} ${(c.tags || []).join(' ')} ${c.host || ''}`.toLowerCase();
+      if (/windows|win10|win11|rdp/i.test(text)) return OS_ICONS.windows;
+      if (/mac|darwin|osx/i.test(text)) return OS_ICONS.macos;
+      if (/ubuntu/i.test(text)) return OS_ICONS.ubuntu;
+      if (/debian/i.test(text)) return OS_ICONS.debian;
+      return OS_ICONS.linux;
+    }
+
+    // Toast
+    let toastTimer = null;
+    function toast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+    }
+
+    // Switch Root Views
+    function switchRoot(idx) {
+      document.querySelectorAll('.view').forEach((v, i) => {
+        v.classList.toggle('active', i === idx);
+      });
+      document.querySelectorAll('.island-btn').forEach((b, i) => {
+        b.classList.toggle('active', i === idx);
+      });
+      document.getElementById('island-pill').style.transform = `translateX(${idx * 100}%)`;
+      const titles = ['Zephyr', '活跃会话', '活动日志', '设置'];
+      document.getElementById('pageTitle').textContent = titles[idx] || 'Zephyr';
+      document.getElementById('headAddBtn').style.display = (idx === 0) ? 'flex' : 'none';
+
+      if (idx === 0) loadConnections();
+      if (idx === 1) renderSessions();
+      if (idx === 2) loadActivities('today');
+    }
+
+    // Sample connections for preview when backend is not reached or empty
+    const SAMPLE_CONNECTIONS = [
+      { id: 'conn_prod_web', name: 'prod-web-01', host: '10.0.8.21', port: 22, protocol: 'SSH', username: 'deploy', tags: ['生产', 'web'], remark: '主生产前端网关节点' },
+      { id: 'conn_redis', name: 'dev-redis-cache', host: '10.0.4.15', port: 6379, protocol: 'SSH', username: 'root', tags: ['开发', '缓存'], remark: 'Redis 集群主节点' },
+      { id: 'conn_win_ops', name: 'win-ops-desktop', host: '192.168.1.100', port: 3389, protocol: 'RDP', username: 'Administrator', tags: ['运维', 'Windows'], remark: '跳板管理机' }
+    ];
+
+    // Load Connections from Real API with preview fallback
+    async function loadConnections() {
+      try {
+        const data = await api('/api/connections');
+        if (data && data.connections && data.connections.length) {
+          allConnections = data.connections;
+        } else {
+          allConnections = SAMPLE_CONNECTIONS;
+        }
+      } catch (e) {
+        allConnections = SAMPLE_CONNECTIONS;
+      }
+      renderConnections();
+    }
+
+    function renderConnections() {
+      const q = document.getElementById('searchInput').value.trim().toLowerCase();
+      const list = allConnections.filter(c => {
+        if (selectedProto !== 'all' && c.protocol !== selectedProto) return false;
+        if (!q) return true;
+        const text = `${c.name} ${c.host} ${(c.tags||[]).join(' ')} ${c.remark||''}`.toLowerCase();
+        return text.includes(q);
+      });
+
+      const container = document.getElementById('connList');
+      if (!list.length) {
+        container.innerHTML = `
+          <div style="text-align:center; padding:48px 0; color:var(--t3);">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:8px;"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
+            <p style="font-size:14px;">没有找到匹配的连接</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = list.map(c => `
+        <article class="conn-card" data-id="${c.id}">
+          <div class="conn-card-top">
+            <div class="os-badge">${getOsIcon(c)}</div>
+            <div class="conn-title-box">
+              <div class="conn-name">${escapeHtml(c.name)}</div>
+              <div class="conn-host">${escapeHtml(c.username || 'root')}@${escapeHtml(c.host)}:${c.port}</div>
+            </div>
+            <span class="proto-badge">${c.protocol}</span>
+          </div>
+          ${(c.tags && c.tags.length) ? `
+            <div class="conn-tags">
+              ${c.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}
+            </div>
+          ` : ''}
+          ${c.remark ? `<div class="conn-remark">${escapeHtml(c.remark)}</div>` : ''}
+          <div class="conn-actions">
+            <button class="btn-icon-action" onclick="editConnection('${c.id}')" title="编辑">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            </button>
+            <button class="btn-icon-action danger" onclick="deleteConnection('${c.id}')" title="删除">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+            <button class="btn-connect" onclick="connectHost('${c.id}')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span>连接</span>
+            </button>
+          </div>
+        </article>
+      `).join('');
+    }
+
+    // Connect Host & Launch Real Terminal
+    async function connectHost(connId) {
+      const c = allConnections.find(x => x.id === connId);
+      if (!c) return;
+
+      toast(`正在连接 ${c.name}...`);
+      const res = await api(`/api/connections/${connId}/open`, { method: 'POST' });
+      if (!res) return;
+
+      const tabId = 'tab_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+      const sshParams = {
+        connectionId: c.id,
+        host: c.host,
+        port: c.port,
+        username: c.username,
+        protocol: c.protocol,
+        encoding: c.encoding || 'utf-8',
+        tabId,
+        sessionId: tabId,
+        embedded: true,
+        timestamp: Date.now()
+      };
+      sessionStorage.setItem(`zephyr_ssh_params_${tabId}`, JSON.stringify(sshParams));
+
+      const sessionObj = {
+        id: tabId,
+        name: c.name,
+        host: `${c.host}:${c.port}`,
+        protocol: c.protocol,
+        connectionId: c.id,
+        startTime: Date.now()
+      };
+      activeSessions.push(sessionObj);
+      updateSessionBadge();
+
+      // Launch in Single-Pane Terminal View
+      openTerminalView(sessionObj);
+    }
+
+    function openTerminalView(session) {
+      currentSessionId = session.id;
+      document.getElementById('termTitleHost').textContent = `${session.name} (${session.host})`;
+      const frame = document.getElementById('terminalFrame');
+      frame.src = `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}`;
+      document.getElementById('terminalView').classList.add('active');
+      document.getElementById('island').classList.add('hidden');
+      renderSessionRail();
+    }
+
+    function exitTerminal() {
+      document.getElementById('terminalView').classList.remove('active');
+      document.getElementById('island').classList.remove('hidden');
+    }
+
+    function closeCurrentTerminal() {
+      if (!currentSessionId) return;
+      sessionStorage.removeItem(`zephyr_ssh_params_${currentSessionId}`);
+      activeSessions = activeSessions.filter(s => s.id !== currentSessionId);
+      updateSessionBadge();
+
+      if (activeSessions.length > 0) {
+        openTerminalView(activeSessions[0]);
+      } else {
+        exitTerminal();
+        switchRoot(0);
+        toast('会话已关闭');
+      }
+    }
+
+    function renderSessionRail() {
+      const rail = document.getElementById('sessRail');
+      if (activeSessions.length <= 1) {
+        rail.style.display = 'none';
+        return;
+      }
+      rail.style.display = 'flex';
+      rail.innerHTML = activeSessions.map(s => `
+        <div class="sess-pill ${s.id === currentSessionId ? 'active' : ''}" onclick="switchTerminalTab('${s.id}')">
+          <span>${escapeHtml(s.name)}</span>
+          <span class="close-tab" onclick="event.stopPropagation(); closeSessionById('${s.id}')">✕</span>
+        </div>
+      `).join('');
+    }
+
+    function switchTerminalTab(id) {
+      const s = activeSessions.find(x => x.id === id);
+      if (s) openTerminalView(s);
+    }
+
+    function closeSessionById(id) {
+      sessionStorage.removeItem(`zephyr_ssh_params_${id}`);
+      activeSessions = activeSessions.filter(s => s.id !== id);
+      updateSessionBadge();
+      if (currentSessionId === id) {
+        if (activeSessions.length) openTerminalView(activeSessions[0]);
+        else exitTerminal();
+      } else {
+        renderSessionRail();
+      }
+    }
+
+    function updateSessionBadge() {
+      const badge = document.getElementById('sessBadge');
+      if (activeSessions.length) {
+        badge.textContent = activeSessions.length;
+        badge.style.display = 'block';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    function renderSessions() {
+      const box = document.getElementById('sessionList');
+      if (!activeSessions.length) {
+        box.innerHTML = `
+          <div style="text-align:center; padding:60px 0; color:var(--t3);">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:8px;"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9l3 3-3 3M12 15h5"/></svg>
+            <p style="font-size:14px;">暂无运行中的活跃会话</p>
+            <button class="chip on" style="margin-top:14px;" onclick="switchRoot(0)">去连接服务器</button>
+          </div>
+        `;
+        return;
+      }
+      box.innerHTML = activeSessions.map(s => `
+        <div class="sess-card">
+          <span class="sess-dot"></span>
+          <div class="sess-info">
+            <div class="sess-name">${escapeHtml(s.name)}</div>
+            <div class="sess-meta">${escapeHtml(s.host)} · ${s.protocol}</div>
+          </div>
+          <button class="btn-connect" style="width:auto; padding:0 14px; height:32px;" onclick="openTerminalView(activeSessions.find(x=>x.id==='${s.id}'))">进入</button>
+          <button class="btn-icon-action danger" style="height:32px; width:32px;" onclick="closeSessionById('${s.id}'); renderSessions();">✕</button>
+        </div>
+      `).join('');
+    }
+
+    // Activities
+    async function loadActivities(range = 'today') {
+      const data = await api('/api/activities');
+      if (!data) return;
+      const list = data.activities || [];
+      const box = document.getElementById('activityList');
+      if (!list.length) {
+        box.innerHTML = '<div style="text-align:center; padding:48px 0; color:var(--t3);">暂无审计活动</div>';
+        return;
+      }
+      box.innerHTML = list.slice(0, 30).map(act => `
+        <div class="activity-row">
+          <div class="act-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+          <div class="act-content">
+            <div class="act-msg">${escapeHtml(act.message || act.action || '系统操作')}</div>
+            <div class="act-time">${new Date(act.timestamp || act.createdAt || Date.now()).toLocaleString()} · ${escapeHtml(act.actor || '本地用户')}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Modal Operations
+    function openAddModal() {
+      document.getElementById('modalTitle').textContent = '新建连接';
+      document.getElementById('connForm').reset();
+      document.getElementById('connId').value = '';
+      document.getElementById('formPort').value = '22';
+      document.getElementById('connModal').classList.add('active');
+    }
+
+    function editConnection(id) {
+      const c = allConnections.find(x => x.id === id);
+      if (!c) return;
+      document.getElementById('modalTitle').textContent = '编辑连接';
+      document.getElementById('connId').value = c.id;
+      document.getElementById('formName').value = c.name || '';
+      document.getElementById('formProtocol').value = c.protocol || 'SSH';
+      document.getElementById('formHost').value = c.host || '';
+      document.getElementById('formPort').value = c.port || 22;
+      document.getElementById('formUser').value = c.username || '';
+      document.getElementById('formPass').value = '';
+      document.getElementById('formTags').value = (c.tags || []).join(', ');
+      document.getElementById('formRemark').value = c.remark || '';
+      document.getElementById('connModal').classList.add('active');
+    }
+
+    async function saveConnection(e) {
+      e.preventDefault();
+      const id = document.getElementById('connId').value;
+      const body = {
+        name: document.getElementById('formName').value.trim(),
+        protocol: document.getElementById('formProtocol').value,
+        host: document.getElementById('formHost').value.trim(),
+        port: Number(document.getElementById('formPort').value),
+        username: document.getElementById('formUser').value.trim(),
+        password: document.getElementById('formPass').value,
+        tags: document.getElementById('formTags').value.split(',').map(s=>s.trim()).filter(Boolean),
+        remark: document.getElementById('formRemark').value.trim()
+      };
+
+      if (id) {
+        await api(`/api/connections/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+        toast('连接已更新');
+      } else {
+        await api('/api/connections', { method: 'POST', body: JSON.stringify(body) });
+        toast('新连接已创建');
+      }
+      document.getElementById('connModal').classList.remove('active');
+      loadConnections();
+    }
+
+    async function deleteConnection(id) {
+      if (!confirm('确定删除该连接？')) return;
+      await api(`/api/connections/${id}`, { method: 'DELETE' });
+      toast('连接已删除');
+      loadConnections();
+    }
+
+    function updatePortByProto() {
+      const proto = document.getElementById('formProtocol').value;
+      const map = { SSH: 22, TELNET: 23, RDP: 3389, VNC: 5900 };
+      document.getElementById('formPort').value = map[proto] || 22;
+    }
+
+    // Theme Toggle
+    function toggleTheme() {
+      const cur = document.documentElement.dataset.theme;
+      const next = cur === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      document.getElementById('themeToggleBtn').textContent = next === 'dark' ? '深色' : '浅色';
+      localStorage.setItem('zephyr_theme', next);
+    }
+
+    async function handleLogout() {
+      if (!confirm('确定登出 Zephyr？')) return;
+      await api('/api/auth/logout', { method: 'POST' }).catch(()=>{});
+      location.href = '/index.html';
+    }
+
+    function escapeHtml(str) {
+      return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // Close Modal on backdrop click
+    document.getElementById('connModal').addEventListener('click', (e) => {
+      if (e.target.id === 'connModal') document.getElementById('connModal').classList.remove('active');
+    });
+
+    // Chips Filter
+    document.querySelectorAll('#chipsBar .chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#chipsBar .chip').forEach(b => b.classList.remove('on'));
+        btn.classList.add('on');
+        selectedProto = btn.dataset.proto;
+        renderConnections();
+      });
+    });
+
+    document.getElementById('searchInput').addEventListener('input', renderConnections);
+
+    // Boot
+    (async function boot() {
+      try {
+        const savedTheme = localStorage.getItem('zephyr_theme');
+        if (savedTheme) {
+          document.documentElement.dataset.theme = savedTheme;
+          document.getElementById('themeToggleBtn').textContent = savedTheme === 'dark' ? '深色' : '浅色';
+        }
+      } catch (e) {}
+      try {
+        const me = await api('/api/auth/me');
+        if (me && me.user) {
+          document.getElementById('userDisplay').textContent = `${me.user.username} (${me.user.role === 'admin' ? '管理员' : '普通用户'})`;
+        }
+      } catch (e) {}
+      await loadConnections();
+    })();
+  </script>
+</body>
+</html>

@@ -9086,7 +9086,15 @@ app.get(['/app.html', '/app'], requirePageAuth, (req, res, next) => {
     if (process.env.ZEPHYR_ONE_EMBEDDED === '1' || req.query.zephyrOne === '1') {
         return sendEmbeddedAppPage(req, res, next);
     }
+    const ua = req.headers['user-agent'] || '';
+    const isMobile = /Android|iPhone|iPod|Mobile/i.test(ua) && !/iPad|Tablet/i.test(ua);
+    if ((isMobile && req.query.desktop !== '1') || req.query.mobile === '1') {
+        return sendNoStorePage(req, res, next, 'mobile.html');
+    }
     return sendNoStorePage(req, res, next, 'app.html');
+});
+app.get(['/mobile.html', '/mobile'], requirePageAuth, (req, res, next) => {
+    return sendNoStorePage(req, res, next, 'mobile.html');
 });
 /* The RDP folder-mapping overlay, referenced by the script tag
  * applyEmbeddedSurface() injects. Served from a route rather than public/ so
