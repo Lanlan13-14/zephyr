@@ -2,6 +2,7 @@ package link
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -114,7 +115,71 @@ func TestAgentTunnelEndToEnd(t *testing.T) {
 	}
 }
 
-// TestTunnelClosePropagates verifies close frames tear the conn down on both
+func TestAgentTunnelLargeBidirectional(t *testing.T) {
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			c, e := echo.Accept()
+			if e != nil {
+				return
+			}
+			go func(c net.Conn) { defer c.Close(); _, _ = io.Copy(c, c) }(c)
+		}
+	}()
+	server := NewNode()
+	srv := httptest.NewServer(server.Handler())
+	defer srv.Close()
+	agent := NewNode()
+	_, sid, err := agent.Dial(srv.URL, "large-sftp-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := NewAgentTunnelHub(agent)
+	go func() { _ = hub.Start(srv.URL, sid) }()
+	mainHub := NewMainEndTunnelHub(server)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if mainHub.Attach(sid) == nil {
+			server.mu.Lock()
+			live := server.streamWriters[sid] != nil
+			server.mu.Unlock()
+			if live {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	server.mu.Lock()
+	live := server.streamWriters[sid] != nil
+	server.mu.Unlock()
+	if !live {
+		t.Fatal("agent stream writer never became live")
+	}
+	conn, err := mainHub.DialTunnel(sid, "127.0.0.1", echo.Addr().(*net.TCPAddr).Port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	const size = 64 * 1024 * 1024
+	payload := make([]byte, size)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	go func() { _, _ = conn.Write(payload) }()
+	got := make([]byte, size)
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatalf("large echo read: %v", err)
+	}
+	if !bytes.Equal(payload, got) {
+		t.Fatal("large echo payload mismatch")
+	}
+}
+
 // ends instead of leaking the TCP dial on the Agent side.
 func TestTunnelClosePropagates(t *testing.T) {
 	target, err := net.Listen("tcp", "127.0.0.1:0")

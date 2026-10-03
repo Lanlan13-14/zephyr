@@ -258,8 +258,12 @@ func Decompress(b []byte, originalSizeHint int) ([]byte, error) {
 	return out, nil
 }
 
-func shouldCompress(size, flags int) bool {
-	if flags&FlagSecret != 0 {
+func shouldCompress(kind, size, flags int) bool {
+	if kind == KindAgentTunnel || flags&FlagSecret != 0 {
+		// Tunnel payloads are already encrypted SSH bytes. Compressing them
+		// creates extreme expansion ratios for repetitive ciphertext-shaped
+		// chunks and trips the decompression-bomb guard on the peer. Keep the
+		// frame authenticated and bounded, but never compress the tunnel lane.
 		return false
 	}
 	return size >= MinCompressBytes
@@ -304,7 +308,7 @@ func Pack(kind int, body any, secret bool) ([]byte, error) {
 		flags = FlagSecret
 	}
 	data := payload
-	if shouldCompress(len(payload), flags) {
+	if shouldCompress(kind, len(payload), flags) {
 		compressed := Compress(payload)
 		if len(compressed) < len(payload) {
 			flags |= FlagZstd

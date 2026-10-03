@@ -350,18 +350,33 @@ func frameHeader(opcode byte, payloadLen int, masked bool) []byte {
 	}
 }
 
-// writeServerFrame emits a server (unmasked) frame. RFC 6455 §5.1: a server
-// MUST NOT mask frames it sends to a client.
+// writeAll guarantees complete socket writes despite legal short writes.
+func writeAll(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
+// writeServerFrame emits an unmasked server frame.
 func writeServerFrame(conn net.Conn, opcode byte, payload []byte) error {
 	if payload == nil {
 		payload = []byte{}
 	}
 	hdr := frameHeader(opcode, len(payload), false)
-	if _, err := conn.Write(hdr); err != nil {
+	if err := writeAll(conn, hdr); err != nil {
 		return err
 	}
-	_, err := conn.Write(payload)
-	return err
+	return writeAll(conn, payload)
 }
 
 // writeClientFrame emits a client (masked) frame. RFC 6455 §5.1: a client
@@ -382,14 +397,13 @@ func writeClientFrame(conn net.Conn, opcode byte, payload []byte) error {
 		masked[i] = payload[i] ^ mask[i%4]
 	}
 	hdr := frameHeader(opcode, len(payload), true)
-	if _, err := conn.Write(hdr); err != nil {
+	if err := writeAll(conn, hdr); err != nil {
 		return err
 	}
-	if _, err := conn.Write(mask); err != nil {
+	if err := writeAll(conn, mask); err != nil {
 		return err
 	}
-	_, err := conn.Write(masked)
-	return err
+	return writeAll(conn, masked)
 }
 
 // writeFrame is the historical name used by the loopback zft2 socket, which

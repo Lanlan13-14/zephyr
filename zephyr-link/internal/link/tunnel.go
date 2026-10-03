@@ -45,7 +45,7 @@ const (
 	// at a prompt; 30 minutes still reclaims abandoned sockets without
 	// interrupting an interactive shell.
 	tunnelIdleTimeout    = 30 * time.Minute
-	tunnelChannelBufSize = 64
+	tunnelChannelBufSize = 1024 // bounded per-tunnel queue; dispatch must never block the shared Link stream
 	// WebSocket ping keeps NAT / reverse-proxy idle timeouts from dropping
 	// /link/stream when no AGENT_TUNNEL frames are in flight. Both Agent and
 	// One initiator hubs send these; the peer answers with pong.
@@ -238,7 +238,7 @@ func (n *Node) dialTunnelStream(peerURL, sessionID string) (*tunnelStreamConn, *
 	hdr.WriteString("Upgrade: websocket\r\nConnection: Upgrade\r\n")
 	hdr.WriteString("Sec-WebSocket-Key: " + key + "\r\n")
 	hdr.WriteString("Sec-WebSocket-Version: 13\r\n\r\n")
-	if _, err := raw.Write(hdr.Bytes()); err != nil {
+	if err := writeAll(raw, hdr.Bytes()); err != nil {
 		raw.Close()
 		return nil, nil, err
 	}
@@ -278,6 +278,11 @@ type agentTunnel struct {
 	closed bool
 	// zft2 marks a lane tunnel whose conn is a Zft2Lane pipe, not TCP.
 	zft2 bool
+	// inbound decouples Link stream reads from a potentially blocking TCP
+	// write. SSH/SFTP is full duplex; blocking the shared reader deadlocks it.
+	dead    chan struct{}
+	inbound chan []byte
+	once    sync.Once
 }
 
 type AgentTunnelHub struct {
@@ -497,7 +502,7 @@ func (h *AgentTunnelHub) ServeZft2Local(conn net.Conn, br *bufio.Reader) {
 		if t == nil || !t.zft2 {
 			continue
 		}
-		if _, err := t.conn.Write(payload[4:]); err != nil {
+		if err := writeFull(t.conn, payload[4:]); err != nil {
 			h.closeTunnel(laneID, "zft2 local write failed")
 		}
 	}
@@ -698,9 +703,17 @@ func (h *AgentTunnelHub) handleFrame(tf *tunnelFrame) {
 			h.closeTunnel(tf.Tun, "oversized frame")
 			return
 		}
-		t.conn.SetWriteDeadline(time.Now().Add(tunnelWriteTimeout))
-		if err := writeFull(t.conn, data); err != nil {
-			h.closeTunnel(tf.Tun, "tcp write failed")
+		if t.zft2 {
+			t.conn.SetWriteDeadline(time.Now().Add(tunnelWriteTimeout))
+			if err := writeFull(t.conn, data); err != nil {
+				h.closeTunnel(tf.Tun, "zft2 local write failed")
+			}
+			return
+		}
+		select {
+		case t.inbound <- data:
+		default:
+			h.closeTunnel(tf.Tun, "tcp inbound queue overflow")
 		}
 	case "close":
 		h.closeTunnel(tf.Tun, "peer closed")
@@ -723,12 +736,13 @@ func (h *AgentTunnelHub) openTunnel(tf *tunnelFrame) {
 		return
 	}
 	tuneTCP(conn)
-	t := &agentTunnel{id: tf.Tun, conn: conn}
+	t := &agentTunnel{id: tf.Tun, conn: conn, inbound: make(chan []byte, tunnelChannelBufSize), dead: make(chan struct{})}
 	h.mu.Lock()
 	h.tunnels[tf.Tun] = t
 	h.mu.Unlock()
 	h.out <- tunnelFrame{Tun: tf.Tun, Op: "open", Seq: 0}
 	go h.pumpTCP(tf.Tun, conn)
+	go h.writeTCPInbound(tf.Tun, t)
 }
 
 func (h *AgentTunnelHub) openZft2Lane(tf *tunnelFrame) {
@@ -747,6 +761,26 @@ func (h *AgentTunnelHub) openZft2Lane(tf *tunnelFrame) {
 	h.out <- tunnelFrame{Tun: tf.Tun, Op: "open", Seq: 0, Lane: "zft2"}
 	cb(lane)
 	go h.pumpZft2LaneToSocket(lane)
+}
+
+func (h *AgentTunnelHub) writeTCPInbound(id int, t *agentTunnel) {
+	for {
+		select {
+		case <-t.dead:
+			return
+		case data := <-t.inbound:
+			if data == nil {
+				return
+			}
+			if err := t.conn.SetWriteDeadline(time.Now().Add(tunnelWriteTimeout)); err != nil {
+				return
+			}
+			if err := writeFull(t.conn, data); err != nil {
+				h.closeTunnel(id, "tcp write failed")
+				return
+			}
+		}
+	}
 }
 
 func (h *AgentTunnelHub) pumpTCP(id int, conn net.Conn) {
@@ -776,6 +810,11 @@ func (h *AgentTunnelHub) closeTunnel(id int, reason string) {
 	if t == nil || t.closed {
 		return
 	}
+	t.once.Do(func() {
+		if t.dead != nil {
+			close(t.dead)
+		}
+	})
 	t.closed = true
 	t.conn.Close()
 	select {
@@ -1202,18 +1241,11 @@ func (h *MainEndTunnelHub) deliver(sessionID string, tf *tunnelFrame) {
 	select {
 	case c.in <- *tf:
 	default:
-		/* Backpressure, not failure. SSH/SFTP keeps the peer socket open and
-		 * resumes as soon as the consumer drains; dropping the tunnel here
-		 * killed every large transfer once the 64-frame buffer filled.
-		 * A stalled consumer is still bounded: the wait is capped so a dead
-		 * reader cannot pin frames forever. */
-		select {
-		case c.in <- *tf:
-		case <-c.dead:
-		case <-time.After(tunnelWriteTimeout):
-			c.once.Do(func() { close(c.dead) })
-			h.drop(c)
-		}
+		// Never block the shared Link stream reader on one slow SSH consumer.
+		// Closing only this tunnel lets the peer observe EOF while other Agent
+		// tunnels and the Link keepalive continue normally.
+		c.once.Do(func() { close(c.dead) })
+		h.drop(c)
 	}
 }
 

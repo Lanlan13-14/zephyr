@@ -85,8 +85,11 @@ function channelOf(kind) {
 const FLAG_ZSTD = 0x01;
 const FLAG_SECRET = 0x02;
 
-function shouldCompress(bytes, flags) {
-    if (flags & FLAG_SECRET) return false;
+function shouldCompress(bytes, flags, kind) {
+    // Agent tunnel payloads are already opaque SSH stream bytes. Zstd can
+    // produce extreme expansion ratios for repetitive payloads, causing the
+    // peer's decompression-bomb guard to kill an otherwise valid tunnel.
+    if (kind === 16 || (flags & FLAG_SECRET)) return false;
     return bytes.length >= MIN_COMPRESS_BYTES;
 }
 
@@ -112,7 +115,7 @@ function pack({ kind, body, secret = false }) {
     if (payload.length > MAX_FRAME_BYTES) throw new Error('frame exceeds max size');
     let flags = secret ? FLAG_SECRET : 0;
     let data = payload;
-    if (shouldCompress(payload, flags)) {
+    if (shouldCompress(payload, flags, kind)) {
         const compressed = compress(payload);
         if (compressed.length < payload.length) {
             flags |= FLAG_ZSTD;
