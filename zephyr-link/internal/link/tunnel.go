@@ -195,6 +195,7 @@ func (n *Node) dialTunnelStream(peerURL, sessionID string) (*tunnelStreamConn, *
 	if err != nil {
 		return nil, nil, err
 	}
+	tuneTCP(raw)
 	if parsed.Scheme == "https" {
 		tc := &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12}
 		if tlsProfile.insecure {
@@ -684,6 +685,7 @@ func (h *AgentTunnelHub) openTunnel(tf *tunnelFrame) {
 		h.out <- tunnelFrame{Tun: tf.Tun, Op: "err", Err: "dial failed: " + err.Error()}
 		return
 	}
+	tuneTCP(conn)
 	t := &agentTunnel{id: tf.Tun, conn: conn}
 	h.mu.Lock()
 	h.tunnels[tf.Tun] = t
