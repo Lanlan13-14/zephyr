@@ -19,6 +19,9 @@ const PRECACHE = [
     '/panel-pin.js?v=20260830-desktop-panel-pin8',
     '/panel-pin.css?v=20260830-desktop-panel-pin8',
     '/markdown.js?v=20260720-notes-md1',
+    '/mobile.html?v=20260925-ai-layout',
+    '/mobile.css?v=20260925-ai-layout',
+    '/mobile-boot.js?v=20260925-ai-layout',
 ];
 const MAX_CACHE_ENTRIES = 160;
 

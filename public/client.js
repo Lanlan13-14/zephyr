@@ -39,6 +39,21 @@ function safeReturnTo() {
     }
 }
 
+function defaultAppPage() {
+    try {
+        const params = new URLSearchParams(location.search);
+        if (params.get('mobile') === '1') return '/mobile.html';
+        if (params.get('desktop') === '1') return '/app.html';
+    } catch { /* fall through to UA sniffing */ }
+    try {
+        const ua = navigator.userAgent || '';
+        const isMobile = /Android|iPhone|iPod|Mobile/i.test(ua) && !/iPad|Tablet/i.test(ua);
+        return isMobile ? '/mobile.html' : '/app.html';
+    } catch {
+        return '/app.html';
+    }
+}
+
 const CAPTCHA_SCRIPT_URLS = {
     turnstile: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',
     hcaptcha: 'https://js.hcaptcha.com/1/api.js?render=explicit',
@@ -521,7 +536,7 @@ async function bootLoginPage() {
     else window.setTimeout(warmLoginMotion, 800);
     api('/api/auth/me').then((data) => {
         if (data.mustChangePassword) showChangePassword();
-        else window.location.href = '/app.html';
+        else window.location.href = safeReturnTo() || defaultAppPage();
     }).catch(() => {});
     loadBeian();
 }
@@ -530,7 +545,7 @@ bootLoginPage().catch((err) => {
     console.warn('[i18n] init failed, continuing with source strings', err);
     api('/api/auth/me').then((data) => {
         if (data.mustChangePassword) showChangePassword();
-        else window.location.href = '/app.html';
+        else window.location.href = safeReturnTo() || defaultAppPage();
     }).catch(() => {});
     loadBeian();
 });
@@ -556,7 +571,7 @@ loginForm.addEventListener('submit', async (e) => {
         const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password, remember: !!$('#rememberMe')?.checked, captchaToken }) });
         if (data.requireTotp) return showTotp(data.tempToken);
         if (data.mustChangePassword) showChangePassword();
-        else window.location.href = safeReturnTo() || '/app.html';
+        else window.location.href = safeReturnTo() || defaultAppPage();
     } catch (err) {
         resetCaptcha();
         showError(errorBanner, err.message);
@@ -565,7 +580,7 @@ loginForm.addEventListener('submit', async (e) => {
 
 totpForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { const data = await api('/api/auth/totp/verify', { method: 'POST', body: JSON.stringify({ tempToken: tempTotpToken, code: $('#totpCode').value }) }); if (data.mustChangePassword) showChangePassword(); else location.href = safeReturnTo() || '/app.html'; }
+    try { const data = await api('/api/auth/totp/verify', { method: 'POST', body: JSON.stringify({ tempToken: tempTotpToken, code: $('#totpCode').value }) }); if (data.mustChangePassword) showChangePassword(); else location.href = safeReturnTo() || defaultAppPage(); }
     catch (err) { showError(totpErrorBanner, err.message); }
 });
 
@@ -595,7 +610,7 @@ $('#passkeyLoginBtn').addEventListener('click', async () => {
         const cred = await navigator.credentials.get({ publicKey: options });
         const payload = { id: cred.id, rawId: bufferToBase64url(cred.rawId), type: cred.type, response: { authenticatorData: bufferToBase64url(cred.response.authenticatorData), clientDataJSON: bufferToBase64url(cred.response.clientDataJSON), signature: bufferToBase64url(cred.response.signature), userHandle: cred.response.userHandle ? bufferToBase64url(cred.response.userHandle) : null } };
         const data = await api('/api/passkeys/login/verify', { method: 'POST', body: JSON.stringify(payload) });
-        if (data.mustChangePassword) showChangePassword(); else location.href = safeReturnTo() || '/app.html';
+        if (data.mustChangePassword) showChangePassword(); else location.href = safeReturnTo() || defaultAppPage();
     } catch (err) { showError(errorBanner, err.message); }
 });
 
@@ -619,9 +634,9 @@ changePasswordForm.addEventListener('submit', async (e) => {
                 try { await navigator.clipboard.writeText(result.rollbackUrl); $('#changeRollbackCopyBtn').textContent = t('链接已复制'); }
                 catch { $('#changeRollbackUrl').select(); }
             };
-            $('#changeRollbackContinueBtn').onclick = () => { window.location.href = '/app.html'; };
+            $('#changeRollbackContinueBtn').onclick = () => { window.location.href = safeReturnTo() || defaultAppPage(); };
         } else {
-            window.location.href = '/app.html';
+            window.location.href = safeReturnTo() || defaultAppPage();
         }
     } catch (err) {
         showError(changeErrorBanner, err.message);

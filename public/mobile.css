@@ -1,0 +1,69 @@
+/* mobile.css — 统一移动壳的1D流重排。只换布局/导航/弹窗呈现，不改业务DOM。
+ * 圆角沿用G2四档 14/12/6/9999 + corner-smoothing:60%。 */
+
+/* 原桌面顶栏保留在DOM供app.js绑定，但视觉隐藏 */
+.mobile-shell .mobile-orig-nav { display: none !important; }
+
+.mobile-shell .app-shell { max-width: 500px; margin: 0 auto; }
+.mobile-shell .app-main { padding: 0 16px calc(112px + env(safe-area-inset-bottom, 0px)); }
+
+/* 顶部轻量页头 */
+.mobile-shell .page-head { display: flex; align-items: center; gap: 8px; padding: calc(env(safe-area-inset-top, 0px) + 14px) 16px 10px; }
+.mobile-shell .page-head h1 { font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: -.03em; flex: 1; }
+.mobile-shell .m-head-btn { min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 9999px; corner-smoothing: 60%; -webkit-corner-smoothing: 60%; border: 1px solid var(--bd-sub, rgba(127,127,127,.25)); background: var(--surface, transparent); color: inherit; font-size: 17px; }
+.mobile-shell .m-head-btn.danger { color: var(--red, #ff453a); }
+
+/* 1D垂直流：连接卡片/活动/远程/笔记列表全栈堆叠；段内字阶 */
+.mobile-shell .view.active { display: flex; flex-direction: column; gap: 12px; }
+.mobile-shell .connection-grid { display: flex; flex-direction: column; gap: 12px; }
+.mobile-shell .connection-grid > * { border-radius: 14px; corner-smoothing: 60%; -webkit-corner-smoothing: 60%; }
+.mobile-shell .action-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+.mobile-shell .action-bar input, .mobile-shell .action-bar select { min-height: 44px; font-size: 17px; border-radius: 12px; corner-smoothing: 60%; -webkit-corner-smoothing: 60%; }
+.mobile-shell .activity-list, .mobile-shell .remote-layout, .mobile-shell .remote-results { display: flex; flex-direction: column; gap: 12px; }
+/* 禁卡片套卡片：二级信息用留白与1px线 */
+.mobile-shell .card .card, .mobile-shell .conn-card .card { border: 0; box-shadow: none; padding-left: 0; padding-right: 0; }
+
+/* 设置：tab横滑跑道 + 面板全屏推入感（单列） */
+.mobile-shell .settings-shell, .mobile-shell .settings-layout { display: flex; flex-direction: column; gap: 12px; }
+.mobile-shell .settings-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.mobile-shell .settings-tabs > * { flex: none; min-height: 44px; }
+.mobile-shell .settings-panel { display: none; }
+.mobile-shell .settings-panel.active { display: flex; flex-direction: column; gap: 12px; }
+
+/* 弹窗走Bottom Sheet */
+.mobile-shell .modal-backdrop { align-items: flex-end !important; }
+.mobile-shell .modal-backdrop > form, .mobile-shell .modal-backdrop > div { width: 100%; max-height: 75dvh; overflow-y: auto; border-radius: 28px 28px 0 0; }
+.mobile-shell .m-sheet-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 90; }
+.mobile-shell .m-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 91; background: var(--surface, #fff); border-radius: 28px 28px 0 0; padding: 12px 20px calc(32px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 8px; max-width: 500px; margin: 0 auto; }
+.mobile-shell .m-sheet-handle { width: 36px; height: 5px; border-radius: 9999px; background: rgba(127,127,127,.4); margin: 0 auto; }
+.mobile-shell .m-sheet-head { display: flex; align-items: center; min-height: 56px; }
+.mobile-shell .m-sheet-title { flex: 1; font-size: 20px; font-weight: 600; }
+.mobile-shell .m-sheet-close { min-width: 44px; min-height: 44px; border-radius: 9999px; border: 0; background: transparent; color: inherit; font-size: 17px; }
+.mobile-shell .m-sheet-item { display: flex; align-items: center; min-height: 56px; font-size: 17px; background: transparent; border: 0; border-top: 1px solid rgba(127,127,127,.2); color: inherit; text-align: left; }
+.mobile-shell .m-sheet-chev { margin-left: auto; opacity: .5; }
+
+/* 悬浮island液态胶囊 */
+.mobile-shell #island { position: fixed; left: 16px; right: 16px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); z-index: 80; display: flex; border-radius: 9999px; corner-smoothing: 60%; -webkit-corner-smoothing: 60%; background: rgba(22,24,26,.68); backdrop-filter: blur(28px) saturate(190%); -webkit-backdrop-filter: blur(28px) saturate(190%); border-top: .5px solid rgba(255,255,255,.22); box-shadow: 0 16px 40px -8px rgba(0,0,0,.65); padding: 8px; }
+.mobile-shell #island-pill { position: absolute; top: 8px; bottom: 8px; left: 0; width: 0; border-radius: 9999px; background: rgba(255,255,255,.14); transition: transform .28s cubic-bezier(.32,.72,0,1), width .28s cubic-bezier(.32,.72,0,1); }
+.mobile-shell .island-btn { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; min-width: 44px; background: transparent; border: 0; color: #fff; font-size: 12px; }
+.mobile-shell .island-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; }
+html[data-theme="light"] .mobile-shell #island { background: rgba(255,255,255,.9); }
+html[data-theme="light"] .mobile-shell .island-btn { color: #111418; }
+html[data-theme="light"] .mobile-shell #island-pill { background: rgba(17,20,24,.08); }
+
+/* 键盘弹起island退场 */
+.mobile-shell.m-kb-open #island { transform: translateY(120%); transition: transform .3s cubic-bezier(.32,.72,0,1); }
+.mobile-shell #island { transition: transform .3s cubic-bezier(.32,.72,0,1); }
+
+/* 终端强制单窗：隐藏分屏gutter与第二窗格，不删DOM */
+.mobile-shell .terminal-workspace-grid { grid-template-columns: minmax(0,1fr) !important; }
+.mobile-shell .term-gutter, .mobile-shell .terminal-splitter, .mobile-shell .splitter-gutter { display: none !important; }
+.mobile-shell .terminal-pane[data-pane="b"], .mobile-shell .term-pane-b { display: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+    .mobile-shell #island, .mobile-shell #island-pill, .mobile-shell .m-sheet { transition: none !important; }
+}
+@media (prefers-reduced-transparency: reduce) {
+    .mobile-shell #island { backdrop-filter: none; -webkit-backdrop-filter: none; background: #16181a; }
+    html[data-theme="light"] .mobile-shell #island { background: #fff; }
+}
