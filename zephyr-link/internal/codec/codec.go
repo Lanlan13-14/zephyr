@@ -252,7 +252,7 @@ func Decompress(b []byte, originalSizeHint int) ([]byte, error) {
 	if len(out) > MaxFrameBytes {
 		return nil, errors.New("decompressed frame exceeds max size")
 	}
-	if len(b) > 0 && len(out)/len(b) > MaxDecompressRatio {
+	if len(b) > 0 && uint64(len(out)) > uint64(len(b))*uint64(MaxDecompressRatio) {
 		return nil, errors.New("decompression ratio exceeds hard limit")
 	}
 	return out, nil
