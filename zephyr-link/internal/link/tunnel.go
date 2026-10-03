@@ -52,6 +52,22 @@ const (
 	tunnelPingInterval = 20 * time.Second
 )
 
+func writeFull(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
 type tunnelFrame struct {
 	Tun  int    `json:"tun"`
 	Op   string `json:"op"`
@@ -683,7 +699,7 @@ func (h *AgentTunnelHub) handleFrame(tf *tunnelFrame) {
 			return
 		}
 		t.conn.SetWriteDeadline(time.Now().Add(tunnelWriteTimeout))
-		if _, err := t.conn.Write(data); err != nil {
+		if err := writeFull(t.conn, data); err != nil {
 			h.closeTunnel(tf.Tun, "tcp write failed")
 		}
 	case "close":
@@ -1022,7 +1038,7 @@ func (h *MainEndTunnelHub) deliverOne(sessionID string, tf *tunnelFrame) {
 		t.close()
 		return
 	}
-	if _, err := t.agentConn.Write(data); err != nil {
+	if err := writeFull(t.agentConn, data); err != nil {
 		t.close()
 	}
 }
@@ -1186,9 +1202,18 @@ func (h *MainEndTunnelHub) deliver(sessionID string, tf *tunnelFrame) {
 	select {
 	case c.in <- *tf:
 	default:
-		// Slow consumer: treat as fatal for this tunnel; SSH reconnects.
-		c.once.Do(func() { close(c.dead) })
-		h.drop(c)
+		/* Backpressure, not failure. SSH/SFTP keeps the peer socket open and
+		 * resumes as soon as the consumer drains; dropping the tunnel here
+		 * killed every large transfer once the 64-frame buffer filled.
+		 * A stalled consumer is still bounded: the wait is capped so a dead
+		 * reader cannot pin frames forever. */
+		select {
+		case c.in <- *tf:
+		case <-c.dead:
+		case <-time.After(tunnelWriteTimeout):
+			c.once.Do(func() { close(c.dead) })
+			h.drop(c)
+		}
 	}
 }
 
