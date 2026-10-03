@@ -215,17 +215,33 @@ func (i *Initiator) HandshakeFinish(hello *ResponderHello) (*Session, error) {
 	return openSession(master, "initiator"), nil
 }
 
+func makeAEAD(key []byte) cipher.AEAD {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		panic(fmt.Sprintf("zsl: aes: %v", err))
+	}
+	aead, err := cipher.NewGCMWithNonceSize(block, IVBytes)
+	if err != nil {
+		panic(fmt.Sprintf("zsl: gcm: %v", err))
+	}
+	return aead
+}
+
 func openSession(master []byte, role string) *Session {
 	sendLabel, recvLabel := "zsl2-send-r", "zsl2-send-i"
 	if role == "initiator" {
 		sendLabel, recvLabel = "zsl2-send-i", "zsl2-send-r"
 	}
 	masterCopy := append([]byte{}, master...)
+	sendKey := derive(masterCopy, sendLabel, KeyBytes)
+	recvKey := derive(masterCopy, recvLabel, KeyBytes)
 	return &Session{
 		role:     role,
 		master:   masterCopy,
-		sendKey:  derive(masterCopy, sendLabel, KeyBytes),
-		recvKey:  derive(masterCopy, recvLabel, KeyBytes),
+		sendKey:  sendKey,
+		recvKey:  recvKey,
+		sendAEAD: makeAEAD(sendKey),
+		recvAEAD: makeAEAD(recvKey),
 		exporter: derive(masterCopy, "zsl2-exporter", KeyBytes),
 		seen:     make(map[uint64]struct{}),
 	}
@@ -245,6 +261,8 @@ type Session struct {
 	master   []byte
 	sendKey  []byte
 	recvKey  []byte
+	sendAEAD cipher.AEAD
+	recvAEAD cipher.AEAD
 	exporter []byte
 	bound    bool
 
@@ -259,7 +277,11 @@ func (s *Session) Exporter() []byte { return append([]byte{}, s.exporter...) }
 
 // Bound reports whether BindTranscript has mixed the handshake proof into the
 // traffic keys. Enrolled sessions must be bound before they carry frames.
-func (s *Session) Bound() bool { return s.bound }
+func (s *Session) Bound() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bound
+}
 
 // BindTranscript re-derives send/recv/exporter from the KEM master and the
 // canonical handshake transcript. It may run once; a second call with a
@@ -284,6 +306,8 @@ func (s *Session) BindTranscript(transcript []byte) error {
 	}
 	s.sendKey = derive(bound, sendLabel, KeyBytes)
 	s.recvKey = derive(bound, recvLabel, KeyBytes)
+	s.sendAEAD = makeAEAD(s.sendKey)
+	s.recvAEAD = makeAEAD(s.recvKey)
 	s.exporter = derive(bound, "zsl2-exporter", KeyBytes)
 	s.master = bound
 	s.bound = true
@@ -316,16 +340,8 @@ func (s *Session) Seal(plaintext []byte) (*Frame, error) {
 	if _, err := rand.Read(iv); err != nil {
 		return nil, fmt.Errorf("zsl: iv: %w", err)
 	}
-	block, err := aes.NewCipher(s.sendKey)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCMWithNonceSize(block, IVBytes)
-	if err != nil {
-		return nil, err
-	}
 	aad := s.aad('s', seq)
-	sealed := gcm.Seal(nil, iv, plaintext, aad)
+	sealed := s.sendAEAD.Seal(nil, iv, plaintext, aad)
 	ct, tag := sealed[:len(sealed)-TagBytes], sealed[len(sealed)-TagBytes:]
 	return &Frame{Seq: seq, IV: iv, CT: ct, Tag: tag}, nil
 }
@@ -341,17 +357,9 @@ func (s *Session) Open(f *Frame) ([]byte, error) {
 	if _, dup := s.seen[seq]; dup {
 		return nil, errors.New("zsl: replay rejected (duplicate sequence)")
 	}
-	block, err := aes.NewCipher(s.recvKey)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCMWithNonceSize(block, IVBytes)
-	if err != nil {
-		return nil, err
-	}
 	aad := s.aad('s', seq)
 	sealed := append(append([]byte{}, f.CT...), f.Tag...)
-	plain, err := gcm.Open(nil, f.IV, sealed, aad)
+	plain, err := s.recvAEAD.Open(nil, f.IV, sealed, aad)
 	if err != nil {
 		return nil, errors.New("zsl: authentication failed")
 	}

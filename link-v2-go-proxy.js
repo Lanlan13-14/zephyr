@@ -293,30 +293,106 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
     return { router, registerDevice: registerDeviceTracked, _proc: proc };
 }
 
+const LINK_PROXY_MAX_QUEUE_BYTES = 8 * 1024 * 1024;
+const LINK_PROXY_MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+
 /* WSS relay: the client terminates TLS+WS at Node; Node opens a second WS to the Go
  * service and shuttles messages both ways. Frame payloads are ZSL/2 ciphertext that
  * only the Go service and the device can read — Node never inspects them. */
-function proxyLinkV2Stream(ws, req) {
+function proxyLinkV2Stream(ws, req, options = {}) {
+    const WebSocket = options.WebSocket || require('ws');
+    const proc = options.proc || sharedProcess();
+    const queue = [];
+    let queuedBytes = 0;
+    let closed = false;
+    let upstream = null;
+    const sizeOf = (data) => {
+        if (Buffer.isBuffer(data)) return data.length;
+        if (typeof data === 'string') return Buffer.byteLength(data);
+        if (data instanceof ArrayBuffer) return data.byteLength;
+        if (ArrayBuffer.isView(data)) return data.byteLength;
+        return Buffer.byteLength(String(data));
+    };
+    const clearQueue = () => {
+        queue.length = 0;
+        queuedBytes = 0;
+    };
+    const closeUpstream = (force = false) => {
+        if (!upstream) return;
+        try {
+            if (force && typeof upstream.terminate === 'function') upstream.terminate();
+            else upstream.close();
+        } catch {}
+    };
+    const fail = (code, reason) => {
+        if (closed) return;
+        closed = true;
+        clearQueue();
+        try { ws.close(code, reason); } catch {}
+        closeUpstream(true);
+    };
+    ws.on('close', () => {
+        closed = true;
+        clearQueue();
+        closeUpstream(true);
+    });
+    ws.on('error', () => fail(1011, 'link-client-error'));
+    const sendUpstream = (data) => {
+        if (closed || !upstream || upstream.readyState !== upstream.OPEN) return false;
+        const bytes = sizeOf(data);
+        if ((Number(upstream.bufferedAmount) || 0) + bytes > LINK_PROXY_MAX_BUFFERED_BYTES) {
+            fail(1013, 'link-backpressure');
+            return false;
+        }
+        try { upstream.send(data); return true; } catch { fail(1011, 'link-upstream-error'); return false; }
+    };
+    const flush = () => {
+        while (!closed && queue.length && upstream && upstream.readyState === upstream.OPEN) {
+            const data = queue[0];
+            if (!sendUpstream(data)) return;
+            queue.shift();
+            queuedBytes -= sizeOf(data);
+        }
+    };
+    ws.on('message', (data) => {
+        if (closed) return;
+        if (upstream && upstream.readyState === upstream.OPEN) {
+            sendUpstream(data);
+            return;
+        }
+        const bytes = sizeOf(data);
+        if (queuedBytes + bytes > LINK_PROXY_MAX_QUEUE_BYTES) {
+            fail(1013, 'link-backpressure');
+            return;
+        }
+        queue.push(data);
+        queuedBytes += bytes;
+    });
     (async () => {
-        const WebSocket = require('ws');
-        const proc = sharedProcess();
         const addr = await proc.ensureStarted();
+        if (closed || ws.readyState !== ws.OPEN) return;
         const url = new URL(req.url || '/', 'http://localhost');
         const sessionId = url.searchParams.get('sessionId') || '';
-        if (!sessionId) { try { ws.close(1008, 'session-required'); } catch {} return; }
-        const upstream = new WebSocket('ws://' + addr + '/link/stream?sessionId=' + encodeURIComponent(sessionId));
-        const queue = [];
-        upstream.on('open', () => { for (const m of queue) upstream.send(m); queue.length = 0; });
-        upstream.on('message', (data) => { if (ws.readyState === ws.OPEN) ws.send(data); });
-        upstream.on('close', () => { try { ws.close(1000, 'upstream-closed'); } catch {} });
-        upstream.on('error', () => { try { ws.close(1011, 'link-upstream-error'); } catch {} });
-        ws.on('message', (data) => {
-            if (upstream.readyState === upstream.OPEN) upstream.send(data);
-            else queue.push(data);
+        if (!sessionId) { fail(1008, 'session-required'); return; }
+    const wsCtor = options.WebSocket || WebSocket;
+        upstream = new wsCtor('ws://' + addr + '/link/stream?sessionId=' + encodeURIComponent(sessionId));
+        if (options.onUpstream) options.onUpstream(upstream);
+        upstream.on('open', flush);
+        upstream.on('message', (data) => {
+            if (closed || ws.readyState !== ws.OPEN) return;
+            const bytes = sizeOf(data);
+            if ((Number(ws.bufferedAmount) || 0) + bytes > LINK_PROXY_MAX_BUFFERED_BYTES) {
+                fail(1013, 'link-backpressure');
+                return;
+            }
+            try { ws.send(data); } catch { fail(1011, 'link-client-error'); }
         });
-        ws.on('close', () => { try { upstream.close(); } catch {} });
-        ws.on('error', () => { try { upstream.close(); } catch {} });
-    })().catch(() => { try { ws.close(1011, 'link-unavailable'); } catch {} });
+        upstream.on('close', (code) => {
+            if (!closed) fail(code === 1000 ? 1000 : 1011, 'upstream-closed');
+        });
+        upstream.on('error', () => fail(1011, 'link-upstream-error'));
+        flush();
+    })().catch(() => fail(1011, 'link-unavailable'));
 }
 
 /* Agent bastion tunnel management: the Node front end asks the Go service to
