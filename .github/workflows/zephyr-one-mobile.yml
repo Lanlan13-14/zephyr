@@ -416,11 +416,19 @@ jobs:
       - name: Build unsigned IPA
         shell: bash
         env:
-          # Dispatch versions are release tags (zom-v1.0.0); the packager
-          # removes the required prefix for CFBundleShortVersionString. Push
-          # and pull-request validation runs use a valid standalone default.
-          MARKETING_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '1.0.0' }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '' }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            [[ "$RELEASE_TAG" == zom-v* ]] || { echo "Invalid Mobile release tag: $RELEASE_TAG" >&2; exit 1; }
+            marketing="${RELEASE_TAG#zom-v}"
+            marketing="${marketing%%pre*}"
+            [[ "$marketing" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]] || { echo "Invalid numeric iOS marketing version: $marketing" >&2; exit 1; }
+          else
+            marketing="1.0.0"
+          fi
+          export MARKETING_VERSION="${marketing}"
           set -o pipefail
           set +e
           bash "$GITHUB_WORKSPACE/zephyr_one/mobile/tools/package-ios-unsigned.sh" \
