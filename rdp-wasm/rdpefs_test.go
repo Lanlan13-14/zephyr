@@ -315,6 +315,25 @@ func TestAgentReadAheadCacheServesSequentialIRPs(t *testing.T) {
 	}
 }
 
+func TestCallAgentWriteRetriesShortWrite(t *testing.T) {
+	transfer := &shortWriteTransfer{}
+	h := NewRdpefsHandler(true)
+	h.SetFileTransfer(transfer)
+	data := make([]byte, 256*1024+17)
+	got := h.callAgentWrite("agent", "handle", 100, data)
+	if got != len(data) {
+		t.Fatalf("written=%d want=%d", got, len(data))
+	}
+	transfer.mu.Lock()
+	defer transfer.mu.Unlock()
+	if transfer.calls < 3 {
+		t.Fatalf("calls=%d want short-write retry calls", transfer.calls)
+	}
+	if len(transfer.offsets) < 2 || transfer.offsets[1] <= transfer.offsets[0] {
+		t.Fatalf("offsets=%v not advanced", transfer.offsets)
+	}
+}
+
 func TestRequestAgentRetriesTransientErrors(t *testing.T) {
 	transfer := &flakyFileTransfer{failCount: 2, payload: []byte{1, 2, 3}, code: "busy"}
 	h := NewRdpefsHandler(true)

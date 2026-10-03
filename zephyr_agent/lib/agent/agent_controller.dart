@@ -555,19 +555,25 @@ class AgentController extends ChangeNotifier {
         _recordTransfer(payload.length);
         break;
       case Zft2Op.write:
-        if (Platform.isAndroid && frame.payload.length > 256 * 1024) {
-          throw FileProviderException(
-            'payload_too_large',
-            'Android write chunk exceeds 256 KiB MethodChannel limit',
+        final writeOffset = (meta['offset'] as num?)?.toInt() ?? 0;
+        var writtenTotal = 0;
+        const nativeChunk = 256 * 1024;
+        while (writtenTotal < frame.payload.length) {
+          final end = (writtenTotal + nativeChunk).clamp(0, frame.payload.length);
+          final part = frame.payload.sublist(writtenTotal, end);
+          final written = await fp.write(
+            meta['handle'] as String,
+            writeOffset + writtenTotal,
+            part,
           );
+          if (written <= 0 || written > part.length) {
+            throw FileProviderException('io_error', 'Invalid file write acknowledgement');
+          }
+          writtenTotal += written;
+          if (written < part.length) break;
         }
-        final written = await fp.write(
-          meta['handle'] as String,
-          (meta['offset'] as num?)?.toInt() ?? 0,
-          frame.payload,
-        );
-        result = {'bytesWritten': written};
-        _recordTransfer(written);
+        result = {'bytesWritten': writtenTotal};
+        _recordTransfer(writtenTotal);
         break;
       case Zft2Op.close:
         final closeHandle = meta['handle'] as String;

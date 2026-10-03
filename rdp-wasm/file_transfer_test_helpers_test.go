@@ -16,7 +16,12 @@ type recordingFileTransfer struct {
 	readData []byte
 }
 
-// flakyFileTransfer fails the first failCount requests with a retryable
+type shortWriteTransfer struct {
+	mu      sync.Mutex
+	offsets []uint64
+	calls   int
+}
+
 // error, then succeeds. Used to verify requestAgent chunk-level retries.
 type flakyFileTransfer struct {
 	mu        sync.Mutex

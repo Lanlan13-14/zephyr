@@ -2242,76 +2242,36 @@ func (h *RdpefsHandler) callAgentWrite(agentID, handle string, offset uint64, da
 		return int(int64Meta(response.Meta, "bytesWritten"))
 	}
 
-	// Build chunk list.
-	type writeChunk struct {
-		index  int
-		off    uint64
-		data   []byte
-	}
-	type writeResult struct {
-		index   int
-		written int
-		err     error
-	}
-
-	totalChunks := (len(data) + maxWriteChunk - 1) / maxWriteChunk
-	chunks := make([]writeChunk, totalChunks)
-	for i := 0; i < totalChunks; i++ {
-		start := i * maxWriteChunk
+	// Process chunks in file-offset order. Android SAF serializes mutations
+	// per path across the MethodChannel; concurrent offsets can race that
+	// cursor and acknowledge a short write before the tail is persisted.
+	// Short writes are retried from the acknowledged offset until this chunk
+	// is complete or the transport reports an error.
+	total := 0
+	for start := 0; start < len(data); {
 		end := start + maxWriteChunk
 		if end > len(data) {
 			end = len(data)
 		}
-		chunks[i] = writeChunk{index: i, off: offset + uint64(start), data: data[start:end]}
-	}
-
-	results := make(chan writeResult, totalChunks)
-	// Semaphore to cap concurrency at agentWriteParallel without launching all
-	// goroutines at once on very large IRPs.
-	sem := make(chan struct{}, agentWriteParallel)
-
-	for _, c := range chunks {
-		c := c
-		sem <- struct{}{}
-		go func() {
-			defer func() { <-sem }()
+		chunk := data[start:end]
+		writtenInChunk := 0
+		for writtenInChunk < len(chunk) {
+			off := offset + uint64(start+writtenInChunk)
 			resp, err := h.requestAgent(agentID, zft2Write,
-				map[string]any{"handle": handle, "offset": c.off}, c.data)
+				map[string]any{"handle": handle, "offset": off}, chunk[writtenInChunk:])
 			if err != nil {
-				slog.Warn("rdpefs: agent write failed", "handle", handle, "offset", c.off, "err", err)
-				results <- writeResult{index: c.index, written: 0, err: err}
-				return
+				slog.Warn("rdpefs: agent write failed", "handle", handle, "offset", off, "err", err)
+				return total + writtenInChunk
 			}
-			results <- writeResult{index: c.index, written: int(int64Meta(resp.Meta, "bytesWritten"))}
-		}()
-	}
-
-	// Collect results.  We want total bytes written up to the first failure
-	// (by chunk index order) so partial progress is reported accurately.
-	type indexed struct {
-		written int
-		err     error
-	}
-	ordered := make([]indexed, totalChunks)
-	for range totalChunks {
-		r := <-results
-		ordered[r.index] = indexed{written: r.written, err: r.err}
-	}
-
-	total := 0
-	for i, r := range ordered {
-		if r.err != nil {
-			slog.Warn("rdpefs: agent write chunk failed", "handle", handle, "chunk", i, "err", r.err)
-			return total
+			written := int(int64Meta(resp.Meta, "bytesWritten"))
+			if written <= 0 || written > len(chunk)-writtenInChunk {
+				slog.Warn("rdpefs: invalid agent write acknowledgement", "handle", handle, "offset", off, "written", written, "remaining", len(chunk)-writtenInChunk)
+				return total + writtenInChunk
+			}
+			writtenInChunk += written
 		}
-		if r.written <= 0 {
-			return total
-		}
-		total += r.written
-		if r.written < len(chunks[i].data) {
-			// Short write — stop here; caller will retry from the new offset.
-			return total
-		}
+		total += len(chunk)
+		start = end
 	}
 	return total
 }
