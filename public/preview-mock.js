@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260924-os-probe';
+import { t } from './i18n/runtime.js?v=20261003-agent-write1';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 
