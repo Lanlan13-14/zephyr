@@ -110,11 +110,23 @@ func (t *tunnelStreamConn) writeFrame(opcode byte, payload []byte) error {
 	return err
 }
 
-func (t *tunnelStreamConn) writeEnvelope(env []byte) error {
-	// Client-to-server: MASK is mandatory. Node's ws (the public hop)
-	// drops unmasked frames, which is why a 101 upgrade still left the
-	// main end with "session has no live stream".
-	return t.writeFrame(0x1, env)
+func (t *tunnelStreamConn) writeEnvelopeWithEndpoint(ep *Endpoint, kind int, body any, secret bool) error {
+	t.wmu.Lock()
+	defer t.wmu.Unlock()
+	if t.closed {
+		return errors.New("tunnel: stream closed")
+	}
+	_ = t.conn.SetWriteDeadline(time.Now().Add(tunnelWriteTimeout))
+	defer t.conn.SetWriteDeadline(time.Time{})
+	env, err := ep.Send(kind, body, secret)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	return writeClientFrame(t.conn, 0x1, raw)
 }
 
 func (t *tunnelStreamConn) readEnvelope() ([]byte, error) {
@@ -645,12 +657,7 @@ func (h *AgentTunnelHub) writeLoop(generation uint64) {
 		case <-ctx.Done():
 			return
 		case tf := <-h.out:
-			env, err := ep.Send(codec.KindAgentTunnel, tf, false)
-			if err != nil {
-				return
-			}
-			raw, _ := json.Marshal(env)
-			if err := stream.writeEnvelope(raw); err != nil {
+			if err := stream.writeEnvelopeWithEndpoint(ep, codec.KindAgentTunnel, tf, false); err != nil {
 				return
 			}
 		}
@@ -1513,12 +1520,7 @@ func (h *InitiatorHub) writeLoop(generation uint64) {
 		case <-ctx.Done():
 			return
 		case tf := <-h.out:
-			env, err := ep.Send(codec.KindAgentTunnel, tf, false)
-			if err != nil {
-				return
-			}
-			raw, _ := json.Marshal(env)
-			if err := stream.writeEnvelope(raw); err != nil {
+			if err := stream.writeEnvelopeWithEndpoint(ep, codec.KindAgentTunnel, tf, false); err != nil {
 				return
 			}
 		}

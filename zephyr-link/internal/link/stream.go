@@ -166,12 +166,7 @@ func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep
 		if replyBody == nil {
 			replyKind, replyBody, replySecret = codec.KindSyncAck, map[string]any{"receivedKind": frame.Kind, "ok": true}, false
 		}
-		ack, err := ep.Send(replyKind, replyBody, replySecret)
-		if err != nil {
-			return
-		}
-		out, _ := json.Marshal(ack)
-		if err := push.write(out); err != nil {
+		if err := push.writeEnvelope(ep, replyKind, replyBody, replySecret); err != nil {
 			return
 		}
 	}
@@ -183,6 +178,22 @@ func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep
 type streamPushWriter struct {
 	mu   sync.Mutex
 	conn net.Conn
+}
+
+func (w *streamPushWriter) writeEnvelope(ep *Endpoint, kind int, body any, secret bool) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	env, err := ep.Send(kind, body, secret)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	_ = w.conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	defer w.conn.SetWriteDeadline(time.Time{})
+	return writeServerFrame(w.conn, 0x1, raw)
 }
 
 func (w *streamPushWriter) writeFrame(opcode byte, payload []byte) error {
@@ -209,15 +220,7 @@ func (n *Node) PushStreamFrame(sessionID string, kind int, body any, secret bool
 	if ep == nil || w == nil {
 		return fmt.Errorf("link: session %s has no live stream", sessionID)
 	}
-	env, err := ep.Send(kind, body, secret)
-	if err != nil {
-		return err
-	}
-	raw, err := json.Marshal(env)
-	if err != nil {
-		return err
-	}
-	return w.write(raw)
+	return w.writeEnvelope(ep, kind, body, secret)
 }
 
 // readFrame parses one RFC 6455 frame. Incoming frames are client frames and
