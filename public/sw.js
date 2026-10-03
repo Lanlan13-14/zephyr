@@ -1,4 +1,4 @@
-const CACHE_NAME = 'zephyr-static-20260925-ai-layout';
+const CACHE_NAME = 'zephyr-static-20261003-agent-write1';
 const PRECACHE = [
     '/app.js?v=20260925-ai-layout',
     '/style.css?v=20260925-ai-layout',

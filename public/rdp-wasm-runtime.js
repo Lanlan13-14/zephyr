@@ -15,7 +15,7 @@ export async function loadGoRuntime({ runtimeUrl = DEFAULT_RUNTIME_URL, importer
 }
 
 export async function instantiateGoWasm(GoRuntime, {
-    wasmUrl = './vendor/rdp-wasm/main.wasm?v=20260730-rdp-ordered-surface4',
+    wasmUrl = './vendor/rdp-wasm/main.wasm?v=20261003-agent-write1',
     fetchImpl = globalThis.fetch,
     pipeline = 'unknown',
 } = {}) {
