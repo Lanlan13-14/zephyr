@@ -8,11 +8,14 @@ mkdir -p "$(dirname "$OUTPUT_PATH")"
 OUTPUT_PATH="$(cd "$(dirname "$OUTPUT_PATH")" && pwd)/$(basename "$OUTPUT_PATH")"
 IOS_PACKAGE_PATH="$(cd "$IOS_PACKAGE_PATH" && pwd)"
 RAW_MARKETING_VERSION="${MARKETING_VERSION:-1.0.0}"
-if [[ "${GITHUB_EVENT_NAME:-}" == "workflow_dispatch" && "$RAW_MARKETING_VERSION" != zom-v* ]]; then
-  echo "Workflow dispatch version must start with zom-v: $RAW_MARKETING_VERSION" >&2
+if [[ "${GITHUB_EVENT_NAME:-}" == "workflow_dispatch" && "$RAW_MARKETING_VERSION" != zom-v* && ! "$RAW_MARKETING_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+  echo "Invalid workflow iOS marketing version: $RAW_MARKETING_VERSION" >&2
   exit 1
 fi
 MARKETING_VERSION="${RAW_MARKETING_VERSION#zom-v}"
+# Prerelease tags remain valid GitHub release identifiers, but Apple marketing
+# versions must contain digits and dots only; the workflow normally strips preN.
+MARKETING_VERSION="${MARKETING_VERSION%%pre*}"
 BUNDLE_VERSION="${GITHUB_RUN_NUMBER:-1}"
 WORK_DIR="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/zephyr-one-ios.XXXXXX")"
 HOST_DIR="$WORK_DIR/host"
