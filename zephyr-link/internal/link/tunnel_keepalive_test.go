@@ -34,7 +34,7 @@ func TestStreamPingWritesMaskedPingOpcode(t *testing.T) {
 		}
 		defer conn.Close()
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		op, _, err := readFrame(bufio.NewReader(conn))
+		op, _, err := readClientFrame(bufio.NewReader(conn))
 		if err != nil {
 			return
 		}

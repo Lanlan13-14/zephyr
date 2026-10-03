@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
 )
@@ -129,7 +130,7 @@ func (n *Node) serveStream(conn net.Conn, br *bufio.Reader, sessionID string, ep
 	n.streamWriters[sessionID] = push
 	n.mu.Unlock()
 	for {
-		op, payload, err := readFrame(br)
+		op, payload, err := readClientFrame(br)
 		if err != nil {
 			return
 		}
@@ -187,6 +188,8 @@ type streamPushWriter struct {
 func (w *streamPushWriter) writeFrame(opcode byte, payload []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	_ = w.conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	defer w.conn.SetWriteDeadline(time.Time{})
 	return writeServerFrame(w.conn, opcode, payload)
 }
 
@@ -217,48 +220,112 @@ func (n *Node) PushStreamFrame(sessionID string, kind int, body any, secret bool
 	return w.write(raw)
 }
 
-// readFrame parses one RFC 6455 frame. Client frames must be masked; this
-// server still accepts both so a Go-to-Go unit test (unmasked, because it
-// never hops through Node) keeps working. Production always hops through
-// Node's `ws`, which requires the MASK bit on every client frame.
+// readFrame parses one RFC 6455 frame. Incoming frames are client frames and
+// therefore must be masked. It accepts only complete, non-fragmented data and
+// control frames; continuation and reserved extensions are not negotiated.
 func readFrame(br *bufio.Reader) (opcode byte, payload []byte, err error) {
+	return readClientFrame(br)
+}
+
+func readClientFrame(br *bufio.Reader) (opcode byte, payload []byte, err error) {
 	var hdr [2]byte
 	if _, err = io.ReadFull(br, hdr[:]); err != nil {
 		return 0, nil, err
 	}
+	if hdr[0]&0x70 != 0 {
+		return 0, nil, errors.New("websocket: reserved bits set")
+	}
+	if hdr[0]&0x80 == 0 {
+		return 0, nil, errors.New("websocket: fragmented frame")
+	}
 	opcode = hdr[0] & 0x0f
+	if opcode == 0 || (opcode > 0x2 && opcode < 0x8) || (opcode >= 0xb && opcode <= 0xf) {
+		return 0, nil, errors.New("websocket: invalid opcode")
+	}
 	masked := hdr[1]&0x80 != 0
-	length := uint64(hdr[1] & 0x7f)
-	if length == 126 {
+	if !masked {
+		return 0, nil, errors.New("websocket: unmasked client frame")
+	}
+	lengthCode := hdr[1] & 0x7f
+	length := uint64(lengthCode)
+	if lengthCode == 126 {
 		var b [2]byte
 		if _, err = io.ReadFull(br, b[:]); err != nil {
 			return 0, nil, err
 		}
 		length = uint64(binary.BigEndian.Uint16(b[:]))
-	} else if length == 127 {
+	} else if lengthCode == 127 {
 		var b [8]byte
 		if _, err = io.ReadFull(br, b[:]); err != nil {
 			return 0, nil, err
 		}
 		length = binary.BigEndian.Uint64(b[:])
+		if length&(uint64(1)<<63) != 0 {
+			return 0, nil, errors.New("websocket: invalid 64-bit length")
+		}
+	}
+	if opcode >= 0x8 && length > 125 {
+		return 0, nil, errors.New("websocket: invalid control frame")
 	}
 	if length > 8<<20 {
 		return 0, nil, errors.New("frame too large")
 	}
 	var maskKey [4]byte
-	if masked {
-		if _, err = io.ReadFull(br, maskKey[:]); err != nil {
-			return 0, nil, err
-		}
+	if _, err = io.ReadFull(br, maskKey[:]); err != nil {
+		return 0, nil, err
 	}
-	payload = make([]byte, length)
+	payload = make([]byte, int(length))
 	if _, err = io.ReadFull(br, payload); err != nil {
 		return 0, nil, err
 	}
-	if masked {
-		for i := range payload {
-			payload[i] ^= maskKey[i%4]
+	for i := range payload {
+		payload[i] ^= maskKey[i%4]
+	}
+	return opcode, payload, nil
+}
+
+func readServerFrame(br *bufio.Reader) (opcode byte, payload []byte, err error) {
+	var hdr [2]byte
+	if _, err = io.ReadFull(br, hdr[:]); err != nil {
+		return 0, nil, err
+	}
+	if hdr[0]&0x70 != 0 || hdr[0]&0x80 == 0 {
+		return 0, nil, errors.New("websocket: invalid server frame")
+	}
+	opcode = hdr[0] & 0x0f
+	if opcode == 0 || (opcode > 0x2 && opcode < 0x8) || (opcode >= 0xb && opcode <= 0xf) {
+		return 0, nil, errors.New("websocket: invalid opcode")
+	}
+	if hdr[1]&0x80 != 0 {
+		return 0, nil, errors.New("websocket: masked server frame")
+	}
+	lengthCode := hdr[1] & 0x7f
+	length := uint64(lengthCode)
+	if lengthCode == 126 {
+		var b [2]byte
+		if _, err = io.ReadFull(br, b[:]); err != nil {
+			return 0, nil, err
 		}
+		length = uint64(binary.BigEndian.Uint16(b[:]))
+	} else if lengthCode == 127 {
+		var b [8]byte
+		if _, err = io.ReadFull(br, b[:]); err != nil {
+			return 0, nil, err
+		}
+		length = binary.BigEndian.Uint64(b[:])
+		if length&(uint64(1)<<63) != 0 {
+			return 0, nil, errors.New("websocket: invalid 64-bit length")
+		}
+	}
+	if opcode >= 0x8 && length > 125 {
+		return 0, nil, errors.New("websocket: invalid control frame")
+	}
+	if length > 8<<20 {
+		return 0, nil, errors.New("frame too large")
+	}
+	payload = make([]byte, int(length))
+	if _, err = io.ReadFull(br, payload); err != nil {
+		return 0, nil, err
 	}
 	return opcode, payload, nil
 }

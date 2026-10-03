@@ -299,9 +299,9 @@ const LINK_PROXY_MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 /* WSS relay: the client terminates TLS+WS at Node; Node opens a second WS to the Go
  * service and shuttles messages both ways. Frame payloads are ZSL/2 ciphertext that
  * only the Go service and the device can read — Node never inspects them. */
-function proxyLinkV2Stream(ws, req) {
-    const WebSocket = require('ws');
-    const proc = sharedProcess();
+function proxyLinkV2Stream(ws, req, options = {}) {
+    const WebSocket = options.WebSocket || require('ws');
+    const proc = options.proc || sharedProcess();
     const queue = [];
     let queuedBytes = 0;
     let closed = false;
@@ -374,7 +374,9 @@ function proxyLinkV2Stream(ws, req) {
         const url = new URL(req.url || '/', 'http://localhost');
         const sessionId = url.searchParams.get('sessionId') || '';
         if (!sessionId) { fail(1008, 'session-required'); return; }
-        upstream = new WebSocket('ws://' + addr + '/link/stream?sessionId=' + encodeURIComponent(sessionId));
+    const wsCtor = options.WebSocket || WebSocket;
+        upstream = new wsCtor('ws://' + addr + '/link/stream?sessionId=' + encodeURIComponent(sessionId));
+        if (options.onUpstream) options.onUpstream(upstream);
         upstream.on('open', flush);
         upstream.on('message', (data) => {
             if (closed || ws.readyState !== ws.OPEN) return;

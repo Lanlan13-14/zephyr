@@ -37,9 +37,9 @@ import (
 // (ack) or err. Data frames flow both ways; close is idempotent.
 
 const (
-	tunnelMaxDataBytes   = 256 * 1024 // per-frame plaintext cap, matches ZFT2 chunk sizing
-	tunnelDialTimeout    = 12 * time.Second
-	tunnelWriteTimeout   = 15 * time.Second
+	tunnelMaxDataBytes = 256 * 1024 // per-frame plaintext cap, matches ZFT2 chunk sizing
+	tunnelDialTimeout  = 12 * time.Second
+	tunnelWriteTimeout = 15 * time.Second
 	// Idle timeout applies to the Agent-side TCP hop toward the SSH target.
 	// 5 minutes used to tear down a live session the moment the user paused
 	// at a prompt; 30 minutes still reclaims abandoned sockets without
@@ -103,10 +103,8 @@ func (t *tunnelStreamConn) writeEnvelope(env []byte) error {
 
 func (t *tunnelStreamConn) readEnvelope() ([]byte, error) {
 	for {
-		// Pings only help if a peer that stopped answering is eventually
-		// declared dead. Any data, ping or pong renews this deadline.
 		_ = t.conn.SetReadDeadline(time.Now().Add(3 * tunnelPingInterval))
-		op, payload, err := readFrame(t.br)
+		op, payload, err := readServerFrame(t.br)
 		if err != nil {
 			return nil, err
 		}
@@ -120,7 +118,7 @@ func (t *tunnelStreamConn) readEnvelope() ([]byte, error) {
 			continue
 		case 0xA: // pong acknowledges our keepalive; it carries no envelope
 			continue
-		case 0x1, 0x2, 0x0:
+		case 0x1, 0x2:
 			return payload, nil
 		default:
 			return nil, errors.New("tunnel: bad stream opcode")
@@ -299,11 +297,13 @@ type AgentTunnelHub struct {
 // Zft2Lane is one zft2-lane tunnel: bytes the main end sealed into the stream
 // arrive here; the host writes replies back through the returned writer.
 type Zft2Lane struct {
-	hub  *AgentTunnelHub
-	id   int
-	in   chan []byte
-	dead chan struct{}
-	once sync.Once
+	hub       *AgentTunnelHub
+	id        int
+	in        chan []byte
+	dead      chan struct{}
+	once      sync.Once
+	readMu    sync.Mutex
+	remainder []byte
 }
 
 // LocalAddr reports a synthetic address for the zft2 lane.
@@ -327,16 +327,28 @@ func (a laneAddr) Network() string { return "zft2-lane" }
 func (a laneAddr) String() string  { return string(a) }
 
 func (l *Zft2Lane) Read(p []byte) (int, error) {
-	select {
-	case data, ok := <-l.in:
-		if !ok || len(data) == 0 {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	l.readMu.Lock()
+	defer l.readMu.Unlock()
+	for len(l.remainder) == 0 {
+		select {
+		case data, ok := <-l.in:
+			if !ok || len(data) == 0 {
+				return 0, io.EOF
+			}
+			l.remainder = data
+		case <-l.dead:
 			return 0, io.EOF
 		}
-		n := copy(p, data)
-		return n, nil
-	case <-l.dead:
-		return 0, io.EOF
 	}
+	n := copy(p, l.remainder)
+	l.remainder = l.remainder[n:]
+	if len(l.remainder) == 0 {
+		l.remainder = nil
+	}
+	return n, nil
 }
 
 func (l *Zft2Lane) Write(p []byte) (int, error) {
@@ -351,7 +363,13 @@ func (l *Zft2Lane) Write(p []byte) (int, error) {
 		if end > len(p) {
 			end = len(p)
 		}
-		l.hub.out <- tunnelFrame{Tun: l.id, Op: "data", Data: base64.StdEncoding.EncodeToString(p[offset:end]), Lane: "zft2"}
+		select {
+		case l.hub.out <- tunnelFrame{Tun: l.id, Op: "data", Data: base64.StdEncoding.EncodeToString(p[offset:end]), Lane: "zft2"}:
+		case <-l.dead:
+			return offset, io.ErrClosedPipe
+		case <-time.After(tunnelWriteTimeout):
+			return offset, errors.New("zft2 lane write timeout")
+		}
 	}
 	return len(p), nil
 }
@@ -359,7 +377,10 @@ func (l *Zft2Lane) Write(p []byte) (int, error) {
 func (l *Zft2Lane) Close() error {
 	l.once.Do(func() {
 		close(l.dead)
-		l.hub.out <- tunnelFrame{Tun: l.id, Op: "close", Lane: "zft2"}
+		select {
+		case l.hub.out <- tunnelFrame{Tun: l.id, Op: "close", Lane: "zft2"}:
+		case <-time.After(tunnelWriteTimeout):
+		}
 	})
 	return nil
 }
@@ -435,7 +456,7 @@ func (h *AgentTunnelHub) ServeZft2Local(conn net.Conn, br *bufio.Reader) {
 		h.mu.Unlock()
 	}()
 	for {
-		op, payload, err := readFrame(br)
+		op, payload, err := readClientFrame(br)
 		if err != nil {
 			return
 		}
@@ -820,8 +841,8 @@ func (c *MainEndTunnel) Write(p []byte) (int, error) {
 func (c *MainEndTunnel) Close() error {
 	c.once.Do(func() {
 		close(c.dead)
-		_ = c.hub.send(c.session, tunnelFrame{Tun: c.id, Op: "close"})
 		c.hub.drop(c)
+		_ = c.hub.send(c.session, tunnelFrame{Tun: c.id, Op: "close"})
 	})
 	return nil
 }
@@ -834,7 +855,7 @@ func (c *MainEndTunnel) SetWriteDeadline(t time.Time) error { return nil }
 
 type tunnelAddr string
 
-func (tunnelAddr) Network() string { return "zephyr-link-tunnel" }
+func (tunnelAddr) Network() string  { return "zephyr-link-tunnel" }
 func (a tunnelAddr) String() string { return string(a) }
 
 // MainEndTunnelHub is embedded in zephyr-link-server. It multiplexes every
@@ -1607,14 +1628,14 @@ func (t *initiatorTunnel) Write(p []byte) (int, error) {
 func (t *initiatorTunnel) Close() error {
 	t.once.Do(func() {
 		close(t.dead)
-		_ = t.hub.send(tunnelFrame{Tun: t.id, Op: "close", Lane: "one-relay"})
 		t.hub.drop(t)
+		_ = t.hub.send(tunnelFrame{Tun: t.id, Op: "close", Lane: "one-relay"})
 	})
 	return nil
 }
 
-func (t *initiatorTunnel) LocalAddr() net.Addr                { return tunnelAddr("one") }
-func (t *initiatorTunnel) RemoteAddr() net.Addr               { return tunnelAddr("agent") }
-func (t *initiatorTunnel) SetDeadline(time.Time) error        { return nil }
-func (t *initiatorTunnel) SetReadDeadline(time.Time) error    { return nil }
-func (t *initiatorTunnel) SetWriteDeadline(time.Time) error   { return nil }
+func (t *initiatorTunnel) LocalAddr() net.Addr              { return tunnelAddr("one") }
+func (t *initiatorTunnel) RemoteAddr() net.Addr             { return tunnelAddr("agent") }
+func (t *initiatorTunnel) SetDeadline(time.Time) error      { return nil }
+func (t *initiatorTunnel) SetReadDeadline(time.Time) error  { return nil }
+func (t *initiatorTunnel) SetWriteDeadline(time.Time) error { return nil }
