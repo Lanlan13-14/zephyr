@@ -7810,6 +7810,30 @@ function sftpWriteChunk(sftp, handle, buffer, length, position) {
         sftp.write(handle, buffer, 0, length, position, (err) => err ? reject(err) : resolve());
     });
 }
+
+/* OpenSSH's sftp-server closes the connection when one SFTP message exceeds
+ * SFTP_MAX_MSG_LENGTH (256 KiB). ssh2's handle-level write sends exactly the
+ * bytes it is given as a single message, and the browser uploads in 8 MiB
+ * chunks, so one write overshoots the cap and the next read dies with
+ * "EOF while reading packet" after the progress bar already hit 100%. Stay a
+ * kilobyte under the cap — the margin OpenSSH keeps itself. */
+const SFTP_MAX_WRITE_BYTES = 256 * 1024 - 1024;
+
+function sftpWriteBounded(sftp, handle, buffer, position) {
+    let sent = 0;
+    const writeMore = () => new Promise((resolve, reject) => {
+        if (sent >= buffer.length) return resolve();
+        const from = sent;
+        const n = Math.min(SFTP_MAX_WRITE_BYTES, buffer.length - sent);
+        sent += n;
+        sftp.write(handle, buffer, from, n, position + from, (err) => {
+            if (err) reject(err);
+            else resolve(writeMore());
+        });
+    });
+    return writeMore();
+}
+
 async function sftpHashFile(sftp, filePath, { algorithm = 'sha256', chunkSize = 256 * 1024, transfer = null } = {}) {
     const hash = crypto.createHash(algorithm);
     let handle = null;
@@ -8537,15 +8561,11 @@ app.post('/api/sftp/upload/:token', requireUser, async (req, res) => {
     req.on('end', () => {
         const buffer = Buffer.concat(chunks);
 
-        // Write chunk at offset using low-level sftp.write()
-        session.sftp.write(session.fileHandle, buffer, 0, buffer.length, offset, (writeErr) => {
-            if (writeErr || session.settled) {
-                if (writeErr) {
-                    console.warn('[sftp-upload-chunk]', 'write failed', { path: uploadTask.path, offset, size: buffer.length, error: writeErr.message });
-                }
-                if (!res.headersSent) {
-                    return res.status(500).json({ error: writeErr ? `写入分片失败：${writeErr.message}` : '上传会话已结束' });
-                }
+        // Split into messages OpenSSH will accept; one 8 MiB write gets the
+        // session killed and the status read returns "EOF while reading packet".
+        sftpWriteBounded(session.sftp, session.fileHandle, buffer, offset).then(() => {
+            if (session.settled) {
+                if (!res.headersSent) res.status(410).json({ error: '上传会话已结束' });
                 return;
             }
 
@@ -8571,6 +8591,11 @@ app.post('/api/sftp/upload/:token', requireUser, async (req, res) => {
                 totalLoaded: session.totalLoaded,
                 totalSize: Number(uploadTask.size) || 0,
             });
+        }).catch((writeErr) => {
+            console.warn('[sftp-upload-chunk]', 'write failed', { path: uploadTask.path, offset, size: buffer.length, error: writeErr.message });
+            if (!res.headersSent) {
+                res.status(500).json({ error: `写入分片失败：${writeErr.message}` });
+            }
         });
     });
 
