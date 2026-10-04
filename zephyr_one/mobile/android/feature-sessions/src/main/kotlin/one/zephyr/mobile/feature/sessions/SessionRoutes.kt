@@ -163,6 +163,7 @@ fun TerminalRoute(
         readFrame = readFrame,
         remoteTitle = remoteTitle,
         keyboardVisible = keyboardVisible,
+        onImeHidden = { keyboardVisible = false },
         onIntent = { intent ->
             dispatch(
                 viewModel = viewModel,
