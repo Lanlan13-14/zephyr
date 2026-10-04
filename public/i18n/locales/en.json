@@ -2471,5 +2471,15 @@
   "在线 Agent 跳板机": "Online Agent bastions",
   "SSH 跳板机连接": "SSH jump host connections",
   "优先级": "Priority",
-  "待办标题": "Todo title"
+  "待办标题": "Todo title",
+  "正在用浏览器解码图片...": "Decoding the image in the browser...",
+  "浏览器解码图片失败": "The browser could not decode the image",
+  "浏览器加载预览图片失败": "The browser failed to load the preview image",
+  "浏览器已转 WebP": "Converted to WebP in the browser",
+  "浏览器原图直出": "Shown directly by the browser",
+  "正在用浏览器解码媒体...": "Decoding the media in the browser...",
+  "浏览器解码媒体失败": "The browser could not decode the media",
+  "浏览器已转码": "Transcoded in the browser",
+  "浏览器直接播放": "Played directly by the browser",
+  "内嵌字幕由浏览器端解码": "Embedded subtitles are decoded in the browser"
 }

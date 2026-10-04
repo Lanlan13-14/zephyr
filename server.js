@@ -135,10 +135,6 @@ const {
     getImageExt,
     isPreviewImageExt,
     assertPreviewSourceSize,
-    writePreviewSourceFile,
-    ensurePreviewCacheFile,
-    cleanupPreviewCache,
-    previewErrorResponse,
 } = require('./preview/image/preview-service');
 const {
     extname: getMediaExt,
@@ -147,12 +143,7 @@ const {
     isVideoExt,
     isSubtitleExt,
     directMime,
-    mediaCacheKey,
-    probeMediaFromStream,
-    decidePlayMode,
-    ffmpegArgsForMode,
-    subtitleToVttArgs,
-    cleanupMediaProbeCache,
+    mediaContentType,
 } = require('./preview/media/media-service');
 const {
     FileAgentManager,
@@ -508,15 +499,8 @@ const sftpMediaTokens = new Map();
 const sftpClipboardByUser = new Map();
 const sftpClipboardTransfers = new Map();
 const sftpArchiveTransfers = new Map();
-const previewCache = new Map();
-const previewInFlight = new Map();
-const mediaProbeCache = new Map();
 const PREVIEW_TOKEN_TTL = 10 * 60 * 1000;
-const PREVIEW_CACHE_TTL = 30 * 60 * 1000;
-const PREVIEW_CACHE_DIR = path.join(os.tmpdir(), 'zephyr-preview-cache');
 const MEDIA_TOKEN_TTL = 24 * 60 * 60 * 1000;
-const MEDIA_CACHE_TTL = 30 * 60 * 1000;
-const MEDIA_CACHE_DIR = path.join(os.tmpdir(), 'zephyr-media-cache');
 
 /* ─── File Agent Manager ─── */
 let fileAgentManager = null;
@@ -1876,9 +1860,6 @@ function terminateSessionBoundRuntimes(reason = 'database-import') {
         sftpClipboardByUser,
         sftpClipboardTransfers,
         sftpArchiveTransfers,
-        previewCache,
-        previewInFlight,
-        mediaProbeCache,
         clipboardTransitTokens,
         ephemeralRdpTargetGrants,
         tempTotpTokens,
@@ -8197,7 +8178,6 @@ app.get('/api/sftp/preview/:token', requireUser, async (req, res) => {
         [...(routed?.clients || [])].reverse().forEach((client) => { try { client.end?.(); } catch {} });
     };
     try {
-        cleanupPreviewCache(previewCache);
         routed = await createRoutedSSHConnection(connectionConfig, 10000);
         sftp = await new Promise((resolve, reject) => {
             routed.client.sftp((err, nextSftp) => err ? reject(err) : resolve(nextSftp));
@@ -8207,45 +8187,39 @@ app.get('/api/sftp/preview/:token', requireUser, async (req, res) => {
         });
         if (stats.isDirectory?.()) throw new Error('目录不支持图片预览');
         const size = Number(stats.size) || 0;
-        const mtime = Number(stats.mtime) || Number(stats.modifyTime) || 0;
         assertPreviewSourceSize(size, PREVIEW_IMAGE_LIMITS);
+        const range = mediaRangeFromRequest(req, size);
+        if (!range) {
+            closeConnection();
+            res.setHeader('Content-Range', `bytes */${size}`);
+            return res.status(416).end();
+        }
+        res.status(range.partial ? 206 : 200);
         res.setHeader('Cache-Control', 'private, max-age=300');
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(previewTask.path))}`);
+        res.setHeader('X-Zephyr-Preview-Engine', 'browser-wasm');
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.type('application/octet-stream');
+        if (size) {
+            res.setHeader('Content-Length', String(range.end - range.start + 1));
+            if (range.partial) res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
+        }
         previewTask.expiresAt = Date.now() + PREVIEW_TOKEN_TTL;
-
-        const result = await ensurePreviewCacheFile({
-            cache: { ttl: PREVIEW_CACHE_TTL },
-            cacheMap: previewCache,
-            inFlightMap: previewInFlight,
-            cacheDir: PREVIEW_CACHE_DIR,
-            sourcePath: previewTask.path,
-            sourceSize: size,
-            sourceMtime: mtime,
-            ext,
-            cacheIdentity: {
-                ownerUserId: previewTask.ownerUserId,
-                connectionId: previewTask.connectionId,
-                serverIdentity: previewTask.serverIdentity,
-            },
-            limits: PREVIEW_IMAGE_LIMITS,
-            readSourceFile: (inputPath, readLimits) => writePreviewSourceFile({
-                createReadStream: () => sftp.createReadStream(previewTask.path),
-                inputPath,
-                ...readLimits,
-            }),
-        });
-        res.type('image/webp');
-        res.setHeader('X-Zephyr-Preview-Engine', result.engine || 'unknown');
-        res.sendFile(result.outputPath, (err) => {
+        const readStream = sftp.createReadStream(previewTask.path, range.empty ? undefined : { start: range.start, end: range.end });
+        readStream.on('error', (err) => {
             closeConnection();
-            if (err) console.warn('[sftp-preview]', 'send failed', { code: 'preview_send_failed' });
+            if (!res.headersSent) res.status(500).end(err.message || '图片读取失败');
+            else res.destroy(err);
         });
+        res.on('close', () => closeConnection());
+        res.on('finish', () => closeConnection());
+        readStream.pipe(res);
     } catch (err) {
         closeConnection();
-        const safe = previewErrorResponse(err);
-        console.warn('[sftp-preview]', 'failed', { code: safe.body.code });
-        if (!res.headersSent) res.status(safe.statusCode).json(safe.body);
+        const statusCode = err?.statusCode || (err?.code === 'preview_input_too_large' ? 413 : 500);
+        console.warn('[sftp-preview]', 'failed', { code: err?.code || 'preview_send_failed' });
+        if (!res.headersSent) res.status(statusCode).json({ error: err?.publicMessage || err?.message || '图片预览失败', code: err?.code || 'preview_send_failed' });
     }
 });
 
@@ -8297,60 +8271,6 @@ function mediaRangeFromRequest(req, size) {
     return { start, end, partial: true };
 }
 
-function cleanupMediaFileCache() {
-    const now = Date.now();
-    try { fs.mkdirSync(MEDIA_CACHE_DIR, { recursive: true }); } catch {}
-    let entries = [];
-    try { entries = fs.readdirSync(MEDIA_CACHE_DIR, { withFileTypes: true }); } catch { return; }
-    for (const entry of entries) {
-        if (!entry.isFile()) continue;
-        const full = path.join(MEDIA_CACHE_DIR, entry.name);
-        try {
-            const stat = fs.statSync(full);
-            if (now - Number(stat.mtimeMs || 0) > MEDIA_CACHE_TTL) fs.unlinkSync(full);
-        } catch {}
-    }
-}
-
-function mediaCacheFilePath(mediaTask, ext) {
-    const key = mediaCacheKey([mediaTask.path, String(mediaTask.size || ''), String(mediaTask.mtime || ''), ext || 'media']);
-    return path.join(MEDIA_CACHE_DIR, `${key}.${ext || 'bin'}`);
-}
-
-function cacheSftpMediaToFile(sftp, mediaTask, ext) {
-    cleanupMediaFileCache();
-    const target = mediaCacheFilePath(mediaTask, ext);
-    return new Promise((resolve, reject) => {
-        fs.mkdirSync(MEDIA_CACHE_DIR, { recursive: true });
-        fs.stat(target, (statErr, cachedStat) => {
-            if (!statErr && Number(cachedStat.size) === Number(mediaTask.size || 0)) {
-                fs.utimes(target, new Date(), new Date(), () => resolve(target));
-                return;
-            }
-            const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-            const input = sftp.createReadStream(mediaTask.path);
-            const output = fs.createWriteStream(tmp);
-            let settled = false;
-            const done = (err) => {
-                if (settled) return;
-                settled = true;
-                try { input.destroy(); } catch {}
-                try { output.destroy(); } catch {}
-                if (err) {
-                    try { fs.unlinkSync(tmp); } catch {}
-                    reject(err);
-                    return;
-                }
-                fs.rename(tmp, target, (renameErr) => renameErr ? reject(renameErr) : resolve(target));
-            };
-            input.on('error', done);
-            output.on('error', done);
-            output.on('finish', () => done());
-            input.pipe(output);
-        });
-    });
-}
-
 app.get('/api/sftp/media/stream/:token', requireUser, async (req, res) => {
     const mediaTask = getMediaTask(req.params.token, req, res);
     if (!mediaTask) return;
@@ -8363,54 +8283,32 @@ app.get('/api/sftp/media/stream/:token', requireUser, async (req, res) => {
         if (stats.isDirectory?.()) throw new Error('目录不支持媒体预览');
         const size = Number(stats.size) || Number(mediaTask.size) || 0;
         const ext = getMediaExt(mediaTask.path);
-        const direct = mediaTask.mode === 'DIRECT';
         res.setHeader('Cache-Control', 'private, max-age=300');
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(mediaTask.path))}`);
-        res.setHeader('X-Zephyr-Media-Mode', mediaTask.mode || 'DIRECT');
-        if (direct) {
-            const range = mediaRangeFromRequest(req, size);
-            if (!range) {
-                closeMediaRouted(routed, sftp);
-                res.setHeader('Content-Range', `bytes */${size}`);
-                return res.status(416).end();
-            }
-            res.status(range.partial ? 206 : 200);
-            res.type(directMime(ext));
-            res.setHeader('Accept-Ranges', 'bytes');
-            if (size) {
-                res.setHeader('Content-Length', String(range.end - range.start + 1));
-                if (range.partial) res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
-            }
-            const readStream = sftp.createReadStream(mediaTask.path, range.empty ? undefined : { start: range.start, end: range.end });
-            readStream.on('error', (err) => {
-                closeMediaRouted(routed, sftp);
-                if (!res.headersSent) res.status(500).end(err.message || '媒体读取失败');
-                else res.destroy(err);
-            });
-            res.on('close', () => closeMediaRouted(routed, sftp));
-            res.on('finish', () => closeMediaRouted(routed, sftp));
-            readStream.pipe(res);
-            return;
+        res.setHeader('X-Zephyr-Media-Mode', 'RAW');
+        const range = mediaRangeFromRequest(req, size);
+        if (!range) {
+            closeMediaRouted(routed, sftp);
+            res.setHeader('Content-Range', `bytes */${size}`);
+            return res.status(416).end();
         }
-        res.status(200);
-        res.type(isVideoExt(ext) ? 'video/mp4' : 'audio/mp4');
-        res.setHeader('Accept-Ranges', 'none');
-        const inputPath = await cacheSftpMediaToFile(sftp, mediaTask, ext);
-        closeMediaRouted(routed, sftp);
-        routed = null;
-        sftp = null;
-        const args = ffmpegArgsForMode(mediaTask.mode, isVideoExt(ext), inputPath);
-        const ffmpeg = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-        let stderr = '';
-        ffmpeg.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8').slice(-4000); });
-        ffmpeg.on('error', (err) => { if (!res.headersSent) res.status(500).end(err.message); else res.destroy(err); });
-        ffmpeg.on('close', (code) => {
-            if (code && !res.destroyed) console.warn('[sftp-media]', 'ffmpeg exited', { path: mediaTask.path, mode: mediaTask.mode, code, stderr: stderr.trim().slice(-500) });
+        res.status(range.partial ? 206 : 200);
+        res.type(mediaContentType(ext));
+        res.setHeader('Accept-Ranges', 'bytes');
+        if (size) {
+            res.setHeader('Content-Length', String(range.end - range.start + 1));
+            if (range.partial) res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
+        }
+        const readStream = sftp.createReadStream(mediaTask.path, range.empty ? undefined : { start: range.start, end: range.end });
+        readStream.on('error', (err) => {
+            closeMediaRouted(routed, sftp);
+            if (!res.headersSent) res.status(500).end(err.message || '媒体读取失败');
+            else res.destroy(err);
         });
-        ffmpeg.stdout.on('error', () => {});
-        res.on('close', () => { try { ffmpeg.kill('SIGKILL'); } catch {} });
-        ffmpeg.stdout.pipe(res);
+        res.on('close', () => closeMediaRouted(routed, sftp));
+        res.on('finish', () => closeMediaRouted(routed, sftp));
+        readStream.pipe(res);
     } catch (err) {
         closeMediaRouted(routed, sftp);
         console.warn('[sftp-media]', 'stream failed', { path: mediaTask?.path || '', error: err.message });
@@ -8428,29 +8326,14 @@ app.get('/api/sftp/media/subtitle/:token/:index.vtt', requireUser, async (req, r
         const subtitle = (mediaTask.subtitles || [])[Number(req.params.index) || 0];
         if (!subtitle) throw new Error('字幕不存在');
         res.setHeader('Cache-Control', 'private, max-age=300');
-        res.type('text/vtt; charset=utf-8');
-        if (subtitle.externalPath) {
-            const ext = getMediaExt(subtitle.externalPath);
-            if (ext === 'vtt') {
-                const rs = sftp.createReadStream(subtitle.externalPath);
-                rs.on('error', (err) => { closeMediaRouted(routed, sftp); if (!res.headersSent) res.status(500).end(err.message); else res.destroy(err); });
-                res.on('close', () => closeMediaRouted(routed, sftp));
-                res.on('finish', () => closeMediaRouted(routed, sftp));
-                rs.pipe(res);
-                return;
-            }
-            const ffmpeg = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'warning', '-i', 'pipe:0', '-f', 'webvtt', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] });
-            sftp.createReadStream(subtitle.externalPath).pipe(ffmpeg.stdin);
-            ffmpeg.on('close', () => closeMediaRouted(routed, sftp));
-            res.on('close', () => { try { ffmpeg.kill('SIGKILL'); } catch {}; closeMediaRouted(routed, sftp); });
-            ffmpeg.stdout.pipe(res);
-            return;
-        }
-        const ffmpeg = spawn('ffmpeg', subtitleToVttArgs(subtitle.index || 0), { stdio: ['pipe', 'pipe', 'pipe'] });
-        sftp.createReadStream(mediaTask.path).pipe(ffmpeg.stdin);
-        ffmpeg.on('close', () => closeMediaRouted(routed, sftp));
-        res.on('close', () => { try { ffmpeg.kill('SIGKILL'); } catch {}; closeMediaRouted(routed, sftp); });
-        ffmpeg.stdout.pipe(res);
+        if (!subtitle.externalPath) throw new Error('内嵌字幕由浏览器端解码');
+        const ext = getMediaExt(subtitle.externalPath);
+        res.type(ext === 'vtt' ? 'text/vtt; charset=utf-8' : 'text/plain; charset=utf-8');
+        const rs = sftp.createReadStream(subtitle.externalPath);
+        rs.on('error', (err) => { closeMediaRouted(routed, sftp); if (!res.headersSent) res.status(500).end(err.message); else res.destroy(err); });
+        res.on('close', () => closeMediaRouted(routed, sftp));
+        res.on('finish', () => closeMediaRouted(routed, sftp));
+        rs.pipe(res);
     } catch (err) {
         closeMediaRouted(routed, sftp);
         if (!res.headersSent) res.status(500).end(err.message || '字幕加载失败');
@@ -12296,8 +12179,9 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     type: 'sftp-preview-ready',
                     path: targetPath,
                     url: `/api/sftp/preview/${token}`,
-                    contentType: 'image/webp',
-                    converted: true,
+                    contentType: 'application/octet-stream',
+                    engine: 'browser-wasm',
+                    converted: false,
                     size: Number(stats.size) || 0,
                 });
             });
@@ -12327,28 +12211,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     return;
                 }
                 try {
-                    cleanupMediaProbeCache(mediaProbeCache);
                     const size = Number(stats.size) || 0;
                     const mtime = Number(stats.mtime) || Number(stats.modifyTime) || 0;
-                    const cacheKey = mediaCacheKey([targetPath, String(size), String(mtime), ext]);
-                    let info = null;
-                    if (msg.force) mediaProbeCache.delete(cacheKey);
-                    const cached = mediaProbeCache.get(cacheKey);
-                    if (cached?.info) {
-                        cached.expiresAt = Date.now() + 30 * 60 * 1000;
-                        info = cached.info;
-                    }
-                    try {
-                        if (!info) info = await probeMediaFromStream(() => sftpStream.createReadStream(targetPath, { start: 0, end: Math.min(size || 16 * 1024 * 1024, 16 * 1024 * 1024) - 1 }), {
-                            cacheMap: mediaProbeCache,
-                            cacheKey,
-                            ext,
-                            timeoutMs: 12000,
-                        });
-                    } catch (probeErr) {
-                        info = { container: ext, duration: 0, video: isVideoExt(ext) ? { codec: '', width: 0, height: 0 } : null, audio: { codec: '', channels: 0 }, subtitles: [] };
-                    }
-                    const mode = decidePlayMode(info, ext, msg.capabilities || {});
                     const token = crypto.randomBytes(24).toString('hex');
                     const dir = dirnameRemote(targetPath);
                     const base = getMediaBasenameNoExt(targetPath).toLowerCase();
@@ -12378,26 +12242,25 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         connectionConfig: attachedSshSession?.connectionConfig || conn,
                         size,
                         mtime,
-                        mode,
-                        info,
+                        mode: 'RAW',
                         subtitles,
                         expiresAt: Date.now() + MEDIA_TOKEN_TTL,
                     });
-                    console.info('[sftp-media-preview]', 'ready', { path: targetPath, mode, subtitles: subtitles.length, size });
+                    console.info('[sftp-media-preview]', 'ready', { path: targetPath, mode: 'RAW', subtitles: subtitles.length, size });
                     sendJSON({
                         type: 'sftp-media-preview-ready',
                         path: targetPath,
                         kind: isVideoExt(ext) ? 'video' : 'audio',
-                        mode,
+                        mode: 'RAW',
+                        engine: 'browser-wasm',
                         streamUrl: `/api/sftp/media/stream/${token}`,
                         token,
                         subtitles: subtitles.map((sub, index) => ({
                             index,
                             language: sub.language || '',
-                            external: !!sub.external,
+                            external: true,
                             url: `/api/sftp/media/subtitle/${token}/${index}.vtt`,
                         })),
-                        info,
                         size,
                     });
                 } catch (mediaErr) {
