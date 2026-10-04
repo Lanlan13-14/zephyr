@@ -7834,6 +7834,15 @@ function sftpWriteBounded(sftp, handle, buffer, position) {
     return writeMore();
 }
 
+/* How many reads stay in flight at once. A bastion tunnel turns every
+ * request-then-wait round trip into tens of milliseconds, and hashing a file
+ * one chunk at a time makes the verification after an upload take longer than
+ * the upload itself — the dialog sits at 100% and then fails. ssh2's fastGet
+ * keeps a window of reads outstanding for the same reason, so the hash does
+ * too. The chunks still have to be folded into the digest in file order, so
+ * anything that arrives early waits in `pending` until its turn. */
+const SFTP_HASH_PIPELINE = 32;
+
 async function sftpHashFile(sftp, filePath, { algorithm = 'sha256', chunkSize = 256 * 1024, transfer = null } = {}) {
     const hash = crypto.createHash(algorithm);
     let handle = null;
@@ -7842,14 +7851,36 @@ async function sftpHashFile(sftp, filePath, { algorithm = 'sha256', chunkSize = 
         handle = await sftpOpen(sftp, filePath, 'r');
         handleRef.handle = handle;
         transfer?.handles?.add?.(handleRef);
-        let position = 0;
-        while (true) {
-            throwIfClipboardTransferCancelled(transfer);
-            const buffer = Buffer.allocUnsafe(chunkSize);
-            const { bytesRead, buffer: readBuffer } = await sftpReadChunk(sftp, handle, buffer, chunkSize, position);
-            if (!bytesRead) break;
-            hash.update(readBuffer.subarray(0, bytesRead));
-            position += bytesRead;
+
+        const pending = new Map();
+        let nextRead = 0;
+        let nextFold = 0;
+        let issued = 0;
+        let reading = true;
+
+        const take = async () => {
+            while (reading && issued - nextFold < SFTP_HASH_PIPELINE) {
+                throwIfClipboardTransferCancelled(transfer);
+                const index = issued++;
+                const position = index * chunkSize;
+                const buffer = Buffer.allocUnsafe(chunkSize);
+                const read = sftpReadChunk(sftp, handle, buffer, chunkSize, position).then(
+                    (result) => ({ index, ...result }),
+                    (error) => { throw Object.assign(error, { index }); },
+                );
+                pending.set(index, read);
+            }
+        };
+
+        await take();
+        while (reading) {
+            const { index, bytesRead, buffer: readBuffer } = await pending.get(nextFold);
+            pending.delete(nextFold);
+            if (index !== nextFold) throw new Error('哈希分片乱序');
+            if (!bytesRead || bytesRead < chunkSize) reading = false;
+            if (bytesRead) hash.update(readBuffer.subarray(0, bytesRead));
+            nextFold++;
+            if (reading) await take();
         }
         return hash.digest('hex');
     } finally {
