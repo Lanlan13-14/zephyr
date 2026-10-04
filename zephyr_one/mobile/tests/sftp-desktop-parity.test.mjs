@@ -71,10 +71,12 @@ test('SFTP engine can chmod, range-read, create-write and exec', () => {
   assert.match(engine, /override suspend fun readFileRange/);
   assert.match(engine, /override fun execStream/);
   // The stream's read/join loops block. Collected from the Compose main thread
-  // (Docker logs), they must run on the IO dispatcher or the UI freezes.
-  const execStreamBody = engine.slice(engine.indexOf('override fun execStream'), engine.indexOf('override fun execStream') + 1800);
-  assert.match(execStreamBody, /scope\.launch\(io\)/);
-  assert.equal(execStreamBody.match(/scope\.launch\(io\)/g)?.length, 3);
+  // (Docker logs), they must run on the IO dispatcher or the UI freezes. The
+  // engine's scope is itself built on that dispatcher, so a bare scope.launch
+  // and an explicit scope.launch(io) are the same pool; both count.
+  const execStreamBody = engine.slice(engine.indexOf('override fun execStream'), engine.indexOf('override fun execStream') + 4000);
+  assert.match(execStreamBody, /scope\.launch(\(io\))?/);
+  assert.equal(execStreamBody.match(/scope\.launch(\(io\))?/g)?.length, 4);
   assert.match(engine, /override suspend fun readFileStream/);
   assert.match(engine, /override suspend fun writeFileStream/);
   assert.match(engine, /RenameFlags\.OVERWRITE/);
