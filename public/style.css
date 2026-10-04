@@ -906,13 +906,29 @@ body.terminal-mode .terminal-view.active { animation: none; }
 .section-head h1 { font-size: clamp(24px, 4vw, 36px); letter-spacing: -0.03em; }
 .eyebrow { color: var(--accent-hover); font-size: 12px; text-transform: uppercase; letter-spacing: .16em; margin-bottom: 4px; }
 .add-btn { width: auto; min-width: 150px; }
-.action-bar { display: grid; grid-template-columns: 1fr 140px 140px 150px; gap: 10px; margin-bottom: 16px; }
+/* Fixed 140/140/150px tracks clip "By created time" onto two lines while the
+   other filters stay one line. Tracks size to their label, search takes the rest. */
+.action-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) repeat(3, minmax(132px, 180px));
+    gap: 10px;
+    margin-bottom: 16px;
+    align-items: stretch;
+}
+.action-bar .search-input,
+.action-bar .ui-toggle-select,
+.action-bar select { min-height: 44px; }
+.action-bar .ui-toggle-select-trigger {
+    height: 44px;
+    min-height: 44px;
+    white-space: nowrap;
+}
 .search-input, .action-bar select, .settings-form input, .settings-form select, .settings-form textarea {
     width: 100%; padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--surface); color: var(--text); outline: none;
 }
 .search-input:focus, .action-bar select:focus, .settings-form input:focus, .settings-form select:focus, .settings-form textarea:focus { border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); box-shadow: var(--focus-ring); }
-.connection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.connection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 14px; }
 .connection-card, .activity-panel, .empty-card, .terminal-placeholder, .settings-content, .settings-menu {
     border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface);
     box-shadow: var(--shadow-soft);
@@ -1035,13 +1051,13 @@ body.terminal-mode .terminal-view.active { animation: none; }
 .remark-md blockquote { border-left: 2.5px solid var(--accent); padding-left: 8px; margin: 6px 0; color: var(--text-secondary); font-style: italic; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; margin-bottom: 10px; }
 .tag-row span { padding: 3px 8px; border-radius: 999px; background: rgba(63,185,80,.13); color: var(--success); font-size: 12px; }
-.card-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-top: 14px; min-width: 0; }
 .card-actions .tool-btn {
     appearance: none;
     border: 1px solid var(--border);
     background: rgba(120, 120, 128, 0.06);
     color: var(--text);
-    padding: 8px 16px;
+    padding: 8px 12px;
     border-radius: var(--radius-sm);
     font-size: 13px;
     font-weight: 500;
@@ -1051,6 +1067,16 @@ body.terminal-mode .terminal-view.active { animation: none; }
     justify-content: center;
     gap: 6px;
     user-select: none;
+    /* .tool-btn is min-width:max-content; flex:0 0 auto for the terminal toolbar.
+       Inside a card that cannot shrink, so Edit/Delete/Connect paint past the card
+       edge once the label is longer than the Chinese source. Wrap the row instead
+       of ellipsizing the label. */
+    flex: 1 1 auto;
+    min-width: max-content;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
     transition: background 0.18s ease, transform 0.12s cubic-bezier(0.32, 0.72, 0, 1), border-color 0.18s ease, color 0.18s ease;
 }
 .card-actions .tool-btn svg { flex-shrink: 0; }
@@ -1059,7 +1085,7 @@ body.terminal-mode .terminal-view.active { animation: none; }
 .card-actions .tool-btn.danger { color: var(--text-secondary); }
 .card-actions .tool-btn.danger:hover { background: rgba(255, 69, 58, 0.12); border-color: rgba(255, 69, 58, 0.3); color: var(--danger); }
 .card-actions .tool-btn.danger:active { background: var(--danger); color: #fff; border-color: var(--danger); }
-.card-actions .btn { width: auto; flex: 1; padding: 9px 20px; margin-top: 0; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent); transition: background 0.2s ease, transform 0.12s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.2s ease; }
+.card-actions .btn { width: auto; flex: 1.4 1 auto; min-width: max-content; max-width: 100%; padding: 9px 14px; margin-top: 0; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; overflow: visible; text-overflow: clip; box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent); transition: background 0.2s ease, transform 0.12s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.2s ease; }
 .card-actions .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 40%, transparent); }
 .card-actions .btn svg { flex-shrink: 0; }
 .card-actions .btn:active { transform: scale(0.96); }
@@ -3734,6 +3760,9 @@ body.app-body > .toast-container {
     .section-head { align-items: stretch; flex-direction: column; }
     .add-btn { width: 100%; }
     .action-bar { grid-template-columns: 1fr; }
+    .action-bar .ui-toggle-select,
+    .action-bar .ui-toggle-select-trigger,
+    .action-bar select { width: 100%; }
     .activity-section-head { align-items: stretch; }
     .activity-section-head .tool-btn { width: 100%; }
     .activity-custom-range { align-items: stretch; flex-direction: column; }
@@ -4288,6 +4317,17 @@ html.ssh-kb-open .terminal-page {
     text-overflow: clip;
 }
 .tool-btn:hover { transform: translate3d(0, -1px, 0) scale(1.01); background: color-mix(in srgb, var(--text) 5%, transparent); border-color: color-mix(in srgb, var(--text-secondary) 28%, var(--border)); }
+/* Card actions must beat the terminal-toolbar .tool-btn (flex:0 0 auto), which is
+   declared later. Keep the label intact and let the row wrap instead. */
+.card-actions .tool-btn {
+    flex: 1 1 auto;
+    min-width: max-content;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+}
+
 .tool-btn:active {
     transform: scale(0.97);
     background: color-mix(in srgb, var(--text) 8%, var(--bg)) !important;
