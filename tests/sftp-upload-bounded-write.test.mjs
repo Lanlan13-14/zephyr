@@ -13,8 +13,9 @@ test('main-end sftp upload splits writes under the OpenSSH message cap', () => {
     const match = src.match(/const SFTP_MAX_WRITE_BYTES = ([0-9 *+\-]+);/);
     assert.ok(match, 'SFTP_MAX_WRITE_BYTES missing');
     const cap = valueOf(match[1].trim());
-    // Framing around the payload puts a full 256 KiB message over the limit.
-    assert.ok(cap <= 256 * 1024 - 1024, `cap ${cap} too high`);
+    // ssh2 caps an OpenSSH write at 256 KiB minus the 2 KiB it reserves for
+    // the header. Anything larger is sent whole and the server drops it.
+    assert.ok(cap <= 256 * 1024 - 2 * 1024, `cap ${cap} too high`);
     assert.ok(cap >= 64 * 1024, `cap ${cap} too low`);
 
     const fn = src.slice(src.indexOf('function sftpWriteBounded'), src.indexOf('function sftpWriteBounded') + 800);

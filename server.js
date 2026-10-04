@@ -7815,9 +7815,11 @@ function sftpWriteChunk(sftp, handle, buffer, length, position) {
  * SFTP_MAX_MSG_LENGTH (256 KiB). ssh2's handle-level write sends exactly the
  * bytes it is given as a single message, and the browser uploads in 8 MiB
  * chunks, so one write overshoots the cap and the next read dies with
- * "EOF while reading packet" after the progress bar already hit 100%. Stay a
- * kilobyte under the cap — the margin OpenSSH keeps itself. */
-const SFTP_MAX_WRITE_BYTES = 256 * 1024 - 1024;
+ * "EOF while reading packet" after the progress bar already hit 100%.
+ * ssh2 itself refuses anything above OPENSSH_MAX_PKT_LEN - PKT_RW_OVERHEAD
+ * (256 KiB minus the 2 KiB it reserves for the header), so match that rather
+ * than leaving a 1 KiB margin that still overflows. */
+const SFTP_MAX_WRITE_BYTES = 256 * 1024 - 2 * 1024;
 
 function sftpWriteBounded(sftp, handle, buffer, position) {
     let sent = 0;
