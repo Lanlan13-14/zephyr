@@ -353,16 +353,24 @@ class SshjEngine internal constructor(
         rename(from, to)
     }
 
-    override suspend fun delete(sessionId: String, path: String, recursive: Boolean): Result<Unit> = sftpUnit(sessionId) {
-        /* stat() follows symlinks, so a dangling link throws before anything is
-         * removed and a link to a directory is walked into. lstat() reports the
-         * link itself: a link is never a directory and is removed with rm, which
-         * drops the link and leaves its target alone. */
-        val attrs = lstat(path)
-        if (attrs.type == FileMode.Type.DIRECTORY) {
-            if (recursive) removeTree(this, path) else rmdir(path)
+    override suspend fun delete(sessionId: String, path: String, recursive: Boolean): Result<Unit> {
+        require(path.isNotBlank() && path != "/") { "拒绝删除空路径或根目录" }
+        /* Same decision as the hosted main end: stat() so a symlink is judged by
+         * what it points at, a directory goes through `rm -rf`, everything else
+         * through SFTP unlink. Walking the tree one SFTP call at a time is what
+         * made a delete stall until the UI gave up and showed nothing. */
+        val kind = stat(sessionId, path).getOrElse { return Result.failure(it) }
+            ?: return Result.failure(IllegalStateException("路径不存在"))
+        return if (kind.isDirectory) {
+            if (!recursive) return Result.failure(IllegalStateException("目录不为空，无法删除"))
+            exec(sessionId, "rm -rf -- ${one.zephyr.mobile.protocol.ssh.SshRemoteOps.shellQuote(path)}")
+                .mapCatching { result ->
+                    if (result.exitCode != 0) {
+                        error(result.stderr.decodeToString().ifBlank { "远程命令退出码 ${result.exitCode}" }.trim())
+                    }
+                }
         } else {
-            rm(path)
+            sftpUnit(sessionId) { rm(path) }
         }
     }
 
@@ -496,16 +504,6 @@ class SshjEngine internal constructor(
         owner = uid.toString(),
         group = gid.toString(),
     )
-
-    private fun removeTree(sftp: net.schmizz.sshj.sftp.SFTPClient, path: String) {
-        /* The directory listing reports a symlink's own type, and isDirectory()
-         * is false for one. Recursing on it would follow the link and delete the
-         * target; rm removes the link itself. */
-        sftp.ls(path).filterNot { it.name == "." || it.name == ".." }.forEach { entry ->
-            if (entry.isDirectory) removeTree(sftp, entry.path) else sftp.rm(entry.path)
-        }
-        sftp.rmdir(path)
-    }
 
     /** True while [sessionId] still names a live engine session. The pool uses this to drop stale cached leases. */
     override fun isSessionLive(sessionId: String): Boolean = sessions.containsKey(sessionId)
