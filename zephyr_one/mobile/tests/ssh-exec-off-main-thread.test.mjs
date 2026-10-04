@@ -22,11 +22,15 @@ test('exec and execStream open the channel off the collecting thread', () => {
   }
 });
 
-test('delete stats the link itself and recursion never follows one', () => {
+test('delete follows the hosted main end: stat, rm -rf for a directory, unlink otherwise', () => {
   const del = slice('suspend fun delete(');
-  assert.match(del, /lstat\(path\)/);
-  assert.doesNotMatch(del, /(?<!l)stat\(path\)/);
-  const tree = slice('fun removeTree(');
-  assert.match(tree, /entry\.isDirectory/);
-  assert.match(tree, /sftp\.rm\(entry\.path\)/);
+  // stat() so a symlink is judged by its target, matching server.js sftp-delete.
+  assert.match(del, /stat\(sessionId, path\)/);
+  assert.match(del, /kind\.isDirectory/);
+  assert.match(del, /rm -rf -- /);
+  assert.match(del, /shellQuote\(path\)/);
+  assert.match(del, /sftpUnit\(sessionId\) \{ rm\(path\) \}/);
+  // The old per-entry SFTP walk stalled and was removed.
+  assert.equal(src.includes('fun removeTree('), false);
+  assert.match(del, /path != "\/"/);
 });
