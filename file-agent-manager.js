@@ -482,7 +482,7 @@ class FileAgentConnection {
             if (this.linkLaneBuf.length < ZFT2_HEADER_BYTES) return;
             const metaLength = this.linkLaneBuf.readUInt32BE(12);
             const payloadLength = this.linkLaneBuf.readUInt32BE(16);
-            const total = HEADER_BYTES + metaLength + payloadLength;
+            const total = ZFT2_HEADER_BYTES + metaLength + payloadLength;
             if (total > 33 * 1024 * 1024) { this.detachLinkLane(); return; }
             if (this.linkLaneBuf.length < total) return;
             const frame = this.linkLaneBuf.subarray(0, total);
