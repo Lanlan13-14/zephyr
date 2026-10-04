@@ -855,6 +855,19 @@ type MainEndTunnel struct {
 }
 
 func (c *MainEndTunnel) Read(p []byte) (int, error) {
+	// A frame is up to tunnelMaxDataBytes and the caller may ask for less, so
+	// the tail is parked in rbuf. It has to come out before the next frame is
+	// taken: ssh2 reads the socket in 64 KiB slices, and a tail left behind
+	// here is never delivered, so the SSH packet it belongs to never
+	// completes and the session hangs. Files small enough to fit one read
+	// never hit this, which is why only the larger uploads died at 100%.
+	c.rmu.Lock()
+	if c.rbuf.Len() > 0 {
+		n, _ := c.rbuf.Read(p)
+		c.rmu.Unlock()
+		return n, nil
+	}
+	c.rmu.Unlock()
 	select {
 	case tf := <-c.in:
 		if tf.Op == "close" || tf.Op == "err" {
