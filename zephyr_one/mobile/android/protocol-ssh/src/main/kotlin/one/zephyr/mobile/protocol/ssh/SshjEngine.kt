@@ -524,7 +524,11 @@ class SshjEngine internal constructor(
         val wrapped = "sh -lc " + one.zephyr.mobile.protocol.ssh.SshRemoteOps.shellQuote(command)
         val commandSession = live.client.startSession()
         val remote = commandSession.exec(wrapped)
-        val stdoutJob = scope.launch {
+        /* These three jobs block on socket reads and Channel.join(). The flow is
+         * collected from the Compose main thread (the Docker log pane), so leaving
+         * them on the caller's dispatcher freezes the UI for the whole `docker logs
+         * -f` session. Pin them to the IO dispatcher; trySend/close are thread-safe. */
+        val stdoutJob = scope.launch(io) {
             val buffer = ByteArray(16 * 1024)
             val input = remote.inputStream
             while (true) {
@@ -533,7 +537,7 @@ class SshjEngine internal constructor(
                 if (read > 0) trySend(SshExecEvent.Stdout(buffer.copyOf(read)))
             }
         }
-        val stderrJob = scope.launch {
+        val stderrJob = scope.launch(io) {
             val buffer = ByteArray(8 * 1024)
             val input = remote.errorStream
             while (true) {
@@ -542,7 +546,7 @@ class SshjEngine internal constructor(
                 if (read > 0) trySend(SshExecEvent.Stderr(buffer.copyOf(read)))
             }
         }
-        val joinJob = scope.launch {
+        val joinJob = scope.launch(io) {
             val joinError: Throwable? = runCatching { remote.join() }.exceptionOrNull()
             stdoutJob.join()
             stderrJob.join()

@@ -91,6 +91,7 @@ fun TerminalScreen(
     onMessage: (String) -> Unit = {},
     onCopy: () -> Unit = {},
     onPaste: () -> Unit = {},
+    onImeHidden: () -> Unit = {},
 ) {
     PageStateScaffold(
         state = state,
@@ -122,6 +123,7 @@ fun TerminalScreen(
             onMessage = onMessage,
             onCopy = onCopy,
             onPaste = onPaste,
+            onImeHidden = onImeHidden,
         )
     }
 }
@@ -152,6 +154,7 @@ private fun DemoTerminalSurface(
     onMessage: (String) -> Unit,
     onCopy: () -> Unit,
     onPaste: () -> Unit,
+    onImeHidden: () -> Unit = {},
 ) {
     val appPalette = ZephyrTheme.palette
     // 外观 flips the terminal canvas only. The rest of the app keeps its theme.
@@ -187,6 +190,16 @@ private fun DemoTerminalSurface(
     // Treating a pending request as open made the context dock alpha=0 while it still occupied
     // height, producing the blank band reported on device.
     val imeOpen = imeHeightPx > 8f
+    /* The system hide-keyboard key (and the back gesture) dismiss the IME without
+     * telling us, leaving keyboardVisible true so the next recomposition calls
+     * showSoftInput again and the key appears to do nothing. Sync the request to
+     * the real inset on the falling edge only; a tap on empty space still toggles
+     * through TOGGLE_KEYBOARD and is not touched here. */
+    var imeWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(imeOpen) {
+        if (imeWasOpen && !imeOpen) onImeHidden()
+        imeWasOpen = imeOpen
+    }
     val surface = content.surface
     val ws = workspace ?: TerminalWorkspaceState(activeSessionId = content.connection.id)
     val liveSessions = sessions.filter { it.protocol.isTerminal && it.transport != SessionTransport.CLOSED }

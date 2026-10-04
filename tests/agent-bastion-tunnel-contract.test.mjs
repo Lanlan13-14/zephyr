@@ -36,6 +36,16 @@ test('Agent tunnel hub is served by the embedded Go runtime', () => {
     assert.match(node, /\/link\/tunnel\/start/);
 });
 
+test('link lane reassembly uses the defined ZFT2 header length', () => {
+    const mgr = read('file-agent-manager.js');
+    const fn = mgr.slice(mgr.indexOf('_onLinkLaneData('), mgr.indexOf('_onLinkLaneData(') + 1200);
+    // HEADER_BYTES is not defined anywhere in this module; referencing it
+    // throws ReferenceError on the first frame and the empty catch swallows
+    // it, so every Agent file transfer over the Link lane silently dies.
+    assert.doesNotMatch(fn, /(?<![A-Z_])HEADER_BYTES(?![A-Z_])/);
+    assert.match(fn, /ZFT2_HEADER_BYTES \+ metaLength \+ payloadLength/);
+});
+
 test('hello carries linkSessionId for the bastion lane', () => {
     const dart = read('zephyr_agent/lib/agent/agent_controller.dart');
     assert.match(dart, /'linkSessionId': _linkRuntime\.sessionId/);

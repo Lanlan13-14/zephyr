@@ -473,6 +473,13 @@ private fun BoundRoot(
             hopAuthProvider = { route -> account.hopAuthFor(route) },
         )
     }
+    /* OpsDestination keys its per-connection shell cache on this port. A fresh
+     * instance per recomposition invalidated that cache, restarted the
+     * `docker logs -f` collection on every frame, and the log pane never
+     * filled — so viewing container logs failed for every route. */
+    val opsExec = remember(sshEngine, account.sessions, managedSsh) {
+        LiveSshExecPort(sshEngine, account.sessions, managedSsh)
+    }
     val terminalHost = remember(account, sshEngine) {
         val ownedHost = SshTerminalHost(
             engine = sshEngine,
@@ -483,8 +490,7 @@ private fun BoundRoot(
             },
             hopAuthProvider = { route -> account.hopAuthFor(route) },
             isolatedExecStream = { connectionId, command ->
-                LiveSshExecPort(sshEngine, account.sessions, managedSsh)
-                    .execStreamEvents(connectionId, command)
+                opsExec.execStreamEvents(connectionId, command)
             },
         )
         SharedRelayTerminalHost(account, ownedHost)
@@ -889,7 +895,7 @@ private fun BoundRoot(
                 account = account,
                 ownerUserId = ownerUserId,
                 section = current.section,
-                exec = LiveSshExecPort(sshEngine, account.sessions, managedSsh),
+                exec = opsExec,
                 onBack = { route = RootRoute.Root(IslandDestination.TOOLS) },
                 onMessage = notice,
             )
