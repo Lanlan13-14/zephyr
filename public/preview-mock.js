@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20261003-agent-write1';
+import { t } from './i18n/runtime.js?v=20261004-dashboard-fit1';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 

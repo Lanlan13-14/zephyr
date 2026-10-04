@@ -77,7 +77,7 @@ async function loadGoWasm() {
     bootStage('wasm-fetching');
     bootStage('wasm-instantiating');
     const { go, result } = await instantiateGoWasm(GoRuntime, {
-        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20261003-agent-write1',
+        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20261004-dashboard-fit1',
         pipeline: 'worker-gpu-v2',
     });
     if (result.instance.exports.mem) {

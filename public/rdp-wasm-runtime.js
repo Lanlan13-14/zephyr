@@ -15,7 +15,7 @@ export async function loadGoRuntime({ runtimeUrl = DEFAULT_RUNTIME_URL, importer
 }
 
 export async function instantiateGoWasm(GoRuntime, {
-    wasmUrl = './vendor/rdp-wasm/main.wasm?v=20261003-agent-write1',
+    wasmUrl = './vendor/rdp-wasm/main.wasm?v=20261004-dashboard-fit1',
     fetchImpl = globalThis.fetch,
     pipeline = 'unknown',
 } = {}) {

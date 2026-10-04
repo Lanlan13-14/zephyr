@@ -1,9 +1,9 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
-import { createNotesController } from './notes.js?v=20261003-agent-write1';
+import { createNotesController } from './notes.js?v=20261004-dashboard-fit1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261003-agent-write1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20261003-agent-write1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261004-dashboard-fit1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20261004-dashboard-fit1';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 const $ = (sel) => document.querySelector(sel);
@@ -5265,8 +5265,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20260804-terminal-shell3&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260919-mobile-input1`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260919-mobile-input1`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261004-dashboard-fit1`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261004-dashboard-fit1`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
