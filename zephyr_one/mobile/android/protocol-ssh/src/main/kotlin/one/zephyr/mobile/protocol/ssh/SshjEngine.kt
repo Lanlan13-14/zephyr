@@ -42,7 +42,9 @@ class SshRemoteFileConflict(
 
 private const val MAX_FILE_WRITE_BYTES = 8 * 1024 * 1024
 private const val MAX_FILE_RANGE_BYTES = 32 * 1024 * 1024
-private const val STREAM_CHUNK_BYTES = 256 * 1024
+/* Must stay under OpenSSH's 256 KiB SFTP message cap once framing is added,
+ * or a single write makes sftp-server drop the connection. See SftpTransferOps. */
+private const val STREAM_CHUNK_BYTES = 256 * 1024 - 1024
 private const val DEFAULT_NEW_FILE_MODE = 0x1A4 // 0644
 
 /**

@@ -5,7 +5,13 @@ import one.zephyr.mobile.protocol.ssh.SshRemoteOps
 
 object SftpTransferOps {
 
-    const val STREAM_CHUNK = 256 * 1024
+    /* One SFTP write is a single message, and OpenSSH's sftp-server closes the
+     * connection when that message exceeds SFTP_MAX_MSG_LENGTH (256 KiB). The
+     * framing around the payload — type, request id, handle, offset, length —
+     * pushes a 256 KiB chunk over the limit, so the server drops the session and
+     * sshj reports "EOF while reading packet" at exactly 256 KiB. Stay a kilobyte
+     * under the cap, which is the margin OpenSSH itself keeps (SFTP_MAX_READ_LENGTH). */
+    const val STREAM_CHUNK = 256 * 1024 - 1024
 
     fun bundleName(): String {
         val stamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmm"))
