@@ -79,7 +79,7 @@ internal class LiveSshExecPort(
         val leaseSlot = CompletableDeferred<ManagedSshLease>()
         val job = launch {
             try {
-                val lease = managed.acquire(connectionId)
+                val lease = managed.acquireEphemeral(connectionId)
                 leaseSlot.complete(lease)
                 engine.execStream(lease.sessionId, command).collect { event ->
                     trySend(event)

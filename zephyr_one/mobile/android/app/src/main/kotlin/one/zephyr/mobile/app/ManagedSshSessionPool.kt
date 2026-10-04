@@ -78,6 +78,27 @@ class ManagedSshSessionPool(
         }
     }
 
+    /* A long-lived stream such as `docker logs -f` must not share the session
+     * the stats and loadAll poller keeps opening exec channels on. sshj runs
+     * one reader for the connection, and a poll exec in flight holds the
+     * stream's own channel open unacknowledged until the 30s timeout. That
+     * timeout surfaces as a ConnectionException whose message is null, which
+     * the panel renders as "日志流中断" with no output. An ephemeral lease
+     * dials a session nobody else can touch and is closed with the stream. */
+    suspend fun acquireEphemeral(connectionId: String): ManagedSshLease {
+        val connection = connectionProvider(connectionId) ?: error("连接不存在")
+        require(connection.protocol == one.zephyr.mobile.model.Protocol.SSH) { "仅 SSH 连接支持此操作" }
+        require(connection.capabilities.canUse) { "没有使用此连接的权限" }
+        val key = "$connectionId#ephemeral#${UUID.randomUUID()}"
+        val sessionId = "managed-${connection.id}-${UUID.randomUUID()}"
+        val lock = locks.getOrPut(key) { Mutex() }
+        return lock.withLock {
+            open(sessionId, connection)
+            live[key] = Live(sessionId, 1)
+            ManagedSshLease(key, sessionId, this)
+        }
+    }
+
     private suspend fun open(sessionId: String, connection: Connection) {
         val credentials = credentialsProvider(connection)
         try {

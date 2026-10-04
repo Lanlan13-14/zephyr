@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -305,9 +306,13 @@ fun HostDockerPanel(
                 }
             }
         }.onFailure { failure ->
+            if (failure is CancellationException) throw failure
+            val reason = generateSequence(failure) { it.cause }
+                .mapNotNull { it.message?.takeIf(String::isNotBlank) }
+                .firstOrNull() ?: "日志流中断"
             logFollow = false
-            logText = (logText + "\n[读取失败] " + (failure.message ?: "日志流中断")).takeLast(80_000)
-            onMessage(failure.message ?: "日志流中断")
+            logText = (logText + "\n[读取失败] " + reason).takeLast(80_000)
+            onMessage(reason)
         }
     }
 
