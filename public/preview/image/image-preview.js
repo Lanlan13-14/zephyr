@@ -48,6 +48,7 @@
             this.index = Number(options.index) || 0;
             this.currentPath = options.path || '';
             this.pending = new Set();
+            this.objectUrl = '';
             this.viewer = null;
             this.closed = false;
             this.modal = this.createModal();
@@ -234,23 +235,45 @@
             this.notify(t('图片预览失败：{error}', { error: error || t('未知错误') }), 'error');
         }
 
-        renderImage(message) {
+        revokeObjectUrl() {
+            if (!this.objectUrl) return;
+            URL.revokeObjectURL(this.objectUrl);
+            this.objectUrl = '';
+        }
+
+        async renderImage(message) {
             if (!message?.url) return this.setError(message?.path || this.currentPath, t('缺少预览地址'));
             this.currentPath = message.path || this.currentPath;
             const state = this.modal.querySelector('[data-role="state"]');
             const stage = this.modal.querySelector('[data-role="stage"]');
             const image = this.modal.querySelector('[data-role="image"]');
             const meta = this.modal.querySelector('[data-role="meta"]');
-            const cacheBust = message.converted ? `&t=${Date.now()}` : '';
+            state.className = 'image-preview-state loading';
+            state.textContent = t('正在用浏览器解码图片...');
+            state.style.display = 'grid';
+            stage.style.display = 'none';
+            let decoded;
+            try {
+                decoded = await window.ZephyrPreviewWasm.decodeImage(message.url);
+            } catch (err) {
+                return this.setError(this.currentPath, err?.message || t('浏览器解码图片失败'));
+            }
+            if (this.closed || (message.path && message.path !== this.currentPath)) {
+                URL.revokeObjectURL(decoded.url);
+                return;
+            }
+            this.revokeObjectUrl();
+            this.objectUrl = decoded.url;
             image.onload = () => {
                 state.style.display = 'none';
                 stage.style.display = 'grid';
                 this.initViewer(image);
             };
-            image.onerror = () => this.setError(this.currentPath, '浏览器加载预览图片失败');
+            image.onerror = () => this.setError(this.currentPath, t('浏览器加载预览图片失败'));
             image.alt = this.currentPath.split('/').pop() || t('图片预览');
-            image.src = `${message.url}${message.url.includes('?') ? '&' : '?'}inline=1${cacheBust}`;
-            meta.innerHTML = `<span title="${escapeHtml(this.currentPath)}">${escapeHtml(this.currentPath)}</span><b>${message.converted ? '已转 WebP' : '原图直出'}</b><em>${this.formatSize(message.size)}</em>`;
+            image.src = decoded.url;
+            const label = decoded.converted ? t('浏览器已转 WebP') : t('浏览器原图直出');
+            meta.innerHTML = `<span title="${escapeHtml(this.currentPath)}">${escapeHtml(this.currentPath)}</span><b>${escapeHtml(label)}</b><em>${decoded.width}×${decoded.height}</em><em>${this.formatSize(message.size)}</em>`;
         }
 
         initViewer(image) {
@@ -305,6 +328,7 @@
         close() {
             if (this.closed) return;
             this.closed = true;
+            this.revokeObjectUrl();
             this.destroyViewer();
             this.layoutMenu?.close?.({ instant: true });
             this.modal.classList.remove('panel-opening');

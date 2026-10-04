@@ -7210,15 +7210,24 @@ function ensureMediaPreviewModule() {
         const script = document.createElement('script');
         const done = () => {
             window.__zephyrMediaPreviewLoading = null;
-            resolve(!!window.ZephyrMediaPreview);
+            resolve(!!window.ZephyrMediaPreview && !!window.ZephyrPreviewWasm);
         };
+        const appendPreview = () => document.body.appendChild(script);
         script.addEventListener('load', done, { once: true });
         script.addEventListener('error', () => {
             window.__zephyrMediaPreviewLoading = null;
             resolve(false);
         }, { once: true });
-        script.src = `preview/media/media-preview.js?v=20260720-telnet-ui-motion2-${Date.now()}`;
-        document.body.appendChild(script);
+        script.src = 'preview/media/media-preview.js?v=20261004-preview-wasm1';
+        if (!window.ZephyrPreviewWasm && !document.querySelector('script[src*="preview/preview-wasm.js"]')) {
+            const runtime = document.createElement('script');
+            runtime.src = 'preview/preview-wasm.js?v=20261004-preview-wasm1';
+            runtime.addEventListener('load', appendPreview, { once: true });
+            runtime.addEventListener('error', () => { window.__zephyrMediaPreviewLoading = null; resolve(false); }, { once: true });
+            document.body.appendChild(runtime);
+        } else {
+            appendPreview();
+        }
     });
     return window.__zephyrMediaPreviewLoading;
 }

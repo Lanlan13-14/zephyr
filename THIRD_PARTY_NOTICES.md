@@ -21,7 +21,9 @@ The Zephyr-SSH project itself is licensed under the GNU General Public License v
 | archiver | MIT | Archive creation | <https://github.com/archiverjs/node-archiver> |
 | unzipper | MIT | ZIP archive extraction | <https://github.com/ZJONSSON/node-unzipper> |
 | ipaddr.js | MIT | IP address parsing and validation | <https://github.com/whitequark/ipaddr.js> |
-| sharp | Apache-2.0 | Image processing and preview conversion | <https://sharp.pixelplumbing.com/> |
+| wasm-vips 0.0.19 (libvips 8.18.7, vendored under `public/vendor/wasm-vips/`) | MIT | Browser-side image decoding for file previews | <https://github.com/kleisauke/wasm-vips> |
+| @ffmpeg/ffmpeg 0.12.15 | MIT | Browser-side wrapper that drives the vendored FFmpeg WebAssembly core | <https://github.com/ffmpegwasm/ffmpeg.wasm> |
+| @ffmpeg/core 0.12.10 (FFmpeg, single-thread build, vendored under `public/vendor/ffmpeg/`) | GPL-2.0-or-later | Browser-side audio/video transcoding for file previews | <https://github.com/ffmpegwasm/ffmpeg.wasm> |
 | FreeRDP | Apache-2.0 | RDP client runtime used by Zephyr's native RDP pipeline | <https://www.freerdp.com/> |
 | OpenSSL 3.6.3 / OpenSSL-Package | Apache-2.0 | FIPS 203 ML-KEM-768 for iOS/macOS. SwiftPM manifest commit `0b0cc7392a4ff6a798c9ed8f4981f1c1bbcb4722`; XCFramework SHA-256 `6c4b064d12b8de2ae77ac59fbcbbd1c20b4fecfb7fc50b8ab326347c52ecbf0c` | <https://www.openssl.org/> / <https://github.com/krzyzanowskim/OpenSSL-Package> |
 | noVNC | MPL-2.0 | Browser-side VNC client | <https://novnc.com/> |

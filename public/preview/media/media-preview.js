@@ -50,6 +50,7 @@
             this.manualSubtitles = [];
             this.remoteSubtitles = [];
             this.currentToken = '';
+            this.preparedMedia = null;
             this.remoteSubtitlePicker = options.remoteSubtitlePicker || null;
             this.modal = this.createModal();
             this.modal._mediaPreviewInstance = this;
@@ -309,27 +310,52 @@
                 }, 80);
             });
         }
-        renderPlayer(message) {
+        async renderPlayer(message) {
             this.pending.delete(message.path);
             if (message.path !== this.currentPath) return;
             this.currentToken = message.token || '';
-            this.remoteSubtitles = message.subtitles || [];
+            this.remoteSubtitles = [];
             const previousManualSubtitles = [...(this.manualSubtitles || [])];
             this.manualSubtitles = previousManualSubtitles;
             const stage = this.modal.querySelector('[data-role="stage"]');
             const state = this.modal.querySelector('[data-role="state"]');
             if (!stage) return;
+            if (state) {
+                state.style.display = 'grid';
+                state.className = 'media-preview-state loading';
+                state.textContent = t('正在用浏览器解码媒体...');
+            }
+            stage.style.display = 'none';
+            const capabilities = this.getCapabilities(message.path);
+            let prepared;
+            try {
+                prepared = await window.ZephyrPreviewWasm.prepareMedia(message.streamUrl, {
+                    kind: message.kind,
+                    name: (message.path || '').split(/[\\/]/).pop() || 'media',
+                    capabilities,
+                });
+            } catch (err) {
+                this.setState(err?.message || t('浏览器解码媒体失败'), 'error');
+                this.notify(t('媒体播放失败{detail}', { detail: err?.message ? `：${err.message}` : '' }), 'error');
+                return;
+            }
+            if (this.closed || message.path !== this.currentPath) {
+                window.ZephyrPreviewWasm.releaseMedia(prepared);
+                return;
+            }
+            this.releasePreparedMedia();
+            this.preparedMedia = prepared;
             stage.innerHTML = '';
             const media = document.createElement(message.kind === 'audio' ? 'audio' : 'video');
             media.controls = true;
             media.autoplay = false;
             media.playsInline = true;
             media.preload = 'metadata';
-            media.src = message.streamUrl;
+            media.src = prepared.url;
             media.load?.();
             media.addEventListener('error', () => {
                 const err = media.error;
-                this.notify(t('媒体播放失败{detail}，可点刷新尝试转码', { detail: err?.message ? `：${err.message}` : '' }), 'error');
+                this.notify(t('媒体播放失败{detail}', { detail: err?.message ? `：${err.message}` : '' }), 'error');
             });
             if (message.kind === 'audio') {
                 const audioWrap = document.createElement('div');
@@ -344,27 +370,44 @@
             } else {
                 stage.appendChild(media);
             }
+            const remote = [];
+            for (const sub of message.subtitles || []) {
+                try {
+                    const response = await fetch(sub.url, { credentials: 'same-origin' });
+                    if (!response.ok) continue;
+                    const raw = await response.text();
+                    const ext = extname(String(sub.url || '').split('?')[0]) || 'srt';
+                    const text = ext === 'vtt' && /^WEBVTT/i.test(raw.trim()) ? raw : this.convertSubtitleTextToVtt(raw, ext === 'vtt' ? 'srt' : ext);
+                    const url = URL.createObjectURL(new Blob([text], { type: 'text/vtt;charset=utf-8' }));
+                    this.objectTracks.push(url);
+                    remote.push({ url, language: sub.language || '', external: true });
+                } catch {}
+            }
+            if (this.closed || message.path !== this.currentPath) return;
+            this.remoteSubtitles = remote;
             this.applySubtitles();
             if (state) state.style.display = 'none';
             stage.style.display = 'grid';
             const meta = this.modal.querySelector('[data-role="meta"]');
             if (meta) {
-                const info = message.info || {};
                 const parts = [
                     `<span>${escapeHtml(message.path)}</span>`,
-                    `<b>${escapeHtml(message.mode || '')}</b>`,
+                    `<b>${escapeHtml(prepared.mode === 'TRANSCODED' ? t('浏览器已转码') : t('浏览器直接播放'))}</b>`,
                     message.size ? `<em>${escapeHtml(this.formatSize(message.size))}</em>` : '',
-                    info.duration ? `<em>${escapeHtml(formatDuration(info.duration))}</em>` : '',
-                    info.video ? `<em>${escapeHtml(`${info.video.codec || '?'} ${info.video.width || ''}x${info.video.height || ''}`)}</em>` : '',
-                    info.audio ? `<em>${escapeHtml(`${info.audio.codec || '?'} ${info.audio.channels || ''}ch`)}</em>` : '',
                 ].filter(Boolean);
                 meta.innerHTML = parts.join('');
             }
+        }
+        releasePreparedMedia() {
+            if (!this.preparedMedia) return;
+            window.ZephyrPreviewWasm.releaseMedia(this.preparedMedia);
+            this.preparedMedia = null;
         }
         revokeTrackObjects() { this.objectTracks.splice(0).forEach((url) => URL.revokeObjectURL(url)); }
         close() {
             if (this.closed) return;
             this.closed = true;
+            this.releasePreparedMedia();
             this.revokeTrackObjects();
             const stage = this.modal.querySelector('[data-role="stage"]');
             stage?.querySelectorAll('video,audio').forEach((media) => { try { media.pause(); media.removeAttribute('src'); media.load?.(); } catch {} });
