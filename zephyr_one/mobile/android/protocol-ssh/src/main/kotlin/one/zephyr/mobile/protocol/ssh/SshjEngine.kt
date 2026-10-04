@@ -7,6 +7,7 @@ import java.net.Socket
 import java.security.PublicKey
 import java.util.EnumSet
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -353,7 +354,11 @@ class SshjEngine internal constructor(
     }
 
     override suspend fun delete(sessionId: String, path: String, recursive: Boolean): Result<Unit> = sftpUnit(sessionId) {
-        val attrs = stat(path)
+        /* stat() follows symlinks, so a dangling link throws before anything is
+         * removed and a link to a directory is walked into. lstat() reports the
+         * link itself: a link is never a directory and is removed with rm, which
+         * drops the link and leaves its target alone. */
+        val attrs = lstat(path)
         if (attrs.type == FileMode.Type.DIRECTORY) {
             if (recursive) removeTree(this, path) else rmdir(path)
         } else {
@@ -493,6 +498,9 @@ class SshjEngine internal constructor(
     )
 
     private fun removeTree(sftp: net.schmizz.sshj.sftp.SFTPClient, path: String) {
+        /* The directory listing reports a symlink's own type, and isDirectory()
+         * is false for one. Recursing on it would follow the link and delete the
+         * target; rm removes the link itself. */
         sftp.ls(path).filterNot { it.name == "." || it.name == ".." }.forEach { entry ->
             if (entry.isDirectory) removeTree(sftp, entry.path) else sftp.rm(entry.path)
         }
@@ -506,14 +514,32 @@ class SshjEngine internal constructor(
         runCatching {
             require(command.isNotBlank()) { "远程命令不能为空" }
             val live = sessions[sessionId] ?: error("SSH 会话已断开")
-            live.client.startSession().use { commandSession ->
-                val remote = commandSession.exec(command)
+            /* The caller awaits this from the main thread, and withContext only
+             * resumes the caller — the thread that resumes it is the one that
+             * blocked, so startSession and exec would still run on the main
+             * thread and stall sshj's single reader. Run them in the engine's
+             * own scope, which the caller is not blocked on. */
+            val opened = CompletableDeferred<Pair<Session, Session.Command>>()
+            scope.launch {
+                runCatching {
+                    val commandSession = live.client.startSession()
+                    commandSession to commandSession.exec(command)
+                }.fold(
+                    onSuccess = { opened.complete(it) },
+                    onFailure = { opened.completeExceptionally(it) },
+                )
+            }
+            val (commandSession, remote) = opened.await()
+            try {
                 coroutineScope {
                     val stdout = async(io) { remote.inputStream.readBytes() }
                     val stderr = async(io) { remote.errorStream.readBytes() }
                     remote.join()
                     SshExecResult(remote.exitStatus ?: -1, stdout.await(), stderr.await())
                 }
+            } finally {
+                runCatching { remote.close() }
+                runCatching { commandSession.close() }
             }
         }
     }
@@ -524,8 +550,33 @@ class SshjEngine internal constructor(
         /* The hosted main end runs tool commands through `sh -lc`; matching it
          * keeps PATH and login-shell behaviour identical between ends. */
         val wrapped = "sh -lc " + one.zephyr.mobile.protocol.ssh.SshRemoteOps.shellQuote(command)
-        val commandSession = live.client.startSession()
-        val remote = commandSession.exec(wrapped)
+        /* callbackFlow runs its producer on the collecting coroutine, and both
+         * the Docker log pane and the file browser collect on the main thread.
+         * sshj serves a connection with exactly one reader thread, and
+         * Session.exec() blocks the caller until the server's channel-request
+         * reply arrives. Waiting for that reply on the main thread means the
+         * reader never runs, the reply is never dispatched, and the wait dies at
+         * sshj's 30s timeout as a ConnectionException whose message is empty —
+         * the log pane shows "日志流中断" and a directory delete through `rm -rf`
+         * never returns. Open the channel on the engine's own dispatcher. */
+        val opened = CompletableDeferred<Pair<Session, Session.Command>>()
+        scope.launch {
+            val outcome = runCatching {
+                val commandSession = live.client.startSession()
+                commandSession to commandSession.exec(wrapped)
+            }
+            outcome.fold(
+                onSuccess = { opened.complete(it) },
+                onFailure = { opened.completeExceptionally(it) },
+            )
+        }
+        val (commandSession, remote) = try {
+            opened.await()
+        } catch (failure: Throwable) {
+            close(failure)
+            awaitClose {}
+            return@callbackFlow
+        }
         /* These three jobs block on socket reads and Channel.join(). The flow is
          * collected from the Compose main thread (the Docker log pane), so leaving
          * them on the caller's dispatcher freezes the UI for the whole `docker logs

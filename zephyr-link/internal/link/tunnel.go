@@ -717,10 +717,15 @@ func (h *AgentTunnelHub) handleFrame(tf *tunnelFrame) {
 			}
 			return
 		}
+		// Block rather than drop. The queue filling up means the SSH target is
+		// slower than the sender, and the right response is the one TCP gives:
+		// stall the sender until there is room. Discarding the frame instead
+		// makes the SSH server see a gap and answer with EOF, which is what
+		// surfaces as an upload dying at 100%. dead is still selected so a
+		// tunnel torn down mid-transfer unblocks this read instead of pinning it.
 		select {
 		case t.inbound <- data:
-		default:
-			h.closeTunnel(tf.Tun, "tcp inbound queue overflow")
+		case <-t.dead:
 		}
 	case "close":
 		h.closeTunnel(tf.Tun, "peer closed")
@@ -1245,14 +1250,16 @@ func (h *MainEndTunnelHub) deliver(sessionID string, tf *tunnelFrame) {
 		h.drop(c)
 		return
 	}
+	// Block rather than drop. A full queue means the SSH client is reading
+	// slower than the server is sending, and stalling here backs the pressure
+	// up through the Link stream to the Agent's TCP read, which is exactly the
+	// flow control a plain TCP connection would apply. Dropping the frame and
+	// closing the tunnel is what made the SSH server answer an upload with EOF
+	// once the progress bar had already reached 100%. dead is still selected so
+	// closing the tunnel unblocks this read.
 	select {
 	case c.in <- *tf:
-	default:
-		// Never block the shared Link stream reader on one slow SSH consumer.
-		// Closing only this tunnel lets the peer observe EOF while other Agent
-		// tunnels and the Link keepalive continue normally.
-		c.once.Do(func() { close(c.dead) })
-		h.drop(c)
+	case <-c.dead:
 	}
 }
 
