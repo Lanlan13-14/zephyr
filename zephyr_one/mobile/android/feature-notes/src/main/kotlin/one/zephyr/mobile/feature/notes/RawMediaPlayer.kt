@@ -3,14 +3,17 @@ package one.zephyr.mobile.feature.notes
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.Slider
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -106,7 +109,7 @@ internal fun RawMediaPlayer(
         if (!started) return@LaunchedEffect
         for (file in subtitles) {
             if (!mountedSubtitles.add(file.absolutePath)) continue
-            if (!player.addSlave(Media.Slave.Type.TYPE_SUBTITLE, Uri.fromFile(file), true)) {
+            if (!player.addSlave(MediaPlayer.Track.Type.Text, Uri.fromFile(file), true)) {
                 mountedSubtitles.remove(file.absolutePath)
                 latestMessage("无法挂载字幕 ${file.name}")
             }
@@ -169,10 +172,10 @@ internal fun RawMediaPlayer(
         }
         Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(clock(position))
-            Slider(
-                value = if (duration > 0) position.toFloat() / duration else 0f,
-                onValueChange = { if (duration > 0) { position = (it * duration).toLong(); player.setTime(position) } },
+            SeekBar(
+                fraction = if (duration > 0) position.toFloat() / duration else 0f,
                 enabled = duration > 0L && player.isSeekable,
+                onChange = { if (duration > 0) { position = (it * duration).toLong(); player.setTime(position) } },
                 modifier = Modifier.weight(1f),
             )
             Text(clock(duration))
@@ -181,9 +184,26 @@ internal fun RawMediaPlayer(
             TextButton(onClick = { volume = if (volume == 0f) 100f else 0f; player.setVolume(volume.toInt()) }) {
                 Text(if (volume == 0f) "取消静音" else "静音")
             }
-            Slider(value = volume, onValueChange = { volume = it; player.setVolume(it.toInt()) }, valueRange = 0f..100f, modifier = Modifier.weight(1f))
+            SeekBar(fraction = volume / 100f, enabled = true, onChange = { volume = it * 100f; player.setVolume(volume.toInt()) }, modifier = Modifier.weight(1f))
             Text("${volume.toInt()}%")
         }
+    }
+}
+
+@Composable
+private fun SeekBar(fraction: Float, enabled: Boolean, onChange: (Float) -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier.fillMaxWidth().height(32.dp).pointerInput(enabled) {
+            if (!enabled) return@pointerInput
+            detectHorizontalDragGestures { change, _ ->
+                change.consume()
+                onChange((change.position.x / size.width).coerceIn(0f, 1f))
+            }
+        },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(Modifier.fillMaxWidth().height(4.dp).background(Color.Gray.copy(alpha = 0.4f)))
+        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(4.dp).background(Color.White))
     }
 }
 

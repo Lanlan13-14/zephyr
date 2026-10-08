@@ -1,5 +1,6 @@
 package one.zephyr.mobile.feature.notes
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
