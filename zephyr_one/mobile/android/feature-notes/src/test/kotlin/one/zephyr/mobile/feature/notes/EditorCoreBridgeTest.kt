@@ -24,7 +24,7 @@ class EditorCoreBridgeTest {
             val opened = EditorCore.open("a😀")
             assertEquals(3, opened.text.length.let { codePoints(opened.text) })
             val edited = EditorCore.edit(opened.id, 1, 2, "中", opened.base, opened.extent)
-            assertEquals("a中😀".replace("😀", ""), edited.text.take(2))
+            // The replacement covers scalar range [1,2), so the emoji is removed.
             assertEquals("a中", edited.text)
             val selected = EditorCore.select(edited.id, 0, 2)
             assertEquals(0, selected.base)
