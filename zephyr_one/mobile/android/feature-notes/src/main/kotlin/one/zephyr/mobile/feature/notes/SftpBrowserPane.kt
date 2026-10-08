@@ -16,7 +16,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -875,11 +874,6 @@ fun SftpBrowserPane(
             is SftpDialog.SaveConflict -> AlertDialog(
                 onDismissRequest = { dialog = null },
                 title = { Text("远端文件已变化") },
-                text = { Text("保存会覆盖其他人刚写入的内容。") },
-                confirmButton = {
-                    TextButton(onClick = {
-                        dialog = null
-                        val currentFile = editor ?: return@TextButton
                 text = { Text("保存会覆盖其他人刚写入的内容。") },
                 confirmButton = {
                     TextButton(onClick = {
