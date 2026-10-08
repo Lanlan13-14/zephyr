@@ -497,7 +497,12 @@ private fun BoundRoot(
     }
     val managedHostKeyPrompt by managedSsh.prompt.collectAsState()
     val managedSftp = remember(managedSsh, sshEngine, account.sessions) {
-        SshjSftpPort(managedSsh, sshEngine, account.sessions)
+        SshjSftpPort(managedSsh, sshEngine, account.sessions,
+            previewBaseUrl = if (account.localMode) null else account.endpoint.baseUrl,
+            previewAuthHeaders = {
+                account.credentials.sid()?.let { mapOf("Cookie" to "zephyr_sid=${java.net.URLEncoder.encode(it, "UTF-8")}") }.orEmpty()
+            },
+        )
     }
     DisposableEffect(managedSsh) {
         onDispose { scope.launch { managedSsh.closeAll() } }

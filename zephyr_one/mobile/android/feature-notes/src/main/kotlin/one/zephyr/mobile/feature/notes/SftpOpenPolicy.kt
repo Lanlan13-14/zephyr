@@ -8,9 +8,15 @@ enum class SftpOpenKind { DIRECTORY, IMAGE, MEDIA, TEXT, ARCHIVE, BINARY }
 object SftpOpenPolicy {
 
     const val TEXT_EDIT_LIMIT = 8L * 1024 * 1024
-    const val IMAGE_PREVIEW_LIMIT = 16L * 1024 * 1024
-    const val MEDIA_PREVIEW_LIMIT = 64L * 1024 * 1024
-    const val MEDIA_CACHE_LIMIT = 256L * 1024 * 1024
+    /** Same byte budget as desktop `public/preview/preview-wasm.js` MAX_IMAGE_BYTES. */
+    const val IMAGE_PREVIEW_LIMIT = 32L * 1024 * 1024
+    /**
+     * Same byte budget as desktop `public/preview/preview-wasm.js` MAX_MEDIA_BYTES.
+     * Opening and staging both use this ceiling; the old 64 MiB open gate rejected files
+     * the desktop preview still plays.
+     */
+    const val MEDIA_PREVIEW_LIMIT = 256L * 1024 * 1024
+    const val MEDIA_CACHE_LIMIT = MEDIA_PREVIEW_LIMIT
 
 
     fun kindOf(entry: RemoteEntry): SftpOpenKind = when {

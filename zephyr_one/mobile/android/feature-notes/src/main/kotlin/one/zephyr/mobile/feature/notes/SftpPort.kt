@@ -106,6 +106,9 @@ data class RemoteExecResult(val exitCode: Int, val stdout: String, val stderr: S
  */
 interface SftpPort {
 
+    /** Native-only auth adapter for a server/Agent RAW URL chosen in the preview tools. */
+    fun previewHttpSource(url: String, name: String): PreviewSource.Http = PreviewSource.Http(url, name)
+
     /** Opens a file channel over an existing connection definition. */
     suspend fun open(connectionId: String): SftpSessionHandle
 

@@ -40,9 +40,9 @@ test('image and media previews decode through the vendored wasm runtimes', () =>
     assert.match(runtime, /blockUntrusted\?\.\(true\)/);
     assert.match(runtime, /MAX_IMAGE_BYTES = 32 \* 1024 \* 1024/);
 
-    const wasmAt = terminalHtml.indexOf('preview/preview-wasm.js?v=20261004-preview-wasm1');
-    const imageAt = terminalHtml.indexOf('preview/image/image-preview.js?v=20261004-preview-wasm1');
-    const mediaAt = terminalHtml.indexOf('preview/media/media-preview.js?v=20261004-preview-wasm1');
+    const wasmAt = terminalHtml.indexOf('preview/preview-wasm.js?v=20261008-media-preview2');
+    const imageAt = terminalHtml.indexOf('preview/image/image-preview.js?v=20261008-media-preview2');
+    const mediaAt = terminalHtml.indexOf('preview/media/media-preview.js?v=20261008-media-preview2');
     assert.ok(wasmAt > 0 && wasmAt < imageAt && imageAt < mediaAt, 'wasm runtime must load before the preview modules');
     singleAssetVersion(terminalHtml, 'preview/preview-wasm.js', 'preview wasm runtime');
 });

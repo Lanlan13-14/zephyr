@@ -142,6 +142,7 @@ const {
     isMediaExt,
     isVideoExt,
     isSubtitleExt,
+    isExternalSubtitleFor,
     directMime,
     mediaContentType,
 } = require('./preview/media/media-service');
@@ -8226,8 +8227,12 @@ app.get('/api/sftp/preview/:token', requireUser, async (req, res) => {
 
 function getMediaTask(token, req, res) {
     const mediaTask = sftpMediaTokens.get(String(token || ''));
-    if (!mediaTask || mediaTask.username !== req.session.username || mediaTask.expiresAt < Date.now()) {
+    if (!mediaTask || mediaTask.expiresAt <= Date.now()) {
         sftpMediaTokens.delete(String(token || ''));
+        res.status(404).json({ error: '媒体预览链接已失效' });
+        return null;
+    }
+    if (mediaTask.ownerUserId !== req.user?.userId || mediaTask.username !== req.session.username) {
         res.status(404).json({ error: '媒体预览链接已失效' });
         return null;
     }
@@ -8259,14 +8264,22 @@ function closeMediaRouted(routed, sftp) {
 function mediaRangeFromRequest(req, size) {
     const total = Number(size) || 0;
     const raw = String(req.headers.range || '');
-    if (!total) return { start: 0, end: 0, partial: false, empty: true };
+    if (!total) return /^bytes=/.test(raw) ? null : { start: 0, end: 0, partial: false, empty: true };
     if (!raw || !/^bytes=/.test(raw)) return { start: 0, end: total - 1, partial: false };
-    const match = raw.match(/bytes=(\d*)-(\d*)/);
-    if (!match) return null;
-    let start = match[1] === '' ? 0 : Number(match[1]);
-    let end = match[2] === '' ? total - 1 : Number(match[2]);
-    if (match[1] === '' && Number.isFinite(end)) start = Math.max(0, total - end);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= total) return null;
+    const match = raw.match(/^bytes=(\d*)-(\d*)$/);
+    if (!match || (!match[1] && !match[2])) return null;
+    let start;
+    let end;
+    if (match[1] === '') {
+        const suffix = Number(match[2]);
+        if (!Number.isSafeInteger(suffix) || suffix <= 0) return null;
+        start = Math.max(0, total - suffix);
+        end = total - 1;
+    } else {
+        start = Number(match[1]);
+        end = match[2] === '' ? total - 1 : Number(match[2]);
+    }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= total) return null;
     end = Math.min(end, total - 1);
     return { start, end, partial: true };
 }
@@ -8281,7 +8294,7 @@ app.get('/api/sftp/media/stream/:token', requireUser, async (req, res) => {
         ({ routed, sftp } = await openMediaSftp(mediaTask.connectionConfig));
         const stats = await new Promise((resolve, reject) => sftp.stat(mediaTask.path, (err, nextStats) => err ? reject(err) : resolve(nextStats)));
         if (stats.isDirectory?.()) throw new Error('目录不支持媒体预览');
-        const size = Number(stats.size) || Number(mediaTask.size) || 0;
+        const size = Number(stats.size) || 0;
         const ext = getMediaExt(mediaTask.path);
         res.setHeader('Cache-Control', 'private, max-age=300');
         res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -8296,6 +8309,11 @@ app.get('/api/sftp/media/stream/:token', requireUser, async (req, res) => {
         res.status(range.partial ? 206 : 200);
         res.type(mediaContentType(ext));
         res.setHeader('Accept-Ranges', 'bytes');
+        if (range.empty) {
+            res.setHeader('Content-Length', '0');
+            closeMediaRouted(routed, sftp);
+            return res.end();
+        }
         if (size) {
             res.setHeader('Content-Length', String(range.end - range.start + 1));
             if (range.partial) res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
@@ -8323,7 +8341,10 @@ app.get('/api/sftp/media/subtitle/:token/:index.vtt', requireUser, async (req, r
     let sftp = null;
     try {
         ({ routed, sftp } = await openMediaSftp(mediaTask.connectionConfig));
-        const subtitle = (mediaTask.subtitles || [])[Number(req.params.index) || 0];
+        const subtitleIndex = Number(req.params.index);
+        const subtitle = Number.isInteger(subtitleIndex) && subtitleIndex >= 0
+            ? (mediaTask.subtitles || [])[subtitleIndex]
+            : null;
         if (!subtitle) throw new Error('字幕不存在');
         res.setHeader('Cache-Control', 'private, max-age=300');
         if (!subtitle.externalPath) throw new Error('内嵌字幕由浏览器端解码');
@@ -12190,24 +12211,25 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
 
         if (msg.type === 'sftp-media-preview') {
+            const requestId = String(msg.requestId || '');
             const targetPath = String(msg.path || '').trim();
             const ext = getMediaExt(targetPath);
             console.info('[sftp-media-preview]', 'request', { path: targetPath, ext });
             if (!targetPath) {
-                sendJSON({ type: 'sftp-media-preview', path: targetPath, error: '缺少媒体路径' });
+                sendJSON({ type: 'sftp-media-preview', requestId, path: targetPath, error: '缺少媒体路径' });
                 return;
             }
             if (!isMediaExt(ext)) {
-                sendJSON({ type: 'sftp-media-preview', path: targetPath, error: '当前文件不是已知音视频格式' });
+                sendJSON({ type: 'sftp-media-preview', requestId, path: targetPath, error: '当前文件不是已知音视频格式' });
                 return;
             }
             sftpStream.stat(targetPath, async (err, stats) => {
                 if (err) {
-                    sendJSON({ type: 'sftp-media-preview', path: targetPath, error: err.message });
+                    sendJSON({ type: 'sftp-media-preview', requestId, path: targetPath, error: err.message });
                     return;
                 }
                 if (stats.isDirectory?.()) {
-                    sendJSON({ type: 'sftp-media-preview', path: targetPath, error: '目录不支持媒体预览' });
+                    sendJSON({ type: 'sftp-media-preview', requestId, path: targetPath, error: '目录不支持媒体预览' });
                     return;
                 }
                 try {
@@ -12216,21 +12238,21 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     const token = crypto.randomBytes(24).toString('hex');
                     const dir = dirnameRemote(targetPath);
                     const base = getMediaBasenameNoExt(targetPath).toLowerCase();
-                    const subtitles = [...(info.subtitles || [])];
+                    // RAW previews have no server-side probe metadata; embedded
+                    // tracks are discovered by the browser decoder.
+                    const subtitles = [];
                     const listExternalSubtitles = () => new Promise((resolve) => {
                         sftpStream.readdir(dir, (listErr, list) => {
                             if (listErr || !Array.isArray(list)) return resolve([]);
-                            const matched = list.filter((item) => {
-                                const name = String(item.filename || item.longname || '');
-                                const itemExt = getMediaExt(name);
-                                return isSubtitleExt(itemExt) && getMediaBasenameNoExt(name).toLowerCase().startsWith(base);
-                            }).slice(0, 8).map((item) => ({
-                                index: subtitles.length,
-                                external: true,
-                                externalPath: (dir.replace(/\/+$/, '') || '/') + '/' + item.filename,
-                                language: String(item.filename || '').replace(/^.*?\.([a-z]{2,3})(?:\.[^.]+)?$/i, '$1'),
-                                codec: getMediaExt(item.filename),
-                            }));
+                            const matched = list.filter((item) => isExternalSubtitleFor(targetPath, item?.filename))
+                                .slice(0, 8)
+                                .map((item, offset) => ({
+                                    index: subtitles.length + offset,
+                                    external: true,
+                                    externalPath: remoteJoin(dir, item.filename),
+                                    language: String(item.filename || '').replace(/^.*?\.([a-z]{2,3})(?:\.[^.]+)?$/i, '$1'),
+                                    codec: getMediaExt(item.filename),
+                                }));
                             resolve(matched);
                         });
                     });
@@ -12238,6 +12260,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     sftpMediaTokens.set(token, {
                         path: targetPath,
                         username: req.authSession?.username || '',
+                        ownerUserId: req.authSession?.userId || attachedSshSession?.userId,
                         sessionId: attachedSshSession?.id || '',
                         connectionConfig: attachedSshSession?.connectionConfig || conn,
                         size,
@@ -12249,6 +12272,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     console.info('[sftp-media-preview]', 'ready', { path: targetPath, mode: 'RAW', subtitles: subtitles.length, size });
                     sendJSON({
                         type: 'sftp-media-preview-ready',
+                        requestId,
                         path: targetPath,
                         kind: isVideoExt(ext) ? 'video' : 'audio',
                         mode: 'RAW',
@@ -12259,12 +12283,13 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                             index,
                             language: sub.language || '',
                             external: true,
+                            codec: sub.codec,
                             url: `/api/sftp/media/subtitle/${token}/${index}.vtt`,
                         })),
                         size,
                     });
                 } catch (mediaErr) {
-                    sendJSON({ type: 'sftp-media-preview', path: targetPath, error: mediaErr.message || '媒体预览失败' });
+                    sendJSON({ type: 'sftp-media-preview', requestId, path: targetPath, error: mediaErr.message || '媒体预览失败' });
                 }
             });
             return;

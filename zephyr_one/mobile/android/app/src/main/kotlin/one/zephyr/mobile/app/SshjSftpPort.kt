@@ -19,7 +19,15 @@ class SshjSftpPort(
     private val pool: ManagedSshSessionPool,
     private val engine: SshEngine,
     private val sessions: one.zephyr.mobile.data.session.SessionRegistry,
+    private val previewBaseUrl: String? = null,
+    private val previewAuthHeaders: () -> Map<String, String> = { emptyMap() },
 ) : SftpPort {
+    override fun previewHttpSource(url: String, name: String): one.zephyr.mobile.feature.notes.PreviewSource.Http {
+        val base = previewBaseUrl
+        return if (base != null) one.zephyr.mobile.feature.notes.RawPreviewReady(name, url).source(base, previewAuthHeaders())
+        else one.zephyr.mobile.feature.notes.PreviewSource.Http(url, name)
+    }
+
     private data class Handle(val sessionId: String, val lease: ManagedSshLease?)
     private val handles = ConcurrentHashMap<String, Handle>()
 
