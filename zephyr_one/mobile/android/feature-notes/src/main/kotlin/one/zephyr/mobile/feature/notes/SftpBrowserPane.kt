@@ -14,6 +14,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,6 +50,7 @@ private data class BrowserFile(
     val wrap: Boolean = true,
     val dirty: Boolean = false,
     val generation: Int = 0,
+    val coreId: Long = 0L,
 ) {
     val title: String get() = path.substringAfterLast('/').ifBlank { path }
 }
@@ -474,7 +478,13 @@ fun SftpBrowserPane(
                     val read = port.read(currentHandle(), entry.path, SftpOpenPolicy.TEXT_EDIT_LIMIT)
                     if (read.truncated || FileEncoding.looksBinary(read.bytes)) return@forEach
                     val encoding = FileEncoding.guess(read.bytes)
-                    upsertEditor(BrowserFile(entry.path, encoding.decode(read.bytes), read, encoding))
+                    val text = encoding.decode(read.bytes)
+                    val ending = if (text.contains("\r\n")) "crlf" else "lf"
+                    val core = EditorCore.open(text)
+                    EditorCore.setEncoding(core.id, encoding.charsetName.lowercase())
+                    EditorCore.setEol(core.id, ending)
+                    EditorCore.markSaved(core.id)
+                    upsertEditor(BrowserFile(entry.path, text, read, encoding, lineEnding = ending, coreId = core.id))
                     opened += 1
                 }
                 if (opened == 0) error("没有可同时打开的文本文件")
@@ -539,42 +549,56 @@ fun SftpBrowserPane(
                 onCloseTab = { closeEditor(force = false, index = it) },
                 onChange = { text, encoding, ending, tabSize, wrap ->
                     updateActive { current ->
-                        val sameText = current.text == text
-                        val sameMeta = current.encoding == encoding &&
-                            current.lineEnding == ending &&
-                            current.tabSize == tabSize &&
-                            current.wrap == wrap
+                        val core = try {
+                            if (current.coreId == 0L) EditorCore.open(text)
+                            else if (current.text != text) EditorCore.edit(
+                                current.coreId, 0,
+                                current.text.codePointCount(0, current.text.length),
+                                text, 0, text.codePointCount(0, text.length),
+                            ) else null
+                        } catch (failure: Throwable) {
+                            onMessage(failure.message ?: "editorcore 不可用")
+                            return@updateActive current
+                        }
+                        val id = core?.id ?: current.coreId
+                        if (id != 0L) {
+                            if (current.encoding != encoding) EditorCore.setEncoding(id, encoding.charsetName.lowercase())
+                            if (current.lineEnding != ending) EditorCore.setEol(id, ending)
+                            if (current.tabSize != tabSize) EditorCore.setTabSize(id, tabSize)
+                        }
+                        val stored = core?.text ?: text
+                        val sameText = current.text == stored
+                        val sameMeta = current.encoding == encoding && current.lineEnding == ending && current.tabSize == tabSize && current.wrap == wrap
                         if (sameText && sameMeta) return@updateActive current
-                        val history = histories.getOrPut(current.path) { SftpEditorHistory() }
-                        history.record(current.text, text)
-                        current.copy(
-                            text = text,
-                            encoding = encoding,
-                            lineEnding = ending,
-                            tabSize = tabSize,
-                            wrap = wrap,
-                            dirty = true,
-                            generation = if (sameText) current.generation else current.generation + 1,
-                        )
+                        histories.getOrPut(current.path) { SftpEditorHistory() }.record(current.text, stored)
+                        current.copy(text = stored, coreId = id, encoding = encoding, lineEnding = ending, tabSize = tabSize, wrap = wrap, dirty = true, generation = if (sameText) current.generation else current.generation + 1)
                     }
                 },
                 onUndo = { latest ->
                     updateActive { current ->
-                        val previous = histories[current.path]?.undo(latest) ?: return@updateActive current
-                        current.copy(text = previous, dirty = true, generation = current.generation + 1)
+                        val undone = runCatching { EditorCore.undo(current.coreId) }.getOrElse { failure ->
+                            onMessage(failure.message ?: "editorcore 不可用")
+                            return@updateActive current
+                        }
+                        current.copy(text = undone.text, dirty = true, generation = current.generation + 1)
                     }
                 },
                 onRedo = { latest ->
                     updateActive { current ->
-                        val next = histories[current.path]?.redo(latest) ?: return@updateActive current
-                        current.copy(text = next, dirty = true, generation = current.generation + 1)
+                        val redone = runCatching { EditorCore.redo(current.coreId) }.getOrElse { failure ->
+                            onMessage(failure.message ?: "editorcore 不可用")
+                            return@updateActive current
+                        }
+                        current.copy(text = redone.text, dirty = true, generation = current.generation + 1)
                     }
                 },
                 onFormat = { latest ->
                     updateActive { current ->
-                        val formatted = SftpEditorSupport.formatDocument(latest, current.tabSize)
-                        histories.getOrPut(current.path) { SftpEditorHistory() }.record(latest, formatted)
-                        current.copy(text = formatted, dirty = true, generation = current.generation + 1)
+                        val formatted = runCatching { EditorCore.format(current.coreId) }.getOrElse { failure ->
+                            onMessage(failure.message ?: "editorcore 不可用")
+                            return@updateActive current
+                        }
+                        current.copy(text = formatted.text, dirty = true, generation = current.generation + 1)
                     }
                 },
                 onBack = { closeEditor(force = false) },
@@ -582,10 +606,15 @@ fun SftpBrowserPane(
                     val current = (editor ?: return@SftpTextEditor).copy(text = latest)
                     scope.launch {
                         runOp(onMessage, { busy = it }, { transfer = it }) {
+                            val source = try {
+                                EditorCore.text(current.coreId)
+                            } catch (failure: Throwable) {
+                                error(failure.message ?: "editorcore 不可用")
+                            }
                             val normalized = if (current.lineEnding == "crlf") {
-                                current.text.replace("\r\n", "\n").replace("\n", "\r\n")
+                                source.replace("\r\n", "\n").replace("\n", "\r\n")
                             } else {
-                                current.text.replace("\r\n", "\n")
+                                source.replace("\r\n", "\n")
                             }
                             val bytes = current.encoding.encode(normalized)
                             if (bytes.size > SftpOpenPolicy.TEXT_EDIT_LIMIT) {
@@ -846,6 +875,11 @@ fun SftpBrowserPane(
             is SftpDialog.SaveConflict -> AlertDialog(
                 onDismissRequest = { dialog = null },
                 title = { Text("远端文件已变化") },
+                text = { Text("保存会覆盖其他人刚写入的内容。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        dialog = null
+                        val currentFile = editor ?: return@TextButton
                 text = { Text("保存会覆盖其他人刚写入的内容。") },
                 confirmButton = {
                     TextButton(onClick = {
@@ -1130,7 +1164,12 @@ private fun SftpTextEditor(
     val file = files.getOrNull(activeIndex) ?: return
     var findQuery by remember { mutableStateOf("") }
     var replaceText by remember { mutableStateOf("") }
+    var findCase by remember { mutableStateOf(false) }
+    var findRegex by remember { mutableStateOf(false) }
+    var findError by remember { mutableStateOf<String?>(null) }
+    var findCurrent by remember { mutableIntStateOf(-1) }
     var findOpen by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
     var outlineOpen by remember { mutableStateOf(false) }
     var problemsOpen by remember { mutableStateOf(false) }
     var paletteOpen by remember { mutableStateOf(false) }
@@ -1152,8 +1191,25 @@ private fun SftpTextEditor(
         delay(180)
         analysisText = draft
     }
-    val hits = remember(analysisText, findQuery, findOpen) {
-        if (!findOpen || findQuery.isBlank()) emptyList() else SftpEditorSupport.findInText(analysisText, findQuery)
+    val hits = remember(analysisText, findQuery, findCase, findRegex, findOpen, file.coreId) {
+        if (!findOpen || file.coreId == 0L) emptyList()
+        else runCatching {
+            val payload = EditorCore.find(file.coreId, findQuery, findCase, findRegex)
+            findError = payload.optString("error").ifBlank { null }
+            findCurrent = payload.optInt("current", -1)
+            val matches = payload.optJSONArray("matches") ?: return@runCatching emptyList()
+            val source = analysisText
+            List(matches.length()) { index ->
+                val match = matches.getJSONObject(index)
+                val start = match.optInt("start")
+                val line = source.take(start.coerceIn(0, source.length)).count { it == '\n' } + 1
+                val lineStart = source.lastIndexOf('\n', (start - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+                SftpEditorSupport.FindHit(line, (start - lineStart + 1).coerceAtLeast(1), source.lineSequence().drop(line - 1).firstOrNull().orEmpty().trim().take(200))
+            }
+        }.getOrElse {
+            findError = it.message ?: "editorcore 不可用"
+            emptyList()
+        }
     }
     val editorScroll = rememberScrollState()
     var jumpLine by remember { mutableStateOf<Int?>(null) }
@@ -1171,6 +1227,43 @@ private fun SftpTextEditor(
     fun commitDraft() {
         if (draft != file.text) {
             onChange(draft, file.encoding, file.lineEnding, file.tabSize, file.wrap)
+        }
+    }
+    fun coreFailure(failure: Throwable): String = failure.message ?: "editorcore 不可用"
+    fun applyCore(snapshot: EditorCore.Snapshot) {
+        draft = snapshot.text
+        onChange(snapshot.text, file.encoding, file.lineEnding, file.tabSize, file.wrap)
+    }
+    fun requireCore(block: (Long) -> Unit) {
+        val id = file.coreId
+        if (id == 0L) {
+            findError = "editorcore 不可用"
+            return
+        }
+        try {
+            block(id)
+        } catch (failure: Throwable) {
+            findError = coreFailure(failure)
+        }
+    }
+    fun runFind(op: String) {
+        requireCore { id ->
+            val payload = when (op) {
+                "previous" -> EditorCore.findPrevious(id, findQuery, findCase, findRegex).getJSONObject("payload")
+                "next" -> EditorCore.findNext(id, findQuery, findCase, findRegex).getJSONObject("payload")
+                else -> EditorCore.find(id, findQuery, findCase, findRegex)
+            }
+            val failure = payload.optString("error")
+            findError = failure.ifBlank { null }
+            findCurrent = payload.optInt("current", -1)
+            val matches = payload.optJSONArray("matches")
+            val current = if (matches != null && findCurrent in 0 until matches.length()) matches.getJSONObject(findCurrent) else null
+            if (current != null) {
+                val start = current.optInt("start")
+                val line = draft.take(start.coerceIn(0, draft.length)).count { it == '\n' } + 1
+                findCursor = line
+                jumpLine = line
+            }
         }
     }
     // First differing keystroke marks dirty immediately so BackHandler cannot
@@ -1236,6 +1329,21 @@ private fun SftpTextEditor(
             FilterChip(selected = file.wrap, onClick = { onChange(draft, file.encoding, file.lineEnding, file.tabSize, !file.wrap) }, label = { Text("换行", fontSize = 11.sp) })
             AssistChip(onClick = { commitDraft(); onUndo(draft) }, label = { Text("撤回", fontSize = 11.sp) })
             AssistChip(onClick = { commitDraft(); onRedo(draft) }, label = { Text("前进", fontSize = 11.sp) })
+            AssistChip(onClick = {
+                requireCore { id ->
+                    val text = EditorCore.copy(id)
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
+                }
+            }, label = { Text("复制", fontSize = 11.sp) })
+            AssistChip(onClick = {
+                requireCore { id ->
+                    val (snapshot, text) = EditorCore.cut(id)
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
+                    applyCore(snapshot)
+                }
+            }, label = { Text("剪切", fontSize = 11.sp) })
+            AssistChip(onClick = { requireCore { id -> applyCore(EditorCore.bracket(id, "(")) } }, label = { Text("括号", fontSize = 11.sp) })
+            AssistChip(onClick = { requireCore { id -> applyCore(EditorCore.breakLine(id)) } }, label = { Text("断行", fontSize = 11.sp) })
             AssistChip(onClick = { commitDraft(); onFormat(draft) }, label = { Text("格式化", fontSize = 11.sp) })
             AssistChip(onClick = { findOpen = !findOpen }, label = { Text("查找", fontSize = 11.sp) })
             AssistChip(onClick = { outlineOpen = !outlineOpen }, label = { Text("大纲", fontSize = 11.sp) })
@@ -1246,12 +1354,26 @@ private fun SftpTextEditor(
         if (findOpen) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(value = findQuery, onValueChange = { findQuery = it }, modifier = Modifier.weight(1f), singleLine = true, placeholder = { Text("在文件中查找") })
-                Text("${hits.size}", color = ZephyrTheme.palette.onFloatingSubtle, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp))
+                Text(
+                    if (findError != null) findError.orEmpty() else "${(findCurrent + 1).coerceAtLeast(0)}/${hits.size}",
+                    color = if (findError != null) ZephyrTheme.palette.status.error else ZephyrTheme.palette.onFloatingSubtle,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                FilterChip(selected = findCase, onClick = { findCase = !findCase }, label = { Text("大小写", fontSize = 11.sp) })
+                FilterChip(selected = findRegex, onClick = { findRegex = !findRegex }, label = { Text("正则", fontSize = 11.sp) })
+                TextButton(onClick = { runFind("previous") }) { Text("上一项") }
+                TextButton(onClick = { runFind("next") }) { Text("下一项") }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(value = replaceText, onValueChange = { replaceText = it }, modifier = Modifier.weight(1f), singleLine = true, placeholder = { Text("替换为") })
                 TextButton(onClick = {
-                    if (findQuery.isNotBlank()) draft = SftpEditorSupport.replaceAll(draft, findQuery, replaceText)
+                    requireCore { id -> applyCore(EditorCore.replaceOne(id, findQuery, replaceText, findCase, findRegex)) }
+                }) { Text("替换") }
+                TextButton(onClick = {
+                    requireCore { id -> applyCore(EditorCore.replaceAll(id, findQuery, replaceText, findCase, findRegex)) }
                 }) { Text("全部替换") }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1301,15 +1423,10 @@ private fun SftpTextEditor(
                                 "find", "replace" -> findOpen = true
                                 "find-next" -> {
                                     findOpen = true
-                                    val found = SftpEditorSupport.findInText(draft, findQuery)
-                                    val next = found.firstOrNull { it.line > findCursor } ?: found.firstOrNull()
-                                    if (next != null) {
-                                        findCursor = next.line
-                                        jumpLine = next.line
-                                    }
+                                    runFind("next")
                                 }
                                 "format" -> { commitDraft(); onFormat(draft) }
-                                "trim" -> draft = SftpEditorSupport.trimTrailingWhitespace(draft)
+                                "trim" -> requireCore { id -> applyCore(EditorCore.trimTrailingWhitespace(id)) }
                                 "goto" -> findOpen = true
                                 "outline" -> outlineOpen = true
                                 "problems" -> problemsOpen = true

@@ -5041,6 +5041,9 @@ app.get('/api/notes/groups', requireUser, (req, res) => {
     res.json({ groups: notesService.groups(req.user) });
 });
 
+const { mountEditorCore } = require('./editorcore-server');
+mountEditorCore(app, requireUser);
+
 app.post('/api/notes/groups/rename', requireUser, (req, res) => {
     try {
         res.json(notesService.renameGroup(req.user, req.body?.oldPath, req.body?.newPath));

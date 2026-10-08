@@ -6947,6 +6947,25 @@ async function closeEditor({ animated = true, force = false } = {}) {
     panel._closeTimer = window.setTimeout(removePanel, 260);
 }
 
+async function applyEditorCoreField(kind) {
+    const instance = getEditorInstance();
+    const call = kind === 'encoding'
+        ? window.ZephyrCodeEditor?.setEncoding?.(instance, fmEditorEncoding?.value || 'utf-8')
+        : window.ZephyrCodeEditor?.setEOL?.(instance, fmEditorLineEnding?.value || 'lf');
+    if (!call) {
+        showToast('editorcore 不可用', 'error');
+        return;
+    }
+    try {
+        await call;
+        updateEditorStatus();
+    } catch (error) {
+        showToast(error?.message || 'editorcore 不可用', 'error');
+    }
+}
+function applyEditorEncoding() { return applyEditorCoreField('encoding'); }
+function applyEditorLineEnding() { return applyEditorCoreField('eol'); }
+
 function applyEditorOptions() {
     const instance = getEditorInstance();
     window.ZephyrCodeEditor?.updateOptions?.(instance, { tabSize: Number(fmEditorTabSize?.value) || 4, wrap: fmEditorWrap?.checked !== false, language: editorLanguage });
@@ -6971,6 +6990,8 @@ function loadEditorFromBytes(bytes, encoding = fmEditorEncoding.value) {
             size: bytes?.length || fmEditorModal._editorSize || 0,
             mtimeMs: fmEditorModal._editorMtimeMs || 0,
             tabSize: Number(fmEditorTabSize?.value) || 4,
+            encoding: fmEditorEncoding?.value || 'utf-8',
+            eol: fmEditorLineEnding?.value || 'lf',
             wrap: fmEditorWrap?.checked !== false,
             autoSave: false,
             minimap: localStorage.getItem('zephyr-editor-minimap-hidden') !== '1',
@@ -7527,10 +7548,11 @@ function openEditor(filePath) {
     return panel;
 }
 
-function saveActiveEditor({ closeAfterSave = true, forceClose = false, forceOverwrite = false } = {}) {
+async function saveActiveEditor({ closeAfterSave = true, forceClose = false, forceOverwrite = false } = {}) {
     if (!editorFilePath) return;
     const panel = fmEditorModal;
-    const text = normalizeLineEnding(getEditorText(panel), fmEditorLineEnding?.value || 'lf');
+    const fromCore = await window.ZephyrCodeEditor?.readUTF8?.(panel?._codeEditor);
+    const text = normalizeLineEnding(typeof fromCore === 'string' ? fromCore : getEditorText(panel), fmEditorLineEnding?.value || 'lf');
     const bytes = encodeText(text, fmEditorEncoding?.value || 'utf-8');
     const expectedMtimeMs = forceOverwrite ? undefined : (panel?._codeEditor?.mtimeMs || panel?._editorMtimeMs || undefined);
     panel._pendingSave = { text, closeAfterSave, forceClose };
@@ -7568,8 +7590,8 @@ fmEditorCompactBtn?.addEventListener('click', (e) => { e.preventDefault(); e.sto
 fmEditorPaletteBtn?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); updateActiveEditorRefs(fmEditorPaletteBtn.closest('.fm-editor-modal')); const instance = getEditorInstance(); window.ZephyrCodeEditor?.openPalette?.(instance); fmEditorPaletteBtn?.classList.toggle('active', !!instance?.panel?.querySelector('[data-editor-role="commandPalette"]')?.classList.contains('open')); });
 fmEditorAiBtn?.addEventListener('click', async (e) => { e.preventDefault(); e.stopPropagation(); updateActiveEditorRefs(fmEditorAiBtn.closest('.fm-editor-modal')); const ok = await window.ZephyrCodeEditor?.aiComplete?.(getEditorInstance()); if (ok) showToast('AI 补全已处理', 'success'); });
 fmEditorSaveBtn?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); updateActiveEditorRefs(fmEditorSaveBtn.closest('.fm-editor-modal')); saveActiveEditor({ closeAfterSave: false }); });
-fmEditorEncoding?.addEventListener('change', () => { updateActiveEditorRefs(fmEditorEncoding.closest('.fm-editor-modal')); if (editorRawBytes) loadEditorFromBytes(editorRawBytes, fmEditorEncoding.value); });
-fmEditorLineEnding?.addEventListener('change', () => { updateActiveEditorRefs(fmEditorLineEnding.closest('.fm-editor-modal')); updateEditorStatus(); });
+fmEditorEncoding?.addEventListener('change', () => { updateActiveEditorRefs(fmEditorEncoding.closest('.fm-editor-modal')); applyEditorEncoding(); });
+fmEditorLineEnding?.addEventListener('change', () => { updateActiveEditorRefs(fmEditorLineEnding.closest('.fm-editor-modal')); applyEditorLineEnding(); });
 fmEditorTabSize?.addEventListener('change', () => { updateActiveEditorRefs(fmEditorTabSize.closest('.fm-editor-modal')); applyEditorOptions(); });
 fmEditorWrap?.addEventListener('change', () => { updateActiveEditorRefs(fmEditorWrap.closest('.fm-editor-modal')); applyEditorOptions(); });
 
@@ -7628,9 +7650,8 @@ function setupClonedEditorEvents(panel) {
     });
     panel.addEventListener('change', (e) => {
         updateActiveEditorRefs(panel);
-        if (e.target.matches('[data-editor-field="encoding"]')) {
-            if (editorRawBytes) loadEditorFromBytes(editorRawBytes, fmEditorEncoding.value);
-        } else if (e.target.matches('[data-editor-field="lineEnding"]')) updateEditorStatus();
+        if (e.target.matches('[data-editor-field="encoding"]')) applyEditorEncoding();
+        else if (e.target.matches('[data-editor-field="lineEnding"]')) applyEditorLineEnding();
         else if (e.target.matches('[data-editor-field="tabSize"], [data-editor-field="wrap"]')) applyEditorOptions();
     });
 }
