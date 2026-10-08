@@ -172,7 +172,7 @@ internal fun RawMediaPlayer(
         }
         Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(clock(position))
-            SeekBar(
+            Slider(
                 fraction = if (duration > 0) position.toFloat() / duration else 0f,
                 enabled = duration > 0L && player.isSeekable,
                 onChange = { if (duration > 0) { position = (it * duration).toLong(); player.setTime(position) } },
@@ -184,14 +184,14 @@ internal fun RawMediaPlayer(
             TextButton(onClick = { volume = if (volume == 0f) 100f else 0f; player.setVolume(volume.toInt()) }) {
                 Text(if (volume == 0f) "取消静音" else "静音")
             }
-            SeekBar(fraction = volume / 100f, enabled = true, onChange = { volume = it * 100f; player.setVolume(volume.toInt()) }, modifier = Modifier.weight(1f))
+            Slider(fraction = volume / 100f, enabled = true, onChange = { volume = it * 100f; player.setVolume(volume.toInt()) }, modifier = Modifier.weight(1f))
             Text("${volume.toInt()}%")
         }
     }
 }
 
 @Composable
-private fun SeekBar(fraction: Float, enabled: Boolean, onChange: (Float) -> Unit, modifier: Modifier = Modifier) {
+private fun Slider(fraction: Float, enabled: Boolean, onChange: (Float) -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier.fillMaxWidth().height(32.dp).pointerInput(enabled) {
             if (!enabled) return@pointerInput
