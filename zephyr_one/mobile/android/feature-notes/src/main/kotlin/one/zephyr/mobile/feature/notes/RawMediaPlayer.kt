@@ -109,7 +109,8 @@ internal fun RawMediaPlayer(
         if (!started) return@LaunchedEffect
         for (file in subtitles) {
             if (!mountedSubtitles.add(file.absolutePath)) continue
-            if (!player.addSlave(MediaPlayer.Track.Type.Text, Uri.fromFile(file), true)) {
+            // libvlc_media_slave_type_subtitle is the first enum value, so its ABI value is 0.
+if (!player.addSlave(0, Uri.fromFile(file), true)) {
                 mountedSubtitles.remove(file.absolutePath)
                 latestMessage("无法挂载字幕 ${file.name}")
             }
