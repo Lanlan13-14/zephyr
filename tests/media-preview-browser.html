@@ -1,0 +1,75 @@
+<!doctype html><meta charset="utf-8"><title>Media preview browser regression</title>
+<script src="/preview/preview-wasm.js"></script><script src="/preview/media/media-preview.js"></script>
+<pre id="out">running</pre><script>
+(async () => {
+    const results = [], notices = [];
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const check = (ok, message) => { if (!ok) throw Error(message); };
+    async function until(fn, label, timeout = 60000) {
+        const end = Date.now() + timeout;
+        while (Date.now() < end) { if (fn()) return; await wait(30); }
+        throw Error('timeout: '+label);
+    }
+    async function run(name, fn) {
+        try { const detail = await fn(); results.push({ name, ok: true, ...detail }); }
+        catch (err) { results.push({ name, ok: false, error: String(err), stack: err.stack }); }
+    }
+    function player(path) {
+        const p = new ZephyrMediaPreview({ send: () => {}, notify: (...args) => notices.push(args) });
+        p.open('/fixtures/'+path); return p;
+    }
+    async function render(p, kind, subtitles = []) {
+        await p.renderPlayer({ path: p.currentPath, kind, streamUrl: p.currentPath, subtitles, requestId: p.requestId });
+        await until(() => p.modal.querySelector(kind)?.readyState >= 2, 'decoded '+p.currentPath);
+        const media = p.modal.querySelector(kind);
+        check(!media.error, media.error?.message);
+        try { await media.play(); }
+        catch (error) {
+            if (error.name !== 'NotAllowedError') throw error;
+            await new Promise((resolve, reject) => {
+                const button = document.createElement('button');
+                button.id = 'play-next'; button.textContent = 'Play test: '+p.currentPath;
+                document.body.appendChild(button);
+                button.onclick = () => { media.play().then(resolve, reject); button.remove(); };
+            });
+        }
+        await wait(100); check(!media.paused, 'did not start playback'); media.pause();
+        return { mode: p.preparedMedia.mode, duration: media.duration, width: media.videoWidth, height: media.videoHeight };
+    }
+    for (const [file, kind, mode] of [['tone.mp3','audio','DIRECT'], ['tone.aiff','audio','TRANSCODED'], ['direct.mp4','video','DIRECT'], ['clip.avi','video','TRANSCODED'], ['unsupported.mp4','video','TRANSCODED']]) {
+        await run(file, async () => {
+            const p = player(file);
+            try { const detail = await render(p,kind); check(detail.mode === mode, 'wrong mode '+detail.mode); check(detail.duration > 0,'no duration'); return detail; }
+            finally { p.close(); }
+        });
+    }
+    await run('ASS subtitle uses declared codec, not fake .vtt route suffix', async () => {
+        const p = player('direct.mp4');
+        try {
+            const source = '[Events]\nDialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,ASS works';
+            await render(p,'video',[{ url: 'data:text/plain,'+encodeURIComponent(source), codec:'ass', language:'en' }]);
+            const vtt = await (await fetch(p.remoteSubtitles[0].url)).text();
+            check(vtt.includes('00:00:00.000 --> 00:00:01.000') && vtt.includes('ASS works'),'invalid ASS conversion: '+vtt);
+            return { converted: true };
+        } finally { p.close(); }
+    });
+    await run('refresh ignores previous same-path ready response', async () => {
+        const p = player('tone.mp3');
+        try { const old = p.requestId; p.open(p.currentPath,{force:true}); check(!p.handleMessage({type:'sftp-media-preview-ready',path:p.currentPath,requestId:old}), 'accepted stale ready'); await render(p,'audio'); }
+        finally { p.close(); }
+    });
+    await run('concurrent audio/video transcodes remain isolated', async () => {
+        const a = player('tone.aiff'), v = player('clip.avi');
+        try { const output = await Promise.all([render(a,'audio'),render(v,'video')]); check(a.preparedMedia.url !== v.preparedMedia.url, 'shared output'); return { outputs:output }; }
+        finally { a.close(); v.close(); }
+    });
+    await run('close during prepare does not revive the player', async () => {
+        const p = player('clip.avi');
+        const pending = p.renderPlayer({path:p.currentPath,kind:'video',streamUrl:p.currentPath,requestId:p.requestId});
+        p.close(); await pending; check(p.preparedMedia === null,'closed player owns output');
+    });
+    window.mediaRegressionResult = {ok: results.every(r=>r.ok),results,notices};
+    document.querySelector('#out').textContent = JSON.stringify(window.mediaRegressionResult);
+    await fetch('/result',{method:'POST',body:JSON.stringify(window.mediaRegressionResult)}).catch(()=>{});
+})().catch(error=>{ document.querySelector('#out').textContent=JSON.stringify({ok:false,error:String(error)}); });
+</script>

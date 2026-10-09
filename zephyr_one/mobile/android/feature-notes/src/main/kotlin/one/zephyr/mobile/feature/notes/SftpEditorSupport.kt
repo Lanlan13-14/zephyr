@@ -134,25 +134,6 @@ object SftpEditorSupport {
         EditorCommand("搜目录", "workspace"),
     )
 
-    fun trimTrailingWhitespace(text: String): String =
-        text.lineSequence().joinToString("\n") { it.trimEnd() }
-
-    fun formatDocument(text: String, tabSize: Int, useTabs: Boolean = false): String {
-        val indent = if (useTabs) "\t" else " ".repeat(tabSize.coerceIn(2, 8))
-        val lines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
-        var depth = 0
-        val out = ArrayList<String>(lines.size)
-        for (raw in lines) {
-            val trimmed = raw.trim()
-            val closes = trimmed.startsWith("}") || trimmed.startsWith("]") || trimmed.startsWith(")")
-            if (closes) depth = (depth - 1).coerceAtLeast(0)
-            out += if (trimmed.isEmpty()) "" else indent.repeat(depth) + trimmed
-            val opens = trimmed.endsWith("{") || trimmed.endsWith("[") || trimmed.endsWith("(")
-            if (opens && !trimmed.startsWith("}")) depth += 1
-        }
-        return out.joinToString("\n")
-    }
-
     fun workspaceSearchCommand(directory: String, query: String, maxFiles: Int = 80): String {
         val encoded = java.util.Base64.getEncoder().encodeToString(query.toByteArray(Charsets.UTF_8))
         return """

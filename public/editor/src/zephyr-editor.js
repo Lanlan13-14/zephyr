@@ -1,9 +1,9 @@
 import {EditorState, Compartment, StateEffect, StateField, EditorSelection} from '@codemirror/state';
 import {EditorView, basicSetup} from 'codemirror';
 import {keymap, lineNumbers, highlightActiveLineGutter, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightSpecialChars, Decoration, ViewPlugin} from '@codemirror/view';
-import {defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, toggleComment, moveLineUp, moveLineDown, copyLineUp, copyLineDown, deleteLine, selectLine, selectParentSyntax, insertBlankLine, deleteTrailingWhitespace} from '@codemirror/commands';
-import {searchKeymap, highlightSelectionMatches, openSearchPanel, findNext, findPrevious, selectNextOccurrence, gotoLine} from '@codemirror/search';
-import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, startCompletion} from '@codemirror/autocomplete';
+import {defaultKeymap, history, historyKeymap, indentWithTab, moveLineUp, moveLineDown, copyLineUp, copyLineDown, deleteLine, selectLine, selectParentSyntax, insertBlankLine} from '@codemirror/commands';
+import {highlightSelectionMatches, gotoLine, selectNextOccurrence} from '@codemirror/search';
+import {autocompletion, completionKeymap, startCompletion} from '@codemirror/autocomplete';
 import {bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, defaultHighlightStyle, StreamLanguage, foldAll, unfoldAll} from '@codemirror/language';
 import {linter, lintGutter} from '@codemirror/lint';
 import {javascript} from '@codemirror/lang-javascript';
@@ -25,10 +25,7 @@ import {dockerFile} from '@codemirror/legacy-modes/mode/dockerfile';
 import {githubLight, githubDark} from '@uiw/codemirror-theme-github';
 import {LSPClient, languageServerExtensions} from '@codemirror/lsp-client';
 import {MergeView} from '@codemirror/merge';
-import {format as prettierFormat} from 'prettier/standalone';
-import * as prettierYaml from 'prettier/plugins/yaml';
-import * as prettierBabel from 'prettier/plugins/babel';
-import * as prettierEstree from 'prettier/plugins/estree';
+import {bracketCoreDocument, breakCoreLine, closeCoreDocument, copyCoreDocument, coreCapabilities, coreDocumentText, coreMeta, cutCoreDocument, editCoreDocument, findInCore, findNextInCore, findPreviousInCore, formatCoreDocument, indentCoreDocument, markCoreSaved, openCoreDocument, outdentCoreDocument, pasteCoreDocument, redoCoreDocument, replaceAllInCore, replaceOneInCore, selectCoreDocument, setCoreEOL, setCoreEncoding, setCoreReadOnly, setCoreTabSize, toggleCoreComment, trimCoreTrailingWhitespace, undoCoreDocument} from './editorcore-bridge.js';
 
 const LARGE_FILE_LIMIT = 5 * 1024 * 1024;
 const MEDIUM_FILE_LIMIT = 1024 * 1024;
@@ -363,7 +360,7 @@ function statusParts(instance) {
   const lineCount = instance.view?.state.doc.lines || 1;
   const label = languageLabels[instance.language] || languageLabels.plain;
   const dirty = instance.dirty ? '● 未保存' : '已保存';
-  const perf = instance.largeFile ? '大文件降级' : instance.mediumFile ? '性能模式' : instance.compact ? '紧凑' : 'IDE';
+  const perf = instance.degraded || (instance.view?.state.doc.lines || 1) > CAPABILITY_LINE_LIMIT ? '5800行降级' : instance.largeFile ? '大文件降级' : instance.mediumFile ? '性能模式' : instance.compact ? '紧凑' : 'IDE';
   const lsp = LSP_LANGUAGES.has(instance.language) && !instance.largeFile ? 'LSP' : '';
   const schema = schemaHint(instance.path);
   const sel = instance.view?.state.selection;
@@ -484,7 +481,6 @@ function buildExtensions(instance) {
     crosshairCursor(),
     indentOnInput(),
     bracketMatching(),
-    closeBrackets(),
     highlightSelectionMatches(),
     syntaxHighlighting(defaultHighlightStyle, {fallback: true}),
     lintGutter(),
@@ -492,22 +488,46 @@ function buildExtensions(instance) {
     EditorView.updateListener.of((update) => {
       if (update.docChanged) {
         instance.dirty = instance.view ? update.state.doc.toString() !== instance.originalText : true;
+        const before = update.startState.doc.toString();
+        const after = update.state.doc.toString();
+        const selection = update.state.selection.main;
+        update.changes.iterChanges((from, to, _fromB, _toB, inserted) => {
+          void editCoreDocument(instance, {before, after, from, to, text: inserted.toString(), selection});
+        });
         scheduleAutoSave(instance);
+      } else if (update.selectionSet) {
+        void selectCoreDocument(instance);
       }
       if (update.docChanged || update.selectionSet) updateStatus(instance);
     }),
     keymap.of([
-      ...closeBracketsKeymap,
       ...defaultKeymap,
-      ...searchKeymap,
       ...historyKeymap,
       ...foldKeymap,
       ...completionKeymap,
       indentWithTab,
+      {key: 'Mod-f', run: () => openSearch(instance), scope: 'editor search-panel'},
+      {key: 'F3', run: () => { void findNextFromPanel(instance); return true; }, shift: () => { void findPreviousFromPanel(instance); return true; }, scope: 'editor search-panel', preventDefault: true},
+      {key: 'Mod-g', run: () => { void findNextFromPanel(instance); return true; }, shift: () => { void findPreviousFromPanel(instance); return true; }, scope: 'editor search-panel', preventDefault: true},
+      {key: 'Escape', run: () => closeSearch(instance), scope: 'editor search-panel'},
       {key: 'Mod-s', run: () => { instance.requestSave?.(); return true; }},
-      {key: 'Mod-Shift-f', run: () => { formatDocument(instance); return true; }},
+      {key: 'Mod-Shift-f', run: () => { void formatWithCore(instance); return true; }},
       {key: 'Mod-Shift-Space', run: () => { requestAiCompletion(instance); return true; }},
-      {key: 'Mod-/', run: toggleComment},
+      {key: 'Mod-/', run: () => { void commentWithCore(instance); return true; }},
+      {key: 'Mod-z', run: () => { void undoWithCore(instance); return true; }},
+      {key: 'Mod-y', run: () => { void redoWithCore(instance); return true; }},
+      {key: 'Mod-Shift-z', run: () => { void redoWithCore(instance); return true; }},
+      {key: 'Tab', run: () => { void indentWithCore(instance); return true; }},
+      {key: 'Shift-Tab', run: () => { void outdentWithCore(instance); return true; }},
+      {key: 'Enter', run: () => { void breakLineWithCore(instance); return true; }},
+      {key: "'", run: (view) => pairWithCore(instance, "'", view)},
+      {key: '"', run: (view) => pairWithCore(instance, '"', view)},
+      {key: '`', run: (view) => pairWithCore(instance, '`', view)},
+      {key: '(', run: (view) => pairWithCore(instance, '(', view)},
+      {key: '{', run: (view) => pairWithCore(instance, '{', view)},
+      {key: '[', run: (view) => pairWithCore(instance, '[', view)},
+      {key: 'Mod-c', run: () => { void copyWithCore(instance); return true; }},
+      {key: 'Mod-x', run: () => { void cutWithCore(instance); return true; }},
       {key: 'Alt-ArrowUp', run: moveLineUp},
       {key: 'Alt-ArrowDown', run: moveLineDown},
       {key: 'Shift-Alt-ArrowUp', run: copyLineUp},
@@ -579,34 +599,249 @@ async function requestAiCompletion(instance) {
   }
 }
 
-async function formatDocument(instance) {
-  if (!instance?.view || instance.largeFile) return false;
-  const language = instance.language;
-  const text = instance.view.state.doc.toString();
-  let parser = '';
-  let plugins = [];
-  if (language === 'yaml') { parser = 'yaml'; plugins = [prettierYaml]; }
-  else if (language === 'json') { parser = 'json'; plugins = [prettierBabel, prettierEstree]; }
-  else if (language === 'javascript' || language === 'typescript') { parser = 'babel'; plugins = [prettierBabel, prettierEstree]; }
-  else if (language === 'html') { parser = 'html'; plugins = [prettierBabel, prettierEstree]; }
-  else if (language === 'css') { parser = 'css'; plugins = [prettierBabel, prettierEstree]; }
-  else if (language === 'markdown') { parser = 'markdown'; plugins = [prettierBabel, prettierEstree]; }
-  else return false;
-  try {
-    const formatted = await prettierFormat(text, {parser, plugins, tabWidth: instance.tabSize || 2, printWidth: 100});
-    if (formatted !== text) instance.view.dispatch({changes: {from: 0, to: instance.view.state.doc.length, insert: formatted}});
-    return true;
-  } catch (error) {
-    instance.notify?.(`格式化失败: ${error.message || error}`, 'error');
-    return false;
+function formatWithCore(instance) {
+  if (!instance?.view) return Promise.resolve(false);
+  return runCore(instance, formatCoreDocument(instance), {replace: true}).then((result) => result != null);
+}
+function trimTrailingWhitespaceWithCore(instance) {
+  if (!instance?.view) return Promise.resolve(false);
+  return runCore(instance, trimCoreTrailingWhitespace(instance), {replace: true}).then((result) => result != null);
+}
+
+const CAPABILITY_LINE_LIMIT = 5800;
+
+function applyCoreText(instance, result) {
+  if (!result || !instance?.view || typeof result.text !== 'string') return result;
+  if (result.text === instance.view.state.doc.toString()) return result;
+  const head = result.snapshot?.selection?.extent ?? result.text.length;
+  instance.view.dispatch({
+    changes: {from: 0, to: instance.view.state.doc.length, insert: result.text},
+    selection: {anchor: Math.max(0, Math.min(head, result.text.length))},
+  });
+  return result;
+}
+
+function runCore(instance, promise, {replace = false} = {}) {
+  return Promise.resolve(promise).then((result) => replace ? applyCoreText(instance, result) : result).catch((error) => {
+    instance?.notify?.(error.message || String(error), 'error');
+    return null;
+  });
+}
+
+export function findWithCore(instance, query, options = {}) {
+  return runCore(instance, findInCore(instance, query, options));
+}
+export function findNextWithCore(instance, query, options = {}) {
+  return runCore(instance, findNextInCore(instance, query, options));
+}
+export function findPreviousWithCore(instance, query, options = {}) {
+  return runCore(instance, findPreviousInCore(instance, query, options));
+}
+export function replaceOneWithCore(instance, query, replacement, options = {}) {
+  return runCore(instance, replaceOneInCore(instance, query, replacement, options), {replace: true});
+}
+export function replaceAllWithCore(instance, query, replacement, options = {}) {
+  return runCore(instance, replaceAllInCore(instance, query, replacement, options), {replace: true});
+}
+export function undoWithCore(instance) { return runCore(instance, undoCoreDocument(instance), {replace: true}); }
+export function redoWithCore(instance) { return runCore(instance, redoCoreDocument(instance), {replace: true}); }
+export function indentWithCore(instance) { return runCore(instance, indentCoreDocument(instance), {replace: true}); }
+export function outdentWithCore(instance) { return runCore(instance, outdentCoreDocument(instance), {replace: true}); }
+export function breakLineWithCore(instance) { return runCore(instance, breakCoreLine(instance), {replace: true}); }
+export function commentWithCore(instance) { return runCore(instance, toggleCoreComment(instance, instance?.language), {replace: true}); }
+export function copyWithCore(instance) { return runCore(instance, copyCoreDocument(instance)); }
+export function cutWithCore(instance) { return runCore(instance, cutCoreDocument(instance), {replace: true}); }
+export function pasteWithCore(instance, text) { return runCore(instance, pasteCoreDocument(instance, text), {replace: true}); }
+
+const BRACKET_OPENS = new Set(['(', '{', '[', '"', "'", '`']);
+
+function pairWithCore(instance, open, view) {
+  if (!BRACKET_OPENS.has(open)) return false;
+  const before = view?.state?.doc?.toString?.() || '';
+  void runCore(instance, (async () => {
+    await selectCoreDocument(instance);
+    const result = await bracketCoreDocument(instance, open);
+    if (result?.text === before) return result;
+    return result;
+  })(), {replace: true});
+  return true;
+}
+
+function searchPanel(instance) {
+  return instance?.panel?.querySelector('[data-editor-role="coreSearch"]') || null;
+}
+
+function searchOptions(panel) {
+  return {
+    caseSensitive: !!panel.querySelector('[data-search="case"]').checked,
+    regex: !!panel.querySelector('[data-search="regex"]').checked,
+  };
+}
+
+function searchQuery(panel) {
+  return panel.querySelector('[data-search="query"]').value;
+}
+
+function paintSearchCount(panel, payload) {
+  const count = panel.querySelector('[data-search="count"]');
+  if (!count) return;
+  if (!payload || payload.error) {
+    count.textContent = payload?.error ? '表达式错误' : '0/0';
+    return;
   }
+  const total = payload.truncated ? `${payload.count}+` : String(payload.count ?? 0);
+  const current = payload.current >= 0 && payload.count ? payload.current + 1 : 0;
+  count.textContent = `${current}/${total}`;
+}
+
+function revealCoreMatch(instance, result) {
+  const payload = result?.payload;
+  const match = payload?.matches?.[payload.current];
+  if (!match || !instance?.view) return;
+  const doc = instance.view.state.doc.toString();
+  const from = scalarsToUnits(doc, match.start);
+  const to = scalarsToUnits(doc, match.end);
+  instance.view.dispatch({
+    selection: {anchor: from, head: to},
+    effects: EditorView.scrollIntoView(from, {y: 'center'}),
+  });
+  instance.view.focus();
+}
+
+function scalarsToUnits(text, scalars) {
+  const chars = Array.from(String(text ?? ''));
+  return chars.slice(0, Math.max(0, scalars)).join('').length;
+}
+
+async function runSearch(instance, op) {
+  const panel = searchPanel(instance);
+  if (!panel) return null;
+  const query = searchQuery(panel);
+  const options = searchOptions(panel);
+  const result = await runCore(instance, op === 'find'
+    ? findInCore(instance, query, options)
+    : op === 'next'
+      ? findNextInCore(instance, query, options)
+      : findPreviousInCore(instance, query, options));
+  paintSearchCount(panel, result?.payload);
+  if (op !== 'find') revealCoreMatch(instance, result);
+  return result;
+}
+
+function findNextFromPanel(instance) { return runSearch(instance, 'next'); }
+function findPreviousFromPanel(instance) { return runSearch(instance, 'previous'); }
+
+function ensureSearchPanel(instance) {
+  const host = instance?.panel || instance?.view?.dom?.parentElement;
+  if (!host) return null;
+  let panel = host.querySelector('[data-editor-role="coreSearch"]');
+  if (panel) return panel;
+  panel = document.createElement('div');
+  panel.className = 'cm-core-search';
+  panel.dataset.editorRole = 'coreSearch';
+  panel.innerHTML = [
+    '<input data-search="query" class="cm-textfield" aria-label="查找" placeholder="查找" spellcheck="false">',
+    '<span data-search="count" class="cm-core-search-count">0/0</span>',
+    '<label><input data-search="case" type="checkbox">大小写</label>',
+    '<label><input data-search="regex" type="checkbox">正则</label>',
+    '<button type="button" data-search="previous">上一项</button>',
+    '<button type="button" data-search="next">下一项</button>',
+    '<input data-search="replace" class="cm-textfield" aria-label="替换" placeholder="替换" spellcheck="false">',
+    '<button type="button" data-search="replace-one">替换</button>',
+    '<button type="button" data-search="replace-all">全部替换</button>',
+    '<button type="button" data-search="close" aria-label="关闭">×</button>',
+  ].join('');
+  const query = panel.querySelector('[data-search="query"]');
+  const replacement = panel.querySelector('[data-search="replace"]');
+  query.addEventListener('input', () => { void runSearch(instance, 'find'); });
+  panel.querySelector('[data-search="case"]').addEventListener('change', () => { void runSearch(instance, 'find'); });
+  panel.querySelector('[data-search="regex"]').addEventListener('change', () => { void runSearch(instance, 'find'); });
+  panel.querySelector('[data-search="next"]').addEventListener('click', () => { void runSearch(instance, 'next'); });
+  panel.querySelector('[data-search="previous"]').addEventListener('click', () => { void runSearch(instance, 'previous'); });
+  panel.querySelector('[data-search="replace-one"]').addEventListener('click', () => { void replaceFromPanel(instance, false); });
+  panel.querySelector('[data-search="replace-all"]').addEventListener('click', () => { void replaceFromPanel(instance, true); });
+  panel.querySelector('[data-search="close"]').addEventListener('click', () => closeSearch(instance));
+  panel.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); closeSearch(instance); }
+    else if (event.key === 'Enter' && event.target === query) {
+      event.preventDefault();
+      void runSearch(instance, event.shiftKey ? 'previous' : 'next');
+    } else if (event.key === 'Enter' && event.target === replacement) {
+      event.preventDefault();
+      void replaceFromPanel(instance, event.shiftKey || event.metaKey || event.ctrlKey);
+    }
+  });
+  const shell = host.querySelector('[data-editor-role="main"]') || instance.view?.dom;
+  if (shell) host.insertBefore(panel, shell);
+  else host.appendChild(panel);
+  return panel;
+}
+
+async function replaceFromPanel(instance, all) {
+  const panel = searchPanel(instance);
+  if (!panel) return null;
+  const query = searchQuery(panel);
+  const replacement = panel.querySelector('[data-search="replace"]').value;
+  const options = searchOptions(panel);
+  const result = await (all
+    ? replaceAllWithCore(instance, query, replacement, options)
+    : replaceOneWithCore(instance, query, replacement, options));
+  await runSearch(instance, 'find');
+  return result;
+}
+
+export function openSearch(instance) {
+  if (!instance?.view) return false;
+  const panel = ensureSearchPanel(instance);
+  if (!panel) return false;
+  panel.hidden = false;
+  const query = panel.querySelector('[data-search="query"]');
+  const selection = instance.view.state.selection.main;
+  if (selection && !selection.empty && selection.to - selection.from < 200) {
+    query.value = instance.view.state.sliceDoc(selection.from, selection.to);
+  }
+  query.focus();
+  query.select();
+  void runSearch(instance, 'find');
+  return true;
+}
+
+export function closeSearch(instance) {
+  const panel = searchPanel(instance);
+  if (!panel || panel.hidden) return false;
+  panel.hidden = true;
+  instance?.view?.focus();
+  return true;
+}
+
+export async function refreshCoreMeta(instance) {
+  const result = await coreMeta(instance);
+  if (!result?.payload || !instance) return null;
+  instance.coreDirty = !!result.payload.dirty;
+  instance.dirty = instance.coreDirty;
+  updateStatus(instance);
+  return result.payload;
+}
+
+export async function refreshCoreCapabilities(instance) {
+  const result = await coreCapabilities(instance);
+  const payload = result?.payload;
+  if (!payload || !instance?.view) return payload || null;
+  instance.capabilities = payload;
+  instance.degraded = !!payload.degraded;
+  if (payload.degraded && instance.wrap) {
+    instance.wrap = false;
+    instance.view.dispatch({effects: wrapConfig.reconfigure([])});
+  }
+  updateStatus(instance);
+  return payload;
 }
 
 function commandList(instance) {
   return [
-    ['查找', openSearchPanel], ['查找下一个', findNext], ['查找上一个', findPrevious], ['跳转到行', gotoLine],
-    ['格式化文档', () => formatDocument(instance)], ['删除尾随空格', deleteTrailingWhitespace], ['触发补全', startCompletion],
-    ['折叠全部', foldAll], ['展开全部', unfoldAll], ['切换注释', toggleComment], ['上移行', moveLineUp], ['下移行', moveLineDown],
+    ['查找', () => openSearch(instance)], ['查找下一个', () => findNextFromPanel(instance)], ['查找上一个', () => findPreviousFromPanel(instance)], ['跳转到行', gotoLine],
+    ['格式化文档', () => formatWithCore(instance)], ['删除尾随空格', () => trimTrailingWhitespaceWithCore(instance)], ['触发补全', startCompletion],
+    ['折叠全部', foldAll], ['展开全部', unfoldAll], ['切换注释', () => commentWithCore(instance)], ['上移行', moveLineUp], ['下移行', moveLineDown],
     ['向上复制行', copyLineUp], ['向下复制行', copyLineDown], ['删除行', deleteLine], ['选择当前行', selectLine],
     ['添加上方光标', addCursorAbove], ['添加下方光标', addCursorBelow], ['选中下一处相同', selectNextOccurrence],
     ['显示大纲', () => { instance.onOutline?.(collectOutline(instance.view)); return true; }],
@@ -668,10 +903,10 @@ function createMobileToolbar(instance, parent) {
     toolbar.dataset.editorRole = 'mobileToolbar';
     const actions = [
       ['保存', () => instance.requestSave?.()],
-      ['查找', () => openSearchPanel(instance.view)],
-      ['撤销', () => undo(instance.view)],
-      ['重做', () => redo(instance.view)],
-      ['格式化', () => formatDocument(instance)],
+      ['查找', () => openSearch(instance)],
+      ['撤销', () => undoWithCore(instance)],
+      ['重做', () => redoWithCore(instance)],
+      ['格式化', () => formatWithCore(instance)],
       ['命令', () => openCommandPalette(instance)],
     ];
     actions.forEach(([label, run]) => {
@@ -716,6 +951,8 @@ export function createZephyrEditor(options) {
     largeFile: (options.size || 0) > LARGE_FILE_LIMIT,
     mediumFile: (options.size || 0) > MEDIUM_FILE_LIMIT,
     tabSize: Number(options.tabSize || 4),
+    encoding: options.encoding || 'utf-8',
+    eol: options.eol || 'lf',
     wrap: options.wrap !== false,
     autoSave: options.autoSave === true,
     minimap: options.minimap === true,
@@ -740,6 +977,7 @@ export function createZephyrEditor(options) {
     parent,
   });
   instance.view = view;
+  void openCoreDocument(instance, instance.originalText, {encoding: instance.encoding, eol: instance.eol, tabSize: instance.tabSize}).then(() => refreshCoreCapabilities(instance));
   createMobileToolbar(instance, options.panel || parent);
   installViewportAdapter(instance);
   installThemeObserver(instance);
@@ -764,6 +1002,7 @@ export function updateZephyrEditorOptions(instance, options = {}) {
   if (options.tabSize) {
     instance.tabSize = Number(options.tabSize) || 4;
     instance.view.dispatch({effects: tabConfig.reconfigure(EditorState.tabSize.of(instance.tabSize))});
+    void setCoreTabSize(instance, instance.tabSize);
   }
   if (typeof options.wrap === 'boolean') {
     instance.wrap = options.wrap;
@@ -788,6 +1027,15 @@ export function getZephyrEditorText(instance) {
   return instance?.view?.state.doc.toString() || '';
 }
 
+// Save and any host that must persist bytes call this. It returns the UTF-8
+// held by the Go core. The CodeMirror string is only the fallback for the
+// moment before the core document has opened.
+export async function readZephyrEditorUTF8(instance) {
+  const text = await coreDocumentText(instance);
+  if (typeof text === 'string') return text;
+  return getZephyrEditorText(instance);
+}
+
 export function setZephyrEditorText(instance, text, {asSaved = true, mtimeMs, size} = {}) {
   if (!instance?.view) return;
   const next = String(text || '');
@@ -800,12 +1048,14 @@ export function setZephyrEditorText(instance, text, {asSaved = true, mtimeMs, si
   if (mtimeMs != null) instance.mtimeMs = mtimeMs;
   if (size != null) instance.size = size;
   instance.view.dispatch({changes: {from: 0, to: instance.view.state.doc.length, insert: next}});
+  void openCoreDocument(instance, next);
   updateStatus(instance);
 }
 
 export function destroyZephyrEditor(instance) {
   if (!instance || instance.destroyed) return;
   instance.destroyed = true;
+  void closeCoreDocument(instance);
   clearTimeout(instance.saveTimer);
   instance.themeObserver?.disconnect();
   instance.viewportCleanup?.();
@@ -813,9 +1063,10 @@ export function destroyZephyrEditor(instance) {
   instance.view?.destroy();
 }
 
-export function undoZephyrEditor(instance) { undo(instance?.view); updateStatus(instance); }
-export function redoZephyrEditor(instance) { redo(instance?.view); updateStatus(instance); }
-export function formatZephyrEditor(instance) { return formatDocument(instance); }
+export function undoZephyrEditor(instance) { return undoWithCore(instance); }
+export function redoZephyrEditor(instance) { return redoWithCore(instance); }
+export function formatZephyrEditor(instance) { return formatWithCore(instance); }
+export function trimTrailingWhitespaceZephyrEditor(instance) { return trimTrailingWhitespaceWithCore(instance); }
 export function aiCompleteZephyrEditor(instance) { return requestAiCompletion(instance); }
 export function focusZephyrEditor(instance) { instance?.view?.focus(); }
 export function isZephyrEditorDirty(instance) { return !!instance?.dirty; }
@@ -832,16 +1083,12 @@ export function gotoEditorLine(instance, line) {
   instance.view.focus();
   return true;
 }
-export function openSearch(instance) {
-  if (!instance?.view) return false;
-  openSearchPanel(instance.view);
-  return true;
-}
 export function markSaved(instance, {text, mtimeMs, size} = {}) {
   if (!instance) return;
   if (text != null) instance.originalText = String(text);
   else instance.originalText = getZephyrEditorText(instance);
   instance.dirty = false;
+  void markCoreSaved(instance);
   if (mtimeMs != null) instance.mtimeMs = mtimeMs;
   if (size != null) instance.size = size;
   updateStatus(instance);
@@ -851,6 +1098,7 @@ window.ZephyrCodeEditor = {
   create: createZephyrEditor,
   updateOptions: updateZephyrEditorOptions,
   getText: getZephyrEditorText,
+  readUTF8: readZephyrEditorUTF8,
   setText: setZephyrEditorText,
   destroy: destroyZephyrEditor,
   undo: undoZephyrEditor,
@@ -866,5 +1114,24 @@ window.ZephyrCodeEditor = {
   gotoLine: gotoEditorLine,
   openSearch,
   markSaved,
+  find: findWithCore,
+  findNext: findNextWithCore,
+  findPrevious: findPreviousWithCore,
+  replaceOne: replaceOneWithCore,
+  replaceAll: replaceAllWithCore,
+  indent: indentWithCore,
+  outdent: outdentWithCore,
+  breakLine: breakLineWithCore,
+  comment: commentWithCore,
+  copyLine: copyWithCore,
+  cutLine: cutWithCore,
+  paste: pasteWithCore,
+  meta: refreshCoreMeta,
+  capabilities: refreshCoreCapabilities,
+  setEncoding: (instance, encoding) => setCoreEncoding(instance, encoding).then(() => refreshCoreMeta(instance)),
+  setEOL: (instance, eol) => setCoreEOL(instance, eol).then(() => refreshCoreMeta(instance)),
+  setReadOnly: (instance, readOnly) => setCoreReadOnly(instance, readOnly),
+  markCoreSaved: (instance) => markCoreSaved(instance).then(() => refreshCoreMeta(instance)),
   MergeView,
 };
+;

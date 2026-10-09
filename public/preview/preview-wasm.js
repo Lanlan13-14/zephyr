@@ -19,8 +19,8 @@
         return dot > -1 ? base.slice(dot + 1).toLowerCase() : 'bin';
     }
 
-    async function readBounded(url, maxBytes) {
-        const response = await fetch(url, { credentials: 'same-origin' });
+    async function readBounded(url, maxBytes, signal) {
+        const response = await fetch(url, { credentials: 'same-origin', signal });
         if (!response.ok) throw new Error(`读取预览文件失败（${response.status}）`);
         const declared = Number(response.headers.get('content-length'));
         if (Number.isFinite(declared) && declared > maxBytes) throw new Error('文件超过浏览器预览大小限制');
@@ -82,13 +82,23 @@
         return ffmpegPromise;
     }
 
-    function browserCanPlay(kind, capabilities) {
-        if (kind === 'audio') {
-            const audio = capabilities?.audio || {};
-            return !!(audio.aac || audio.mp3 || audio.opus || audio.flac || audio.vorbis || audio.pcm_s16le);
-        }
+    // A supported codec in an unrelated container says nothing about this file.
+    // The player still retries through WASM when the actual stream cannot decode.
+    function browserCanPlay(kind, ext, capabilities) {
+        const audio = capabilities?.audio || {};
         const video = capabilities?.video || {};
-        return !!(video.h264 || video.vp8 || video.vp9 || video.av1);
+        if (kind === 'video') {
+            if (ext === 'webm') return !!(video.vp8 || video.vp9 || video.av1);
+            if (ext === 'mp4' || ext === 'm4v') return !!(video.h264 || video.hevc || video.av1);
+            return false;
+        }
+        if (ext === 'mp3') return !!audio.mp3;
+        if (['m4a', 'aac', 'm4b'].includes(ext)) return !!audio.aac;
+        if (ext === 'wav') return !!(audio.pcm_s16le || audio.pcm_s24le);
+        if (ext === 'flac') return !!audio.flac;
+        if (ext === 'opus' || ext === 'weba') return !!audio.opus;
+        if (ext === 'ogg' || ext === 'oga') return !!(audio.opus || audio.vorbis);
+        return false;
     }
 
     async function decodeImage(url) {
@@ -117,39 +127,51 @@
         }
     }
 
-    async function prepareMedia(url, { kind = 'video', name = 'media', capabilities = {} } = {}) {
+    let mediaQueue = Promise.resolve();
+    let mediaSequence = 0;
+
+    async function prepareMedia(url, { kind = 'video', name = 'media', capabilities = {}, forceTranscode = false, signal } = {}) {
         const ext = extensionOf(name);
-        const direct = kind === 'video'
-            ? ['mp4', 'm4v', 'webm'].includes(ext)
-            : ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus', 'weba'].includes(ext);
-        if (direct && browserCanPlay(kind, capabilities)) {
+        signal?.throwIfAborted();
+        if (!forceTranscode && browserCanPlay(kind, ext, capabilities)) {
             return { url, owned: false, mode: 'DIRECT', engine: 'browser' };
         }
-        const bytes = await readBounded(url, MAX_MEDIA_BYTES);
-        const ffmpeg = await loadFfmpeg();
-        const input = `input.${ext || 'bin'}`;
-        const output = kind === 'audio' ? 'output.m4a' : 'output.mp4';
-        const args = kind === 'audio'
-            ? ['-i', input, '-vn', '-c:a', 'aac', '-b:a', '160k', output]
-            : ['-i', input, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', output];
-        await ffmpeg.writeFile(input, bytes);
-        let code = 1;
-        try {
-            code = await ffmpeg.exec(args, 120000);
-            if (code !== 0) throw new Error(`浏览器转码失败（${code}）`);
-            const data = await ffmpeg.readFile(output);
-            const copy = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
-            const type = kind === 'audio' ? 'audio/mp4' : 'video/mp4';
-            return {
-                url: URL.createObjectURL(new Blob([copy], { type })),
-                owned: true,
-                mode: 'TRANSCODED',
-                engine: 'ffmpeg.wasm',
-            };
-        } finally {
-            try { await ffmpeg.deleteFile(input); } catch {}
-            try { await ffmpeg.deleteFile(output); } catch {}
-        }
+        // One WASM filesystem/worker is shared by all floating preview windows.
+        // Queue before downloading, so opening several files cannot multiply the
+        // 256 MiB input buffers or overwrite another window's input/output.
+        const run = mediaQueue.then(async () => {
+            signal?.throwIfAborted();
+            const bytes = await readBounded(url, MAX_MEDIA_BYTES, signal);
+            signal?.throwIfAborted();
+            const ffmpeg = await loadFfmpeg();
+            const id = ++mediaSequence;
+            const input = `input-${id}.${ext || 'bin'}`;
+            const output = kind === 'audio' ? `output-${id}.m4a` : `output-${id}.mp4`;
+            const args = kind === 'audio'
+                ? ['-i', input, '-vn', '-c:a', 'aac', '-b:a', '160k', output]
+                : ['-i', input, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', output];
+            try {
+                await ffmpeg.writeFile(input, bytes);
+                const code = await ffmpeg.exec(args, 120000);
+                signal?.throwIfAborted();
+                if (code !== 0) throw new Error(`浏览器转码失败（${code}）`);
+                const data = await ffmpeg.readFile(output);
+                signal?.throwIfAborted();
+                if (!(data instanceof Uint8Array) || !data.byteLength) throw new Error('浏览器转码未生成媒体文件');
+                const type = kind === 'audio' ? 'audio/mp4' : 'video/mp4';
+                return {
+                    url: URL.createObjectURL(new Blob([data], { type })),
+                    owned: true,
+                    mode: 'TRANSCODED',
+                    engine: 'ffmpeg.wasm',
+                };
+            } finally {
+                try { await ffmpeg.deleteFile(input); } catch {}
+                try { await ffmpeg.deleteFile(output); } catch {}
+            }
+        });
+        mediaQueue = run.catch(() => {});
+        return run;
     }
 
     function releaseMedia(prepared) {

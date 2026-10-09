@@ -8,7 +8,9 @@ const AUDIO_EXTENSIONS = new Set([
     'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus', 'weba', 'wma', 'alac', 'aiff',
     'aif', 'ape', 'amr', 'mid', 'midi', 'mka', 'caf', 'ac3', 'dts', 'm4b'
 ]);
-const SUBTITLE_EXTENSIONS = new Set(['vtt', 'srt', 'ass', 'ssa', 'sub']);
+// MicroDVD .sub shares its extension with binary subtitle streams, so it is
+// not treated as a text sidecar the server can stream unchanged.
+const SUBTITLE_EXTENSIONS = new Set(['vtt', 'srt', 'ass', 'ssa']);
 const CONTENT_TYPE = new Map([
     ['mp4', 'video/mp4'], ['m4v', 'video/mp4'], ['mov', 'video/quicktime'], ['mkv', 'video/x-matroska'],
     ['webm', 'video/webm'], ['avi', 'video/x-msvideo'], ['wmv', 'video/x-ms-wmv'], ['flv', 'video/x-flv'],
@@ -39,11 +41,19 @@ function isMediaExt(ext) { return VIDEO_EXTENSIONS.has(ext) || AUDIO_EXTENSIONS.
 function isVideoExt(ext) { return VIDEO_EXTENSIONS.has(ext); }
 function isAudioExt(ext) { return AUDIO_EXTENSIONS.has(ext); }
 function isSubtitleExt(ext) { return SUBTITLE_EXTENSIONS.has(ext); }
+function isExternalSubtitleFor(mediaPath, subtitleName) {
+    const name = String(subtitleName || '');
+    const itemExt = extname(name);
+    if (!isSubtitleExt(itemExt)) return false;
+    const mediaBase = basenameNoExt(mediaPath).toLowerCase();
+    const subtitleBase = basenameNoExt(name).toLowerCase();
+    return subtitleBase === mediaBase || subtitleBase.startsWith(`${mediaBase}.`);
+}
 function directMime(ext) { return CONTENT_TYPE.get(ext) || 'application/octet-stream'; }
 function mediaContentType(ext) { return CONTENT_TYPE.get(ext) || 'application/octet-stream'; }
 
 module.exports = {
     VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, SUBTITLE_EXTENSIONS,
-    extname, basenameNoExt, isMediaExt, isVideoExt, isAudioExt, isSubtitleExt,
+    extname, basenameNoExt, isMediaExt, isVideoExt, isAudioExt, isSubtitleExt, isExternalSubtitleFor,
     directMime, mediaContentType,
 };

@@ -25,8 +25,4 @@ class SftpEditorSupportTest {
         assertEquals("A-a", SftpEditorSupport.replaceAll("A-a", "   ", "b"))
     }
 
-    @Test
-    fun `trim drops trailing spaces but keeps the line break`() {
-        assertEquals("a\nb", SftpEditorSupport.trimTrailingWhitespace("a  \nb\t"))
-    }
 }

@@ -6,7 +6,12 @@ import { fileURLToPath } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, 'android', rel), 'utf8');
-const pane = read('feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/SftpBrowserPane.kt');
+const pane = [
+  'feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/SftpBrowserPane.kt',
+  'feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/MobilePreviewPane.kt',
+  'feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/RawImageViewer.kt',
+  'feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/RawMediaPlayer.kt',
+].map(read).join('\n');
 const kinds = read('protocol-ssh/src/main/kotlin/one/zephyr/mobile/protocol/ssh/SshFileKinds.kt');
 const policy = read('feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/SftpOpenPolicy.kt');
 const port = read('feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/SftpPort.kt');
@@ -16,10 +21,11 @@ const adapter = read('app/src/main/kotlin/one/zephyr/mobile/app/SshjSftpPort.kt'
 test('SFTP browser keeps desktop file-manager actions in the drawer', () => {
   for (const needle of [
     '新建文件夹', '新建文件', '上传文件', '粘贴', '复制', '剪切', '重命名', '删除',
-    '压缩', '权限', '下载', '属性', '解压到', '图片预览', '媒体预览',
+    '压缩', '权限', '下载', '属性', '解压到', '预览本地图片 / 音视频', '预览服务器 / Agent RAW 地址',
     '覆盖远端', '兼容', 'GetMultipleContents', 'CreateDocument',
-    'SftpTextEditor', 'SftpPreviewPane', 'VideoView', 'MediaPlayer', 'BitmapFactory',
+    'SftpTextEditor', 'MobilePreviewPane', 'RawImageViewer', 'RawMediaPlayer', 'LibVLC',
     'writeStream', 'readStream', 'bundleCommand', 'upsertEditor', '搜目录', '大纲', '格式化', '撤回',
+    '预览本地图片 / 音视频', '预览服务器 / Agent RAW 地址',
     'openSelected', '正在自动连接', 'sourceConnectionId',
   ]) {
     assert.match(pane, new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));

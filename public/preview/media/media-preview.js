@@ -51,6 +51,10 @@
             this.remoteSubtitles = [];
             this.currentToken = '';
             this.preparedMedia = null;
+            this.requestSequence = 0;
+            this.renderVersion = 0;
+            this.loadController = null;
+            this.requestId = '';
             this.remoteSubtitlePicker = options.remoteSubtitlePicker || null;
             this.modal = this.createModal();
             this.modal._mediaPreviewInstance = this;
@@ -168,10 +172,16 @@
         }
         open(filePath, options = {}) {
             if (!filePath || !ZephyrMediaPreview.isMedia(filePath)) return false;
+            this.loadController?.abort();
+            this.renderVersion += 1;
+            this.releasePreparedMedia();
+            this.revokeTrackObjects();
             this.currentPath = filePath;
             this.manualSubtitles = [];
             this.remoteSubtitles = [];
+            this.pending.clear();
             this.pending.add(filePath);
+            this.requestId = `media-${this.index}-${++this.requestSequence}`;
             this.closed = false;
             const title = this.modal.querySelector('[data-role="title"]');
             if (title) title.textContent = filePath;
@@ -191,7 +201,7 @@
                 }
             });
             this.focus();
-            this.send({ type: 'sftp-media-preview', path: filePath, force: !!options.force, capabilities: this.getCapabilities(filePath) });
+            this.send({ type: 'sftp-media-preview', path: filePath, requestId: this.requestId, force: !!options.force, capabilities: this.getCapabilities(filePath) });
             return true;
         }
         getCapabilities(filePath) {
@@ -222,6 +232,7 @@
             };
         }
         handleMessage(message) {
+            if (this.closed || (message?.requestId && message.requestId !== this.requestId)) return false;
             if (message?.type === 'sftp-media-preview-ready' && (!message.path || message.path === this.currentPath || this.pending.has(message.path))) { this.renderPlayer(message); return true; }
             if (message?.type === 'sftp-media-preview' && (!message.path || message.path === this.currentPath || this.pending.has(message.path))) {
                 this.pending.delete(message.path);
@@ -310,13 +321,16 @@
                 }, 80);
             });
         }
-        async renderPlayer(message) {
+        async renderPlayer(message, options = {}) {
             this.pending.delete(message.path);
-            if (message.path !== this.currentPath) return;
+            if (this.closed || message.path !== this.currentPath || (message.requestId && message.requestId !== this.requestId)) return;
+            this.loadController?.abort();
+            const controller = new AbortController();
+            this.loadController = controller;
+            const version = ++this.renderVersion;
+            const active = () => !this.closed && version === this.renderVersion && message.path === this.currentPath;
             this.currentToken = message.token || '';
             this.remoteSubtitles = [];
-            const previousManualSubtitles = [...(this.manualSubtitles || [])];
-            this.manualSubtitles = previousManualSubtitles;
             const stage = this.modal.querySelector('[data-role="stage"]');
             const state = this.modal.querySelector('[data-role="state"]');
             if (!stage) return;
@@ -333,13 +347,16 @@
                     kind: message.kind,
                     name: (message.path || '').split(/[\\/]/).pop() || 'media',
                     capabilities,
+                    forceTranscode: !!options.forceTranscode,
+                    signal: controller.signal,
                 });
             } catch (err) {
+                if (!active() || controller.signal.aborted) return;
                 this.setState(err?.message || t('浏览器解码媒体失败'), 'error');
                 this.notify(t('媒体播放失败{detail}', { detail: err?.message ? `：${err.message}` : '' }), 'error');
                 return;
             }
-            if (this.closed || message.path !== this.currentPath) {
+            if (!active()) {
                 window.ZephyrPreviewWasm.releaseMedia(prepared);
                 return;
             }
@@ -351,12 +368,22 @@
             media.autoplay = false;
             media.playsInline = true;
             media.preload = 'metadata';
+            media.addEventListener('error', () => {
+                if (!active()) return;
+                const err = media.error;
+                // Extensions/canPlayType describe a container, not the actual
+                // codecs inside it. Retry decode/unsupported errors once only.
+                if (prepared.mode === 'DIRECT' && (err?.code === 3 || err?.code === 4)) {
+                    try { media.pause(); media.removeAttribute('src'); media.load?.(); } catch {}
+                    void this.renderPlayer(message, { forceTranscode: true });
+                    return;
+                }
+                const detail = err?.message || t('浏览器解码媒体失败');
+                this.setState(detail, 'error');
+                this.notify(t('媒体播放失败{detail}', { detail: `：${detail}` }), 'error');
+            }, { once: true });
             media.src = prepared.url;
             media.load?.();
-            media.addEventListener('error', () => {
-                const err = media.error;
-                this.notify(t('媒体播放失败{detail}', { detail: err?.message ? `：${err.message}` : '' }), 'error');
-            });
             if (message.kind === 'audio') {
                 const audioWrap = document.createElement('div');
                 audioWrap.className = 'media-audio-card';
@@ -373,17 +400,18 @@
             const remote = [];
             for (const sub of message.subtitles || []) {
                 try {
-                    const response = await fetch(sub.url, { credentials: 'same-origin' });
+                    const response = await fetch(sub.url, { credentials: 'same-origin', signal: controller.signal });
                     if (!response.ok) continue;
                     const raw = await response.text();
-                    const ext = extname(String(sub.url || '').split('?')[0]) || 'srt';
+                    if (!active()) return;
+                    const ext = sub.codec || sub.format || extname(String(sub.url || '').split('?')[0]) || 'srt';
                     const text = ext === 'vtt' && /^WEBVTT/i.test(raw.trim()) ? raw : this.convertSubtitleTextToVtt(raw, ext === 'vtt' ? 'srt' : ext);
                     const url = URL.createObjectURL(new Blob([text], { type: 'text/vtt;charset=utf-8' }));
                     this.objectTracks.push(url);
                     remote.push({ url, language: sub.language || '', external: true });
                 } catch {}
             }
-            if (this.closed || message.path !== this.currentPath) return;
+            if (!active()) return;
             this.remoteSubtitles = remote;
             this.applySubtitles();
             if (state) state.style.display = 'none';
@@ -407,6 +435,9 @@
         close() {
             if (this.closed) return;
             this.closed = true;
+            this.renderVersion += 1;
+            this.loadController?.abort();
+            this.pending.clear();
             this.releasePreparedMedia();
             this.revokeTrackObjects();
             const stage = this.modal.querySelector('[data-role="stage"]');

@@ -1,6 +1,7 @@
 package one.zephyr.mobile.feature.notes
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,6 +36,26 @@ class SftpOpenPolicyTest {
         assertTrue(image!!.contains("请下载后查看"))
         assertEquals(null, SftpOpenPolicy.rejectReason(SftpOpenKind.MEDIA, SftpOpenPolicy.MEDIA_PREVIEW_LIMIT))
         assertTrue(SftpOpenPolicy.rejectReason(SftpOpenKind.MEDIA, SftpOpenPolicy.MEDIA_CACHE_LIMIT + 1)!!.contains("请下载后播放"))
+    }
+
+    @Test
+    fun mediaCeilingMatchesDesktopWasmBudget() {
+        assertEquals(256L * 1024 * 1024, SftpOpenPolicy.MEDIA_PREVIEW_LIMIT)
+        assertEquals(SftpOpenPolicy.MEDIA_PREVIEW_LIMIT, SftpOpenPolicy.MEDIA_CACHE_LIMIT)
+        assertEquals(32L * 1024 * 1024, SftpOpenPolicy.IMAGE_PREVIEW_LIMIT)
+        assertNull(SftpOpenPolicy.rejectReason(SftpOpenKind.MEDIA, 128L * 1024 * 1024))
+    }
+
+    @Test
+    fun sidecarSubtitlesFollowDesktopBasenameRule() {
+        assertTrue(isSidecarSubtitle("Clip.MKV", "clip.srt"))
+        assertTrue(isSidecarSubtitle("clip.mkv", "clip.en.ass"))
+        assertTrue(isSidecarSubtitle("clip.mkv", "clip.zh-Hans.vtt"))
+        assertFalse(isSidecarSubtitle("clip.mkv", "clip-extra.srt"))
+        assertFalse(isSidecarSubtitle("clip.mkv", "other.srt"))
+        assertFalse(isSidecarSubtitle("clip.mkv", "clip.sub"))
+        assertTrue(isSubtitle("notes.sub"))
+        assertFalse(isSubtitle("notes.txt"))
     }
 
     @Test
