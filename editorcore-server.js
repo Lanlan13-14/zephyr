@@ -16,7 +16,8 @@ function createEditorCoreBridge() {
 
   function ensure() {
     if (child && !child.killed) return child;
-    child = spawn('go', ['run', '.'], { cwd: hostDir, stdio: ['pipe', 'pipe', 'pipe'] });
+    const hostBinary = process.env.ZEPHYR_EDITORCORE_HOST || path.join(hostDir, 'editorcore-host');
+    child = spawn(hostBinary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     const lines = readline.createInterface({ input: child.stdout });
     lines.on('line', (line) => {
       const wait = pending.shift();
