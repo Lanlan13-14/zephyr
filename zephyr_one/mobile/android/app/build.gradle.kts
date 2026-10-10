@@ -118,10 +118,14 @@ android {
     }
 }
 afterEvaluate {
-    tasks.named("mergePrereleaseNativeLibs").configure { outputs.upToDateWhen { false } }
-    tasks.named("replaceVlcLibcxx").configure { dependsOn("mergePrereleaseNativeLibs") }
-    tasks.named("stripPrereleaseDebugSymbols").configure { dependsOn("replaceVlcLibcxx") }
-    tasks.named("packagePrerelease").configure { dependsOn("replaceVlcLibcxx") }
+    // strip reads the merged libs and writes its own copy, which is what the
+    // APK packages. Replacing the merge output is undone by strip. Replace the
+    // stripped file instead.
+    tasks.named("replaceVlcLibcxx").configure { dependsOn("stripPrereleaseDebugSymbols") }
+    tasks.named("packagePrerelease").configure {
+        dependsOn("replaceVlcLibcxx")
+        mustRunAfter("replaceVlcLibcxx")
+    }
 }
 
 kotlin {
