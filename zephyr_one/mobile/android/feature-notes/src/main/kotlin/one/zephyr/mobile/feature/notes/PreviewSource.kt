@@ -13,7 +13,7 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
-/** Credentials stay in native code. WebView never receives SSH handles, tokens or remote URLs. */
+/** Credentials stay in native code. The decoder never receives SSH handles, tokens or remote URLs. */
 sealed interface PreviewSource {
     val name: String
     val displayPath: String

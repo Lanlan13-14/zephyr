@@ -1,77 +1,109 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import fs from 'node:fs/promises';
+import {spawnSync} from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
+
 const mobile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const assets = path.join(mobile, 'android/feature-notes/src/main/assets');
-let chromium;
-try {
-    const moduleName = process.env.ZEPHYR_PLAYWRIGHT_MODULE || 'playwright-core';
-    ({chromium} = await import(moduleName));
-} catch {}
-const require = createRequire(import.meta.url);
-// The shipped browser logic itself runs, not a regex/reimplementation of its formulas.
-const controls = await fs.readFile(path.join(assets,'mobile-preview/image-controls.js'),'utf8');
-const {ImageTransform} = require('node:vm').runInNewContext(`${controls};module.exports`, {module:{exports:{}},globalThis:{}});
-test('actual image transforms: zoom clamps, one-to-one, rotate, flip, pan and reset', () => {
-    const transform = new ImageTransform();
-    transform.scale(1.2); assert.equal(transform.zoom,1.2);
-    transform.scale(100); assert.equal(transform.zoom,20);
-    transform.scale(0); assert.equal(transform.zoom,0.05);
-    transform.oneToOne(1200,800,300,200); assert.equal(transform.zoom,4);
-    transform.rotate(-90); transform.flip('x'); transform.flip('y'); transform.pan(20,30);
-    assert.equal(transform.css(),'translate(20px,30px) rotate(-90deg) scale(-4,-4)');
-    transform.reset(); assert.equal(transform.css(),'translate(0px,0px) rotate(0deg) scale(1,1)');
+const root = path.resolve(mobile, '../..');
+const decoder = fs.readFileSync(path.join(mobile, 'android/protocol-ffmpeg/src/main/kotlin/one/zephyr/mobile/protocol/ffmpeg/FfmpegImage.kt'), 'utf8');
+const viewer = fs.readFileSync(path.join(mobile, 'android/feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/RawImageViewer.kt'), 'utf8');
+
+test('image transform math: zoom clamps, one-to-one, rotate, flip, pan and reset', () => {
+    assert.match(viewer, /zoom = \(zoom \* 1\.2f\)\.coerceIn\(0\.05f, 20f\)/);
+    assert.match(viewer, /zoom = \(zoom \/ 1\.2f\)\.coerceIn\(0\.05f, 20f\)/);
+    assert.match(viewer, /val fit = minOf\(viewport\.width\.toFloat\(\) \/ image\.width, viewport\.height\.toFloat\(\) \/ image\.height, 1f\)/);
+    assert.match(viewer, /angle = \(angle - 90f\) % 360f/);
+    assert.match(viewer, /flipX \*= -1f/);
+    assert.match(viewer, /flipY \*= -1f/);
+    assert.match(viewer, /offset = Offset\.Zero/);
+    assert.match(viewer, /detectTransformGestures/);
+    assert.match(viewer, /onDoubleTap/);
 });
-test('real Chromium mobile page: PNG decode, all viewer buttons, bridge and pointer pan', {skip:!chromium}, async () => {
-    let raw = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=','base64');
-    const server = http.createServer(async (req,res) => {
-        res.setHeader('Cross-Origin-Opener-Policy','same-origin'); res.setHeader('Cross-Origin-Embedder-Policy','require-corp'); res.setHeader('Cross-Origin-Resource-Policy','same-origin');
-        const url = new URL(req.url,'http://localhost');
-        if (url.pathname === '/raw/image') { res.end(raw); return; }
-        try {
-            const file = path.join(assets,url.pathname);
-            assert.ok(file.startsWith(assets + path.sep));
-            const mime = {'.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.html':'text/html'}[path.extname(file)] || 'application/octet-stream';
-            res.setHeader('Content-Type',mime); res.end(await fs.readFile(file));
-        } catch { res.writeHead(404);res.end(); }
-    });
-    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-    const browser = await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
-    try {
-        const page = await browser.newPage({viewport:{width:390,height:700}});
-        const errors=[];page.on('pageerror',e=>errors.push(e.message));
-        await page.addInitScript(()=>{window.PreviewBridge={sibling:delta=>{window.lastSibling=delta;}};});
-        const url=`http://127.0.0.1:${server.address().port}/mobile-preview/image.html?name=pixel.png`;
-        await page.goto(url);
-        await page.waitForFunction(()=>document.querySelector('#status').hidden,{timeout:20000});
-        assert.equal(await page.locator('#image').evaluate(el=>el.naturalWidth),1);
-        for(const action of ['zoomIn','zoomOut','oneToOne','rotateLeft','rotateRight','flipHorizontal','flipVertical','view','reset']) {
-            await page.locator(`[data-action="${action}"]`).click();
-            assert.ok(await page.locator('#image').evaluate(el=>el.style.transform));
+
+test('FFmpeg still-image conversion is the only non-platform decoder', () => {
+    assert.match(decoder, /System\.loadLibrary\("zephyr_ffmpeg_android"\)/);
+    assert.match(decoder, /libffmpegexec\.so/);
+    assert.match(decoder, /decodeWithFfmpeg/);
+    assert.match(decoder, /nativeConvert\(ffmpeg\.absolutePath, input\.absolutePath, output\.absolutePath, MAX_EDGE\)/);
+    assert.doesNotMatch(decoder, /wasm-vips|android\.webkit\.WebView|vips-es6/);
+});
+
+const ffmpeg = process.env.ZEPHYR_HOST_FFMPEG || 'ffmpeg';
+const hasFfmpeg = spawnSync(ffmpeg, ['-version'], {encoding: 'utf8'}).status === 0;
+
+function convert(input, output) {
+    const result = spawnSync(ffmpeg, [
+        '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+        '-i', input, '-an', '-frames:v', '1',
+        '-vf', "scale='min(4096,iw)':'min(4096,ih)':force_original_aspect_ratio=decrease",
+        '-q:v', '3', output,
+    ], {encoding: 'utf8'});
+    return result;
+}
+
+test('host FFmpeg converts the desktop-previewable still formats the decoder claims', {skip: !hasFfmpeg}, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-ffmpeg-cov-'));
+    const src = path.join(dir, 'src.png');
+    const generated = spawnSync(ffmpeg, [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-f', 'lavfi', '-i', 'testsrc2=size=64x64',
+        '-frames:v', '1', '-update', '1', src,
+    ], {encoding: 'utf8'});
+    assert.equal(generated.status, 0, generated.stderr);
+    const samples = {
+        jpg: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.jpg')]),
+        png: () => ({status: 0}),
+        webp: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.webp')]),
+        gif: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.gif')]),
+        bmp: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.bmp')]),
+        tif: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.tif')]),
+        jp2: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-frames:v', '1', '-update', '1', path.join(dir, 'a.jp2')]),
+        j2k: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-frames:v', '1', '-update', '1', path.join(dir, 'a.j2k')]),
+        tga: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.tga')]),
+        sgi: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.sgi')]),
+        pcx: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.pcx')]),
+        pam: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.pam')]),
+        ppm: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.ppm')]),
+        hdr: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.hdr')]),
+        exr: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-frames:v', '1', '-update', '1', path.join(dir, 'a.exr')]),
+        dds: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.dds')]),
+        jxl: () => spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, path.join(dir, 'a.jxl')]),
+    };
+    const decoded = [];
+    const skipped = [];
+    for (const [ext, make] of Object.entries(samples)) {
+        const made = make();
+        const input = ext === 'png' ? src : path.join(dir, `a.${ext}`);
+        if ((made.status ?? 1) !== 0 || !fs.existsSync(input) || fs.statSync(input).size === 0) {
+            skipped.push(ext);
+            continue;
         }
-        await page.locator('[data-action="next"]').click();assert.equal(await page.evaluate(()=>window.lastSibling),1);
-        await page.locator('[data-action="prev"]').click();assert.equal(await page.evaluate(()=>window.lastSibling),-1);
-        await page.mouse.move(180,200);await page.mouse.down();await page.mouse.move(205,235);await page.mouse.up();
-        assert.match(await page.locator('#image').evaluate(el=>el.style.transform),/translate\(25px, 35px\)/);
-        assert.deepEqual(errors,[]);
-        // Actual bundled wasm-vips + side modules decode non-browser TIFF and encode WebP.
-        const decoded = await page.evaluate(async()=>{
-            const {default:Vips}=await import('./vendor/wasm-vips/vips-es6.js');
-            const v=await Vips({dynamicLibraries:['vips-jxl.wasm','vips-heif.wasm','vips-resvg.wasm']});
-            v.concurrency?.(1);
-            const original=v.Image.black(2,3);
-            const tiff=new Uint8Array(original.tiffsaveBuffer());
-            original.delete();
-            const image=v.Image.thumbnailBuffer(tiff,4096,{height:4096,size:'down'});
-            const result={width:image.width,height:image.height,length:image.webpsaveBuffer().length};
-            image.delete();return result;
-        });
-        assert.equal(decoded.width,2);assert.equal(decoded.height,3);assert.ok(decoded.length>0);
-        raw=Buffer.from('not an image');await page.goto(url);
-        await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('预览失败'),{timeout:30000});
-    } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
+        const output = path.join(dir, `out-${ext}.jpg`);
+        const result = convert(input, output);
+        if (result.status === 0 && fs.existsSync(output) && fs.statSync(output).size > 0) decoded.push(ext);
+        else skipped.push(`${ext}:${(result.stderr || '').trim().split('\n').pop() || 'fail'}`);
+    }
+    assert.ok(decoded.includes('jpg'));
+    assert.ok(decoded.includes('png'));
+    assert.ok(decoded.includes('webp'));
+    assert.ok(decoded.includes('bmp'));
+    assert.ok(decoded.includes('tif'));
+    assert.ok(decoded.includes('jp2'));
+    assert.ok(decoded.includes('exr'));
+    assert.ok(decoded.length >= 10, `too few formats decoded: ${decoded.join(',')} skipped=${skipped.join(',')}`);
+    fs.rmSync(dir, {recursive: true, force: true});
+});
+
+test('FFmpeg refuses garbage bytes the way the Kotlin decoder surfaces failure', {skip: !hasFfmpeg}, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-ffmpeg-fail-'));
+    const input = path.join(dir, 'not-an-image.bin');
+    const output = path.join(dir, 'out.jpg');
+    fs.writeFileSync(input, 'not an image');
+    const result = convert(input, output);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr || '', /Invalid data|could not find codec|No such file|not contain any stream|Invalid/i);
+    fs.rmSync(dir, {recursive: true, force: true});
 });

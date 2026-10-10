@@ -21,9 +21,11 @@ The Zephyr-SSH project itself is licensed under the GNU General Public License v
 | archiver | MIT | Archive creation | <https://github.com/archiverjs/node-archiver> |
 | unzipper | MIT | ZIP archive extraction | <https://github.com/ZJONSSON/node-unzipper> |
 | ipaddr.js | MIT | IP address parsing and validation | <https://github.com/whitequark/ipaddr.js> |
-| wasm-vips 0.0.19 (libvips 8.18.7, vendored under `public/vendor/wasm-vips/`) | MIT | Browser-side image decoding for file previews | <https://github.com/kleisauke/wasm-vips> |
+| wasm-vips 0.0.19 (libvips 8.18.7, vendored under `public/vendor/wasm-vips/`) | MIT | Browser-side image decoding for file previews (web / desktop only) | <https://github.com/kleisauke/wasm-vips> |
 | @ffmpeg/ffmpeg 0.12.15 | MIT | Browser-side wrapper that drives the vendored FFmpeg WebAssembly core | <https://github.com/ffmpegwasm/ffmpeg.wasm> |
-| @ffmpeg/core 0.12.10 (FFmpeg, single-thread build, vendored under `public/vendor/ffmpeg/`) | GPL-2.0-or-later | Browser-side audio/video transcoding for file previews | <https://github.com/ffmpegwasm/ffmpeg.wasm> |
+| @ffmpeg/core 0.12.10 (FFmpeg, single-thread build, vendored under `public/vendor/ffmpeg/`) | GPL-2.0-or-later | Browser-side audio/video transcoding for file previews (web / desktop only) | <https://github.com/ffmpegwasm/ffmpeg.wasm> |
+| FFmpeg 6.1.2 + libjxl 0.10.4 (Android `libffmpegexec.so`) | LGPL-2.1-or-later / BSD-3-Clause | On-device still-image decode for Zephyr One Mobile | <https://ffmpeg.org/> / <https://github.com/libjxl/libjxl> |
+| LibVLC 3.6.5 (`org.videolan.android:libvlc-all`) | LGPL-2.1-or-later | On-device RAW audio/video playback for Zephyr One Mobile | <https://www.videolan.org/vlc/libvlc.html> |
 | FreeRDP | Apache-2.0 | RDP client runtime used by Zephyr's native RDP pipeline | <https://www.freerdp.com/> |
 | OpenSSL 3.6.3 / OpenSSL-Package | Apache-2.0 | FIPS 203 ML-KEM-768 for iOS/macOS. SwiftPM manifest commit `0b0cc7392a4ff6a798c9ed8f4981f1c1bbcb4722`; XCFramework SHA-256 `6c4b064d12b8de2ae77ac59fbcbbd1c20b4fecfb7fc50b8ab326347c52ecbf0c` | <https://www.openssl.org/> / <https://github.com/krzyzanowskim/OpenSSL-Package> |
 | noVNC | MPL-2.0 | Browser-side VNC client | <https://novnc.com/> |

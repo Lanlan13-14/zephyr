@@ -51,5 +51,5 @@ test('aggregate command still covers every current test module', () => {
   for (const module of ['app', 'core-contracts', 'core-model', 'protocol-telnet', 'protocol-zft2']) {
     assert.match(workflow, new RegExp(`:${module}:test`));
   }
-  assert.equal(testedModules.length, 19);
+  assert.equal(testedModules.length, 20);
 });

@@ -135,7 +135,7 @@ jobs:
 
       - name: Install FreeRDP Android build tools
         working-directory: .
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        run: sudo apt-get update && sudo apt-get install -y ninja-build nasm pkg-config autoconf automake libtool
 
       - name: Cache Android FreeRDP
         uses: actions/cache@v4
@@ -158,6 +158,28 @@ jobs:
           grep -q '^#define WITH_INTERNAL_MD4' "$ZEPHYR_ANDROID_FREERDP_ROOT/arm64-v8a/include/winpr3/winpr/config.h"
           grep -q '^#define WITH_INTERNAL_RC4' "$ZEPHYR_ANDROID_FREERDP_ROOT/arm64-v8a/include/winpr3/winpr/config.h"
           grep -q '^#define WITH_INTERNAL_MD5' "$ZEPHYR_ANDROID_FREERDP_ROOT/arm64-v8a/include/winpr3/winpr/config.h"
+
+      - name: Cache Android FFmpeg
+        uses: actions/cache@v4
+        with:
+          path: zephyr_one/native/ffmpeg-core/.ffmpeg-android
+          key: android-ffmpeg-6.1.2-libjxl-0.10.4-${{ hashFiles('zephyr_one/native/ffmpeg-core/scripts/build-ffmpeg-android.sh') }}
+
+      - name: Build pinned Android FFmpeg
+        working-directory: .
+        env:
+          ZEPHYR_ANDROID_FFMPEG_ROOT: ${{ github.workspace }}/zephyr_one/native/ffmpeg-core/.ffmpeg-android
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          export ANDROID_NDK_HOME="$sdk/ndk/27.2.12479018"
+          test -d "$ANDROID_NDK_HOME"
+          sh zephyr_one/native/ffmpeg-core/scripts/build-ffmpeg-android.sh arm64-v8a
+          test -f "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/.zephyr-ffmpeg-tag"
+          test "$(cat "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/.zephyr-ffmpeg-tag")" = '6.1.2+libjxl-0.10.4'
+          test -x "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/bin/ffmpeg"
+          readelf -h "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/bin/ffmpeg" | grep -q 'Machine:.*AArch64'
+          test -f "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/lib/libjxl.a"
 
       # Gradle is provisioned by the action rather than by a committed wrapper.
       # The wrapper JAR is a binary artefact, and adding one that no human in
@@ -262,6 +284,7 @@ jobs:
         timeout-minutes: 15
         env:
           ZEPHYR_ANDROID_FREERDP_ROOT: ${{ github.workspace }}/zephyr_one/native/freerdp-core/.freerdp-android
+          ZEPHYR_ANDROID_FFMPEG_ROOT: ${{ github.workspace }}/zephyr_one/native/ffmpeg-core/.ffmpeg-android
           PYTHONUNBUFFERED: '1'
         shell: bash
         working-directory: zephyr_one/mobile/android
@@ -291,6 +314,7 @@ jobs:
         timeout-minutes: 6
         env:
           ZEPHYR_ANDROID_FREERDP_ROOT: ${{ github.workspace }}/zephyr_one/native/freerdp-core/.freerdp-android
+          ZEPHYR_ANDROID_FFMPEG_ROOT: ${{ github.workspace }}/zephyr_one/native/ffmpeg-core/.ffmpeg-android
         shell: bash
         working-directory: zephyr_one/mobile/android
         run: |
@@ -305,6 +329,7 @@ jobs:
             :core-model:test \
             :protocol-telnet:test \
             :protocol-zft2:test \
+            :protocol-ffmpeg:testReleaseUnitTest \
             2>&1 | stdbuf -oL -eL tee /tmp/gradle-test.log || status=$?
           if [ "$status" -ne 0 ]; then
             bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
@@ -327,6 +352,8 @@ jobs:
           test "$package" = 'one.zephyr.mobile.debug'
           ! $ANDROID_HOME/build-tools/35.0.0/aapt dump badging "${apks[0]}" | grep -q '^application-debuggable$'
           unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_rdp_android.so'
+          unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_ffmpeg_android.so'
+          unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libffmpegexec.so'
           # The embedded Go runtimes must actually ship, or the AI/Link features are dead on device.
           unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_ai_runtime.so'
           unzip -Z1 "${apks[0]}" | grep -qx 'lib/arm64-v8a/libzephyr_link.so'
