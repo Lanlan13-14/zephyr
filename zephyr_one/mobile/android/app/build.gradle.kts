@@ -92,26 +92,34 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
-    // libvlc 3.6.5 and the FFmpeg CLI both ship libc++_shared.so. Adding a third
-    // jniLibs source did not win the merge: pre121 still shipped FFmpeg's 1.2 MB
-    // copy, and libvlcjni's JNI_OnLoad returned JNI_ERR against it. Replace the
-    // merged file after AGP has written it, so the APK contains LibVLC's copy.
+    // libvlc 3.6.5 and the FFmpeg CLI both ship libc++_shared.so. A jniLibs source
+    // lost the duplicate merge, and a doLast on the merge task never ran because
+    // that task was FROM-CACHE. pre121 and the #277 CI APK both still shipped
+    // FFmpeg's 1.2 MB copy, and libvlcjni's JNI_OnLoad returns JNI_ERR against it.
+    // This task runs after strip and before packaging, and it is never cached.
     val vlcLibcxx = configurations.create("vlcLibcxx")
-    tasks.configureEach {
-        if (name == "mergePrereleaseNativeLibs" || name == "mergeReleaseNativeLibs" || name == "mergeDebugNativeLibs") {
-            doLast {
-                val merged = layout.buildDirectory.get().asFile
-                val targets = merged.walkTopDown().filter { it.name == "libc++_shared.so" && "arm64-v8a" in it.path }.toList()
-                val aar = vlcLibcxx.files.single { it.name.startsWith("libvlc-all-") && it.name.endsWith(".aar") }
-                val extracted = layout.buildDirectory.file("vlc-libcxx/libc++_shared.so").get().asFile
-                extracted.parentFile.mkdirs()
-                zipTree(aar).matching { include("jni/arm64-v8a/libc++_shared.so") }.singleFile.copyTo(extracted, overwrite = true)
-                check(extracted.length() > 4L * 1024 * 1024) { "LibVLC libc++ is ${extracted.length()} bytes" }
-                check(targets.isNotEmpty()) { "merge produced no arm64 libc++_shared.so" }
-                targets.forEach { extracted.copyTo(it, overwrite = true) }
+    val replaceVlcLibcxx = tasks.register("replaceVlcLibcxx") {
+        outputs.upToDateWhen { false }
+        dependsOn("mergePrereleaseNativeLibs")
+        doLast {
+            val merged = layout.buildDirectory.get().asFile
+            val targets = merged.walkTopDown().filter { it.name == "libc++_shared.so" && "arm64-v8a" in it.path }.toList()
+            val aar = vlcLibcxx.files.single { it.name.startsWith("libvlc-all-") && it.name.endsWith(".aar") }
+            val extracted = layout.buildDirectory.file("vlc-libcxx/libc++_shared.so").get().asFile
+            extracted.parentFile.mkdirs()
+            zipTree(aar).matching { include("jni/arm64-v8a/libc++_shared.so") }.singleFile.copyTo(extracted, overwrite = true)
+            check(extracted.length() > 4L * 1024 * 1024) { "LibVLC libc++ is ${extracted.length()} bytes" }
+            check(targets.isNotEmpty()) { "merge produced no arm64 libc++_shared.so under ${merged}" }
+            targets.forEach { target ->
+                extracted.copyTo(target, overwrite = true)
+                logger.lifecycle("replaced ${target} (${target.length()} bytes)")
             }
         }
     }
+    tasks.matching { it.name == "stripPrereleaseDebugSymbols" || it.name == "packagePrerelease" }.configureEach {
+        dependsOn(replaceVlcLibcxx)
+    }
+    tasks.named("mergePrereleaseNativeLibs").configure { outputs.upToDateWhen { false } }
 }
 
 kotlin {
