@@ -147,7 +147,7 @@ test('app pins arm64 so transitive AAR natives cannot bloat the APK', () => {
     // 1.2 MB) was the one that landed in the APK; libvlcjni's JNI_OnLoad then
     // returns JNI_ERR. The app packages LibVLC's own copy so the merge cannot
     // pick the smaller one.
-    assert.match(appGradle, /packageVlcLibcxx/);
+    assert.match(appGradle, /mergePrereleaseNativeLibs/);
     assert.match(appGradle, /libc\+\+_shared\.so/);
     // libvlc-all ships four ABIs; without the filter the APK tripled in size.
     const notes = read('android/feature-notes/build.gradle.kts');
