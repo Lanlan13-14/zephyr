@@ -91,6 +91,30 @@ android {
         jniLibs.useLegacyPackaging = true
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+
+    // libvlc 3.6.5 and the FFmpeg CLI both ship libc++_shared.so. The APK holds
+    // one. FFmpeg's (NDK r27, ~1.2 MB) was winning, and libvlcjni's JNI_OnLoad
+    // returned JNI_ERR against it — the preview died on open with
+    // UnsatisfiedLinkError. Package LibVLC's own copy so that one wins the merge.
+    val vlcLibcxx = configurations.create("vlcLibcxx")
+    val packagedVlcLibcxx = layout.buildDirectory.dir("vlc-libcxx")
+    sourceSets.getByName("main").jniLibs.srcDir(packagedVlcLibcxx)
+    val packageVlcLibcxx = tasks.register<Copy>("packageVlcLibcxx") {
+        // A configuration resolves the AAR, not its jni/ tree. Unzip first.
+        from({ zipTree(vlcLibcxx.singleFile) }) {
+            include("jni/arm64-v8a/libc++_shared.so")
+            eachFile { relativePath = RelativePath(true, "arm64-v8a", "libc++_shared.so") }
+            includeEmptyDirs = false
+        }
+        into(packagedVlcLibcxx)
+        doLast {
+            val shipped = packagedVlcLibcxx.get().file("arm64-v8a/libc++_shared.so").asFile
+            check(shipped.isFile && shipped.length() > 4L * 1024 * 1024) {
+                "LibVLC libc++_shared.so was not packaged (got ${shipped.length()} bytes)"
+            }
+        }
+    }
+    tasks.named("preBuild").configure { dependsOn(packageVlcLibcxx) }
 }
 
 kotlin {
@@ -146,6 +170,8 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.animation)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    add("vlcLibcxx", "org.videolan.android:libvlc-all:3.6.5")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
