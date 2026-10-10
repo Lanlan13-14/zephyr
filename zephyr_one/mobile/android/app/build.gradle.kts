@@ -42,6 +42,13 @@ android {
         // build talking to a plain-http server is exactly how a cleartext regression reaches
         // release unnoticed.
         manifestPlaceholders["usesCleartextTraffic"] = "false"
+
+        // The APK is arm64-only: FreeRDP/FFmpeg JNI are built for arm64-v8a
+        // and libvlc-all otherwise ships x86/x86_64/armeabi-v7a copies that
+        // tripled the APK to ~110 MiB.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {

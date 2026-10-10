@@ -116,6 +116,14 @@ test('CI builds and packages the pinned Android FFmpeg CLI', () => {
     assert.match(ffmpegGradle, /libffmpegexec\.so/);
 });
 
+test('app pins arm64 so transitive AAR natives cannot bloat the APK', () => {
+    const appGradle = read('android/app/build.gradle.kts');
+    assert.match(appGradle, /abiFilters \+= listOf\("arm64-v8a"\)/);
+    // libvlc-all ships four ABIs; without the filter the APK tripled in size.
+    const notes = read('android/feature-notes/build.gradle.kts');
+    assert.match(notes, /libvlc-all/);
+});
+
 test('mobile preview assets no longer vendor wasm-vips', () => {
     const assets = path.join(mobile, 'android/feature-notes/src/main/assets');
     assert.equal(fs.existsSync(path.join(assets, 'mobile-preview')), false);
