@@ -37,10 +37,12 @@ internal fun RawMediaPlayer(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val main = remember { Handler(Looper.getMainLooper()) }
     // Process-lived engine (see VlcEngine): per-preview release crashed libvlc 3.x.
     val engine = remember { VlcEngine.obtain(context) }
     val player = remember(engine, file) { MediaPlayer(engine) }
+    // Dedicated handler so teardown can drop OUR posts without wiping the
+    // MediaPlayer's own main-thread queue (it posts updateVideoSurfaces on Vout).
+    val events = remember(player) { Handler(Looper.getMainLooper()) }
     val disposed = remember(player) { AtomicBoolean(false) }
     var playing by remember(file) { mutableStateOf(false) }
     var started by remember(file) { mutableStateOf(false) }
@@ -52,6 +54,7 @@ internal fun RawMediaPlayer(
     var volume by remember(file) { mutableFloatStateOf(100f) }
     var repeat by remember(file) { mutableStateOf(false) }
     var trackRevision by remember { mutableIntStateOf(0) }
+    var seekable by remember(file) { mutableStateOf(false) }
     var audioMenu by remember { mutableStateOf(false) }
     var subtitleMenu by remember { mutableStateOf(false) }
     val latestMessage by rememberUpdatedState(onMessage)
@@ -59,8 +62,9 @@ internal fun RawMediaPlayer(
 
     DisposableEffect(player) {
         player.setEventListener { event ->
-            main.post {
-                if (!disposed.get()) when (event.type) {
+            events.post {
+                if (disposed.get() || player.isReleased) return@post
+                when (event.type) {
                     MediaPlayer.Event.Playing -> { playing = true; failure = null; trackRevision++ }
                     MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> playing = false
                     MediaPlayer.Event.EndReached -> {
@@ -82,23 +86,38 @@ internal fun RawMediaPlayer(
         player.media = media
         media.release()
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) { player.pause(); playing = false }
+            if (event == Lifecycle.Event.ON_STOP && !disposed.get() && !player.isReleased) {
+                player.pause()
+                playing = false
+            }
         }
         lifecycle.addObserver(observer)
         onDispose {
             disposed.set(true)
             lifecycle.removeObserver(observer)
+            // Null the listener first: VLCObject.release also clears it, but only
+            // after dropping the native ref, and a callback already on the queue
+            // must not touch the player. Do not clear the main looper — libvlc
+            // posts its own surface update there.
             player.setEventListener(null)
-            main.removeCallbacksAndMessages(null)
-            player.stop()
-            player.detachViews()
-            player.release()
+            events.removeCallbacksAndMessages(null)
+            if (!player.isReleased) {
+                // stop() before the view goes: detachViews() disables the video
+                // track (mVoutCount → 0) and then onSurfacesDestroyed tries to
+                // disable it again against a window that is already INIT. The
+                // next play() then calls native code on that dead vout and the
+                // process dies (SIGSEGV). stop() resets mVoutCount first.
+                runCatching { player.stop() }
+                runCatching { player.detachViews() }
+                player.release()
+            }
         }
     }
     LaunchedEffect(player) {
-        while (true) {
+        while (!disposed.get() && !player.isReleased) {
             position = player.time.coerceAtLeast(0L)
             duration = player.length.coerceAtLeast(0L)
+            seekable = player.isSeekable
             delay(250)
         }
     }
@@ -107,19 +126,24 @@ internal fun RawMediaPlayer(
     // add the tracks that are already attached.
     val mountedSubtitles = remember(player) { mutableSetOf<String>() }
     LaunchedEffect(player, started, subtitles) {
-        if (!started) return@LaunchedEffect
-        for (file in subtitles) {
-            if (!mountedSubtitles.add(file.absolutePath)) continue
+        if (!started || disposed.get()) return@LaunchedEffect
+        for (subtitle in subtitles) {
+            if (disposed.get()) return@LaunchedEffect
+            if (!mountedSubtitles.add(subtitle.absolutePath)) continue
             // libvlc_media_slave_type_subtitle is the first enum value, so its ABI value is 0.
-if (!player.addSlave(0, Uri.fromFile(file), true)) {
-                mountedSubtitles.remove(file.absolutePath)
-                latestMessage("无法挂载字幕 ${file.name}")
+            if (!player.addSlave(0, Uri.fromFile(subtitle), true)) {
+                mountedSubtitles.remove(subtitle.absolutePath)
+                latestMessage("无法挂载字幕 ${subtitle.name}")
             }
         }
         trackRevision++
     }
-    val audioTracks = remember(player, trackRevision) { player.audioTracks?.toList().orEmpty() }
-    val subtitleTracks = remember(player, trackRevision) { player.spuTracks?.toList().orEmpty() }
+    val audioTracks = remember(player, trackRevision) {
+        if (disposed.get()) emptyList() else player.audioTracks?.toList().orEmpty()
+    }
+    val subtitleTracks = remember(player, trackRevision) {
+        if (disposed.get()) emptyList() else player.spuTracks?.toList().orEmpty()
+    }
 
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         if (audioOnly) {
@@ -128,32 +152,42 @@ if (!player.addSlave(0, Uri.fromFile(file), true)) {
             }
         } else {
             AndroidView(
-                factory = { VLCVideoLayout(it).also { view -> player.attachViews(view, null, true, false) } },
+                factory = { viewContext ->
+                    VLCVideoLayout(viewContext).also { view ->
+                        if (!disposed.get()) player.attachViews(view, null, true, false)
+                    }
+                },
+                // Do not detachViews() here. VideoHelper.detachViews() calls
+                // setVideoTrackEnabled(false) while the surface is still up, and
+                // Compose recreates this view on rotation and parent relayout.
+                // The player DisposableEffect below stops first, then detaches,
+                // then releases — that is the only order libvlc 3.6 survives.
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
         }
         failure?.let { Text(it, modifier = Modifier.padding(8.dp)) }
         Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = {
+                if (disposed.get()) return@TextButton
                 if (playing) { player.pause(); playing = false }
                 else {
                     if (ended) { player.stop(); ended = false }
                     player.play(); started = true
                 }
             }) { Text(if (playing) "暂停" else "播放") }
-            TextButton(onClick = { player.setTime((position - 10_000).coerceAtLeast(0L)) }, enabled = player.isSeekable) { Text("−10秒") }
-            TextButton(onClick = { player.setTime((position + 10_000).coerceAtMost(duration)) }, enabled = player.isSeekable) { Text("+10秒") }
+            TextButton(onClick = { if (!disposed.get()) player.setTime((position - 10_000).coerceAtLeast(0L)) }, enabled = seekable) { Text("−10秒") }
+            TextButton(onClick = { if (!disposed.get()) player.setTime((position + 10_000).coerceAtMost(duration)) }, enabled = seekable) { Text("+10秒") }
             TextButton(onClick = { repeat = !repeat }) { Text(if (repeat) "循环：开" else "循环：关") }
             TextButton(onClick = {
                 speed = when (speed) { 0.5f -> 0.75f; 0.75f -> 1f; 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 0.5f }
-                player.rate = speed
+                if (!disposed.get()) player.rate = speed
             }) { Text("${speed}×") }
             Box {
                 TextButton(onClick = { audioMenu = true }) { Text("音轨") }
                 DropdownMenu(expanded = audioMenu, onDismissRequest = { audioMenu = false }) {
                     audioTracks.forEach { track ->
                         DropdownMenuItem({ Text(track.name ?: "音轨 ${track.id}") }, {
-                            if (!player.setAudioTrack(track.id)) latestMessage("音轨切换失败")
+                            if (disposed.get() || !player.setAudioTrack(track.id)) latestMessage("音轨切换失败")
                             audioMenu = false
                         })
                     }
@@ -162,10 +196,10 @@ if (!player.addSlave(0, Uri.fromFile(file), true)) {
             Box {
                 TextButton(onClick = { subtitleMenu = true }) { Text("字幕") }
                 DropdownMenu(expanded = subtitleMenu, onDismissRequest = { subtitleMenu = false }) {
-                    DropdownMenuItem({ Text("关闭字幕") }, { player.setSpuTrack(-1); subtitleMenu = false })
+                    DropdownMenuItem({ Text("关闭字幕") }, { if (!disposed.get()) player.setSpuTrack(-1); subtitleMenu = false })
                     subtitleTracks.filter { it.id >= 0 }.forEach { track ->
                         DropdownMenuItem({ Text(track.name ?: "字幕 ${track.id}") }, {
-                            if (!player.setSpuTrack(track.id)) latestMessage("字幕切换失败")
+                            if (disposed.get() || !player.setSpuTrack(track.id)) latestMessage("字幕切换失败")
                             subtitleMenu = false
                         })
                     }
@@ -176,17 +210,26 @@ if (!player.addSlave(0, Uri.fromFile(file), true)) {
             Text(clock(position))
             Slider(
                 fraction = if (duration > 0) position.toFloat() / duration else 0f,
-                enabled = duration > 0L && player.isSeekable,
-                onChange = { if (duration > 0) { position = (it * duration).toLong(); player.setTime(position) } },
+                enabled = duration > 0L && seekable,
+                onChange = { if (duration > 0 && !disposed.get()) { position = (it * duration).toLong(); player.setTime(position) } },
                 modifier = Modifier.weight(1f),
             )
             Text(clock(duration))
         }
         Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { volume = if (volume == 0f) 100f else 0f; player.setVolume(volume.toInt()) }) {
+            TextButton(onClick = {
+                if (disposed.get()) return@TextButton
+                volume = if (volume == 0f) 100f else 0f
+                player.setVolume(volume.toInt())
+            }) {
                 Text(if (volume == 0f) "取消静音" else "静音")
             }
-            Slider(fraction = volume / 100f, enabled = true, onChange = { volume = it * 100f; player.setVolume(volume.toInt()) }, modifier = Modifier.weight(1f))
+            Slider(
+                fraction = volume / 100f,
+                enabled = true,
+                onChange = { volume = it * 100f; if (!disposed.get()) player.setVolume(volume.toInt()) },
+                modifier = Modifier.weight(1f),
+            )
             Text("${volume.toInt()}%")
         }
     }
