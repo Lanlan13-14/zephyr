@@ -66,6 +66,14 @@ test('byte budgets, RAW path and FFmpeg engine match desktop preview', () => {
     assert.match(player, /VlcEngine\.obtain/);
     assert.doesNotMatch(player, /engine\.release|removeCallbacksAndMessages\(null\)\s*\n\s*player\.stop/);
     assert.match(player, /events\.removeCallbacksAndMessages\(null\)/);
+    // VideoPlayerActivity.startPlayback attaches the surface and only then
+    // loads the media. setMedia before the vout exists SIGSEGVs on open,
+    // which is the crash at "正在读取预览文件".
+    const attachAt = player.indexOf('player.attachViews(view, null, true, false)');
+    const setMediaAt = player.indexOf('player.media = media');
+    assert.ok(attachAt > 0 && setMediaAt > attachAt, 'attach the surface before setMedia');
+    assert.match(player, /setHWDecoderEnabled\(false, false\)/);
+    assert.doesNotMatch(player, /setHWDecoderEnabled\(true/);
     assert.doesNotMatch(source + pane + player + image, /wasm-vips|vips-es6|preview\.zephyr\.invalid|android\.webkit\.WebView/);
     assert.doesNotMatch(source + pane + player, /ffmpeg\.|prepareMedia|forceTranscode|\/api\/.*transcode/);
     assert.match(notesGradle, /libvlc-all/);

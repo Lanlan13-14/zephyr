@@ -55,6 +55,11 @@ internal fun RawMediaPlayer(
     var repeat by remember(file) { mutableStateOf(false) }
     var trackRevision by remember { mutableIntStateOf(0) }
     var seekable by remember(file) { mutableStateOf(false) }
+    // Native media open waits until the video surface is attached. libvlc
+    // demuxes inside setMedia; doing that before attachViews (the moment this
+    // composable replaces "正在读取预览文件") SIGSEGVs the vout.
+    var opened by remember(file) { mutableStateOf(false) }
+    var boundView by remember(file) { mutableStateOf<VLCVideoLayout?>(null) }
     var audioMenu by remember { mutableStateOf(false) }
     var subtitleMenu by remember { mutableStateOf(false) }
     val latestMessage by rememberUpdatedState(onMessage)
@@ -80,11 +85,6 @@ internal fun RawMediaPlayer(
                 }
             }
         }
-        val media = Media(engine, Uri.fromFile(file))
-        // A failing hardware codec can fall back to libavcodec on the device.
-        media.setHWDecoderEnabled(true, false)
-        player.media = media
-        media.release()
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && !disposed.get() && !player.isReleased) {
                 player.pause()
@@ -113,7 +113,8 @@ internal fun RawMediaPlayer(
             }
         }
     }
-    LaunchedEffect(player) {
+    LaunchedEffect(player, opened) {
+        if (!opened) return@LaunchedEffect
         while (!disposed.get() && !player.isReleased) {
             position = player.time.coerceAtLeast(0L)
             duration = player.length.coerceAtLeast(0L)
@@ -138,11 +139,11 @@ internal fun RawMediaPlayer(
         }
         trackRevision++
     }
-    val audioTracks = remember(player, trackRevision) {
-        if (disposed.get()) emptyList() else player.audioTracks?.toList().orEmpty()
+    val audioTracks = remember(player, trackRevision, opened) {
+        if (!opened || disposed.get()) emptyList() else player.audioTracks?.toList().orEmpty()
     }
-    val subtitleTracks = remember(player, trackRevision) {
-        if (disposed.get()) emptyList() else player.spuTracks?.toList().orEmpty()
+    val subtitleTracks = remember(player, trackRevision, opened) {
+        if (!opened || disposed.get()) emptyList() else player.spuTracks?.toList().orEmpty()
     }
 
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -152,10 +153,28 @@ internal fun RawMediaPlayer(
             }
         } else {
             AndroidView(
-                factory = { viewContext ->
-                    VLCVideoLayout(viewContext).also { view ->
-                        if (!disposed.get()) player.attachViews(view, null, true, false)
+                factory = { viewContext -> VLCVideoLayout(viewContext) },
+                update = { view ->
+                    if (disposed.get() || boundView === view) return@AndroidView
+                    if (boundView != null) {
+                        // New view (rotation). Detach only — stop() drops the
+                        // media, and a second setMedia is another native open.
+                        runCatching { player.detachViews() }
                     }
+                    // VideoPlayerActivity.startPlayback: attach the surface, then
+                    // load the media. setMedia before the vout exists crashes.
+                    player.attachViews(view, null, true, false)
+                    if (!opened) {
+                        val media = Media(engine, Uri.fromFile(file))
+                        // :no-hw-dec. MediaCodec setup SIGSEGVs on open on a lot of
+                        // devices; libavcodec inside libvlc is the RAW path.
+                        media.setHWDecoderEnabled(false, false)
+                        media.addOption(":file-caching=1500")
+                        player.media = media
+                        media.release()
+                        opened = true
+                    }
+                    boundView = view
                 },
                 // Do not detachViews() here. VideoHelper.detachViews() calls
                 // setVideoTrackEnabled(false) while the surface is still up, and
@@ -171,6 +190,15 @@ internal fun RawMediaPlayer(
                 if (disposed.get()) return@TextButton
                 if (playing) { player.pause(); playing = false }
                 else {
+                    if (audioOnly && !opened) {
+                        val media = Media(engine, Uri.fromFile(file))
+                        media.setHWDecoderEnabled(false, false)
+                        media.addOption(":file-caching=1500")
+                        player.media = media
+                        media.release()
+                        opened = true
+                    }
+                    if (!opened) return@TextButton
                     if (ended) { player.stop(); ended = false }
                     player.play(); started = true
                 }
