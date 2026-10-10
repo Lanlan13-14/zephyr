@@ -116,10 +116,12 @@ android {
             }
         }
     }
-    tasks.matching { it.name == "stripPrereleaseDebugSymbols" || it.name == "packagePrerelease" }.configureEach {
-        dependsOn(replaceVlcLibcxx)
-    }
+}
+afterEvaluate {
     tasks.named("mergePrereleaseNativeLibs").configure { outputs.upToDateWhen { false } }
+    tasks.named("replaceVlcLibcxx").configure { dependsOn("mergePrereleaseNativeLibs") }
+    tasks.named("stripPrereleaseDebugSymbols").configure { dependsOn("replaceVlcLibcxx") }
+    tasks.named("packagePrerelease").configure { dependsOn("replaceVlcLibcxx") }
 }
 
 kotlin {
@@ -175,10 +177,6 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.animation)
     debugImplementation(libs.androidx.compose.ui.tooling)
-
-    add("vlcLibcxx", "org.videolan.android:libvlc-all:3.6.5")
-
-    testImplementation(lilibs.androidx.compose.ui.tooling)
 
     add("vlcLibcxx", "org.videolan.android:libvlc-all:3.6.5")
 
