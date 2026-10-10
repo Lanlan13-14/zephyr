@@ -1,3 +1,9 @@
+#if defined(__ANDROID__)
+/* bionic hides posix_spawn unless a feature level is requested before includes. */
+#if !defined(_POSIX_C_SOURCE) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>

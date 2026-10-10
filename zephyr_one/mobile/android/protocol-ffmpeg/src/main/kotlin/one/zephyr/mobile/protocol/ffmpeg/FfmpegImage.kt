@@ -129,5 +129,3 @@ object FfmpegImage {
 
     data class Result(val file: File, val width: Int, val height: Int, val engine: String)
 }
-class Result(val file: File, val width: Int, val height: Int, val engine: String)
-}
