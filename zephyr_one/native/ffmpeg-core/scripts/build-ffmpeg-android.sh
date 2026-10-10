@@ -12,7 +12,6 @@ FFMPEG_TAG="n6.1.2"
 JXL_TAG="v0.10.4"
 BROTLI_TAG="v1.1.0"
 HIGHWAY_TAG="1.2.0"
-LCMS_TAG="lcms2.16"
 STAMP_VALUE="6.1.2+libjxl-0.10.4"
 API="${ZEPHYR_ANDROID_API:-24}"
 ABI="${1:-arm64-v8a}"
@@ -113,29 +112,10 @@ cmake -S "$WORKDIR/highway-src" -B "$WORKDIR/highway-build" -G Ninja \
   -DBUILD_SHARED_LIBS=OFF \
   -DHWY_ENABLE_TESTS=OFF \
   -DHWY_ENABLE_EXAMPLES=OFF \
-  -DHWY_ENABLE_CONTRIB=OFF
+  -DHWY_ENABLE_CONTRIB=OFF \
+  -DBUILD_TESTING=OFF
 cmake --build "$WORKDIR/highway-build" --parallel "$JOBS"
 cmake --install "$WORKDIR/highway-build"
-
-# --- lcms2 (libjxl colour management) ---
-LCMS_TGZ="$WORKDIR/lcms2-$LCMS_TAG.tar.gz"
-fetch "https://github.com/mm2/Little-CMS/archive/refs/tags/$LCMS_TAG.tar.gz" "$LCMS_TGZ"
-rm -rf "$WORKDIR/lcms-src"
-mkdir -p "$WORKDIR/lcms-src"
-tar -xzf "$LCMS_TGZ" -C "$WORKDIR/lcms-src" --strip-components=1
-(
-  cd "$WORKDIR/lcms-src"
-  ./configure \
-    --prefix="$ABI_PREFIX" \
-    --host=aarch64-linux-android \
-    --enable-static \
-    --disable-shared \
-    --without-jpeg \
-    --without-tiff \
-    --without-zlib
-  make -j"$JOBS"
-  make install
-)
 
 # --- libjxl ---
 JXL_TGZ="$WORKDIR/libjxl-$JXL_TAG.tar.gz"
@@ -165,9 +145,10 @@ cmake -S "$WORKDIR/jxl-src" -B "$WORKDIR/jxl-build" -G Ninja \
   -DJPEGXL_ENABLE_VIEWERS=OFF \
   -DJPEGXL_ENABLE_DEVTOOLS=OFF \
   -DJPEGXL_ENABLE_TESTS=OFF \
+  -DBUILD_TESTING=OFF \
   -DJPEGXL_BUNDLE_LIBPNG=OFF \
   -DJPEGXL_FORCE_SYSTEM_BROTLI=ON \
-  -DJPEGXL_FORCE_SYSTEM_LCMS2=ON \
+  -DJPEGXL_FORCE_SYSTEM_LCMS2=OFF \
   -DJPEGXL_FORCE_SYSTEM_HWY=ON \
   -DJPEGXL_STATIC=ON
 cmake --build "$WORKDIR/jxl-build" --parallel "$JOBS"
