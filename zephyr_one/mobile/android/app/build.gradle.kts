@@ -100,7 +100,7 @@ android {
     val vlcLibcxx = configurations.create("vlcLibcxx")
     val replaceVlcLibcxx = tasks.register("replaceVlcLibcxx") {
         outputs.upToDateWhen { false }
-        dependsOn("mergePrereleaseNativeLibs")
+        // The merge task does not exist until afterEvaluate.
         doLast {
             val merged = layout.buildDirectory.get().asFile
             val targets = merged.walkTopDown().filter { it.name == "libc++_shared.so" && "arm64-v8a" in it.path }.toList()
@@ -175,6 +175,10 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.animation)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    add("vlcLibcxx", "org.videolan.android:libvlc-all:3.6.5")
+
+    testImplementation(lilibs.androidx.compose.ui.tooling)
 
     add("vlcLibcxx", "org.videolan.android:libvlc-all:3.6.5")
 
