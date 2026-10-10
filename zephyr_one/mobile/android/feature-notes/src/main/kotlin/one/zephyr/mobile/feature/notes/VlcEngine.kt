@@ -19,10 +19,10 @@ import java.io.File
  * attached; doing that (or clearing the main looper, which drops the player's
  * own surface update) and then playing again SIGSEGVs the process.
  *
- * [LibVLC.loadLibraries] calls System.exit(1) when libvlc or libvlcjni fails
- * to load. On Android 16 that is an instant process death the moment a preview
- * opens — indistinguishable from a crash, and with no stack. Load the two
- * libraries here first and keep the failure as a message instead.
+ * The stock loader terminates the process when libvlc or libvlcjni fails to
+ * load. On Android 16 that is an instant death the moment a preview opens,
+ * with no stack. Load the two libraries here first and keep the failure as a
+ * message instead.
  */
 object VlcEngine {
     private const val TAG = "VlcEngine"
@@ -59,8 +59,8 @@ object VlcEngine {
 
     private fun loadNative(context: Context) {
         // libvlcjni is linked against libvlc. Load that one first so a missing
-        // dependency fails here, with a message, instead of inside the
-        // System.exit(1) path of LibVLC.loadLibraries.
+        // dependency fails here, with a message, instead of inside the stock
+        // loader's process-termination path.
         val dir = nativeDir(context)
         loadOne(dir, "c++_shared", required = false)
         loadOne(dir, "vlc", required = true)
