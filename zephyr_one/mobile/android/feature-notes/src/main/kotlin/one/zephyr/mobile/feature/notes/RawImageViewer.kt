@@ -1,101 +1,140 @@
 package one.zephyr.mobile.feature.notes
 
-import android.annotation.SuppressLint
-import android.os.Handler
-import android.os.Looper
-import android.webkit.JavascriptInterface
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import java.io.ByteArrayInputStream
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import one.zephyr.mobile.protocol.ffmpeg.FfmpegImage
+import one.zephyr.mobile.ui.component.*
+import one.zephyr.mobile.ui.theme.ZephyrTheme
 import java.io.File
 
-private const val PREVIEW_ORIGIN = "https://preview.zephyr.invalid"
-
-/** No remote navigation, file:// permission, mixed content, auth or arbitrary native operations. */
-@SuppressLint("SetJavaScriptEnabled")
+/**
+ * Full-pane image surface. Decode is ImageDecoder then FFmpeg, never a
+ * browser engine. Gestures match the desktop viewer (pinch/pan/rotate/flip).
+ */
 @Composable
-internal fun RawImageViewer(file: File, name: String, modifier: Modifier = Modifier, onSibling: (Int) -> Unit) {
+internal fun RawImageViewer(
+    file: File,
+    name: String,
+    modifier: Modifier = Modifier,
+    onSibling: (Int) -> Unit = {},
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val sibling by rememberUpdatedState(onSibling)
-    val main = remember { Handler(Looper.getMainLooper()) }
-    var alive by remember(file) { mutableStateOf(true) }
-    val view = remember(file) {
-        WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            @Suppress("DEPRECATION")
-            settings.allowFileAccessFromFileURLs = false
-            @Suppress("DEPRECATION")
-            settings.allowUniversalAccessFromFileURLs = false
-            settings.javaScriptCanOpenWindowsAutomatically = false
-            settings.domStorageEnabled = false
-            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            settings.setSupportMultipleWindows(false)
-            addJavascriptInterface(object {
-                @JavascriptInterface fun sibling(delta: Int) {
-                    if (delta == -1 || delta == 1) main.post { if (alive) sibling(delta) }
+    var decoded by remember(file) { mutableStateOf<FfmpegImage.Result?>(null) }
+    var bitmap by remember(file) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var failure by remember(file) { mutableStateOf<String?>(null) }
+    var zoom by remember(file) { mutableFloatStateOf(1f) }
+    var angle by remember(file) { mutableFloatStateOf(0f) }
+    var flipX by remember(file) { mutableFloatStateOf(1f) }
+    var flipY by remember(file) { mutableFloatStateOf(1f) }
+    var offset by remember(file) { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+
+    LaunchedEffect(file) {
+        failure = null
+        decoded = null
+        bitmap?.recycle()
+        bitmap = null
+        val result = runCatching {
+            withContext(Dispatchers.IO) { FfmpegImage.convert(context, file, name) }
+        }
+        result.fold(
+            onSuccess = { value ->
+                decoded = value
+                bitmap = withContext(Dispatchers.IO) {
+                    BitmapFactory.decodeFile(value.file.absolutePath)
                 }
-            }, "PreviewBridge")
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = true
-                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse {
-                    val url = request?.url
-                    fun denied() = WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
-                    if (url?.scheme != "https" || url.host != "preview.zephyr.invalid" || url.port != -1) return denied()
-                    return runCatching {
-                        val path = url.path.orEmpty()
-                        val isolation = mapOf(
-                            "Cross-Origin-Opener-Policy" to "same-origin",
-                            "Cross-Origin-Embedder-Policy" to "require-corp",
-                            "Cross-Origin-Resource-Policy" to "same-origin",
-                            "Cache-Control" to "no-store",
-                        )
-                        if (path == "/raw/image") WebResourceResponse("application/octet-stream", null, 200, "OK", isolation, file.inputStream())
-                        else {
-                            require(path.startsWith("/mobile-preview/") && !path.contains(".."))
-                            val mime = when (path.substringAfterLast('.')) {
-                                "js", "mjs" -> "application/javascript"
-                                "wasm" -> "application/wasm"
-                                "css" -> "text/css"
-                                "html" -> "text/html"
-                                else -> "application/octet-stream"
-                            }
-                            WebResourceResponse(mime, if (mime == "application/wasm") null else "UTF-8", 200, "OK", isolation, context.assets.open(path.removePrefix("/")))
-                        }
-                    }.getOrElse { denied() }
+                if (bitmap == null) failure = "图片超过浏览器解码安全限制"
+            },
+            onFailure = { error -> failure = error.message ?: "浏览器解码图片失败" },
+        )
+    }
+    DisposableEffect(file) {
+        onDispose { bitmap?.recycle(); bitmap = null }
+    }
+
+    fun reset() { zoom = 1f; angle = 0f; flipX = 1f; flipY = 1f; offset = Offset.Zero }
+    fun oneToOne() {
+        val image = bitmap ?: return
+        if (viewport.width <= 0 || viewport.height <= 0) return
+        val fit = minOf(viewport.width.toFloat() / image.width, viewport.height.toFloat() / image.height, 1f)
+        if (fit > 0f) zoom = 1f / fit
+        offset = Offset.Zero
+    }
+
+    Column(modifier.background(ZephyrTheme.palette.surfaces.background)) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AssistChip(onClick = { zoom = (zoom * 1.2f).coerceIn(0.05f, 20f) }, label = { Text("＋") })
+            AssistChip(onClick = { zoom = (zoom / 1.2f).coerceIn(0.05f, 20f) }, label = { Text("−") })
+            AssistChip(onClick = { oneToOne() }, label = { Text("1:1") })
+            AssistChip(onClick = { reset() }, label = { Text("重置") })
+            AssistChip(onClick = { onSibling(-1) }, label = { Text("上一张") })
+            AssistChip(onClick = { onSibling(1) }, label = { Text("下一张") })
+            AssistChip(onClick = { angle = (angle - 90f) % 360f }, label = { Text("左旋") })
+            AssistChip(onClick = { angle = (angle + 90f) % 360f }, label = { Text("右旋") })
+            AssistChip(onClick = { flipX *= -1f }, label = { Text("水平翻转") })
+            AssistChip(onClick = { flipY *= -1f }, label = { Text("垂直翻转") })
+        }
+        Box(
+            Modifier.weight(1f).fillMaxWidth().onSizeChanged { viewport = it }
+                .pointerInput(file) {
+                    detectTransformGestures { _, pan, zoomChange, rotation ->
+                        zoom = (zoom * zoomChange).coerceIn(0.05f, 20f)
+                        angle = (angle + rotation) % 360f
+                        offset += pan
+                    }
                 }
+                .pointerInput(file) {
+                    detectTapGestures(onDoubleTap = { oneToOne() })
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                failure != null -> Text("图片预览失败：$failure", modifier = Modifier.padding(12.dp))
+                bitmap == null -> Text("正在用 FFmpeg 解码图片…")
+                else -> Image(
+                    bitmap = bitmap!!.asImageBitmap(),
+                    contentDescription = name,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().graphicsLayer {
+                        scaleX = zoom * flipX
+                        scaleY = zoom * flipY
+                        rotationZ = angle
+                        translationX = offset.x
+                        translationY = offset.y
+                    },
+                )
             }
-            loadUrl("$PREVIEW_ORIGIN/mobile-preview/image.html?name=${android.net.Uri.encode(name)}")
+        }
+        val meta = decoded
+        if (meta != null) {
+            Text(
+                "$name · ${meta.width}×${meta.height} · ${String.format("%.1f", file.length() / 1024.0)} KiB · ${meta.engine}",
+                modifier = Modifier.padding(8.dp),
+                color = ZephyrTheme.palette.onFloatingSubtle,
+            )
         }
     }
-    DisposableEffect(view, lifecycle) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_STOP -> view.onPause()
-                Lifecycle.Event.ON_START -> view.onResume()
-                else -> Unit
-            }
-        }
-        lifecycle.addObserver(observer)
-        onDispose {
-            alive = false
-            lifecycle.removeObserver(observer)
-            view.evaluateJavascript("window.dispatchEvent(new Event('pagehide'))", null)
-            view.stopLoading()
-            view.removeJavascriptInterface("PreviewBridge")
-            view.loadUrl("about:blank")
-            view.destroy()
-        }
-    }
-    AndroidView(factory = { view }, modifier = modifier)
 }

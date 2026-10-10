@@ -4,29 +4,27 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.protocol.ssh.SshFileKinds
 import one.zephyr.mobile.ui.component.*
+import one.zephyr.mobile.ui.icon.ZephyrIcons
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 import java.io.File
-import kotlin.math.roundToInt
 
-/** Unified local / native SSH / authenticated server or Agent HTTP RAW preview. */
+/**
+ * Preview occupies the same full-pane surface as [SftpTextEditor]. No floating
+ * window, no layout menu, no drag-to-resize — those were the previous scheme.
+ */
 @Composable
 fun MobilePreviewPane(
     source: PreviewSource,
@@ -37,14 +35,7 @@ fun MobilePreviewPane(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val configuration = LocalConfiguration.current
     var revision by remember(source) { mutableIntStateOf(0) }
-    var layout by remember { mutableStateOf("full") }
-    var layoutMenu by remember { mutableStateOf(false) }
-    var x by remember { mutableFloatStateOf(0f) }
-    var y by remember { mutableFloatStateOf(0f) }
-    var widthAdjust by remember { mutableFloatStateOf(0f) }
-    var heightAdjust by remember { mutableFloatStateOf(0f) }
     val image = SshFileKinds.isImage(source.name)
     val files = remember(source, revision) { PreviewFiles(context) }
     var staged by remember(files) { mutableStateOf<File?>(null) }
@@ -100,65 +91,47 @@ fun MobilePreviewPane(
         onSource(images[(index + delta + images.size) % images.size])
     }
     BackHandler { onBack() }
-    Dialog(onDismissRequest = onBack, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val widthFraction = when (layout) { "half" -> 0.5f; "left-quarter", "right-quarter" -> 0.25f; else -> 1f }
-            val availableWidth = maxWidth
-            val availableHeight = maxHeight
-            // Narrow phones retain usable touch targets; quarter/half layouts still select an edge.
-            val width = (availableWidth * widthFraction + widthAdjust.dp).coerceIn(280.dp.coerceAtMost(availableWidth), availableWidth)
-            val height = (availableHeight + heightAdjust.dp).coerceIn(260.dp.coerceAtMost(availableHeight), availableHeight)
-            Column(
-                Modifier.align(if (layout == "right-quarter") Alignment.TopEnd else Alignment.TopStart)
-                    .offset { IntOffset(x.roundToInt(), y.roundToInt()) }.width(width).height(height)
-                    .background(ZephyrTheme.palette.surfaces.background),
-            ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Box {
-                        TextButton(onClick = { layoutMenu = true }) { Text("布局") }
-                        DropdownMenu(expanded = layoutMenu, onDismissRequest = { layoutMenu = false }) {
-                            listOf("full" to "全屏", "half" to "半屏", "left-quarter" to "左侧四分之一", "right-quarter" to "右侧四分之一").forEach { (key, title) ->
-                                DropdownMenuItem({ Text(title) }, { layout = key; x = 0f; y = 0f; widthAdjust = 0f; heightAdjust = 0f; layoutMenu = false })
-                            }
-                            DropdownMenuItem({ Text("关闭窗口") }, onBack)
-                        }
-                    }
-                    Text(source.name, modifier = Modifier.weight(1f).pointerInput(configuration.screenWidthDp, configuration.screenHeightDp) {
-                        detectDragGestures { change, drag ->
-                            change.consume()
-                            x = (x + drag.x).coerceIn(-size.width.toFloat() + 60f, size.width.toFloat() - 60f)
-                            y = (y + drag.y).coerceIn(0f, configuration.screenHeightDp * density - 100f)
-                        }
-                    })
-                    TextButton(onClick = onBack) { Text("关闭") }
+    Column(Modifier.fillMaxSize().background(ZephyrTheme.palette.surfaces.background)) {
+        Row(
+            Modifier.fillMaxWidth().background(ZephyrTheme.palette.surfaces.content).padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IconButton(onClick = onBack) { Icon(ZephyrIcons.Back, "返回文件列表") }
+            Column(Modifier.weight(1f)) {
+                Text(source.name, color = ZephyrTheme.palette.onFloating, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(
+                    source.displayPath,
+                    color = ZephyrTheme.palette.onFloatingSubtle,
+                    maxLines = 1,
+                )
+            }
+            TextButton(onClick = onBack) { Text("关闭") }
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AssistChip(onClick = { revision++ }, label = { Text("刷新") })
+            if (!image) {
+                AssistChip(onClick = { subtitlePicker.launch(arrayOf("*/*")) }, enabled = !subtitleBusy, label = { Text("本地字幕") })
+                AssistChip(onClick = { subtitlePath = "" }, enabled = !subtitleBusy, label = { Text("路径字幕") })
+            }
+            Text(
+                if (image) "图片 · FFmpeg 解码" else "媒体 · 客户端 RAW 解码（LibVLC / FFmpeg）",
+                color = ZephyrTheme.palette.onFloatingSubtle,
+            )
+        }
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            when {
+                failure != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("预览失败：$failure", modifier = Modifier.padding(12.dp))
+                    TextButton(onClick = { revision++ }) { Text("重试") }
                 }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                    TextButton(onClick = { revision++ }) { Text("刷新") }
-                    if (!image) {
-                        TextButton(onClick = { subtitlePicker.launch(arrayOf("*/*")) }, enabled = !subtitleBusy) { Text("本地字幕") }
-                        TextButton(onClick = { subtitlePath = "" }, enabled = !subtitleBusy) { Text("路径字幕") }
-                    }
-                    Text("${source.displayPath} · ${if (image) "图片" else "客户端 RAW 解码"}", modifier = Modifier.padding(12.dp))
-                }
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    when {
-                        failure != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("预览失败：$failure", modifier = Modifier.padding(12.dp))
-                            TextButton(onClick = { revision++ }) { Text("重试") }
-                        }
-                        staged == null -> Text("正在读取预览文件…")
-                        image -> key(files) { RawImageViewer(staged!!, source.name, Modifier.fillMaxSize(), ::openSibling) }
-                        else -> key(files) { RawMediaPlayer(staged!!, SshFileKinds.isAudio(source.name), subtitles, Modifier.fillMaxSize(), onMessage) }
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("↙ 调整大小", modifier = Modifier.padding(12.dp).pointerInput(availableWidth, availableHeight) {
-                        detectDragGestures { change, drag -> change.consume(); widthAdjust -= drag.x / density; heightAdjust += drag.y / density }
-                    })
-                    Text("调整大小 ↘", modifier = Modifier.padding(12.dp).pointerInput(availableWidth, availableHeight) {
-                        detectDragGestures { change, drag -> change.consume(); widthAdjust += drag.x / density; heightAdjust += drag.y / density }
-                    })
-                }
+                staged == null -> Text("正在读取预览文件…")
+                image -> key(files) { RawImageViewer(staged!!, source.name, Modifier.fillMaxSize(), ::openSibling) }
+                else -> key(files) { RawMediaPlayer(staged!!, SshFileKinds.isAudio(source.name), subtitles, Modifier.fillMaxSize(), onMessage) }
             }
         }
     }
@@ -173,8 +146,6 @@ fun MobilePreviewPane(
                         is PreviewSource.Sftp -> PreviewSource.Sftp(source.port, source.handle,
                             if (draft.startsWith('/')) draft else RemotePath.join(source.path.substringBeforeLast('/', "."), draft))
                         is PreviewSource.Http -> RawPreviewReady(draft, draft).source(source.url, source.headers)
-                        // Local files have no session origin. The document picker is the only
-                        // subtitle input; an arbitrary URL must not be fetched into the decoder.
                         else -> error("本地预览请使用「本地字幕」选择文件")
                     }
                     mountSubtitle(candidate)

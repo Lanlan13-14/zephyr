@@ -39,7 +39,7 @@ class SftpOpenPolicyTest {
     }
 
     @Test
-    fun mediaCeilingMatchesDesktopWasmBudget() {
+    fun mediaCeilingMatchesDesktopPreviewBudget() {
         assertEquals(256L * 1024 * 1024, SftpOpenPolicy.MEDIA_PREVIEW_LIMIT)
         assertEquals(SftpOpenPolicy.MEDIA_PREVIEW_LIMIT, SftpOpenPolicy.MEDIA_CACHE_LIMIT)
         assertEquals(32L * 1024 * 1024, SftpOpenPolicy.IMAGE_PREVIEW_LIMIT)
