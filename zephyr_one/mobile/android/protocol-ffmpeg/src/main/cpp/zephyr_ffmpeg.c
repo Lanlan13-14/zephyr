@@ -1,12 +1,5 @@
-#if defined(__ANDROID__)
-/* bionic hides posix_spawn unless a feature level is requested before includes. */
-#if !defined(_POSIX_C_SOURCE) && !defined(_DEFAULT_SOURCE)
-#define _DEFAULT_SOURCE 1
-#endif
-#endif
 #include <errno.h>
 #include <fcntl.h>
-#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,8 +7,6 @@
 #include <unistd.h>
 
 #include <jni.h>
-
-extern char** environ;
 
 static const int kMaxEdge = 4096;
 
@@ -28,31 +19,38 @@ static char* jstring_dup(JNIEnv* env, jstring value) {
     return copy;
 }
 
-static int spawn_capture(char* const argv[], int capture_stdout, char* output, size_t output_len, char* error, size_t error_len) {
+/*
+ * fork/execv runs the pinned FFmpeg CLI. posix_spawn is gated behind feature
+ * macros in bionic and NDK toolchains disagree about the level, while fork is
+ * always available. The child is short-lived and never touches the JVM, so
+ * the Zygote fork caveats do not apply.
+ */
+static int spawn_capture(char* const argv[], char* output, size_t output_len, char* error, size_t error_len) {
     int pipefd[2];
     if (pipe(pipefd) != 0) {
         snprintf(error, error_len, "无法启动 FFmpeg");
         return -1;
     }
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    int nullfd = open("/dev/null", O_RDWR);
-    if (nullfd >= 0) {
-        posix_spawn_file_actions_adddup2(&actions, nullfd, capture_stdout ? STDERR_FILENO : STDOUT_FILENO);
-    }
-    posix_spawn_file_actions_adddup2(&actions, pipefd[1], capture_stdout ? STDOUT_FILENO : STDERR_FILENO);
-    posix_spawn_file_actions_addclose(&actions, pipefd[0]);
-    posix_spawn_file_actions_addclose(&actions, pipefd[1]);
-    pid_t pid = 0;
-    int spawn_rc = posix_spawn(&pid, argv[0], &actions, NULL, argv, environ);
-    posix_spawn_file_actions_destroy(&actions);
-    if (nullfd >= 0) close(nullfd);
-    close(pipefd[1]);
-    if (spawn_rc != 0) {
+    pid_t pid = fork();
+    if (pid < 0) {
         close(pipefd[0]);
-        snprintf(error, error_len, "无法启动 FFmpeg（%s）", strerror(spawn_rc));
+        close(pipefd[1]);
+        snprintf(error, error_len, "无法启动 FFmpeg");
         return -1;
     }
+    if (pid == 0) {
+        int nullfd = open("/dev/null", O_WRONLY);
+        if (nullfd >= 0) {
+            dup2(nullfd, STDOUT_FILENO);
+            close(nullfd);
+        }
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[0]);
+        close(pipefd[1]);
+        execv(argv[0], argv);
+        _exit(127);
+    }
+    close(pipefd[1]);
     size_t total = 0;
     if (output && output_len > 0) {
         for (;;) {
@@ -77,7 +75,7 @@ static int spawn_capture(char* const argv[], int capture_stdout, char* output, s
         return -1;
     }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        char* last = output ? output : "";
+        char* last = "";
         if (output) {
             last = output;
             for (char* p = output; *p; p++) if (*p == '\n') last = p + 1;
@@ -85,7 +83,7 @@ static int spawn_capture(char* const argv[], int capture_stdout, char* output, s
             size_t len = strlen(last);
             while (len > 0 && (last[len - 1] == '\n' || last[len - 1] == '\r')) last[--len] = '\0';
         }
-        if (last && *last) snprintf(error, error_len, "FFmpeg 解码失败：%s", last);
+        if (*last) snprintf(error, error_len, "FFmpeg 解码失败：%s", last);
         else snprintf(error, error_len, "FFmpeg 解码失败（exit %d）",
                       WIFEXITED(status) ? WEXITSTATUS(status) : -1);
         return -1;
@@ -135,12 +133,10 @@ Java_one_zephyr_mobile_protocol_ffmpeg_FfmpegImage_nativeConvert(
         output,
         NULL,
     };
-    int rc = spawn_capture(argv, 0, captured, sizeof(captured), error, sizeof(error));
+    int rc = spawn_capture(argv, captured, sizeof(captured), error, sizeof(error));
     free(ffmpeg);
     free(input);
     free(output);
     if (rc != 0) return (*env)->NewStringUTF(env, error[0] ? error : "FFmpeg 解码失败");
     return NULL;
 }
-
-
