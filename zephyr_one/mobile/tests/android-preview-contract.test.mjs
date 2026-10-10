@@ -143,6 +143,12 @@ test('CI builds and packages the pinned Android FFmpeg CLI', () => {
 test('app pins arm64 so transitive AAR natives cannot bloat the APK', () => {
     const appGradle = read('android/app/build.gradle.kts');
     assert.match(appGradle, /abiFilters \+= listOf\("arm64-v8a"\)/);
+    // libffmpegexec and libvlc each ship libc++_shared.so. FFmpeg's (NDK r27,
+    // 1.2 MB) was the one that landed in the APK; libvlcjni's JNI_OnLoad then
+    // returns JNI_ERR. The app packages LibVLC's own copy so the merge cannot
+    // pick the smaller one.
+    assert.match(appGradle, /packageVlcLibcxx/);
+    assert.match(appGradle, /libc\+\+_shared\.so/);
     // libvlc-all ships four ABIs; without the filter the APK tripled in size.
     const notes = read('android/feature-notes/build.gradle.kts');
     assert.match(notes, /libvlc-all/);
