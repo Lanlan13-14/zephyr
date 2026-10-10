@@ -20,11 +20,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import one.zephyr.mobile.ui.component.*
-import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** LibVLC includes native demuxers and software codecs; MediaCodec is only an optional fast path. */
 @Composable
@@ -38,8 +38,10 @@ internal fun RawMediaPlayer(
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val main = remember { Handler(Looper.getMainLooper()) }
-    val engine = remember(file) { LibVLC(context, arrayListOf("--no-video-title-show", "--network-caching=1200")) }
-    val player = remember(engine) { MediaPlayer(engine) }
+    // Process-lived engine (see VlcEngine): per-preview release crashed libvlc 3.x.
+    val engine = remember { VlcEngine.obtain(context) }
+    val player = remember(engine, file) { MediaPlayer(engine) }
+    val disposed = remember(player) { AtomicBoolean(false) }
     var playing by remember(file) { mutableStateOf(false) }
     var started by remember(file) { mutableStateOf(false) }
     var ended by remember(file) { mutableStateOf(false) }
@@ -52,14 +54,13 @@ internal fun RawMediaPlayer(
     var trackRevision by remember { mutableIntStateOf(0) }
     var audioMenu by remember { mutableStateOf(false) }
     var subtitleMenu by remember { mutableStateOf(false) }
-    var disposed by remember(player) { mutableStateOf(false) }
     val latestMessage by rememberUpdatedState(onMessage)
     val latestRepeat by rememberUpdatedState(repeat)
 
     DisposableEffect(player) {
         player.setEventListener { event ->
             main.post {
-                if (!disposed) when (event.type) {
+                if (!disposed.get()) when (event.type) {
                     MediaPlayer.Event.Playing -> { playing = true; failure = null; trackRevision++ }
                     MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> playing = false
                     MediaPlayer.Event.EndReached -> {
@@ -85,13 +86,13 @@ internal fun RawMediaPlayer(
         }
         lifecycle.addObserver(observer)
         onDispose {
-            disposed = true
+            disposed.set(true)
             lifecycle.removeObserver(observer)
             player.setEventListener(null)
+            main.removeCallbacksAndMessages(null)
             player.stop()
             player.detachViews()
             player.release()
-            engine.release()
         }
     }
     LaunchedEffect(player) {
