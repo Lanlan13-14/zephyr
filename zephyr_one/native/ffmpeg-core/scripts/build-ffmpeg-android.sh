@@ -289,16 +289,21 @@ tar -xzf "$FFMPEG_TGZ" -C "$WORKDIR/ffmpeg-src" --strip-components=1
 
 test -x "$ABI_PREFIX/bin/ffmpeg"
 test -f "$ABI_PREFIX/lib/libavcodec.a"
-"$ABI_PREFIX/bin/ffmpeg" -hide_banner -decoders 2>/dev/null | grep -q ' mjpeg ' || {
-  echo "ERROR: ffmpeg binary missing mjpeg decoder" >&2
+# The binary is aarch64; the x86_64 CI host cannot execute it. Assert the
+# ELF machine instead, plus the static archives the Gradle module links.
+readelf -h "$ABI_PREFIX/bin/ffmpeg" | grep -q 'Machine:.*AArch64' || {
+  echo "ERROR: ffmpeg binary is not AArch64" >&2
   exit 2
 }
-"$ABI_PREFIX/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -q ' mjpeg ' || {
-  echo "ERROR: ffmpeg binary missing mjpeg encoder" >&2
-  exit 2
-}
-"$ABI_PREFIX/bin/ffmpeg" -hide_banner -filters 2>/dev/null | grep -q ' scale ' || {
-  echo "ERROR: ffmpeg binary missing scale filter" >&2
+for archive in avcodec avformat avutil swscale swresample; do
+  test -f "$ABI_PREFIX/lib/lib${archive}.a" || {
+    echo "ERROR: missing lib${archive}.a" >&2
+    exit 2
+  }
+done
+# libjxl must be linked in; verify its static archive landed in the prefix.
+test -f "$ABI_PREFIX/lib/libjxl.a" || {
+  echo "ERROR: libjxl.a missing from the FFmpeg prefix" >&2
   exit 2
 }
 printf '%s' "$STAMP_VALUE" > "$STAMP"

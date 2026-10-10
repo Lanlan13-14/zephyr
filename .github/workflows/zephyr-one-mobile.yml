@@ -178,9 +178,8 @@ jobs:
           test -f "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/.zephyr-ffmpeg-tag"
           test "$(cat "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/.zephyr-ffmpeg-tag")" = '6.1.2+libjxl-0.10.4'
           test -x "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/bin/ffmpeg"
-          "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/bin/ffmpeg" -hide_banner -decoders | grep -q ' libjxl '
-          "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/bin/ffmpeg" -hide_banner -encoders | grep -q ' mjpeg '
-          "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/bin/ffmpeg" -hide_banner -filters | grep -q ' scale '
+          readelf -h "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/bin/ffmpeg" | grep -q 'Machine:.*AArch64'
+          test -f "$ZEPHYR_ANDROID_FFMPEG_ROOT/arm64-v8a/lib/libjxl.a"
 
       # Gradle is provisioned by the action rather than by a committed wrapper.
       # The wrapper JAR is a binary artefact, and adding one that no human in
