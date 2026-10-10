@@ -55,7 +55,17 @@ test('byte budgets, RAW path and FFmpeg engine match desktop preview', () => {
     assert.match(ffmpegJni, /force_original_aspect_ratio=decrease/);
     assert.match(player, /LibVLC/);
     assert.match(player, /addSlave/);
-    assert.match(player, /mountedSubtitles\.add\(file\.absolutePath\)/);
+    assert.match(player, /mountedSubtitles\.add\(subtitle\.absolutePath\)/);
+    // libvlc 3.6: detachViews() disables the video track before the vout is
+    // torn down. stop() must run first or the next play() SIGSEGVs, and the
+    // engine itself is process-lived (VlcEngine) — releasing it crashes too.
+    const stopAt = player.indexOf('player.stop()');
+    const detachAt = player.indexOf('player.detachViews()');
+    const releaseAt = player.indexOf('player.release()');
+    assert.ok(stopAt > 0 && detachAt > stopAt && releaseAt > detachAt, 'stop before detach before release');
+    assert.match(player, /VlcEngine\.obtain/);
+    assert.doesNotMatch(player, /engine\.release|removeCallbacksAndMessages\(null\)\s*\n\s*player\.stop/);
+    assert.match(player, /events\.removeCallbacksAndMessages\(null\)/);
     assert.doesNotMatch(source + pane + player + image, /wasm-vips|vips-es6|preview\.zephyr\.invalid|android\.webkit\.WebView/);
     assert.doesNotMatch(source + pane + player, /ffmpeg\.|prepareMedia|forceTranscode|\/api\/.*transcode/);
     assert.match(notesGradle, /libvlc-all/);

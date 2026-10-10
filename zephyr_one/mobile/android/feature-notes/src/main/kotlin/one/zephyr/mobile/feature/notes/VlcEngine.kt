@@ -11,6 +11,11 @@ import org.videolan.libvlc.LibVLC
  * native SIGSEGV on the second engine teardown. The engine is therefore
  * process-lived and never released; [org.videolan.libvlc.MediaPlayer] and
  * [org.videolan.libvlc.Media] stay per-preview and are released normally.
+ *
+ * Per-player teardown order is stop(), then detachViews(), then release().
+ * libvlc 3.6's detachViews() disables the video track while the vout is still
+ * attached; doing that (or clearing the main looper, which drops the player's
+ * own surface update) and then playing again SIGSEGVs the process.
  */
 object VlcEngine {
     @Volatile private var instance: LibVLC? = null
