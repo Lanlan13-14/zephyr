@@ -123,6 +123,14 @@ fetch "https://github.com/libjxl/libjxl/archive/refs/tags/$JXL_TAG.tar.gz" "$JXL
 rm -rf "$WORKDIR/jxl-src"
 mkdir -p "$WORKDIR/jxl-src"
 tar -xzf "$JXL_TGZ" -C "$WORKDIR/jxl-src" --strip-components=1
+# The release tarball has no git submodules; fetch skcms at the exact commit
+# libjxl v0.10.4 deps.sh pins (deps.sh THIRD_PARTY_SKCMS).
+SKCMS_COMMIT="42030a771244ba67f86b1c1c76a6493f873c5f91"
+SKCMS_TGZ="$WORKDIR/skcms-$SKCMS_COMMIT.tar.gz"
+fetch "https://skia.googlesource.com/skcms/+archive/$SKCMS_COMMIT.tar.gz" "$SKCMS_TGZ"
+mkdir -p "$WORKDIR/jxl-src/third_party/skcms"
+tar -xzf "$SKCMS_TGZ" -C "$WORKDIR/jxl-src/third_party/skcms"
+test -f "$WORKDIR/jxl-src/third_party/skcms/skcms.h"
 cmake -S "$WORKDIR/jxl-src" -B "$WORKDIR/jxl-build" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI="$ABI" \
