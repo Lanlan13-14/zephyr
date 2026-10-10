@@ -37,8 +37,15 @@ internal fun RawMediaPlayer(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    // Process-lived engine (see VlcEngine): per-preview release crashed libvlc 3.x.
+    // Process-lived engine (see VlcEngine). Null means the native library did
+    // not load; LibVLC.loadLibraries would have killed the process instead.
     val engine = remember { VlcEngine.obtain(context) }
+    if (engine == null) {
+        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text(VlcEngine.failure() ?: "LibVLC 未能加载，无法预览该媒体", modifier = Modifier.padding(16.dp))
+        }
+        return
+    }
     val player = remember(engine, file) { MediaPlayer(engine) }
     // Dedicated handler so teardown can drop OUR posts without wiping the
     // MediaPlayer's own main-thread queue (it posts updateVideoSurfaces on Vout).
