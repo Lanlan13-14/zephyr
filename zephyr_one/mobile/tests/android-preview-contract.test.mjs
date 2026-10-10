@@ -64,6 +64,12 @@ test('byte budgets, RAW path and FFmpeg engine match desktop preview', () => {
     const releaseAt = player.indexOf('player.release()');
     assert.ok(stopAt > 0 && detachAt > stopAt && releaseAt > detachAt, 'stop before detach before release');
     assert.match(player, /VlcEngine\.obtain/);
+    // LibVLC.loadLibraries calls System.exit(1) when libvlc/libvlcjni fails to
+    // load. That is an instant process death on Android 16, with no stack.
+    const engine = read('android/feature-notes/src/main/kotlin/one/zephyr/mobile/feature/notes/VlcEngine.kt');
+    assert.match(engine, /System\.load/);
+    assert.match(engine, /fun obtain\(context: Context\): LibVLC\?/);
+    assert.doesNotMatch(engine, /System\.exit|loadLibraries\(\)/);
     assert.doesNotMatch(player, /engine\.release|removeCallbacksAndMessages\(null\)\s*\n\s*player\.stop/);
     assert.match(player, /events\.removeCallbacksAndMessages\(null\)/);
     // VideoPlayerActivity.startPlayback attaches the surface and only then
