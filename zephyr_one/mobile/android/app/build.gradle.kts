@@ -101,7 +101,10 @@ android {
     sourceSets.getByName("main").jniLibs.srcDir(packagedVlcLibcxx)
     val packageVlcLibcxx = tasks.register<Copy>("packageVlcLibcxx") {
         // A configuration resolves the AAR, not its jni/ tree. Unzip first.
-        from({ zipTree(vlcLibcxx.singleFile) }) {
+        from({
+            val aar = vlcLibcxx.files.single { it.name.startsWith("libvlc-all-") && it.name.endsWith(".aar") }
+            zipTree(aar)
+        }) {
             include("jni/arm64-v8a/libc++_shared.so")
             eachFile { relativePath = RelativePath(true, "arm64-v8a", "libc++_shared.so") }
             includeEmptyDirs = false
