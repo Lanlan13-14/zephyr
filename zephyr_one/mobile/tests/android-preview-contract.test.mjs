@@ -74,9 +74,11 @@ test('byte budgets, RAW path and FFmpeg engine match desktop preview', () => {
     assert.match(player, /events\.removeCallbacksAndMessages\(null\)/);
     // VideoPlayerActivity.startPlayback attaches the surface and only then
     // loads the media. setMedia before the vout exists SIGSEGVs on open,
-    // which is the crash at "正在读取预览文件".
-    const attachAt = player.indexOf('player.attachViews(view, null, true, false)');
-    const setMediaAt = player.indexOf('player.media = media');
+    // which is the crash at "正在读取预览文件". Scope the order check to the
+    // video branch: audio has no surface and opens on the first play tap.
+    const videoBranch = player.slice(player.indexOf('AndroidView('));
+    const attachAt = videoBranch.indexOf('player.attachViews(view, null, true, false)');
+    const setMediaAt = videoBranch.indexOf('player.media = media');
     assert.ok(attachAt > 0 && setMediaAt > attachAt, 'attach the surface before setMedia');
     assert.match(player, /setHWDecoderEnabled\(false, false\)/);
     assert.doesNotMatch(player, /setHWDecoderEnabled\(true/);
