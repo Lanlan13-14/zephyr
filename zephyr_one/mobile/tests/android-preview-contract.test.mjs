@@ -83,6 +83,11 @@ test('byte budgets, RAW path and FFmpeg engine match desktop preview', () => {
     assert.doesNotMatch(source + pane + player + image, /wasm-vips|vips-es6|preview\.zephyr\.invalid|android\.webkit\.WebView/);
     assert.doesNotMatch(source + pane + player, /ffmpeg\.|prepareMedia|forceTranscode|\/api\/.*transcode/);
     assert.match(notesGradle, /libvlc-all/);
+    // libvlc-all ships no proguard.txt. Its JNI resolves members by name, so
+    // R8 renaming them makes JNI_OnLoad return JNI_ERR. The module that owns
+    // the dependency must keep the whole org.videolan tree.
+    const consumerRules = read('android/feature-notes/consumer-rules.pro');
+    assert.match(consumerRules, /-keep class org\.videolan\.libvlc\.\*\* \{ \*; \}/);
     assert.match(notesGradle, /protocol-ffmpeg/);
     assert.doesNotMatch(browser, /BitmapFactory|VideoView|android\.media\.MediaPlayer/);
 });
