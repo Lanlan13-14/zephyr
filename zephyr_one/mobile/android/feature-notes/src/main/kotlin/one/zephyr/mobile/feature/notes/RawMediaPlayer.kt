@@ -1,32 +1,44 @@
 package one.zephyr.mobile.feature.notes
 
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
 import one.zephyr.mobile.ui.component.*
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
+import one.zephyr.mobile.ui.theme.ZephyrTheme
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** LibVLC includes native demuxers and software codecs; MediaCodec is only an optional fast path. */
+/**
+ * AVPlayerViewController-style surface: the video fills the pane, controls live
+ * in a translucent overlay the user toggles by tapping the video. Nothing sits
+ * permanently under the surface stealing space from the picture.
+ */
 @Composable
 internal fun RawMediaPlayer(
     file: File,
@@ -37,19 +49,19 @@ internal fun RawMediaPlayer(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    // Process-lived engine (see VlcEngine). Null means the native library did
-    // not load; LibVLC.loadLibraries would have killed the process instead.
     val engine = remember { VlcEngine.obtain(context) }
     if (engine == null) {
-        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text(VlcEngine.failure() ?: "LibVLC 未能加载，无法预览该媒体", modifier = Modifier.padding(16.dp))
+        Box(modifier.background(ZephyrTheme.palette.surfaces.background), contentAlignment = Alignment.Center) {
+            Text(
+                VlcEngine.failure() ?: "LibVLC 未能加载，无法预览该媒体",
+                color = ZephyrTheme.palette.onBackground,
+                modifier = Modifier.padding(24.dp),
+            )
         }
         return
     }
     val player = remember(engine, file) { MediaPlayer(engine) }
-    // Dedicated handler so teardown can drop OUR posts without wiping the
-    // MediaPlayer's own main-thread queue (it posts updateVideoSurfaces on Vout).
-    val events = remember(player) { Handler(Looper.getMainLooper()) }
+    val events = remember(player) { android.os.Handler(android.os.Looper.getMainLooper()) }
     val disposed = remember(player) { AtomicBoolean(false) }
     var playing by remember(file) { mutableStateOf(false) }
     var started by remember(file) { mutableStateOf(false) }
@@ -59,16 +71,14 @@ internal fun RawMediaPlayer(
     var duration by remember(file) { mutableLongStateOf(0L) }
     var speed by remember(file) { mutableFloatStateOf(1f) }
     var volume by remember(file) { mutableFloatStateOf(100f) }
+    var muted by remember(file) { mutableStateOf(false) }
     var repeat by remember(file) { mutableStateOf(false) }
     var trackRevision by remember { mutableIntStateOf(0) }
     var seekable by remember(file) { mutableStateOf(false) }
-    // Native media open waits until the video surface is attached. libvlc
-    // demuxes inside setMedia; doing that before attachViews (the moment this
-    // composable replaces "正在读取预览文件") SIGSEGVs the vout.
     var opened by remember(file) { mutableStateOf(false) }
     var boundView by remember(file) { mutableStateOf<VLCVideoLayout?>(null) }
-    var audioMenu by remember { mutableStateOf(false) }
-    var subtitleMenu by remember { mutableStateOf(false) }
+    var controlsVisible by remember(file) { mutableStateOf(audioOnly) }
+    var sheet by remember { mutableStateOf<Sheet?>(null) }
     val latestMessage by rememberUpdatedState(onMessage)
     val latestRepeat by rememberUpdatedState(repeat)
 
@@ -77,7 +87,7 @@ internal fun RawMediaPlayer(
             events.post {
                 if (disposed.get() || player.isReleased) return@post
                 when (event.type) {
-                    MediaPlayer.Event.Playing -> { playing = true; failure = null; trackRevision++ }
+                    MediaPlayer.Event.Playing -> { playing = true; failure = null; seekable = player.isSeekable; trackRevision++ }
                     MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> playing = false
                     MediaPlayer.Event.EndReached -> {
                         playing = false; ended = true
@@ -85,7 +95,7 @@ internal fun RawMediaPlayer(
                     }
                     MediaPlayer.Event.EncounteredError -> {
                         playing = false
-                        failure = "客户端无法解码该媒体或文件已损坏（LibVLC）"
+                        failure = "客户端无法解码该媒体或文件已损坏"
                         latestMessage(failure!!)
                     }
                     MediaPlayer.Event.ESAdded, MediaPlayer.Event.ESDeleted -> trackRevision++
@@ -94,26 +104,16 @@ internal fun RawMediaPlayer(
         }
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && !disposed.get() && !player.isReleased) {
-                player.pause()
-                playing = false
+                player.pause(); playing = false
             }
         }
         lifecycle.addObserver(observer)
         onDispose {
             disposed.set(true)
             lifecycle.removeObserver(observer)
-            // Null the listener first: VLCObject.release also clears it, but only
-            // after dropping the native ref, and a callback already on the queue
-            // must not touch the player. Do not clear the main looper — libvlc
-            // posts its own surface update there.
             player.setEventListener(null)
             events.removeCallbacksAndMessages(null)
             if (!player.isReleased) {
-                // stop() before the view goes: detachViews() disables the video
-                // track (mVoutCount → 0) and then onSurfacesDestroyed tries to
-                // disable it again against a window that is already INIT. The
-                // next play() then calls native code on that dead vout and the
-                // process dies (SIGSEGV). stop() resets mVoutCount first.
                 runCatching { player.stop() }
                 runCatching { player.detachViews() }
                 player.release()
@@ -129,16 +129,19 @@ internal fun RawMediaPlayer(
             delay(250)
         }
     }
-    // External VTT/SRT/ASS/SSA/MicroDVD .sub are decoded natively, including ASS styling.
-    // LibVLC only accepts slaves after the media is started, and a later mount must not
-    // add the tracks that are already attached.
+    // Auto-hide the chrome a few seconds after opening, the AVPlayer behavior;
+    // any tap brings it back.
+    LaunchedEffect(opened, controlsVisible) {
+        if (!opened || !controlsVisible) return@LaunchedEffect
+        delay(3500)
+        controlsVisible = false
+    }
     val mountedSubtitles = remember(player) { mutableSetOf<String>() }
     LaunchedEffect(player, started, subtitles) {
         if (!started || disposed.get()) return@LaunchedEffect
         for (subtitle in subtitles) {
             if (disposed.get()) return@LaunchedEffect
             if (!mountedSubtitles.add(subtitle.absolutePath)) continue
-            // libvlc_media_slave_type_subtitle is the first enum value, so its ABI value is 0.
             if (!player.addSlave(0, Uri.fromFile(subtitle), true)) {
                 mountedSubtitles.remove(subtitle.absolutePath)
                 latestMessage("无法挂载字幕 ${subtitle.name}")
@@ -153,10 +156,41 @@ internal fun RawMediaPlayer(
         if (!opened || disposed.get()) emptyList() else player.spuTracks?.toList().orEmpty()
     }
 
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    // Audio has no surface: the media opens when playback is first requested.
+    // Video opens inside AndroidView.update, surface-first (#274's contract).
+    fun openAudioIfNeeded() {
+        if (opened || !audioOnly || disposed.get()) return
+        val media = Media(engine, Uri.fromFile(file))
+        media.setHWDecoderEnabled(false, false)
+        media.addOption(":file-caching=1500")
+        player.media = media
+        media.release()
+        opened = true
+    }
+
+    fun togglePlay() {
+        if (disposed.get()) return
+        if (playing) { player.pause(); playing = false }
+        else {
+            if (!opened) {
+                if (!audioOnly) return
+                openAudioIfNeeded()
+            }
+            if (ended) { player.stop(); ended = false }
+            player.play(); started = true
+        }
+    }
+
+    val overlayAlpha by animateFloatAsState(
+        targetValue = if (controlsVisible) 1f else 0f,
+        animationSpec = tween(180),
+        label = "controls",
+    )
+
+    Box(modifier.background(ZephyrTheme.palette.surfaces.background)) {
         if (audioOnly) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text(if (playing) "音频正在播放" else "音频 · 点击播放 / 暂停")
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(if (playing) "音频正在播放" else "音频", color = ZephyrTheme.palette.onBackground)
             }
         } else {
             AndroidView(
@@ -164,131 +198,242 @@ internal fun RawMediaPlayer(
                 update = { view ->
                     if (disposed.get() || boundView === view) return@AndroidView
                     if (boundView != null) {
-                        // New view (rotation). Detach only — stop() drops the
-                        // media, and a second setMedia is another native open.
+                        // Rotation: detach only — stop() drops the media.
                         runCatching { player.detachViews() }
                     }
-                    // VideoPlayerActivity.startPlayback: attach the surface, then
-                    // load the media. setMedia before the vout exists crashes.
-                    player.attachViews(view, null, true, false)
+                    // VideoPlayerActivity order: surface first, then the media.
+                        player.attachViews(view, null, true, false)
                     if (!opened) {
                         val media = Media(engine, Uri.fromFile(file))
-                        // :no-hw-dec. MediaCodec setup SIGSEGVs on open on a lot of
-                        // devices; libavcodec inside libvlc is the RAW path.
                         media.setHWDecoderEnabled(false, false)
                         media.addOption(":file-caching=1500")
                         player.media = media
                         media.release()
                         opened = true
+                        // Surface-first open, then play — startPlayback in
+                        // VideoPlayerActivity does the same. Chrome shows for a
+                        // moment so the transport is discoverable.
+                        player.play()
+                        started = true
+                        controlsVisible = true
                     }
                     boundView = view
                 },
-                // Do not detachViews() here. VideoHelper.detachViews() calls
-                // setVideoTrackEnabled(false) while the surface is still up, and
-                // Compose recreates this view on rotation and parent relayout.
-                // The player DisposableEffect below stops first, then detaches,
-                // then releases — that is the only order libvlc 3.6 survives.
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
+            )
+            // Tap the surface to toggle the chrome — the picture is never
+            // permanently obstructed.
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            // Toggling chrome never changes playback state; the
+                            // user taps the transport to play/pause.
+                            controlsVisible = !controlsVisible
+                        }
+                    },
             )
         }
-        failure?.let { Text(it, modifier = Modifier.padding(8.dp)) }
-        Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = {
-                if (disposed.get()) return@TextButton
-                if (playing) { player.pause(); playing = false }
-                else {
-                    if (audioOnly && !opened) {
-                        val media = Media(engine, Uri.fromFile(file))
-                        media.setHWDecoderEnabled(false, false)
-                        media.addOption(":file-caching=1500")
-                        player.media = media
-                        media.release()
-                        opened = true
-                    }
-                    if (!opened) return@TextButton
-                    if (ended) { player.stop(); ended = false }
-                    player.play(); started = true
+
+        failure?.let {
+            Text(
+                it,
+                color = ZephyrTheme.palette.status.error,
+                style = ZephyrTextStyles.caption,
+                modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
+            )
+        }
+
+        // Translucent overlay: center transport at mid-height, scrubber at the
+        // bottom — the AVPlayerViewController arrangement.
+        Column(
+            Modifier.matchParentSize().alpha(overlayAlpha).background(Color(0x40000000)),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Spacer(Modifier.weight(1f))
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(36.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RoundIcon(
+                    glyph = "−10秒",
+                    description = "后退10秒",
+                    enabled = seekable,
+                    onClick = { if (!disposed.get()) player.setTime((position - 10_000).coerceAtLeast(0L)) },
+                )
+                Box(
+                    Modifier
+                        .size(70.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(Color(0xF2FFFFFF))
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { togglePlay() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // Glyph + state label pair so the contract and screen readers
+                    // both see 播放/暂停.
+                    Text(
+                        if (playing) "❚❚ 暂停" else "▶ 播放",
+                        color = Color(0xFF14181D),
+                        style = ZephyrTextStyles.caption,
+                    )
                 }
-            }) { Text(if (playing) "暂停" else "播放") }
-            TextButton(onClick = { if (!disposed.get()) player.setTime((position - 10_000).coerceAtLeast(0L)) }, enabled = seekable) { Text("−10秒") }
-            TextButton(onClick = { if (!disposed.get()) player.setTime((position + 10_000).coerceAtMost(duration)) }, enabled = seekable) { Text("+10秒") }
-            TextButton(onClick = { repeat = !repeat }) { Text(if (repeat) "循环：开" else "循环：关") }
-            TextButton(onClick = {
-                speed = when (speed) { 0.5f -> 0.75f; 0.75f -> 1f; 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 0.5f }
-                if (!disposed.get()) player.rate = speed
-            }) { Text("${speed}×") }
-            Box {
-                TextButton(onClick = { audioMenu = true }) { Text("音轨") }
-                DropdownMenu(expanded = audioMenu, onDismissRequest = { audioMenu = false }) {
-                    audioTracks.forEach { track ->
-                        DropdownMenuItem({ Text(track.name ?: "音轨 ${track.id}") }, {
-                            if (disposed.get() || !player.setAudioTrack(track.id)) latestMessage("音轨切换失败")
-                            audioMenu = false
-                        })
+                RoundIcon(
+                    glyph = "+10秒",
+                    description = "前进10秒",
+                    enabled = seekable,
+                    onClick = { if (!disposed.get()) player.setTime((position + 10_000).coerceAtMost(duration)) },
+                )
+            }
+            Column(
+                Modifier.fillMaxWidth().background(Color(0x33000000)).padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(clock(position), color = Color.White, style = ZephyrTextStyles.caption)
+                    ScrubBar(
+                        fraction = if (duration > 0) position.toFloat() / duration else 0f,
+                        enabled = duration > 0L && seekable,
+                        onChange = { if (duration > 0 && !disposed.get()) { position = (it * duration).toLong(); player.setTime(position) } },
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(if (duration > 0) "-${clock(duration - position)}" else clock(duration), color = Color.White, style = ZephyrTextStyles.caption)
+                }
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OverlayText("音轨") { sheet = Sheet.Audio }
+                    OverlayText("字幕") { sheet = Sheet.Subtitles }
+                    OverlayText("${speed}×") { sheet = Sheet.Speed }
+                    OverlayText(if (repeat) "循环开" else "循环关") { repeat = !repeat }
+                    OverlayText(if (muted || volume == 0f) "取消静音" else "静音") {
+                        if (disposed.get()) return@OverlayText
+                        muted = !muted
+                        volume = if (muted) 0f else 100f
+                        player.setVolume(volume.toInt())
                     }
                 }
             }
-            Box {
-                TextButton(onClick = { subtitleMenu = true }) { Text("字幕") }
-                DropdownMenu(expanded = subtitleMenu, onDismissRequest = { subtitleMenu = false }) {
-                    DropdownMenuItem({ Text("关闭字幕") }, { if (!disposed.get()) player.setSpuTrack(-1); subtitleMenu = false })
-                    subtitleTracks.filter { it.id >= 0 }.forEach { track ->
-                        DropdownMenuItem({ Text(track.name ?: "字幕 ${track.id}") }, {
-                            if (disposed.get() || !player.setSpuTrack(track.id)) latestMessage("字幕切换失败")
-                            subtitleMenu = false
-                        })
+        }
+
+        sheet?.let { current ->
+            AlertDialog(
+                onDismissRequest = { sheet = null },
+                confirmButton = {},
+                title = {
+                    Text(
+                        when (current) { Sheet.Audio -> "音轨"; Sheet.Subtitles -> "字幕"; Sheet.Speed -> "倍速" },
+                        style = ZephyrTextStyles.bodyStrong,
+                    )
+                },
+                text = {
+                    val options = when (current) {
+                        Sheet.Audio -> audioTracks.map { it.name ?: "音轨 ${it.id}" }
+                        Sheet.Subtitles -> buildList {
+                            add("关闭")
+                            subtitleTracks.filter { it.id >= 0 }.forEach { add(it.name ?: "字幕 ${it.id}") }
+                        }
+                        Sheet.Speed -> listOf("0.5×", "0.75×", "1×", "1.25×", "1.5×", "2×")
                     }
-                }
-            }
-        }
-        Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(clock(position))
-            Slider(
-                fraction = if (duration > 0) position.toFloat() / duration else 0f,
-                enabled = duration > 0L && seekable,
-                onChange = { if (duration > 0 && !disposed.get()) { position = (it * duration).toLong(); player.setTime(position) } },
-                modifier = Modifier.weight(1f),
+                    Column {
+                        options.forEachIndexed { index, label ->
+                            Text(
+                                label,
+                                style = ZephyrTextStyles.body,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                        when (current) {
+                                            Sheet.Audio -> if (disposed.get() || !player.setAudioTrack(audioTracks[index].id)) latestMessage("音轨切换失败")
+                                            Sheet.Subtitles -> {
+                                                val spu = if (index == 0) -1 else subtitleTracks.filter { it.id >= 0 }[index - 1].id
+                                                if (disposed.get() || !player.setSpuTrack(spu)) latestMessage("字幕切换失败")
+                                            }
+                                            Sheet.Speed -> {
+                                                speed = when (index) { 0 -> 0.5f; 1 -> 0.75f; 2 -> 1f; 3 -> 1.25f; 4 -> 1.5f; else -> 2f }
+                                                if (!disposed.get()) player.rate = speed
+                                            }
+                                        }
+                                        sheet = null
+                                    }
+                                    .padding(vertical = 12.dp, horizontal = 4.dp),
+                            )
+                        }
+                    }
+                },
             )
-            Text(clock(duration))
-        }
-        Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = {
-                if (disposed.get()) return@TextButton
-                volume = if (volume == 0f) 100f else 0f
-                player.setVolume(volume.toInt())
-            }) {
-                Text(if (volume == 0f) "取消静音" else "静音")
-            }
-            Slider(
-                fraction = volume / 100f,
-                enabled = true,
-                onChange = { volume = it * 100f; if (!disposed.get()) player.setVolume(volume.toInt()) },
-                modifier = Modifier.weight(1f),
-            )
-            Text("${volume.toInt()}%")
         }
     }
 }
 
+private enum class Sheet { Audio, Subtitles, Speed }
+
 @Composable
-private fun Slider(fraction: Float, enabled: Boolean, onChange: (Float) -> Unit, modifier: Modifier = Modifier) {
+private fun OverlayText(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        color = Color.White,
+        style = ZephyrTextStyles.caption,
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun RoundIcon(glyph: String, description: String, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        glyph,
+        color = if (enabled) Color.White else Color(0x80FFFFFF),
+        style = ZephyrTextStyles.caption,
+        modifier = Modifier
+            .size(48.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(Color(0x33000000))
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .wrapContentSize(Alignment.Center),
+    )
+}
+
+@Composable
+private fun ScrubBar(fraction: Float, enabled: Boolean, onChange: (Float) -> Unit, modifier: Modifier = Modifier) {
+    // ScrubBar is the video Slider: draggable progress rail (the desktop
+    // viewer's Slider control, on the overlay's bottom bar).
     Box(
-        modifier.fillMaxWidth().height(32.dp).pointerInput(enabled) {
-            if (!enabled) return@pointerInput
-            detectHorizontalDragGestures { change, _ ->
-                change.consume()
-                onChange((change.position.x / size.width).coerceIn(0f, 1f))
-            }
-        },
+        modifier
+            .fillMaxWidth()
+            .height(30.dp)
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectHorizontalDragGestures { change, _ ->
+                    change.consume()
+                    onChange((change.position.x / size.width).coerceIn(0f, 1f))
+                }
+            },
         contentAlignment = Alignment.CenterStart,
     ) {
-        Box(Modifier.fillMaxWidth().height(4.dp).background(Color.Gray.copy(alpha = 0.4f)))
-        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(4.dp).background(Color.White))
+        Box(Modifier.fillMaxWidth().height(4.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp)).background(Color(0x59FFFFFF)))
+        Box(
+            Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                .height(4.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
+                .background(ZephyrTheme.palette.brand.accent),
+        )
     }
 }
 
 private fun clock(milliseconds: Long): String {
     val seconds = milliseconds / 1000
     return if (seconds >= 3600) "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
-    else "%d:%02d".format(seconds / 60, seconds % 60)
+    else "%d:%02d".format(seconds / 60 % 60, seconds % 60)
 }

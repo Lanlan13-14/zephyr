@@ -4,20 +4,18 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.protocol.ssh.SshFileKinds
 import one.zephyr.mobile.ui.component.*
 import one.zephyr.mobile.ui.icon.ZephyrIcons
+import one.zephyr.mobile.ui.theme.ZephyrTextStyles
 import one.zephyr.mobile.ui.theme.ZephyrTheme
 import java.io.File
 
@@ -92,36 +90,44 @@ fun MobilePreviewPane(
     }
     BackHandler { onBack() }
     Column(Modifier.fillMaxSize().background(ZephyrTheme.palette.surfaces.background)) {
-        Row(
-            Modifier.fillMaxWidth().background(ZephyrTheme.palette.surfaces.content).padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            IconButton(onClick = onBack) { Icon(ZephyrIcons.Back, "返回文件列表") }
-            Column(Modifier.weight(1f)) {
-                Text(source.name, color = ZephyrTheme.palette.onFloating, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                Text(
-                    source.displayPath,
-                    color = ZephyrTheme.palette.onFloatingSubtle,
-                    maxLines = 1,
-                )
+        // iOS navigation bar anatomy: leading chevron, centered title with the
+        // subtitle as a second line, trailing close. One bar, no second row.
+        Box(Modifier.fillMaxWidth().background(ZephyrTheme.palette.surfaces.content)) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) { Icon(ZephyrIcons.Back, "返回文件列表") }
+                Column(
+                    Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        source.name,
+                        color = ZephyrTheme.palette.onFloating,
+                        style = ZephyrTextStyles.bodyStrong,
+                        maxLines = 1,
+                    )
+                    Text(
+                        source.displayPath,
+                        color = ZephyrTheme.palette.onFloatingSubtle,
+                        style = ZephyrTextStyles.caption,
+                        maxLines = 1,
+                    )
+                }
+                TextButton(onClick = onBack) { Text("关闭") }
             }
-            TextButton(onClick = onBack) { Text("关闭") }
-        }
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AssistChip(onClick = { revision++ }, label = { Text("刷新") })
-            if (!image) {
-                AssistChip(onClick = { subtitlePicker.launch(arrayOf("*/*")) }, enabled = !subtitleBusy, label = { Text("本地字幕") })
-                AssistChip(onClick = { subtitlePath = "" }, enabled = !subtitleBusy, label = { Text("路径字幕") })
+            Row(
+                Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AssistChip(onClick = { revision++ }, label = { Text("刷新") })
+                if (!image) {
+                    AssistChip(onClick = { subtitlePicker.launch(arrayOf("*/*")) }, enabled = !subtitleBusy, label = { Text("本地字幕") })
+                    AssistChip(onClick = { subtitlePath = "" }, enabled = !subtitleBusy, label = { Text("路径字幕") })
+                }
             }
-            Text(
-                if (image) "图片 · FFmpeg 解码" else "媒体 · 客户端 RAW 解码（LibVLC / FFmpeg）",
-                color = ZephyrTheme.palette.onFloatingSubtle,
-            )
         }
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             when {
