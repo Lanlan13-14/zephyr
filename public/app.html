@@ -454,9 +454,11 @@
                                     </div>
                                     <label data-i18n="自定义 CSS">自定义 CSS</label>
                                     <textarea id="customCssInput" rows="6" spellcheck="false" placeholder=":root { --accent: #0a84ff; }\n.connection-card { border-radius: 22px; }"></textarea>
-                                    <label data-i18n="自定义 JS">自定义 JS</label>
-                                    <textarea id="customJsInput" rows="5" spellcheck="false" placeholder="// 保存后在前端页面执行；请只填写可信代码" data-i18n-placeholder="// 保存后在前端页面执行；请只填写可信代码"></textarea>
-                                    <p class="field-hint" data-i18n="自定义 CSS/JS 只在选择“自定义”配色时生效；JS 会在登录页、后台和远程窗口前端执行，请只保存你信任的代码。">自定义 CSS/JS 只在选择“自定义”配色时生效；JS 会在登录页、后台和远程窗口前端执行，请只保存你信任的代码。</p>
+                                    <div id="customJsField">
+                                        <label data-i18n="自定义 JS">自定义 JS</label>
+                                        <textarea id="customJsInput" rows="5" spellcheck="false" placeholder="// 仅超级管理员可编辑；保存后在前端页面执行，请只填写可信代码" data-i18n-placeholder="// 仅超级管理员可编辑；保存后在前端页面执行，请只填写可信代码"></textarea>
+                                        <p class="field-hint" data-i18n="自定义 CSS/JS 只在选择“自定义”配色时生效；自定义 JS 仅超级管理员可设置，且只在你登录后的后台页面执行；请只保存你信任的代码。">自定义 CSS/JS 只在选择“自定义”配色时生效；自定义 JS 仅超级管理员可设置，且只在你登录后的后台页面执行；请只保存你信任的代码。</p>
+                                    </div>
                                 </div>
                                 <h3 data-i18n="SSH 终端自定义">SSH 终端自定义</h3>
                                 <label data-i18n="终端背景来源">终端背景来源</label>

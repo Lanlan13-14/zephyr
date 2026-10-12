@@ -216,7 +216,9 @@ function applyBrand(appearance = {}) {
 
 function applyTheme(theme, { persist = false } = {}) {
     document.documentElement.setAttribute('data-theme', theme);
-    applyZephyrColorScheme(publicSettings.appearance || {}, { theme, page: 'login' });
+    /* Login page: never execute admin-authored customJs (stored XSS). The
+     * unauthenticated /api/public/settings no longer ships it either. */
+    applyZephyrColorScheme(publicSettings.appearance || {}, { theme, page: 'login', executeCustomJs: false });
     setFavicon((publicSettings.appearance || {}).brandIcon || DEFAULT_BRAND_ICON);
     if (persist) localStorage.setItem('zephyr-theme', theme);
     [themeToggleLogin, themeToggleChange, themeToggleTotp, themeToggleForgot].filter(Boolean).forEach((btn) => { btn.textContent = theme === 'dark' ? '☀️' : '🌙'; });

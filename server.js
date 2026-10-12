@@ -3801,7 +3801,7 @@ function safeSettings(s = storage.getSettings()) {
     return copy;
 }
 function mergeSecret(oldValue, newValue) { return newValue === '******' ? oldValue : (newValue ?? oldValue ?? ''); }
-function normalizeSettingsInput(body) {
+function normalizeSettingsInput(body, { allowCustomJs = false } = {}) {
     const current = storage.getSettings();
     const next = { ...body };
     if (body.mail) next.mail = { ...(current.mail || {}), ...body.mail, pass: mergeSecret(current.mail?.pass, body.mail.pass) };
@@ -3875,7 +3875,9 @@ function normalizeSettingsInput(body) {
             customThemeMode,
             customColors,
             customCss: String(body.appearance.customCss ?? currentAppearance.customCss ?? '').slice(0, 200000),
-            customJs: String(body.appearance.customJs ?? currentAppearance.customJs ?? '').slice(0, 200000),
+            customJs: allowCustomJs
+                ? String(body.appearance.customJs ?? currentAppearance.customJs ?? '').slice(0, 200000)
+                : String(currentAppearance.customJs ?? ''),
             terminalBackground,
             terminalFontColor,
             terminalFontColors,
@@ -3929,7 +3931,10 @@ function publicAppearanceSettings(settings = storage.getSettings()) {
 function updateSettingsSection(req, res, section) {
     if (section === 'ai') return updateAiSettingsSection(req, res);
     const value = req.body?.[section] ?? req.body ?? {};
-    const normalized = normalizeSettingsInput({ [section]: value });
+    /* appearance.customJs executes in every authenticated browser, so only
+     * the super admin may write it (PUT /api/settings already requires the
+     * super admin; this section route is reachable by plain admins). */
+    const normalized = normalizeSettingsInput({ [section]: value }, { allowCustomJs: !!req.user?.isSuperAdmin });
     if (section === 'security' && normalized.security?.ipWhitelistEnabled && !ipAllowed(clientIp(req), normalized.security.ipWhitelist)) {
         return res.status(400).json({ error: '当前 IP 不在白名单内，已阻止启用以避免误锁' });
     }
@@ -5895,7 +5900,7 @@ app.put('/api/settings', requireSuperAdmin, (req, res) => {
         delete bodyInput.ai.skills;
         delete bodyInput.ai.envVars;
     }
-    const body = normalizeSettingsInput(bodyInput);
+    const body = normalizeSettingsInput(bodyInput, { allowCustomJs: true });
     if (body.ai) {
         body.ai.memories = [];
         body.ai.skills = [];
@@ -6549,7 +6554,6 @@ app.get('/api/public/settings', (req, res) => {
             customThemeMode: ['light', 'dark', 'auto'].includes(appearance.customThemeMode) ? appearance.customThemeMode : 'dark',
             customColors: appearance.customColors || {},
             customCss: String(appearance.customCss || ''),
-            customJs: String(appearance.customJs || ''),
         },
         icp: s.icp || s.beian?.icp || '',
         icpUrl: s.icpUrl || s.beian?.icpUrl || '',
