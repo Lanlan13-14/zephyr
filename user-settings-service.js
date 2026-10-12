@@ -240,6 +240,14 @@ class UserSettingsService {
         delete base.captcha;
         delete base.mail;
         delete base.dataManage;
+        /* Platform customJs is super-admin authored and executes in every
+         * authenticated browser. It must not ride the personal effective
+         * payload (login page used to receive it via /api/public/settings;
+         * keep the trusted-script surface out of any non-super endpoint). */
+        if (base.appearance) {
+            base.appearance = { ...base.appearance };
+            delete base.appearance.customJs;
+        }
         if (base.ai) {
             base.ai = {
                 ...base.ai,

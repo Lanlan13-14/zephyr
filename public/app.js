@@ -1282,7 +1282,12 @@ async function saveAppearance(e) {
         },
     };
     if (myIdentity.role === 'admin') {
-        settings = await savePlatformSettings('appearance', { appearance });
+        /* customJs runs in every authenticated browser. Server only accepts
+         * it from the super admin; strip it here so a plain admin saving the
+         * appearance form cannot clobber the stored value with their (empty)
+         * textarea. */
+        const platformPatch = myIdentity.isSuperAdmin ? { appearance } : { appearance: { ...appearance, customJs: previous.customJs ?? '' } };
+        settings = await savePlatformSettings('appearance', platformPatch);
     } else {
         const { brandName, brandIcon, customJs, ...personalAppearance } = appearance;
         settings = await savePersonalSettings({ appearance: personalAppearance });
@@ -1295,9 +1300,13 @@ async function saveAppearance(e) {
     toast(t('个性化设置已保存'));
 }
 async function resetAppearance() {
+    const previous = getAppearance();
     const appearance = { ...getAppearance(), brandName: defaultBrandName(), brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
     if (myIdentity.role === 'admin') {
-        settings = await savePlatformSettings('appearance', { appearance });
+        /* Plain admins cannot clear customJs (super-admin owned); keep the
+         * stored value instead of sending the reset's empty string. */
+        const platformPatch = myIdentity.isSuperAdmin ? { appearance } : { appearance: { ...appearance, customJs: previous.customJs ?? '' } };
+        settings = await savePlatformSettings('appearance', platformPatch);
     } else {
         const { brandName, brandIcon, customJs, ...personalAppearance } = appearance;
         settings = await savePersonalSettings({ appearance: personalAppearance });
@@ -15662,6 +15671,9 @@ function initSettingsVisibility() {
     document.getElementById('platformSecuritySettings')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearLoginEventsBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearActivityBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
+    /* customJs executes in every authenticated browser, so only the super
+     * admin may view or edit it (server rejects others on write too). */
+    document.getElementById('customJsField')?.classList.toggle('force-hidden', !isSuperAdmin);
     const isOneMode = typeof window !== 'undefined' && !!window.__zephyrOneUnlock;
     document.getElementById('linkSettingsTab')?.classList.toggle('force-hidden', !isOneMode);
     document.getElementById('settings-link')?.classList.toggle('force-hidden', !isOneMode);
