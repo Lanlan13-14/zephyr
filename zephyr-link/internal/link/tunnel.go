@@ -68,6 +68,39 @@ func writeFull(conn net.Conn, data []byte) error {
 	return nil
 }
 
+// rewriteBastionDialHost maps a target that names the Agent machine itself
+// onto the loopback interface the Agent process can always reach.
+//
+// The dial runs *inside* the Agent, so "the host the user typed for this
+// Windows box" and "where RDP is listening" are the same machine. That name
+// is frequently the LAN address the Zephyr server uses to reach the Agent
+// (hairpin NAT), or a name that only resolves on the far side of the tunnel.
+// Neither is a reason to fail: the service is local. Loopback, empty, and
+// any other host are left untouched — forwarding to a different machine on
+// the Agent's LAN must keep the address the user asked for.
+func rewriteBastionDialHost(host, selfHost string) string {
+	host = strings.TrimSpace(host)
+	selfHost = strings.TrimSpace(selfHost)
+	if host == "" || selfHost == "" || strings.EqualFold(host, selfHost) == false {
+		return host
+	}
+	if isLocalDialHost(host) {
+		return host
+	}
+	return "127.0.0.1"
+}
+
+// isLocalDialHost reports hosts that already mean "this machine" to the
+// dialer, so rewriting them would only hide what the user asked for.
+func isLocalDialHost(host string) bool {
+	switch strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]")) {
+	case "localhost", "127.0.0.1", "::1", "0.0.0.0", "::":
+		return true
+	default:
+		return false
+	}
+}
+
 type tunnelFrame struct {
 	Tun  int    `json:"tun"`
 	Op   string `json:"op"`
@@ -111,13 +144,12 @@ func (t *tunnelStreamConn) writeFrame(opcode byte, payload []byte) error {
 }
 
 func (t *tunnelStreamConn) writeEnvelopeWithEndpoint(ep *Endpoint, kind int, body any, secret bool) error {
-	t.wmu.Lock()
-	defer t.wmu.Unlock()
-	if t.closed {
-		return errors.New("tunnel: stream closed")
-	}
-	_ = t.conn.SetWriteDeadline(time.Now().Add(tunnelWriteTimeout))
-	defer t.conn.SetWriteDeadline(time.Time{})
+	// Seal before taking the socket. ep.Send is the whole ML-KEM/AES seal of
+	// one frame, and a 256 KiB RDP chunk makes that tens of milliseconds.
+	// ping() needs the same mutex; holding it across the seal lets a burst of
+	// tunnel data push the keepalive past the far side's read deadline, which
+	// is exactly the "Agent drops for a moment" seen when the bastion target
+	// is a busy local service.
 	env, err := ep.Send(kind, body, secret)
 	if err != nil {
 		return err
@@ -126,6 +158,13 @@ func (t *tunnelStreamConn) writeEnvelopeWithEndpoint(ep *Endpoint, kind int, bod
 	if err != nil {
 		return err
 	}
+	t.wmu.Lock()
+	defer t.wmu.Unlock()
+	if t.closed {
+		return errors.New("tunnel: stream closed")
+	}
+	_ = t.conn.SetWriteDeadline(time.Now().Add(tunnelWriteTimeout))
+	defer t.conn.SetWriteDeadline(time.Time{})
 	return writeClientFrame(t.conn, 0x1, raw)
 }
 
@@ -313,10 +352,15 @@ type AgentTunnelHub struct {
 	nextID     int
 	stream     *tunnelStreamConn
 	ep         *Endpoint
-	out        chan tunnelFrame
-	ctx        context.Context
-	cancel     context.CancelFunc
-	readyCh    chan struct{}
+	// out carries tunnel payloads. control carries open/close/err. They are
+	// separate so a saturated payload queue (a fast RDP server, a slow reader
+	// on the far side) cannot delay the frame that admits or tears down a
+	// tunnel, and cannot stall the write loop long enough to miss a ping.
+	out     chan tunnelFrame
+	control chan tunnelFrame
+	ctx     context.Context
+	cancel  context.CancelFunc
+	readyCh chan struct{}
 	// zft2Conn/zft2WriteMu serialize writes onto the local zft2 socket.
 	zft2Conn    net.Conn
 	zft2WriteMu *sync.Mutex
@@ -325,6 +369,11 @@ type AgentTunnelHub struct {
 	// OnZft2Open hands a zft2-lane tunnel's byte pipe to the host (Dart via
 	// MethodChannel on Android). When nil, a zft2 open is refused.
 	OnZft2Open func(t *Zft2Lane)
+	// selfHosts are addresses that name the machine this Agent runs on, as
+	// observed from the Link dial itself (the local address of the stream
+	// socket). A bastion open aimed at one of them is a connection to a
+	// service on this same machine and is dialed on loopback.
+	selfHosts map[string]struct{}
 }
 
 // Zft2Lane is one zft2-lane tunnel: bytes the main end sealed into the stream
@@ -419,7 +468,13 @@ func (l *Zft2Lane) Close() error {
 }
 
 func NewAgentTunnelHub(node *Node) *AgentTunnelHub {
-	return &AgentTunnelHub{node: node, tunnels: make(map[int]*agentTunnel), out: make(chan tunnelFrame, tunnelChannelBufSize)}
+	return &AgentTunnelHub{
+		node:      node,
+		tunnels:   make(map[int]*agentTunnel),
+		out:       make(chan tunnelFrame, tunnelChannelBufSize),
+		control:   make(chan tunnelFrame, tunnelChannelBufSize),
+		selfHosts: map[string]struct{}{},
+	}
 }
 
 // Start connects the stream channel and serves tunnel frames until the stream
@@ -445,6 +500,15 @@ func (h *AgentTunnelHub) Start(peerURL, sessionID string) error {
 	h.ep = ep
 	h.peerURL = peerURL
 	h.sessionID = sessionID
+	// The local side of the Link socket is an address of this machine. A
+	// later bastion open that names it is the user reaching back to a
+	// service here (RDP on the Windows box the Agent runs on), which has to
+	// be dialed on loopback rather than hairpinned out through the router.
+	if stream.conn != nil {
+		if addr, ok := stream.conn.LocalAddr().(*net.TCPAddr); ok && addr.IP != nil {
+			h.noteSelfLocked(addr.IP.String())
+		}
+	}
 	h.ctx, h.cancel = context.WithCancel(context.Background())
 	ready := make(chan struct{})
 	close(ready)
@@ -462,6 +526,54 @@ func (h *AgentTunnelHub) Start(peerURL, sessionID string) error {
 	go h.readLoop(generation)
 	go h.pingLoop(generation)
 	return nil
+}
+
+// noteSelfLocked records an address that names this Agent's own machine.
+// Caller holds h.mu.
+func (h *AgentTunnelHub) noteSelfLocked(host string) {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" || isLocalDialHost(host) {
+		return
+	}
+	if h.selfHosts == nil {
+		h.selfHosts = map[string]struct{}{}
+	}
+	h.selfHosts[strings.ToLower(host)] = struct{}{}
+}
+
+// dialHost resolves the TCP host a bastion open should actually connect to.
+// A target naming this machine becomes loopback; everything else is unchanged.
+func (h *AgentTunnelHub) dialHost(host string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for self := range h.selfHosts {
+		if rewritten := rewriteBastionDialHost(host, self); rewritten != host {
+			return rewritten
+		}
+	}
+	return strings.TrimSpace(host)
+}
+
+// enqueueControl delivers a tunnel lifecycle frame (open ack, close, err).
+// It must not share a queue with payload data: one RDP session can fill the
+// payload queue for as long as the far side reads slowly, and a close or an
+// error stuck behind it keeps the TCP socket and the read pump alive forever.
+// Dropping the oldest control frame is safe — close and err are idempotent
+// and the peer treats a missing ack as a timeout.
+func (h *AgentTunnelHub) enqueueControl(tf tunnelFrame) {
+	select {
+	case h.control <- tf:
+		return
+	default:
+	}
+	select {
+	case <-h.control:
+	default:
+	}
+	select {
+	case h.control <- tf:
+	default:
+	}
 }
 
 // SessionID reports the Link session the hub's stream is running on.
@@ -653,9 +765,27 @@ func (h *AgentTunnelHub) writeLoop(generation uint64) {
 		if ctx == nil || stream == nil || ep == nil || current != generation {
 			return
 		}
+		// Control first, and checked again before a payload is taken. The
+		// open ack, close and err are what stops the far side timing the
+		// tunnel out; a payload can wait, they cannot. A single select would
+		// give both equal odds and let a burst of RDP bytes starve the ack.
 		select {
 		case <-ctx.Done():
 			return
+		case tf := <-h.control:
+			if err := stream.writeEnvelopeWithEndpoint(ep, codec.KindAgentTunnel, tf, false); err != nil {
+				return
+			}
+			continue
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case tf := <-h.control:
+			if err := stream.writeEnvelopeWithEndpoint(ep, codec.KindAgentTunnel, tf, false); err != nil {
+				return
+			}
 		case tf := <-h.out:
 			if err := stream.writeEnvelopeWithEndpoint(ep, codec.KindAgentTunnel, tf, false); err != nil {
 				return
@@ -735,16 +865,16 @@ func (h *AgentTunnelHub) handleFrame(tf *tunnelFrame) {
 }
 
 func (h *AgentTunnelHub) openTunnel(tf *tunnelFrame) {
-	host := strings.TrimSpace(tf.Host)
+	host := h.dialHost(tf.Host)
 	port := tf.Port
 	if host == "" || port <= 0 || port > 65535 {
-		h.out <- tunnelFrame{Tun: tf.Tun, Op: "err", Err: "invalid target"}
+		h.enqueueControl(tunnelFrame{Tun: tf.Tun, Op: "err", Err: "invalid target"})
 		return
 	}
 	d := net.Dialer{Timeout: tunnelDialTimeout}
 	conn, err := d.Dial("tcp", net.JoinHostPort(host, fmt.Sprintf("%d", port)))
 	if err != nil {
-		h.out <- tunnelFrame{Tun: tf.Tun, Op: "err", Err: "dial failed: " + err.Error()}
+		h.enqueueControl(tunnelFrame{Tun: tf.Tun, Op: "err", Err: "dial failed: " + err.Error()})
 		return
 	}
 	tuneTCP(conn)
@@ -752,7 +882,7 @@ func (h *AgentTunnelHub) openTunnel(tf *tunnelFrame) {
 	h.mu.Lock()
 	h.tunnels[tf.Tun] = t
 	h.mu.Unlock()
-	h.out <- tunnelFrame{Tun: tf.Tun, Op: "open", Seq: 0}
+	h.enqueueControl(tunnelFrame{Tun: tf.Tun, Op: "open", Seq: 0})
 	go h.pumpTCP(tf.Tun, conn)
 	go h.writeTCPInbound(tf.Tun, t)
 }
@@ -762,7 +892,7 @@ func (h *AgentTunnelHub) openZft2Lane(tf *tunnelFrame) {
 	cb := h.OnZft2Open
 	h.mu.Unlock()
 	if cb == nil {
-		h.out <- tunnelFrame{Tun: tf.Tun, Op: "err", Err: "zft2 lane unavailable", Lane: "zft2"}
+		h.enqueueControl(tunnelFrame{Tun: tf.Tun, Op: "err", Err: "zft2 lane unavailable", Lane: "zft2"})
 		return
 	}
 	lane := &Zft2Lane{hub: h, id: tf.Tun, in: make(chan []byte, tunnelChannelBufSize), dead: make(chan struct{})}
@@ -770,7 +900,7 @@ func (h *AgentTunnelHub) openZft2Lane(tf *tunnelFrame) {
 	h.mu.Lock()
 	h.tunnels[tf.Tun] = t
 	h.mu.Unlock()
-	h.out <- tunnelFrame{Tun: tf.Tun, Op: "open", Seq: 0, Lane: "zft2"}
+	h.enqueueControl(tunnelFrame{Tun: tf.Tun, Op: "open", Seq: 0, Lane: "zft2"})
 	cb(lane)
 	go h.pumpZft2LaneToSocket(lane)
 }
@@ -829,10 +959,7 @@ func (h *AgentTunnelHub) closeTunnel(id int, reason string) {
 	})
 	t.closed = true
 	t.conn.Close()
-	select {
-	case h.out <- tunnelFrame{Tun: id, Op: "close"}:
-	default:
-	}
+	h.enqueueControl(tunnelFrame{Tun: id, Op: "close"})
 }
 
 // ───────────────────────── Main-end side ─────────────────────────
@@ -849,9 +976,12 @@ type MainEndTunnel struct {
 	rbuf    bytes.Buffer
 	rmu     sync.Mutex
 	in      chan tunnelFrame
-	dead    chan struct{}
-	once    sync.Once
-	seq     int64
+	// incoming feeds the delivery goroutine. deliver sends here and returns
+	// at once; that goroutine is what preserves frame order onto in.
+	incoming chan *tunnelFrame
+	dead     chan struct{}
+	once     sync.Once
+	seq      int64
 }
 
 func (c *MainEndTunnel) Read(p []byte) (int, error) {
@@ -861,13 +991,19 @@ func (c *MainEndTunnel) Read(p []byte) (int, error) {
 	// here is never delivered, so the SSH packet it belongs to never
 	// completes and the session hangs. Files small enough to fit one read
 	// never hit this, which is why only the larger uploads died at 100%.
+	// Hold rmu across the whole read, including the wait for the next frame.
+	// deliver() now hands each frame off on its own goroutine, so two frames
+	// for this tunnel can be in flight together. Releasing the lock between
+	// parking a tail and taking the next frame let those two race: the second
+	// frame was copied out while the first's tail was still being appended,
+	// and the stream came back reordered. That is invisible below one frame
+	// and corrupts everything past tunnelMaxDataBytes.
 	c.rmu.Lock()
+	defer c.rmu.Unlock()
 	if c.rbuf.Len() > 0 {
 		n, _ := c.rbuf.Read(p)
-		c.rmu.Unlock()
 		return n, nil
 	}
-	c.rmu.Unlock()
 	select {
 	case tf := <-c.in:
 		if tf.Op == "close" || tf.Op == "err" {
@@ -885,15 +1021,11 @@ func (c *MainEndTunnel) Read(p []byte) (int, error) {
 		}
 		n := copy(p, data)
 		if n < len(data) {
-			c.rmu.Lock()
 			c.rbuf.Write(data[n:])
-			c.rmu.Unlock()
 		}
 		return n, nil
 	case <-c.dead:
 		// Drain any buffered bytes before reporting EOF.
-		c.rmu.Lock()
-		defer c.rmu.Unlock()
 		if c.rbuf.Len() > 0 {
 			n, _ := c.rbuf.Read(p)
 			return n, nil
@@ -1263,15 +1395,66 @@ func (h *MainEndTunnelHub) deliver(sessionID string, tf *tunnelFrame) {
 		h.drop(c)
 		return
 	}
-	// Block rather than drop. A full queue means the SSH client is reading
-	// slower than the server is sending, and stalling here backs the pressure
-	// up through the Link stream to the Agent's TCP read, which is exactly the
-	// flow control a plain TCP connection would apply. Dropping the frame and
-	// closing the tunnel is what made the SSH server answer an upload with EOF
-	// once the progress bar had already reached 100%. dead is still selected so
-	// closing the tunnel unblocks this read.
+	// Hand the frame off the link read loop. This loop is the only thing
+	// reading the Agent's stream, so blocking here stalls every other tunnel
+	// on that Agent and the keepalive that proves the Agent is still
+	// connected. That is the whole of the "bastion target is this machine and
+	// the Agent briefly drops" failure: RDP pushes bytes before anyone reads
+	// them, this call blocks, and the stream dies.
+	//
+	// The handoff is one goroutine per tunnel, fed in order, so frames of one
+	// tunnel stay ordered while a different tunnel's slow reader cannot pin
+	// this one. The tunnel's own queue still applies backpressure: the
+	// handoff blocks until that tunnel has room or is closed, so a slow SSH
+	// client stalls the sender of its own tunnel instead of dropping a frame
+	// (dropping is what made uploads die at 100%).
+	c.enqueue(tf)
+}
+
+// startDelivery launches the single goroutine that feeds this tunnel's
+// frames to its reader, in the order deliver saw them. The queue it drains
+// is unbounded on purpose: the link read loop must be able to hand a frame
+// over and move on, or one tunnel's slow reader stalls every tunnel on the
+// Agent plus the keepalive. Backpressure still holds — the Agent side stops
+// sending on this tunnel once its own bounded queue fills — so the queue
+// here only ever holds what is already in flight.
+func (c *MainEndTunnel) startDelivery() {
+	c.incoming = make(chan *tunnelFrame)
+	go func() {
+		var pending []*tunnelFrame
+		var out chan tunnelFrame
+		var next tunnelFrame
+		for {
+			if out == nil && len(pending) > 0 {
+				next = *pending[0]
+				pending = pending[1:]
+				out = c.in
+			}
+			select {
+			case tf := <-c.incoming:
+				if tf == nil {
+					return
+				}
+				pending = append(pending, tf)
+			case out <- next:
+				out = nil
+			case <-c.dead:
+				return
+			}
+		}
+	}()
+}
+
+// enqueue hands one frame to the tunnel's delivery goroutine and returns
+// immediately. Order is the goroutine's responsibility; blocking here would
+// put the link read loop back behind this one tunnel.
+func (c *MainEndTunnel) enqueue(tf *tunnelFrame) {
+	if c.incoming == nil {
+		return
+	}
+	copied := *tf
 	select {
-	case c.in <- *tf:
+	case c.incoming <- &copied:
 	case <-c.dead:
 	}
 }
@@ -1343,6 +1526,7 @@ func (h *MainEndTunnelHub) dial(sessionID string, open tunnelFrame) (net.Conn, e
 	id := agent.nextID
 	open.Tun = id
 	c := &MainEndTunnel{hub: h, session: sessionID, id: id, in: make(chan tunnelFrame, tunnelChannelBufSize), dead: make(chan struct{})}
+	c.startDelivery()
 	agent.tunnels[id] = c
 	h.mu.Unlock()
 	if err := h.send(sessionID, open); err != nil {
