@@ -1476,8 +1476,18 @@ class FileAgentManager {
         conn.heartbeatTimer = setInterval(() => {
             const silentFor = Date.now() - (conn.lastSeenAt || conn.connectedAt || 0);
             if (silentFor >= HEARTBEAT_INTERVAL_MS * HEARTBEAT_TIMEOUT_FACTOR) {
-                this.log(`[file-agent] heartbeat timeout for ${agentId}`);
-                this.unregisterAgent(agentId, 'heartbeat_timeout');
+            // The heartbeat socket and the bastion data stream are different
+            // connections. While a relay is open the data stream is the one
+            // under load, and it is also what starves this socket: the Agent
+            // is busy sealing RDP frames and its ping never arrives. Dropping
+            // it here is the "Agent flashes offline and the RDP dies" failure.
+            // The relay's own close is what ends the exemption.
+            if ((conn.bastionActive || 0) > 0) {
+                this.log(`[file-agent] heartbeat quiet for ${agentId} but ${conn.bastionActive} bastion tunnel(s) are live; keeping it`);
+                return;
+            }
+            this.log(`[file-agent] heartbeat timeout for ${agentId}`);
+            this.unregisterAgent(agentId, 'heartbeat_timeout');
             }
         }, HEARTBEAT_INTERVAL_MS);
 
@@ -1779,6 +1789,15 @@ class FileAgentManager {
     notifyBastionActivity(agentId, info = {}) {
         const conn = this.agents.get(agentId);
         if (!conn || !conn.online) return false;
+        // A live relay is proof the Agent is alive even when its heartbeat
+        // socket has gone quiet. RDP rides the encrypted Link stream, not this
+        // WebSocket, and a saturated stream stops the heartbeat frames from
+        // arriving; counting the open tunnels here is what keeps the 45s
+        // heartbeat timeout from tearing the Agent down mid-session.
+        const event = String(info.event || '');
+        if (event === 'open') conn.bastionActive = (conn.bastionActive || 0) + 1;
+        else if (event === 'close') conn.bastionActive = Math.max(0, (conn.bastionActive || 0) - 1);
+        else if (event === 'data') conn.lastSeenAt = Date.now();
         try {
             conn.ws.send(JSON.stringify({
                 type: 'bastion_activity',
@@ -1788,6 +1807,12 @@ class FileAgentManager {
         } catch {
             return false;
         }
+    }
+
+    /** True while this Agent is carrying at least one bastion tunnel. */
+    hasActiveBastion(agentId) {
+        const conn = this.agents.get(agentId);
+        return !!conn && (conn.bastionActive || 0) > 0;
     }
 
     /** Check if an agent belongs to a user. */
