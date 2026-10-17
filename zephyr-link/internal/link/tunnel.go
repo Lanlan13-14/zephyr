@@ -358,6 +358,10 @@ type AgentTunnelHub struct {
 	// tunnel, and cannot stall the write loop long enough to miss a ping.
 	out     chan tunnelFrame
 	control chan tunnelFrame
+	// inbound carries frames the read loop has accepted but not yet applied.
+	// Applying them inline held the only stream reader behind one tunnel's
+	// TCP write, which dropped the link under an RDP flood.
+	inbound chan []byte
 	ctx     context.Context
 	cancel  context.CancelFunc
 	readyCh chan struct{}
@@ -522,6 +526,7 @@ func (h *AgentTunnelHub) Start(peerURL, sessionID string) error {
 	if prevStream != nil {
 		prevStream.Close()
 	}
+	h.startInbound()
 	go h.writeLoop(generation)
 	go h.readLoop(generation)
 	go h.pingLoop(generation)
@@ -748,11 +753,46 @@ func (h *AgentTunnelHub) readLoop(generation uint64) {
 		if frame.Kind != codec.KindAgentTunnel {
 			continue
 		}
-		var tf tunnelFrame
-		if err := codec.Decode(frame.Body, &tf); err != nil {
-			continue
+		body := append([]byte(nil), frame.Body...)
+		// Decode and dispatch off this loop. handleFrame blocks on a tunnel
+		// whose TCP target is slower than the sender, and that wait used to
+		// happen here, on the only goroutine reading the stream. One slow
+		// tunnel then held back every other tunnel plus the pong that answers
+		// the peer's ping, and the peer declared the stream dead. The queue
+		// keeps frames in order; it is drained by one goroutine so a tunnel's
+		// own frames stay ordered too.
+		h.enqueueInbound(body)
+	}
+}
+
+// startInbound launches the goroutine that decodes and applies tunnel frames
+// in the order the stream delivered them. Frames wait in a queue instead of
+// in the read loop, so one tunnel's slow TCP write cannot delay the pong the
+// peer's ping is waiting for.
+func (h *AgentTunnelHub) startInbound() {
+	h.inbound = make(chan []byte, tunnelChannelBufSize)
+	go func() {
+		for body := range h.inbound {
+			var tf tunnelFrame
+			if err := codec.Decode(body, &tf); err != nil {
+				continue
+			}
+			h.handleFrame(&tf)
 		}
-		h.handleFrame(&tf)
+	}()
+}
+
+// enqueueInbound hands one frame to the decode goroutine. It only blocks
+// once that goroutine is itself a full queue behind, which is the tunnel
+// genuinely not draining; the read loop is no longer blocked by the first
+// slow frame.
+func (h *AgentTunnelHub) enqueueInbound(body []byte) {
+	if h.inbound == nil {
+		return
+	}
+	select {
+	case h.inbound <- body:
+	case <-h.ctx.Done():
 	}
 }
 

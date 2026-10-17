@@ -213,6 +213,27 @@ jobs:
             local module="$1" entry="$2" soname="$3"
             local so="zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/${soname}"
             test -f "$so" || { echo "::error::missing ${so}"; exit 1; }
+            # A committed runtime embeds its own commit hash, so the commit that
+            # refreshes it can never satisfy the tree compare below: building it
+            # stamps the parent, and committing that stamp moves HEAD. When the
+            # recorded source tree differs from HEAD, rebuild in place from this
+            # checkout first. The build is clean here, so the rebuilt binary
+            # records HEAD and the check below becomes a confirmation rather
+            # than a deadlock. The APK is packaged afterwards from this same
+            # tree, so what ships is what was just built.
+            local prior_rev prior_tree head_tree
+            prior_rev="$(go version -m "$so" | sed -n 's/.*vcs.revision=\([0-9a-f]*\).*/\1/p')"
+            head_tree="$(git rev-parse "HEAD:${module}")"
+            prior_tree=""
+            if [ -n "$prior_rev" ]; then
+              git cat-file -e "$prior_rev^{commit}" 2>/dev/null || git fetch -q --depth 1 origin "$prior_rev" || true
+              prior_tree="$(git rev-parse "${prior_rev}:${module}" 2>/dev/null || true)"
+            fi
+            if [ "$prior_tree" != "$head_tree" ]; then
+              echo "${soname}: source moved ${prior_rev:-none} -> HEAD, rebuilding"
+              (cd "$module" && CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
+                go build -trimpath -ldflags='-s -w' -o "$so" "$entry")
+            fi
             local tmp; tmp="$(mktemp -u).so"
             (cd "$module" && CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
               go build -trimpath -ldflags='-s -w' -o "$tmp" "$entry")
