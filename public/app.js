@@ -14083,7 +14083,15 @@ async function loadNetwork() {
      * and only falls back to locally connected Agents when unbound. */
     agentBastions = (bastionData.agents || []).filter((a) => a && a.online !== false && a.bastionEnabled !== false);
     renderNetwork();
-    updateRouteOptions();
+    // The connection editor's jump rows already hold the saved selection.
+    // Rebuilding them here with an empty selection is what made an RDP
+    // connection reopen with its bastion showing as unselected even though
+    // the saved route still worked. renderJumpOptions keeps those rows.
+    if ($('#connMode')?.value === 'jump' && $$('#jumpRouteList [data-jump-route-select]').length) {
+        renderJumpOptions();
+    } else {
+        updateRouteOptions();
+    }
     renderSshKeyOptions($('#connSshKey')?.value || '');
     return { proxies, sshKeys, jumpHosts, agentBastions };
 }
