@@ -3572,7 +3572,7 @@ export const Motion = {
         '--split-slide-2-x': 0,
       }, {
         units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' },
-        preset: 'ui',
+        preset: { response: 0.22, damping: 1.0 },
         immediate: !animate,
       });
     }
@@ -3580,8 +3580,7 @@ export const Motion = {
     const padX = 16;
     const activeWin = activeSlot === 2 ? win2 : win1;
     const inactiveWin = activeSlot === 2 ? win1 : win2;
-    const paneW = activeWin.offsetWidth || Math.round(wsWidth * 0.8 - 23);
-    // Exact translation so the gap between activeWin and inactiveWin is `gap` (14px):
+    const paneW = Math.round(wsWidth * 0.8 - 23);
     const slideMag = Math.max(0, Math.round(2 * paneW - wsWidth + 2 * padX + gap));
     const x1 = activeSlot === 2 ? -slideMag : 0;
     const x2 = activeSlot === 1 ? slideMag : 0;
@@ -3593,79 +3592,107 @@ export const Motion = {
       '--split-slide-1-x': x1,
       '--split-slide-2-x': x2,
     }, animate
-      ? { units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' }, preset: { response: 0.18, damping: 1.0 } }
+      ? { units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' }, preset: { response: 0.22, damping: 1.0 } }
       : { units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' }, immediate: true });
   },
 
   /**
    * M26: Terminal topbar shelf symmetric collapse/expand & chevron 180deg spring (Section 3.4.2 & 4.2.4).
    */
-  topbarShelfCollapse(mainNav, collapsed, { chevrons = [], headerItems = [], openHeight = 83, collapsedHeight = 27, animate = true } = {}) {
+  topbarShelfCollapse(mainNav, collapsed, { chevrons = [], headerItems = [], openHeight = 72, collapsedHeight = 22, animate = true } = {}) {
     if (!mainNav) return Promise.resolve();
     const targetH = collapsed ? collapsedHeight : openHeight;
-    const targetOffset = collapsed ? (collapsedHeight - openHeight) : 0; // -56px when collapsed, 0px when open
-    const targetY = collapsed ? -48 : 0;
+    const targetOffset = collapsed ? -(openHeight - collapsedHeight) : 0; // -50px when collapsed, 0px when open
+    const targetY = collapsed ? -(openHeight - collapsedHeight) : 0;
     const targetOpacity = collapsed ? 0 : 1;
-    const targetRot = collapsed ? 180 : 0;
     const root = typeof document !== 'undefined' ? document.documentElement : null;
+    const smartbar = typeof document !== 'undefined' ? document.getElementById('sessionTabs') : null;
+    const collapseSpring = { response: 0.24, damping: 1.0 };
     const jobs = [];
+
+    this.stop(mainNav, ['y']);
+    mainNav.style.transform = 'none';
+
     if (root) {
       jobs.push(this.cssVars(root, {
         '--topbar-current-height': targetH,
         '--terminal-nav-height': targetH,
-      }, {
-        units: { '--topbar-current-height': 'px', '--terminal-nav-height': 'px' },
-        preset: 'ui',
-        immediate: !animate,
-      }));
+        '--smartbar-top': targetH,
+      }, animate
+        ? { units: { '--topbar-current-height': 'px', '--terminal-nav-height': 'px', '--smartbar-top': 'px' }, preset: collapseSpring }
+        : { units: { '--topbar-current-height': 'px', '--terminal-nav-height': 'px', '--smartbar-top': 'px' }, immediate: true }));
     }
-    // 'ui' is a 0.40s reposition spring, which reads as lag on a control the
-    // user expects to answer immediately. Collapse and the chevron share one
-    // short, critically damped spring.
-    const collapseSpring = { response: 0.2, damping: 1.0 };
+    if (smartbar) {
+      jobs.push(this.cssVars(smartbar, {
+        '--smartbar-top': targetH,
+      }, animate
+        ? { units: { '--smartbar-top': 'px' }, preset: collapseSpring }
+        : { units: { '--smartbar-top': 'px' }, immediate: true }));
+    }
+
     jobs.push(this.cssVars(mainNav, {
+      '--topbar-collapse-shift': targetOffset,
       '--topbar-collapse-offset': targetOffset,
     }, animate
-      ? { units: { '--topbar-collapse-offset': 'px' }, preset: collapseSpring }
-      : { units: { '--topbar-collapse-offset': 'px' }, immediate: true }));
-    for (const item of headerItems) {
+      ? { units: { '--topbar-collapse-shift': 'px', '--topbar-collapse-offset': 'px' }, preset: collapseSpring }
+      : { units: { '--topbar-collapse-shift': 'px', '--topbar-collapse-offset': 'px' }, immediate: true }));
+
+    const items = (headerItems && headerItems.length)
+      ? headerItems
+      : Array.from(mainNav.querySelectorAll(':scope > .brand, :scope > .nav-tabs, :scope > .nav-actions'));
+    for (const item of items) {
       if (!item) continue;
-      if (!animate) this.set(item, { y: targetY, opacity: targetOpacity });
-      else jobs.push(this.to(item, { y: targetY, opacity: targetOpacity }, { preset: collapseSpring }));
+      if (!animate) {
+        this.set(item, { y: targetY, opacity: targetOpacity });
+      } else {
+        jobs.push(this.to(item, { y: targetY, opacity: targetOpacity }, { preset: collapseSpring }));
+      }
     }
-    for (const ico of chevrons) {
+
+    const allChevrons = (chevrons && chevrons.length)
+      ? chevrons
+      : Array.from(mainNav.querySelectorAll('.shelf-collapse-ico'));
+    for (const ico of allChevrons) {
       if (!ico) continue;
-      if (!animate) this.set(ico, { rotate: targetRot });
-      else jobs.push(this.to(ico, { rotate: targetRot }, { preset: collapseSpring }));
+      try { this.release(ico); } catch {}
+      ico.removeAttribute('style');
+      const poly = ico.querySelector('polyline');
+      if (poly) {
+        poly.setAttribute('points', collapsed ? '6 9 12 15 18 9' : '18 15 12 9 6 15');
+      }
     }
+
     return Promise.all(jobs);
   },
 
   /**
-   * M07: Tier-1 panel Docked <-> Floating FLIP morph transition (Section 3.4.2 & 4.2.3).
+   * Topbar shelf smooth extend/retract when switching between Terminal view (72px) and other views (56px).
+   * Driven 100% by zephyr_motion.wasm via --z-shelf-ext (0px <-> 16px) and --z-shelf-alpha (0 <-> 1).
    */
-  /**
-   * Topbar shelf smooth extend/retract when switching between Terminal view (83px) and other views (56px).
-   * Driven 100% by zephyr_motion.wasm via --z-shelf-ext so height - paddingBottom === 56px at every frame (zero bounce!).
-   */
-  async topbarViewShelf(mainNav, enteringTerminal, { preset = 'mac' } = {}) {
+  async topbarViewShelf(mainNav, enteringTerminal, { preset = { response: 0.26, damping: 1.0 } } = {}) {
     if (!mainNav) return false;
+    const EXT = 16;
     const token = this._bump(mainNav);
-    const curH = mainNav.getBoundingClientRect?.().height || (enteringTerminal ? 56 : 83);
-    const fromExt = Math.max(0, Math.min(27, Math.round(curH - 56)));
-    const toExt = enteringTerminal ? 27 : 0;
+    const curH = mainNav.getBoundingClientRect?.().height || (enteringTerminal ? 56 : 56 + EXT);
+    const fromExt = enteringTerminal ? Math.max(0, Math.min(EXT, Math.round(curH - 56))) : EXT;
+    const toExt = enteringTerminal ? EXT : 0;
+    const fromAlpha = enteringTerminal ? Number((fromExt / EXT).toFixed(3)) : 1;
+    const toAlpha = enteringTerminal ? 1 : 0;
     const units = { '--z-shelf-ext': 'px', '--z-shelf-alpha': '' };
 
     this.stop(mainNav, ['--z-shelf-ext', '--z-shelf-alpha']);
-    await this.cssVars(mainNav, {
+    // Synchronously seed inline CSS vars BEFORE any await so there is never a 1-frame snap!
+    mainNav.style.setProperty('--z-shelf-ext', fromExt + 'px');
+    mainNav.style.setProperty('--z-shelf-alpha', String(fromAlpha));
+    this.cssVars(mainNav, {
       '--z-shelf-ext': fromExt,
-      '--z-shelf-alpha': enteringTerminal ? (fromExt / 27) : 1,
+      '--z-shelf-alpha': fromAlpha,
     }, { immediate: true, units });
 
     try {
       await this.cssVars(mainNav, {
         '--z-shelf-ext': toExt,
-        '--z-shelf-alpha': enteringTerminal ? 1 : 0,
+        '--z-shelf-alpha': toAlpha,
       }, { preset, units });
     } finally {
       if (this._genOf(mainNav) === token) {
@@ -3843,35 +3870,56 @@ export const Motion = {
     return true;
   },
 
-  async panelDockMorph(panel, mutateLayoutFn, { preset = 'mac' } = {}) {
-    if (!panel) {
+  async panelDockMorph(panel, mutateLayoutFn, { preset = { response: 0.24, damping: 1.0 } } = {}) {
+    if (!panel || typeof mutateLayoutFn !== 'function') {
       mutateLayoutFn?.();
       return false;
     }
     const token = this._bump(panel);
-    const csBefore = getComputedStyle(panel);
-    const wasVisible = csBefore.display !== 'none' && csBefore.visibility !== 'hidden' && panel.offsetWidth > 20;
+    const csBefore = typeof getComputedStyle === 'function' ? getComputedStyle(panel) : null;
+    const wasVisible = csBefore && csBefore.display !== 'none' && csBefore.visibility !== 'hidden' && panel.offsetWidth > 16;
     const fromRect = wasVisible ? panel.getBoundingClientRect() : null;
-    const fromRadius = parseFloat(csBefore.borderTopLeftRadius) || (panel.classList.contains('docked-left') || panel.classList.contains('docked-right') ? 0 : 16);
+    const fromRadius = parseFloat(csBefore?.borderTopLeftRadius) || (panel.classList.contains('docked-left') || panel.classList.contains('docked-right') ? 0 : 16);
 
-    panel.classList.remove('z-panel-morphing', 'z-panel-closing');
-    this.stop(panel, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']);
-    mutateLayoutFn?.();
+    const clearVars = (el) => {
+      ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => {
+        el.style.removeProperty(k);
+      });
+    };
 
-    if (!fromRect || fromRect.width < 20 || fromRect.height < 20) return true;
+    panel.classList.remove('z-panel-morphing', 'z-panel-opening', 'z-panel-closing');
+    this.stop(panel, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity', 'x', 'y', 'scale', 'opacity']);
+    clearVars(panel);
+    panel.style.transform = '';
+    panel.style.transition = 'none';
+
+    const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    if (page?.dataset) page.dataset.dockMorphInFlight = '1';
+
+    mutateLayoutFn();
+
+    if (!fromRect || fromRect.width < 16 || fromRect.height < 16) {
+      if (page?.dataset) delete page.dataset.dockMorphInFlight;
+      return true;
+    }
     void panel.offsetWidth;
     const toRect = panel.getBoundingClientRect();
-    if (!toRect || toRect.width < 20 || toRect.height < 20) return true;
+    if (!toRect || toRect.width < 16 || toRect.height < 16) {
+      if (page?.dataset) delete page.dataset.dockMorphInFlight;
+      return true;
+    }
 
     const dx = Math.abs(fromRect.left - toRect.left);
     const dy = Math.abs(fromRect.top - toRect.top);
     const dw = Math.abs(fromRect.width - toRect.width);
     const dh = Math.abs(fromRect.height - toRect.height);
-    if (dx + dy + dw + dh < 4) return true;
+    if (dx + dy + dw + dh < 4) {
+      if (page?.dataset) delete page.dataset.dockMorphInFlight;
+      return true;
+    }
 
-    const isNowDocked = panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || !!panel.dataset.pinSide;
+    const isNowDocked = panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || !!panel.dataset.unifiedDockSide || !!panel.dataset.pinSide;
     const toRadius = isNowDocked ? 0 : 16;
-    const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
     const pageRect = page.getBoundingClientRect?.() || { left: 0, top: 0 };
 
     const fromVars = {
@@ -3900,35 +3948,28 @@ export const Motion = {
     };
 
     panel.classList.add('z-panel-morphing');
-    await this.cssVars(panel, fromVars, { immediate: true, units });
-    const guard = withSettleSafetyGuard(panel, 520, () => {
-      if (this._genOf(panel) === token) panel.classList.remove('z-panel-morphing');
-    });
+    this.cssVars(panel, fromVars, { immediate: true, units });
+    void panel.offsetWidth;
+
+    const cleanup = () => {
+      if (page?.dataset) delete page.dataset.dockMorphInFlight;
+      if (this._genOf(panel) === token) {
+        panel.classList.remove('z-panel-morphing');
+        clearVars(panel);
+        panel.style.transition = '';
+        window.dispatchEvent(new Event('resize'));
+      }
+    };
+    const guard = withSettleSafetyGuard(panel, 420, cleanup);
     try {
       await this.cssVars(panel, toVars, { preset, units });
     } finally {
       guard();
-      if (this._genOf(panel) === token) {
-        panel.classList.remove('z-panel-morphing');
-        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => {
-          panel.style.removeProperty(k);
-        });
-      }
+      cleanup();
     }
     return true;
   },
 
-  /**
-   * Split-screen terminal window Fullscreen morph (2 windows -> 1 maximized window).
-   * Driven by zephyr_motion.wasm via Motion.cssVars without CSS transform distortion on child iframes.
-   */
-
-  /**
-   * WASM-driven avoidance animation for the existing 1st terminal window when a 2nd terminal
-   * card flips in from the Dashboard into split-screen (slot-2).
-   * Smoothly springs the 1st terminal from full workspace width into its left 50% slot (slot-1)
-   * in exact sync with the 3D card flip.
-   */
   async terminalWindowAvoidance(existingWin, fromBox, toBox, { preset = { response: 0.46, damping: 0.96 } } = {}) {
     if (!existingWin || !fromBox || !toBox) return false;
     const token = this._bump(existingWin);

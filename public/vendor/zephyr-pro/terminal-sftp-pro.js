@@ -1,4 +1,4 @@
-import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261018-ui60';
+import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261018-ui103';
 if (typeof window !== 'undefined' && ZephyrWasmMotion) { window.Motion = ZephyrWasmMotion; }
 
 export const IPV4_OR_IPV6_RE = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\[?(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]+\]?(?::\d{1,5})?/g;
@@ -1159,7 +1159,7 @@ export function installTerminalSftpPro(ctx) {
     }
   }
 
-  function togglePanelDockState(panel, explicitSide) {
+  function togglePanelDockState(panel, explicitSide, { userTriggered = true } = {}) {
     if (!panel) return;
     const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
     const isDocked = panel.classList.contains('docked-right') || panel.classList.contains('docked-left') || !!panel.dataset.unifiedDockSide;
@@ -1244,11 +1244,11 @@ export function installTerminalSftpPro(ctx) {
         });
         if (Motion?.panelResizeRing) Motion.panelResizeRing(panel, false);
       }
-      syncHostWindowDockAndFloatState({ userTriggered: true });
+      syncHostWindowDockAndFloatState({ userTriggered });
     };
 
     if (Motion?.panelDockMorph) {
-      Motion.panelDockMorph(panel, applyMutation, { preset: 'mac' });
+      Motion.panelDockMorph(panel, applyMutation, { preset: { response: 0.24, damping: 1.0 } });
     } else {
       applyMutation();
     }
@@ -2318,9 +2318,9 @@ export function installTerminalSftpPro(ctx) {
       const dockedPanel = document.querySelector('.z-unified-panel.docked-left, .z-unified-panel.docked-right');
       if (dockedPanel) {
         if (d.slotSide === 'left' && dockedPanel.classList.contains('docked-right')) {
-          togglePanelDockState(dockedPanel, 'left');
+          togglePanelDockState(dockedPanel, 'left', { userTriggered: false });
         } else if (d.slotSide === 'right' && dockedPanel.classList.contains('docked-left')) {
-          togglePanelDockState(dockedPanel, 'right');
+          togglePanelDockState(dockedPanel, 'right', { userTriggered: false });
         }
       }
     }

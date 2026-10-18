@@ -61,7 +61,7 @@
     --terminal-shelf-open-padding: 27px;
     --terminal-shelf-line-height: 4px;
     --smartbar-handle-height: 20px;
-    --terminal-shelf-line-center-offset: calc((var(--terminal-shelf-open-padding) - var(--terminal-shelf-rest-padding)) / 2);
+    --terminal-shelf-line-center-offset: 11px;
     --smartbar-shelf-offset: calc(var(--terminal-shelf-line-center-offset) + var(--smartbar-handle-height) / 2);
     --smartbar-panel-drop: 38px;
 }
@@ -1356,11 +1356,11 @@ body.terminal-mode .app-shell {
     overflow: hidden;
 }
 .terminal-smartbar {
-    --smartbar-top: 61px;
+    --smartbar-top: 72px;
     --smartbar-bar-width: 72px;
-    --smartbar-bar-height: var(--terminal-shelf-line-height, 4px);
+    --smartbar-bar-height: 4px;
     position: fixed;
-    top: calc(var(--smartbar-top) - var(--smartbar-shelf-offset));
+    top: calc(var(--smartbar-top) - 11px);
     left: 50%;
     right: auto;
     width: 0;
@@ -1374,10 +1374,10 @@ body.terminal-mode .app-shell {
 .terminal-smartbar .empty-state { display: none; }
 .smartbar-handle {
     position: absolute;
-    top: 0;
+    top: -10px;
     left: 50%;
     width: 118px;
-    height: var(--smartbar-handle-height);
+    height: 20px;
     padding: 0;
     border: 0;
     border-radius: 0;
@@ -19282,15 +19282,13 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
     padding: 0 20px;
     pointer-events: none;
     opacity: 0;
-    transform: translate3d(0, -8px, 0);
-    transition: opacity var(--terminal-shelf-duration, .56s) ease,
-                transform var(--terminal-shelf-duration, .56s) var(--terminal-shelf-ease, cubic-bezier(.32,.72,0,1));
+    transform: none;
+    transition: opacity var(--terminal-shelf-duration, .56s) ease;
     z-index: 3;
 }
 
 body.terminal-mode .main-nav .terminal-shelf-bar {
     opacity: 1;
-    transform: translate3d(0, 0, 0);
 }
 
 .terminal-shelf-collapse-btn {

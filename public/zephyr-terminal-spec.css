@@ -3396,12 +3396,16 @@ body.app-body:not(.terminal-mode) .main-nav {
   --topbar-collapse-offset: 0px;
 }
 body.app-body.terminal-mode .main-nav {
-  --z-shelf-ext: 27px;
+  --z-shelf-ext: 16px;
 }
 body.app-body .main-nav {
   height: calc(56px + var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px)) !important;
   min-height: calc(56px + var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px)) !important;
   max-height: calc(56px + var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px)) !important;
+  transform: none !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  overflow: hidden !important;
   padding-top: 0 !important;
   padding-bottom: max(0px, calc(var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px))) !important;
   transition: background-color 0.25s ease, border-color 0.25s ease !important;
@@ -3530,12 +3534,20 @@ html body .z-unified-secondary-panel:not(.z-panel-morphing):not(.panel-fullscree
  *       .main-nav 高度由 WASM 缩至 27px，同时开启 overflow: hidden 裁切上移的主顶栏内容，
  *       仅露出底部 27px 伸出架（#terminalShelfBar）与正中小白条把手！ */
 body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav {
-  overflow: hidden !important;
+  overflow: visible !important;
+}
+body.app-body.terminal-mode.terminal-topbar-collapsed,
+body.app-body.terminal-mode.terminal-topbar-collapsed .app-shell {
+  overflow: visible !important;
 }
 body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav > .brand,
 body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav > .nav-tabs,
-body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav > .nav-actions {
+body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav > .nav-actions,
+body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav > #liquidGlassCanvas {
+  opacity: 0 !important;
+  visibility: hidden !important;
   pointer-events: none !important;
+  transition: opacity 160ms ease, visibility 160ms !important;
 }
 
 
@@ -3546,7 +3558,7 @@ body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav > .nav-actions {
 /* 23.1 终端页顶栏（body.terminal-mode .main-nav）强制默认 --z-shelf-ext: 27px，
  *      彻底杜绝因变量回退 0px 导致 27px 伸出架（^ 按钮与小白条）与主顶栏穿模重合！ */
 body.app-body.terminal-mode:not(.terminal-topbar-collapsed) .main-nav {
-  --z-shelf-ext: 27px;
+  --z-shelf-ext: 16px;
 }
 /* 收起态的高度只由 zephyr_motion.wasm 逐帧写入 --topbar-collapse-offset 决定，
  * 这里不再写死 height，也不再放 CSS transition，否则会和引擎抢同一条通道。 */
@@ -3754,17 +3766,43 @@ body.desktop-embed .fm-editor-modal .cm-mobile-toolbar {
 }
 
 
-/* 23.6 #terminalShelfBar 物理锚定在主顶栏 56px 下方（top: calc(56px + var(--topbar-collapse-offset, 0px))），
- *      即使在顶栏伸缩动画中途也绝不可能向上侵入 0..56px 的品牌标/导航胶囊/登出按钮区！ */
+/* 23.6 #terminalShelfBar 精简为 16px 伸出量（展开态总高 72px，收起态总高 22px）：
+ *      物理锚定在 bottom: 0（高 22px，中心距底边 11px），且透明度 100% 由 WASM --z-shelf-alpha 驱动，
+ *      彻底消除卡片翻转进入终端页时顶部伸出栏与小白条的任何闪烁！ */
 body.app-body.terminal-mode #terminalShelfBar,
 body.app-body.terminal-mode .terminal-shelf-bar {
   position: absolute !important;
   left: 0 !important;
   right: 0 !important;
-  top: calc(56px + var(--topbar-collapse-offset, 0px)) !important;
-  bottom: auto !important;
-  height: 27px !important;
+  top: max(0px, calc(50px + var(--topbar-collapse-offset, 0px))) !important;
+  bottom: 0 !important;
+  height: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 20px !important;
+  transform: none !important;
+  opacity: var(--z-shelf-alpha, 1) !important;
+  visibility: visible !important;
+  transition: none !important;
   pointer-events: none !important;
+  z-index: 95 !important;
+}
+body.app-body.terminal-mode .terminal-shelf-collapse-btn {
+  width: 26px !important;
+  height: 16px !important;
+}
+body.app-body.terminal-mode .main-nav::after {
+  bottom: 9px !important;
+  height: 4px !important;
+  opacity: var(--z-shelf-alpha, 1) !important;
+  visibility: visible !important;
+  clip-path: none !important;
+  transform: translate3d(-50%, 0, 0) !important;
+  transition: none !important;
+}
+body.app-body.terminal-mode .main-nav.terminal-shelf-dock-open::after {
+  opacity: 0 !important;
 }
 
 /* 23.7 所有一级与二级浮窗标题栏强制 touch-action: none 与 user-select: none，
@@ -3978,4 +4016,24 @@ html[data-theme="dark"] .z-unified-secondary-panel .fm-titlebar-head,
 html[data-theme="dark"] .z-unified-secondary-panel .panel-titlebar {
   background: color-mix(in srgb, var(--surface, #1B1C20) 90%, var(--text, #FFFFFF)) !important;
   border-bottom-color: var(--border) !important;
+}
+
+
+/* Keep the 1st terminal visible while it slides in from the left via WASM during a 2nd-terminal card flip */
+body.terminal-card-flip-preparing #view-terminal:has(.terminal-window-morphing),
+body.terminal-card-flip-preparing #terminalWorkspace:has(.terminal-window-morphing) {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+body.terminal-card-flip-preparing #terminalWorkspace > .terminal-window:not(.terminal-window-morphing),
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window:not(.terminal-window-morphing) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+body.terminal-card-flip-preparing #terminalWorkspace > .terminal-window.terminal-window-morphing,
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window.terminal-window-morphing {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: none !important;
+  z-index: 65 !important;
 }

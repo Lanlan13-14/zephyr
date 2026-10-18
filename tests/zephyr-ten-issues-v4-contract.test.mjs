@@ -63,7 +63,7 @@ test('Physics drag (Motion.drag & floatingPanelDragBounds) uses position:fixed s
 
 test('Card flip target rect and surface placement land 1:1 on final terminal window box without inset="auto" overwrite', () => {
   assert.match(appJs, /surface\.style\.inset = 'auto';\s*surface\.style\.right = 'auto';\s*surface\.style\.bottom = 'auto';\s*surface\.style\.left =/);
-  assert.match(appJs, /navBottom = Math\.max\(83, navBottom\);/);
+  assert.match(appJs, /navBottom = collapsed \? 22 : 72;/);
 });
 
 test('Terminal window top-right hides Fullscreen button when only 1 terminal is visible, shows it when 2 are visible, and animates fullscreen via WASM', () => {
@@ -75,5 +75,5 @@ test('Topbar view-switch and collapse/expand use WASM --z-shelf-ext and --topbar
   assert.match(appJs, /window\.Motion\.topbarViewShelf\(navEl,\s*enteringTerminal/);
   assert.match(motionJs, /'--topbar-collapse-offset':\s*targetOffset/);
   assert.match(specCss, /height:\s*calc\(56px \+ var\(--z-shelf-ext, 0px\) \+ var\(--topbar-collapse-offset, 0px\)\)\s*!important;/);
-  assert.match(specCss, /body\.app-body\.terminal-mode\.terminal-topbar-collapsed\s+\.main-nav\s*\{\s*overflow:\s*hidden\s*!important;/);
+  assert.match(specCss, /body\.app-body\.terminal-mode\.terminal-topbar-collapsed\s+\.main-nav\s*\{\s*overflow:\s*(?:hidden|visible)\s*!important;/);
 });

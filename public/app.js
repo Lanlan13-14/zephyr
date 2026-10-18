@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261018-ui63';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261018-ui103';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261018-ui63');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261018-ui103');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -2434,17 +2434,13 @@ function setTerminalTopbarCollapsed(collapsed) {
         const chevrons = Array.from(document.querySelectorAll('[data-shelf-collapse-toggle] .shelf-collapse-ico'));
         window.Motion.topbarShelfCollapse(nav, next, { chevrons, animate: true });
     } else if (nav) {
-        nav.style.setProperty('--topbar-collapse-offset', next ? '-56px' : '0px');
+        nav.style.setProperty('--topbar-collapse-offset', next ? '-50px' : '0px');
+        nav.style.setProperty('--topbar-collapse-shift', next ? '-50px' : '0px');
     }
     window.clearTimeout(shelfCollapseTimer);
     /* 折叠会改变顶栏高度，Smartbar 定位与终端可视高度都要重新测量。 */
     try {
-        syncTerminalSmartbarTop();
         syncTerminalShelfLineState();
-        const nav = document.querySelector('.main-nav');
-        if (nav) {
-            document.documentElement.style.setProperty('--terminal-nav-height', `${Math.round(nav.getBoundingClientRect().height)}px`);
-        }
         scheduleTerminalLayoutStabilize('shelf-collapse-toggle', { focus: true });
     } catch { /* 非终端页忽略 */ }
     try { scheduleWorkspaceSave('shelf-collapse-toggle'); } catch {}
@@ -2458,6 +2454,13 @@ function resetTerminalTopbarCollapsedIfLeaving(isTerminal) {
         document.querySelectorAll('[data-shelf-collapse-toggle]').forEach((btn) => {
             btn.setAttribute('aria-expanded', 'true');
         });
+        const nav = document.querySelector('.main-nav');
+        if (nav && window.Motion?.topbarShelfCollapse) {
+            window.Motion.topbarShelfCollapse(nav, false, { animate: false });
+        } else if (nav) {
+            nav.style.removeProperty('--topbar-collapse-offset');
+            nav.style.removeProperty('--topbar-collapse-shift');
+        }
     }
 }
 
@@ -2485,8 +2488,8 @@ function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     const leavingTerminal = target !== 'terminal' && wasTerminal;
     if (leavingTerminal) closeTerminalSmartbarForViewLeave();
     const navEl = document.querySelector('.main-nav');
-    if (navEl && (enteringTerminal || leavingTerminal) && !enteringAnimated && window.Motion?.topbarViewShelf) {
-        void window.Motion.topbarViewShelf(navEl, enteringTerminal, { preset: 'mac' });
+    if (navEl && (enteringTerminal || leavingTerminal) && window.Motion?.topbarViewShelf) {
+        void window.Motion.topbarViewShelf(navEl, enteringTerminal, { preset: { response: 0.26, damping: 1.0 } });
     } else if (navEl) {
         try {
             window.Motion?._bump?.(navEl);
@@ -2556,26 +2559,10 @@ function terminalCardFlipNavBottom() {
     return Math.max(0, Math.round(r.bottom));
 }
 function settleTerminalShelfForCardFlip() {
-    const nav = document.querySelector('.main-nav');
-    if (!nav) return 0;
-    const oldTransition = nav.style.getPropertyValue('transition');
-    const oldTransitionPriority = nav.style.getPropertyPriority('transition');
-    const oldPaddingBottom = nav.style.getPropertyValue('padding-bottom');
-    const oldPaddingPriority = nav.style.getPropertyPriority('padding-bottom');
-    const rootStyle = getComputedStyle(document.documentElement);
-    const openPadding = rootStyle.getPropertyValue('--terminal-shelf-open-padding').trim() || '27px';
-    // The card owns the visible transition. Snap the shelf to its terminal
-    // layout in the same task so the flip stage and live terminal share one box.
-    nav.style.setProperty('transition', 'none', 'important');
-    nav.style.setProperty('padding-bottom', openPadding, 'important');
-    void nav.offsetWidth;
-    const bottom = Math.max(0, Math.round(nav.getBoundingClientRect().bottom));
-    document.documentElement.style.setProperty('--terminal-nav-height', `${Math.round(nav.getBoundingClientRect().height)}px`);
-    if (oldPaddingBottom) nav.style.setProperty('padding-bottom', oldPaddingBottom, oldPaddingPriority);
-    else nav.style.removeProperty('padding-bottom');
-    if (oldTransition) nav.style.setProperty('transition', oldTransition, oldTransitionPriority);
-    else nav.style.removeProperty('transition');
-    return bottom;
+    const collapsed = document.body.classList.contains('terminal-topbar-collapsed');
+    const h = collapsed ? 22 : 72;
+    document.documentElement.style.setProperty('--terminal-nav-height', h + 'px');
+    return h;
 }
 function terminalCardSourceRadius(sourceEl) {
     const card = sourceEl?.classList?.contains?.('connection-card')
@@ -2592,55 +2579,67 @@ function terminalCardSourceRadius(sourceEl) {
     return Number.isFinite(lg) && lg > 0 ? lg : 16;
 }
 function terminalCardFlipTargetRect(_origin) {
-    const vw = window.innerWidth || document.documentElement.clientWidth || 360;
-    const vh = window.innerHeight || document.documentElement.clientHeight || 640;
-    let navBottom = settleTerminalShelfForCardFlip();
-    if (vw >= 761 && !document.body.classList.contains('terminal-topbar-collapsed')) {
-        navBottom = Math.max(83, navBottom);
+    const vw = window.innerWidth || document.documentElement.clientWidth || 1280;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+    const nav = document.querySelector('.main-nav');
+    const inTerminal = document.body.classList.contains('terminal-mode');
+    const collapsed = document.body.classList.contains('terminal-topbar-collapsed');
+    let navBottom = 72;
+    if (vw >= 761) {
+        navBottom = collapsed ? 22 : 72;
+    } else if (nav) {
+        const navRect = nav.getBoundingClientRect();
+        const extraShelf = inTerminal ? 0 : 15;
+        navBottom = Math.max(0, Math.round(navRect.bottom + extraShelf));
     }
     navBottom = Math.max(0, Math.round(navBottom));
-    const hosted = terminalCardFlipMotion?.hostedWindow;
-    const ws = document.getElementById('terminalWorkspace');
     const padX = vw >= 761 ? 16 : 0;
     const padTop = vw >= 761 ? 12 : 0;
     const padBottom = vw >= 761 ? 18 : 0;
-    const fullW = Math.max(200, vw - padX * 2);
     const fullH = Math.max(200, vh - navBottom - padTop - padBottom);
-    const visibleCount = visibleTerminalTabs().length;
+    const visibleTabs = visibleTerminalTabs();
+    const visibleCount = visibleTabs.length;
     const maxW = getEffectiveTerminalMaxWindows();
     if (vw >= 761 && visibleCount >= 2 && maxW >= 2) {
-        const gutter = 14;
-        const halfW = Math.round((fullW - gutter) / 2);
-        const visibleWins = ws ? Array.from(ws.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)')) : [];
-        const isSecondSlot = hosted ? (visibleWins.indexOf(hosted) === 1 || (visibleWins.length >= 1 && visibleWins[0] !== hosted)) : false;
-        const siblingPinned = visibleWins.some((w) => w !== hosted && (
+        const ws = document.getElementById('terminalWorkspace');
+        const siblingPinned = Array.from(ws?.querySelectorAll?.(':scope > .terminal-window:not(.minimized-keepalive)') || []).some((w) =>
             pinnedStateByTabId.get(String(w.dataset.window || '')) === true
             || w.classList.contains('window-has-dock-left')
             || w.classList.contains('window-has-dock-right')
-        ));
+        );
         if (siblingPinned && settings?.terminal?.splitDockSlideOutInactive !== false) {
             const pane80W = Math.round(vw * 0.8 - 23);
+            const rightSlotLeft = Math.max(padX, vw - padX - pane80W);
             return {
-                left: isSecondSlot ? (vw - padX - pane80W) : padX,
+                left: rightSlotLeft,
                 top: navBottom + padTop,
+                stageTop: padTop,
                 width: pane80W,
                 height: fullH,
                 topBound: navBottom,
                 fillStage: false,
             };
         }
+        const innerW = Math.max(320, vw - padX * 2);
+        const gutter = 14;
+        const slot1W = Math.round(innerW * 0.496);
+        const slot2Left = padX + slot1W + gutter;
+        const slot2W = Math.max(160, vw - padX - slot2Left);
         return {
-            left: isSecondSlot ? (padX + halfW + gutter) : padX,
+            left: slot2Left,
             top: navBottom + padTop,
-            width: halfW,
+            stageTop: padTop,
+            width: slot2W,
             height: fullH,
             topBound: navBottom,
             fillStage: false,
         };
     }
+    const fullW = Math.max(200, vw - padX * 2);
     return {
         left: padX,
         top: navBottom + padTop,
+        stageTop: padTop,
         width: fullW,
         height: fullH,
         topBound: navBottom,
@@ -2653,7 +2652,8 @@ function placeTerminalCardFlipSurface(surface, rect) {
     surface.style.right = 'auto';
     surface.style.bottom = 'auto';
     surface.style.left = `${rect.left}px`;
-    surface.style.top = `${rect.top}px`;
+    const localTop = typeof rect.stageTop === 'number' ? rect.stageTop : Math.max(0, rect.top - (rect.topBound || 0));
+    surface.style.top = `${localTop}px`;
     surface.style.width = `${rect.width}px`;
     surface.style.height = `${rect.height}px`;
 }
@@ -2936,14 +2936,9 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     // Lay out the terminal shelf before the back face becomes readable. The
     // full card remains above it; the nav padding is snapped to final geometry
     // so there can be no post-handoff downward frame.
+    document.body.classList.remove('terminal-card-flip-preparing');
     document.body.classList.add('terminal-card-flip-handoff');
-    const nav = document.querySelector('.main-nav');
-    const navStyle = nav ? getComputedStyle(nav) : null;
-    const shelfFrom = navStyle ? (parseFloat(navStyle.paddingBottom) || 10) : 10;
-    const shelfTo = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--terminal-shelf-open-padding')) || 27;
     applySwitchViewCore('terminal', { enteringAnimated: true });
-    // If a 1st terminal window is already open in the workspace while this 2nd card flips into slot-2,
-    // smoothly spring the 1st terminal from full workspace width into its left 50% slot (slot-1) via WASM!
     try {
         const ws = document.getElementById('terminalWorkspace');
         const vw = window.innerWidth || document.documentElement.clientWidth || 1280;
@@ -2956,39 +2951,36 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
                 const padX = 16;
                 const padTop = 12;
                 const padBottom = 18;
-                const gutter = 14;
-                const fullW = Math.max(200, vw - padX * 2);
-                const fullH = Math.max(200, vh - topBound - padTop - padBottom);
-                const halfW = Math.round((fullW - gutter) / 2);
                 const vTop = Math.round(topBound + padTop);
-                const anyPinned = pinnedStateByTabId.get(String(win1.dataset.window || '')) === true
+                const fullH = Math.max(200, vh - topBound - padTop - padBottom);
+                const siblingPinned = pinnedStateByTabId.get(String(win1.dataset.window || '')) === true
                     || win1.classList.contains('window-has-dock-left')
                     || win1.classList.contains('window-has-dock-right');
-                const pane80W = Math.round(vw * 0.8 - 23);
-                const slideMag = Math.max(0, Math.round(2 * pane80W - vw + 2 * padX + gutter));
-                const fromBox = { left: padX, top: vTop, width: fullW, height: fullH };
-                const toBox = anyPinned
-                    ? { left: padX - slideMag, top: vTop, width: pane80W, height: fullH }
-                    : { left: padX, top: vTop, width: halfW, height: fullH };
-                void Motion.terminalWindowAvoidance(win1, fromBox, toBox, {
-                    preset: { response: 0.46, damping: 0.96 },
-                });
+                if (siblingPinned && settings?.terminal?.splitDockSlideOutInactive !== false) {
+                    const pane80W = Math.round(vw * 0.8 - 23);
+                    const slideMag = Math.max(0, Math.round(vw * 0.6));
+                    const fromBox = { left: -pane80W, top: vTop, width: pane80W, height: fullH };
+                    const toBox = { left: padX - slideMag, top: vTop, width: pane80W, height: fullH };
+                    win1.style.opacity = '0.9';
+                    void Motion.terminalWindowAvoidance(win1, fromBox, toBox, {
+                        preset: { response: 0.46, damping: 0.98 },
+                    });
+                } else {
+                    const innerW = Math.max(320, vw - padX * 2);
+                    const slot1W = Math.round(innerW * 0.496);
+                    const fromBox = { left: -slot1W - 24, top: vTop, width: slot1W, height: fullH };
+                    const toBox = { left: padX, top: vTop, width: slot1W, height: fullH };
+                    win1.style.opacity = '1';
+                    void Motion.terminalWindowAvoidance(win1, fromBox, toBox, {
+                        preset: { response: 0.46, damping: 0.98 },
+                    });
+                }
             }
         }
     } catch (_) {}
-    if (nav) {
-        Motion.cssVars(nav, { '--terminal-card-shelf-line-opacity': 0 }, { immediate: true });
-        Motion.set(nav, { y: shelfFrom - shelfTo });
-        void nav.offsetHeight;
-    }
     syncTerminalSmartbarTop();
     syncTerminalShelfLineState();
-
-    // Top shelf catches up first; the card keeps the slower reference cadence.
-    const shelfJobs = nav ? [
-        Motion.to(nav, { y: 0 }, { preset: { response: 0.22, damping: 1 } }),
-        Motion.cssVars(nav, { '--terminal-card-shelf-line-opacity': 1 }, { preset: { response: 0.40, damping: 0.96 }, delay: 0.10 }),
-    ] : [];
+    const shelfJobs = [];
 
     // One cadence for the whole gesture. Geometry and rotation are separate
     // DOM responsibilities but use the same Go flip standard and start frame.
@@ -3011,10 +3003,7 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     Motion.set(rotor, { rotateY: -180 });
     if (scrim) Motion.set(scrim, { opacity: 0.55 });
     Promise.allSettled([...jobs, ...shelfJobs]).catch(() => {});
-    if (nav) {
-        Motion.stop(nav, ['y', '--terminal-card-shelf-line-opacity']);
-        Motion.set(nav, { y: 0, '--terminal-card-shelf-line-opacity': 1 });
-    }
+
     terminalCardFlipMotion.phase = 'open';
     return true;
 }
@@ -3050,26 +3039,14 @@ async function finishTerminalCardFlipOpenHandoff() {
     // full viewport off the left edge and let the layout morph below slide
     // them in from outside the screen. The window that IS the flipping card is
     // excluded: it morphs from the card's end box, not from off screen.
-    const slideInFromLeft = captureCardFlipOffscreenSlideIn();
     restoreCardFlipHostedWindow();
     Object.assign(win.style, {
         visibility: 'visible', opacity: '1', pointerEvents: '', animation: 'none',
         transition: 'none', transform: 'none', filter: 'none',
     });
-    // The restored node is back under #terminalWorkspace, so the normal
-    // renderer reuses this exact iframe and assigns the real layout class,
-    // slot-N placement and splitter tracks in the same JS task.
     syncVisualLayout({ preserve: true });
     renderTerminalWorkspace();
-    // Same-frame handoff: the exact back-face node is now in the exact final
-    // box; only then remove the flip surface and reveal the terminal view.
     document.body.classList.remove('terminal-card-flip-preparing', 'terminal-card-flip-animating', 'terminal-card-flip-handoff');
-    // Release the flip-only pins. `[data-card-flip-radius]` carries
-    // `transform/transition/filter/animation: none !important`, which outranks
-    // element.animate() in the cascade — leaving it on froze this window for
-    // every later layout morph while its siblings moved, so windows ended up
-    // overlapping and corners were covered. Keep only the inline
-    // `animation: none` so the entrance keyframes cannot replay.
     releaseCardFlipWindowPins(win);
     if (Motion && surface) {
         Motion.stop(surface);
@@ -3077,29 +3054,9 @@ async function finishTerminalCardFlipOpenHandoff() {
         Motion.set(surface, { opacity: 0 });
         if (scrim) Motion.set(scrim, { opacity: 0 });
     }
-    if (Motion) {
-        const nav = document.querySelector('.main-nav');
-        if (nav) Motion.release(nav);
-    }
+
     resetTerminalCardFlipSurface(Motion);
-    // The flip always ends full-stage. With a multi-window layout the final box
-    // is one slot, so morph from the flip's end box into that slot instead of
-    // snapping.
-    //
-    // This must be gated on a MATERIAL difference, not on the morph's own 1px
-    // threshold. In a single-window layout the window is inset by the
-    // workspace's 1px border, so |dx|+|dy| is 2 and the morph would fire for a
-    // 1px nudge — and `.layout-morphing .terminal-frame` is `pointer-events:
-    // none`, which would leave a freshly opened terminal dead to input for the
-    // whole 560ms. Compare against the settled box and only morph on a real
-    // slot change.
-    if (shouldSettleCardFlipIntoSlot(win, stageRect)) {
-        animateTerminalWindowLayoutFrom(new Map([[win.dataset.window, stageRect]]), { reason: 'card-flip-settle' });
-    }
-    // The panes that were already open slide in from off the left edge on the
-    // WASM motion engine, starting once the incoming card is nearly down, so
-    // the two reads as one move rather than the old pane popping into place.
-    slideExistingPanesInFromLeft(slideInFromLeft);
+    applySplitSlideState({ animate: false });
     terminalCardFlipMotion.phase = 'settled';
     terminalCardFlipMotion.originRect = null;
     terminalCardFlipMotion.sourceEl = null;
@@ -5489,27 +5446,23 @@ function applySplitSlideState({ animate = true } = {}) {
     ws.classList.toggle('split-dock-slide-enabled', isTwoPane && slideSettingAllowed);
     ws.classList.toggle('has-docked-panel', hasDocked);
 
-    /* 活动窗格：沿用现有的 activeTerminalTab，映射到 slot-1 / slot-2 */
     const slots = ['slot-1', 'slot-2'];
-    // The pane that keeps the 80% is the one the user acted in, which
-    // activateTerminalPaneById marks .active. The other pane slides off.
-    const activeSlot = slots.find((cls) => ws.querySelector(':scope > .terminal-window.' + cls + '.active')) || 'slot-1';
+    // Default activeSlot to 2 (the newly opened 2nd terminal on the right keeps 80%) unless slot-1 is explicitly clicked
+    const activeSlot = slots.find((cls) => ws.querySelector(':scope > .terminal-window.' + cls + '.active')) || 'slot-2';
     ws.classList.toggle('active-slot-1', activeSlot === 'slot-1');
     ws.classList.toggle('active-slot-2', activeSlot === 'slot-2');
 
     ensureSplitSlideShields();
 
-    requestAnimationFrame(() => {
-        if (window.Motion?.splitDockSlide) {
-            window.Motion.splitDockSlide(ws, {
-                hasDockedPanel: hasDocked,
-                activeSlot: activeSlot === 'slot-2' ? 2 : 1,
-                broadcastActive: broadcast,
-                gap: 14,
-                animate,
-            });
-        }
-    });
+    if (window.Motion?.splitDockSlide) {
+        window.Motion.splitDockSlide(ws, {
+            hasDockedPanel: hasDocked,
+            activeSlot: activeSlot === 'slot-2' ? 2 : 1,
+            broadcastActive: broadcast,
+            gap: 14,
+            animate,
+        });
+    }
 }
 
 /* 子 iframe 上报停靠状态（计划 4.2.3 规则 B 上行消息） */
@@ -5561,14 +5514,14 @@ function bindTerminalPanelPinStateMessages() {
         if (data.userTriggered || (!wasPinned && nowPinned)) {
             activateTerminalPaneById(tabId);
         }
-        // Re-rendering here replays the element.animate layout morph, which
-        // holds the pane geometry for its whole 560ms and only then lets the
-        // engine slide run. The slide is the animation for a pin; the morph
-        // is not, so update the dock classes without it.
-        renderTerminalTabs({ rebuildWorkspace: false });
+        // The dock classes are toggled by the other pin listener. Re-rendering
+        // the tabs here restarts the layout morph, which fights the slide and
+        // makes the pin feel like a jump. The slide is the whole response.
+        const ws = document.getElementById('terminalWorkspace');
+        if (ws) ws.classList.toggle('has-docked-panel', [...pinnedStateByTabId.values()].some(Boolean));
         applySplitSlideState();
     });
-    /* 点击 20% 露头遮罩：拉回该窗格 */
+    /* 点击 20% 露头遮罩：即时拉回该窗格 (指哪打哪) */
     document.addEventListener('click', (e) => {
         const shield = e.target.closest && e.target.closest('.split-slide-wake-shield');
         if (!shield) return;
@@ -5576,13 +5529,11 @@ function bindTerminalPanelPinStateMessages() {
         if (!win) return;
         e.preventDefault();
         e.stopPropagation();
-        /* 计划 4.2.3：点击 20% 露头即把该窗格拉回主视野。
-         * 窗格 id 挂在 data-window 上（与 iframe 的 data-frame 一致）。 */
         const tabId = win.dataset.window || win.querySelector('iframe.terminal-frame')?.dataset.frame || '';
         if (tabId) {
-            try { showTerminalSessionInWorkspace(String(tabId)); } catch (err) { console.warn('[split-slide] activate failed', err); }
+            activateTerminalPaneById(String(tabId));
+            applySplitSlideState({ animate: true });
         }
-        applySplitSlideState();
     }, true);
 }
 
@@ -5913,8 +5864,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261018-ui63`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261018-ui63`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261018-ui103`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261018-ui103`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -15156,7 +15107,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261018-ui63')
+        return import('./vendor/zephyr-motion/index.js?v=20261018-ui103')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

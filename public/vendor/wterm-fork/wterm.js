@@ -662,6 +662,8 @@ class WTerm {
     let charWidth = initial.charWidth;
     let rowHeight = initial.rowHeight;
     this.resizeObserver = new ResizeObserver((entries) => {
+      const pageEl = typeof document !== 'undefined' ? document.querySelector('.terminal-page') : null;
+      if (pageEl && pageEl.dataset && pageEl.dataset.dockMorphInFlight === '1') return;
       const measured = this.refreshCellMetrics();
       if (measured.charWidth > 0) charWidth = measured.charWidth;
       if (measured.rowHeight > 0) rowHeight = measured.rowHeight;
