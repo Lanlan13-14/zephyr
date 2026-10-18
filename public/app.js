@@ -1,3 +1,5 @@
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261018-ui63';
+export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
 import { createNotesController } from './notes.js?v=20261004-dashboard-fit1';
@@ -374,6 +376,9 @@ let browserChangeWakeClient = null;
 let browserChangeRefreshScheduler = null;
 let currentAppView = 'dashboard';
 let terminalTabs = [], activeTerminalTab = null;
+// SSH handshake latency reported by each terminal iframe's stats stream,
+// keyed by tab id. This is the monitor card's probe, not a hardcoded value.
+const terminalProbeLatency = new Map();
 let openOrderStack = [], visualLayout = [], recentUseStack = [];
 let terminalSmartbarOpen = false;
 let terminalSmartbarSide = 'center';
@@ -436,8 +441,32 @@ const TERMINAL_EDGE_SNAP_PX = 56;
  * screen identified which product the user was actually in.
  */
 const defaultBrandName = () => zephyrDefaultBrandName();
-const DEFAULT_BRAND_ICON = '🌬️';
+const DEFAULT_BRAND_ICON = 'zephyr-wind';
+/* Rows saved before the zero-emoji migration still hold the emoji. */
+const LEGACY_DEFAULT_BRAND_ICONS = ['🌬️'];
+function isDefaultBrandIcon(value) {
+    const v = String(value ?? '').trim();
+    return v === DEFAULT_BRAND_ICON || LEGACY_DEFAULT_BRAND_ICONS.includes(v);
+}
 let pendingBrandIcon = DEFAULT_BRAND_ICON;
+
+/* ZephyrIcons (plan 2.4.1). Controls that used to write an emoji through
+ * textContent now swap an SVG subtree, so the glyph survives theme flips. */
+const ZI = {
+  sun: "<svg class=\"zi-sun\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42\"/></svg>",
+  moon: "<svg class=\"zi-moon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20.6 14.5A8.8 8.8 0 0 1 9.5 3.4a.7.7 0 0 0-.9-.9A10.2 10.2 0 1 0 21.5 15.4a.7.7 0 0 0-.9-.9z\"/></svg>",
+  eye: "<svg class=\"zi-eye\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M2.2 12S5.8 5.4 12 5.4 21.8 12 21.8 12 18.2 18.6 12 18.6 2.2 12 2.2 12z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>",
+  eyeOff: "<svg class=\"zi-eyeoff\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M9.9 5.7A9.9 9.9 0 0 1 12 5.4c6.2 0 9.8 6.6 9.8 6.6a17 17 0 0 1-3 3.7\"/><path d=\"M6.4 7.4A16.8 16.8 0 0 0 2.2 12S5.8 18.6 12 18.6a9.8 9.8 0 0 0 4-1\"/><path d=\"M9.9 9.9a3 3 0 0 0 4.2 4.2\"/><path d=\"M3 3l18 18\"/></svg>",
+  check: "<svg class=\"zi-check\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><polyline points=\"20 6 9 17 4 12\"/></svg>",
+};
+function applyThemeToggleIcon(el, theme) {
+  if (!el) return;
+  el.innerHTML = theme === 'dark' ? ZI.sun : ZI.moon;
+}
+function applyPasswordRevealIcon(el, revealed) {
+  if (!el) return;
+  el.innerHTML = revealed ? ZI.eyeOff : ZI.eye;
+}
 const SMARTBAR_TEXT_IMAGE_CACHE = new Map();
 
 function localizedAiError(error = {}) {
@@ -641,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261018-ui63');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -1087,20 +1116,157 @@ function scheduleTerminalLayoutStabilize(reason = 'layout-stabilize', options = 
     }, 24);
 }
 function broadcastTerminalSettings(terminal = {}, workspace = settings?.workspace || {}) {
-    $$('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
+    document.querySelectorAll('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
         try { frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'terminal-settings', terminal, workspace }, '*'); } catch (_) {}
     });
 }
+let lastThemeTriggerPoint = null;
+if (typeof document !== 'undefined') {
+    document.addEventListener('pointerdown', (e) => {
+        const btn = e.target?.closest?.('#appThemeToggle, #settingsThemeToggle, #colorSchemeSelect, #themeModeSelect');
+        if (btn) {
+            const r = btn.getBoundingClientRect();
+            lastThemeTriggerPoint = {
+                x: Math.round(r.left + r.width / 2),
+                y: Math.round(r.top + r.height / 2),
+                el: btn,
+            };
+        }
+    }, true);
+}
+
 function broadcastThemeToTerminals(theme) {
     const appearance = getAppearance();
-    $$('#terminalWorkspace iframe.terminal-frame').forEach((frame) => frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'theme-change', theme, appearance }, '*'));
+    const scheme = appearance?.colorScheme || appearance?.palette || document.documentElement.getAttribute('data-color-scheme') || 'frost';
+    document.querySelectorAll('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
+        try {
+            const fdoc = frame.contentDocument;
+            if (fdoc?.documentElement) {
+                fdoc.documentElement.setAttribute('data-theme', theme);
+                fdoc.documentElement.setAttribute('data-color-scheme', scheme);
+                fdoc.documentElement.setAttribute('data-wterm-theme', theme === 'light' ? 'light' : 'default');
+            }
+            frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'theme-change', theme, appearance }, '*');
+        } catch (_) {}
+    });
     broadcastNotesEnabled();
     scheduleTerminalLayoutStabilize('theme-change', { focus: false, tabId: null });
 }
-function applyTheme(theme, { persist = false } = {}) {
+
+function resolveThemeOriginPoint(originEl) {
+    const btn = originEl
+        || lastThemeTriggerPoint?.el
+        || document.getElementById('appThemeToggle')
+        || document.getElementById('settingsThemeToggle');
+    if (btn && typeof btn.getBoundingClientRect === 'function') {
+        const r = btn.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+        }
+    }
+    if (lastThemeTriggerPoint) return { x: lastThemeTriggerPoint.x, y: lastThemeTriggerPoint.y };
+    return { x: Math.round((window.innerWidth || 1280) - 84), y: 28 };
+}
+
+function playPixelCircularThemeWave(cx, cy, maxR, nextTheme) {
+    if (typeof document === 'undefined' || !document.body) return;
+    document.getElementById('zephyrThemeCircleWave')?.remove();
+    const wave = document.createElement('div');
+    wave.id = 'zephyrThemeCircleWave';
+    wave.className = 'zephyr-theme-circle-wave';
+    wave.dataset.targetTheme = nextTheme;
+    wave.style.setProperty('--wave-x', `${cx}px`);
+    wave.style.setProperty('--wave-y', `${cy}px`);
+    wave.style.setProperty('--wave-r', '0px');
+    document.body.appendChild(wave);
+    const Motion = window.Motion || sshKeyMotion?.engine;
+    if (Motion?.cssVars) {
+        void Motion.cssVars(wave, { '--wave-r': maxR }, {
+            preset: { response: 0.52, damping: 0.98 },
+            units: { '--wave-r': 'px' },
+        }).finally(() => {
+            wave.remove();
+        });
+    } else {
+        wave.remove();
+    }
+}
+
+function applyThemeCoreMutations(theme, { persist = false } = {}) {
+    const root = document.documentElement;
+    try {
+        localStorage.removeItem('zephyr-terminal-theme-override');
+        localStorage.removeItem('zephyr-wterm-theme-explicit');
+    } catch {}
+    root.setAttribute('data-theme', theme);
+    applyZephyrColorScheme(getAppearance(), { theme, page: 'app' });
+    setFavicon(pendingBrandIcon || DEFAULT_BRAND_ICON);
+    SMARTBAR_TEXT_IMAGE_CACHE.clear();
+    if (terminalTabs.length) renderTerminalSmartbar();
+    if (persist || getAppearance().autoThemeEnabled === false) localStorage.setItem('zephyr-theme', theme);
+    applyThemeToggleIcon($('#appThemeToggle'), theme);
+    applyThemeToggleIcon($('#settingsThemeToggle'), theme);
+    syncAppearanceSchemeControls();
+    broadcastThemeToTerminals(theme);
+}
+
+function applyTheme(theme, { persist = false, originEl = null, animateCircle = false } = {}) {
     const root = document.documentElement;
     const previousTheme = root.getAttribute('data-theme') || getSystemTheme();
     const changed = previousTheme !== theme;
+
+    if (changed && (animateCircle || lastThemeTriggerPoint)) {
+        const { x: cx, y: cy } = resolveThemeOriginPoint(originEl);
+        const vw = window.innerWidth || document.documentElement.clientWidth || 1280;
+        const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+        const maxR = Math.ceil(Math.hypot(Math.max(cx, vw - cx), Math.max(cy, vh - cy)) + 24);
+        lastThemeTriggerPoint = null;
+
+        root.style.setProperty('--theme-clip-x', `${cx}px`);
+        root.style.setProperty('--theme-clip-y', `${cy}px`);
+        root.style.setProperty('--theme-clip-r', '0px');
+
+        if (typeof document.startViewTransition === 'function') {
+            root.classList.add('theme-circle-reveal');
+            try {
+                const vt = document.startViewTransition(() => {
+                    applyThemeCoreMutations(theme, { persist });
+                });
+                vt.ready.then(() => {
+                    const anim = root.animate(
+                        [
+                            { clipPath: `circle(0px at ${cx}px ${cy}px)` },
+                            { clipPath: `circle(${maxR}px at ${cx}px ${cy}px)` },
+                        ],
+                        {
+                            duration: 520,
+                            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                            pseudoElement: '::view-transition-new(root)',
+                        }
+                    );
+                    const Motion = window.Motion || sshKeyMotion?.engine;
+                    if (Motion?.cssVars) {
+                        void Motion.cssVars(root, { '--theme-clip-r': maxR }, {
+                            preset: { response: 0.50, damping: 0.98 },
+                            units: { '--theme-clip-r': 'px' },
+                        });
+                    }
+                    return anim.finished;
+                }).catch(() => {}).finally(() => {
+                    vt.finished.finally(() => {
+                        root.classList.remove('theme-circle-reveal');
+                        root.style.removeProperty('--theme-clip-r');
+                    });
+                });
+                playPixelCircularThemeWave(cx, cy, maxR, theme);
+                return;
+            } catch (_) {
+                root.classList.remove('theme-circle-reveal');
+            }
+        }
+        playPixelCircularThemeWave(cx, cy, maxR, theme);
+    }
+
     root.classList.remove('theme-transitioning');
     void root.offsetWidth;
     root.classList.add('theme-transitioning');
@@ -1110,25 +1276,31 @@ function applyTheme(theme, { persist = false } = {}) {
         root.classList.remove('theme-transitioning');
         document.body?.classList.remove('theme-ripple-active');
     }, 460);
-    root.setAttribute('data-theme', theme);
-    applyZephyrColorScheme(getAppearance(), { theme, page: 'app' });
-    setFavicon(pendingBrandIcon || DEFAULT_BRAND_ICON);
-    SMARTBAR_TEXT_IMAGE_CACHE.clear();
-    if (terminalTabs.length) renderTerminalSmartbar();
-    if (persist || getAppearance().autoThemeEnabled === false) localStorage.setItem('zephyr-theme', theme);
-    $('#appThemeToggle').textContent = theme === 'dark' ? '☀️' : '🌙';
-    $('#settingsThemeToggle').textContent = theme === 'dark' ? '☀️' : '🌙';
-    syncAppearanceSchemeControls();
+    applyThemeCoreMutations(theme, { persist });
     console.debug('[appearance-client]', 'theme transition applied', { previousTheme, theme, changed });
-    broadcastThemeToTerminals(theme);
 }
-async function toggleTheme() {
+
+async function toggleTheme(originEl = null) {
     const nextTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
     localStorage.setItem('zephyr-theme', nextTheme);
-    settings = await savePersonalSettings({ appearance: { colorScheme: 'frost', theme: nextTheme, autoThemeEnabled: false } }).catch((err) => { toast(err.message); return settings; });
-    $('#autoThemeEnabled').checked = false;
-    applyTheme(nextTheme, { persist: true });
-    console.debug('[appearance-client]', 'manual theme selected', { theme: nextTheme, autoThemeEnabled: false });
+    const currentAppearance = getAppearance();
+    const updatedAppearance = {
+        ...currentAppearance,
+        colorScheme: currentAppearance.colorScheme || document.documentElement.getAttribute('data-color-scheme') || 'frost',
+        theme: nextTheme,
+        autoThemeEnabled: false,
+    };
+    if (settings && typeof settings === 'object') {
+        settings.appearance = updatedAppearance;
+    }
+    if ($('#autoThemeEnabled')) $('#autoThemeEnabled').checked = false;
+    applyTheme(nextTheme, { persist: true, originEl, animateCircle: true });
+    console.debug('[appearance-client]', 'manual theme selected', { theme: nextTheme, colorScheme: updatedAppearance.colorScheme, autoThemeEnabled: false });
+    savePersonalSettings({ appearance: updatedAppearance }).then((saved) => {
+        if (saved) settings = saved;
+    }).catch((err) => {
+        toast(err.message);
+    });
 }
 function escapeHtml(str) { return String(str || '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m])); }
 /* `compact` drops One's "One" wordmark, for marks rendered small.
@@ -1282,31 +1454,37 @@ async function saveAppearance(e) {
         },
     };
     if (myIdentity.role === 'admin') {
-        /* customJs runs in every authenticated browser. Server only accepts
-         * it from the super admin; strip it here so a plain admin saving the
-         * appearance form cannot clobber the stored value with their (empty)
-         * textarea. */
-        const platformPatch = myIdentity.isSuperAdmin ? { appearance } : { appearance: { ...appearance, customJs: previous.customJs ?? '' } };
-        settings = await savePlatformSettings('appearance', platformPatch);
+        settings = await savePlatformSettings('appearance', { appearance });
+        // The loader merges the per-user override ON TOP of the platform value,
+        // so a platform-only write is discarded on the next reload and the theme
+        // snaps back to whatever the override still says. Write both.
+        const { brandName: _bn, brandIcon: _bi, customJs: _cj, ...personalAppearance } = appearance;
+        await savePersonalSettings({ appearance: personalAppearance }).catch(() => {});
+        settings.appearance = { ...(settings.appearance || {}), ...appearance };
     } else {
         const { brandName, brandIcon, customJs, ...personalAppearance } = appearance;
         settings = await savePersonalSettings({ appearance: personalAppearance });
     }
     localStorage.removeItem('zephyr-theme');
     if (!autoThemeEnabled) localStorage.setItem('zephyr-theme', theme);
+    const ipProtEnabled = Boolean($('#ipProtectionToggle')?.checked);
+    applyIpProtectionState(ipProtEnabled, settings);
+    refreshAllViewsForIpProtection();
+    if (myIdentity.isSuperAdmin) {
+        api('/api/settings', {
+            method: 'PUT',
+            body: JSON.stringify({ ipProtection: ipProtEnabled }),
+        }).catch(() => {});
+    }
     applyAppearance(settings.appearance || appearance);
     applyTheme(getPreferredTheme());
     console.info('[appearance-client]', 'appearance saved', { brandName: appearance.brandName, customIcon: appearance.brandIcon !== DEFAULT_BRAND_ICON, autoThemeEnabled, theme });
     toast(t('个性化设置已保存'));
 }
 async function resetAppearance() {
-    const previous = getAppearance();
     const appearance = { ...getAppearance(), brandName: defaultBrandName(), brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
     if (myIdentity.role === 'admin') {
-        /* Plain admins cannot clear customJs (super-admin owned); keep the
-         * stored value instead of sending the reset's empty string. */
-        const platformPatch = myIdentity.isSuperAdmin ? { appearance } : { appearance: { ...appearance, customJs: previous.customJs ?? '' } };
-        settings = await savePlatformSettings('appearance', platformPatch);
+        settings = await savePlatformSettings('appearance', { appearance });
     } else {
         const { brandName, brandIcon, customJs, ...personalAppearance } = appearance;
         settings = await savePersonalSettings({ appearance: personalAppearance });
@@ -1624,6 +1802,7 @@ function setupAppearanceControls() {
         settings.appearance = { ...getAppearance(), colorScheme: 'custom', customColors: readCustomThemeColors() };
         applyZephyrColorScheme(settings.appearance, { theme: getPreferredTheme(), page: 'app', executeCustomJs: false });
         setFavicon(pendingBrandIcon || DEFAULT_BRAND_ICON);
+        broadcastThemeToTerminals(getPreferredTheme());
     }));
     $('#terminalBgSource')?.addEventListener('change', () => syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { ...(getAppearance().terminalBackground || {}), type: $('#terminalBgSource').value } }));
     $('#terminalBgUrl')?.addEventListener('input', () => syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'url', url: $('#terminalBgUrl').value.trim(), fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35), blur: Number($('#terminalBgBlur')?.value || 0) } }));
@@ -2231,6 +2410,69 @@ function closeTerminalSmartbarForViewLeave() {
     root?.classList.remove('open', 'closing', 'shelf-line-active', 'dock-open');
     $('.main-nav')?.classList.remove('terminal-shelf-settled', 'terminal-shelf-dock-open');
 }
+/* ── 计划 4.2.4 第 4 项：终端顶栏伸出架折叠状态机 ──────────────────────
+ * 收起后顶部只留 ~26px 伸出架（Smartbar 把手 + 左右对称按钮），终端区因此
+ * 向上扩张约 56px。恢复只能靠再次点击左右任一按钮，绝不监听鼠标贴顶。 */
+let terminalTopbarCollapsed = false;
+let shelfCollapseTimer = 0;
+
+function setTerminalTopbarCollapsed(collapsed) {
+    const next = !!collapsed && document.body.classList.contains('terminal-mode');
+    if (next === terminalTopbarCollapsed) return;
+    terminalTopbarCollapsed = next;
+    document.body.classList.toggle('terminal-topbar-collapsed', next);
+    document.querySelectorAll('[data-shelf-collapse-toggle]').forEach((btn) => {
+        btn.setAttribute('aria-expanded', String(!next));
+    });
+    // Drive the collapse through the shared offset. CSS height is
+    // calc(56px + shelf + offset), and the shelf is pinned at
+    // calc(56px + offset), so offset -56px pulls the shelf to the top of the
+    // viewport and the nav shrinks to the 27px rail. Without this the class
+    // only hides the nav content and a blank band stays above the terminal.
+    const nav = document.querySelector('.main-nav');
+    if (nav && window.Motion?.topbarShelfCollapse) {
+        const chevrons = Array.from(document.querySelectorAll('[data-shelf-collapse-toggle] .shelf-collapse-ico'));
+        window.Motion.topbarShelfCollapse(nav, next, { chevrons, animate: true });
+    } else if (nav) {
+        nav.style.setProperty('--topbar-collapse-offset', next ? '-56px' : '0px');
+    }
+    window.clearTimeout(shelfCollapseTimer);
+    /* 折叠会改变顶栏高度，Smartbar 定位与终端可视高度都要重新测量。 */
+    try {
+        syncTerminalSmartbarTop();
+        syncTerminalShelfLineState();
+        const nav = document.querySelector('.main-nav');
+        if (nav) {
+            document.documentElement.style.setProperty('--terminal-nav-height', `${Math.round(nav.getBoundingClientRect().height)}px`);
+        }
+        scheduleTerminalLayoutStabilize('shelf-collapse-toggle', { focus: true });
+    } catch { /* 非终端页忽略 */ }
+    try { scheduleWorkspaceSave('shelf-collapse-toggle'); } catch {}
+}
+
+/* 离开终端视图时自动恢复展开态，避免回到仪表盘时顶栏是收起的。 */
+function resetTerminalTopbarCollapsedIfLeaving(isTerminal) {
+    if (!isTerminal && terminalTopbarCollapsed) {
+        terminalTopbarCollapsed = false;
+        document.body.classList.remove('terminal-topbar-collapsed');
+        document.querySelectorAll('[data-shelf-collapse-toggle]').forEach((btn) => {
+            btn.setAttribute('aria-expanded', 'true');
+        });
+    }
+}
+
+function bindTerminalShelfCollapse() {
+    if (document.documentElement.dataset.shelfCollapseBound === '1') return;
+    document.documentElement.dataset.shelfCollapseBound = '1';
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest?.('[data-shelf-collapse-toggle]');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setTerminalTopbarCollapsed(!terminalTopbarCollapsed);
+    }, true);
+}
+
 function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     const target = name === 'ai' ? 'dashboard' : name;
     currentAppView = target;
@@ -2242,10 +2484,24 @@ function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     const enteringTerminal = target === 'terminal' && !wasTerminal;
     const leavingTerminal = target !== 'terminal' && wasTerminal;
     if (leavingTerminal) closeTerminalSmartbarForViewLeave();
+    const navEl = document.querySelector('.main-nav');
+    if (navEl && (enteringTerminal || leavingTerminal) && !enteringAnimated && window.Motion?.topbarViewShelf) {
+        void window.Motion.topbarViewShelf(navEl, enteringTerminal, { preset: 'mac' });
+    } else if (navEl) {
+        try {
+            window.Motion?._bump?.(navEl);
+            window.Motion?.stop?.(navEl, ['--z-shelf-ext', '--z-shelf-alpha']);
+        } catch {}
+        navEl.style.removeProperty('--z-shelf-ext');
+        navEl.style.removeProperty('--z-shelf-alpha');
+    }
     document.body.classList.toggle('terminal-mode', target === 'terminal');
     document.body.classList.toggle('terminal-mode-entering', enteringTerminal && !enteringAnimated);
+    /* 计划 4.2.4：离开终端视图时顶栏必须是展开态。 */
+    resetTerminalTopbarCollapsedIfLeaving(target === 'terminal');
     window.clearTimeout(switchView._navTimer);
     if (target === 'terminal') {
+        if (!terminalTabs.length && !document.querySelector('#terminalWorkspace .terminal-empty-card')) { try { renderTerminalWorkspace(); } catch (_) {} }
         renderTerminalSmartbar();
         // Immediate measure so content row sits under nav+shelf (no underlap).
         try {
@@ -2338,35 +2594,68 @@ function terminalCardSourceRadius(sourceEl) {
 function terminalCardFlipTargetRect(_origin) {
     const vw = window.innerWidth || document.documentElement.clientWidth || 360;
     const vh = window.innerHeight || document.documentElement.clientHeight || 640;
-    // Measure the terminal shelf's final bottom while the dashboard is still
-    // the visible view. This lets preparation happen without selecting an
-    // empty terminal page before the actual card starts moving.
-    const nav = document.querySelector('.main-nav');
-    let navBottom = terminalCardFlipNavBottom();
-    if (nav && !document.body.classList.contains('terminal-mode')) {
-        const currentPadding = parseFloat(getComputedStyle(nav).paddingBottom) || 0;
-        const openPadding = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--terminal-shelf-open-padding')) || 27;
-        navBottom += Math.max(0, openPadding - currentPadding);
+    let navBottom = settleTerminalShelfForCardFlip();
+    if (vw >= 761 && !document.body.classList.contains('terminal-topbar-collapsed')) {
+        navBottom = Math.max(83, navBottom);
     }
     navBottom = Math.max(0, Math.round(navBottom));
+    const hosted = terminalCardFlipMotion?.hostedWindow;
+    const ws = document.getElementById('terminalWorkspace');
+    const padX = vw >= 761 ? 16 : 0;
+    const padTop = vw >= 761 ? 12 : 0;
+    const padBottom = vw >= 761 ? 18 : 0;
+    const fullW = Math.max(200, vw - padX * 2);
+    const fullH = Math.max(200, vh - navBottom - padTop - padBottom);
+    const visibleCount = visibleTerminalTabs().length;
+    const maxW = getEffectiveTerminalMaxWindows();
+    if (vw >= 761 && visibleCount >= 2 && maxW >= 2) {
+        const gutter = 14;
+        const halfW = Math.round((fullW - gutter) / 2);
+        const visibleWins = ws ? Array.from(ws.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)')) : [];
+        const isSecondSlot = hosted ? (visibleWins.indexOf(hosted) === 1 || (visibleWins.length >= 1 && visibleWins[0] !== hosted)) : false;
+        const siblingPinned = visibleWins.some((w) => w !== hosted && (
+            pinnedStateByTabId.get(String(w.dataset.window || '')) === true
+            || w.classList.contains('window-has-dock-left')
+            || w.classList.contains('window-has-dock-right')
+        ));
+        if (siblingPinned && settings?.terminal?.splitDockSlideOutInactive !== false) {
+            const pane80W = Math.round(vw * 0.8 - 23);
+            return {
+                left: isSecondSlot ? (vw - padX - pane80W) : padX,
+                top: navBottom + padTop,
+                width: pane80W,
+                height: fullH,
+                topBound: navBottom,
+                fillStage: false,
+            };
+        }
+        return {
+            left: isSecondSlot ? (padX + halfW + gutter) : padX,
+            top: navBottom + padTop,
+            width: halfW,
+            height: fullH,
+            topBound: navBottom,
+            fillStage: false,
+        };
+    }
     return {
-        left: 0,
-        top: navBottom,
-        width: Math.max(200, vw),
-        height: Math.max(200, vh - navBottom),
+        left: padX,
+        top: navBottom + padTop,
+        width: fullW,
+        height: fullH,
         topBound: navBottom,
-        fillStage: true,
+        fillStage: false,
     };
 }
 function placeTerminalCardFlipSurface(surface, rect) {
     if (!surface || !rect) return;
+    surface.style.inset = 'auto';
+    surface.style.right = 'auto';
+    surface.style.bottom = 'auto';
     surface.style.left = `${rect.left}px`;
     surface.style.top = `${rect.top}px`;
     surface.style.width = `${rect.width}px`;
     surface.style.height = `${rect.height}px`;
-    surface.style.right = 'auto';
-    surface.style.bottom = 'auto';
-    surface.style.inset = 'auto';
 }
 function placeTerminalCardFlipStage(stage, topBound) {
     if (!stage) return;
@@ -2653,6 +2942,40 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     const shelfFrom = navStyle ? (parseFloat(navStyle.paddingBottom) || 10) : 10;
     const shelfTo = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--terminal-shelf-open-padding')) || 27;
     applySwitchViewCore('terminal', { enteringAnimated: true });
+    // If a 1st terminal window is already open in the workspace while this 2nd card flips into slot-2,
+    // smoothly spring the 1st terminal from full workspace width into its left 50% slot (slot-1) via WASM!
+    try {
+        const ws = document.getElementById('terminalWorkspace');
+        const vw = window.innerWidth || document.documentElement.clientWidth || 1280;
+        const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+        if (ws && vw >= 761 && Motion?.terminalWindowAvoidance) {
+            const siblingWins = Array.from(ws.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)'))
+                .filter((w) => w !== liveWindow);
+            if (siblingWins.length === 1) {
+                const win1 = siblingWins[0];
+                const padX = 16;
+                const padTop = 12;
+                const padBottom = 18;
+                const gutter = 14;
+                const fullW = Math.max(200, vw - padX * 2);
+                const fullH = Math.max(200, vh - topBound - padTop - padBottom);
+                const halfW = Math.round((fullW - gutter) / 2);
+                const vTop = Math.round(topBound + padTop);
+                const anyPinned = pinnedStateByTabId.get(String(win1.dataset.window || '')) === true
+                    || win1.classList.contains('window-has-dock-left')
+                    || win1.classList.contains('window-has-dock-right');
+                const pane80W = Math.round(vw * 0.8 - 23);
+                const slideMag = Math.max(0, Math.round(2 * pane80W - vw + 2 * padX + gutter));
+                const fromBox = { left: padX, top: vTop, width: fullW, height: fullH };
+                const toBox = anyPinned
+                    ? { left: padX - slideMag, top: vTop, width: pane80W, height: fullH }
+                    : { left: padX, top: vTop, width: halfW, height: fullH };
+                void Motion.terminalWindowAvoidance(win1, fromBox, toBox, {
+                    preset: { response: 0.46, damping: 0.96 },
+                });
+            }
+        }
+    } catch (_) {}
     if (nav) {
         Motion.cssVars(nav, { '--terminal-card-shelf-line-opacity': 0 }, { immediate: true });
         Motion.set(nav, { y: shelfFrom - shelfTo });
@@ -2722,6 +3045,12 @@ async function finishTerminalCardFlipOpenHandoff() {
     // produced the vertical stack instead of a left/right split.
     // Keep the final back face visually intact until the live node is already
     // in its final workspace box. The back surface is cleared only afterwards.
+    // Panes that were already open become visible for the first time at this
+    // handoff frame, so they would otherwise pop into their slot. Seed them a
+    // full viewport off the left edge and let the layout morph below slide
+    // them in from outside the screen. The window that IS the flipping card is
+    // excluded: it morphs from the card's end box, not from off screen.
+    const slideInFromLeft = captureCardFlipOffscreenSlideIn();
     restoreCardFlipHostedWindow();
     Object.assign(win.style, {
         visibility: 'visible', opacity: '1', pointerEvents: '', animation: 'none',
@@ -2767,6 +3096,10 @@ async function finishTerminalCardFlipOpenHandoff() {
     if (shouldSettleCardFlipIntoSlot(win, stageRect)) {
         animateTerminalWindowLayoutFrom(new Map([[win.dataset.window, stageRect]]), { reason: 'card-flip-settle' });
     }
+    // The panes that were already open slide in from off the left edge on the
+    // WASM motion engine, starting once the incoming card is nearly down, so
+    // the two reads as one move rather than the old pane popping into place.
+    slideExistingPanesInFromLeft(slideInFromLeft);
     terminalCardFlipMotion.phase = 'settled';
     terminalCardFlipMotion.originRect = null;
     terminalCardFlipMotion.sourceEl = null;
@@ -2787,6 +3120,61 @@ async function finishTerminalCardFlipOpenHandoff() {
  * The threshold is read from --workspace-gutter so it cannot drift from the CSS:
  * anything smaller than one gutter is not a slot change.
  */
+
+/**
+ * Before-rects for panes already open when a card flip hands off.
+ *
+ * The flipped card covers the stage while the workspace is laid out under it,
+ * so these panes are seen for the first time at the handoff frame. Reporting
+ * each one a full viewport to the left makes the layout morph slide it in from
+ * off screen instead of popping it into its slot.
+ */
+
+/**
+ * Slide panes that were already open in from beyond the left edge.
+ *
+ * Runs on zephyr_motion.wasm through Motion.terminalWindowAvoidance, which
+ * springs --z-morph-* per frame. No CSS animation and no element.animate():
+ * both composite badly against the flip and read as a pop. The delay lets the
+ * incoming card finish most of its travel before the old pane starts moving.
+ */
+function slideExistingPanesInFromLeft(seeded) {
+    const Motion = sshKeyMotion?.engine;
+    if (!seeded?.length || !Motion?.terminalWindowAvoidance) return;
+    const workspace = document.getElementById('terminalWorkspace');
+    if (!workspace) return;
+    window.setTimeout(() => {
+        seeded.forEach(([id, fromBox]) => {
+            const el = workspace.querySelector(':scope > .terminal-window[data-window="' + CSS.escape(id) + '"]');
+            if (!el) return;
+            el.style.opacity = '';
+            const toBox = el.getBoundingClientRect();
+            if (toBox.width <= 1 || toBox.height <= 1) return;
+            Motion.terminalWindowAvoidance(el, fromBox, toBox, { preset: { response: 0.42, damping: 0.96 } });
+        });
+    }, 460);
+}
+function captureCardFlipOffscreenSlideIn() {
+    const workspace = $('#terminalWorkspace');
+    const hostedId = terminalCardFlipMotion.hostedWindow?.dataset?.window || '';
+    if (!workspace) return [];
+    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    const seeded = [];
+    workspace.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)').forEach((el) => {
+        if (!el.dataset.window || el.dataset.window === hostedId) return;
+        const box = el.getBoundingClientRect();
+        if (box.width <= 1 || box.height <= 1) return;
+        el.style.animation = 'none';
+        el.style.opacity = '0';
+        seeded.push([el.dataset.window, {
+            left: box.left - vw,
+            top: box.top,
+            width: box.width,
+            height: box.height,
+        }]);
+    });
+    return seeded;
+}
 function shouldSettleCardFlipIntoSlot(win, stageRect) {
     if (!win?.isConnected || !stageRect || stageRect.width <= 1 || stageRect.height <= 1) return false;
     const now = win.getBoundingClientRect();
@@ -2859,7 +3247,7 @@ async function playTerminalCardFlipClose(options = {}) {
     if (!back.childNodes.length) {
         paintTerminalCardFlipBack({
             name: options.name || sourceEl?.querySelector?.('h2')?.textContent || t('终端'),
-            host: options.host || sourceEl?.querySelector?.('.host-line')?.textContent || '',
+            host: isIpProtectionEnabled(settings) ? '' : (options.host || sourceEl?.querySelector?.('.host-line')?.textContent || ''),
             protocol: options.protocol,
             tabId: options.tabId,
         });
@@ -3558,7 +3946,7 @@ function renderConnections() {
             : `<svg class="empty-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg><span>${t('暂无备注')}</span>`;
 
         return `<article class="connection-card"><div class="card-top"><div class="card-top-left"><div class="distro-icon-capsule os-${iconKey}" title="${escapeHtml(c.name)}">${iconSvg}</div><span class="protocol-badge">${escapeHtml(c.protocol)}</span></div><div class="card-top-meta">${sourceBadge}<span class="last-time">${fmtTime(c.lastConnectedAt)}</span></div></div>
-        <h2>${escapeHtml(c.name)}</h2><p class="host-line">${escapeHtml(c.host)}:${escapeHtml(c.port)} · <span class="route-mode-text">${c.connectionMode === 'proxy' ? t('代理') : c.connectionMode === 'jump' ? t('跳板机') : t('直连')}</span></p>
+        <h2>${escapeHtml(formatProtectedName(c.name, c.protocol, settings))}</h2><p class="host-line">${isIpProtectionEnabled(settings) ? '' : `<span class="host-addr-text">${escapeHtml(c.host)}:${escapeHtml(c.port)}</span> · `}<span class="route-mode-text">${c.connectionMode === 'proxy' ? t('代理') : c.connectionMode === 'jump' ? t('跳板机') : t('直连')}</span></p>
         <div class="tag-row">${(c.tags || []).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="remark-md ${hasRemark ? '' : 'empty-state'}">${remarkHtml}</div>
         <div class="card-actions">${canEdit ? `<button class="tool-btn" data-edit="${c.id}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>${t('编辑')}</span></button>` : ''}${canDelete ? `<button class="tool-btn danger" data-delete="${c.id}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span>${t('删除')}</span></button>` : ''}${canUse ? `<button class="btn btn-primary" data-connect="${c.id}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>${t('连接')}</span></button>` : `<button class="btn btn-primary" disabled title="${t('仅观察')}">${t('只读')}</button>`}</div></article>`;
     }).join('') : connectionListEmptyHtml();
@@ -3584,16 +3972,18 @@ function activityDetails(activity) {
     const connection = connections.find((item) => message.includes(item.name) || activity.connectionId === item.id);
     const category = activity.category || (/登录|密码|TOTP|Passkey|用户/.test(message) ? t('账户') : (/连接|服务器|跳板机|代理|SSH 密钥/.test(message) ? t('连接') : (/设置|邮件|导入|日志/.test(message) ? t('系统') : t('操作'))));
     const outcome = activity.outcome || (/失败|拒绝|错误|超时/.test(message) ? t('失败') : t('成功'));
+    const ipProtected = isIpProtectionEnabled(settings);
     const sourceIp = String(activity.sourceIp || '').trim();
     const protocol = activity.protocol || connection?.protocol || '';
-    const target = activity.target || (connection ? `${connection.host}:${connection.port}` : '');
+    const rawTarget = activity.target || (connection ? `${connection.host}:${connection.port}` : '');
+    const target = ipProtected ? '' : rawTarget;
     return {
         category,
         outcome,
         actor: activity.actor || (activity.userId === myIdentity.userId ? t('当前用户') : (activity.userId || t('系统'))),
         protocol,
         target,
-        sourceIp,
+        sourceIp: ipProtected ? '' : sourceIp,
     };
 }
 function syncActivityRangeThumb({ instant = false } = {}) {
@@ -3705,7 +4095,7 @@ function renderActivities() {
         return `<article class="activity-detail-item" style="--activity-stagger:${stagger}ms">
             <div class="activity-detail-head">
                 <div class="activity-event-mark" data-category="${escapeHtml(detail.category)}" aria-hidden="true"></div>
-                <div class="activity-event-title"><h2>${escapeHtml(localizeActivityMessage(activity.message || t('未知活动')))}</h2><span class="activity-status ${outcomeClass}">${escapeHtml(detail.outcome)}</span></div>
+                <div class="activity-event-title"><h2>${escapeHtml(scrubIpWhenProtected(localizeActivityMessage(activity.message || t('未知活动')), t('未知活动'), settings))}</h2><span class="activity-status ${outcomeClass}">${escapeHtml(detail.outcome)}</span></div>
                 <time datetime="${new Date(Number(activity.time || 0)).toISOString()}">${escapeHtml(fmtTime(activity.time))}</time>
             </div>
             <dl class="activity-meta-grid">
@@ -4009,7 +4399,7 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     renderSshKeyOptions(conn?.sshKeyId || '');
     $('#connTags').value = (conn?.tags || []).join(', '); setRouteMode(conn?.connectionMode || 'direct', conn?.connectionMode === 'jump' ? (conn?.jumpHostIds || (conn?.jumpHostId ? [conn.jumpHostId] : [])) : (conn?.proxyId || ''));
     if ($('#connIcon')) $('#connIcon').value = conn?.icon || 'auto';
-    $('#connPassword').type = 'password'; $('#toggleConnPassword').textContent = '👁️';
+    $('#connPassword').type = 'password'; applyPasswordRevealIcon($('#toggleConnPassword'), false);
     // Transient credentials must never be written as a readable DOM value.
     if (connectionModalMode === 'transient' && conn?.hasTransientCredential) {
         $('#connPassword').value = '';
@@ -5010,6 +5400,220 @@ function positionSmartbarPicker() {
     picker.style.setProperty('--smartbar-picker-arrow-left', `${arrowLeft}px`);
     picker.style.setProperty('--smartbar-picker-origin-x', `${arrowLeft}px`);
 }
+/* ── 计划 4.2.4：跨端设备角标 ────────────────────────────────────────────
+ * 计划要求：跨端可接力会话在图标右下角渲染 18×18px、圆角 6px 的来源设备角标；
+ * 自有设备点击免确认秒切。协议未就绪时只渲染角标与列表，不做假接管。 */
+let boundAgentDevices = [];
+let boundAgentDevicesFetchedAt = 0;
+
+function devicePlatformIcon(platform) {
+    const p = String(platform || '').toLowerCase();
+    if (p.includes('android') || p.includes('ios') || p.includes('mobile') || p.includes('phone')) {
+        return '<rect x="6.5" y="2" width="11" height="20" rx="2.2"/><path d="M10.5 18.4h3"/>';
+    }
+    if (p.includes('tablet') || p.includes('ipad')) {
+        return '<rect x="4" y="2.5" width="16" height="19" rx="2"/><path d="M11 18.6h2"/>';
+    }
+    return '<rect x="2" y="4" width="20" height="12" rx="1.6"/><path d="M1 19h22"/>';
+}
+
+function renderDeviceBadgeHtml(device) {
+    if (!device) return '';
+    const online = device.lastSeenAt && (Date.now() - Number(device.lastSeenAt) < 120000);
+    const name = escapeHtml(device.deviceName || 'Zephyr Agent');
+    return '<span class="smartbar-device-badge' + (online ? '' : ' offline') + '"'
+        + ' title="' + name + '（' + (online ? t('在线') : t('离线')) + '）"'
+        + ' aria-label="' + name + '">'
+        + '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+        + ' stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        + devicePlatformIcon(device.platform)
+        + '</svg></span>';
+}
+
+/* 拉取已绑定设备；失败不抛错，界面保持无角标。 */
+async function refreshBoundAgentDevices({ force = false } = {}) {
+    if (!force && Date.now() - boundAgentDevicesFetchedAt < 30000) return boundAgentDevices;
+    try {
+        const data = await api('/api/one/agents');
+        boundAgentDevices = (data.agents || []).filter((a) => a.enabled !== false);
+        boundAgentDevicesFetchedAt = Date.now();
+    } catch {
+        boundAgentDevices = [];
+    }
+    return boundAgentDevices;
+}
+
+function remoteHandoffSectionHtml() {
+    if (!boundAgentDevices.length) return '';
+    const rows = boundAgentDevices.map((d) => {
+        const online = d.lastSeenAt && (Date.now() - Number(d.lastSeenAt) < 120000);
+        return '<button type="button" class="smartbar-handoff-row" data-handoff-device="' + escapeHtml(d.clientId || '') + '" data-handoff-online="' + (online ? '1' : '0') + '">'
+            + '<span class="smartbar-handoff-ico">' + renderDeviceBadgeHtml(d) + '</span>'
+            + '<strong>' + escapeHtml(d.deviceName || 'Zephyr Agent') + '</strong>'
+            + '<em>' + (online ? t('在线') : t('离线')) + '</em>'
+            + '</button>';
+    }).join('');
+    return '<div class="smartbar-picker-section">' + t('可从其他设备接管') + '</div>'
+        + '<div class="smartbar-handoff-list">' + rows + '</div>';
+}
+
+/* ── 计划 4.2.3 第 4 项：双屏停靠滑出状态机 ────────────────────────────
+ * 停靠面板在子 iframe 里，通过 postMessage 上报；
+ * 这里据此决定哪个窗格滑出、哪个露 20%，并在露头处挂唤醒遮罩。 */
+const pinnedStateByTabId = new Map();
+
+function ensureSplitSlideShields() {
+    const ws = document.getElementById('terminalWorkspace');
+    if (!ws) return;
+    ws.querySelectorAll(':scope > .terminal-window').forEach((win) => {
+        if (win.querySelector(':scope > .split-slide-wake-shield')) return;
+        const shield = document.createElement('div');
+        shield.className = 'split-slide-wake-shield';
+        shield.setAttribute('aria-hidden', 'true');
+        win.appendChild(shield);
+    });
+}
+
+function applySplitSlideState({ animate = true } = {}) {
+    const ws = document.getElementById('terminalWorkspace');
+    if (!ws) return;
+    const isTwoPane = ws.classList.contains('layout-2');
+    const visibleWinIds = Array.from(ws.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)'))
+        .map((w) => String(w.dataset.window || ''));
+    const anyPinned = visibleWinIds.some((id) => pinnedStateByTabId.get(id) === true)
+        || ws.querySelector(':scope > .terminal-window.window-has-dock-left, :scope > .terminal-window.window-has-dock-right') !== null;
+    const broadcast = ws.classList.contains('broadcast-input-active');
+    const slideSettingAllowed = settings?.terminal?.splitDockSlideOutInactive !== false;
+    const hasDocked = isTwoPane && anyPinned && !broadcast && slideSettingAllowed;
+
+    ws.classList.toggle('split-dock-slide-enabled', isTwoPane && slideSettingAllowed);
+    ws.classList.toggle('has-docked-panel', hasDocked);
+
+    /* 活动窗格：沿用现有的 activeTerminalTab，映射到 slot-1 / slot-2 */
+    const slots = ['slot-1', 'slot-2'];
+    // The pane that keeps the 80% is the one the user acted in, which
+    // activateTerminalPaneById marks .active. The other pane slides off.
+    const activeSlot = slots.find((cls) => ws.querySelector(':scope > .terminal-window.' + cls + '.active')) || 'slot-1';
+    ws.classList.toggle('active-slot-1', activeSlot === 'slot-1');
+    ws.classList.toggle('active-slot-2', activeSlot === 'slot-2');
+
+    ensureSplitSlideShields();
+
+    requestAnimationFrame(() => {
+        if (window.Motion?.splitDockSlide) {
+            window.Motion.splitDockSlide(ws, {
+                hasDockedPanel: hasDocked,
+                activeSlot: activeSlot === 'slot-2' ? 2 : 1,
+                broadcastActive: broadcast,
+                gap: 14,
+                animate,
+            });
+        }
+    });
+}
+
+/* 子 iframe 上报停靠状态（计划 4.2.3 规则 B 上行消息） */
+function activateTerminalPaneById(tabId) {
+    if (!tabId) return false;
+    const ws = document.getElementById('terminalWorkspace');
+    if (!ws) return false;
+    const targetWin = ws.querySelector(`:scope > .terminal-window[data-window="${CSS.escape(String(tabId))}"]`);
+    if (!targetWin || targetWin.classList.contains('minimized-keepalive')) return false;
+    activeTerminalTab = String(tabId);
+    touchTerminalSession(activeTerminalTab);
+    ws.querySelectorAll(':scope > .terminal-window').forEach((w) => {
+        const isAct = w === targetWin;
+        w.classList.toggle('active', isAct);
+        w.querySelectorAll('.terminal-frame, .terminal-placeholder').forEach((f) => f.classList.toggle('active', isAct));
+    });
+    return true;
+}
+
+function bindTerminalPanelPinStateMessages() {
+    if (window.__splitSlideBound === '1') return;
+    window.__splitSlideBound = '1';
+    window.addEventListener('message', (e) => {
+        const data = e.data;
+        /* 文档 4.2.3 规则 B：子窗格加载完成后回问槽位，立即补发。 */
+        if (data && data.source === 'zephyr-terminal' && data.type === 'zephyr-pane-slot-query') {
+            broadcastPaneSlotConstraints();
+            return;
+        }
+        /* 当用户在某个分屏终端内部点击/操作时，立即将该分屏设为活动窗格（.active），
+         * 确保随后在该窗格固定磁贴时，滑出 80% 的一定是另一个未操作的终端！ */
+        if (data && data.source === 'zephyr-terminal' && data.type === 'zephyr-pane-activate') {
+            // Remember which pane was touched, but do not recompute the slide
+            // here. This fires on every click inside a frame; recomputing made
+            // the slide restart on clicks that were never meant to move it.
+            // The pin handler and the wake shield are what move the panes.
+            const tabId = String(data.tabId || '');
+            if (tabId && activeTerminalTab !== tabId) activeTerminalTab = tabId;
+            return;
+        }
+        if (!data || data.source !== 'zephyr-terminal' || data.type !== 'zephyr-panel-pin-state') return;
+        const tabId = String(data.tabId || '');
+        if (!tabId) return;
+        const wasPinned = pinnedStateByTabId.get(tabId) === true;
+        const nowPinned = !!data.hasPinnedPanel;
+        pinnedStateByTabId.set(tabId, nowPinned);
+        /* 若该窗格刚刚由用户点击固定了磁贴（或触发了停靠切换），强制将该窗格设为活动窗格，
+         * 保证留在屏幕内 80% 的是刚操作磁贴的这个终端，被滑出 80% 的是没操作的另一个终端！ */
+        if (data.userTriggered || (!wasPinned && nowPinned)) {
+            activateTerminalPaneById(tabId);
+        }
+        // Re-rendering here replays the element.animate layout morph, which
+        // holds the pane geometry for its whole 560ms and only then lets the
+        // engine slide run. The slide is the animation for a pin; the morph
+        // is not, so update the dock classes without it.
+        renderTerminalTabs({ rebuildWorkspace: false });
+        applySplitSlideState();
+    });
+    /* 点击 20% 露头遮罩：拉回该窗格 */
+    document.addEventListener('click', (e) => {
+        const shield = e.target.closest && e.target.closest('.split-slide-wake-shield');
+        if (!shield) return;
+        const win = shield.closest('.terminal-window');
+        if (!win) return;
+        e.preventDefault();
+        e.stopPropagation();
+        /* 计划 4.2.3：点击 20% 露头即把该窗格拉回主视野。
+         * 窗格 id 挂在 data-window 上（与 iframe 的 data-frame 一致）。 */
+        const tabId = win.dataset.window || win.querySelector('iframe.terminal-frame')?.dataset.frame || '';
+        if (tabId) {
+            try { showTerminalSessionInWorkspace(String(tabId)); } catch (err) { console.warn('[split-slide] activate failed', err); }
+        }
+        applySplitSlideState();
+    }, true);
+}
+
+/* ── 文档 4.2.3 规则 B：向每个终端窗格下发槽位约束 ─────────────────────
+ * 单屏 → single（左右都开放）；双屏 slot-1 → left（只停最左）；
+ * 双屏 slot-2 → right（只停最右）。广播输入状态一并下发。 */
+function broadcastPaneSlotConstraints() {
+    const ws = document.getElementById('terminalWorkspace');
+    if (!ws) return;
+    const isTwo = ws.classList.contains('layout-2');
+    const broadcastActive = ws.classList.contains('broadcast-input-active');
+    ws.querySelectorAll(':scope > .terminal-window').forEach((win) => {
+        const frame = win.querySelector('iframe.terminal-frame');
+        if (!frame || !frame.contentWindow) return;
+        let slotSide = 'single';
+        if (isTwo) {
+            if (win.classList.contains('slot-1')) slotSide = 'left';
+            else if (win.classList.contains('slot-2')) slotSide = 'right';
+        }
+        try {
+            frame.contentWindow.postMessage({
+                source: 'zephyr-app',
+                type: 'zephyr-pane-slot',
+                layoutMode: isTwo ? 'layout-2' : 'layout-1',
+                slotSide,
+                broadcastActive,
+            }, '*');
+        } catch { /* 跨域/未加载完成时忽略 */ }
+    });
+}
+
 function renderTerminalSmartbar() {
     const order = getTerminalSmartbarOrder();
     const orderedIds = order === 'new-first' ? [...openOrderStack].reverse() : [...openOrderStack];
@@ -5019,15 +5623,28 @@ function renderTerminalSmartbar() {
         seen.add(t.id);
         return true;
     });
-    const icon = (t, index) => `<button class="smartbar-session ${t.id === activeTerminalTab ? 'active' : ''} ${t.minimized ? 'minimized' : ''}" style="--dock-index:${index}" data-smartbar-tab="${t.id}" title="${escapeHtml(t.protocol)} · ${escapeHtml(t.name)} · ${escapeHtml(t.status)}" aria-label="${escapeHtml(t.name || 'Terminal')}"><span class="smartbar-session-icon"><span class="proto-dot ${terminalProtocolClass(t.protocol)}"></span>${smartbarSessionInitialsHtml(t.name)}</span><span class="smartbar-session-label" aria-hidden="true">${smartbarSessionLabelHtml(t.name || 'Terminal')}</span></button>`;
+    const icon = (t, index) => `<button class="smartbar-session ${t.id === activeTerminalTab ? 'active' : ''} ${t.minimized ? 'minimized' : ''}" style="--dock-index:${index}" data-smartbar-tab="${t.id}" title="${escapeHtml(t.protocol)} · ${escapeHtml(formatProtectedName(t.name, t.protocol, settings))} · ${escapeHtml(t.status)}" aria-label="${escapeHtml(formatProtectedName(t.name || 'Terminal', t.protocol, settings))}"><span class="smartbar-session-icon"><span class="proto-dot ${terminalProtocolClass(t.protocol)}"></span>${smartbarSessionInitialsHtml(t.name)}</span><span class="smartbar-session-label" aria-hidden="true">${smartbarSessionLabelHtml(t.name || 'Terminal')}</span></button>`;
     const launchableConnections = connections.filter((c) => ['SSH', 'RDP', 'VNC'].includes(String(c.protocol || 'SSH').toUpperCase()));
     const picker = terminalSmartbarPickerOpen ? `
         <div class="smartbar-picker" role="dialog" aria-label="${t('选择服务器连接')}">
             <div class="smartbar-picker-head"><strong>${t('选择服务器')}</strong><button data-smartbar-picker-close title="${t('关闭')}">×</button></div>
             <div class="smartbar-picker-list">
-                ${launchableConnections.length ? launchableConnections.map((c) => `<button data-smartbar-connect="${c.id}"><span class="proto-dot ${terminalProtocolClass(c.protocol)}"></span><strong>${escapeHtml(c.name)}</strong><em>${escapeHtml(c.protocol)} · ${escapeHtml(c.host)}:${escapeHtml(c.port)}</em></button>`).join('') : `<div class="smartbar-empty">${t('暂无 SSH/RDP/VNC 服务器')}</div>`}
+                ${launchableConnections.length ? launchableConnections.map((c) => `<button data-smartbar-connect="${c.id}"><span class="proto-dot ${terminalProtocolClass(c.protocol)}"></span><strong>${escapeHtml(formatProtectedName(c.name, c.protocol, settings))}</strong><em>${isIpProtectionEnabled(settings) ? escapeHtml(c.protocol) : `${escapeHtml(c.protocol)} · ${escapeHtml(c.host)}:${escapeHtml(c.port)}`}</em></button>`).join('') : `<div class="smartbar-empty">${t('暂无 SSH/RDP/VNC 服务器')}</div>`}
+                ${remoteHandoffSectionHtml()}
             </div>
         </div>` : '';
+    /* 计划 4.2.4：picker 一打开就拉真实设备列表，渲染跨端接管分区。 */
+    if (terminalSmartbarPickerOpen) {
+        refreshBoundAgentDevices().then((devices) => {
+            if (devices.length && terminalSmartbarPickerOpen) {
+                const mount = document.getElementById('smartbarPickerLayer');
+                const list = mount && mount.querySelector('.smartbar-picker-list');
+                if (list && !list.querySelector('.smartbar-handoff-list')) {
+                    list.insertAdjacentHTML('beforeend', remoteHandoffSectionHtml());
+                }
+            }
+        }).catch(() => {});
+    }
     const pickerMount = document.getElementById('smartbarPickerLayer') || (() => {
         const el = document.createElement('div');
         el.id = 'smartbarPickerLayer';
@@ -5078,7 +5695,29 @@ function terminalWindowMenu(session) {
     return `<div class="terminal-window-menu" role="menu" style="--island-action-count:${items.length}">${items.map(([action, label]) => `<button data-window-action="${action}" data-window="${session.id}" title="${label}" aria-label="${label}">${label}</button>`).join('')}</div>`;
 }
 function terminalWindowTitlebarHtml(session) {
-    return `<button class="terminal-grip terminal-window-center-dots" data-window-control="${session.id}" title="${t('短按打开窗口操作，长按拖动交换位置')}" aria-label="${t('窗口操作与拖动')}"><span></span></button><button class="mobile-fullscreen-dock-toggle" data-mobile-dock-toggle data-smartbar-toggle title="${t('展开/收回移动端 Dock')}" aria-label="${t('展开/收回移动端 Dock')}"><span></span></button><span class="proto-dot ${terminalProtocolClass(session.protocol)}"></span><strong>${escapeHtml(terminalShortName(session.name))}</strong>${terminalWindowMenu(session)}`;
+    const conn = (typeof connections !== 'undefined' && Array.isArray(connections))
+        ? connections.find((c) => c && c.id === session.connectionId)
+        : null;
+    const proto = String(session.protocol || conn?.protocol || 'SSH').toUpperCase();
+    const hostBadge = isIpProtectionEnabled(settings) ? '' : (conn?.host || session.host || '');
+    const probe = terminalProbeLatency.get(session.id);
+    const latencyMs = probe?.ms ?? conn?.latencyMs ?? session.latencyMs ?? null;
+    const workspace = $('#terminalWorkspace');
+    const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+    const isFull = workspace?.classList.contains('custom-fullscreen')
+        || fullscreenElement === workspace
+        || fullscreenElement?.classList?.contains('terminal-window');
+    const visibleCount = visibleTerminalTabs().length;
+    const showFullscreenBtn = visibleCount >= 2 || isFull || isCompactTerminalWorkspace();
+    const fullAction = isFull ? 'exit-fullscreen' : 'fullscreen';
+    const fullTitle = isFull ? t('退出全屏') : t('全屏');
+    const fullIconSvg = isFull
+        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16"/></svg>'
+        : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+    const fullBtnHtml = showFullscreenBtn
+        ? `<button type="button" class="pbtn z1-max" data-window-action="${fullAction}" data-window="${session.id}" title="${fullTitle}" aria-label="${fullTitle}">${fullIconSvg}</button>`
+        : '';
+    return `<button class="terminal-grip terminal-window-center-dots" data-window-control="${session.id}" title="${t('拖动交换窗口位置')}" aria-label="${t('拖动交换窗口位置')}"><span></span></button><button class="mobile-fullscreen-dock-toggle" data-mobile-dock-toggle data-smartbar-toggle title="${t('展开/收回移动端 Dock')}" aria-label="${t('展开/收回移动端 Dock')}"><span></span></button><div class="z1-tb-left"><span class="proto-dot ${terminalProtocolClass(session.protocol)}"></span><strong class="terminal-window-title">${escapeHtml(formatProtectedName(terminalShortName(session.name), proto, settings))}</strong><span class="z1-badge z1-proto-badge">${escapeHtml(proto)}</span>${hostBadge ? `<span class="z1-badge z1-host z1-host-badge">${escapeHtml(hostBadge)}</span>` : ''}<span class="z1-ping" data-z1-ping="${session.id}"${probe?.level ? ` data-level="${probe.level}"` : ''}>${latencyMs == null ? '' : `${latencyMs}ms`}</span></div><div class="z1-tb-actions"><button type="button" class="pbtn z1-min" data-window-action="minimize" data-window="${session.id}" title="${t('最小化')}" aria-label="${t('最小化')}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>${fullBtnHtml}<button type="button" class="pbtn z1-close" data-window-action="close" data-window="${session.id}" title="${t('关闭')}" aria-label="${t('关闭')}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>`;
 }
 function positionTerminalWindowMenu(titlebar, { collapsed = false, force = false } = {}) {
     if (!force && !titlebar?.classList.contains('menu-open')) return;
@@ -5270,12 +5909,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&v=20260804-rdp-ssh-scroll4&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&v=20261018-ui1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&v=20260804-terminal-shell3&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&v=20261018-ui1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261004-dashboard-fit1`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261004-dashboard-fit1`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261018-ui63`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261018-ui63`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -5283,6 +5922,11 @@ function createTerminalWindowElement(session) {
                     source: 'zephyr-app',
                     type: 'notes-enabled',
                     enabled: isNotesEnabled(),
+                }, '*');
+                frame.contentWindow?.postMessage({
+                    source: 'zephyr-app',
+                    type: 'ip-protection-change',
+                    enabled: isIpProtectionEnabled(settings),
                 }, '*');
                 frame.contentWindow?.postMessage({
                     source: 'zephyr-app',
@@ -5347,8 +5991,24 @@ function renderTerminalWorkspace() {
                 el.remove();
             }
         });
-        if (!workspace.querySelector(':scope > .terminal-placeholder')) {
-            workspace.insertAdjacentHTML('afterbegin', `<div class="terminal-placeholder active">${t('暂无可见会话。最小化会话可从终端栏恢复。')}</div>`);
+        document.body.classList.add('terminal-empty-state');
+        syncTerminalSmartbarTop();
+        syncTerminalShelfLineState();
+        const existingPlaceholder = workspace.querySelector(':scope > .terminal-placeholder');
+        const minimizedPillsHtml = keepAliveMinimized.length
+            ? `<div class="terminal-empty-minimized-list">${keepAliveMinimized.map((s) => `<button type="button" class="tool-btn terminal-empty-restore-pill" data-empty-restore-tab="${escapeHtml(s.id)}"><span class="proto-dot ${terminalProtocolClass(s.protocol)}"></span><span>${escapeHtml(formatProtectedName(s.name, s.protocol, settings))}</span></button>`).join('')}</div>`
+            : '';
+        const emptyMinimalHtml = `<div class="terminal-placeholder active">
+            <div class="terminal-empty-minimal terminal-empty-card" data-empty-open-picker role="button" tabindex="0" title="${t('点击展开顶部终端栏或选择连接')}">
+                <span class="terminal-empty-dot"></span>
+                <span class="terminal-empty-text">${keepAliveMinimized.length ? t('当前会话已最小化，点击顶部白条或此处恢复') : t('暂无会话 · 点击上方白条或此处打开连接')}</span>
+                ${minimizedPillsHtml}
+            </div>
+        </div>`;
+        if (existingPlaceholder) {
+            existingPlaceholder.outerHTML = emptyMinimalHtml;
+        } else {
+            workspace.insertAdjacentHTML('afterbegin', emptyMinimalHtml);
         }
         keepAliveMinimized.forEach((t) => {
             let win = workspace.querySelector(`:scope > .terminal-window[data-window="${CSS.escape(t.id)}"]`);
@@ -5363,6 +6023,7 @@ function renderTerminalWorkspace() {
         mountMobileDockToggle(workspace);
         return;
     }
+    document.body.classList.remove('terminal-empty-state');
     mountMobileDockToggle(workspace);
     workspace.querySelectorAll(':scope > .terminal-placeholder, :scope > .workspace-splitter').forEach((el) => el.remove());
     workspace.querySelectorAll(':scope > .terminal-window').forEach((el) => {
@@ -5372,7 +6033,11 @@ function renderTerminalWorkspace() {
         }
     });
     visible.forEach((t, index) => {
-        let win = workspace.querySelector(`:scope > .terminal-window[data-window="${CSS.escape(t.id)}"]`);
+        const matches = Array.from(workspace.querySelectorAll(`:scope > .terminal-window[data-window="${CSS.escape(t.id)}"]`));
+        if (matches.length > 1) {
+            matches.slice(1).forEach((dup) => dup.remove());
+        }
+        let win = matches[0] || (terminalCardFlipMotion?.hostedWindow?.dataset?.window === String(t.id) ? terminalCardFlipMotion.hostedWindow : null);
         if (!win) {
             win = createTerminalWindowElement(t);
             workspace.appendChild(win);
@@ -5409,8 +6074,11 @@ function renderTerminalWorkspace() {
         splitterY.dataset.splitter = 'y';
         workspace.appendChild(splitterY);
     }
+    applySplitSlideState();
+    broadcastPaneSlotConstraints();
     rememberCompactTerminalKeyboardBaseline('render-terminal-workspace');
     scheduleTerminalLayoutStabilize('render-terminal-workspace', { focus: true });
+    broadcastPaneSlotConstraints();
 }
 function renderTerminalTabs({ rebuildWorkspace = true } = {}) {
     syncVisualLayout({ preserve: true });
@@ -5428,6 +6096,7 @@ function renderTerminalTabs({ rebuildWorkspace = true } = {}) {
             const active = win.dataset.window === activeTerminalTab && !win.classList.contains('minimized-keepalive');
             win.querySelectorAll('.terminal-frame, .terminal-placeholder').forEach((frame) => frame.classList.toggle('active', active));
         });
+        applySplitSlideState();
         terminalTabs.forEach((t) => { $$(`[data-window-status="${t.id}"]`).forEach((el) => { el.textContent = t.status || ''; }); });
     }
     requestAnimationFrame(() => {
@@ -5703,10 +6372,16 @@ function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change'
             el.classList.add('layout-morphing');
             if (compensate) el.classList.add('layout-morphing-radius');
             const timing = {
-                duration: TERMINAL_MORPH_DURATION,
+                duration: reason === 'card-flip-settle' ? 460 : TERMINAL_MORPH_DURATION,
                 easing: TERMINAL_MORPH_EASING,
                 fill: 'both',
             };
+            // A pane seeded off screen also fades in, otherwise it reads as a
+            // pop the moment the morph's first frame paints it.
+            if (reason === 'card-flip-settle' && el.style.opacity === '0') {
+                el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: 'ease-out', fill: 'both' });
+                el.style.opacity = '';
+            }
             // Geometry: densified so radius x scale stays constant every frame.
             const anim = el.animate(
                 buildTerminalMorphFrames({ dx, dy, sx, sy, radius: restRadius, compensate }),
@@ -6618,19 +7293,29 @@ async function fullscreenTerminalTab(tabId) {
             }, 120);
         } else {
             const minimizedIds = visibleBefore.filter((id) => id !== tabId);
-            minimizedIds.forEach((id) => {
-                const session = getTerminalSession(id);
-                if (session) session.minimized = true;
-            });
-            visualLayout = [tabId];
-            activeTerminalTab = tabId;
-            syncVisualLayout({ preserve: false });
-            console.debug('[terminal-layout]', 'desktop fullscreen uses single-window layout', {
-                tabId,
-                minimizedIds,
-                visualLayout: [...visualLayout]
-            });
-            renderTerminalTabs();
+            const applyFullscreenLayout = () => {
+                minimizedIds.forEach((id) => {
+                    const session = getTerminalSession(id);
+                    if (session) session.minimized = true;
+                });
+                visualLayout = [tabId];
+                activeTerminalTab = tabId;
+                syncVisualLayout({ preserve: false });
+                console.debug('[terminal-layout]', 'desktop fullscreen uses single-window layout', {
+                    tabId,
+                    minimizedIds,
+                    visualLayout: [...visualLayout]
+                });
+                renderTerminalTabs();
+            };
+            const Motion = await sshKeyMotion._ensure();
+            if (Motion?.terminalWindowFullscreenMorph) {
+                await Motion.terminalWindowFullscreenMorph(win, applyFullscreenLayout, { preset: 'mac' });
+            } else {
+                const beforeRects = captureTerminalWindowRects();
+                applyFullscreenLayout();
+                animateTerminalWindowLayoutFrom(beforeRects, { reason: 'desktop-fullscreen' });
+            }
             window.setTimeout(() => {
                 workspace.querySelector(`.terminal-frame[data-frame="${CSS.escape(tabId)}"]`)?.contentWindow?.postMessage({ source: 'zephyr-app', type: 'focus-terminal' }, '*');
             }, 120);
@@ -7767,8 +8452,8 @@ function renderQuickTestResults(payload = {}, { loading = false } = {}) {
         const ok = r.ok !== false && !r.error;
         const label = modLabel[r.modality] || r.modality || t('文本');
         const status = ok
-            ? `<span class="ai-quick-test-status is-ok">✓ ${escapeHtml(formatQuickTestDuration(r.durationMs))}</span>`
-            : `<span class="ai-quick-test-status is-err">✕ ${escapeHtml(formatQuickTestDuration(r.durationMs))}</span>`;
+            ? `<span class="ai-quick-test-status is-ok">${ZI.check}${escapeHtml(formatQuickTestDuration(r.durationMs))}</span>`
+            : `<span class="ai-quick-test-status is-err"><svg class="zi-close" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> ${escapeHtml(formatQuickTestDuration(r.durationMs))}</span>`;
         const body = ok
             ? (r.content || t('（无文本回复）'))
             : (r.error || t('请求失败'));
@@ -7864,12 +8549,12 @@ function aiModelDisplayName(provider = {}, modelId = '') {
 }
 function aiModelCapabilityIcons(entry = {}) {
     const icons = [];
-    if (entry?.input?.image) icons.push({ key: 'image', label: '🖼️', title: t('图片输入') });
-    if (entry?.input?.pdf) icons.push({ key: 'pdf', label: '📄', title: t('PDF 输入') });
-    if (entry?.input?.audio) icons.push({ key: 'audio', label: '🔊', title: t('音频输入') });
-    if (entry?.input?.video) icons.push({ key: 'video', label: '🎬', title: t('视频输入') });
-    if (entry?.reasoning) icons.push({ key: 'think', label: '💭', title: t('思考') });
-    if (entry?.hidden) icons.push({ key: 'hidden', label: '🙈', title: t('已隐藏') });
+    if (entry?.input?.image) icons.push({ key: 'image', html: ZI.image, title: t('图片输入') });
+    if (entry?.input?.pdf) icons.push({ key: 'pdf', html: ZI.pdf, title: t('PDF 输入') });
+    if (entry?.input?.audio) icons.push({ key: 'audio', html: ZI.audio, title: t('音频输入') });
+    if (entry?.input?.video) icons.push({ key: 'video', html: ZI.video, title: t('视频输入') });
+    if (entry?.reasoning) icons.push({ key: 'think', html: ZI.think, title: t('思考') });
+    if (entry?.hidden) icons.push({ key: 'hidden', html: ZI.hidden, title: t('已隐藏') });
     return icons;
 }
 function aiProviderKind(provider = {}) {
@@ -8163,7 +8848,7 @@ function openAiChoiceModal({ title = '请选择', current = '', choices = [], on
             ${choices.map((item) => `
                 <button type="button" class="ai-choice-row" data-value="${escapeHtml(item.value)}" style="border:0;width:100%;background:${item.value === current ? 'color-mix(in srgb, #007aff 15%, var(--surface))' : 'color-mix(in srgb, var(--text) 4%, transparent)'};color:var(--text);padding:12px 14px;border-radius:12px;font-size:14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;text-align:left;border:1px solid ${item.value === current ? '#007aff' : 'transparent'};">
                     <span style="font-weight:${item.value === current ? '600' : '400'};">${escapeHtml(item.label)}</span>
-                    ${item.value === current ? '<span style="color:#007aff;font-weight:bold;">✓</span>' : ''}
+                    ${item.value === current ? '<span class="ai-picker-check">${ZI.check}</span>' : ''}
                 </button>
             `).join('')}
         </div>
@@ -8200,7 +8885,7 @@ function openAiChoiceModal({ title = '请选择', current = '', choices = [], on
 }
 
 function openAiPicker(kind = '', anchor = null) {
-    closeAiPickerPopover();
+    closeAiPickerPopover({ instant: true });
     const choices = aiHeaderChoices(kind);
     if (!choices.length) {
         if (kind === 'provider') toast(t('尚未配置任何 AI 供应商，请前往设置配置'));
@@ -8211,13 +8896,45 @@ function openAiPicker(kind = '', anchor = null) {
     }
 
     const current = kind === 'provider' ? $('#aiProviderSelect')?.value : kind === 'model' ? $('#aiModelSelect')?.value : $('#aiThinkIntensity')?.value;
+    /* 锚点优先用调用方传入的，其次回退到对应触发器按钮。 */
+    anchor = anchor
+        || (kind === 'provider' ? $('#aiProviderPickerBtn') : kind === 'model' ? $('#aiModelPickerBtn') : $('#aiThinkPickerBtn'))
+        || aiPanelMorphOriginButton;
 
-    openAiChoiceModal({
-        title: kind === 'provider' ? t('选择供应商') : kind === 'model' ? t('选择模型') : t('调整推理深度'),
-        current,
-        choices,
-        onSelect: (value) => applyAiPickerChoice(kind, value),
+    const pop = document.createElement('div');
+    pop.className = 'ai-picker-popover';
+    pop.dataset.pickerKind = kind;
+    pop.setAttribute('role', 'listbox');
+    pop.setAttribute('aria-label', kind === 'provider' ? t('选择供应商') : kind === 'model' ? t('选择模型') : t('调整推理深度'));
+
+    pop.innerHTML = choices.map((item) => {
+        const active = item.value === current;
+        return '<button type="button" role="option" aria-selected="' + active + '"'
+            + ' class="ai-picker-option' + (active ? ' active' : '') + '"'
+            + ' data-value="' + escapeHtml(item.value) + '">'
+            + escapeHtml(item.label)
+            + '</button>';
+    }).join('');
+
+    document.body.appendChild(pop);
+
+    pop.querySelectorAll('.ai-picker-option').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const value = btn.dataset.value;
+            closeAiPickerPopover();
+            applyAiPickerChoice(kind, value);
+        });
     });
+
+    const Motion = sshKeyMotion.engine;
+    if (Motion && typeof Motion.popover === 'function') {
+        Promise.resolve(Motion.popover(pop, anchor, { open: true, preset: 'snappy' }))
+            .catch(() => { pop.style.opacity = '1'; pop.style.transform = 'none'; });
+    } else {
+        /* 引擎不可用时保底可见，绝不让功能元素停在 opacity:0。 */
+        pop.style.opacity = '1';
+    }
+    return pop;
 }
 function applyAiPickerChoice(kind = '', value = '') {
     const session = aiCurrentSession();
@@ -9033,7 +9750,7 @@ function resetAiEnvForm() {
     $('#aiEnvDescription').value = '';
     $('#aiEnvValue').value = '';
     $('#aiEnvValue').type = 'password';
-    $('#toggleAiEnvValue').textContent = '👁️';
+    applyPasswordRevealIcon($('#toggleAiEnvValue'), false);
     $('#aiEnvEnabled').checked = true;
     $('#aiEnvVisibleToAi').checked = false;
     $('#aiEnvValueVisibleToAi').checked = false;
@@ -9467,7 +10184,7 @@ function renderAiChat() {
 }
 function summarizeAiUserMessageForDisplay(text = '') {
     return String(text || '')
-        .replace(/\[附件\][^\n]+(?:🖼️)?\n*/g, '')
+        .replace(/\[附件\][^\n]+\n*/g, '')
         .replace(/附件图片：([^\n]+)\n\s*data:image\/[^;\s]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '')
         .replace(/data:image\/[A-Za-z0-9.+-]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '')
         .trim();
@@ -9786,7 +10503,7 @@ function ensureAiMessageMenu() {
     menu = document.createElement('div');
     menu.id = 'aiMessageContextMenu';
     menu.className = 'ai-message-menu hidden';
-    menu.innerHTML = `<button type="button" data-ai-msg-action="copy"><span>⧉</span>${t('复制文本')}</button><button type="button" data-ai-msg-action="edit"><span>✎</span>${t('编辑消息')}</button><button type="button" data-ai-msg-action="regen"><span>↻</span>${t('重新回答')}</button><button type="button" data-ai-msg-action="select"><span>T</span>${t('选择文本')}</button><button type="button" data-ai-msg-action="usage"><span>◷</span>${t('查看用量')}</button>`;
+    menu.innerHTML = `<button type="button" data-ai-msg-action="copy"><svg class="zi-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>${t('复制文本')}</button><button type="button" data-ai-msg-action="edit"><svg class="zi-edit" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>${t('编辑消息')}</button><button type="button" data-ai-msg-action="regen"><svg class="zi-regen" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16"/><path d="M3 21v-5h5"/></svg>${t('重新回答')}</button><button type="button" data-ai-msg-action="select"><svg class="zi-select" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 10 11 4 15"/><line x1="12" y1="19" x2="20" y2="19"/></svg>${t('选择文本')}</button><button type="button" data-ai-msg-action="usage"><svg class="zi-usage" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>${t('查看用量')}</button>`;
     document.body.appendChild(menu);
     return menu;
 }
@@ -11997,7 +12714,7 @@ function openAiAssistantPanel(trigger = null) {
         const contentEl = panel.querySelector('.ai-agent-window');
         if (Motion && typeof Motion.aiPanelOpen === 'function') {
             try {
-                await Motion.aiPanelOpen(panel, null, {
+                await Motion.aiPanelOpen(panel, sourceButton, {
                     contentEl,
                     contentWithPanel: true,
                     mode: 'origin',
@@ -12031,6 +12748,8 @@ function toggleAiAssistantPanel(trigger = null) {
     openAiAssistantPanel(trigger);
 }
 function closeAiAssistantPanel() {
+    /* Exit retraces the entry path (plan 3.4.2 M11). */
+    const trigger = aiPanelMorphOriginButton || $('#aiFloatingBtn') || $('#openAiAssistantBtn') || $('#openAiAssistantBtn2') || $('#aiNavTab');
     const panel = $('#aiAgentPanel');
     if (!panel || panel.style.display === 'none' || aiPanelState === 'closed' || aiPanelState === 'closing') return;
     stopAiPanelWatchdog();
@@ -12081,7 +12800,7 @@ function closeAiAssistantPanel() {
         const contentEl = panel.querySelector('.ai-agent-window');
         if (Motion && typeof Motion.aiPanelClose === 'function') {
             try {
-                await Motion.aiPanelClose(panel, null, {
+                await Motion.aiPanelClose(panel, trigger, {
                     contentEl,
                     mode: 'origin',
                     preset: 'macClose',
@@ -13072,7 +13791,7 @@ function setupAiAssistant() {
     });
     $('#aiEnvForm')?.addEventListener('submit', saveAiEnv);
     $('#aiEnvResetBtn')?.addEventListener('click', resetAiEnvForm);
-    $('#toggleAiEnvValue')?.addEventListener('click', () => { const el = $('#aiEnvValue'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleAiEnvValue').textContent = el.type === 'password' ? '👁️' : '🙈'; });
+    $('#toggleAiEnvValue')?.addEventListener('click', () => { const el = $('#aiEnvValue'); el.type = el.type === 'password' ? 'text' : 'password'; applyPasswordRevealIcon($('#toggleAiEnvValue'), el.type === 'text'); });
     $('#aiEnvList')?.addEventListener('click', (e) => { const edit = e.target.dataset.aiEditEnv, del = e.target.dataset.aiDeleteEnv; const ai = normalizeAiSettings(settings.ai || {}); if (edit) { const item = ai.envVars.find((x) => x.id === edit); if (!item) return; $('#aiEnvId').value = item.id; $('#aiEnvName').value = item.name || ''; $('#aiEnvDescription').value = item.description || ''; $('#aiEnvValue').value = item.hasValue || item.value ? '******' : ''; $('#aiEnvEnabled').checked = item.enabled !== false; $('#aiEnvVisibleToAi').checked = item.visibleToAi === true; $('#aiEnvValueVisibleToAi').checked = item.valueVisibleToAi === true; } if (del) deleteAiEnv(del); });
     $('#aiMemoryForm')?.addEventListener('submit', saveAiMemory);
     $('#aiMemoryResetBtn')?.addEventListener('click', resetAiMemoryForm);
@@ -13463,7 +14182,7 @@ function setupAiAssistant() {
     document.addEventListener('visibilitychange', () => { if (!document.hidden && aiPanelState === 'open') startAiPanelWatchdog(); });
 }
 
-function renderRemoteServers() { const ssh = connections.filter((c) => c.protocol === 'SSH'); $('#remoteServerList').innerHTML = ssh.length ? ssh.map((c) => `<label class="server-check"><input type="checkbox" value="${c.id}"> <span>${escapeHtml(c.name)}</span><em>${escapeHtml(c.host)}</em></label>`).join('') : `<div class="empty-card">${t('暂无 SSH 连接')}</div>`; }
+function renderRemoteServers() { const ssh = connections.filter((c) => c.protocol === 'SSH'); $('#remoteServerList').innerHTML = ssh.length ? ssh.map((c) => `<label class="server-check"><input type="checkbox" value="${c.id}"> <span>${escapeHtml(formatProtectedName(c.name, c.protocol, settings))}</span>${isIpProtectionEnabled(settings) ? '' : `<em>${escapeHtml(c.host)}</em>`}</label>`).join('') : `<div class="empty-card">${t('暂无 SSH 连接')}</div>`; }
 async function remoteExecute(e) { e.preventDefault(); const ids = $$('#remoteServerList input:checked').map((i) => i.value); try { $('#remoteResults').innerHTML = `<div class="empty-card">${t('执行中...')}</div>`; const data = await api('/api/remote-execute', { method: 'POST', body: JSON.stringify({ connectionIds: ids, command: $('#remoteCommand').value, timeoutSeconds: Number($('#remoteTimeout').value) || 30 }) }); $('#remoteResults').innerHTML = data.results.map((r) => `<article class="result-card ${r.success ? 'ok' : 'fail'}"><h3>${escapeHtml(r.name)} <span>${escapeHtml(r.status)} · ${r.durationMs}ms</span></h3>${r.error ? `<p class="error-text">${escapeHtml(r.error)}</p>` : ''}<pre>${escapeHtml(r.stdout || '')}</pre>${r.stderr ? `<pre class="stderr">${escapeHtml(r.stderr)}</pre>` : ''}</article>`).join(''); await loadConnections(); } catch (err) { toast(err.message); } }
 
 async function savePersonalSettings(patch) {
@@ -13532,6 +14251,14 @@ async function loadSettings() {
     if (generation !== settingsLoadGeneration) return settings;
     personalSettingsOverrides = nextPersonalSettingsOverrides;
     settings = nextSettings;
+    const savedIpProt = (() => {
+        try { return localStorage.getItem('zephyr_ip_protection_saved') === '1'; } catch { return false; }
+    })();
+    settings.ipProtection = savedIpProt;
+    if (settings.appearance && typeof settings.appearance === 'object') {
+        settings.appearance.ipProtection = savedIpProt;
+    }
+    applyIpProtectionState(savedIpProt, settings);
     const sec = settings.security || {}, cap = settings.captcha || {}, mail = settings.mail || {}, beian = settings.beian || {};
     $('#versionText').textContent = settings.version || '--';
     applyAgentReleaseLinks(settings.agentRelease);
@@ -13576,7 +14303,7 @@ function isNotesEnabled() {
 }
 
 function broadcastNotesEnabled(enabled = isNotesEnabled()) {
-    $$('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
+    document.querySelectorAll('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
         try {
             frame.contentWindow?.postMessage({
                 source: 'zephyr-app',
@@ -13722,7 +14449,7 @@ function closePasswordChangedModal() {
     if (urlInput) urlInput.value = '';
 }
 function renderPasskeys() { if (!$('#passkeyList')) return; $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 Passkey')}</p>`; }
-function renderSecurityLists() { if (!$('#ipBanList')) return; $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>${t('失败')} ${b.failedCount} · ${t('解封')} ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">${t('解除')}</button></div>`).join('') || `<p class="muted">${t('暂无封禁 IP')}</p>`; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason ? t(e.reason) : '')} · ${fmtTime(e.time)}</span></div>`).join('') || `<p class="muted">${t('暂无登录事件')}</p>`; }
+function renderSecurityLists() { if (!$('#ipBanList')) return; const ipProt = isIpProtectionEnabled(settings); $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b class="ip-ban-addr">${escapeHtml(ipProt ? t('已隐藏 IP') : b.ip)}</b><span>${t('失败')} ${b.failedCount} · ${t('解封')} ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">${t('解除')}</button></div>`).join('') || `<p class="muted">${t('暂无封禁 IP')}</p>`; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${ ipProt ? '' : `${escapeHtml(e.ip || '')} · ` }${escapeHtml(e.reason ? t(e.reason) : '')} · ${fmtTime(e.time)}</span></div>`).join('') || `<p class="muted">${t('暂无登录事件')}</p>`; }
 async function saveSecurityPolicy(e) { e.preventDefault(); if (!$('#securityPolicyForm')) return; settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast(t('安全策略已保存')); }
 async function saveCaptcha(e) {
     e.preventDefault();
@@ -13751,7 +14478,7 @@ async function revealCaptchaSecret() {
     const data = await api('/api/settings/captcha/open', { method: 'POST', body: JSON.stringify({ secret }) });
     $('#captchaSecretKey').value = data.secretKey || '';
     $('#captchaSecretKey').type = 'text';
-    $('#toggleCaptchaSecret').textContent = '🙈';
+    applyPasswordRevealIcon($('#toggleCaptchaSecret'), true);
     console.debug('[captcha-client]', 'captcha secret loaded', { provider: data.provider, hasSecretKey: !!data.hasSecretKey });
     toast(data.hasSecretKey ? '已载入保存的 CAPTCHA 密钥' : '当前未保存 CAPTCHA 密钥');
 }
@@ -13760,7 +14487,7 @@ async function saveMail(e) {
     try {
         settings = await savePlatformSettings('mail', { mail: { enabled: $('#mailEnabled').checked, host: $('#mailHost').value.trim(), port: Number($('#mailPort').value) || 465, secure: $('#mailSecure').checked, user: $('#mailUser').value.trim(), pass: $('#mailPass').value, from: $('#mailFrom').value.trim(), adminEmail: $('#mailAdminEmail').value.trim(), notifyLoginSuccess: $('#notifyLoginSuccess').checked, notifyLoginFailure: $('#notifyLoginFailure').checked, notifyLoginToUser: $('#notifyLoginToUser').checked, geoLookupEnabled: $('#geoLookupEnabled').checked } });
         $('#mailPass').type = 'password';
-        $('#toggleMailPassword').textContent = '👁️';
+        applyPasswordRevealIcon($('#toggleMailPassword'), false);
         toast(t('邮件设置已保存'));
     } catch (err) {
         toast(err.message || '邮件设置保存失败');
@@ -13771,7 +14498,7 @@ async function revealMailPass() {
     const data = await api('/api/settings/mail/open', { method: 'POST', body: JSON.stringify({ secret }) });
     $('#mailPass').value = data.pass || '';
     $('#mailPass').type = 'text';
-    $('#toggleMailPassword').textContent = '🙈';
+    applyPasswordRevealIcon($('#toggleMailPassword'), true);
     console.debug('[secret-open]', 'mail password loaded', { hasPass: !!data.hasPass });
     toast(data.hasPass ? '已载入保存的 SMTP 密码' : '当前未保存 SMTP 密码');
 }
@@ -14083,20 +14810,12 @@ async function loadNetwork() {
      * and only falls back to locally connected Agents when unbound. */
     agentBastions = (bastionData.agents || []).filter((a) => a && a.online !== false && a.bastionEnabled !== false);
     renderNetwork();
-    // The connection editor's jump rows already hold the saved selection.
-    // Rebuilding them here with an empty selection is what made an RDP
-    // connection reopen with its bastion showing as unselected even though
-    // the saved route still worked. renderJumpOptions keeps those rows.
-    if ($('#connMode')?.value === 'jump' && $$('#jumpRouteList [data-jump-route-select]').length) {
-        renderJumpOptions();
-    } else {
-        updateRouteOptions();
-    }
+    updateRouteOptions();
     renderSshKeyOptions($('#connSshKey')?.value || '');
     return { proxies, sshKeys, jumpHosts, agentBastions };
 }
 function renderNetwork() {
-    $('#proxyList').innerHTML = proxies.map((p) => `<div class="mini-item proxy-item"><span class="resource-tag resource-tag-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml((p.type || 'socks5').toUpperCase())}</span><span class="resource-tag resource-tag-host" title="${escapeHtml(p.host)}">${escapeHtml(p.host)}</span><span class="resource-tag resource-tag-port">${Number(p.port) || 1080}</span>${p.username ? `<span class="resource-tag resource-tag-auth">${escapeHtml(p.username)}</span>` : ''}${p.hasPassword ? `<span class="resource-tag resource-tag-secret">${t('有密码')}</span>` : ''}</div><button data-edit-proxy="${p.id}">${t('编辑')}</button><button data-open-proxy="${p.id}">${t('查看')}</button><button data-del-proxy="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无代理')}</p>`;
+    $('#proxyList').innerHTML = proxies.map((p) => `<div class="mini-item proxy-item"><span class="resource-tag resource-tag-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml((p.type || 'socks5').toUpperCase())}</span>${isIpProtectionEnabled(settings) ? '' : `<span class="resource-tag resource-tag-host" title="${escapeHtml(p.host)}">${escapeHtml(p.host)}</span>`}<span class="resource-tag resource-tag-port">${Number(p.port) || 1080}</span>${p.username ? `<span class="resource-tag resource-tag-auth">${escapeHtml(p.username)}</span>` : ''}${p.hasPassword ? `<span class="resource-tag resource-tag-secret">${t('有密码')}</span>` : ''}</div><button data-edit-proxy="${p.id}">${t('编辑')}</button><button data-open-proxy="${p.id}">${t('查看')}</button><button data-del-proxy="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无代理')}</p>`;
     $('#sshKeyList').innerHTML = sshKeys.map((k) => `<div class="mini-item ssh-key-item"><span class="ssh-key-tag ssh-key-tag-name" title="${escapeHtml(k.name)}">${escapeHtml(k.name)}</span><div class="ssh-key-meta"><span class="ssh-key-tag ssh-key-tag-private">${k.hasPrivateKey ? t('已保存私钥') : t('无私钥')}</span>${k.hasPassphrase ? `<span class="ssh-key-tag ssh-key-tag-passphrase">${t('有口令')}</span>` : ''}${k.remark ? `<span class="ssh-key-tag ssh-key-tag-remark" title="${escapeHtml(k.remark)}">${escapeHtml(k.remark)}</span>` : ''}</div><button data-edit-ssh-key="${k.id}">${t('编辑')}</button><button data-open-ssh-key="${k.id}">${t('查看')}</button><button data-del-ssh-key="${k.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 SSH 密钥')}</p>`;
 }
 function renderJumpOptions() {
@@ -14437,7 +15156,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2')
+        return import('./vendor/zephyr-motion/index.js?v=20261018-ui63')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -14687,6 +15406,20 @@ function bindConnectionPressFeedback(root = document) {
 
 function bindEvents() {
     document.documentElement.dataset.appBindEvents = 'start';
+    bindTerminalPanelPinStateMessages();
+    /* 计划 4.2.4：跨端接管入口。协议（ZSL-HANDOFF/1）尚未实现，
+     * 这里明确告知而不是假装成功，避免出现「点了没反应」的假功能。 */
+    document.addEventListener('click', (e) => {
+        const row = e.target.closest && e.target.closest('[data-handoff-device]');
+        if (!row) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const online = row.dataset.handoffOnline === '1';
+        toast(online
+            ? t('跨端接管协议尚未实现，无法从此设备接管会话')
+            : t('该设备当前离线，无法接管'));
+    }, true);
+    bindTerminalShelfCollapse();
     bindConnectionPressFeedback();
     $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view, { cardFlipSource: btn })));
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => {
@@ -14735,7 +15468,7 @@ function bindEvents() {
         if (!btn) return;
         handleAdminAction(btn.dataset.adminAction, btn.dataset.userId);
     });
-    $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget, { mode: 'create', source: 'dashboard' })); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleConnPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest?.('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection); $('#connectTransientBtn')?.addEventListener('click', () => connectTransient().catch((err) => toast(err.message)));
+    $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget, { mode: 'create', source: 'dashboard' })); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; applyPasswordRevealIcon($('#toggleConnPassword'), el.type === 'text'); }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest?.('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection); $('#connectTransientBtn')?.addEventListener('click', () => connectTransient().catch((err) => toast(err.message)));
     $('#connEphemeral')?.addEventListener('change', applyEphemeralToggleFromUi);
     $('#connProtocol').addEventListener('change', () => updateProtocolFields({ preservePort: false }));
     $('#rdpTouchMode')?.addEventListener('change', updateRdpTouchSettingsUi);
@@ -14815,6 +15548,23 @@ function bindEvents() {
         }
     });
     $('#sessionTabs').addEventListener('click', (e) => {
+        if (e.target.closest?.('[data-smartbar-add]')) {
+            suppressSmartbarClick = false;
+            terminalSmartbarPickerOpen = !terminalSmartbarPickerOpen;
+            setTerminalSmartbarOpen(true);
+            requestAnimationFrame(() => {
+                positionSmartbarPicker();
+                const pickerEl = document.querySelector('#smartbarPickerLayer .smartbar-picker');
+                if (pickerEl && window.Motion?.present) {
+                    window.Motion.present(pickerEl, { preset: 'snappy', fromScale: 0.95 }).finally(() => {
+                        window.Motion.release?.(pickerEl);
+                        pickerEl.style.transform = '';
+                        pickerEl.style.opacity = '1';
+                    });
+                }
+            });
+            return;
+        }
         if (suppressSmartbarClick) { suppressSmartbarClick = false; return; }
         const toggle = e.target.closest?.('[data-smartbar-toggle]');
         if (toggle) { setTerminalSmartbarOpen(!terminalSmartbarOpen); return; }
@@ -15269,9 +16019,9 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
     $('#addPasskeyBtn')?.addEventListener('click', () => registerPasskey().catch((err) => toast(err.message)));
     $('#passkeyList')?.addEventListener('click', async (e) => { const id = e.target.dataset.delPasskey; if (id && confirm(t('删除该 Passkey？'))) { await api(`/api/passkeys/${id}`, { method: 'DELETE' }); await loadSecurityStatus(); } });
     $('#ipBanList')?.addEventListener('click', async (e) => { const ip = e.target.dataset.unban; if (ip) { await api(`/api/security/ip-bans/${encodeURIComponent(ip)}`, { method: 'DELETE' }); await loadSecurityLists(); toast(t('已解除封禁')); } });
-    $('#toggleCaptchaSecret')?.addEventListener('click', () => { const el = $('#captchaSecretKey'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleCaptchaSecret').textContent = el.type === 'password' ? '👁️' : '🙈'; });
+    $('#toggleCaptchaSecret')?.addEventListener('click', () => { const el = $('#captchaSecretKey'); el.type = el.type === 'password' ? 'text' : 'password'; applyPasswordRevealIcon($('#toggleCaptchaSecret'), el.type === 'text'); });
     $('#revealCaptchaSecret')?.addEventListener('click', () => revealCaptchaSecret().catch((err) => toast(err.message || '读取 CAPTCHA 密钥失败')));
-    $('#toggleMailPassword').addEventListener('click', () => { const el = $('#mailPass'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleMailPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; });
+    $('#toggleMailPassword').addEventListener('click', () => { const el = $('#mailPass'); el.type = el.type === 'password' ? 'text' : 'password'; applyPasswordRevealIcon($('#toggleMailPassword'), el.type === 'text'); });
     $('#revealMailPass').addEventListener('click', () => revealMailPass().catch((err) => toast(err.message || '读取 SMTP 密码失败')));
     $('#testMailBtn').addEventListener('click', () => testMail());
     $('#exportDataBtn').addEventListener('click', () => { location.href = '/api/data/export'; });
@@ -15634,6 +16384,25 @@ function bindDeepLinkChannel() {
     });
     // Terminal -> app: backend probed the remote OS and persisted the icon
     // (auto/probed → actual system). Sync memory + re-render connection cards.
+    // Terminal -> app: the stats stream's SSH handshake probe. Paint it on the
+    // pane titlebar so the chip matches the monitor card.
+    window.addEventListener('message', (event) => {
+        if (event.origin !== location.origin) return;
+        const data = event.data || {};
+        if (data.type !== 'zephyr-probe-latency' || !data.tabId) return;
+        const ms = Number.isFinite(data.ms) ? Math.max(0, Math.round(data.ms)) : null;
+        const level = ['good', 'mid', 'bad'].includes(data.level) ? data.level : '';
+        const prev = terminalProbeLatency.get(data.tabId);
+        if (prev && prev.ms === ms && prev.level === level) return;
+        if (ms == null) terminalProbeLatency.delete(data.tabId);
+        else terminalProbeLatency.set(data.tabId, { ms, level });
+        const text = ms == null ? '' : `${ms}ms`;
+        document.querySelectorAll(`[data-z1-ping="${CSS.escape(String(data.tabId))}"]`).forEach((chip) => {
+            if (chip.textContent !== text) chip.textContent = text;
+            if (level) chip.dataset.level = level;
+            else delete chip.dataset.level;
+        });
+    });
     window.addEventListener('message', (event) => {
         if (event.origin !== location.origin) return;
         const data = event.data || {};
@@ -15679,9 +16448,6 @@ function initSettingsVisibility() {
     document.getElementById('platformSecuritySettings')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearLoginEventsBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearActivityBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
-    /* customJs executes in every authenticated browser, so only the super
-     * admin may view or edit it (server rejects others on write too). */
-    document.getElementById('customJsField')?.classList.toggle('force-hidden', !isSuperAdmin);
     const isOneMode = typeof window !== 'undefined' && !!window.__zephyrOneUnlock;
     document.getElementById('linkSettingsTab')?.classList.toggle('force-hidden', !isOneMode);
     document.getElementById('settings-link')?.classList.toggle('force-hidden', !isOneMode);
@@ -16502,3 +17268,348 @@ function setupAgentTokenSettings() {
     loadAgentDevices().catch(() => {});
     loadOneClients().catch(() => {});
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Plan Chapters 4.3, 5, 7.2.2 & 10.6 Host Integration
+ * ══════════════════════════════════════════════════════════════════════════ */
+const globalAiSecretVault = new SecretVaultRehydrator();
+window.__zephyrAiSecretVault = globalAiSecretVault;
+window.__zephyrScanInjection = scanIncomingServerOutputForInjection;
+window.ZephyrHaptics = ZephyrHaptics;
+
+function syncActiveSurfaceAttribute() {
+    const mode = resolveActiveSurfaceMode(window);
+    document.documentElement.dataset.surface = mode;
+    document.documentElement.classList.toggle('pad-landscape-desktop', isPadLandscapeSurface(window));
+    ensurePadFloatingModifierCapsule((seq) => {
+        const activeFrame = document.querySelector('#terminalWorkspace .terminal-window.active iframe.terminal-frame')
+            || document.querySelector('#terminalWorkspace iframe.terminal-frame');
+        activeFrame?.contentWindow?.postMessage({ source: 'zephyr-app', type: 'zephyr-inject-code', code: seq }, '*');
+    });
+}
+
+function ensureInitiateViaPrimaryField() {
+    const shareGroup = document.getElementById('connectionShareGroup') || document.querySelector('#connectionForm .connection-share-options');
+    if (!shareGroup || document.getElementById('connInitiateViaPrimary')) return;
+    const container = shareGroup.classList.contains('connection-share-options')
+        ? shareGroup
+        : (shareGroup.querySelector('.connection-share-options') || shareGroup);
+    const label = document.createElement('label');
+    label.className = 'connection-share-option';
+    label.id = 'initiateViaPrimaryRow';
+    label.setAttribute('for', 'connInitiateViaPrimary');
+    label.innerHTML = `
+        <span class="connection-share-copy">
+            <strong>Initiate via Primary (Handoff Ready)</strong>
+            <small>Anchor session on Zephyr Primary Server for seamless cross-device handoff</small>
+        </span>
+        <span class="connection-share-switch">
+            <input type="checkbox" id="connInitiateViaPrimary" name="initiateViaPrimary">
+            <span aria-hidden="true"></span>
+        </span>
+    `;
+    container.appendChild(label);
+}
+
+function installSshConfigDragAndPasteImport() {
+    const dash = document.getElementById('view-dashboard');
+    if (!dash || dash.dataset.sshImportBound === '1') return;
+    dash.dataset.sshImportBound = '1';
+
+    function showImportPreview(hosts) {
+        if (!hosts || !hosts.length) return;
+        let banner = document.getElementById('sshConfigImportBanner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'sshConfigImportBanner';
+            banner.className = 'ssh-config-import-banner z-glass-regular';
+            dash.prepend(banner);
+        }
+        banner.style.display = 'flex';
+        banner.innerHTML = `
+            <div class="ssh-import-head">
+                <strong>SSH Config Ready (${hosts.length} hosts parsed)</strong>
+                <div class="ssh-import-actions">
+                    <button type="button" class="btn btn-primary" id="sshConfigConfirmImportBtn">Import ${hosts.length} Hosts</button>
+                    <button type="button" class="btn" id="sshConfigCancelImportBtn">×</button>
+                </div>
+            </div>
+            <div class="ssh-import-list">
+                ${hosts.map((h, i) => `
+                    <label class="ssh-import-item">
+                        <input type="checkbox" data-ssh-idx="${i}" checked>
+                        <span><b>${h.name}</b> (${h.username}@${h.host}:${h.port})${h.proxyJump ? ' via ' + h.proxyJump : ''}</span>
+                    </label>
+                `).join('')}
+            </div>
+        `;
+        banner.querySelector('#sshConfigCancelImportBtn')?.addEventListener('click', () => {
+            banner.style.display = 'none';
+        });
+        banner.querySelector('#sshConfigConfirmImportBtn')?.addEventListener('click', async () => {
+            const checkedIdxs = new Set(
+                Array.from(banner.querySelectorAll('input[data-ssh-idx]:checked')).map((el) => Number(el.dataset.sshIdx))
+            );
+            const selected = hosts.filter((_, idx) => checkedIdxs.has(idx));
+            for (const h of selected) {
+                try {
+                    await fetch('/api/connections', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: h.name,
+                            type: 'ssh',
+                            host: h.host,
+                            port: h.port,
+                            username: h.username,
+                            authType: 'password',
+                        }),
+                    });
+                } catch {}
+            }
+            banner.style.display = 'none';
+            ZephyrHaptics.success();
+            if (typeof loadConnections === 'function') loadConnections();
+        });
+    }
+
+    dash.addEventListener('dragover', (e) => {
+        if (e.dataTransfer?.types?.includes('Files')) e.preventDefault();
+    });
+    dash.addEventListener('drop', async (e) => {
+        const files = e.dataTransfer?.files;
+        if (!files || !files.length) return;
+        e.preventDefault();
+        const file = files[0];
+        const text = await file.text();
+        const parsed = parseSshConfigAndAutoLink(text);
+        if (parsed.length) showImportPreview(parsed);
+    });
+    document.addEventListener('paste', (e) => {
+        if (!dash.classList.contains('active')) return;
+        if (e.target?.closest?.('input, textarea')) return;
+        const text = e.clipboardData?.getData('text') || '';
+        if (/^\s*Host\s+\S+/im.test(text) && /\bHostName\s+\S+/i.test(text)) {
+            const parsed = parseSshConfigAndAutoLink(text);
+            if (parsed.length) {
+                e.preventDefault();
+                showImportPreview(parsed);
+            }
+        }
+    });
+}
+
+function bindBroadcastAndDiagnoseMessages() {
+    window.addEventListener('message', (ev) => {
+        const d = ev.data;
+        if (!d || d.source !== 'zephyr-terminal') return;
+        if (d.type === 'zephyr-broadcast-input' && d.data) {
+            const ws = document.getElementById('terminalWorkspace');
+            if (!ws || !ws.classList.contains('broadcast-input-active')) return;
+            ws.querySelectorAll('iframe.terminal-frame').forEach((frame) => {
+                if (frame.contentWindow && frame.contentWindow !== ev.source) {
+                    try {
+                        frame.contentWindow.postMessage({
+                            source: 'zephyr-app',
+                            type: 'zephyr-broadcast-input-forward',
+                            data: d.data,
+                        }, '*');
+                    } catch {}
+                }
+            });
+        } else if (d.type === 'zephyr-ai-diagnose') {
+            const aiBtn = document.getElementById('aiFloatingBtn') || document.getElementById('openAiAssistantBtn');
+            aiBtn?.click?.();
+            const aiInput = document.getElementById('aiUserInput');
+            if (aiInput && d.command) {
+                aiInput.value = `Diagnose failed command: ${d.command}\n${d.output || ''}`;
+                aiInput.focus();
+            }
+        }
+    });
+}
+
+function bindGlobalHapticsAndAiSecretGuard() {
+    document.addEventListener('click', (ev) => {
+        const target = ev.target.closest?.('.nav-tab, #island .item, .switch, .btn-primary, [data-shelf-collapse-toggle]');
+        if (target) ZephyrHaptics.selectionTick();
+    }, { passive: true });
+
+    const aiInput = document.getElementById('aiUserInput');
+    const aiSendBtn = document.getElementById('aiSendBtn');
+    const redactAiInputIfNeeded = () => {
+        if (!aiInput || !aiInput.value) return;
+        const res = globalAiSecretVault.redactUserPromptBeforeSend(aiInput.value);
+        if (res.hasSecrets) {
+            aiInput.value = res.sanitized;
+        }
+    };
+    aiSendBtn?.addEventListener('pointerdown', redactAiInputIfNeeded, true);
+    aiInput?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) redactAiInputIfNeeded();
+    }, true);
+}
+
+function initZephyrProHostFeatures() {
+    syncActiveSurfaceAttribute();
+    window.addEventListener('resize', syncActiveSurfaceAttribute);
+    ensureInitiateViaPrimaryField();
+    installSshConfigDragAndPasteImport();
+    bindBroadcastAndDiagnoseMessages();
+    bindGlobalHapticsAndAiSecretGuard();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initZephyrProHostFeatures);
+else initZephyrProHostFeatures();
+
+
+function injectNavTabIcons() {
+    const map = {"dashboard":"<svg class=\"nav-tab-ico\" width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1.5\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1.5\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1.5\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\" rx=\"1.5\"/></svg>","activity":"<svg class=\"nav-tab-ico\" width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/></svg>","terminal":"<svg class=\"nav-tab-ico\" width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><polyline points=\"4 17 10 11 4 5\"/><line x1=\"12\" y1=\"19\" x2=\"20\" y2=\"19\"/></svg>","remote":"<svg class=\"nav-tab-ico\" width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41\"/></svg>","notes":"<svg class=\"nav-tab-ico\" width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"16\" y1=\"13\" x2=\"8\" y2=\"13\"/><line x1=\"16\" y1=\"17\" x2=\"8\" y2=\"17\"/></svg>","settings":"<svg class=\"nav-tab-ico\" width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z\"/></svg>"};
+    document.querySelectorAll('.nav-tabs .nav-tab[data-view]').forEach((btn) => {
+        const view = btn.dataset.view;
+        const svg = map[view];
+        if (!svg || btn.querySelector('svg.nav-tab-ico')) return;
+        const i18nKey = btn.getAttribute('data-i18n') || btn.textContent.trim();
+        btn.removeAttribute('data-i18n');
+        const label = typeof t === 'function' ? t(i18nKey) : i18nKey;
+        btn.innerHTML = svg + '<span class="nav-tab-txt" data-i18n="' + i18nKey + '">' + label + '</span>';
+    });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(injectNavTabIcons, 60));
+else setTimeout(injectNavTabIcons, 60);
+onLocaleChange(() => setTimeout(injectNavTabIcons, 30));
+
+
+function bindTerminalEmptyAndAiResizeFocus() {
+    if (document.documentElement.dataset.emptyAndAiFocusBound === '1') return;
+    document.documentElement.dataset.emptyAndAiFocusBound = '1';
+
+    // Ensure #aiFloatingBtn has its clean SVG icon without ever stripping .force-hidden when AI is disabled!
+    const aiBtn = document.getElementById('aiFloatingBtn');
+    if (aiBtn && !aiBtn.querySelector('svg')) {
+        aiBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10l1.4 1.4M5.6 18.4l1.4-1.4m10-10l1.4-1.4"/></svg><span>AI</span>';
+    }
+    // Ensure authentic Zephyr brand mark from theme-runtime.js is rendered
+    try { applyAppearance(getAppearance()); } catch (_) {}
+    try { applyAiVisibility(); } catch (_) {}
+
+    // Terminal empty state actions (Issue 10)
+    document.addEventListener('click', (ev) => {
+        const pickerBtn = ev.target.closest?.('[data-empty-open-picker]');
+        if (pickerBtn) {
+            ev.preventDefault();
+            if (!connections || !connections.length) {
+                switchView('dashboard');
+                return;
+            }
+            terminalSmartbarOpen = true;
+            terminalSmartbarPickerOpen = true;
+            renderTerminalSmartbar();
+            return;
+        }
+        const dashBtn = ev.target.closest?.('[data-empty-go-dashboard]');
+        if (dashBtn) {
+            ev.preventDefault();
+            switchView('dashboard');
+            return;
+        }
+        const restoreBtn = ev.target.closest?.('[data-empty-restore-tab]');
+        if (restoreBtn) {
+            ev.preventDefault();
+            const tabId = restoreBtn.dataset.emptyRestoreTab;
+            if (tabId) {
+                restoreTerminalSession(tabId);
+                showTerminalSessionInWorkspace(tabId);
+                renderTerminalTabs();
+            }
+        }
+    });
+
+    // AI floating panel outer-ring resize handle focus show/hide (Issue 6)
+    document.addEventListener('pointerdown', (ev) => {
+        const aiPanel = document.getElementById('aiAgentPanel');
+        if (!aiPanel || aiPanel.style.display === 'none') return;
+        const inside = aiPanel.contains(ev.target);
+        if (window.Motion?.panelResizeRing) {
+            window.Motion.panelResizeRing(aiPanel, inside);
+        } else {
+            aiPanel.classList.toggle('panel-focused', inside);
+        }
+    }, true);
+
+    window.addEventListener('resize', () => {
+        // The slide changes pane geometry, which fires resize. Resetting the
+        // slide here with animate:false snapped the pane back the instant the
+        // engine moved it, so the slide never played. Re-apply it animated;
+        // applySplitSlideState bails out when the target is unchanged.
+        applySplitSlideState();
+    });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindTerminalEmptyAndAiResizeFocus);
+else bindTerminalEmptyAndAiResizeFocus();
+
+window.addEventListener('message', (ev) => {
+    const d = ev?.data;
+    if (!d || d.source !== 'zephyr-terminal') return;
+    if (d.type === 'zephyr-panel-pin-state' || d.type === 'zephyr-panel-float-state') {
+        const winEl = d.tabId
+            ? document.querySelector(`.terminal-window[data-window="${CSS.escape(d.tabId)}"]`)
+            : null;
+        if (winEl) {
+            const sides = Array.isArray(d.pinSides) ? d.pinSides : [];
+            winEl.classList.toggle('window-has-dock-right', sides.includes('right'));
+            winEl.classList.toggle('window-has-dock-left', sides.includes('left'));
+            if (typeof d.hasFloatingPanel === 'boolean') {
+                winEl.classList.toggle('window-has-floating-panel', d.hasFloatingPanel && sides.length === 0);
+            }
+        }
+        // The slide itself is started by bindTerminalPanelPinStateMessages.
+        // Starting it here as well restarts the spring mid-flight, which is
+        // the stutter and the slow settle on every pin and pane switch.
+    }
+});
+
+function refreshAllViewsForIpProtection() {
+    try { renderConnections(); } catch (_) {}
+    try { renderTerminalTabs(); } catch (_) {}
+    try { renderTerminalSmartbar(); } catch (_) {}
+    try { renderRemoteServers(); } catch (_) {}
+    try { renderActivities(); } catch (_) {}
+    try { renderNetwork(); } catch (_) {}
+    try { renderSecurityLists(); } catch (_) {}
+}
+
+function bindIpProtectionToggle() {
+    try { localStorage.removeItem('zephyr_ip_protection'); } catch {}
+    const initial = (() => {
+        try { return localStorage.getItem('zephyr_ip_protection_saved') === '1'; } catch { return false; }
+    })();
+    applyIpProtectionState(initial, settings);
+    if (myIdentity?.isSuperAdmin && !initial) {
+        api('/api/settings', {
+            method: 'PUT',
+            body: JSON.stringify({ ipProtection: false }),
+        }).catch(() => {});
+    }
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindIpProtectionToggle);
+else bindIpProtectionToggle();
+
+
+function upgradeHostAiAgentPanelHeader() {
+    const aiPanel = document.getElementById('aiAgentPanel');
+    if (!aiPanel || aiPanel.dataset.unifiedAiUpgraded === '1') return;
+    const chatHeader = aiPanel.querySelector('.ai-chat-header');
+    const actions = chatHeader?.querySelector('.ai-header-actions');
+    if (!chatHeader || !actions) return;
+    aiPanel.dataset.unifiedAiUpgraded = '1';
+    chatHeader.classList.add('panel-titlebar');
+    const closeBtn = actions.querySelector('#aiCloseBtn');
+    if (closeBtn) {
+        closeBtn.classList.add('panel-close-btn');
+        closeBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    }
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', upgradeHostAiAgentPanelHeader);
+else upgradeHostAiAgentPanelHeader();

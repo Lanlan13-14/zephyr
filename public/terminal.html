@@ -5,17 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title data-i18n="Zephyr - 终端">Zephyr - 终端</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
-    <link rel="modulepreload" href="terminal.js?v=20261004-dashboard-fit1">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260725-telnet-page-split1">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260728-ai-handle-only-drag1">
+    <link rel="modulepreload" href="terminal.js?v=20261018-ui65">
+    <link rel="modulepreload" href="theme-runtime.js?v=20261018-ui1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20261018-ui1">
     <link rel="stylesheet" href="/vendor/wterm-fork/terminal.css?v=20260801-terminal-grid-converge1">
-    <link rel="stylesheet" href="style.css?v=20261004-dashboard-fit1">
+    <link rel="stylesheet" href="style.css?v=20261018-ui65">
+    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261018-ui65">
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
     <link rel="stylesheet" href="/vendor/viewerjs/viewer.min.css">
     <link rel="stylesheet" href="preview/image/image-preview.css?v=20261008-media-preview2">
     <link rel="stylesheet" href="preview/media/media-preview.css?v=20261008-media-preview2">
     <link rel="stylesheet" href="editor/zephyr-editor.css?v=20260725-telnet-page-split1">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js" async></script>
     <script type="importmap">
         {
             "imports": {
@@ -24,6 +25,18 @@
             }
         }
     </script>
+<script>
+(function(){
+  try {
+    var sp = new URLSearchParams(location.search);
+    var isDesktop = sp.get('desktop') === '1' || sp.get('embed') === '1' || (window.innerWidth >= 761);
+    if (isDesktop) {
+      document.documentElement.dataset.zephyrSurface = 'desktop';
+      document.documentElement.classList.remove('mobile-stable-input');
+    }
+  } catch (_){}
+})();
+</script>
 </head>
 <body>
     <div class="terminal-page">
@@ -35,18 +48,20 @@
             </div>
             <span class="info" id="connInfo"></span>
             <div class="topbar-actions" id="topbarActions">
-                <button class="btn-sm" id="fileBtn" title="文件管理" data-i18n-title="文件管理" aria-label="文件管理" data-i18n-aria-label="文件管理" data-mobile-icon="file" data-i18n="文件">文件</button>
-                <button class="btn-sm" id="infoBtn" title="实时监控" data-i18n-title="实时监控" aria-label="实时监控" data-i18n-aria-label="实时监控" data-mobile-icon="stats" data-i18n="监控">监控</button>
-                <button class="btn-sm" id="dockerBtn" title="Docker 容器与镜像管理" data-i18n-title="Docker 容器与镜像管理" aria-label="Docker" data-mobile-icon="docker">Docker</button>
-                <button class="btn-sm" id="snippetBtn" title="代码片段" data-i18n-title="代码片段" aria-label="代码片段" data-i18n-aria-label="代码片段" data-mobile-icon="snippet" data-i18n="片段">片段</button>
-                <button class="btn-sm" id="notesBtn" title="笔记" data-i18n-title="笔记" aria-label="笔记" data-i18n-aria-label="笔记" data-mobile-icon="notes" data-i18n="笔记">笔记</button>
-                <button class="btn-sm" id="shortcutBtn" title="快捷键" data-i18n-title="快捷键" aria-label="快捷键" data-i18n-aria-label="快捷键" data-mobile-icon="keyboard" data-i18n="快捷键">快捷键</button>
-                <button class="btn-sm" id="copyBtn" title="复制选中内容" data-i18n-title="复制选中内容" aria-label="复制选中内容" data-i18n-aria-label="复制选中内容" data-mobile-icon="copy" data-i18n="复制">复制</button>
-                <button class="btn-sm" id="pasteBtn" title="粘贴剪贴板" data-i18n-title="粘贴剪贴板" aria-label="粘贴剪贴板" data-i18n-aria-label="粘贴剪贴板" data-mobile-icon="paste" data-i18n="粘贴">粘贴</button>
-                <button class="btn-sm wterm-theme-toggle" id="wtermThemeToggle" title="独立切换 wterm 终端主题，不跟随全局深浅色模式" data-i18n-title="独立切换 wterm 终端主题，不跟随全局深浅色模式" aria-label="切换终端主题" data-i18n-aria-label="切换终端主题" data-mobile-icon="term-theme" data-i18n="终端: 默认">终端: 默认</button>
-                <button class="btn-sm" id="themeToggle" title="切换主题" data-i18n-title="切换主题" aria-label="切换主题" data-i18n-aria-label="切换主题" data-mobile-icon="theme" data-i18n="主题">主题</button>
-                <button class="btn-sm" id="reconnectBtn" title="重新连接" data-i18n-title="重新连接" aria-label="重新连接" data-i18n-aria-label="重新连接" data-mobile-icon="reconnect" data-i18n="重连">重连</button>
-                <button class="btn-sm danger" id="disconnectBtn" title="断开连接" data-i18n-title="断开连接" aria-label="断开连接" data-i18n-aria-label="断开连接" data-mobile-icon="disconnect" data-i18n="断开">断开</button>
+                <button class="btn-sm" id="fileBtn" title="文件管理" data-i18n-title="文件管理" aria-label="文件管理" data-i18n-aria-label="文件管理" data-mobile-icon="file"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="tb-lbl" data-i18n="文件">文件</span></button>
+                <button class="btn-sm" id="infoBtn" title="实时监控" data-i18n-title="实时监控" aria-label="实时监控" data-i18n-aria-label="实时监控" data-mobile-icon="stats"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="tb-lbl" data-i18n="监控">监控</span></button>
+                <button class="btn-sm" id="dockerBtn" title="Docker 容器与镜像管理" data-i18n-title="Docker 容器与镜像管理" aria-label="Docker" data-mobile-icon="docker"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 21 7v10l-9 4.5L3 17V7z"/><path d="M3 7l9 4.5L21 7"/><path d="M12 11.5V21.5"/></svg><span class="tb-lbl" data-i18n="容器">容器</span></button>
+                <button class="btn-sm" id="portForwardBtn" title="端口转发 (-L/-R/-D)" aria-label="端口转发"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg><span class="tb-lbl" data-i18n="端口转发">端口转发</span></button>
+                <button class="btn-sm" id="snippetBtn" title="代码片段" data-i18n-title="代码片段" aria-label="代码片段" data-i18n-aria-label="代码片段" data-mobile-icon="snippet"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg><span class="tb-lbl" data-i18n="片段">片段</span></button>
+                <button class="btn-sm" id="notesBtn" title="笔记" data-i18n-title="笔记" aria-label="笔记" data-i18n-aria-label="笔记" data-mobile-icon="notes"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span class="tb-lbl" data-i18n="笔记">笔记</span></button>
+                <button class="btn-sm" id="shortcutBtn" title="快捷键" data-i18n-title="快捷键" aria-label="快捷键" data-i18n-aria-label="快捷键" data-mobile-icon="keyboard"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="6" y1="9" x2="6.01" y2="9"/><line x1="10" y1="9" x2="10.01" y2="9"/><line x1="14" y1="9" x2="14.01" y2="9"/><line x1="18" y1="9" x2="18.01" y2="9"/><line x1="8" y1="15" x2="16" y2="15"/></svg><span class="tb-lbl" data-i18n="快捷键">快捷键</span></button>
+                <button class="btn-sm" id="copyBtn" title="复制选中内容" data-i18n-title="复制选中内容" aria-label="复制选中内容" data-i18n-aria-label="复制选中内容" data-mobile-icon="copy"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="tb-lbl" data-i18n="复制">复制</span></button>
+                <button class="btn-sm" id="pasteBtn" title="粘贴剪贴板" data-i18n-title="粘贴剪贴板" aria-label="粘贴剪贴板" data-i18n-aria-label="粘贴剪贴板" data-mobile-icon="paste"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg><span class="tb-lbl" data-i18n="粘贴">粘贴</span></button>
+                <span class="topbar-v-sep" aria-hidden="true"></span>
+                <button class="btn-sm wterm-theme-toggle" id="wtermThemeToggle" title="独立切换终端画布明暗" data-i18n-title="独立切换 wterm 终端主题，不跟随全局深浅色模式" aria-label="切换终端主题" data-i18n-aria-label="切换终端主题" data-mobile-icon="term-theme"><svg class="tb-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg></button>
+                <button class="btn-sm" id="themeToggle" title="切换主题" data-i18n-title="切换主题" aria-label="切换主题" data-i18n-aria-label="切换主题" data-mobile-icon="theme" data-i18n="主题" style="display:none;">主题</button>
+                <button class="btn-sm" id="reconnectBtn" title="重新连接" data-i18n-title="重新连接" aria-label="重新连接" data-i18n-aria-label="重新连接" data-mobile-icon="reconnect"><svg class="tb-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="btn-sm danger" id="disconnectBtn" title="断开连接" data-i18n-title="断开连接" aria-label="断开连接" data-i18n-aria-label="断开连接" data-mobile-icon="disconnect" style="display:none;"><svg class="tb-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="5.7" y1="5.7" x2="18.3" y2="18.3"/></svg></button>
             </div>
         </div>
 
@@ -438,6 +453,6 @@
     <script src="preview/image/image-preview.js?v=20261008-media-preview2"></script>
     <script src="preview/media/media-preview.js?v=20261008-media-preview2"></script>
     <script src="editor/zephyr-editor.bundle.js?v=20260725-telnet-page-split1" type="module"></script>
-    <script src="terminal.js?v=20261004-dashboard-fit1" type="module"></script>
+    <script src="terminal.js?v=20261018-ui65" type="module"></script>
 </body>
 </html>

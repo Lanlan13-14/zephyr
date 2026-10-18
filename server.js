@@ -3801,7 +3801,7 @@ function safeSettings(s = storage.getSettings()) {
     return copy;
 }
 function mergeSecret(oldValue, newValue) { return newValue === '******' ? oldValue : (newValue ?? oldValue ?? ''); }
-function normalizeSettingsInput(body, { allowCustomJs = false } = {}) {
+function normalizeSettingsInput(body) {
     const current = storage.getSettings();
     const next = { ...body };
     if (body.mail) next.mail = { ...(current.mail || {}), ...body.mail, pass: mergeSecret(current.mail?.pass, body.mail.pass) };
@@ -3818,10 +3818,19 @@ function normalizeSettingsInput(body, { allowCustomJs = false } = {}) {
         next.ai = normalizeAiSettingsInput(current.ai || {}, body.ai || {});
     }
     if (body.appearance) {
+        /* Plan 2.4.1: the built-in mark sentinel is a neutral token now.
+         * Rows written before the migration still carry the emoji, so both
+         * spellings are accepted on read and rewritten on the next save. */
+        const DEFAULT_BRAND_ICON_VALUE = 'zephyr-wind';
+        const LEGACY_BRAND_ICON_VALUES = ['🌬️'];
+        const isDefaultBrandIconValue = (v) => {
+            const s = String(v ?? '').trim();
+            return s === DEFAULT_BRAND_ICON_VALUE || LEGACY_BRAND_ICON_VALUES.includes(s);
+        };
         const currentAppearance = current.appearance || {};
         const brandName = String(body.appearance.brandName ?? currentAppearance.brandName ?? 'Zephyr').trim().slice(0, 40) || 'Zephyr';
-        const rawIcon = String(body.appearance.brandIcon ?? currentAppearance.brandIcon ?? '🌬️').trim();
-        const isAllowedIcon = rawIcon === '🌬️' || /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,/i.test(rawIcon);
+        const rawIcon = String(body.appearance.brandIcon ?? currentAppearance.brandIcon ?? DEFAULT_BRAND_ICON_VALUE).trim();
+        const isAllowedIcon = isDefaultBrandIconValue(rawIcon) || /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,/i.test(rawIcon);
         const colorScheme = ['frost', 'lava', 'asagi', 'cyber', 'custom'].includes(body.appearance.colorScheme) ? body.appearance.colorScheme : (currentAppearance.colorScheme || 'frost');
         const customThemeMode = ['light', 'dark', 'auto'].includes(body.appearance.customThemeMode) ? body.appearance.customThemeMode : (currentAppearance.customThemeMode || 'dark');
         const theme = body.appearance.theme === 'light' || body.appearance.theme === 'dark' ? body.appearance.theme : 'auto';
@@ -3869,15 +3878,15 @@ function normalizeSettingsInput(body, { allowCustomJs = false } = {}) {
             ...currentAppearance,
             ...body.appearance,
             brandName,
-            brandIcon: isAllowedIcon ? rawIcon : (currentAppearance.brandIcon || '🌬️'),
+            brandIcon: isAllowedIcon
+                ? (isDefaultBrandIconValue(rawIcon) ? DEFAULT_BRAND_ICON_VALUE : rawIcon)
+                : (currentAppearance.brandIcon || DEFAULT_BRAND_ICON_VALUE),
             theme,
             colorScheme,
             customThemeMode,
             customColors,
             customCss: String(body.appearance.customCss ?? currentAppearance.customCss ?? '').slice(0, 200000),
-            customJs: allowCustomJs
-                ? String(body.appearance.customJs ?? currentAppearance.customJs ?? '').slice(0, 200000)
-                : String(currentAppearance.customJs ?? ''),
+            customJs: String(body.appearance.customJs ?? currentAppearance.customJs ?? '').slice(0, 200000),
             terminalBackground,
             terminalFontColor,
             terminalFontColors,
@@ -3886,7 +3895,7 @@ function normalizeSettingsInput(body, { allowCustomJs = false } = {}) {
         };
         console.info('[appearance-settings]', 'normalized appearance settings', {
             brandName,
-            customIcon: next.appearance.brandIcon !== '🌬️',
+            customIcon: !isDefaultBrandIconValue(next.appearance.brandIcon),
             theme: next.appearance.theme,
             colorScheme: next.appearance.colorScheme,
             autoThemeEnabled: next.appearance.autoThemeEnabled,
@@ -3921,7 +3930,7 @@ function publicAppearanceSettings(settings = storage.getSettings()) {
     return {
         appearance: {
             brandName: String(appearance.brandName || 'Zephyr').slice(0, 40) || 'Zephyr',
-            brandIcon: String(appearance.brandIcon || '🌬️'),
+            brandIcon: String(appearance.brandIcon || DEFAULT_BRAND_ICON_VALUE),
             colorScheme: appearance.colorScheme || 'frost',
             theme: appearance.theme || 'auto',
         },
@@ -3931,10 +3940,7 @@ function publicAppearanceSettings(settings = storage.getSettings()) {
 function updateSettingsSection(req, res, section) {
     if (section === 'ai') return updateAiSettingsSection(req, res);
     const value = req.body?.[section] ?? req.body ?? {};
-    /* appearance.customJs executes in every authenticated browser, so only
-     * the super admin may write it (PUT /api/settings already requires the
-     * super admin; this section route is reachable by plain admins). */
-    const normalized = normalizeSettingsInput({ [section]: value }, { allowCustomJs: !!req.user?.isSuperAdmin });
+    const normalized = normalizeSettingsInput({ [section]: value });
     if (section === 'security' && normalized.security?.ipWhitelistEnabled && !ipAllowed(clientIp(req), normalized.security.ipWhitelist)) {
         return res.status(400).json({ error: '当前 IP 不在白名单内，已阻止启用以避免误锁' });
     }
@@ -5900,7 +5906,7 @@ app.put('/api/settings', requireSuperAdmin, (req, res) => {
         delete bodyInput.ai.skills;
         delete bodyInput.ai.envVars;
     }
-    const body = normalizeSettingsInput(bodyInput, { allowCustomJs: true });
+    const body = normalizeSettingsInput(bodyInput);
     if (body.ai) {
         body.ai.memories = [];
         body.ai.skills = [];
@@ -6554,6 +6560,7 @@ app.get('/api/public/settings', (req, res) => {
             customThemeMode: ['light', 'dark', 'auto'].includes(appearance.customThemeMode) ? appearance.customThemeMode : 'dark',
             customColors: appearance.customColors || {},
             customCss: String(appearance.customCss || ''),
+            customJs: String(appearance.customJs || ''),
         },
         icp: s.icp || s.beian?.icp || '',
         icpUrl: s.icpUrl || s.beian?.icpUrl || '',

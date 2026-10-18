@@ -1,4 +1,11 @@
-const DEFAULT_BRAND_ICON = '🌬️';
+const DEFAULT_BRAND_ICON = 'zephyr-wind';
+/* Rows written before the zero-emoji migration still carry the old emoji;
+ * treat it as the same 'use the built-in wind mark' sentinel. */
+export const LEGACY_DEFAULT_BRAND_ICONS = Object.freeze(['🌬️']);
+function isDefaultBrandIcon(value) {
+    const v = String(value ?? '').trim();
+    return v === DEFAULT_BRAND_ICON || LEGACY_DEFAULT_BRAND_ICONS.includes(v);
+}
 const SCHEME_IDS = new Set(['frost', 'lava', 'asagi', 'cyber', 'custom']);
 
 /* ── Zephyr mark geometry (Apple HIG aligned) ──────────────────────────
@@ -323,7 +330,7 @@ function zephyrOneCompactSvg({ gradientId = 'zephyr-one-gradient', title = 'Zeph
 export function zephyrBrandIconHtml(icon = DEFAULT_BRAND_ICON, opts = {}) {
     const value = String(icon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
     if (value.startsWith('data:image/')) return `<img src="${value}" alt="">`;
-    if (value === DEFAULT_BRAND_ICON) {
+    if (isDefaultBrandIcon(value)) {
         const seq = ++iconSeq;
         let svg;
         if (!isOneProduct()) {
@@ -362,7 +369,7 @@ function oneFaviconSvgForPalette(palette) {
 export function zephyrFaviconHref(icon = DEFAULT_BRAND_ICON) {
     const value = String(icon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
     if (value.startsWith('data:image/')) return value;
-    if (value === DEFAULT_BRAND_ICON) {
+    if (isDefaultBrandIcon(value)) {
         const palette = paletteForScheme();
         const svg = isOneProduct() ? oneFaviconSvgForPalette(palette) : faviconSvgForPalette(palette);
         return `data:image/svg+xml,${encodeURIComponent(svg)}`;

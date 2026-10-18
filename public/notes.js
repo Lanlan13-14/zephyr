@@ -1,3 +1,4 @@
+import { extractSecretSpans } from './vendor/zephyr-pro/app-continuity-guard-pro.js';
 /**
  * notes.js — Notes workspace UI (FREEZE plan §6.4).
  * Craft-first shell: in-app dialogs only (no browser chrome dialogs),
@@ -5,7 +6,7 @@
  */
 
 import { renderMarkdown as renderMarkdownFull, escapeHtml as mdEscapeHtml } from './markdown.js?v=20260720-notes-md1';
-import { t } from './i18n/runtime.js?v=20261004-dashboard-fit1';
+import { t } from './i18n/runtime.js?v=20261018-ui1';
 
 const NOTES_DEBOUNCE_MS = 800;
 const NOTES_SEARCH_MS = 180;
@@ -1917,6 +1918,64 @@ export function createNotesController({
         state.connectionFilter = connectionId || '';
         await loadList();
     }
+
+
+    let noteSecretTimer = null;
+    let noteSecretIgnored = false;
+    function scheduleNoteSecretCheck(text) {
+        if (noteSecretIgnored) return;
+        if (noteSecretTimer) clearTimeout(noteSecretTimer);
+        noteSecretTimer = setTimeout(() => {
+            const spans = extractSecretSpans(text || '');
+            let pill = document.getElementById('noteSecretGuardPill');
+            if (!spans.length) {
+                if (pill) pill.style.display = 'none';
+                return;
+            }
+            const host = document.querySelector('#view-notes .notes-editor-head, #view-notes .notes-toolbar, #view-notes');
+            if (!host) return;
+            if (!pill) {
+                pill = document.createElement('div');
+                pill.id = 'noteSecretGuardPill';
+                pill.className = 'note-secret-guard-pill z-glass-thin';
+                pill.innerHTML = `
+                    <span class="nsg-label">Shield: Plaintext secret detected</span>
+                    <button type="button" class="btn-sm" data-nsg-action="mask">Mask</button>
+                    <button type="button" class="btn-sm" data-nsg-action="ignore">Ignore</button>
+                `;
+                pill.addEventListener('click', (ev) => {
+                    const btn = ev.target.closest('[data-nsg-action]');
+                    if (!btn) return;
+                    if (btn.dataset.nsgAction === 'ignore') {
+                        noteSecretIgnored = true;
+                        pill.style.display = 'none';
+                    } else if (btn.dataset.nsgAction === 'mask') {
+                        const ta = document.getElementById('noteContentInput') || document.querySelector('#view-notes textarea');
+                        if (ta && ta.value) {
+                            const curSpans = extractSecretSpans(ta.value);
+                            let out = '';
+                            let c = 0;
+                            for (const sp of curSpans) {
+                                out += ta.value.slice(c, sp.start) + '••••••••';
+                                c = sp.end;
+                            }
+                            out += ta.value.slice(c);
+                            ta.value = out;
+                            ta.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                        pill.style.display = 'none';
+                    }
+                });
+                host.prepend(pill);
+            }
+            pill.style.display = 'inline-flex';
+        }, 400);
+    }
+    document.addEventListener('input', (ev) => {
+        if (ev.target && (ev.target.id === 'noteContentInput' || ev.target.closest?.('#view-notes'))) {
+            scheduleNoteSecretCheck(ev.target.value || '');
+        }
+    });
 
     bind();
     setMode('edit');

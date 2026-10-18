@@ -70,7 +70,7 @@
 @property --workspace-split-x {
     syntax: '<percentage>';
     inherits: true;
-    initial-value: 66.666%;
+    initial-value: 49.6%;
 }
 
 @property --workspace-split-y {
@@ -167,8 +167,9 @@
 }
 
 :root[data-wterm-theme="light"] {
-    --wterm-bg: #f5f5f7;
-    --wterm-fg: #1d1d1f;
+    /* 文档 4.2.0：浅色终端画布纯白 #FFFFFF，深黑等宽字 #1D1D1F。 */
+    --wterm-bg: #FFFFFF;
+    --wterm-fg: #1D1D1F;
     --wterm-selection: rgba(0,122,255,0.20);
 }
 
@@ -423,7 +424,8 @@ body.app-body.terminal-mode {
     width: 100%;
     max-width: 440px;
     box-shadow: var(--shadow-soft);
-    animation: fadeIn 0.35s var(--ease-smooth);
+    /* 本 WebView 关键帧不推进，登录卡入场动画会让整页空白（见章节铁律）。 */
+    opacity: 1;
 }
 :root[data-theme="dark"] .login-card { box-shadow: 0 18px 44px -26px rgba(0,0,0,0.72); }
 @keyframes fadeIn {
@@ -655,21 +657,25 @@ body.app-body.terminal-mode {
     isolation: isolate;
     overflow: visible;
     border-bottom-color: transparent;
-    box-shadow: none;
-    background: var(--nav-fusion-bg);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
     transition:
         padding-bottom var(--terminal-shelf-duration) var(--terminal-shelf-ease),
         background .30s ease,
         box-shadow .42s ease,
         border-radius .42s ease;
+    /* Plan 3.2/3.3: the WebGL bed draws nothing here, so the bar owns its optics. */
+    background: var(--z-nav-glass-bg, color-mix(in srgb, var(--surface) 62%, transparent));
+    backdrop-filter: blur(24px) saturate(175%);
+    -webkit-backdrop-filter: blur(24px) saturate(175%);
+    box-shadow: var(--z-specular-top, inset 0 1px 0 rgba(255,255,255,0.10)),
+                0 10px 28px rgba(0, 0, 0, 0.10);
 }
 .main-nav.liquid-glass-on .nav-tabs,
 .main-nav.liquid-glass-on .nav-tab {
     touch-action: none;
 }
 .main-nav.liquid-glass-on #liquidGlassCanvas {
+    /* Empty WebGL surface (all pixels [0,0,0,0]); keep it out of the stack. */
+    display: none !important;
     position: absolute;
     left: 0;
     top: 0;
@@ -684,14 +690,17 @@ body.app-body.terminal-mode {
     overflow: visible;
     flex: none;
 }
-.main-nav.liquid-glass-on > *:not(#liquidGlassCanvas) {
+.main-nav.liquid-glass-on > *:not(#liquidGlassCanvas):not(.terminal-shelf-bar) {
     position: relative;
     z-index: 1;
 }
 .main-nav.liquid-glass-on .nav-tabs {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
+    /* Plan 3.2 glass-thin: the pill track is a real surface, not bare text. */
+    background: var(--z-glass-thin-bg, color-mix(in srgb, var(--surface) 78%, transparent)) !important;
+    border: 1px solid var(--z-outline, color-mix(in srgb, var(--border) 60%, transparent)) !important;
+    box-shadow: var(--z-specular-top, inset 0 1px 0 rgba(255,255,255,0.10)) !important;
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
     justify-content: flex-start;
     /* 桌面：hug 岛。width:0 子项会把 inline-flex 压成 padding，字叠成一团。 */
     flex: 0 0 auto;
@@ -703,11 +712,12 @@ body.app-body.terminal-mode {
 .main-nav.liquid-glass-on .nav-tab,
 .main-nav.liquid-glass-on .nav-tab:hover,
 .main-nav.liquid-glass-on .nav-tab.active {
-    background: transparent !important;
-    box-shadow: none !important;
-    color: transparent !important;
+    /* 文档 4.2.0：激活项是实心胶囊（白/#2C3036），背景与阴影交给
+     * zephyr-terminal-spec.css 的主题规则；这里不再强制 transparent。
+     * 但文字必须由 DOM 绘制（3.3 节：WebGL 层在本环境画不出字）。 */
+    color: var(--z-text-secondary, var(--text-secondary));
     text-shadow: none !important;
-    -webkit-text-fill-color: transparent !important;
+    -webkit-text-fill-color: currentColor;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -719,6 +729,14 @@ body.app-body.terminal-mode {
     box-sizing: border-box;
     font-weight: 500;
     white-space: nowrap;
+}
+.main-nav.liquid-glass-on .nav-tab.active {
+    color: var(--z-accent, var(--accent));
+}
+.main-nav.liquid-glass-on .nav-tab .nav-tab-ico,
+.main-nav.liquid-glass-on .nav-tab svg {
+    color: inherit;
+    stroke: currentColor;
 }
 .main-nav.liquid-glass-on .nav-tab:active {
     transform: none;
@@ -898,9 +916,14 @@ body.terminal-mode-entering .main-nav {
 .nav-actions #logoutBtn:active {
     transform: scale(0.95);
 }
-.app-main { width: min(1180px, calc(100% - 28px)); margin: 0 auto; padding: 26px 0 48px; }
-.view { display: none; animation: fadeIn .28s ease-out; }
-.view.active { display: block; }
+.app-main { width: var(--z-main-max-width, min(1180px, calc(100% - 28px))); margin: 0 auto; padding: 26px 0 48px; }
+/* 视图同样不用关键帧：display 切换时 transition 不会跑，但终态 opacity:1
+ * 已经是计算值，所以内容永远可见，符合计划第三章铁律。 */
+.view { display: none; opacity: 1; }
+.view.active { display: block; opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+    .view, .view.active { transition: none; }
+}
 body.terminal-mode .terminal-view.active { animation: none; }
 .section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .section-head h1 { font-size: clamp(24px, 4vw, 36px); letter-spacing: -0.03em; }
@@ -928,7 +951,8 @@ body.terminal-mode .terminal-view.active { animation: none; }
     background: var(--surface); color: var(--text); outline: none;
 }
 .search-input:focus, .action-bar select:focus, .settings-form input:focus, .settings-form select:focus, .settings-form textarea:focus { border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); box-shadow: var(--focus-ring); }
-.connection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 14px; }
+/* Track floor stays a literal: dashboard-overflow-contract.test.mjs freezes it. */
+.connection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: var(--z-space-lg, 14px); }
 .connection-card, .activity-panel, .empty-card, .terminal-placeholder, .settings-content, .settings-menu {
     border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface);
     box-shadow: var(--shadow-soft);
@@ -936,7 +960,6 @@ body.terminal-mode .terminal-view.active { animation: none; }
 .connection-card {
     padding: 16px;
     transform-origin: center;
-    animation: connectionCardIn .34s cubic-bezier(.16,1,.3,1) both;
     transition:
         transform .52s var(--ease-micro),
         opacity .24s ease,
@@ -1692,7 +1715,7 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     transition: border-radius .64s cubic-bezier(.16,1,.3,1), box-shadow .64s cubic-bezier(.16,1,.3,1), transform .64s cubic-bezier(.16,1,.3,1);
 }
 .terminal-workspace-grid {
-    --workspace-split-x: 66.666%;
+    --workspace-split-x: 49.6%;
     --workspace-split-y: 50%;
     /* The resize bar owns a real grid track. Windows and splitters therefore
        occupy disjoint boxes: neither can ever paint over the other, and every
@@ -1701,11 +1724,12 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     display: grid;
     /* gap must stay 0: the gutter above IS the spacing track. */
     gap: 0;
-    padding: 0;
-    background:
-        radial-gradient(circle at 20% 0%, rgba(10,132,255,.13), transparent 30%),
-        radial-gradient(circle at 82% 12%, rgba(63,185,80,.10), transparent 28%),
-        #d1d5db;
+    /* 文档 4.2.0 第 3 条：工作区四周留白 12px 16px 18px。 */
+    padding: 12px 16px 18px;
+    box-sizing: border-box;
+    /* 文档 4.2.0 第 1 条：底色跟随页面（浅 #F4F6F9 / 深 #0C0E10），
+     * 不再画彩色渐变——设计稿里工作区是干净的页面底色。 */
+    background: transparent;
     contain: layout paint;
     transition:
         --workspace-split-x .42s cubic-bezier(.16,1,.3,1),
@@ -2738,7 +2762,19 @@ body.terminal-custom-fullscreen-open.terminal-fullscreen-exiting .main-nav {
 .settings-tab { text-align: left; border-radius: var(--radius); }
 .settings-content { padding: 18px; }
 .settings-panel { display: none; }
-.settings-panel.active { display: block; animation: fadeIn .24s ease-out; }
+/* 终态先落地：display + opacity 都不依赖动画是否跑完（见计划第三章铁律）。 */
+/* 本 WebView 的 animation currentTime 恒为 0（实测），关键帧式入场会把内容
+ * 永久冻结在 opacity:0。改用 transition：终值立刻是计算值，动画只是过渡。 */
+.settings-panel {
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity .22s var(--z-ease-out, ease-out), transform .22s var(--z-ease-out, ease-out);
+}
+.settings-panel.active {
+    display: block;
+    opacity: 1;
+    transform: none;
+}
 .settings-form { display: grid; gap: 10px; max-width: 420px; margin-bottom: 14px; }
 #settings-security { display: none; gap: 14px; }
 #settings-security.active { display: grid; }
@@ -3139,7 +3175,7 @@ body.terminal-custom-fullscreen-open.terminal-fullscreen-exiting .main-nav {
     font-size: 12px;
     text-align: center;
 }
-.mini-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto auto auto; gap: 8px; align-items: center; padding: 10px; border-radius: var(--radius); background: var(--bg); font-size: 13px; animation: connectionCardIn .34s cubic-bezier(.16,1,.3,1) both; }
+.mini-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto auto auto; gap: 8px; align-items: center; padding: 10px; border-radius: var(--radius); background: var(--bg); font-size: 13px; }
 .mini-item.deleting { opacity: 0; transform: translate3d(0, -14px, 0) scale(.90); filter: blur(10px) saturate(.72); pointer-events: none; animation: connectionCardDelete .30s cubic-bezier(.2,.8,.2,1) both; }
 .mini-item span { color: var(--text-secondary); }
 .ssh-key-tag, .resource-tag { display: inline-flex; align-items: center; justify-self: start; width: max-content; max-width: 100%; min-height: 24px; padding: 3px 8px; border-radius: var(--radius-control); font-size: 12px; font-weight: 500; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3756,7 +3792,7 @@ body.app-body > .toast-container {
     .main-nav { align-items: flex-start; flex-wrap: wrap; padding: 10px; gap: 10px; }
     .nav-tabs { order: 3; flex-basis: 100%; justify-content: flex-start; width: 100%; }
     .nav-tab { padding: 6px 12px; font-size: 13px; }
-    .app-main { width: min(100% - 20px, 1180px); padding-top: 18px; }
+    .app-main { width: var(--z-main-max-width, min(100% - 20px, 1180px)); padding-top: 18px; }
     .section-head { align-items: stretch; flex-direction: column; }
     .add-btn { width: 100%; }
     .action-bar { grid-template-columns: 1fr; }
@@ -4429,6 +4465,8 @@ html.ssh-kb-open .terminal-page {
     100% { opacity: 0; transform: scale(1); }
 }
 :root[data-theme="light"]:not([data-wterm-theme="default"]) .terminal-container { background: var(--wterm-bg); }
+/* 文档 4.2.0 第 4 条：浅色下终端字符画布是纯白 #FFFFFF。 */
+:root[data-theme="light"] .terminal-container { background: #FFFFFF; }
 .terminal-container .wterm-wrapper {
     width: 100%;
     height: auto !important;
@@ -5245,7 +5283,7 @@ html.ssh-kb-open .terminal-page {
     display: flex; align-items: center; justify-content: space-between;
     gap: 8px; width: 100%; padding: 8px 12px;
     border-bottom: 1px solid var(--border); cursor: pointer;
-    animation: fadeInItem 0.2s ease-out; transition: background 0.1s;
+transition: background 0.1s;
 }
 .fm-item:hover { background: var(--bg); }
 
@@ -10185,13 +10223,10 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     padding: 30px 10px !important;
     font-style: italic !important;
 }
+/* 历史残骸已清理：此处曾有一段丢失选择器主体的孤儿声明块，
+ * 导致此后所有规则整体错位一层。 */
 .ai-cell-resource-bar span {
     font-weight: 500 !important;
-}
-    font-size: 12px;
-    color: #a4b1cd;
-    overflow-y: auto;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 .ai-cell-empty-state {
     opacity: 0.55;
@@ -13376,7 +13411,8 @@ select optgroup {
 }
 
 /* Terminal window shell invariant: every non-fullscreen protocol window uses
-   the same radius and base surface, regardless of activation or animation. */
+   the same radius and base surface, regardless of activation or animation.
+   文档 4.2.0 第 3 条：终端大卡片圆角固定 14px（不是 --radius-lg 的 18px）。 */
 .terminal-workspace:not(.custom-fullscreen) .terminal-window:not(:fullscreen):not(.minimized-keepalive) {
     border-radius: var(--radius-lg) !important;
     overflow: hidden !important;
@@ -17171,7 +17207,7 @@ body.app-body:not(.terminal-mode) .main-nav {
 body.app-body:not(.terminal-mode) .app-main {
     flex: 1 1 auto !important;
     min-height: 0 !important;
-    width: min(1180px, calc(100% - 28px));
+    width: var(--z-main-max-width, min(1180px, calc(100% - 28px)));
     margin: 0 auto !important;
     padding: 26px 0 48px !important;
     overflow-x: hidden !important;
@@ -17322,17 +17358,21 @@ body.app-body.terminal-mode .terminal-workspace.compact {
     height: 100% !important;
     max-height: 100% !important;
     margin: 0 !important;
-    padding: 0 !important;
+    /* 文档 4.2.0 第 3 条：工作区四周留白 12px 16px 18px。 */
+    padding: 12px 16px 18px !important;
+    box-sizing: border-box !important;
     gap: 0 !important;
-    /* Color match: titlebar is translucent; gray #d1d5db behind it looks wrong.
-       Final RDP chrome sits on surface-like light — use surface as workspace bg. */
-    background: var(--surface) !important;
+    /* 文档 4.2.0 第 1 条：工作区底色就是页面底色，不另铺 surface。 */
+    background: transparent !important;
     border-radius: 0 !important;
 }
 body.app-body.terminal-mode .terminal-workspace-grid {
-    background: var(--surface) !important;
+    /* 文档 4.2.0 第 1/3 条：工作区底色跟随页面，四周留白 12px 16px 18px。
+     * 原来这里是 var(--surface) + padding:0，与设计稿不符。 */
+    background: transparent !important;
     gap: 0 !important;
-    padding: 0 !important;
+    padding: 12px 16px 18px !important;
+    box-sizing: border-box !important;
 }
 body.app-body.terminal-mode .terminal-window:not(.minimized-keepalive) {
     min-height: 0 !important;
@@ -17442,7 +17482,8 @@ body.app-body.terminal-mode .terminal-workspace,
 body.app-body.terminal-mode .terminal-workspace.compact,
 body.app-body.terminal-mode .terminal-workspace-grid,
 body.app-body.terminal-mode .terminal-window[data-card-flip-radius] {
-    border-radius: var(--terminal-card-radius, 18px) !important;
+    /* 文档 4.2.0 第 3 条：终端大卡片圆角 14px。 */
+    border-radius: var(--terminal-card-radius, 14px) !important;
     overflow: hidden !important;
 }
 body.app-body.terminal-mode .terminal-window[data-card-flip-radius]:not(.motion-closing) {
@@ -19071,3 +19112,407 @@ body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
     max-height: 220px;
     overflow: auto;
 }
+
+/* Plan 4.3: header actions hug their label. Without this, the later
+ * .btn{width:100%} rule wins on equal specificity and the button stretches
+ * across the whole row (measured 1006px in the 1560px shell). */
+.section-head > .add-btn,
+.section-head > .btn.add-btn,
+.section-head .section-actions > .btn,
+#addConnectionBtn {
+    width: auto;
+    min-width: 150px;
+    flex: 0 0 auto;
+    align-self: flex-end;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 计划第三章铁律兜底：本 WebView 的 animation.currentTime 恒为 0，
+ * 任何「关键帧入场 + from{opacity:0}」都会让元素永久不可见。
+ * 以下规则强制这些功能浮层处于可见终态；动画仅作装饰，失败也不影响使用。
+ * ══════════════════════════════════════════════════════════════════════════ */
+.smartbar-picker,
+.docker-log-drawer,
+.transfer-popover.open,
+.notes-list-item,
+.file-manager.panel-opening,
+.docker-panel.panel-opening,
+.info-modal.panel-opening,
+.snippet-panel.panel-opening,
+.shortcut-panel.panel-opening {
+    opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .smartbar-picker,
+    .docker-log-drawer,
+    .transfer-popover.open,
+    .notes-list-item,
+    .file-manager.panel-opening,
+    .docker-panel.panel-opening,
+    .info-modal.panel-opening,
+    .snippet-panel.panel-opening,
+    .shortcut-panel.panel-opening,
+    .connection-card,
+    .mini-item,
+    .fm-item,
+    .login-card {
+        animation: none !important;
+        opacity: 1;
+    }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 计划 4.2.3：SFTP/工具面板的「窗格内停靠」布局
+ *
+ * 停靠态不再是覆盖在终端上的 fixed 浮层，而是 .terminal-page 的 grid 第二列：
+ *   顶栏通栏，下行左侧终端、右侧停靠栏，两者被同一张卡片包裹。
+ * JS 只需给 .terminal-page 加 .has-docked-left / .has-docked-right，
+ * 面板自身加 .docked-left / .docked-right，不再写 position/left/top。
+ * ══════════════════════════════════════════════════════════════════════════ */
+.terminal-page {
+    --z-dock-w: var(--z-sftp-dock-width, 380px);
+}
+
+/* 停靠态：两列网格 */
+.terminal-page.has-docked-left,
+.terminal-page.has-docked-right {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+}
+.terminal-page.has-docked-left {
+    grid-template-columns: var(--z-dock-w) minmax(0, 1fr);
+}
+.terminal-page.has-docked-right {
+    grid-template-columns: minmax(0, 1fr) var(--z-dock-w);
+}
+
+/* 顶栏通栏 */
+.terminal-page.has-docked-left > .terminal-topbar,
+.terminal-page.has-docked-right > .terminal-topbar {
+    grid-column: 1 / -1;
+    grid-row: 1;
+}
+
+/* 终端主体占剩余空间 */
+.terminal-page.has-docked-left > .terminal-container,
+.terminal-page.has-docked-right > .terminal-container {
+    grid-row: 2;
+    min-width: 0;
+    min-height: 0;
+}
+.terminal-page.has-docked-left > .terminal-container { grid-column: 2; }
+.terminal-page.has-docked-right > .terminal-container { grid-column: 1; }
+
+/* 停靠面板：原位进入网格，取消一切 fixed 定位 */
+.terminal-page.has-docked-left > .file-manager.docked-left,
+.terminal-page.has-docked-right > .file-manager.docked-right,
+.terminal-page.has-docked-left > .info-modal.docked-left,
+.terminal-page.has-docked-right > .info-modal.docked-right,
+.terminal-page.has-docked-left > .docker-panel.docked-left,
+.terminal-page.has-docked-right > .docker-panel.docked-right,
+.terminal-page.has-docked-left > .snippet-panel.docked-left,
+.terminal-page.has-docked-right > .snippet-panel.docked-right,
+.terminal-page.has-docked-left > .shortcut-panel.docked-left,
+.terminal-page.has-docked-right > .shortcut-panel.docked-right,
+.terminal-page.has-docked-left > .port-forward-panel.docked-left,
+.terminal-page.has-docked-right > .port-forward-panel.docked-right {
+    position: static !important;
+    inset: auto !important;
+    grid-row: 2;
+    width: auto !important;
+    min-width: 0;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    transform: none !important;
+    box-shadow: none !important;
+    opacity: 1 !important;
+    display: flex !important;
+    flex-direction: column;
+    background: var(--z-surface-content, var(--surface));
+    overflow: hidden;
+}
+
+/* 停靠侧的分隔线（代替浮层的投影，表达「同一张卡片的两个分区」） */
+.terminal-page.has-docked-right > .terminal-container {
+    border-right: 1px solid var(--z-outline, var(--border));
+}
+.terminal-page.has-docked-left > .terminal-container {
+    border-left: 1px solid var(--z-outline, var(--border));
+}
+
+/* 停靠态下不允许出现浮窗拖拽手柄与缩放把手 */
+.terminal-page.has-docked-left .file-manager.docked-left .panel-drag-handle,
+.terminal-page.has-docked-right .file-manager.docked-right .panel-drag-handle,
+.terminal-page.has-docked-left .file-manager.docked-left .panel-resize-handle,
+.terminal-page.has-docked-right .file-manager.docked-right .panel-resize-handle {
+    display: none !important;
+}
+
+/* 停靠栏内部滚动 */
+.terminal-page.has-docked-left .file-manager.docked-left .fm-body,
+.terminal-page.has-docked-right .file-manager.docked-right .fm-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 计划 4.2.4 第 4 项：终端顶栏伸出架 + 左右对称折叠按钮
+ *
+ * 只在终端视图（body.terminal-mode）出现。两个按钮外观/尺寸/功能完全一致，
+ * 分别贴在左右边缘 20px —— 无论鼠标在左半屏还是右半屏都能就近点击。
+ * 收起后仅保留 26px 伸出架；不监听鼠标贴顶，只能点按钮恢复（计划硬性要求）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+.terminal-shelf-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--terminal-shelf-open-padding, 27px);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    pointer-events: none;
+    opacity: 0;
+    transform: translate3d(0, -8px, 0);
+    transition: opacity var(--terminal-shelf-duration, .56s) ease,
+                transform var(--terminal-shelf-duration, .56s) var(--terminal-shelf-ease, cubic-bezier(.32,.72,0,1));
+    z-index: 3;
+}
+
+body.terminal-mode .main-nav .terminal-shelf-bar {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+}
+
+.terminal-shelf-collapse-btn {
+    pointer-events: auto;
+    width: 28px;
+    height: 18px;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in srgb, var(--z-outline, var(--border)) 75%, transparent);
+    background: color-mix(in srgb, var(--z-surface-floating, var(--surface)) 72%, transparent);
+    color: var(--z-text-secondary, var(--text-secondary));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 180ms ease, color 180ms ease,
+                transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.terminal-shelf-collapse-btn:hover {
+    background: color-mix(in srgb, var(--z-accent, var(--accent)) 18%,
+                var(--z-surface-floating, var(--surface)));
+    color: var(--z-text-primary, var(--text));
+    transform: scale(1.06);
+}
+
+.terminal-shelf-collapse-btn:active {
+    transform: scale(0.94);
+}
+
+.terminal-shelf-collapse-btn .shelf-collapse-ico {
+    /* SVG 默认 transform-origin 是 viewBox 原点，必须改成自身盒中心。
+     * 旋转由引擎逐帧写 transform，这里不放 transition。 */
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+/* 收起态的高度、内容位移和箭头旋转全部由 zephyr_motion.wasm 逐帧驱动
+ * （--topbar-collapse-offset / y / rotate）。这里只做裁切和禁点，
+ * 不再写 height、transform 或 transition，避免和引擎抢通道。 */
+body.terminal-mode.terminal-topbar-collapsed .main-nav > .brand,
+body.terminal-mode.terminal-topbar-collapsed .main-nav > .nav-tabs,
+body.terminal-mode.terminal-topbar-collapsed .main-nav > .nav-actions,
+body.terminal-mode.terminal-topbar-collapsed .main-nav > #liquidGlassCanvas {
+    pointer-events: none;
+}
+
+/* 收起态下终端工作区向上扩张，多出约 56px 可视高度 */
+body.terminal-mode.terminal-topbar-collapsed .terminal-workspace-grid {
+    height: calc(100vh - var(--terminal-shelf-open-padding, 27px) - 8px);
+}
+
+/* 非终端视图不显示伸出架，也不允许残留收起态 */
+body:not(.terminal-mode) .terminal-shelf-bar {
+    display: none;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 计划 4.2.4：Smartbar 跨端来源设备角标 + 接管列表
+ * 规格：18×18px、圆角 6px（--z-radius-xs）、压在图标右下角。
+ * ══════════════════════════════════════════════════════════════════════════ */
+.smartbar-session-icon .smartbar-device-badge {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--z-radius-xs, 6px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--z-surface-floating, var(--surface)) 92%, transparent);
+    color: var(--z-accent, var(--accent));
+    border: 1.5px solid var(--z-accent, var(--accent));
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    z-index: 4;
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease;
+}
+
+.smartbar-device-badge.offline {
+    color: var(--z-offline, #8E99A6);
+    border-color: var(--z-offline, #8E99A6);
+    opacity: 0.72;
+}
+
+.smartbar-session:hover .smartbar-session-icon .smartbar-device-badge {
+    transform: scale(1.12);
+}
+
+/* ── picker 内的「可从其他设备接管」分区 ─────────────────────────────── */
+.smartbar-picker-section {
+    padding: 8px 10px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    color: var(--z-text-tertiary, var(--text-secondary));
+    text-transform: none;
+}
+
+.smartbar-handoff-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.smartbar-handoff-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: var(--z-radius-sm, 10px);
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    transition: background 140ms ease;
+}
+
+.smartbar-handoff-row:hover,
+.smartbar-handoff-row:focus-visible {
+    background: color-mix(in srgb, var(--z-accent, var(--accent)) 12%, transparent);
+    outline: none;
+}
+
+.smartbar-handoff-row .smartbar-handoff-ico {
+    position: relative;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+}
+
+.smartbar-handoff-row .smartbar-handoff-ico .smartbar-device-badge {
+    position: static;
+    width: 20px;
+    height: 20px;
+}
+
+.smartbar-handoff-row strong {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.smartbar-handoff-row em {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--z-text-tertiary, var(--text-secondary));
+    flex: 0 0 auto;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 文档 4.2.3 规则 C：双屏停靠态 80% 纯几何平移滑出 + 唤醒遮罩
+ * 数值与文档原文一致，不做自由发挥。
+ * ══════════════════════════════════════════════════════════════════════════ */
+.terminal-workspace-grid {
+  height: var(--z-terminal-workspace-height, calc(100vh - 100px));
+}
+body.terminal-topbar-collapsed .terminal-workspace-grid {
+  --z-terminal-workspace-height: calc(100vh - 44px);
+}
+
+/* 双屏停靠态：保持每个窗格自身宽度恒定为 80%（内部终端与停靠栏 0 重排、0 换行抖动），
+ * 未操作窗格纯几何平移滑出自身 80% 到屏幕外 */
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) {
+  display: block;
+  overflow: hidden;
+  position: relative;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .workspace-splitter {
+  display: none;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-1,
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-2 {
+  position: absolute;
+  top: 12px;
+  bottom: 18px;
+  width: calc(80% - 20px);
+  /* Driven by zephyr_motion.wasm Motion.splitDockSlide (M25) */
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-1 {
+  left: calc(16px + var(--split-slide-1-x, 0px));
+  right: auto;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-2 {
+  right: calc(16px - var(--split-slide-2-x, 0px));
+  left: auto;
+}
+
+/* 左窗格（slot-1）操作中：左窗格原位展示，右窗格（slot-2）向右纯平移滑出自身 80% 到屏幕外（留 20% 露头） */
+/* M25: Position and z-index driven by Motion.splitDockSlide & zephyr-terminal-spec.css */
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-1 > .terminal-window.slot-1,
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-2 > .terminal-window.slot-2 {
+  z-index: 3;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-1 > .terminal-window.slot-2,
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-2 > .terminal-window.slot-1 {
+  z-index: 2;
+}
+
+/* 非活动滑出窗格的 20% 露头唤醒遮罩：拦截点击以平滑拉回窗格，防止误触内部 iframe */
+.terminal-window .split-slide-wake-shield {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  cursor: pointer;
+  background: transparent;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-1 > .terminal-window.slot-2 .split-slide-wake-shield,
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-2 > .terminal-window.slot-1 .split-slide-wake-shield {
+  display: block;
+}
+

@@ -14,8 +14,10 @@ let zSeed = 10100;
 let activePinMenu = null;
 
 export function isDesktopPanelPinEnvironment() {
-    return window.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches === true
+    const fineHover = window.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches === true
         && Math.min(window.innerWidth || 0, window.innerHeight || 0) > 700;
+    const wideDesktopViewport = (window.innerWidth || 0) >= 761;
+    return fineHover || wideDesktopViewport;
 }
 
 function pageFor(panel, page) {
@@ -74,10 +76,6 @@ function dockedAt(page, side) {
     return panelGroup(page).filter((panel) => panel.dataset.pinSide === side && (panel.dataset.pinMode || 'side') === 'side');
 }
 
-function sideInset(page, side) {
-    return dockedAt(page, side).reduce((max, panel) => Math.max(max, panel.offsetWidth || 0), 0);
-}
-
 function halfInset(page) {
     return panelGroup(page).reduce((max, panel) => {
         if (panel.dataset.pinMode !== 'half') return max;
@@ -85,12 +83,27 @@ function halfInset(page) {
     }, 0);
 }
 
+function clampHalfHeight(height, scope) {
+    return Math.max(160, Math.min(scope.height - scope.topbarHeight - 80, Math.round(height)));
+}
+
+function edgeInset(page) {
+    const style = getComputedStyle(page);
+    return {
+        left: Number.parseFloat(style.borderLeftWidth) || 0,
+        right: Number.parseFloat(style.borderRightWidth) || 0,
+        top: Number.parseFloat(style.borderTopWidth) || 0,
+        bottom: Number.parseFloat(style.borderBottomWidth) || 0,
+    };
+}
+
+function sideInset(page, side) {
+    return dockedAt(page, side).reduce((max, panel) => Math.max(max, panel.offsetWidth || 0), 0);
+}
+
 function applyInsets(page, { bottomOverride = null } = {}) {
     const left = sideInset(page, 'left');
     const right = sideInset(page, 'right');
-    // A bottom dock covers the page's own bottom safe padding; the CSS rule
-    // already reserves safe-area separately. Adding both here pushed the SSH
-    // terminal completely off-screen while resizing the dock.
     const bottom = bottomOverride ?? halfInset(page);
     page.style.setProperty('--pin-inset-left', `${left}px`);
     page.style.setProperty('--pin-inset-right', `${right}px`);
@@ -119,18 +132,40 @@ function startGeometryMotion(panel) {
     }, 560);
 }
 
-function clampHalfHeight(height, scope) {
-    return Math.max(160, Math.min(scope.height - scope.topbarHeight - 80, Math.round(height)));
+/* 计划 4.2.3：侧停靠进入网格，不再使用 fixed 覆盖。
+ * 页面加 .has-docked-left/right，面板加 .docked-left/right，CSS 负责排布。 */
+/* 计划 4.2.3 规则 B：把停靠状态上报给宿主，宿主据此做双屏 80% 滑出。 */
+function reportPinState() {
+    if (window.parent === window) return;
+    try {
+        const anyPanel = [...pinned][0] || null;
+        const tabId = (anyPanel && anyPanel._pinPage && anyPanel._pinPage.dataset && anyPanel._pinPage.dataset.tabId)
+            || new URLSearchParams(location.search).get('tabId')
+            || '';
+        window.parent.postMessage({
+            source: 'zephyr-terminal',
+            type: 'zephyr-panel-pin-state',
+            tabId,
+            hasPinnedPanel: pinned.size > 0,
+            pinSides: [...pinned].map((p) => p.dataset.pinSide).filter(Boolean),
+        }, '*');
+    } catch { /* 跨域环境忽略 */ }
 }
 
-function edgeInset(page) {
-    const style = getComputedStyle(page);
-    return {
-        left: Number.parseFloat(style.borderLeftWidth) || 0,
-        right: Number.parseFloat(style.borderRightWidth) || 0,
-        top: Number.parseFloat(style.borderTopWidth) || 0,
-        bottom: Number.parseFloat(style.borderBottomWidth) || 0,
-    };
+function applyDockClasses(panel, side) {
+    const page = panel._pinPage;
+    if (!page) return;
+    page.classList.remove('has-docked-left', 'has-docked-right');
+    panel.classList.remove('docked-left', 'docked-right');
+    if (side !== 'left' && side !== 'right') return;
+    page.classList.add(side === 'left' ? 'has-docked-left' : 'has-docked-right');
+    panel.classList.add(side === 'left' ? 'docked-left' : 'docked-right');
+}
+
+function clearDockClasses(panel) {
+    const page = panel._pinPage;
+    if (page) page.classList.remove('has-docked-left', 'has-docked-right');
+    panel.classList.remove('docked-left', 'docked-right');
 }
 
 function place(panel, mode = panel.dataset.pinMode || 'side', { animate = false } = {}) {
@@ -138,6 +173,7 @@ function place(panel, mode = panel.dataset.pinMode || 'side', { animate = false 
     const scope = scopeFor(page);
     const side = panel.dataset.pinSide || 'left';
     const fullHeight = scope.height;
+    const height = fullHeight - halfInset(page);
     rememberNormalGeometry(panel);
     // Read the painted frame *before* changing layout. Rapid pin/unpin/mode
     // changes therefore retarget from the current visual state, not from the
@@ -156,10 +192,6 @@ function place(panel, mode = panel.dataset.pinMode || 'side', { animate = false 
             height: `${Math.max(1, fullHeight - scope.topbarHeight)}px`,
         });
     } else if (mode === 'half') {
-        // Bottom dock is genuinely a bottom band: the bottom row owns the full
-        // width, while side rails remain only in the row above it. Extend one
-        // border-width past the page edge so the page's own 1px frame can never
-        // leave a white seam at the right/bottom edge.
         const edge = edgeInset(page);
         const height = clampHalfHeight(Number.parseFloat(panel.style.height) || Math.round(fullHeight / 2), scope);
         panel._pinHalfHeight = height;
@@ -168,15 +200,18 @@ function place(panel, mode = panel.dataset.pinMode || 'side', { animate = false 
             width: `${scope.width + edge.left + edge.right}px`, height: `${height + edge.bottom}px`,
         });
     } else {
-        const explicit = Number.parseFloat(panel.style.width);
-        const width = Math.min(Number.isFinite(explicit) ? explicit : quarterWidth(scope), scope.width);
-        // Side rails stop above any bottom-docked panel; the bottom band is the
-        // only owner of the lower row, so the two modes never overlap.
-        const height = fullHeight - halfInset(page);
-        Object.assign(panel.style, fixed, {
-            left: `${scope.left + (side === 'left' ? 0 : scope.width - width)}px`, top: `${scope.top}px`,
-            width: `${width}px`, height: `${Math.max(1, height)}px`,
-        });
+        /* 计划 4.2.3：侧停靠进入 .terminal-page 的网格列。
+         * 交给 CSS 排布，JS 只负责状态类；宽度由 --z-sftp-dock-width 决定。 */
+        clearDockClasses(panel);
+        applyDockClasses(panel, side);
+        panel.style.position = '';
+        panel.style.left = '';
+        panel.style.top = '';
+        panel.style.right = '';
+        panel.style.bottom = '';
+        panel.style.width = '';
+        panel.style.height = '';
+        panel.style.transform = '';
     }
 
     if (!animate || !fromRect || fromRect.width < 2 || fromRect.height < 2) return;
@@ -212,6 +247,12 @@ function syncChrome(panel) {
         button.classList.toggle('on', active);
         button.setAttribute('aria-pressed', String(active));
     });
+    panel.querySelectorAll('.panel-pin-toggle, #fmDockBtn').forEach((btn) => {
+        const docked = !!side;
+        btn.classList.toggle('active', docked);
+        btn.classList.toggle('on', docked);
+        btn.setAttribute('aria-pressed', String(docked));
+    });
     panel.querySelectorAll('.panel-resize-handle').forEach((handle) => {
         const edge = handle.dataset.resizeEdge || (handle.classList.contains('left') ? 'left' : 'right');
         handle.style.display = side && mode === 'side' && edge === side ? 'none' : '';
@@ -228,6 +269,12 @@ function syncChrome(panel) {
 
 function pin(panel, side) {
     const page = panel._pinPage;
+    /* Unpin any previous panel on the same side so docking swaps cleanly */
+    for (const other of [...pinned]) {
+        if (other !== panel && other._pinPage === page && other.dataset.pinSide === side) {
+            unpin(other);
+        }
+    }
     const stack = dockedAt(page, side).filter((item) => item !== panel);
     const width = stack[0]?.offsetWidth || quarterWidth(scopeFor(page));
     panel.dataset.pinSide = side;
@@ -238,6 +285,7 @@ function pin(panel, side) {
     syncChrome(panel);
     bringToFront(panel);
     applyInsets(page);
+    reportPinState();
     if (navigator.vibrate) navigator.vibrate(12);
 }
 
@@ -250,8 +298,8 @@ function unpin(panel) {
     const fromRect = panel.getBoundingClientRect();
     delete panel.dataset.pinSide;
     delete panel.dataset.pinMode;
-    delete panel._pinHalfHeight;
-    pinned.delete(panel);
+        pinned.delete(panel);
+    clearDockClasses(panel);
     startGeometryMotion(panel);
     if (restore) {
         Object.assign(panel.style, restore, { transform: 'none' });
@@ -286,6 +334,7 @@ function unpin(panel) {
     syncChrome(panel);
     panelGroup(page).forEach((other) => other !== panel && place(other));
     applyInsets(page);
+    reportPinState();
     if (navigator.vibrate) navigator.vibrate([6, 16, 6]);
 }
 
@@ -346,7 +395,7 @@ function openPinMenu(anchor, panel, onClose) {
     menu.setAttribute('aria-label', t('钉住布局'));
     menu.innerHTML = `
         <button data-pin-layout="full" title="${t('全屏')}" aria-label="${t('全屏')}"><span class="panel-layout-icon full"></span></button>
-        <button data-pin-layout="half" title="${t('下 1/2')}" aria-label="${t('下 1/2')}"><span class="panel-layout-icon half"></span></button>
+        <button data-pin-layout="half" title="${t('下 1/2')}" aria-label="${t('下 1/2')}" style="display:none"><span class="panel-layout-icon half"></span></button>
         <button data-pin-layout="switch-left" title="${t('钉到左边')}" aria-label="${t('钉到左边')}"><span class="panel-layout-icon left"></span></button>
         <button data-pin-layout="switch-right" title="${t('钉到右边')}" aria-label="${t('钉到右边')}"><span class="panel-layout-icon right"></span></button>
         <button data-pin-layout="unpin" title="${t('取消钉住')}" aria-label="${t('取消钉住')}"><span class="panel-layout-icon unpin"></span></button>
@@ -412,13 +461,45 @@ function openPinMenu(anchor, panel, onClose) {
             return;
         }
         panel.dataset.pinMode = action;
-        if (action === 'half') panel.style.height = `${panel._pinHalfHeight || Math.round(scopeFor(page).height / 2)}px`;
         place(panel, action, { animate: true });
         syncChrome(panel);
         bringToFront(panel);
         panelGroup(page).forEach((other) => other !== panel && place(other));
         applyInsets(page);
     });
+}
+
+function bindPinnedVerticalDrag(panel, handle) {
+    handle.addEventListener('pointerdown', (event) => {
+        if (panel.dataset.pinMode !== 'half' || event.target.closest('button')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const page = panel._pinPage;
+        const scope = scopeFor(page);
+        const startY = event.clientY;
+        const startHeight = panel._pinHalfHeight || panel.offsetHeight || Math.round(scope.height / 2);
+        panel.classList.add('resizing');
+        const move = (ev) => {
+            ev.preventDefault();
+            const height = clampHalfHeight(startHeight + (startY - ev.clientY), scope);
+            const edge = edgeInset(page);
+            panel._pinHalfHeight = height;
+            panel.style.top = `${scope.top + scope.height - height}px`;
+            panel.style.height = `${height + edge.bottom}px`;
+            applyInsets(page, { bottomOverride: height });
+        };
+        const up = () => {
+            panel.classList.remove('resizing');
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            const next = panel._pinHalfHeight || panel.offsetHeight;
+            applyInsets(page, { bottomOverride: next });
+            panelGroup(page).forEach((other) => other !== panel && place(other));
+            applyInsets(page);
+        };
+        window.addEventListener('pointermove', move, { passive: false });
+        window.addEventListener('pointerup', up, { once: true });
+    }, true);
 }
 
 function bindPinnedResize(panel, handle) {
@@ -455,56 +536,147 @@ function bindPinnedResize(panel, handle) {
     }, true);
 }
 
-function bindPinnedVerticalDrag(panel, handle) {
-    handle.addEventListener('pointerdown', (event) => {
-        if (!panel.dataset.pinSide || panel.dataset.pinMode !== 'half') return;
-        if (event.target.closest('.panel-pin-btn, .panel-traffic-btn, [data-layout-panel], [data-ai-agent-layout]')) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        const page = panel._pinPage;
-        const scope = scopeFor(page);
-        const startY = event.clientY;
-        const startHeight = panel.offsetHeight;
-        panel.classList.add('resizing');
-        const move = (ev) => {
-            ev.preventDefault();
-            const edge = edgeInset(page);
-            const next = clampHalfHeight(startHeight + (startY - ev.clientY), scope);
-            panel._pinHalfHeight = next;
-            panel.style.height = `${next + edge.bottom}px`;
-            panel.style.top = `${scope.top + scope.height - next}px`;
-            // Content must move with the drag, not wait for pointerup; otherwise
-            // a live white band opens above the dock exactly like the screenshot.
-            applyInsets(page, { bottomOverride: next });
-        };
-        const up = () => {
-            panel.classList.remove('resizing');
-            window.removeEventListener('pointermove', move);
-            window.removeEventListener('pointerup', up);
-            // The terminal/content area must own only the space above the dock.
-            // This reflow is what prevents the bottom band from covering it.
-            panelGroup(page).forEach((other) => other !== panel && place(other));
-            applyInsets(page);
-        };
-        window.addEventListener('pointermove', move, { passive: false });
-        window.addEventListener('pointerup', up, { once: true });
-    }, true);
-}
 
 /**
  * Attach only to a top-level secondary panel. Nested/third-level panels must
  * not inherit the parent pin state; callers simply do not invoke this on them.
  */
+/* ── 计划 4.2.3 规则 A：可停靠面板白名单 ────────────────────────────────
+ * 只有「用户直接点击工具坞打开的一级面板」允许停靠。
+ * 二级及以上衍生浮窗（代码编辑器、图片/音视频预览、属性框、Diff 窗）
+ * 一律不可停靠——它们是从列表里点开的临时视图，钉住会破坏层级语义。 */
+const TIER1_DOCKABLE_IDS = new Set([
+    'fileManager',        // SFTP 目录浏览器
+    'infoModal',          // 主机监控
+    'dockerPanel',        // 容器管理
+    'snippetPanel',       // 代码片段
+    'shortcutPanel',      // 快捷键
+    'terminalNotesPanel', // 笔记列表
+    'portForwardPanel',   // 端口转发
+    'aiAgentPanel',       // 顶层 AI 工作台
+]);
+
+const TIER2_FORBIDDEN_IDS = new Set([
+    'fmEditorModal',        // 代码编辑器
+    'imagePreviewModal',    // 图片预览
+    'mediaPreviewModal',    // 音视频预览
+    'filePropertiesModal',  // 属性框
+    'fileDiffModal',        // Diff 对比
+    'aiProviderModal',      // 供应商编辑
+]);
+
+function isDockablePanel(panel) {
+    if (!panel) return false;
+    const id = panel.id || '';
+    if (TIER2_FORBIDDEN_IDS.has(id)) return false;
+    // 白名单显式列出；未列出的元素一律不可停靠（fail-closed）。
+    if (TIER1_DOCKABLE_IDS.has(id)) return true;
+    return false;
+}
+
+/* ── 文档 4.2.3 规则 B：接收宿主下行的窗格槽位约束 ───────────────────── */
+let currentSlotSide = 'single';
+
+function applyPaneSlotConstraint(slotSide) {
+    const next = (slotSide === 'left' || slotSide === 'right') ? slotSide : 'single';
+    if (next === currentSlotSide) return;
+    currentSlotSide = next;
+
+    const forbidden = next === 'left' ? 'right' : next === 'right' ? 'left' : '';
+
+    for (const panel of [...pinned]) {
+        if (!panel.isConnected) continue;
+        /* 侧别与窗格不符：立即迁移到允许的一侧。 */
+        const side = panel.dataset.pinSide;
+        if (forbidden && side === forbidden) {
+            pin(panel, next);
+            continue;
+        }
+        /* 隐藏不允许方向的图钉按钮。 */
+        panel.querySelectorAll('.panel-pin-btn').forEach((btn) => {
+            const hide = forbidden && btn.dataset.pinSide === forbidden;
+            btn.style.display = hide ? 'none' : '';
+            btn.disabled = !!hide;
+        });
+    }
+
+    /* 菜单项同理：重建菜单时按槽位过滤。 */
+    document.querySelectorAll('.panel-pin-menu [data-pin-layout]').forEach((item) => {
+        const action = item.dataset.pinLayout;
+        const hide = (forbidden === 'left' && action === 'switch-left')
+            || (forbidden === 'right' && action === 'switch-right');
+        item.style.display = hide ? 'none' : '';
+    });
+}
+
+function bindPaneSlotMessages() {
+    if (window.__paneSlotBound === '1') return;
+    window.__paneSlotBound = '1';
+    window.addEventListener('message', (e) => {
+        const d = e.data;
+        if (!d || d.source !== 'zephyr-app' || d.type !== 'zephyr-pane-slot') return;
+        applyPaneSlotConstraint(d.slotSide);
+    });
+    /* 脚本加载时若已有槽位信息，主动问一次。 */
+    try {
+        if (window.parent !== window) {
+            window.parent.postMessage({ source: 'zephyr-terminal', type: 'zephyr-pane-slot-query' }, '*');
+        }
+    } catch {}
+}
+
+function preferredDockSide() {
+    return currentSlotSide === 'left' ? 'left' : 'right';
+}
+
+function bindPinToggleButtons(panel, handle) {
+    const titlebar = panel.querySelector('.panel-titlebar, .fm-header, .docker-header, .info-modal-header, .snippet-panel-header');
+    let toggleBtn = panel.querySelector('.panel-pin-toggle, #fmDockBtn');
+    if (!toggleBtn && titlebar) {
+        toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'tool-btn panel-pin-toggle';
+        toggleBtn.title = t('停靠/悬浮切换');
+        toggleBtn.setAttribute('aria-label', t('停靠/悬浮切换'));
+        toggleBtn.setAttribute('aria-pressed', 'false');
+        toggleBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"/></svg>';
+        const closeBtn = titlebar.querySelector('.fm-close-btn, #dockerCloseBtn, #infoCloseBtn, .panel-close-btn');
+        if (closeBtn && closeBtn.parentNode === titlebar) {
+            titlebar.insertBefore(toggleBtn, closeBtn);
+        } else {
+            titlebar.appendChild(toggleBtn);
+        }
+    }
+    panel.querySelectorAll('.panel-pin-toggle, #fmDockBtn').forEach((btn) => {
+        if (btn.dataset.pinToggleBound === '1' || btn.dataset.dockBound === '1') return;
+        btn.dataset.pinToggleBound = '1';
+        btn.classList.add('panel-pin-toggle');
+        btn.addEventListener('click', (ev) => {
+            if (btn.dataset.dockBound === '1') return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (panel.dataset.pinSide) unpin(panel);
+            else pin(panel, preferredDockSide());
+        });
+    });
+}
+
 export function attachDesktopPanelPin(page, panel, { dragHandle, layoutButton, onClose } = {}) {
     if (!panel || panel.dataset.desktopPinWired === '1' || !isDesktopPanelPinEnvironment()) return false;
+    /* 计划 4.2.3 规则 A：二级及以上浮窗永不挂图钉。 */
+    if (!isDockablePanel(panel)) {
+        panel.classList.remove('pinned', 'docked-left', 'docked-right', 'pin-animating');
+        panel.querySelectorAll('.panel-pin-btn').forEach((btn) => btn.remove());
+        return false;
+    }
     panel.dataset.desktopPinWired = '1';
     panel._pinPage = pageFor(panel, page);
+    bindPaneSlotMessages();
 
     // Defensive reset for cloned nested panels: default stays a normal floating window.
     delete panel.dataset.pinSide;
     delete panel.dataset.pinMode;
-    delete panel._pinHalfHeight;
-    panel.classList.remove('pinned', 'pin-animating');
+        panel.classList.remove('pinned', 'pin-animating');
 
     const handle = dragHandle || panel.querySelector('.panel-drag-handle');
     if (!handle) return false;
@@ -534,8 +706,6 @@ export function attachDesktopPanelPin(page, panel, { dragHandle, layoutButton, o
         if (!button) return;
         event.preventDefault();
         event.stopPropagation();
-        // Bottom dock locks both toggles; while it is active, toggles stay ON
-        // rather than pretending to select a left/right rail. Use ⋯ to release.
         if (panel.dataset.pinMode === 'half') return;
         if (panel.dataset.pinSide === button.dataset.pinSide) unpin(panel);
         else pin(panel, button.dataset.pinSide);
@@ -553,8 +723,10 @@ export function attachDesktopPanelPin(page, panel, { dragHandle, layoutButton, o
         }, true);
     }
 
-    panel.querySelectorAll('.panel-resize-handle').forEach((handleEl) => bindPinnedResize(panel, handleEl));
     bindPinnedVerticalDrag(panel, handle);
+    bindPinToggleButtons(panel, handle);
+    panel.querySelectorAll('.panel-resize-handle').forEach((handleEl) => bindPinnedResize(panel, handleEl));
+    
     panel.addEventListener('pointerdown', () => {
         if (panel.dataset.pinSide) bringToFront(panel);
     }, true);
@@ -566,8 +738,7 @@ export function attachDesktopPanelPin(page, panel, { dragHandle, layoutButton, o
             pinned.delete(panel);
             delete panel.dataset.pinSide;
             delete panel.dataset.pinMode;
-            delete panel._pinHalfHeight;
-            // Keep release semantics identical to the demo: a closed/docked panel
+                        // Keep release semantics identical to the demo: a closed/docked panel
             // always comes back as an ordinary floating window with normal ⋯ chrome.
             syncChrome(panel);
             panelGroup(owner).forEach((other) => place(other));

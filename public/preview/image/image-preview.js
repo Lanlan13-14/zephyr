@@ -179,7 +179,12 @@
             this.focus();
             requestAnimationFrame(() => {
                 if (!this.closed && this.modal.isConnected) {
-                    this.modal.classList.add('panel-opening');
+                    this.modal.classList.add('open');
+                    if (window.Motion?.panelOpenWasm) {
+                        void window.Motion.panelOpenWasm(this.modal, null, { preset: 'mac' });
+                    } else {
+                        this.modal.classList.add('panel-opening');
+                    }
                     // animation-fill:both must not stick or Motion.drag loses transform.
                     window.clearTimeout(this.modal._panelMotionClearTimer);
                     this.modal._panelMotionClearTimer = window.setTimeout(() => {
@@ -332,6 +337,10 @@
             this.destroyViewer();
             this.layoutMenu?.close?.({ instant: true });
             this.modal.classList.remove('panel-opening');
+            if (window.Motion?.panelCloseWasm) {
+                void window.Motion.panelCloseWasm(this.modal, null, { preset: 'snappy', onDone: () => remove() });
+                return;
+            }
             this.modal.classList.add('panel-closing');
             const onAnimationEnd = (event) => {
                 if (event.target !== this.modal || event.animationName !== 'floatingPanelCloseToButton') return;

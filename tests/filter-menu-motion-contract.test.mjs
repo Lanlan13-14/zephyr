@@ -38,7 +38,7 @@ test('motion opt-in set covers dashboard filters + settings/appearance/terminal 
         'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
         'aiTodoPriority',
         // 连接编辑器与图五首页筛选使用同一套菜单动画
-        'connProtocol', 'connSshKey', 'connEncoding', 'connRoute',
+        'connProtocol', 'connIcon', 'connSshKey', 'connEncoding', 'connRoute',
         'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
         // 设置 → 语言 与 代理弹窗 → 类型
         'languageSelect', 'proxyType',

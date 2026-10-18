@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20261004-dashboard-fit1';
+import { t } from './i18n/runtime.js?v=20261018-ui1';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 
@@ -87,7 +87,7 @@ let previewSettings = {
     version: '3.0.0 Preview',
     appearance: {
         brandName: 'Zephyr',
-        brandIcon: '🌬️',
+        brandIcon: 'zephyr-wind',
         theme: 'light',
         autoThemeEnabled: false,
         colorScheme: 'frost',

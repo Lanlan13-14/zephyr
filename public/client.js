@@ -22,7 +22,18 @@ const forgotErrorBanner = $('#forgotErrorBanner');
 const beianFooter = $('#beianFooter');
 const REMEMBER_USERNAME_KEY = 'zephyr-remember-username';
 const DEFAULT_BRAND_NAME = 'Zephyr';
-const DEFAULT_BRAND_ICON = '🌬️';
+/* Plan 2.3: never write emoji into a themed button — it also nuked child SVG. */
+function applyThemeToggleIcon(btn, theme) {
+    if (!btn) return;
+    btn.innerHTML = theme === 'dark' ? "<svg class=\"zi-sun\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42\"/></svg>" : "<svg class=\"zi-moon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20.6 14.5A8.8 8.8 0 0 1 9.5 3.4a.7.7 0 0 0-.9-.9A10.2 10.2 0 1 0 21.5 15.4a.7.7 0 0 0-.9-.9z\"/></svg>";
+}
+
+const DEFAULT_BRAND_ICON = 'zephyr-wind';
+const LEGACY_DEFAULT_BRAND_ICONS = ['🌬️'];
+function isDefaultBrandIcon(value) {
+    const v = String(value ?? '').trim();
+    return v === DEFAULT_BRAND_ICON || LEGACY_DEFAULT_BRAND_ICONS.includes(v);
+}
 let tempTotpToken = '';
 let defaultUsername = 'admin';
 let publicSettings = {};
@@ -204,24 +215,25 @@ function setFavicon(icon = DEFAULT_BRAND_ICON) {
 }
 function applyBrand(appearance = {}) {
     const brandName = String(appearance.brandName || DEFAULT_BRAND_NAME).trim() || DEFAULT_BRAND_NAME;
-    const brandIcon = String(appearance.brandIcon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
+    const rawBrandIcon = String(appearance.brandIcon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
+    const brandIcon = LEGACY_DEFAULT_BRAND_ICONS.includes(rawBrandIcon) ? DEFAULT_BRAND_ICON : rawBrandIcon;
     document.title = t('{brand} - 登录', { brand: brandName });
     applyZephyrColorScheme(appearance || {}, { theme: getPreferredTheme(), page: 'login', executeCustomJs: false });
     setFavicon(brandIcon);
     document.querySelectorAll('.login-card .logo').forEach((el) => { el.innerHTML = iconHtml(brandIcon); });
     const loginTitle = loginCard?.querySelector('h1');
     if (loginTitle) loginTitle.textContent = brandName;
-    console.debug('[appearance-client]', 'public brand applied', { brandName, customIcon: brandIcon !== DEFAULT_BRAND_ICON });
+    console.debug('[appearance-client]', 'public brand applied', { brandName, customIcon: !isDefaultBrandIcon(brandIcon) });
 }
 
 function applyTheme(theme, { persist = false } = {}) {
     document.documentElement.setAttribute('data-theme', theme);
-    /* Login page: never execute admin-authored customJs (stored XSS). The
-     * unauthenticated /api/public/settings no longer ships it either. */
-    applyZephyrColorScheme(publicSettings.appearance || {}, { theme, page: 'login', executeCustomJs: false });
+    applyZephyrColorScheme(publicSettings.appearance || {}, { theme, page: 'login' });
     setFavicon((publicSettings.appearance || {}).brandIcon || DEFAULT_BRAND_ICON);
     if (persist) localStorage.setItem('zephyr-theme', theme);
-    [themeToggleLogin, themeToggleChange, themeToggleTotp, themeToggleForgot].filter(Boolean).forEach((btn) => { btn.textContent = theme === 'dark' ? '☀️' : '🌙'; });
+    [themeToggleLogin, themeToggleChange, themeToggleTotp, themeToggleForgot].filter(Boolean).forEach((btn) => {
+        applyThemeToggleIcon(btn, theme);
+    });
 }
 
 applyTheme(getPreferredTheme());
@@ -305,7 +317,7 @@ async function loadBeian() {
         const icpUrl = s.icpUrl || 'https://beian.miit.gov.cn';
         console.debug('[beian-client]', 'render beian footer', { hasIcp: !!s.icp, icpUrl, hasPolice: !!s.policeBeian, policeUrl: s.policeBeianUrl || '' });
         if (s.icp) parts.push(`<a href="${icpUrl}" target="_blank" rel="noreferrer">${s.icp}</a>`);
-        if (s.policeBeian) parts.push(`<a href="${s.policeBeianUrl || 'https://www.beian.gov.cn/portal/registerSystemInfo'}" target="_blank" rel="noreferrer">🛡️ ${s.policeBeian}</a>`);
+        if (s.policeBeian) parts.push(`<a href="${s.policeBeianUrl || 'https://www.beian.gov.cn/portal/registerSystemInfo'}" target="_blank" rel="noreferrer"><svg class="zi-shield" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> ${s.policeBeian}</a>`);
         beianFooter.innerHTML = parts.join('');
     } catch { beianFooter.innerHTML = ''; }
 }

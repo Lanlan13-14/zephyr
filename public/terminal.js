@@ -1,3 +1,29 @@
+
+function formatMockupMtime(file) {
+    const raw = file?.mtime || file?.modifyTime || file?.date || file?.updatedAt;
+    if (!raw) return '10-18 09:42';
+    const ts = typeof raw === 'number' ? (raw < 1e12 ? raw * 1000 : raw) : Date.parse(raw);
+    if (!Number.isFinite(ts)) {
+        const s = String(raw).trim();
+        return s.length > 11 ? s.slice(5, 16) : s;
+    }
+    const d = new Date(ts);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${mm}-${dd} ${hh}:${mi}`;
+}
+function formatMockupSize(file) {
+    if (!file || file.type === 'd') return '—';
+    const bytes = Number(file.size);
+    if (!Number.isFinite(bytes) || bytes < 0) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+}
+import { installTerminalSftpPro, isAgentVfsPath, fetchAgentVfsListing, sanitizeTerminalPaste, classifyTerminalCommandRisk } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261018-ui63';
 // terminal-grid-converge1 supersedes terminal-stability1 / kb-xterm-fit2 / aux-bar-fly1.
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 import {
@@ -886,11 +912,11 @@ function isSftpArchiveFile(filePath = '') { return SFTP_ARCHIVE_ICON_EXTENSIONS.
 function isSftpMediaFile(filePath = '') { const ext = sftpFileExt(filePath); return SFTP_VIDEO_EXTENSIONS.has(ext) || SFTP_AUDIO_EXTENSIONS.has(ext); }
 function isSftpVideoFile(filePath = '') { return SFTP_VIDEO_EXTENSIONS.has(sftpFileExt(filePath)); }
 
-const ZEPHYR_GLYPH_DEFS = `<svg width="0" height="0" class="zephyr-glyph-defs" aria-hidden="true" focusable="false"><defs><linearGradient id="macBlue" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#5AC8FA"/><stop offset="100%" stop-color="#007AFF"/></linearGradient><linearGradient id="macGold" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FFD60A"/><stop offset="100%" stop-color="#FF9F0A"/></linearGradient><linearGradient id="macCyan" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#32ADE6"/><stop offset="100%" stop-color="#007AFF"/></linearGradient><linearGradient id="macGreen" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#34C759"/><stop offset="100%" stop-color="#248A3D"/></linearGradient><linearGradient id="macPurple" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#AF52DE"/><stop offset="100%" stop-color="#5E5CE6"/></linearGradient><linearGradient id="macIndigo" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#5E5CE6"/><stop offset="100%" stop-color="#403EAB"/></linearGradient><linearGradient id="macRed" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FF5252"/><stop offset="100%" stop-color="#E53935"/></linearGradient><linearGradient id="macDark" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#48484A"/><stop offset="100%" stop-color="#1C1C1E"/></linearGradient></defs></svg>`;
+const ZEPHYR_GLYPH_DEFS = `<svg width="0" height="0" class="zephyr-glyph-defs" aria-hidden="true" focusable="false"><defs><linearGradient id="macBlue" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" style="stop-color:color-mix(in srgb, var(--accent, #5AC8FA) 55%, white)"/><stop offset="100%" style="stop-color:color-mix(in srgb, var(--accent, #007AFF) 82%, white)"/></linearGradient><linearGradient id="macGold" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FFD60A"/><stop offset="100%" stop-color="#FF9F0A"/></linearGradient><linearGradient id="macCyan" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#32ADE6"/><stop offset="100%" stop-color="#007AFF"/></linearGradient><linearGradient id="macGreen" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#34C759"/><stop offset="100%" stop-color="#248A3D"/></linearGradient><linearGradient id="macPurple" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#AF52DE"/><stop offset="100%" stop-color="#5E5CE6"/></linearGradient><linearGradient id="macIndigo" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#5E5CE6"/><stop offset="100%" stop-color="#403EAB"/></linearGradient><linearGradient id="macRed" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FF5252"/><stop offset="100%" stop-color="#E53935"/></linearGradient><linearGradient id="macDark" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#48484A"/><stop offset="100%" stop-color="#1C1C1E"/></linearGradient></defs></svg>`;
 const ZEPHYR_GLYPHS = {
     folder: '<path d="M2 7C2 5.3 3.3 4 5 4H9.3C10.1 4 10.9 4.4 11.5 5L12.5 6.1C12.8 6.4 13.2 6.6 13.6 6.6H19C20.7 6.6 22 7.9 22 9.6V17C22 18.7 20.7 20 19 20H5C3.3 20 2 18.7 2 17V7Z" fill="url(#macBlue)"/>',
     archive: '<path d="M2 7C2 5.3 3.3 4 5 4H9.3C10.1 4 10.9 4.4 11.5 5L12.5 6.1C12.8 6.4 13.2 6.6 13.6 6.6H19C20.7 6.6 22 7.9 22 9.6V17C22 18.7 20.7 20 19 20H5C3.3 20 2 18.7 2 17V7Z" fill="url(#macGold)"/><line x1="12" y1="7" x2="12" y2="15" stroke="#8E8E93" stroke-width="2" stroke-dasharray="2 2" stroke-linecap="round"/><rect x="10.5" y="14" width="3" height="4" rx="1.5" fill="#FFFFFF" stroke="#8E8E93" stroke-width="1"/>',
-    file: '<path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2Z" fill="#FFFFFF" stroke="#C7C7CC" stroke-width="1.5" stroke-linejoin="round"/><path d="M14 2V8H20" fill="#E5E5EA" stroke="#C7C7CC" stroke-width="1.5" stroke-linejoin="round"/><line x1="8" y1="13" x2="16" y2="13" stroke="#007AFF" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="17" x2="14" y2="17" stroke="#8E8E93" stroke-width="1.5" stroke-linecap="round"/>',
+    file: '<path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2Z" fill="#FFFFFF" stroke="#C7C7CC" stroke-width="1.5" stroke-linejoin="round"/><path d="M14 2V8H20" fill="#E5E5EA" stroke="#C7C7CC" stroke-width="1.5" stroke-linejoin="round"/><line x1="8" y1="13" x2="16" y2="13" style="stroke:var(--accent, #007AFF)" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="17" x2="14" y2="17" stroke="#8E8E93" stroke-width="1.5" stroke-linecap="round"/>',
     upload: '<path d="M17.5 19C20 19 22 17 22 14.5C22 12.1 20.2 10.2 17.9 10C17.4 6.6 14.5 4 11 4C7.1 4 4 7.1 4 11C4 11.2 4 11.5 4.1 11.7C2.3 12.3 1 14 1 16C1 18.2 2.8 20 5 20" fill="url(#macCyan)"/><path d="M11 16V9M8 12L11 9L14 12" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
     download: '<path d="M17.5 19C20 19 22 17 22 14.5C22 12.1 20.2 10.2 17.9 10C17.4 6.6 14.5 4 11 4C7.1 4 4 7.1 4 11C4 11.2 4 11.5 4.1 11.7C2.3 12.3 1 14 1 16C1 18.2 2.8 20 5 20" fill="url(#macGreen)"/><path d="M11 9V16M8 13L11 16L14 13" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
     copy: '<rect x="5" y="5" width="12" height="13" rx="2" fill="url(#macIndigo)"/><rect x="9" y="9" width="12" height="13" rx="2" fill="#FFFFFF" stroke="#C7C7CC" stroke-width="1.5"/><line x1="12" y1="13" x2="18" y2="13" stroke="#8E8E93" stroke-width="1.5" stroke-linecap="round"/><line x1="12" y1="17" x2="16" y2="17" stroke="#8E8E93" stroke-width="1.5" stroke-linecap="round"/>',
@@ -1922,8 +1948,22 @@ function applyTheme(theme, { persist = false, terminalOverride = false } = {}) {
     applyTerminalAppearance(terminalAppearance || {});
     if (terminalOverride) localStorage.setItem(TERMINAL_THEME_OVERRIDE_KEY, theme);
     else if (persist) localStorage.setItem('zephyr-theme', theme);
-    themeToggle.textContent = theme === 'dark' ? '☀️' : '🌙';
+    themeToggle.innerHTML = theme === 'dark' ? "<svg class=\"zi-sun\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42\"/></svg>" : "<svg class=\"zi-moon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20.6 14.5A8.8 8.8 0 0 1 9.5 3.4a.7.7 0 0 0-.9-.9A10.2 10.2 0 1 0 21.5 15.4a.7.7 0 0 0-.9-.9z\"/></svg>";
 }
+try {
+    if (window.parent && window.parent !== window && window.parent.document?.documentElement) {
+        const pRoot = window.parent.document.documentElement;
+        const pScheme = pRoot.getAttribute('data-color-scheme');
+        const pTheme = pRoot.getAttribute('data-theme');
+        if (pScheme) {
+            document.documentElement.setAttribute('data-color-scheme', pScheme);
+            terminalAppearance = { ...(terminalAppearance || {}), colorScheme: pScheme };
+        }
+        if (pTheme === 'light' || pTheme === 'dark') {
+            localStorage.setItem('zephyr-theme', pTheme);
+        }
+    }
+} catch {}
 applyTheme(getPreferredTheme());
 
 function normalizeTerminalHexColor(value = '') {
@@ -2083,9 +2123,16 @@ function applyTerminalAppearance(appearance = {}) {
     }
 }
 
+/* 计划 4.2.2：用户显式选过终端主题就尊重它；从未选过则跟随全局深浅色。
+ * 没有这一层，浅色主题下终端永远是黑底，与白色顶栏割裂。 */
 function getPreferredWtermTheme() {
-    const saved = localStorage.getItem('zephyr-wterm-theme');
-    return saved === 'light' ? 'light' : 'default';
+    /* 计划 4.2.2：只有用户主动点过「终端主题」按钮才锁定终端配色。
+     * 旧版本会无条件写 zephyr-wterm-theme=default，那个值不能当作意图，
+     * 所以用独立标记位判断，避免升级后终端被永久钉死成黑底。 */
+    if (localStorage.getItem('zephyr-wterm-theme-explicit') === '1') {
+        return localStorage.getItem('zephyr-wterm-theme') === 'light' ? 'light' : 'default';
+    }
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'default';
 }
 
 function hasCustomTerminalAppearance() {
@@ -2121,13 +2168,22 @@ function applyWtermTheme(theme) {
         }, 460);
     }
     document.documentElement.setAttribute('data-wterm-theme', normalized);
-    localStorage.setItem('zephyr-wterm-theme', requested);
+    /* 只有用户主动点「终端主题」按钮才落盘；跟随全局时不留痕迹，
+     * 否则一次浅色主题就会把终端永久钉成 light。 */
+    if (applyWtermTheme._explicit) {
+        localStorage.setItem('zephyr-wterm-theme', requested);
+        localStorage.setItem('zephyr-wterm-theme-explicit', '1');
+        applyWtermTheme._explicit = false;
+    }
     if (wtermThemeToggle) {
-        wtermThemeToggle.textContent = customTerm
+        wtermThemeToggle.title = customTerm
             ? (requested === 'light' ? t('终端: 自定义 Light') : t('终端: 自定义'))
             : (requested === 'light' ? t('终端: Light') : t('终端: 默认'));
-        wtermThemeToggle.classList.toggle('active', requested === 'light' || customTerm);
-        wtermThemeToggle.setAttribute('aria-pressed', requested === 'light' || customTerm ? 'true' : 'false');
+        if (!wtermThemeToggle.querySelector('svg')) {
+            wtermThemeToggle.innerHTML = '<svg class="tb-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg>';
+        }
+        wtermThemeToggle.classList.toggle('active', Boolean(customTerm));
+        wtermThemeToggle.setAttribute('aria-pressed', customTerm ? 'true' : 'false');
     }
     try { term?.setOption?.('theme', requested === 'light' ? 'light' : 'default'); } catch (_) {}
     applyTerminalAppearance(terminalAppearance || {});
@@ -2164,11 +2220,15 @@ window.addEventListener('message', (e) => {
         return;
     }
     if (e.data.type === 'theme-change' && ['light', 'dark'].includes(e.data.theme)) {
+        try {
+            localStorage.removeItem(TERMINAL_THEME_OVERRIDE_KEY);
+            localStorage.removeItem('zephyr-wterm-theme-explicit');
+        } catch {}
         if (e.data.appearance) terminalAppearance = e.data.appearance || {};
+        applyTheme(e.data.theme);
         applyZephyrColorScheme(terminalAppearance || {}, { theme: e.data.theme, page: 'terminal' });
         applyTerminalAppearance(terminalAppearance || {});
         applyWtermTheme(getPreferredWtermTheme());
-        if (!hasTerminalThemeOverride()) applyTheme(e.data.theme);
         requestStableTerminalLayout('parent-theme-change', { includeResize: false });
     }
     if ((e.data.type === 'terminal-settings' || e.data.workspace) && e.data.workspace && Object.prototype.hasOwnProperty.call(e.data.workspace, 'sessionPersistence')) {
@@ -4596,7 +4656,7 @@ const terminalToastMotion = {
     _ensure() {
         if (this.engine) return Promise.resolve(this.engine);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261018-ui63')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
@@ -4700,7 +4760,18 @@ function sendJsonMessage(payload) {
 }
 
 function animatePanelFromButton(panel, button, opening = true) {
-    if (!panel || !button) return;
+    if (!panel) return;
+    if (window.Motion?.panelOpenWasm && window.Motion?.panelCloseWasm) {
+        window.clearTimeout(panel._panelMotionClearTimer);
+        panel.classList.remove('panel-opening', 'panel-closing');
+        if (opening) {
+            void window.Motion.panelOpenWasm(panel, button, { preset: 'mac' });
+        } else {
+            void window.Motion.panelCloseWasm(panel, button, { preset: 'snappy' });
+        }
+        return;
+    }
+    if (!button) return;
     const panelRect = panel.getBoundingClientRect?.();
     const buttonRect = button.getBoundingClientRect?.();
     if (!panelRect || !buttonRect || panelRect.width <= 1 || panelRect.height <= 1) return;
@@ -4711,8 +4782,6 @@ function animatePanelFromButton(panel, button, opening = true) {
     panel.classList.remove('panel-opening', 'panel-closing');
     void panel.offsetWidth;
     panel.classList.add(opening ? 'panel-opening' : 'panel-closing');
-    // animation-fill:both on .panel-opening must not stick — it overrides
-    // Motion.drag inline transform and makes panels undraggable.
     window.clearTimeout(panel._panelMotionClearTimer);
     const ms = opening ? 400 : 320;
     panel._panelMotionClearTimer = window.setTimeout(() => {
@@ -4760,7 +4829,7 @@ function createFileManagerWindow({ path = currentPath } = {}) {
     delete panel.dataset.desktopPinWired;
     delete panel.dataset.pinSide;
     delete panel.dataset.pinMode;
-    panel.classList.remove('pinned', 'pin-animating');
+    panel.classList.remove('pinned', 'pin-animating', 'docked-right', 'docked-left', 'z-unified-panel', 'panel-fullscreen'); delete panel.dataset.unifiedDockSide; delete panel.dataset.outerRingResizeWired;
     panel.querySelectorAll('.panel-pin-btn').forEach((button) => button.remove());
     panel.querySelectorAll('[data-panel-layout-click-bound], [data-layout-panel]').forEach((el) => {
         delete el.dataset.panelLayoutClickBound;
@@ -4995,6 +5064,11 @@ function handleExtraFileManagerListMessage(msg) {
 
 // ---------- 文件管理器 ----------
 function showFileManager() {
+    ensureSftpProInitialized();
+    if (sftpPro && !sftpPro.cdState.sftpOpenedSinceLastCd && sftpPro.cdState.lastCdCwd) {
+        currentPath = sftpPro.consumeInitialSftpPath(currentPath);
+        if (fmPathInput) fmPathInput.value = currentPath;
+    }
     ensureFloatingPanel(fileManager, getDefaultPanelOptions(fileManager));
     fileManager.classList.add('open');
     updateFileButtonActiveState();
@@ -5010,6 +5084,9 @@ function showFileManager() {
 function hideFileManager() {
     if (typeof closePanelLayoutMenu === 'function') closePanelLayoutMenu({ instant: true });
     if (typeof closeEditorCommandPalette === 'function') closeEditorCommandPalette(fileManager);
+    if (fileManager.classList.contains('docked-right') || fileManager.classList.contains('docked-left')) {
+        fileManager.querySelector('.panel-pin-toggle')?.click();
+    }
     animatePanelFromButton(fileManager, fileBtn, false);
     fileManager.classList.remove('open');
     updateFileButtonActiveState();
@@ -5017,9 +5094,10 @@ function hideFileManager() {
     updateMobileFileActions();
     window.setTimeout(() => clearPanelMotion(fileManager), 320);
 }
-fileBtn.addEventListener('click', () => {
-    if (!fileManager.classList.contains('open') && extraFileManagerWindows.size === 0) showFileManager();
-    else createFileManagerWindow({ path: currentPath });
+fileBtn.addEventListener('click', (e) => {
+    if (!fileManager.classList.contains('open')) showFileManager();
+    else if (e.shiftKey || e.altKey) createFileManagerWindow({ path: currentPath });
+    else hideFileManager();
 });
 fmCloseBtn.addEventListener('click', hideFileManager);
 
@@ -5129,6 +5207,15 @@ function initSFTP() {
     wsConnection.send(JSON.stringify({ type: 'sftp-init' }));
 }
 function refreshFileList() {
+    if (isAgentVfsPath(currentPath)) {
+        if (fmPathInput) fmPathInput.value = currentPath;
+        fetchAgentVfsListing(currentPath).then((files) => {
+            selectedFilePaths.clear();
+            renderFileList(files);
+            updateMobileFileActions();
+        });
+        return;
+    }
     if (!sftpReady) return;
     wsConnection.send(JSON.stringify({ type: 'sftp-list', path: currentPath }));
     fmPathInput.value = currentPath;
@@ -5242,6 +5329,12 @@ function openFileItem(filePath, fileType) {
     if (fileType === 'd') { navigateTo(filePath); return; }
     if (window.ZephyrImagePreview?.isImage?.(filePath)) { openImagePreview(filePath); return; }
     if (isSftpMediaFile(filePath)) { openMediaPreview(filePath); return; }
+    const fileObj = getFileByPath(filePath);
+    if (fileObj && sftpPro) {
+        const rowEl = Array.from(fmList?.querySelectorAll('.fm-item') || []).find((el) => el.dataset.filePath === filePath);
+        const gate = sftpPro.checkFileMemoryGate({ ...fileObj, path: filePath }, rowEl);
+        if (gate && gate !== 'allow-full') return;
+    }
     openEditor(filePath);
 }
 function isTouchLikeDevice() {
@@ -5537,7 +5630,14 @@ function ensureFilePropertiesModal() {
 }
 function hideFilePropertiesModal() {
     filePropertiesOverlay?.classList.remove('show');
-    filePropertiesModal?.classList.remove('show');
+    if (filePropertiesModal && window.Motion?.panelCloseWasm) {
+        void window.Motion.panelCloseWasm(filePropertiesModal, null, {
+            preset: 'snappy',
+            onDone: () => filePropertiesModal?.classList.remove('show', 'open'),
+        });
+        return;
+    }
+    filePropertiesModal?.classList.remove('show', 'open');
 }
 function renderFilePropertiesModal(selected, extra = null) {
     ensureFilePropertiesModal();
@@ -5579,7 +5679,9 @@ function showFilePropertiesModal(selected) {
     ensureFilePropertiesModal();
     renderFilePropertiesModal(selected, null);
     filePropertiesOverlay.classList.add('show');
-    filePropertiesModal.classList.add('show');
+    filePropertiesModal.style.display = 'flex';
+    filePropertiesModal.classList.add('show', 'open');
+    requestAnimationFrame(() => window.Motion?.panelOpenWasm?.(filePropertiesModal, null, { preset: 'mac' }));
     requestRemoteProperties(selected);
 }
 // Native download target is opened only after the signed URL is ready.
@@ -5692,9 +5794,22 @@ document.addEventListener('keydown', (e) => {
 });
 
 function renderFileList(files) {
-    allFiles = sortFiles(files);
+    const rawList = Array.isArray(files) ? [...files] : [];
+    if ((currentPath === '/' || currentPath === '.') && !rawList.some((f) => f && f.name === 'zephyr-agent')) {
+        rawList.unshift({
+            name: 'zephyr-agent',
+            displayName: 'Zephyr Agent',
+            type: 'd',
+            size: 0,
+            modifyTime: Date.now(),
+            rights: 'drwxr-xr-x',
+            isAgentMountEntry: true,
+        });
+    }
+    allFiles = sortFiles(rawList);
     const filtered = filterFiles(allFiles, searchQuery);
     fmList.innerHTML = '';
+    sftpPro?.syncActiveSftpTab(currentPath, filtered.length);
     filtered.forEach(file => {
         const item = document.createElement('div');
         item.className = 'fm-item';
@@ -5761,7 +5876,15 @@ function renderFileList(files) {
 
         actions.appendChild(renameBtn);
         actions.appendChild(deleteBtn);
+        const sizeSpan = document.createElement('span');
+        sizeSpan.className = 'fm-item-size tabular-nums';
+        sizeSpan.textContent = formatMockupSize(file);
+        const mtimeSpan = document.createElement('span');
+        mtimeSpan.className = 'fm-item-mtime tabular-nums';
+        mtimeSpan.textContent = formatMockupMtime(file);
         item.appendChild(nameSpan);
+        item.appendChild(sizeSpan);
+        item.appendChild(mtimeSpan);
         item.appendChild(actions);
         fmList.appendChild(item);
     });
@@ -6941,6 +7064,10 @@ async function closeEditor({ animated = true, force = false } = {}) {
         if (panel !== document.getElementById('fmEditorModal')) panel.remove();
     };
     if (!animated) { removePanel(); return; }
+    if (window.Motion?.panelCloseWasm) {
+        await window.Motion.panelCloseWasm(panel, null, { preset: 'snappy', onDone: removePanel });
+        return;
+    }
     panel.classList.remove('open');
     panel.classList.add('closing');
     panel._closeTimer && window.clearTimeout(panel._closeTimer);
@@ -7021,14 +7148,13 @@ function setupEditorPanel(panel) {
     markEditorRoles(panel);
     panel.classList.add('editor-window');
     if (panel === document.getElementById('fmEditorModal') && panel.parentElement !== document.querySelector('.terminal-page')) {
-        const rect = fileManager.getBoundingClientRect();
         dockEditorPanel(panel);
-        const pageRect = panel.parentElement.getBoundingClientRect();
-        panel.style.left = `${Math.round(rect.left - pageRect.left + 16 + (editorPanelsByPath.size % 4) * 22)}px`;
-        panel.style.top = `${Math.round(rect.top - pageRect.top + 52 + (editorPanelsByPath.size % 4) * 22)}px`;
+        panel.style.left = '260px';
+        panel.style.top = '110px';
         panel.style.right = 'auto';
         panel.style.bottom = 'auto';
     }
+    try { window.__zephyrUpgradeSecondaryPanel?.(panel); } catch {}
     updateEditorZIndex(panel);
     if (!panel.querySelector('[data-editor-resize-edge="left"]')) {
         const leftHandle = document.createElement('div');
@@ -7152,24 +7278,21 @@ function createEditorPanel(filePath) {
     dockEditorPanel(panel);
     panel.dataset.editorPath = filePath;
     panel.style.display = 'flex';
-    if (panel.parentElement === document.querySelector('.terminal-page') && !panel.style.left && !panel.style.top) {
-        if (!panel.dataset.editorMoved && !panel.dataset.editorResized) {
-            if (isCompactScreen()) {
-                panel.style.width = 'calc(100vw - 12px)';
-                panel.style.left = '6px';
-                panel.style.top = '6px';
-            } else {
-                const rect = fileManager.getBoundingClientRect();
-                const pageRect = panel.parentElement.getBoundingClientRect();
-                panel.style.left = `${Math.round(rect.left - pageRect.left + 16 + (editorPanelsByPath.size % 4) * 22)}px`;
-                panel.style.top = `${Math.round(rect.top - pageRect.top + 52 + (editorPanelsByPath.size % 4) * 22)}px`;
-            }
-        }
-        updateEditorZIndex(panel);
-    } else {
-        panel.style.left = panel.style.left || `${16 + (editorPanelsByPath.size % 4) * 22}px`;
-        panel.style.top = panel.style.top || `${52 + (editorPanelsByPath.size % 4) * 22}px`;
-    }
+    const pageEl = document.querySelector('.terminal-page') || document.body;
+    const vw = window.innerWidth || 1280;
+    const vh = window.innerHeight || 800;
+    const dockedRightW = pageEl.classList.contains('has-docked-right') ? 360 : 0;
+    const dockedLeftW = pageEl.classList.contains('has-docked-left') ? 360 : 0;
+    const availW = Math.max(400, vw - dockedLeftW - dockedRightW);
+    const edW = Math.min(680, availW - 36);
+    const edH = Math.min(440, vh - 140);
+    const step = (editorPanelsByPath.size % 4) * 22;
+    const defaultLeft = Math.max(dockedLeftW + 18, Math.min(dockedLeftW + availW - edW - 18, Math.round(dockedLeftW + (availW - edW) / 2 + step)));
+    const defaultTop = Math.max(96, Math.min(vh - edH - 24, Math.round(110 + step)));
+    panel.style.width = `${edW}px`;
+    panel.style.height = `${edH}px`;
+    panel.style.left = `${defaultLeft}px`;
+    panel.style.top = `${defaultTop}px`
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
     panel.style.width = panel.style.width || '';
@@ -7535,7 +7658,10 @@ function openEditor(filePath) {
     panel._editorMtimeMs = 0;
     panel.style.display = 'flex';
     panel.classList.remove('closing');
-    requestAnimationFrame(() => panel.classList.add('open'));
+    requestAnimationFrame(() => {
+        panel.classList.add('open');
+        window.Motion?.panelOpenWasm?.(panel, null, { preset: 'mac' });
+    });
     if (fmEditorTitle) fmEditorTitle.textContent = t('编辑: {path}', { path: filePath });
     if (fmEditorStatus) fmEditorStatus.textContent = t('读取中...');
     if (fmEditorMain) fmEditorMain.innerHTML = '';
@@ -7667,6 +7793,7 @@ function handleSFTPMessage(msg) {
         case 'sftp-ready': sftpReady = true; refreshAllOpenFileManagers(); flushPendingUploads(); break;
         case 'sftp-list':
             if (handleExtraFileManagerListMessage(msg)) break;
+            if (isAgentVfsPath(currentPath) && !isAgentVfsPath(msg.path)) break;
             if (msg.error) alert(`${t('列出目录失败:')} ${msg.error}`);
             else { selectedFilePaths.clear(); renderFileList(msg.files); currentPath = msg.path; fmPathInput.value = currentPath; updateMobileFileActions(); }
             break;
@@ -7869,6 +7996,9 @@ function handleSFTPMessage(msg) {
             } else if (msg.conflict || msg.code === 'mtime_conflict') {
                 handleEditorSaveConflict(panel, msg);
             } else {
+                if (/permission denied|eacces|operation not permitted/i.test(String(msg.error || ''))) {
+                    sftpPro?.showInlineSudoSaveBar(panel || fmEditorModal, msg.path || editorFilePath, panel?._pendingSave?.text || '');
+                }
                 showToast('保存失败: ' + (msg.error || t('未知错误')), 'error');
             }
             break;
@@ -8617,7 +8747,7 @@ const dockerMotion = {
     _ensure() {
         if (this.engine) return Promise.resolve(this.engine);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261018-ui63')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion?.to) throw new Error('Motion unavailable');
@@ -9244,6 +9374,15 @@ function setupTerminalInputPanelMetrics() {
 }
 
 function mountMobileStableBarsInFlow() {
+    if (document.documentElement.dataset.zephyrSurface === 'desktop' || document.body?.classList.contains('desktop-embed')) {
+        const tb = document.querySelector('.terminal-topbar');
+        if (tb && topbarActions && topbarActions.parentElement !== tb) {
+            tb.appendChild(topbarActions);
+        }
+        document.documentElement.classList.remove('mobile-stable-input');
+        document.body?.classList.remove('mobile-stable-input');
+        return;
+    }
     if (!isMobileStableInputMode() || !topbarActions || !terminalInputPanel) return;
     const page = document.querySelector('.terminal-page');
     if (!page) return;
@@ -9432,8 +9571,10 @@ function writeSshKbPageGeometry(safeInset, layoutOpen, { fromParent = false } = 
 
     // Always keep mobile-stable class for the fixed-chrome CSS path.
     try {
-        document.documentElement.classList.add('mobile-stable-input');
-        document.body?.classList?.add?.('mobile-stable-input');
+        if (document.documentElement.dataset.zephyrSurface !== 'desktop' && !document.body?.classList?.contains?.('desktop-embed')) {
+            document.documentElement.classList.add('mobile-stable-input');
+            document.body?.classList?.add?.('mobile-stable-input');
+        }
     } catch (_) {}
 
     document.documentElement.style.setProperty('--keyboard-inset', `${inset}px`);
@@ -11475,6 +11616,7 @@ function renderStats(d) {
      * 与 1s stats 采样并行发出，每个 stats tick 追加一个折线点。探针失败为 --。 */
     const latencyMsRaw = d.latency?.ms;
     const latencyMs = (latencyMsRaw == null || isNaN(latencyMsRaw)) ? null : Math.max(0, Math.round(Number(latencyMsRaw)));
+    reportProbeLatencyToHost(latencyMs);
     if (latencyMs != null) {
         setTextStat('latencyText', `${latencyMs} ms`);
         const latencyEl = infoBody.querySelector('[data-stat="latencyText"]');
@@ -11514,6 +11656,19 @@ function renderStats(d) {
     }
 }
 
+/* Push the monitor's SSH handshake latency to the parent pane titlebar.
+   Same thresholds as the monitor card so the two numbers read identically. */
+function reportProbeLatencyToHost(latencyMs) {
+    const tabId = params.tabId || params.sessionId || '';
+    if (!tabId || window.parent === window) return;
+    const level = latencyMs == null ? '' : (latencyMs < 100 ? 'good' : latencyMs < 300 ? 'mid' : 'bad');
+    const key = `${tabId}|${latencyMs == null ? '' : latencyMs}`;
+    if (reportProbeLatencyToHost._last === key) return;
+    reportProbeLatencyToHost._last = key;
+    try {
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'zephyr-probe-latency', tabId, ms: latencyMs, level }, '*');
+    } catch (_) {}
+}
 function setTextStatName(selector, value) {
     const el = infoBody.querySelector(selector);
     if (el && el.textContent !== value) el.textContent = value;
@@ -11550,6 +11705,10 @@ function positionMonitorPanel() {
 
 function renderStatsSoon(data) {
     latestStatsData = data || latestStatsData;
+    // The titlebar latency chip must track the probe even while the monitor
+    // panel is closed; renderStats only runs once the panel is open.
+    const probeMs = latestStatsData?.latency?.ms;
+    reportProbeLatencyToHost((probeMs == null || isNaN(probeMs)) ? null : Math.max(0, Math.round(Number(probeMs))));
     if (!infoModal?.classList?.contains('open') || !latestStatsData) return;
     if (monitorPageSwitching) return;
     if (monitorRenderRaf) return;
@@ -11900,6 +12059,7 @@ function isMobileStablePlainEchoData(data = '') {
 
 function writeTerminalData(data = '') {
     if (!term?.write) return;
+    if (sftpPro?.onIncomingTerminalChunk(data)) return;
     updateTerminalMouseTrackingFromData(data);
     const plainEcho = isMobileStablePlainEchoData(data);
     if (plainEcho) mobileStableEchoSuppressUntil = Date.now() + 180;
@@ -12041,6 +12201,7 @@ function getDefaultPanelOptions(panel) {
 }
 
 function clampPanel(panel) {
+    if (!panel?.parentElement || !panel.classList?.contains('open') || panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('docked-right') || panel.classList?.contains('docked-left') || panel.classList?.contains('panel-fullscreen') || panel.dataset?.unifiedDockSide || panel.dataset?.pinSide) return;
     const rect = panel.getBoundingClientRect();
     const parentRect = panel.parentElement.getBoundingClientRect();
     const minVisible = isCompactScreen() ? 140 : 80;
@@ -12260,7 +12421,7 @@ function setupPanelLayoutMenu() {
 }
 
 function bringPanelToFront(panel) {
-    if (!panel) return;
+    if (!panel || panel.classList?.contains('docked-left') || panel.classList?.contains('docked-right') || panel.dataset?.unifiedDockSide) return;
     // AI panel parity: raise z-index only. CSS front-switching rewrite of
     // transform would clobber Motion.drag mid-gesture (drag feels dead).
     if (panel.classList?.contains('editor-window') || panel.classList?.contains('image-preview-modal') || panel.classList?.contains('media-preview-modal')) {
@@ -12477,7 +12638,13 @@ function sendData(data, { normalizeNewlines = false, source = 'unknown', forceFo
         // 本项目仍需 JSON 包装以匹配现有 /ssh 协议，但 payload 保持 WTerm 产生的原始字节序列。
         const payload = fromWTerm ? data : (normalizeNewlines ? normalizeTerminalInputNewlines(data) : data);
         const input = fromWTerm || !applyModifiers ? payload : processModifiers(payload);
+        sftpPro?.parseInputForCd(input);
         wsConnection.send(JSON.stringify({ type: 'input', data: input }));
+        if (window.__zephyrBroadcastInputActive && source !== 'broadcast-peer' && window.parent !== window) {
+            try {
+                window.parent.postMessage({ source: 'zephyr-terminal', type: 'zephyr-broadcast-input', data: input }, '*');
+            } catch {}
+        }
         if (forceFollow) requestTerminalAutoFollow(`${source}:sent`);
         else scheduleTerminalScrollbarUpdate();
     }
@@ -13776,5 +13943,37 @@ window.addEventListener('beforeunload', () => {
     closeWebSocketOnly(t('页面卸载'), { sendDisconnect: !shouldDetach });
 });
 
+
+let sftpPro = null;
+function ensureSftpProInitialized() {
+    if (sftpPro) return sftpPro;
+    sftpPro = installTerminalSftpPro({
+        getTerm: () => term,
+        getWs: () => wsConnection,
+        getCurrentPath: () => currentPath,
+        setCurrentPath: (p) => { currentPath = p; },
+        navigateTo: (p) => navigateTo(p),
+        openEditor: (p) => openEditor(p),
+        requestDownload: (f) => requestDownload(f),
+        showToast: (m, k) => showToast(m, k),
+        t,
+        hostName: params?.name || params?.host || 'SSH',
+    });
+    window.__zephyrSftpPro = sftpPro;
+    return sftpPro;
+}
+window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (!d) return;
+    if (d.source === 'zephyr-app' && d.type === 'zephyr-pane-slot') {
+        window.__zephyrBroadcastInputActive = !!d.broadcastActive;
+    } else if (d.source === 'zephyr-app' && d.type === 'zephyr-broadcast-input-forward') {
+        if (d.data) sendData(d.data, { source: 'broadcast-peer', applyModifiers: false });
+    } else if (d.source === 'zephyr-app' && d.type === 'zephyr-inject-code') {
+        if (d.code) sendData(d.code, { normalizeNewlines: true, source: 'code-card-inject', forceFollow: true });
+    }
+});
+
+ensureSftpProInitialized();
 main();
 requestParentSharedFileClipboard();

@@ -316,3 +316,25 @@
   position: absolute;
   image-rendering: pixelated;
 }
+
+/* ── 4.2.6 Table 4.3: Nerd Fonts fallback, SGR blink, CJK wide & Box-Drawing alignment ── */
+@keyframes term-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.wterm {
+  font-family: var(--font-mono, 'JetBrains Mono', 'SF Mono', 'Symbols Nerd Font Mono', 'Fira Code', Menlo, Consolas, monospace);
+  font-variant-ligatures: contextual;
+}
+.wterm .term-row > span.term-wide {
+  display: inline-block;
+  width: calc(2 * var(--cell-width, 1ch));
+  overflow: hidden;
+  vertical-align: top;
+}
+.wterm .term-graphics {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}

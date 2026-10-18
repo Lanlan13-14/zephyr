@@ -1,3 +1,5 @@
+import { MOBILE_SHEET_DETENTS, attachMobileBottomSheet, resolveActiveSurfaceMode } from './vendor/zephyr-pro/app-continuity-guard-pro.js';
+export { MOBILE_SHEET_DETENTS };
 /**
  * Shared floating-panel interaction for SSH terminal and RDP page.
  * Coordinates are parent-relative (same model as public/terminal.js).
@@ -66,7 +68,7 @@ export function isCompactScreen() {
     return isPhoneLikeEnvironment();
 }
 
-export function allocateFloatingPanelZIndex(panel, selector = '.floating-panel, .rdp-floating-panel, .file-manager, .info-modal, .docker-panel, .snippet-panel, .shortcut-panel') {
+export function allocateFloatingPanelZIndex(panel, selector = '.floating-panel, .rdp-floating-panel, .file-manager, .info-modal, .docker-panel, .snippet-panel, .shortcut-panel, .port-forward-panel, .terminal-notes-panel, .fm-editor-modal, .image-preview-modal, .media-preview-modal, .fm-props-modal, .docker-log-drawer') {
     const currentZIndex = Number(panel?.style?.zIndex || 0) || 0;
     let maxZIndex = Math.max(floatingPanelZIndexSeed, currentZIndex);
     document.querySelectorAll(selector).forEach((item) => {
@@ -120,7 +122,7 @@ export function getDefaultPanelOptions(panel, kind = '') {
 }
 
 export function clampPanel(panel) {
-    if (!panel?.parentElement) return;
+    if (!panel?.parentElement || panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('docked-right') || panel.classList?.contains('docked-left') || panel.classList?.contains('panel-fullscreen')) return;
     const rect = panel.getBoundingClientRect();
     const parentRect = panel.parentElement.getBoundingClientRect();
     const minVisible = isCompactScreen() ? 140 : 80;
@@ -132,8 +134,8 @@ export function clampPanel(panel) {
     panel.style.bottom = 'auto';
 }
 
-export function bringPanelToFront(panel, selector = '.rdp-floating-panel, .file-manager, .info-modal, .docker-panel, .snippet-panel, .shortcut-panel') {
-    if (!panel) return;
+export function bringPanelToFront(panel, selector = '.rdp-floating-panel, .file-manager, .info-modal, .docker-panel, .snippet-panel, .shortcut-panel, .port-forward-panel, .terminal-notes-panel, .fm-editor-modal, .image-preview-modal, .media-preview-modal, .fm-props-modal, .docker-log-drawer') {
+    if (!panel || panel.classList?.contains('docked-left') || panel.classList?.contains('docked-right') || panel.dataset?.unifiedDockSide) return;
     // AI panel parity: fronting only raises z-index. Never run CSS transform
     // animations here — they clobber Motion.drag's transform channel mid-gesture.
     document.querySelectorAll(selector).forEach((p) => {
@@ -334,10 +336,14 @@ const floatingPanelMotion = {
     failed: false,
     _p: null,
     _ensure() {
+        if (typeof window !== 'undefined' && window.Motion && typeof window.Motion.drag === 'function') {
+            this.engine = window.Motion;
+            return Promise.resolve(window.Motion);
+        }
         if (this.engine) return Promise.resolve(this.engine);
         if (this.failed && !this._p) return Promise.resolve(null);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20260731-motion-tween3')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261018-ui60')
             .then(async (mod) => {
                 const Motion = mod?.Motion || (typeof window !== 'undefined' ? window.Motion : null);
                 if (!Motion || typeof Motion.drag !== 'function') throw new Error('Motion.drag unavailable');
@@ -447,13 +453,17 @@ export function visualPanelLayoutPosition(panel) {
  */
 export function bakePanelTransform(panel, Motion = null) {
     if (!panel) return;
+    if (panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('z-panel-closing') || panel.classList?.contains('panel-fullscreen') || panel.classList?.contains('docked-left') || panel.classList?.contains('docked-right')) {
+        try { Motion?.stop?.(panel, ['x', 'y']); } catch {}
+        panel.style.transform = 'none';
+        return;
+    }
     // Capture painted position BEFORE detaching writers.
     const painted = visualPanelLayoutPosition(panel);
     if (Motion) {
         try {
-            // Detach first so no rAF rewrites transform after we clear it.
+            // Stop only x/y channels so we never clobber concurrent morph/ring channels.
             Motion.stop?.(panel, ['x', 'y']);
-            Motion.release?.(panel);
         } catch { /* ignore */ }
     } else {
         // No engine: compose from layout + current matrix.
@@ -493,8 +503,15 @@ export function floatingPanelVisualLimits(panel) {
 
 export function floatingPanelDragBounds(panel) {
     // Deltas relative to current baked left/top (layout, transform-free).
-    const left = Number.isFinite(panel?.offsetLeft) ? panel.offsetLeft : (parseFloat(panel?.style?.left) || 0);
-    const top = Number.isFinite(panel?.offsetTop) ? panel.offsetTop : (parseFloat(panel?.style?.top) || 0);
+    // IMPORTANT: For position:fixed panels, panel.offsetParent is null so panel.offsetLeft is 0!
+    // Always read parseFloat(panel.style.left/top) first, falling back to visualPanelLayoutPosition(panel).
+    const styleLeft = parseFloat(panel?.style?.left);
+    const styleTop = parseFloat(panel?.style?.top);
+    const pos = (!Number.isNaN(styleLeft) && !Number.isNaN(styleTop))
+        ? { left: styleLeft, top: styleTop }
+        : visualPanelLayoutPosition(panel);
+    const left = Number.isFinite(pos.left) ? pos.left : 0;
+    const top = Number.isFinite(pos.top) ? pos.top : 0;
     const lim = floatingPanelVisualLimits(panel);
     return {
         minX: lim.minLeft - left,
@@ -519,8 +536,10 @@ function hardClampDragDelta(panel, x, y) {
 function softClampPanelEdge(panel) {
     if (!panel) return false;
     const lim = floatingPanelVisualLimits(panel);
-    const left = Number.isFinite(panel.offsetLeft) ? panel.offsetLeft : (parseFloat(panel.style.left) || 0);
-    const top = Number.isFinite(panel.offsetTop) ? panel.offsetTop : (parseFloat(panel.style.top) || 0);
+    const styleLeft = parseFloat(panel.style.left);
+    const styleTop = parseFloat(panel.style.top);
+    const left = !Number.isNaN(styleLeft) ? styleLeft : (Number.isFinite(panel.offsetLeft) ? panel.offsetLeft : 0);
+    const top = !Number.isNaN(styleTop) ? styleTop : (Number.isFinite(panel.offsetTop) ? panel.offsetTop : 0);
     const nextLeft = Math.min(Math.max(left, lim.minLeft), lim.maxLeft);
     const nextTop = Math.min(Math.max(top, lim.minTop), lim.maxTop);
     if (Math.abs(nextLeft - left) < 0.5 && Math.abs(nextTop - top) < 0.5) return false;
@@ -532,18 +551,16 @@ function softClampPanelEdge(panel) {
 }
 
 function finishFloatingPanelPhysicsDrag(panel, Motion, { onFinish } = {}) {
-    // CRITICAL ORDER (AI never double-paints because it keeps transition:none and
-    // its bake races less; terminal absolute panels were painting left+translate):
-    //  1) freeze painted rect while transform still applied
-    //  2) detach Motion writers (stop+release) so nothing rewrites transform
-    //  3) write left/top = painted layout; transform none
-    //  4) softClamp with SAME limits as drag (usually no-op)
-    //  5) only then drop .dragging (CSS transitions must not animate the bake)
+    if (panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('z-panel-closing') || panel.classList?.contains('panel-fullscreen') || panel.classList?.contains('docked-left') || panel.classList?.contains('docked-right')) {
+        try { Motion?.stop?.(panel, ['x', 'y']); } catch {}
+        panel.style.transform = 'none';
+        panel.classList.remove('dragging', 'panel-physics-baking');
+        return;
+    }
     panel.classList.add('panel-physics-baking');
     const painted = visualPanelLayoutPosition(panel);
     try {
         Motion?.stop?.(panel, ['x', 'y']);
-        Motion?.release?.(panel);
     } catch { /* ignore */ }
     Object.assign(panel.style, {
         left: `${painted.left}px`,
@@ -667,13 +684,17 @@ export async function ensureFloatingPanelPhysicsDrag(panel, {
     if (!panel) return false;
     // Prefer explicit gray strip; fall back to window titlebar chrome when a
     // panel only has traffic-light titlebar (editor / image / media preview).
-    const dragHandle = handle
-        || panel.querySelector('.panel-drag-handle')
-        || panel.querySelector('.fm-editor-window-titlebar, .image-preview-titlebar, .media-preview-titlebar');
+    const visibleTitlebar = panel.querySelector(':scope > .fm-titlebar-head, :scope > .panel-titlebar:not(.fm-editor-window-titlebar):not(.image-preview-titlebar):not(.media-preview-titlebar), :scope > .image-preview-header, :scope > .media-preview-header, :scope > .fm-props-head, :scope > .docker-log-header, :scope > .transfer-popover-head');
+    const dragHandle = visibleTitlebar
+        || ((handle && handle.isConnected && getComputedStyle(handle).display !== 'none') ? handle : null)
+        || panel.querySelector('.panel-drag-handle');
     let state = panelPhysicsState.get(panel);
     if (!state) {
-        state = { physicsReady: false, controller: null, hardBound: false, fallbackBound: false };
+        state = { physicsReady: false, controller: null, hardBound: false, fallbackBound: false, boundHandle: null };
         panelPhysicsState.set(panel, state);
+    }
+    if (state.physicsReady && state.boundHandle && state.boundHandle.isConnected && state.boundHandle === dragHandle) {
+        force = false;
     }
 
     // Precise hard drag on ⋯ only.
@@ -733,8 +754,9 @@ export async function ensureFloatingPanelPhysicsDrag(panel, {
         handle: dragHandle,
         activationThreshold: 4,
         rubberband: true,
-        decelRate: 0.997,
-        preset: 'ui',
+        decelRate: 0.990,
+        maxProjection: 32,
+        preset: 'snappy',
         bounds: () => floatingPanelDragBounds(panel),
         snap: (tx, ty, ctx) => {
             const b = floatingPanelDragBounds(panel);
@@ -749,15 +771,16 @@ export async function ensureFloatingPanelPhysicsDrag(panel, {
             return hardClampDragDelta(panel, tx, ty);
         },
         filter: (e) => {
-            if (!e || !dragHandle) return false;
+            if (!e) return false;
+            if (panel.classList?.contains?.('docked-left') || panel.classList?.contains?.('docked-right') || panel.dataset?.pinSide) return false;
             if (e.button != null && e.button !== 0) return false;
             if (e.target?.closest?.(layoutSelector)) return false;
             const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-            const fromHandle = path.includes?.(dragHandle)
-                || dragHandle === e.target
-                || dragHandle.contains?.(e.target);
+            const titlebarEl = panel.querySelector?.('.fm-titlebar-head, .panel-titlebar, .fm-editor-header, .image-preview-header, .media-preview-header, .fm-props-head');
+            const fromHandle = (dragHandle && (path.includes?.(dragHandle) || dragHandle === e.target || dragHandle.contains?.(e.target)))
+                || (titlebarEl && (path.includes?.(titlebarEl) || titlebarEl === e.target || titlebarEl.contains?.(e.target)));
             if (!fromHandle) return false;
-            if (e.target?.closest?.('button, a, input, textarea, select, [role="button"], label')) return false;
+            if (e.target?.closest?.('button, a, input, textarea, select, [role="button"], label, .fm-editor-tabs')) return false;
             return true;
         },
         onActivate: () => {
@@ -772,6 +795,7 @@ export async function ensureFloatingPanelPhysicsDrag(panel, {
             // Visual bake: freeze painted box, detach writers, write left/top.
             bakePanelTransform(panel, Motion);
             try { Motion.set(panel, { x: 0, y: 0 }); } catch { /* ignore */ }
+            panel.dataset.userPlaced = '1';
             panel.classList.add('dragging');
             panel.classList.remove('panel-physics-baking');
             panel.style.willChange = 'transform';
@@ -793,11 +817,14 @@ export async function ensureFloatingPanelPhysicsDrag(panel, {
         },
     });
     state.physicsReady = true;
+    state.boundHandle = dragHandle;
 
     // Lazy rebind if first interaction happened before engine boot.
     if (!panel.dataset.panelPhysicsPointerBound) {
         panel.dataset.panelPhysicsPointerBound = '1';
         panel.addEventListener('pointerdown', () => {
+            const curState = panelPhysicsState.get(panel);
+            if (curState?.physicsReady && curState?.boundHandle?.isConnected) return;
             void ensureFloatingPanelPhysicsDrag(panel, {
                 handle: dragHandle,
                 layoutButton: traffic,
@@ -985,4 +1012,16 @@ if (typeof window !== 'undefined') {
         bake: bakePanelTransform,
         bounds: floatingPanelDragBounds,
     };
+}
+
+export function openMobileToolSheet(panel, kind, triggerBtn) {
+    if (!panel) return null;
+    panel.removeAttribute('hidden');
+    panel.style.display = 'flex';
+    panel.classList.add('open');
+    triggerBtn?.classList?.add('active');
+    return attachMobileBottomSheet(panel, {
+        defaultDetent: 'MID',
+        onDismiss: () => closeFloatingPanel(panel, triggerBtn),
+    });
 }

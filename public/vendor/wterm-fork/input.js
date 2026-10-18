@@ -318,8 +318,11 @@ class InputHandler {
   }
   handleMouseDown(e) {
     const bridge = this.getBridge();
-    if (!bridge || bridge.mouseMode() === 0 || e.shiftKey) {
+    // 4.2.6 Table 4.3 #8: Shift or Option/Alt + Drag bypasses Mouse Tracking to force local text selection
+    if (!bridge || bridge.mouseMode() === 0 || e.shiftKey || e.altKey) {
+      this._localDragSelecting = !!(e.shiftKey || e.altKey);
       this.handleClickSelection(e);
+      if (this._localDragSelecting) return;
     }
     if (!bridge || bridge.mouseMode() === 0) return;
     e.preventDefault();
@@ -330,6 +333,10 @@ class InputHandler {
     this.sendMouseEvent(button, col, row, true);
   }
   handleMouseUp(e) {
+    if (this._localDragSelecting) {
+      this._localDragSelecting = false;
+      return;
+    }
     const bridge = this.getBridge();
     if (!bridge || bridge.mouseMode() === 0) return;
     e.preventDefault();
@@ -338,6 +345,12 @@ class InputHandler {
     this.sendMouseEvent(button, col, row, false);
   }
   handleMouseMove(e) {
+    if (this._localDragSelecting && e.buttons === 1 && this._selectionStart) {
+      const { col, row } = this.mouseToCell(e);
+      this._selectionEnd = { row, col };
+      this._applySelection();
+      return;
+    }
     const bridge = this.getBridge();
     if (!bridge || bridge.mouseMode() < 2) return;
     const { col, row } = this.mouseToCell(e);

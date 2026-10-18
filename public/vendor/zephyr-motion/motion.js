@@ -55,6 +55,16 @@ function composeTransform(tv) {
   const sy = tv.scaleY ?? tv.scale ?? 1;
   const rot = tv.rotate ?? 0;
   const rotY = tv.rotateY ?? 0;
+  if (
+    Math.abs(x) < 0.001 &&
+    Math.abs(y) < 0.001 &&
+    Math.abs(sx - 1) < 0.0005 &&
+    Math.abs(sy - 1) < 0.0005 &&
+    Math.abs(rot) < 0.001 &&
+    Math.abs(rotY) < 0.001
+  ) {
+    return '';
+  }
   let out = `translate3d(${x}px, ${y}px, 0) scale(${sx}, ${sy})`;
   if (rot) out += ` rotate(${rot}deg)`;
   if (rotY) out += ` rotateY(${rotY}deg)`;
@@ -172,7 +182,7 @@ function writerFor(st, ch, unit) {
       return v => { el.style.height = `${v}px`; st.managed.add('height'); };
     default:
       if (ch.startsWith('--')) {
-        return v => { el.style.setProperty(ch, `${v}${unit}`); };
+        return v => { el.style.setProperty(ch, `${v}${unit}`); st.managed.add(ch); };
       }
       // Unknown channel: treat as CSS custom property verbatim.
       return v => { el.style.setProperty(ch, `${v}${unit}`); };
@@ -202,6 +212,23 @@ function channelsOf(el) {
 }
 
 // ── public API ───────────────────────────────────────────────────────────
+
+export function withSettleSafetyGuard(elements, maxMs = 650, onSettle) {
+  const list = Array.isArray(elements) ? elements : [elements];
+  let settled = false;
+  const finalize = () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    for (const el of list) {
+      if (!el || !el.style) continue;
+      if (parseFloat(el.style.opacity) < 0.99) el.style.opacity = '';
+    }
+    if (typeof onSettle === 'function') onSettle();
+  };
+  const timer = setTimeout(finalize, maxMs);
+  return finalize;
+}
 
 export const Motion = {
   engine,
@@ -648,26 +675,12 @@ export const Motion = {
    */
   track(el, handlers = {}) {
     const id = this._trackerFor(el);
-    const st = { active: false, pid: -1, sx: 0, sy: 0, lx: 0, ly: 0 };
+    const st = { active: false, pid: -1, sx: 0, sy: 0, lx: 0, ly: 0, captureEl: null };
     const now = () => performance.now() / 1000;
 
-    const down = e => {
-      if (st.active) return;
-      // Allow onStart to veto (filter/handle checks) before we claim the pointer.
-      const startInfo = { x: e.clientX, y: e.clientY, event: e };
-      if (handlers.onStart?.(startInfo) === false) return;
-      st.active = true;
-      st.pid = e.pointerId;
-      // May throw for synthetic/invalid pointer ids — capture is a
-      // nice-to-have, never let it kill the gesture.
-      try { el.setPointerCapture?.(e.pointerId); } catch { /* noop */ }
-      engine.trackerClear(id);
-      engine.trackerPush(id, now(), e.clientX, e.clientY);
-      st.sx = st.lx = e.clientX;
-      st.sy = st.ly = e.clientY;
-    };
     const move = e => {
-      if (!st.active || e.pointerId !== st.pid) return;
+      if (!st.active || e.pointerId !== st.pid || e._zMotionMoveHandled === id) return;
+      e._zMotionMoveHandled = id;
       engine.trackerPush(id, now(), e.clientX, e.clientY);
       const [vx, vy] = engine.trackerVelocity(id);
       st.lx = e.clientX;
@@ -679,8 +692,16 @@ export const Motion = {
       });
     };
     const up = e => {
-      if (!st.active || e.pointerId !== st.pid) return;
+      if (!st.active || e.pointerId !== st.pid || e._zMotionUpHandled === id) return;
+      e._zMotionUpHandled = id;
       st.active = false;
+      if ( typeof window !== 'undefined' ) {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+      }
+      try { st.captureEl?.releasePointerCapture?.(e.pointerId); } catch { /* noop */ }
+      st.captureEl = null;
       const [vx, vy] = engine.trackerVelocity(id);
       handlers.onEnd?.({
         x: e.clientX, y: e.clientY,
@@ -688,17 +709,52 @@ export const Motion = {
         vx, vy, event: e,
       });
     };
-    el.addEventListener('pointerdown', down);
-    el.addEventListener('pointermove', move);
-    el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', up);
+    const down = e => {
+      if (st.active) return;
+      // Allow onStart to veto (filter/handle checks) before we claim the pointer.
+      const startInfo = { x: e.clientX, y: e.clientY, event: e };
+      if (handlers.onStart?.(startInfo) === false) return;
+      st.active = true;
+      st.pid = e.pointerId;
+      const capTarget = (e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function') ? e.currentTarget : el;
+      st.captureEl = capTarget;
+      try { capTarget?.setPointerCapture?.(e.pointerId); } catch { /* noop */ }
+      if (typeof window !== 'undefined') {
+        window.addEventListener('pointermove', move, { passive: false });
+        window.addEventListener('pointerup', up);
+        window.addEventListener('pointercancel', up);
+      }
+      engine.trackerClear(id);
+      engine.trackerPush(id, now(), e.clientX, e.clientY);
+      st.sx = st.lx = e.clientX;
+      st.sy = st.ly = e.clientY;
+    };
+    const extraTargets = Array.isArray(handlers.extraTargets) ? handlers.extraTargets.filter(Boolean) : [];
+    const bindNodes = [el, ...extraTargets.filter(t => t !== el && typeof t?.addEventListener === 'function')];
+    for (const node of bindNodes) {
+      if (node?.style) {
+        node.style.touchAction = 'none';
+        node.style.userSelect = 'none';
+      }
+      node.addEventListener('pointerdown', down);
+      node.addEventListener('pointermove', move);
+      node.addEventListener('pointerup', up);
+      node.addEventListener('pointercancel', up);
+    }
     return {
       trackerId: id,
       destroy: () => {
-        el.removeEventListener('pointerdown', down);
-        el.removeEventListener('pointermove', move);
-        el.removeEventListener('pointerup', up);
-        el.removeEventListener('pointercancel', up);
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          window.removeEventListener('pointercancel', up);
+        }
+        for (const node of bindNodes) {
+          node.removeEventListener('pointerdown', down);
+          node.removeEventListener('pointermove', move);
+          node.removeEventListener('pointerup', up);
+          node.removeEventListener('pointercancel', up);
+        }
         this._freeTracker(el, id);
       },
     };
@@ -761,19 +817,33 @@ export const Motion = {
     };
     const nearest = (pts, v) => pts.reduce((a, b) => Math.abs(b - v) < Math.abs(a - v) ? b : a, pts[0]);
 
+    const getExtraHeaders = () => {
+      if (!surface || typeof surface.querySelectorAll !== 'function') return [];
+      return Array.from(surface.querySelectorAll(
+        '.fm-titlebar-head, .panel-titlebar, .fm-editor-header, .image-preview-header, .media-preview-header, .fm-props-head, .docker-log-header'
+      ));
+    };
+    const extraHeaderHandles = getExtraHeaders();
     // track() always binds the listener target. Prefer handle so nested
     // controls outside it never start a drag, while the transformed element
     // remains `surface` (the panel).
     return this.track(listen, {
+      extraTargets: extraHeaderHandles,
       onStart: pt => {
+        if (surface?.classList?.contains?.('docked-left') || surface?.classList?.contains?.('docked-right') || surface?.dataset?.pinSide) {
+          active = false;
+          return false;
+        }
         if (typeof filter === 'function' && filter(pt.event) === false) {
           active = false;
           return false;
         }
-        // If a handle is used, ensure the down really came from it / its kids.
+        // If a handle is used, ensure the down really came from it / its kids or unified titlebar header.
         if (handle && pt.event) {
           const path = typeof pt.event.composedPath === 'function' ? pt.event.composedPath() : [];
-          const ok = path.includes?.(handle) || handle === pt.event.target || handle.contains?.(pt.event.target);
+          const headers = getExtraHeaders();
+          const inHeader = headers.some(h => path.includes?.(h) || h === pt.event.target || h.contains?.(pt.event.target));
+          const ok = path.includes?.(handle) || handle === pt.event.target || handle.contains?.(pt.event.target) || inHeader;
           if (!ok) { active = false; return false; }
         }
         this.stop(surface, ['x', 'y']);
@@ -791,11 +861,12 @@ export const Motion = {
         if (!active) {
           if (Math.hypot(p.dx, p.dy) < threshold) return;
           active = true;
-          // Re-sample grab at activation so threshold travel is not a jump.
+          // Run onActivate first (which bakes any residual transform into left/top and zeroes x/y),
+          // then sample grab & liveBounds so threshold travel has zero jump.
           this.stop(surface, ['x', 'y']);
+          opts.onActivate?.({ ...p, x: this.value(surface, 'x') || 0, y: this.value(surface, 'y') || 0 });
           grab = { x: this.value(surface, 'x') || 0, y: this.value(surface, 'y') || 0 };
           liveBounds = readBounds();
-          opts.onActivate?.({ ...p, x: grab.x, y: grab.y });
         }
         // Refresh bounds each frame so resize/viewport changes stay correct.
         liveBounds = readBounds();
@@ -819,8 +890,11 @@ export const Motion = {
         liveBounds = readBounds();
         // Project the resting point from the release velocity, THEN snap —
         // animate to where the gesture is going, not where it stopped.
-        let tx = rx + (axis === 'y' ? 0 : engine.project(p.vx, decelRate));
-        let ty = ry + (axis === 'x' ? 0 : engine.project(p.vy, decelRate));
+        const maxProj = Number.isFinite(opts.maxProjection) ? Number(opts.maxProjection) : 42;
+        const projX = Math.max(-maxProj, Math.min(maxProj, engine.project(p.vx, decelRate) * 0.28));
+        const projY = Math.max(-maxProj, Math.min(maxProj, engine.project(p.vy, decelRate) * 0.28));
+        let tx = rx + (axis === 'y' ? 0 : projX);
+        let ty = ry + (axis === 'x' ? 0 : projY);
         if (typeof snap === 'function') {
           const s = snap(tx, ty, { x: rx, y: ry, vx: p.vx, vy: p.vy }) || {};
           if (Number.isFinite(s.x)) tx = s.x;
@@ -834,8 +908,15 @@ export const Motion = {
         opts.onRelease?.({ ...p, x: rx, y: ry, targetX: tx, targetY: ty });
         const props = {};
         const velocity = {};
-        if (axis !== 'y') { props.x = tx; velocity.x = p.vx; }
-        if (axis !== 'x') { props.y = ty; velocity.y = p.vy; }
+        const pCfg = resolvePreset(preset);
+        const omega = (2 * Math.PI) / Math.max(0.08, pCfg.response || 0.25);
+        const capVel = (v, rem) => {
+          if (!Number.isFinite(v) || Math.abs(rem) < 0.5) return 0;
+          if (v * rem <= 0) return 0;
+          return Math.sign(v) * Math.min(Math.abs(v), Math.abs(rem) * omega * 0.85);
+        };
+        if (axis !== 'y') { props.x = tx; velocity.x = capVel(p.vx, tx - rx); }
+        if (axis !== 'x') { props.y = ty; velocity.y = capVel(p.vy, ty - ry); }
         const promise = this.to(surface, props, { preset, velocity });
         const done = Promise.resolve(promise).then(() => {
           last = { x: tx, y: ty };
@@ -3471,6 +3552,533 @@ export const Motion = {
     panel.style.overflow = '';
     if (opts.release) this.release(panel);
     return true;
+  },
+
+  /**
+   * M25: Desktop 2-pane docked 80% slide-out & wake-shield retarget (Section 3.4.2 & 4.2.3).
+   * Keeps an exact `gap` (14px) between the active 80% pane and the slid-out inactive pane.
+   */
+  splitDockSlide(gridEl, { hasDockedPanel = false, activeSlot = 1, broadcastActive = false, gap = 14, animate = true } = {}) {
+    if (!gridEl || typeof gridEl.querySelector !== 'function') return Promise.resolve();
+    const win1 = gridEl.querySelector(':scope > .terminal-window.slot-1');
+    const win2 = gridEl.querySelector(':scope > .terminal-window.slot-2');
+    if (win1) win1.style.transform = '';
+    if (win2) win2.style.transform = '';
+    if (!win1 || !win2 || !hasDockedPanel || broadcastActive) {
+      if (win1) win1.style.opacity = '1';
+      if (win2) win2.style.opacity = '1';
+      return this.cssVars(gridEl, {
+        '--split-slide-1-x': 0,
+        '--split-slide-2-x': 0,
+      }, {
+        units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' },
+        preset: 'ui',
+        immediate: !animate,
+      });
+    }
+    const wsWidth = gridEl.clientWidth || gridEl.getBoundingClientRect?.().width || 1280;
+    const padX = 16;
+    const activeWin = activeSlot === 2 ? win2 : win1;
+    const inactiveWin = activeSlot === 2 ? win1 : win2;
+    const paneW = activeWin.offsetWidth || Math.round(wsWidth * 0.8 - 23);
+    // Exact translation so the gap between activeWin and inactiveWin is `gap` (14px):
+    const slideMag = Math.max(0, Math.round(2 * paneW - wsWidth + 2 * padX + gap));
+    const x1 = activeSlot === 2 ? -slideMag : 0;
+    const x2 = activeSlot === 1 ? slideMag : 0;
+    activeWin.style.opacity = '1';
+    inactiveWin.style.opacity = '0.9';
+    const readVar = (name) => Math.round(parseFloat(getComputedStyle(gridEl).getPropertyValue(name)) || 0);
+    if (readVar('--split-slide-1-x') === x1 && readVar('--split-slide-2-x') === x2) return Promise.resolve();
+    return this.cssVars(gridEl, {
+      '--split-slide-1-x': x1,
+      '--split-slide-2-x': x2,
+    }, animate
+      ? { units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' }, preset: { response: 0.18, damping: 1.0 } }
+      : { units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' }, immediate: true });
+  },
+
+  /**
+   * M26: Terminal topbar shelf symmetric collapse/expand & chevron 180deg spring (Section 3.4.2 & 4.2.4).
+   */
+  topbarShelfCollapse(mainNav, collapsed, { chevrons = [], headerItems = [], openHeight = 83, collapsedHeight = 27, animate = true } = {}) {
+    if (!mainNav) return Promise.resolve();
+    const targetH = collapsed ? collapsedHeight : openHeight;
+    const targetOffset = collapsed ? (collapsedHeight - openHeight) : 0; // -56px when collapsed, 0px when open
+    const targetY = collapsed ? -48 : 0;
+    const targetOpacity = collapsed ? 0 : 1;
+    const targetRot = collapsed ? 180 : 0;
+    const root = typeof document !== 'undefined' ? document.documentElement : null;
+    const jobs = [];
+    if (root) {
+      jobs.push(this.cssVars(root, {
+        '--topbar-current-height': targetH,
+        '--terminal-nav-height': targetH,
+      }, {
+        units: { '--topbar-current-height': 'px', '--terminal-nav-height': 'px' },
+        preset: 'ui',
+        immediate: !animate,
+      }));
+    }
+    // 'ui' is a 0.40s reposition spring, which reads as lag on a control the
+    // user expects to answer immediately. Collapse and the chevron share one
+    // short, critically damped spring.
+    const collapseSpring = { response: 0.2, damping: 1.0 };
+    jobs.push(this.cssVars(mainNav, {
+      '--topbar-collapse-offset': targetOffset,
+    }, animate
+      ? { units: { '--topbar-collapse-offset': 'px' }, preset: collapseSpring }
+      : { units: { '--topbar-collapse-offset': 'px' }, immediate: true }));
+    for (const item of headerItems) {
+      if (!item) continue;
+      if (!animate) this.set(item, { y: targetY, opacity: targetOpacity });
+      else jobs.push(this.to(item, { y: targetY, opacity: targetOpacity }, { preset: collapseSpring }));
+    }
+    for (const ico of chevrons) {
+      if (!ico) continue;
+      if (!animate) this.set(ico, { rotate: targetRot });
+      else jobs.push(this.to(ico, { rotate: targetRot }, { preset: collapseSpring }));
+    }
+    return Promise.all(jobs);
+  },
+
+  /**
+   * M07: Tier-1 panel Docked <-> Floating FLIP morph transition (Section 3.4.2 & 4.2.3).
+   */
+  /**
+   * Topbar shelf smooth extend/retract when switching between Terminal view (83px) and other views (56px).
+   * Driven 100% by zephyr_motion.wasm via --z-shelf-ext so height - paddingBottom === 56px at every frame (zero bounce!).
+   */
+  async topbarViewShelf(mainNav, enteringTerminal, { preset = 'mac' } = {}) {
+    if (!mainNav) return false;
+    const token = this._bump(mainNav);
+    const curH = mainNav.getBoundingClientRect?.().height || (enteringTerminal ? 56 : 83);
+    const fromExt = Math.max(0, Math.min(27, Math.round(curH - 56)));
+    const toExt = enteringTerminal ? 27 : 0;
+    const units = { '--z-shelf-ext': 'px', '--z-shelf-alpha': '' };
+
+    this.stop(mainNav, ['--z-shelf-ext', '--z-shelf-alpha']);
+    await this.cssVars(mainNav, {
+      '--z-shelf-ext': fromExt,
+      '--z-shelf-alpha': enteringTerminal ? (fromExt / 27) : 1,
+    }, { immediate: true, units });
+
+    try {
+      await this.cssVars(mainNav, {
+        '--z-shelf-ext': toExt,
+        '--z-shelf-alpha': enteringTerminal ? 1 : 0,
+      }, { preset, units });
+    } finally {
+      if (this._genOf(mainNav) === token) {
+        mainNav.style.removeProperty('--z-shelf-ext');
+        mainNav.style.removeProperty('--z-shelf-alpha');
+      }
+    }
+    return true;
+  },
+
+  /**
+   * WASM-driven Open animation for all Tier-1 and Tier-2 floating windows.
+   */
+  async panelOpenWasm(panel, triggerBtn = null, { preset = 'mac' } = {}) {
+    if (!panel) return false;
+    if (panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || panel.dataset.pinSide) {
+      return true;
+    }
+    const token = this._bump(panel);
+    panel.classList.remove('z-panel-closing', 'panel-closing');
+    panel.style.display = 'flex';
+    void panel.offsetWidth;
+    const toRect = panel.getBoundingClientRect();
+    if (!toRect || toRect.width < 20 || toRect.height < 20) return false;
+
+    const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    const pageRect = page.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const toL = Math.round(toRect.left - pageRect.left);
+    const toT = Math.round(toRect.top - pageRect.top);
+    const toW = Math.round(toRect.width);
+    const toH = Math.round(toRect.height);
+
+    const scale = 0.88;
+    const fromW = Math.round(toW * scale);
+    const fromH = Math.round(toH * scale);
+    let fromL = Math.round(toL + (toW - fromW) / 2);
+    let fromT = Math.round(toT + (toH - fromH) / 2 - 14);
+    if (triggerBtn && typeof triggerBtn.getBoundingClientRect === 'function') {
+      const br = triggerBtn.getBoundingClientRect();
+      if (br.width > 0 && br.height > 0) {
+        const btnCenterX = br.left - pageRect.left + br.width / 2;
+        fromL = Math.round(toL + (toW - fromW) * 0.5 + (btnCenterX - (toL + toW * 0.5)) * 0.18);
+        fromT = Math.max(42, Math.round(toT - 18));
+      }
+    }
+
+    const units = {
+      '--z-morph-l': 'px',
+      '--z-morph-t': 'px',
+      '--z-morph-w': 'px',
+      '--z-morph-h': 'px',
+      '--z-morph-r': 'px',
+      '--z-morph-opacity': '',
+    };
+
+    this.stop(panel, ['x', 'y', '--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']); panel.style.transform = 'none'; panel.classList.remove('dragging');
+    panel.classList.add('z-panel-morphing');
+    await this.cssVars(panel, {
+      '--z-morph-l': fromL,
+      '--z-morph-t': fromT,
+      '--z-morph-w': fromW,
+      '--z-morph-h': fromH,
+      '--z-morph-r': 20,
+      '--z-morph-opacity': 0,
+    }, { immediate: true, units });
+
+    const guard = withSettleSafetyGuard(panel, 460, () => {
+      if (this._genOf(panel) === token) {
+        panel.classList.remove('z-panel-morphing');
+      }
+    });
+    try {
+      await this.cssVars(panel, {
+        '--z-morph-l': toL,
+        '--z-morph-t': toT,
+        '--z-morph-w': toW,
+        '--z-morph-h': toH,
+        '--z-morph-r': 16,
+        '--z-morph-opacity': 1,
+      }, { preset, units });
+    } finally {
+      guard();
+      if (this._genOf(panel) === token) {
+        panel.classList.remove('z-panel-morphing');
+        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => {
+          panel.style.removeProperty(k);
+        });
+      }
+    }
+    return true;
+  },
+
+  /**
+   * WASM-driven Close animation for all Tier-1 and Tier-2 floating windows.
+   */
+  async panelCloseWasm(panel, triggerBtn = null, { preset = 'snappy', onDone } = {}) {
+    if (!panel) {
+      onDone?.();
+      return false;
+    }
+    const token = this._bump(panel);
+    const fromRect = panel.getBoundingClientRect();
+    if (!fromRect || fromRect.width < 20 || fromRect.height < 20) {
+      panel.classList.remove('open', 'show', 'z-panel-morphing', 'z-panel-closing', 'panel-fullscreen');
+      panel.style.display = 'none';
+      onDone?.();
+      return false;
+    }
+
+    const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    const pageRect = page.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const fromL = Math.round(fromRect.left - pageRect.left);
+    const fromT = Math.round(fromRect.top - pageRect.top);
+    const fromW = Math.round(fromRect.width);
+    const fromH = Math.round(fromRect.height);
+
+    const scale = 0.88;
+    const toW = Math.round(fromW * scale);
+    const toH = Math.round(fromH * scale);
+    let toL = Math.round(fromL + (fromW - toW) / 2);
+    let toT = Math.round(fromT + (fromH - toH) / 2 - 12);
+    if (triggerBtn && typeof triggerBtn.getBoundingClientRect === 'function') {
+      const br = triggerBtn.getBoundingClientRect();
+      if (br.width > 0 && br.height > 0) {
+        const btnCenterX = br.left - pageRect.left + br.width / 2;
+        toL = Math.round(fromL + (fromW - toW) * 0.5 + (btnCenterX - (fromL + fromW * 0.5)) * 0.16);
+      }
+    }
+
+    const units = {
+      '--z-morph-l': 'px',
+      '--z-morph-t': 'px',
+      '--z-morph-w': 'px',
+      '--z-morph-h': 'px',
+      '--z-morph-r': 'px',
+      '--z-morph-opacity': '',
+    };
+
+    this.stop(panel, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']);
+    panel.classList.add('z-panel-morphing', 'z-panel-closing');
+    await this.cssVars(panel, {
+      '--z-morph-l': fromL,
+      '--z-morph-t': fromT,
+      '--z-morph-w': fromW,
+      '--z-morph-h': fromH,
+      '--z-morph-r': 16,
+      '--z-morph-opacity': 1,
+    }, { immediate: true, units });
+
+    const guard = withSettleSafetyGuard(panel, 340, () => {
+      if (this._genOf(panel) === token) {
+        panel.classList.remove('z-panel-morphing', 'z-panel-closing', 'open', 'show', 'panel-fullscreen');
+      }
+    });
+    try {
+      await this.cssVars(panel, {
+        '--z-morph-l': toL,
+        '--z-morph-t': toT,
+        '--z-morph-w': toW,
+        '--z-morph-h': toH,
+        '--z-morph-r': 20,
+        '--z-morph-opacity': 0,
+      }, { preset, units });
+    } finally {
+      guard();
+      if (this._genOf(panel) === token) {
+        panel.classList.remove('z-panel-morphing', 'z-panel-closing', 'open', 'show', 'panel-fullscreen');
+        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => {
+          panel.style.removeProperty(k);
+        });
+        panel.style.display = 'none';
+        onDone?.();
+      }
+    }
+    return true;
+  },
+
+  async panelDockMorph(panel, mutateLayoutFn, { preset = 'mac' } = {}) {
+    if (!panel) {
+      mutateLayoutFn?.();
+      return false;
+    }
+    const token = this._bump(panel);
+    const csBefore = getComputedStyle(panel);
+    const wasVisible = csBefore.display !== 'none' && csBefore.visibility !== 'hidden' && panel.offsetWidth > 20;
+    const fromRect = wasVisible ? panel.getBoundingClientRect() : null;
+    const fromRadius = parseFloat(csBefore.borderTopLeftRadius) || (panel.classList.contains('docked-left') || panel.classList.contains('docked-right') ? 0 : 16);
+
+    panel.classList.remove('z-panel-morphing', 'z-panel-closing');
+    this.stop(panel, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']);
+    mutateLayoutFn?.();
+
+    if (!fromRect || fromRect.width < 20 || fromRect.height < 20) return true;
+    void panel.offsetWidth;
+    const toRect = panel.getBoundingClientRect();
+    if (!toRect || toRect.width < 20 || toRect.height < 20) return true;
+
+    const dx = Math.abs(fromRect.left - toRect.left);
+    const dy = Math.abs(fromRect.top - toRect.top);
+    const dw = Math.abs(fromRect.width - toRect.width);
+    const dh = Math.abs(fromRect.height - toRect.height);
+    if (dx + dy + dw + dh < 4) return true;
+
+    const isNowDocked = panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || !!panel.dataset.pinSide;
+    const toRadius = isNowDocked ? 0 : 16;
+    const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    const pageRect = page.getBoundingClientRect?.() || { left: 0, top: 0 };
+
+    const fromVars = {
+      '--z-morph-l': Math.round(fromRect.left - pageRect.left),
+      '--z-morph-t': Math.round(fromRect.top - pageRect.top),
+      '--z-morph-w': Math.round(fromRect.width),
+      '--z-morph-h': Math.round(fromRect.height),
+      '--z-morph-r': Math.round(fromRadius),
+      '--z-morph-opacity': 1,
+    };
+    const toVars = {
+      '--z-morph-l': Math.round(toRect.left - pageRect.left),
+      '--z-morph-t': Math.round(toRect.top - pageRect.top),
+      '--z-morph-w': Math.round(toRect.width),
+      '--z-morph-h': Math.round(toRect.height),
+      '--z-morph-r': Math.round(toRadius),
+      '--z-morph-opacity': 1,
+    };
+    const units = {
+      '--z-morph-l': 'px',
+      '--z-morph-t': 'px',
+      '--z-morph-w': 'px',
+      '--z-morph-h': 'px',
+      '--z-morph-r': 'px',
+      '--z-morph-opacity': '',
+    };
+
+    panel.classList.add('z-panel-morphing');
+    await this.cssVars(panel, fromVars, { immediate: true, units });
+    const guard = withSettleSafetyGuard(panel, 520, () => {
+      if (this._genOf(panel) === token) panel.classList.remove('z-panel-morphing');
+    });
+    try {
+      await this.cssVars(panel, toVars, { preset, units });
+    } finally {
+      guard();
+      if (this._genOf(panel) === token) {
+        panel.classList.remove('z-panel-morphing');
+        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => {
+          panel.style.removeProperty(k);
+        });
+      }
+    }
+    return true;
+  },
+
+  /**
+   * Split-screen terminal window Fullscreen morph (2 windows -> 1 maximized window).
+   * Driven by zephyr_motion.wasm via Motion.cssVars without CSS transform distortion on child iframes.
+   */
+
+  /**
+   * WASM-driven avoidance animation for the existing 1st terminal window when a 2nd terminal
+   * card flips in from the Dashboard into split-screen (slot-2).
+   * Smoothly springs the 1st terminal from full workspace width into its left 50% slot (slot-1)
+   * in exact sync with the 3D card flip.
+   */
+  async terminalWindowAvoidance(existingWin, fromBox, toBox, { preset = { response: 0.46, damping: 0.96 } } = {}) {
+    if (!existingWin || !fromBox || !toBox) return false;
+    const token = this._bump(existingWin);
+    const units = {
+      '--z-morph-l': 'px',
+      '--z-morph-t': 'px',
+      '--z-morph-w': 'px',
+      '--z-morph-h': 'px',
+    };
+    this.stop(existingWin, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h']);
+    existingWin.classList.add('terminal-window-morphing');
+    await this.cssVars(existingWin, {
+      '--z-morph-l': Math.round(fromBox.left),
+      '--z-morph-t': Math.round(fromBox.top),
+      '--z-morph-w': Math.round(fromBox.width),
+      '--z-morph-h': Math.round(fromBox.height),
+    }, { immediate: true, units });
+    const guard = withSettleSafetyGuard(existingWin, 660, () => {
+      if (this._genOf(existingWin) === token) {
+        existingWin.classList.remove('terminal-window-morphing');
+      }
+    });
+    try {
+      await this.cssVars(existingWin, {
+        '--z-morph-l': Math.round(toBox.left),
+        '--z-morph-t': Math.round(toBox.top),
+        '--z-morph-w': Math.round(toBox.width),
+        '--z-morph-h': Math.round(toBox.height),
+      }, { preset, units });
+    } finally {
+      guard();
+      if (this._genOf(existingWin) === token) {
+        existingWin.classList.remove('terminal-window-morphing');
+        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h'].forEach((k) => {
+          existingWin.style.removeProperty(k);
+        });
+      }
+    }
+    return true;
+  },
+
+  async terminalWindowFullscreenMorph(targetWin, mutateLayoutFn, { preset = 'mac' } = {}) {
+    if (!targetWin) {
+      mutateLayoutFn?.();
+      return false;
+    }
+    const token = this._bump(targetWin);
+    const fromRect = targetWin.getBoundingClientRect();
+    targetWin.classList.remove('terminal-window-morphing');
+    this.stop(targetWin, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h']);
+    mutateLayoutFn?.();
+    if (!fromRect || fromRect.width < 40 || fromRect.height < 40) return true;
+    void targetWin.offsetWidth;
+    const toRect = targetWin.getBoundingClientRect();
+    if (!toRect || toRect.width < 40 || toRect.height < 40) return true;
+    if (Math.abs(fromRect.left - toRect.left) + Math.abs(fromRect.width - toRect.width) < 4) return true;
+
+    const fromVars = {
+      '--z-morph-l': Math.round(fromRect.left),
+      '--z-morph-t': Math.round(fromRect.top),
+      '--z-morph-w': Math.round(fromRect.width),
+      '--z-morph-h': Math.round(fromRect.height),
+    };
+    const toVars = {
+      '--z-morph-l': Math.round(toRect.left),
+      '--z-morph-t': Math.round(toRect.top),
+      '--z-morph-w': Math.round(toRect.width),
+      '--z-morph-h': Math.round(toRect.height),
+    };
+    const units = {
+      '--z-morph-l': 'px',
+      '--z-morph-t': 'px',
+      '--z-morph-w': 'px',
+      '--z-morph-h': 'px',
+    };
+
+    targetWin.classList.add('terminal-window-morphing');
+    await this.cssVars(targetWin, fromVars, { immediate: true, units });
+    const guard = withSettleSafetyGuard(targetWin, 520, () => {
+      if (this._genOf(targetWin) === token) targetWin.classList.remove('terminal-window-morphing');
+    });
+    try {
+      await this.cssVars(targetWin, toVars, { preset, units });
+    } finally {
+      guard();
+      if (this._genOf(targetWin) === token) {
+        targetWin.classList.remove('terminal-window-morphing');
+        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h'].forEach((k) => {
+          targetWin.style.removeProperty(k);
+        });
+      }
+    }
+    return true;
+  },
+
+  /**
+   * Outer-ring floating resize handles focus spring (Issue 6: hidden when unfocused, shown when clicked).
+   */
+  panelResizeRing(panel, focused, { preset = 'snappy' } = {}) {
+    if (!panel) return Promise.resolve();
+    panel.classList?.toggle?.('panel-focused', !!focused);
+    const handles = panel.querySelectorAll ? Array.from(panel.querySelectorAll(':scope > .panel-resize-handle')) : [];
+    if (!handles.length) return Promise.resolve();
+    const targetOpacity = focused ? 1 : 0;
+    return Promise.all(handles.map((h) => {
+      h.style.pointerEvents = focused ? 'auto' : 'none';
+      h.style.transform = '';
+      return this.to(h, { opacity: targetOpacity }, { preset });
+    }));
+  },
+
+  /**
+   * M15: Unified floating panel ⋯ layout popover spring open/close.
+   */
+  async panelMorePopover(popoverEl, anchorBtn, open = true, { preset = 'snappy', onClosed } = {}) {
+    if (!popoverEl) return false;
+    const token = this._bump(popoverEl);
+    if (open) {
+      popoverEl.hidden = false;
+      popoverEl.style.display = 'flex';
+      popoverEl.style.pointerEvents = 'auto';
+      if (anchorBtn && typeof anchorBtn.getBoundingClientRect === 'function') {
+        const br = anchorBtn.getBoundingClientRect();
+        const vw = window.innerWidth || 1280;
+        const vh = window.innerHeight || 800;
+        void popoverEl.offsetWidth;
+        const pw = popoverEl.offsetWidth || 188;
+        const ph = popoverEl.offsetHeight || 176;
+        const left = Math.max(8, Math.min(vw - pw - 8, Math.round(br.right - pw)));
+        const top = Math.max(8, Math.min(vh - ph - 8, Math.round(br.bottom + 6)));
+        popoverEl.style.left = `${left}px`;
+        popoverEl.style.top = `${top}px`;
+        const ox = Math.max(12, Math.min(pw - 12, Math.round(br.left + br.width / 2 - left)));
+        popoverEl.style.transformOrigin = `${ox}px 0px`;
+      }
+      this.set(popoverEl, { opacity: 0, scale: 0.92, y: -6 });
+      const guard = withSettleSafetyGuard(popoverEl, 450);
+      await this.to(popoverEl, { opacity: 1, scale: 1, y: 0 }, { preset });
+      guard();
+      return this._genOf(popoverEl) === token;
+    } else {
+      popoverEl.style.pointerEvents = 'none';
+      await this.to(popoverEl, { opacity: 0, scale: 0.92, y: -6 }, { preset });
+      if (this._genOf(popoverEl) === token) {
+        popoverEl.style.display = 'none';
+        this.release(popoverEl);
+        onClosed?.();
+      }
+      return true;
+    }
   },
 
   /** Physics helpers (proxy to the active backend). */

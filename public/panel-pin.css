@@ -115,3 +115,17 @@
 @media (prefers-reduced-motion: reduce) {
     .pin-animating, .panel-pin-menu, .terminal-page, .rdp-page, .app-shell { animation: none !important; transition-duration: .01ms !important; }
 }
+
+
+/* 计划 4.2.3：网格停靠态下，空间由 grid-template-columns 分配，
+ * 不再需要 padding 让位（否则双重让位会把终端挤窄）。 */
+.terminal-page.has-docked-left,
+.terminal-page.has-docked-right {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+/* 底部半屏停靠仍走原来的 padding 模型。 */
+.terminal-page.has-docked-left.pin-has-bottom,
+.terminal-page.has-docked-right.pin-has-bottom {
+    padding-bottom: calc(max(4px, env(safe-area-inset-bottom)) + var(--pin-inset-bottom, 0px));
+}

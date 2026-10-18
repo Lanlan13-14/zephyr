@@ -1,3 +1,4 @@
+import { StreamingCharsetDecoder } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261018-ui60';
 /* Telnet terminal page — no SFTP / Docker / remote stats. Fork of terminal.js. */
 // terminal-grid-converge1 supersedes terminal-stability1 / kb-xterm-fit2 / aux-bar-fly1.
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
@@ -33,7 +34,7 @@ import {
     ensureFloatingPanelPhysicsDrag,
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
-} from './floating-panel.js?v=20260731-panel-drag-physics4';
+} from './floating-panel.js?v=20261018-ui60';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
@@ -863,11 +864,11 @@ function isSftpArchiveFile(filePath = '') { return SFTP_ARCHIVE_ICON_EXTENSIONS.
 function isSftpMediaFile(filePath = '') { const ext = sftpFileExt(filePath); return SFTP_VIDEO_EXTENSIONS.has(ext) || SFTP_AUDIO_EXTENSIONS.has(ext); }
 function isSftpVideoFile(filePath = '') { return SFTP_VIDEO_EXTENSIONS.has(sftpFileExt(filePath)); }
 
-const ZEPHYR_GLYPH_DEFS = `<svg width="0" height="0" class="zephyr-glyph-defs" aria-hidden="true" focusable="false"><defs><linearGradient id="macBlue" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#5AC8FA"/><stop offset="100%" stop-color="#007AFF"/></linearGradient><linearGradient id="macGold" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FFD60A"/><stop offset="100%" stop-color="#FF9F0A"/></linearGradient><linearGradient id="macCyan" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#32ADE6"/><stop offset="100%" stop-color="#007AFF"/></linearGradient><linearGradient id="macGreen" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#34C759"/><stop offset="100%" stop-color="#248A3D"/></linearGradient><linearGradient id="macPurple" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#AF52DE"/><stop offset="100%" stop-color="#5E5CE6"/></linearGradient><linearGradient id="macIndigo" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#5E5CE6"/><stop offset="100%" stop-color="#403EAB"/></linearGradient><linearGradient id="macRed" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FF5252"/><stop offset="100%" stop-color="#E53935"/></linearGradient><linearGradient id="macDark" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#48484A"/><stop offset="100%" stop-color="#1C1C1E"/></linearGradient></defs></svg>`;
+const ZEPHYR_GLYPH_DEFS = `<svg width="0" height="0" class="zephyr-glyph-defs" aria-hidden="true" focusable="false"><defs><linearGradient id="macBlue" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" style="stop-color:var(--accent-hover, var(--accent, #5AC8FA))"/><stop offset="100%" style="stop-color:var(--accent, #007AFF)"/></linearGradient><linearGradient id="macGold" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FFD60A"/><stop offset="100%" stop-color="#FF9F0A"/></linearGradient><linearGradient id="macCyan" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#32ADE6"/><stop offset="100%" stop-color="#007AFF"/></linearGradient><linearGradient id="macGreen" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#34C759"/><stop offset="100%" stop-color="#248A3D"/></linearGradient><linearGradient id="macPurple" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#AF52DE"/><stop offset="100%" stop-color="#5E5CE6"/></linearGradient><linearGradient id="macIndigo" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#5E5CE6"/><stop offset="100%" stop-color="#403EAB"/></linearGradient><linearGradient id="macRed" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FF5252"/><stop offset="100%" stop-color="#E53935"/></linearGradient><linearGradient id="macDark" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#48484A"/><stop offset="100%" stop-color="#1C1C1E"/></linearGradient></defs></svg>`;
 const ZEPHYR_GLYPHS = {
     folder: '<path d="M2 7C2 5.3 3.3 4 5 4H9.3C10.1 4 10.9 4.4 11.5 5L12.5 6.1C12.8 6.4 13.2 6.6 13.6 6.6H19C20.7 6.6 22 7.9 22 9.6V17C22 18.7 20.7 20 19 20H5C3.3 20 2 18.7 2 17V7Z" fill="url(#macBlue)"/>',
     archive: '<path d="M2 7C2 5.3 3.3 4 5 4H9.3C10.1 4 10.9 4.4 11.5 5L12.5 6.1C12.8 6.4 13.2 6.6 13.6 6.6H19C20.7 6.6 22 7.9 22 9.6V17C22 18.7 20.7 20 19 20H5C3.3 20 2 18.7 2 17V7Z" fill="url(#macGold)"/><line x1="12" y1="7" x2="12" y2="15" stroke="#8E8E93" stroke-width="2" stroke-dasharray="2 2" stroke-linecap="round"/><rect x="10.5" y="14" width="3" height="4" rx="1.5" fill="#FFFFFF" stroke="#8E8E93" stroke-width="1"/>',
-    file: '<path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2Z" fill="#FFFFFF" stroke="#C7C7CC" stroke-width="1.5" stroke-linejoin="round"/><path d="M14 2V8H20" fill="#E5E5EA" stroke="#C7C7CC" stroke-width="1.5" stroke-linejoin="round"/><line x1="8" y1="13" x2="16" y2="13" stroke="#007AFF" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="17" x2="14" y2="17" stroke="#8E8E93" stroke-width="1.5" stroke-linecap="round"/>',
+    file: '<path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2Z" fill="#FFFFFF" stroke="#C7C7CC" stroke-width="1.5" stroke-linejoin="round"/><path d="M14 2V8H20" fill="#E5E5EA" stroke="#C7C7CC" stroke-width="1.5" stroke-linejoin="round"/><line x1="8" y1="13" x2="16" y2="13" style="stroke:var(--accent, #007AFF)" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="17" x2="14" y2="17" stroke="#8E8E93" stroke-width="1.5" stroke-linecap="round"/>',
     upload: '<path d="M17.5 19C20 19 22 17 22 14.5C22 12.1 20.2 10.2 17.9 10C17.4 6.6 14.5 4 11 4C7.1 4 4 7.1 4 11C4 11.2 4 11.5 4.1 11.7C2.3 12.3 1 14 1 16C1 18.2 2.8 20 5 20" fill="url(#macCyan)"/><path d="M11 16V9M8 12L11 9L14 12" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
     download: '<path d="M17.5 19C20 19 22 17 22 14.5C22 12.1 20.2 10.2 17.9 10C17.4 6.6 14.5 4 11 4C7.1 4 4 7.1 4 11C4 11.2 4 11.5 4.1 11.7C2.3 12.3 1 14 1 16C1 18.2 2.8 20 5 20" fill="url(#macGreen)"/><path d="M11 9V16M8 13L11 16L14 13" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
     copy: '<rect x="5" y="5" width="12" height="13" rx="2" fill="url(#macIndigo)"/><rect x="9" y="9" width="12" height="13" rx="2" fill="#FFFFFF" stroke="#C7C7CC" stroke-width="1.5"/><line x1="12" y1="13" x2="18" y2="13" stroke="#8E8E93" stroke-width="1.5" stroke-linecap="round"/><line x1="12" y1="17" x2="16" y2="17" stroke="#8E8E93" stroke-width="1.5" stroke-linecap="round"/>',
@@ -1890,8 +1891,22 @@ function applyTheme(theme, { persist = false, terminalOverride = false } = {}) {
     applyTerminalAppearance(terminalAppearance || {});
     if (terminalOverride) localStorage.setItem(TERMINAL_THEME_OVERRIDE_KEY, theme);
     else if (persist) localStorage.setItem('zephyr-theme', theme);
-    themeToggle.textContent = theme === 'dark' ? '☀️' : '🌙';
+    themeToggle.innerHTML = theme === 'dark' ? "<svg class=\"zi-sun\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42\"/></svg>" : "<svg class=\"zi-moon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20.6 14.5A8.8 8.8 0 0 1 9.5 3.4a.7.7 0 0 0-.9-.9A10.2 10.2 0 1 0 21.5 15.4a.7.7 0 0 0-.9-.9z\"/></svg>";
 }
+try {
+    if (window.parent && window.parent !== window && window.parent.document?.documentElement) {
+        const pRoot = window.parent.document.documentElement;
+        const pScheme = pRoot.getAttribute('data-color-scheme');
+        const pTheme = pRoot.getAttribute('data-theme');
+        if (pScheme) {
+            document.documentElement.setAttribute('data-color-scheme', pScheme);
+            terminalAppearance = { ...(terminalAppearance || {}), colorScheme: pScheme };
+        }
+        if (pTheme === 'light' || pTheme === 'dark') {
+            localStorage.setItem('zephyr-theme', pTheme);
+        }
+    }
+} catch {}
 applyTheme(getPreferredTheme());
 
 function normalizeTerminalHexColor(value = '') {
@@ -2091,11 +2106,14 @@ function applyWtermTheme(theme) {
     document.documentElement.setAttribute('data-wterm-theme', normalized);
     localStorage.setItem('zephyr-wterm-theme', requested);
     if (wtermThemeToggle) {
-        wtermThemeToggle.textContent = customTerm
+        wtermThemeToggle.title = customTerm
             ? (requested === 'light' ? t('终端: 自定义 Light') : t('终端: 自定义'))
             : (requested === 'light' ? t('终端: Light') : t('终端: 默认'));
-        wtermThemeToggle.classList.toggle('active', requested === 'light' || customTerm);
-        wtermThemeToggle.setAttribute('aria-pressed', requested === 'light' || customTerm ? 'true' : 'false');
+        if (!wtermThemeToggle.querySelector('svg')) {
+            wtermThemeToggle.innerHTML = '<svg class="tb-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg>';
+        }
+        wtermThemeToggle.classList.toggle('active', Boolean(customTerm));
+        wtermThemeToggle.setAttribute('aria-pressed', customTerm ? 'true' : 'false');
     }
     try { term?.setOption?.('theme', requested === 'light' ? 'light' : 'default'); } catch (_) {}
     applyTerminalAppearance(terminalAppearance || {});
@@ -2132,11 +2150,15 @@ window.addEventListener('message', (e) => {
         return;
     }
     if (e.data.type === 'theme-change' && ['light', 'dark'].includes(e.data.theme)) {
+        try {
+            localStorage.removeItem(TERMINAL_THEME_OVERRIDE_KEY);
+            localStorage.removeItem('zephyr-wterm-theme-explicit');
+        } catch {}
         if (e.data.appearance) terminalAppearance = e.data.appearance || {};
+        applyTheme(e.data.theme);
         applyZephyrColorScheme(terminalAppearance || {}, { theme: e.data.theme, page: 'terminal' });
         applyTerminalAppearance(terminalAppearance || {});
         applyWtermTheme(getPreferredWtermTheme());
-        if (!hasTerminalThemeOverride()) applyTheme(e.data.theme);
         requestStableTerminalLayout('parent-theme-change', { includeResize: false });
     }
     if ((e.data.type === 'terminal-settings' || e.data.workspace) && e.data.workspace && Object.prototype.hasOwnProperty.call(e.data.workspace, 'sessionPersistence')) {
@@ -4564,7 +4586,7 @@ const terminalToastMotion = {
     _ensure() {
         if (this.engine) return Promise.resolve(this.engine);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261018-ui60')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
@@ -8751,6 +8773,15 @@ function setupTerminalInputPanelMetrics() {
 }
 
 function mountMobileStableBarsInFlow() {
+    if (document.documentElement.dataset.zephyrSurface === 'desktop' || document.body?.classList.contains('desktop-embed')) {
+        const tb = document.querySelector('.terminal-topbar');
+        if (tb && topbarActions && topbarActions.parentElement !== tb) {
+            tb.appendChild(topbarActions);
+        }
+        document.documentElement.classList.remove('mobile-stable-input');
+        document.body?.classList.remove('mobile-stable-input');
+        return;
+    }
     if (!isMobileStableInputMode() || !topbarActions || !terminalInputPanel) return;
     const page = document.querySelector('.terminal-page');
     if (!page) return;
@@ -8939,8 +8970,10 @@ function writeSshKbPageGeometry(safeInset, layoutOpen, { fromParent = false } = 
 
     // Always keep mobile-stable class for the fixed-chrome CSS path.
     try {
-        document.documentElement.classList.add('mobile-stable-input');
-        document.body?.classList?.add?.('mobile-stable-input');
+        if (document.documentElement.dataset.zephyrSurface !== 'desktop' && !document.body?.classList?.contains?.('desktop-embed')) {
+            document.documentElement.classList.add('mobile-stable-input');
+            document.body?.classList?.add?.('mobile-stable-input');
+        }
     } catch (_) {}
 
     document.documentElement.style.setProperty('--keyboard-inset', `${inset}px`);
@@ -11521,6 +11554,7 @@ function getDefaultPanelOptions(panel) {
 }
 
 function clampPanel(panel) {
+    if (!panel?.parentElement || !panel.classList?.contains('open') || panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('docked-right') || panel.classList?.contains('docked-left') || panel.classList?.contains('panel-fullscreen') || panel.dataset?.unifiedDockSide || panel.dataset?.pinSide) return;
     const rect = panel.getBoundingClientRect();
     const parentRect = panel.parentElement.getBoundingClientRect();
     const minVisible = isCompactScreen() ? 140 : 80;
@@ -13246,3 +13280,36 @@ window.addEventListener('beforeunload', () => {
 
 main();
 requestParentSharedFileClipboard();
+
+
+const telnetCharsetDecoder = new StreamingCharsetDecoder(localStorage.getItem('zephyr-telnet-encoding') || 'utf-8');
+function ensureTelnetEncodingSelector() {
+    const actions = document.getElementById('topbarActions');
+    if (!actions || document.getElementById('telnetEncodingSelect')) return;
+    const sel = document.createElement('select');
+    sel.id = 'telnetEncodingSelect';
+    sel.className = 'btn-sm telnet-encoding-select';
+    sel.title = 'Telnet Charset Encoding';
+    sel.setAttribute('aria-label', 'Telnet Charset Encoding');
+    for (const [val, label] of [
+        ['utf-8', 'UTF-8'],
+        ['gb18030', 'GB18030 / GBK'],
+        ['big5', 'Big5'],
+        ['shift-jis', 'Shift-JIS'],
+        ['cp437', 'CP437 (BBS)'],
+    ]) {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = label;
+        if (val === telnetCharsetDecoder.encoding) opt.selected = true;
+        sel.appendChild(opt);
+    }
+    sel.addEventListener('change', () => {
+        telnetCharsetDecoder.setEncoding(sel.value);
+        try { localStorage.setItem('zephyr-telnet-encoding', sel.value); } catch {}
+    });
+    actions.prepend(sel);
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ensureTelnetEncodingSelector);
+else ensureTelnetEncodingSelector();
+window.__zephyrTelnetCharsetDecoder = telnetCharsetDecoder;

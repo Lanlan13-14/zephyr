@@ -6,9 +6,15 @@ const FLAG_BOLD = 1;
 const FLAG_DIM = 2;
 const FLAG_ITALIC = 4;
 const FLAG_UNDERLINE = 8;
+const FLAG_BLINK = 16;
 const FLAG_REVERSE = 32;
 const FLAG_INVISIBLE = 64;
 const FLAG_STRIKETHROUGH = 128;
+const FLAG_OVERLINE = 256;
+const FLAG_UNDERLINE_DOUBLE = 512;
+const FLAG_UNDERLINE_CURLY = 1024;
+const FLAG_UNDERLINE_DOTTED = 2048;
+const FLAG_UNDERLINE_DASHED = 4096;
 function rgbToCSS(packed) {
   const r = packed >> 16 & 255;
   const g = packed >> 8 & 255;
@@ -53,7 +59,7 @@ function cellBgCSS(bg, bgRgb) {
   if (bgRgb !== void 0) return rgbToCSS(bgRgb);
   return colorToCSS(bg);
 }
-function buildCellStyle(fg, bg, flags, fgRgb, bgRgb, screenReverse = false) {
+function buildCellStyle(fg, bg, flags, fgRgb, bgRgb, screenReverse = false, ul = DEFAULT_COLOR, ulRgb = void 0) {
   let fgIdx = fg, bgIdx = bg, fgR = fgRgb, bgR = bgRgb;
   if ((flags & FLAG_REVERSE) !== (screenReverse ? FLAG_REVERSE : 0)) {
     const tmpIdx = fgIdx;
@@ -75,8 +81,18 @@ function buildCellStyle(fg, bg, flags, fgRgb, bgRgb, screenReverse = false) {
   if (flags & FLAG_ITALIC) style += "font-style:italic;";
   const decorations = [];
   if (flags & FLAG_UNDERLINE) decorations.push("underline");
+  if (flags & FLAG_OVERLINE) decorations.push("overline");
   if (flags & FLAG_STRIKETHROUGH) decorations.push("line-through");
   if (decorations.length) style += `text-decoration:${decorations.join(" ")};`;
+  if (flags & FLAG_UNDERLINE) {
+    if (flags & FLAG_UNDERLINE_DOUBLE) style += "text-decoration-style:double;";
+    else if (flags & FLAG_UNDERLINE_CURLY) style += "text-decoration-style:wavy;";
+    else if (flags & FLAG_UNDERLINE_DOTTED) style += "text-decoration-style:dotted;";
+    else if (flags & FLAG_UNDERLINE_DASHED) style += "text-decoration-style:dashed;";
+    const ulCSS = cellFgCSS(ul, ulRgb);
+    if (ulCSS) style += `text-decoration-color:${ulCSS};`;
+  }
+  if (flags & FLAG_BLINK) style += "animation:term-blink 1s step-end infinite;";
   if (flags & FLAG_INVISIBLE) style += "visibility:hidden;";
   return style;
 }
@@ -260,6 +276,24 @@ function resolveColors(fg, bg, flags, fgRgb, bgRgb, screenReverse = false) {
     fg: cellFgCSS(fgIdx, fgR) || "var(--term-fg)",
     bg: cellBgCSS(bgIdx, bgR) || "var(--term-bg)"
   };
+}
+function isPixelSnappedGlyph(cp) {
+  return (cp >= 9600 && cp <= 9631) || (cp >= 57520 && cp <= 57523);
+}
+function getCustomGlyphStyle(cp, fg, bg) {
+  if (cp === 57520) { // U+E0B0 Powerline right solid arrow
+    return `background:${fg};clip-path:polygon(0 0, 100% 50%, 0 100%);`;
+  }
+  if (cp === 57522) { // U+E0B2 Powerline left solid arrow
+    return `background:${fg};clip-path:polygon(100% 0, 0 50%, 100% 100%);`;
+  }
+  if (cp === 57521) { // U+E0B1 Powerline right thin chevron
+    return `background:${bg};box-shadow:inset -1.5px 0 0 ${fg};`;
+  }
+  if (cp === 57523) { // U+E0B3 Powerline left thin chevron
+    return `background:${bg};box-shadow:inset 1.5px 0 0 ${fg};`;
+  }
+  return `background:${getBlockBackground(cp, fg, bg)};`;
 }
 function getBlockBackground(cp, fg, bg) {
   switch (cp) {
@@ -448,7 +482,7 @@ class Renderer {
       const cell = getCell(col);
       const inBounds = col < lineLen;
       const cp = inBounds ? cell.char : 0;
-      if (inBounds && cp >= 9600 && cp <= 9631) {
+      if (inBounds && isPixelSnappedGlyph(cp)) {
         flushRun(col);
         const colors = resolveColors(
           cell.fg,
@@ -458,9 +492,9 @@ class Renderer {
           cell.bgRgb,
           screenReverse
         );
-        const bg = getBlockBackground(cp, colors.fg, colors.bg);
+        const glyphStyle = getCustomGlyphStyle(cp, colors.fg, colors.bg);
         const dim = cell.flags & FLAG_DIM ? "opacity:0.5;" : "";
-        html += `<span class="term-block" style="background:${bg};${dim}"></span>`;
+        html += `<span class="term-block" style="${glyphStyle}${dim}"></span>`;
         runStyle = "";
         runText = "";
         runLink = null;
@@ -475,7 +509,7 @@ class Renderer {
           continue;
         }
         const ch = inBounds && cp >= 32 ? getGrapheme(cp) || String.fromCodePoint(cp) : " ";
-        const style = inBounds ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb, screenReverse) : "";
+        const style = inBounds ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb, screenReverse, cell.ul, cell.ulRgb) : "";
         const wideAttr = inBounds && cell.wide === 1 ? " term-wide" : "";
         const link = inBounds ? safeHyperlink(getHyperlink(cell.linkId || 0)) : null;
         if (style + wideAttr !== runStyle || link !== runLink) {
@@ -639,8 +673,9 @@ class Renderer {
         canvas.width = Math.max(1, img.width);
         canvas.height = Math.max(1, img.height);
         const ctx = canvas.getContext("2d");
-        if (ctx && img.width > 0 && img.height > 0) {
-          const data = new ImageData(img.pixels, img.width, img.height);
+        if (ctx && img.width > 0 && img.height > 0 && img.pixels) {
+          const clamped = img.pixels instanceof Uint8ClampedArray ? img.pixels : new Uint8ClampedArray(img.pixels);
+          const data = new ImageData(clamped, img.width, img.height);
           ctx.putImageData(data, 0, 0);
         }
       }

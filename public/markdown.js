@@ -29,6 +29,76 @@ function safeHref(url = '') {
     return '';
 }
 
+
+const GREEK_AND_MATH_SYMBOLS = {
+    alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε',
+    zeta: 'ζ', eta: 'η', theta: 'θ', iota: 'ι', kappa: 'κ', lambda: 'λ',
+    mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ',
+    upsilon: 'υ', phi: 'φ', varphi: 'ϕ', chi: 'χ', psi: 'ψ', omega: 'ω',
+    Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+    Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+    infty: '∞', partial: '∂', nabla: '∇', pm: '±', mp: '∓', times: '×',
+    div: '÷', cdot: '·', ast: '∗', star: '⋆', circ: '∘', bullet: '∙',
+    le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', neq: '≠', approx: '≈',
+    equiv: '≡', sim: '∼', propto: '∝', in: '∈', notin: '∉', subset: '⊂',
+    subseteq: '⊆', cup: '∪', cap: '∩', emptyset: '∅', forall: '∀', exists: '∃',
+    neg: '¬', land: '∧', lor: '∨', to: '→', rightarrow: '→', leftarrow: '←',
+    Rightarrow: '⇒', Leftarrow: '⇐', iff: '⇔', sum: '∑', prod: '∏', int: '∫',
+    oint: '∮', therefore: '∴', because: '∵', dots: '…', cdots: '⋯', ldots: '…',
+};
+
+function texToCleanHtml(tex) {
+    let s = escapeHtml(String(tex || '').trim());
+    // Fractions \frac{a}{b}
+    for (let pass = 0; pass < 3; pass++) {
+        s = s.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '<span class="md-frac"><span class="md-frac-num">$1</span><span class="md-frac-den">$2</span></span>');
+        s = s.replace(/\\sqrt\{([^{}]*)\}/g, '<span class="md-sqrt">√<span class="md-sqrt-rad">$1</span></span>');
+        s = s.replace(/\\(?:text|mathrm|mathbf|mathit|mathcal)\{([^{}]*)\}/g, '<span class="md-math-rm">$1</span>');
+    }
+    // Superscripts & subscripts
+    s = s.replace(/\^\{([^{}]*)\}/g, '<sup>$1</sup>').replace(/\^([A-Za-z0-9+\-])/g, '<sup>$1</sup>');
+    s = s.replace(/_\{([^{}]*)\}/g, '<sub>$1</sub>').replace(/_([A-Za-z0-9+\-])/g, '<sub>$1</sub>');
+    // Greek & math symbols
+    s = s.replace(/\\([A-Za-z]+)/g, (m, name) => GREEK_AND_MATH_SYMBOLS[name] || name);
+    s = s.replace(/[{}]/g, '');
+    return s;
+}
+
+export function renderMathTex(tex, displayMode = false) {
+    const raw = String(tex || '').trim();
+    if (!raw) return '';
+    try {
+        if (typeof globalThis !== 'undefined' && globalThis.katex && typeof globalThis.katex.renderToString === 'function') {
+            return globalThis.katex.renderToString(raw, {
+                displayMode: !!displayMode,
+                throwOnError: false,
+                strict: 'ignore',
+                output: 'htmlAndMathml',
+            });
+        }
+    } catch (_) {}
+    const rendered = texToCleanHtml(raw);
+    const attr = escapeAttr(raw);
+    if (displayMode) {
+        return `<div class="katex-display md-math-block" data-latex="${attr}" title="${attr}"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mtext>${rendered}</mtext></mrow></math></div>`;
+    }
+    return `<span class="katex md-math-inline" data-latex="${attr}" title="${attr}"><math xmlns="http://www.w3.org/1998/Math/MathML"><mrow><mtext>${rendered}</mtext></mrow></math></span>`;
+}
+
+function autoCloseStreamingDelimiters(src) {
+    let s = String(src || '');
+    const fenceMatches = s.match(/^\s{0,3}(`{3,}|~{3,})/gm) || [];
+    if (fenceMatches.length % 2 === 1) {
+        const lastFence = fenceMatches[fenceMatches.length - 1].trim().slice(0, 3);
+        s += '\n' + lastFence;
+    }
+    const blockMathCount = (s.match(/\$\$/g) || []).length;
+    if (blockMathCount % 2 === 1) {
+        s += '$$';
+    }
+    return s;
+}
+
 function normalizeNewlines(src) {
     return String(src || '').replace(/\r\n?/g, '\n');
 }
@@ -45,6 +115,17 @@ function renderInline(text, options = {}) {
 
     // Inline code first (protect contents from further markdown).
     s = s.replace(/`([^`\n]+)`/g, (_, code) => hold(`<code>${escapeHtml(code)}</code>`));
+
+    // Inline display math $...$ or \[...\] on a single line
+    s = s.replace(/\$\$([^\$\n]+?)\$\$/g, (_, tex) => hold(renderMathTex(tex, true)));
+    s = s.replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => hold(renderMathTex(tex, true)));
+
+    // Inline math \(...\) or $...$ (avoid matching currency like $10 and $20)
+    s = s.replace(/\\\(([^\n]+?)\\\)/g, (_, tex) => hold(renderMathTex(tex, false)));
+    s = s.replace(/(^|[^\\\$])\$(?!\s)([^\$\n]+?)(?<!\s)\$(?!\d)/g, (_, pre, tex) => `${pre}${hold(renderMathTex(tex, false))}`);
+
+    // Footnote reference [^id]
+    s = s.replace(/\[\^([A-Za-z0-9_-]+)\]/g, (_, id) => hold(`<sup class="md-footnote-ref"><a href="#fn-${escapeAttr(id)}">[${escapeHtml(id)}]</a></sup>`));
 
     // Images ![alt](url "title")
     s = s.replace(/!\[([^\]]*)\]\(\s*<?([^\s)>]+)>?(?:\s+(?:"([^"]*)"|'([^']*)'))?\s*\)/g, (_, alt, url, t1, t2) => {
@@ -266,6 +347,17 @@ function parseBlockquote(lines, start, options = {}) {
         }
         break;
     }
+    if (qLines.length > 0) {
+        const alertMatch = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i.exec(String(qLines[0] || '').trim());
+        if (alertMatch) {
+            const kind = alertMatch[1].toUpperCase();
+            const bodyHtml = renderBlocks(qLines.slice(1).join('\n'), options);
+            return {
+                html: `<blockquote class="md-alert md-alert-${kind.toLowerCase()}" data-alert="${kind}"><div class="md-alert-title">${kind}</div>${bodyHtml}</blockquote>`,
+                next: i,
+            };
+        }
+    }
     return { html: `<blockquote>${renderBlocks(qLines.join('\n'), options)}</blockquote>`, next: i };
 }
 
@@ -373,8 +465,38 @@ function paragraphLinesToHtml(paraLines) {
     return `<p>${joined.trim()}</p>`;
 }
 
+function isMathBlockOpen(line) {
+    return /^\s{0,3}(\$\$|\\\[)\s*(.*)$/.exec(line || '');
+}
+
+function parseMathBlock(lines, start) {
+    const open = isMathBlockOpen(lines[start]);
+    if (!open) return null;
+    const closeToken = open[1] === '$$' ? '$$' : '\\]';
+    const firstRest = open[2] || '';
+    if (firstRest.includes(closeToken)) {
+        const idx = firstRest.indexOf(closeToken);
+        return { html: renderMathTex(firstRest.slice(0, idx), true), next: start + 1 };
+    }
+    const body = firstRest ? [firstRest] : [];
+    let i = start + 1;
+    while (i < lines.length) {
+        const line = lines[i];
+        const cIdx = line.indexOf(closeToken);
+        if (cIdx >= 0) {
+            if (cIdx > 0) body.push(line.slice(0, cIdx));
+            i += 1;
+            break;
+        }
+        body.push(line);
+        i += 1;
+    }
+    return { html: renderMathTex(body.join('\n'), true), next: i };
+}
+
 function renderBlocks(src, options = {}) {
-    const lines = normalizeNewlines(src).split('\n');
+    const normalizedSrc = options?.streaming ? autoCloseStreamingDelimiters(src) : src;
+    const lines = normalizeNewlines(normalizedSrc).split('\n');
     const out = [];
     let i = 0;
 
@@ -382,6 +504,16 @@ function renderBlocks(src, options = {}) {
         if (isBlank(lines[i])) {
             i += 1;
             continue;
+        }
+
+        // Display Math block ($ ... $ or \[ ... \])
+        if (isMathBlockOpen(lines[i])) {
+            const mb = parseMathBlock(lines, i);
+            if (mb) {
+                out.push(mb.html);
+                i = mb.next;
+                continue;
+            }
         }
 
         // Fenced code

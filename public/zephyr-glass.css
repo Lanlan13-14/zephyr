@@ -1,0 +1,65 @@
+/* ==========================================================================
+ * public/zephyr-glass.css — 3-Tier Liquid Glass Optical Material System
+ * ========================================================================== */
+
+@layer surfaces {
+  /* Tier 1: Thin Interactive Glass (Topbar action buttons, toolbar pills, cmd capsule) */
+  .z-glass-thin {
+    background: rgba(44, 48, 56, 0.58);
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    border: 1px solid var(--z-outline);
+    box-shadow: var(--z-specular-top), 0 2px 8px rgba(0, 0, 0, 0.14);
+  }
+  html[data-theme="light"] .z-glass-thin {
+    background: rgba(255, 255, 255, 0.68);
+    box-shadow: var(--z-specular-top), 0 2px 6px rgba(15, 20, 28, 0.06);
+  }
+
+  /* Tier 2: Regular Structural Glass (Nav pill fallback, Mobile RootIsland, Smartbar Dock, Toasts) */
+  .z-glass-regular {
+    background: var(--z-surface-floating);
+    backdrop-filter: blur(24px) saturate(175%);
+    -webkit-backdrop-filter: blur(24px) saturate(175%);
+    border: 1px solid var(--z-outline);
+    box-shadow: var(--z-specular-top), 0 10px 28px rgba(0, 0, 0, 0.24);
+  }
+  html[data-theme="light"] .z-glass-regular {
+    background: rgba(235, 239, 244, 0.80);
+    box-shadow: var(--z-specular-top), 0 8px 22px rgba(15, 20, 28, 0.08);
+  }
+
+  /* Tier 3: Thick Floating Glass (Floating SFTP/Docker/Monitor/Snippet/Shortcut, AI Panel, Modals, Sheets) */
+  .z-glass-thick {
+    background: rgba(21, 24, 30, 0.90);
+    backdrop-filter: blur(36px) saturate(190%);
+    -webkit-backdrop-filter: blur(36px) saturate(190%);
+    border: 1px solid var(--z-outline-strong);
+    box-shadow: var(--z-specular-top), 0 22px 54px rgba(0, 0, 0, 0.38);
+  }
+  html[data-theme="light"] .z-glass-thick {
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: var(--z-specular-top), 0 18px 44px rgba(15, 20, 28, 0.14);
+  }
+
+  /* Accessibility & WebView Compositor Fallback */
+  @media (prefers-reduced-transparency: reduce) {
+    .z-glass-thin,
+    .z-glass-regular,
+    .z-glass-thick {
+      background: var(--z-surface-floating-solid) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+  }
+
+  /* Accessibility: Reduced Motion (WCAG 2.2 AA — 尊重操作系统关闭/减弱动态效果设置) */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 120ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

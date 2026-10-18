@@ -1,0 +1,3981 @@
+/* ══════════════════════════════════════════════════════════════════════════
+ * public/zephyr-terminal-spec.css
+ *
+ * 严格实现 ZEPHYR-UNIFIED-MASTER-PLAN 4.2.0 节「8 张设计稿纯文字像素级解剖」
+ * 的死命令数值。此文件是终端工作区像素口径的唯一真源。
+ *
+ * 不使用 @layer：style.css 是未分层的，未分层规则优先级高于所有分层规则，
+ * 分层反而会让本文件被压掉。改为在 style.css 之后加载 + 精确选择器。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. 页面整体底层背景（浅 #F4F6F9 / 深 #0C0E10） ─────────────────── */
+body.app-body { background: var(--bg, #0C0E10); }
+html[data-theme="light"] body.app-body { background: var(--bg, #F4F6F9); }
+
+/* ── 2. 顶部主导航栏：总高 56px，左右内边距 20px ─────────────────────── */
+.main-nav {
+  height: 56px;
+  min-height: 56px;
+  padding: 0 20px;
+  box-sizing: border-box;
+}
+body.terminal-mode .main-nav {
+  height: calc(56px + 27px);
+  min-height: calc(56px + 27px);
+  padding-bottom: 27px;
+}
+
+/* 品牌：风标 26×26 + Zephyr 17px/700 */
+.brand img, .brand .zephyr-brand-mark svg { width: 26px; height: 26px; }
+.brand strong, .brand b { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+html[data-theme="dark"] .brand strong, html[data-theme="dark"] .brand b { color: #FFFFFF; }
+html[data-theme="light"] .brand strong, html[data-theme="light"] .brand b { color: #111418; }
+
+/* ── 3. 正中 6-Tab 导航胶囊 ──────────────────────────────────────────── */
+.nav-tabs {
+  border-radius: 9999px;
+  padding: 4px;
+  gap: 0;
+  height: 40px;
+  box-sizing: border-box;
+}
+html[data-theme="light"] .main-nav .nav-tabs {
+  background: rgba(235, 239, 242, 0.78);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: none;
+}
+html[data-theme="dark"] .main-nav .nav-tabs {
+  background: rgba(25, 29, 32, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+/* 激活页签：浅色纯白实心 + 阴影，字 var(--accent, var(--z-accent, #0071E3))；深色 #2C3036 + var(--accent, var(--z-accent, #0A84FF)) */
+html[data-theme="light"] .main-nav .nav-tab.active {
+  background: #FFFFFF;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  color: var(--accent, var(--z-accent, #0071E3));
+}
+html[data-theme="dark"] .main-nav .nav-tab.active {
+  background: #2C3036;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--accent, var(--z-accent, #0A84FF));
+}
+
+/* ── 4. 右侧 3 个操作按钮（文档 4.2.0.1 第 5 条） ─────────────────────── */
+.nav-actions #aiFloatingBtn:not(.force-hidden):not([hidden]) {
+  height: 34px; width: auto; padding: 0 14px;
+  border-radius: 9999px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px;
+}
+html[data-theme="light"] .nav-actions #aiFloatingBtn {
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  color: #111418;
+}
+html[data-theme="dark"] .nav-actions #aiFloatingBtn {
+  background: rgba(44, 44, 46, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #F2F4F7;
+}
+
+.nav-actions #appThemeToggle {
+  width: 34px; height: 34px; min-width: 34px;
+  padding: 0; border-radius: 50%;
+}
+html[data-theme="dark"] .nav-actions #appThemeToggle svg { color: #FFD60A; }
+html[data-theme="light"] .nav-actions #appThemeToggle svg { color: #E8A415; }
+
+.nav-actions #logoutBtn {
+  height: 34px; width: auto; padding: 0 14px;
+  border-radius: 9999px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px;
+}
+html[data-theme="light"] .nav-actions #logoutBtn {
+  background: rgba(255, 59, 48, 0.10);
+  border: 1px solid rgba(255, 59, 48, 0.22);
+  color: #FF3B30;
+}
+html[data-theme="dark"] .nav-actions #logoutBtn {
+  background: rgba(255, 69, 58, 0.16);
+  border: 1px solid rgba(255, 69, 58, 0.32);
+  color: #FF453A;
+}
+
+/* ── 5. 终端工作区四周留白 12px 16px 18px ───────────────────────────── */
+.terminal-workspace-grid {
+  padding: 12px 16px 18px;
+  box-sizing: border-box;
+}
+
+/* ── 6. 终端大卡片：圆角 14px，激活 2px 蓝框 + 外发光 ─────────────────── */
+.terminal-window { border-radius: 14px; }
+html[data-theme="light"] .terminal-window {
+  background: #FFFFFF;
+  border: 1px solid rgba(17, 20, 24, 0.10);
+}
+html[data-theme="dark"] .terminal-window {
+  background: #0D0F11;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+html[data-theme="light"] .terminal-window.active {
+  border: 2px solid var(--accent, var(--z-accent, #0071E3));
+  box-shadow: 0 0 18px -2px var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 35%, transparent)),
+              0 14px 36px -16px rgba(17, 20, 24, 0.16);
+}
+html[data-theme="dark"] .terminal-window.active {
+  border: 2px solid var(--accent, var(--z-accent, #0A84FF));
+  box-shadow: 0 0 22px -2px var(--accent-glow, color-mix(in srgb, var(--accent, #0A84FF) 50%, transparent)),
+              0 16px 40px -14px rgba(0, 0, 0, 0.55);
+}
+
+/* ── 7. 窗格标题栏高 42px + 右侧 4 个 28×28 按钮 ─────────────────────── */
+.terminal-window-titlebar {
+  height: 42px; min-height: 42px;
+  box-sizing: border-box;
+}
+html[data-theme="light"] .terminal-window-titlebar {
+  background: #FFFFFF;
+  border-bottom: 1px solid rgba(17, 20, 24, 0.06);
+}
+html[data-theme="dark"] .terminal-window-titlebar {
+  background: #131619;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.terminal-window-titlebar .pbtn { width: 28px; height: 28px; border-radius: 7px; }
+
+/* ── 8. 次级工具胶囊条：margin 8px 12px 0 / 高 36px / 圆角 10px ──────── */
+.terminal-page .topbar-actions {
+  margin: 8px 12px 0;
+  height: 36px; min-height: 36px;
+  border-radius: 10px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+html[data-theme="light"] .terminal-page .topbar-actions {
+  background: #F3F5F8;
+  border: 1px solid rgba(17, 20, 24, 0.06);
+}
+html[data-theme="dark"] .terminal-page .topbar-actions {
+  background: #171A1E;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+/* 激活工具按钮：淡蓝底蓝字蓝框，圆角 7px（文档 4.2.0.1 第 4 条） */
+.terminal-page .topbar-actions .btn-sm.active { border-radius: 7px; }
+html[data-theme="light"] .terminal-page .topbar-actions .btn-sm.active {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent));
+  border: 1px solid var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent));
+  color: var(--accent, var(--z-accent, #0071E3));
+}
+html[data-theme="dark"] .terminal-page .topbar-actions .btn-sm.active {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 18%, transparent));
+  border: 1px solid var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 38%, transparent));
+  color: var(--accent, var(--z-accent, #0A84FF));
+}
+
+/* ── 9. 终端字符画布：占满剩余高度 ──────────────────────────────────── */
+.terminal-container { flex: 1 1 auto; min-height: 0; }
+html[data-theme="light"] .terminal-container { background: #FFFFFF; color: #1D1D1F; }
+html[data-theme="dark"] .terminal-container { background: #0B0D0F; color: #E5E7EB; }
+
+/* ── 10. 底部命令发送栏：padding 8px 12px 12px ───────────────────────── */
+.terminal-page .terminal-top-input {
+  padding: 8px 12px 12px;
+  box-sizing: border-box;
+}
+html[data-theme="light"] .terminal-page .cmd-input {
+  min-height: 38px; background: #F3F5F8;
+  border: 1px solid rgba(17, 20, 24, 0.06);
+  border-radius: 10px; color: #1D1D1F;
+}
+html[data-theme="dark"] .terminal-page .cmd-input {
+  min-height: 38px; background: #16191D;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px; color: #E5E7EB;
+}
+.terminal-page .cmd-send-btn {
+  width: 76px; min-width: 76px;
+  height: 38px; min-height: 38px;
+  border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; padding: 0; font-size: 13px; font-weight: 500;
+}
+html[data-theme="light"] .terminal-page .cmd-send-btn { background: var(--accent, var(--z-accent, #0071E3)); border: 0; color: #FFFFFF; }
+html[data-theme="dark"] .terminal-page .cmd-send-btn { background: var(--accent, var(--z-accent, #0A84FF)); border: 0; color: #FFFFFF; }
+
+/* ── 11. 停靠态文件管理面板：宽 360px，标题栏 42px 齐平 ──────────────── */
+.terminal-page { --z-sftp-dock-width: 360px; }
+.terminal-page .file-manager .fm-header {
+  height: 42px; min-height: 42px;
+  box-sizing: border-box;
+}
+html[data-theme="light"] .terminal-page.has-docked-right > .file-manager.docked-right {
+  border-left: 1px solid rgba(17, 20, 24, 0.06);
+}
+html[data-theme="dark"] .terminal-page.has-docked-right > .file-manager.docked-right {
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+}
+html[data-theme="light"] .terminal-page.has-docked-left > .file-manager.docked-left {
+  border-right: 1px solid rgba(17, 20, 24, 0.06);
+}
+html[data-theme="dark"] .terminal-page.has-docked-left > .file-manager.docked-left {
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* ── 12. 分屏中缝 14px ─────────────────────────────────────────────── */
+.workspace-splitter.vertical { width: 14px; min-width: 14px; }
+
+/* ── 13. 桌面端终端纵向层级（文档 4.2.0 第 4 条） ──────────────────────
+ * 设计稿自上而下：标题栏 42px → 工具胶囊条 36px → 终端画布(1fr) → 底部命令栏。
+ * DOM 里 #terminalTopInput 在 #terminalContainer 之前（移动端需要置顶），
+ * 桌面端用 order 把它排到最后，不改 DOM。
+ * 计划 5.6：Pad 横屏同样走桌面 UI，所以只按宽度判定，不加 hover/pointer。 */
+@media (min-width: 761px) {
+  .terminal-page .terminal-topbar { order: 1; flex: 0 0 auto; }
+  .terminal-page .terminal-container { order: 2; flex: 1 1 auto; min-height: 0; }
+  .terminal-page .terminal-top-input { order: 3; flex: 0 0 auto; }
+  /* 命令栏改为「底部」语义：分隔线在上 */
+  .terminal-page .terminal-top-input {
+    border-bottom: 0;
+    border-top: 1px solid rgba(17, 20, 24, 0.06);
+  }
+  html[data-theme="dark"] .terminal-page .terminal-top-input {
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  /* 移动端辅助键栏在桌面端隐藏 */
+  .terminal-page .terminal-bottom-bar { display: none; }
+}
+
+/* ── 14. 桌面端把工具胶囊条排成独立第二行（文档 4.2.0 第 4 条） ─────────
+ * DOM 结构：.terminal-topbar{ [status][info][topbar-actions] }
+ * 文档要求：窗格顶栏 42px（状态+主机名+徽章+4 个按钮），
+ *           工具胶囊条 36px 独立成行，外边距 8px 12px 0。
+ * 不动 DOM（避免破坏移动端与脚本），用 flex-wrap + flex-basis 让它换行。 */
+@media (min-width: 761px) {
+  .terminal-page .terminal-topbar {
+    flex-wrap: wrap;
+    align-items: center;
+    height: auto;
+    padding: 0 16px;
+    row-gap: 0;
+    align-content: flex-start;
+  }
+  /* 第一行：状态 + 连接信息，占满整行并固定 42px */
+  .terminal-page .terminal-topbar > .status,
+  .terminal-page .terminal-topbar > .info {
+    flex: 0 0 auto;
+    height: 42px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .terminal-page .terminal-topbar > .status {
+    margin-right: 10px;
+  }
+  /* 把剩余空间吃掉，强制工具条掉到下一行 */
+  .terminal-page .terminal-topbar > .info {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  /* 第二行：工具胶囊条整行 36px，外边距 8px 12px 0 */
+  .terminal-page .terminal-topbar > .topbar-actions {
+    order: 5;
+    flex: 0 0 100%;
+    width: 100%;
+    height: 36px;
+    min-height: 36px;
+    margin: 8px 0 0;
+    box-sizing: border-box;
+  }
+}
+
+/* ── 15. 图钉切换按钮 .panel-pin-toggle（文档 4.2.0.1 第 3 条） ────────── */
+.panel-pin-toggle {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--z-accent, var(--accent, var(--z-accent, #0A84FF)));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.panel-pin-toggle.active,
+.panel-pin-toggle.on,
+.pinned .panel-pin-toggle {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 20%, transparent));
+  color: var(--accent, var(--z-accent, #0A84FF));
+  border-color: var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 32%, transparent));
+}
+html[data-theme="light"] .panel-pin-toggle.active,
+html[data-theme="light"] .panel-pin-toggle.on,
+html[data-theme="light"] .pinned .panel-pin-toggle {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 14%, transparent));
+  color: var(--accent, var(--z-accent, #0071E3));
+  border-color: var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent));
+}
+.panel-pin-menu [data-pin-layout="half"] {
+  display: none !important;
+}
+
+/* ── 16. SFTP 容器查询与停靠态 3 行 / 浮窗态 1 行响应式工具栏（4.2.0.1 第 2 条） ── */
+#fileManager {
+  container-type: inline-size;
+  container-name: sftp-panel;
+}
+@media (min-width: 821px) {
+  #fileManager.open:not(.docked-right):not(.docked-left):not(.pinned) {
+    border-radius: 16px;
+  }
+}
+
+.terminal-workspace, .terminal-window { --radius-lg: 14px; }
+
+/* ── 17. SFTP 多开标签栏、底部状态栏、大文件门禁与 sudo 提权条（4.2.5） ── */
+.fm-tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--z-outline-soft, rgba(255,255,255,0.06));
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.fm-tab-pill {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--z-text-secondary, #9AA4B0);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fm-tab-pill.active {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 16%, transparent));
+  border-color: var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 32%, transparent));
+  color: var(--z-accent, var(--accent, var(--z-accent, #0A84FF)));
+  font-weight: 600;
+}
+.fm-tab-add-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--z-outline, rgba(255,255,255,0.1));
+  background: transparent;
+  color: var(--z-text-secondary, #9AA4B0);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.fm-footer {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 12px;
+  border-top: 1px solid var(--z-outline-soft, rgba(255,255,255,0.06));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--z-text-secondary, #8E939B);
+}
+.fm-large-file-gate,
+.fm-editor-sudo-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 4px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.sudo-pass-input,
+.pf-input {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--z-outline, rgba(255,255,255,0.12));
+  background: var(--z-surface-elevated, #1B1F26);
+  color: var(--z-text-primary, #F2F4F7);
+  font-size: 12px;
+}
+
+/* ── 18. 端口转发内联面板（-L/-R/-D）与终端右上角搜索条/历史胶囊 ── */
+.port-forward-panel {
+  width: 520px;
+  max-width: calc(100vw - 32px);
+}
+.pf-create-capsule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.pf-mode-seg {
+  display: inline-flex;
+  background: var(--z-surface-pill-track, #191D20);
+  border-radius: 8px;
+  padding: 2px;
+}
+.pf-mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--z-text-secondary, #9AA4B0);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pf-mode-btn.active {
+  background: var(--z-accent, var(--accent, var(--z-accent, #0A84FF)));
+  color: #FFFFFF;
+}
+.pf-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--z-outline-soft, rgba(255,255,255,0.06));
+  font-size: 12px;
+}
+.pf-badge {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 16%, transparent));
+  color: var(--z-accent, var(--accent, var(--z-accent, #0A84FF)));
+  font-weight: 600;
+}
+.pf-endpoint { flex: 1; font-family: var(--font-mono, monospace); }
+.terminal-inline-search-bar {
+  position: absolute;
+  top: 10px;
+  right: 16px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 10px;
+}
+.terminal-inline-search-bar input {
+  width: 160px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+.term-search-opt,
+.term-search-nav,
+.term-search-close {
+  height: 24px;
+  min-width: 24px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+.term-search-opt.active {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 22%, transparent));
+  color: var(--z-accent, var(--accent, var(--z-accent, #0A84FF)));
+}
+.term-row.term-search-hit {
+  background: rgba(255, 214, 10, 0.22) !important;
+}
+.term-row.term-search-current {
+  background: rgba(255, 159, 10, 0.42) !important;
+}
+.terminal-missed-output-pill {
+  position: absolute;
+  right: 18px;
+  bottom: 16px;
+  z-index: 30;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  color: var(--z-accent, var(--accent, var(--z-accent, #0A84FF)));
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.terminal-zmodem-bar,
+.terminal-security-guard-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 35;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 12px;
+  font-size: 12.5px;
+}
+
+/* ── 19. Pad 横屏浮动修饰键胶囊、移动端底部弹出抽屉、SSH 配置导入条与安全胶囊 ── */
+.floating-modifier-capsule {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 260;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+.floating-modifier-capsule .fmc-grip {
+  cursor: grab;
+  padding: 0 4px;
+  opacity: 0.65;
+}
+.floating-modifier-capsule button {
+  height: 28px;
+  min-width: 32px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid var(--z-outline, rgba(255,255,255,0.1));
+  background: var(--z-surface-elevated, #1B1F26);
+  color: var(--z-text-primary, #F2F4F7);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ssh-config-import-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  border-radius: 14px;
+}
+.ssh-import-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ssh-import-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 12.5px;
+}
+.note-secret-guard-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  color: var(--z-warn, #FFD60A);
+  border: 1px solid rgba(255, 214, 10, 0.35);
+}
+@media (max-width: 820px) {
+  .mobile-bottom-sheet {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    width: 100vw !important;
+    border-radius: 20px 20px 0 0 !important;
+    transition: transform 420ms cubic-bezier(0.16, 1, 0.3, 1), height 320ms cubic-bezier(0.16, 1, 0.3, 1);
+    z-index: 210 !important;
+  }
+}
+.mobile-sheet-grabber {
+  width: 100%;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  flex-shrink: 0;
+}
+.mobile-sheet-pill {
+  width: 38px;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--z-outline-strong, rgba(255, 255, 255, 0.24));
+}
+
+/* 4.2.0.1 第 2 条：SFTP 停靠态（<= 440px）3 行工具区 vs 浮窗态（> 440px）单行紧凑工具栏 */
+@container sftp-panel (max-width: 440px) {
+  .fm-toolbar {
+    display: grid;
+    display: flex; flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 12px;
+  }
+}
+@container sftp-panel (min-width: 441px) {
+  .fm-toolbar {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 20. 8 张设计稿（794–801）视觉精修、10 项体验缺陷根治与全站一二级浮窗大一统契约
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+:root,
+html[data-theme="light"],
+html[data-theme="dark"] {
+  --z-sftp-dock-width: 360px !important;
+}
+
+/* 20.1 解决 Android WebView DPR=3.5 合成器 contain/transform 吞窗口及 overlay 残留问题 */
+.terminal-overlay.hidden {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+#terminalWorkspace {
+  contain: none !important;
+}
+.terminal-page {
+  transform: none !important;
+  contain: none !important;
+}
+.force-hidden,
+[hidden] {
+  display: none !important;
+}
+
+/* 20.2 防高分屏 Chromium 合成器吞字 + 顶部主导航栏（.main-nav）1:1 对齐设计稿 794–801 */
+.main-nav .nav-tab:not(.active),
+.terminal-page .topbar-actions .btn-sm:not(.active):not(.danger),
+.fm-titlebar-head,
+.z-unified-panel .panel-titlebar strong,
+.z-unified-panel .docker-title,
+.z-unified-panel .monitor-title,
+.fm-title-text,
+.fm-title-host,
+.z-panel-title-main {
+  background: rgba(128, 128, 128, 0.006);
+}
+
+/* Issue 1 修复：保留原生 theme-runtime.js 渲染的 Apple HIG G1/G2 渐变西风之神品牌标 (#brandIcon) */
+.main-nav .brand #brandIcon,
+.main-nav #brandIcon,
+.main-nav #brandLogo {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+.main-nav .brand .zephyr-brand-mark,
+.main-nav .brand .zephyr-brand-svg {
+  width: 28px !important;
+  height: 28px !important;
+  display: inline-block !important;
+}
+.main-nav .brand #brandName,
+.main-nav #brandName,
+.main-nav #brandTitle {
+  font-size: 17px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.02em !important;
+}
+
+/* 居中 6-Tab Liquid Glass 胶囊槽与激活态实心胶囊 */
+.main-nav .nav-tabs {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  height: 40px !important;
+  padding: 4px !important;
+  border-radius: 9999px !important;
+}
+html[data-theme="light"] .main-nav .nav-tabs {
+  background: rgba(232, 236, 241, 0.88) !important;
+  border: 1px solid rgba(15, 20, 28, 0.06) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 4px 14px rgba(15, 20, 28, 0.05) !important;
+}
+html[data-theme="dark"] .main-nav .nav-tabs {
+  background: rgba(24, 28, 34, 0.88) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 8px 20px rgba(0, 0, 0, 0.35) !important;
+}
+.main-nav .nav-tab:not(.force-hidden):not([hidden]) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  padding: 0 14px !important;
+  height: 32px !important;
+  border-radius: 9999px !important;
+  border: 1px solid transparent !important;
+  position: relative !important;
+}
+.main-nav .nav-tab::after,
+.main-nav .nav-tab::before,
+.main-nav .nav-tabs::after {
+  display: none !important;
+  content: none !important;
+}
+.main-nav .nav-tab .nav-tab-ico {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+html[data-theme="light"] .main-nav .nav-tab.active {
+  background: #FFFFFF !important;
+  color: var(--accent, var(--z-accent, #0071E3)) !important;
+  border-color: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 14%, transparent)) !important;
+  box-shadow: 0 2px 8px rgba(15, 20, 28, 0.08) !important;
+  font-weight: 600 !important;
+}
+html[data-theme="dark"] .main-nav .nav-tab.active {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 22%, transparent)) !important;
+  color: var(--accent-hover, var(--accent, #409CFF)) !important;
+  border-color: var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 36%, transparent)) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28) !important;
+  font-weight: 600 !important;
+}
+
+/* Issue 2 修复：顶栏右侧操作按钮 — 仅当 AI 功能启用（无 .force-hidden）时才显示 #aiFloatingBtn */
+.main-nav .nav-actions {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+.main-nav .nav-actions #aiFloatingBtn.force-hidden,
+.main-nav #aiFloatingBtn.force-hidden,
+.main-nav .nav-tab.force-hidden {
+  display: none !important;
+}
+.main-nav .nav-actions #aiFloatingBtn:not(.force-hidden):not([hidden]),
+.main-nav #aiFloatingBtn:not(.force-hidden):not([hidden]) {
+  height: 34px !important;
+  min-height: 34px !important;
+  width: auto !important;
+  min-width: 64px !important;
+  max-width: none !important;
+  padding: 0 14px !important;
+  border-radius: 9999px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  overflow: visible !important;
+}
+html[data-theme="light"] .main-nav .nav-actions #aiFloatingBtn:not(.force-hidden) {
+  background: rgba(235, 239, 244, 0.92) !important;
+  color: #1D1D1F !important;
+  border: 1px solid rgba(15, 20, 28, 0.08) !important;
+}
+html[data-theme="dark"] .main-nav .nav-actions #aiFloatingBtn:not(.force-hidden) {
+  background: rgba(34, 38, 46, 0.88) !important;
+  color: #F2F4F7 !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+}
+.main-nav .nav-actions #appThemeToggle,
+.main-nav #appThemeToggle {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  max-width: 34px !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #E8A415 !important;
+}
+html[data-theme="dark"] .main-nav .nav-actions #appThemeToggle {
+  color: #FFD60A !important;
+  background: rgba(34, 38, 46, 0.88) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+}
+html[data-theme="light"] .main-nav .nav-actions #appThemeToggle {
+  background: rgba(235, 239, 244, 0.92) !important;
+  border: 1px solid rgba(15, 20, 28, 0.08) !important;
+}
+.main-nav .nav-actions #logoutBtn,
+.main-nav #logoutBtn {
+  height: 34px !important;
+  min-height: 34px !important;
+  width: auto !important;
+  max-width: none !important;
+  padding: 0 14px !important;
+  border-radius: 9999px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+html[data-theme="light"] .main-nav .nav-actions #logoutBtn {
+  background: rgba(255, 59, 48, 0.10) !important;
+  border: 1px solid rgba(255, 59, 48, 0.22) !important;
+  color: #FF3B30 !important;
+}
+html[data-theme="dark"] .main-nav .nav-actions #logoutBtn {
+  background: rgba(255, 69, 58, 0.16) !important;
+  border: 1px solid rgba(255, 69, 58, 0.32) !important;
+  color: #FF453A !important;
+}
+
+/* 20.3 Issue 5 修复：外层 .terminal-window 14px 圆角蓝线前景护栏（::after z-index:30 绝不被子 iframe 遮挡） */
+.terminal-window {
+  border-radius: 14px !important;
+  overflow: hidden !important;
+  position: relative !important;
+  /* Issue 9: 严禁在 .terminal-window 上写 CSS animation/transition: transform 抢占 zephyr_motion.wasm */
+  animation: none !important;
+  transform: none !important;
+  filter: none !important;
+  transition: box-shadow 220ms ease, border-color 220ms ease !important;
+}
+.terminal-window > .terminal-window-titlebar {
+  border-radius: 12px 12px 0 0 !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.terminal-window.window-has-dock-right > .terminal-window-titlebar {
+  border-radius: 12px 0 0 0 !important;
+}
+.terminal-window.window-has-dock-left > .terminal-window-titlebar {
+  border-radius: 0 12px 0 0 !important;
+}
+.terminal-window > .terminal-window-body,
+.terminal-window > .terminal-window-body > iframe.terminal-frame {
+  border-radius: 0 0 12px 12px !important;
+  overflow: hidden !important;
+}
+.terminal-window.window-has-dock-right > .terminal-window-body,
+.terminal-window.window-has-dock-right > .terminal-window-body > iframe.terminal-frame,
+.terminal-window.window-has-dock-left > .terminal-window-body,
+.terminal-window.window-has-dock-left > .terminal-window-body > iframe.terminal-frame {
+  border-radius: 12px !important;
+}
+/* 顶层前景圆角描边环（z-index: 30，画在所有子 iframe 和标题栏之上，彻底根治圆角蓝线被遮住） */
+.terminal-window::after {
+  content: '' !important;
+  position: absolute !important;
+  inset: 0 !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  z-index: 30 !important;
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.16) !important;
+  transition: box-shadow 200ms ease !important;
+}
+html[data-theme="light"] .terminal-window.active {
+  border: 0 !important;
+  box-shadow: 0 0 18px -2px var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 35%, transparent)), 0 14px 36px -16px rgba(17, 20, 24, 0.16) !important;
+}
+html[data-theme="light"] .terminal-window.active::after {
+  box-shadow: inset 0 0 0 2px var(--accent, var(--z-accent, #0071E3)) !important;
+}
+html[data-theme="dark"] .terminal-window.active {
+  border: 0 !important;
+  box-shadow: 0 0 22px -2px var(--accent-glow, color-mix(in srgb, var(--accent, #0A84FF) 50%, transparent)), 0 16px 40px -14px rgba(0, 0, 0, 0.55) !important;
+}
+html[data-theme="dark"] .terminal-window.active::after {
+  box-shadow: inset 0 0 0 2px var(--accent, var(--z-accent, #0A84FF)) !important;
+}
+/* 单屏下当自由浮窗在前景打开时（图 798/799），底层终端退回安静的 1px 细边框 */
+html[data-theme="light"] .terminal-workspace-grid.layout-1 .terminal-window.window-has-floating-panel {
+  box-shadow: 0 10px 28px rgba(15, 20, 28, 0.06) !important;
+}
+html[data-theme="light"] .terminal-workspace-grid.layout-1 .terminal-window.window-has-floating-panel::after {
+  box-shadow: inset 0 0 0 1px rgba(15, 20, 28, 0.12) !important;
+}
+html[data-theme="dark"] .terminal-workspace-grid.layout-1 .terminal-window.window-has-floating-panel {
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45) !important;
+}
+html[data-theme="dark"] .terminal-workspace-grid.layout-1 .terminal-window.window-has-floating-panel::after {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10) !important;
+}
+
+.terminal-window.window-has-dock-right > .terminal-window-titlebar {
+  width: calc(100% - 360px) !important;
+  box-sizing: border-box !important;
+  border-right: 1px solid var(--z-outline, rgba(128, 128, 128, 0.14)) !important;
+  position: relative !important;
+  z-index: 6 !important;
+}
+.terminal-window.window-has-dock-right > .terminal-window-body {
+  margin-top: -42px !important;
+  height: calc(100% + 42px) !important;
+}
+
+.terminal-window.window-has-dock-left > .terminal-window-titlebar {
+  margin-left: 360px !important;
+  width: calc(100% - 360px) !important;
+  box-sizing: border-box !important;
+  border-left: 1px solid var(--z-outline, rgba(128, 128, 128, 0.14)) !important;
+  position: relative !important;
+  z-index: 6 !important;
+}
+.terminal-window.window-has-dock-left > .terminal-window-body {
+  margin-top: -42px !important;
+  height: calc(100% + 42px) !important;
+}
+
+/* 外层窗格标题栏内部元素排版（42px） */
+.terminal-window-titlebar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 14px !important;
+  height: 42px !important;
+  min-height: 42px !important;
+}
+.terminal-window-titlebar .z1-tb-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.terminal-window-titlebar .terminal-window-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+html[data-theme="light"] .terminal-window-titlebar .terminal-window-title { color: #111418; }
+html[data-theme="dark"] .terminal-window-titlebar .terminal-window-title { color: #FFFFFF; }
+
+.terminal-window-titlebar .z1-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  font-family: var(--font-mono, monospace);
+}
+html[data-theme="light"] .terminal-window-titlebar .z1-badge {
+  background: #F1F3F6;
+  color: #5B6570;
+  border: 1px solid rgba(15, 20, 28, 0.06);
+}
+html[data-theme="dark"] .terminal-window-titlebar .z1-badge {
+  background: rgba(255, 255, 255, 0.07);
+  color: #9AA4B0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.terminal-window-titlebar .z1-ping {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+  color: #30D158;
+}
+html[data-theme="light"] .terminal-window-titlebar .z1-ping {
+  color: #1A9E3F;
+}
+.terminal-window-titlebar .z1-tb-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.terminal-window-titlebar .pbtn {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: rgba(128, 128, 128, 0.006);
+  color: var(--z-text-secondary, #8E99A6);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.terminal-window-titlebar .pbtn:hover {
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--z-text-primary, #F2F4F7);
+}
+.terminal-window-titlebar > .terminal-grip.terminal-window-center-dots {
+  opacity: 0;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+/* 20.4 桌面端内嵌终端（含双分屏窄 iframe）强制锁定桌面 3 层纵向布局 */
+html[data-zephyr-surface="desktop"] .terminal-page:not(.has-docked-right):not(.has-docked-left),
+body.desktop-embed .terminal-page:not(.has-docked-right):not(.has-docked-left) {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100vh !important;
+  padding-bottom: 0 !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page > .terminal-topbar,
+body.desktop-embed .terminal-page > .terminal-topbar {
+  position: static !important;
+  inset: auto !important;
+  order: 1 !important;
+  width: 100% !important;
+  padding: 8px 12px 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  min-height: 0 !important;
+  height: auto !important;
+  box-sizing: border-box !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page > .terminal-topbar > .status,
+html[data-zephyr-surface="desktop"] .terminal-page > .terminal-topbar > .info,
+body.desktop-embed .terminal-page > .terminal-topbar > .status,
+body.desktop-embed .terminal-page > .terminal-topbar > .info {
+  display: none !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page > .terminal-topbar > .topbar-actions,
+body.desktop-embed .terminal-page > .terminal-topbar > .topbar-actions {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 4px !important;
+  width: 100% !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  margin: 0 !important;
+  padding: 0 8px !important;
+  border-radius: 10px !important;
+  overflow-x: auto !important;
+  scrollbar-width: none !important;
+  box-sizing: border-box !important;
+}
+html[data-theme="light"] .terminal-page > .terminal-topbar > .topbar-actions,
+html[data-theme="light"] .terminal-page > .topbar-actions {
+  background: #F3F5F8 !important;
+  border: 1px solid rgba(15, 20, 28, 0.06) !important;
+}
+html[data-theme="dark"] .terminal-page > .terminal-topbar > .topbar-actions,
+html[data-theme="dark"] .terminal-page > .topbar-actions {
+  background: #171A1E !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page > .terminal-container,
+body.desktop-embed .terminal-page > .terminal-container {
+  order: 2 !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  width: 100% !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page > .terminal-top-input,
+body.desktop-embed .terminal-page > .terminal-top-input {
+  order: 3 !important;
+  position: static !important;
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  padding: 8px 12px 12px !important;
+  border-top: 0 !important;
+  border-bottom: 0 !important;
+  background: transparent !important;
+}
+.terminal-page > .terminal-top-input > .cmd-input-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: 100% !important;
+  flex: 1 1 auto !important;
+}
+html[data-zephyr-surface="desktop"] #mobileAuxKeys,
+html[data-zephyr-surface="desktop"] .mobile-aux-keys,
+html[data-zephyr-surface="desktop"] #terminalBottomBar,
+body.desktop-embed #mobileAuxKeys,
+body.desktop-embed .mobile-aux-keys,
+body.desktop-embed #terminalBottomBar {
+  display: none !important;
+}
+
+/* 20.5 次级工具胶囊条（.topbar-actions）线性 SVG 图标与右侧三枚纯图标按钮 */
+.terminal-page .topbar-actions .btn-sm {
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 9px !important;
+  border-radius: 7px !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  gap: 5px !important;
+  flex-shrink: 0 !important;
+  border: 1px solid transparent !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions .btn-sm::before,
+body.desktop-embed .terminal-page .topbar-actions .btn-sm::before {
+  display: none !important;
+  content: none !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions #notesBtn,
+body.desktop-embed .terminal-page .topbar-actions #notesBtn {
+  display: inline-flex !important;
+}
+html[data-theme="light"] .terminal-page .topbar-actions .btn-sm:not(.active) {
+  color: #4E5865 !important;
+}
+html[data-theme="dark"] .terminal-page .topbar-actions .btn-sm:not(.active) {
+  color: #9AA4B0 !important;
+}
+html[data-theme="light"] .terminal-page .topbar-actions .btn-sm.active {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent)) !important;
+  color: var(--accent, var(--z-accent, #0071E3)) !important;
+  border-color: var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent)) !important;
+}
+html[data-theme="dark"] .terminal-page .topbar-actions .btn-sm.active {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 18%, transparent)) !important;
+  color: var(--accent, var(--z-accent, #0A84FF)) !important;
+  border-color: var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 38%, transparent)) !important;
+}
+.terminal-page .topbar-actions .topbar-v-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--z-outline, rgba(128, 128, 128, 0.22));
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions #themeToggle,
+body.desktop-embed .terminal-page .topbar-actions #themeToggle {
+  display: none !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions #wtermThemeToggle,
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions #reconnectBtn,
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions #disconnectBtn,
+body.desktop-embed .terminal-page .topbar-actions #wtermThemeToggle,
+body.desktop-embed .terminal-page .topbar-actions #reconnectBtn,
+body.desktop-embed .terminal-page .topbar-actions #disconnectBtn {
+  width: 28px !important;
+  min-width: 28px !important;
+  padding: 0 !important;
+  justify-content: center !important;
+  background: rgba(128, 128, 128, 0.006) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* 底部命令发送框（全宽 flex: 1）与蓝色纸飞机发送按钮（高 38px，圆角 10px） */
+.terminal-page .terminal-top-input .cmd-input,
+.terminal-page .terminal-top-input #cmdInput {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  line-height: 22px !important;
+  border-radius: 10px !important;
+  padding: 8px 14px !important;
+  font-size: 13px !important;
+  resize: none !important;
+  box-sizing: border-box !important;
+}
+html[data-theme="light"] .terminal-page .terminal-top-input #cmdInput {
+  background: #F3F5F8 !important;
+  border: 1px solid rgba(15, 20, 28, 0.06) !important;
+  color: #1D1D1F !important;
+}
+html[data-theme="dark"] .terminal-page .terminal-top-input #cmdInput {
+  background: #16191D !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  color: #E5E7EB !important;
+}
+.terminal-page .terminal-top-input .cmd-send-btn,
+.terminal-page .terminal-top-input #cmdSendBtn {
+  flex: 0 0 auto !important;
+  height: 38px !important;
+  min-width: 78px !important;
+  padding: 0 16px !important;
+  border-radius: 10px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  background: var(--accent, var(--z-accent, #0071E3)) !important;
+  color: #FFFFFF !important;
+  border: 0 !important;
+}
+html[data-theme="dark"] .terminal-page .terminal-top-input #cmdSendBtn {
+  background: var(--accent, var(--z-accent, #0A84FF)) !important;
+}
+
+/* 20.6 停靠态（.has-docked-right / .has-docked-left）高优先级完整三行双列网格 */
+html[data-zephyr-surface="desktop"] .terminal-page.has-docked-right,
+body.desktop-embed .terminal-page.has-docked-right,
+.terminal-page.has-docked-right {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 360px !important;
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+  height: 100vh !important;
+}
+.terminal-page.has-docked-right > .terminal-topbar {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  margin-top: 42px !important;
+}
+.terminal-page.has-docked-right > .terminal-container {
+  grid-column: 1 !important;
+  grid-row: 2 !important;
+  border-right: 0 !important;
+}
+.terminal-page.has-docked-right > .terminal-top-input {
+  grid-column: 1 !important;
+  grid-row: 3 !important;
+}
+.terminal-page.has-docked-right > .docked-right {
+  grid-column: 2 !important;
+  grid-row: 1 / -1 !important;
+  position: static !important;
+  inset: auto !important;
+  width: 360px !important;
+  max-width: 360px !important;
+  height: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border-top: 0 !important;
+  border-right: 0 !important;
+  border-bottom: 0 !important;
+  border-left: 1px solid var(--z-outline, rgba(128, 128, 128, 0.14)) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+html[data-zephyr-surface="desktop"] .terminal-page.has-docked-left,
+body.desktop-embed .terminal-page.has-docked-left,
+.terminal-page.has-docked-left {
+  display: grid !important;
+  grid-template-columns: 360px minmax(0, 1fr) !important;
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+  height: 100vh !important;
+}
+.terminal-page.has-docked-left > .docked-left {
+  grid-column: 1 !important;
+  grid-row: 1 / -1 !important;
+  position: static !important;
+  inset: auto !important;
+  width: 360px !important;
+  max-width: 360px !important;
+  height: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border-top: 0 !important;
+  border-left: 0 !important;
+  border-bottom: 0 !important;
+  border-right: 1px solid var(--z-outline, rgba(128, 128, 128, 0.14)) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+.terminal-page.has-docked-left > .terminal-topbar {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  margin-top: 42px !important;
+}
+.terminal-page.has-docked-left > .terminal-container {
+  grid-column: 2 !important;
+  grid-row: 2 !important;
+  border-left: 0 !important;
+}
+.terminal-page.has-docked-left > .terminal-top-input {
+  grid-column: 2 !important;
+  grid-row: 3 !important;
+}
+
+/* 20.7 Issue 4 / Issue 6 / Issue 7 / Issue 8 大一统：
+ * 彻底消除“三个时代”的浮窗割裂，统一全部一级浮窗（7 大工具 + AI 面板）与全部二级浮窗（代码编辑器、图片预览、音视频预览、属性框、容器日志/详情、主站 Modal）！ */
+
+/* 隐藏第一代遗留的顶部灰色拖拽横条（改由 42px 统一标题栏直接拖拽） */
+.z-unified-panel > .panel-drag-handle,
+.z-unified-secondary-panel > .panel-drag-handle,
+.fm-editor-modal > .fm-editor-window-titlebar,
+.image-preview-modal > .image-preview-titlebar,
+.media-preview-modal > .media-preview-titlebar {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* 禁用子页面内旧时代的 .panel-layout-menu / .panel-pin-menu，统一使用 .z-panel-more-popover (Issue 7) */
+.terminal-page ~ .panel-layout-menu,
+body.desktop-embed .panel-layout-menu,
+body.desktop-embed .panel-pin-menu {
+  display: none !important;
+}
+
+/* 统一 42px 浮窗标题栏（可拖拽 cursor: grab） */
+.z-unified-panel .panel-titlebar,
+.z-unified-panel .fm-titlebar-head,
+.z-unified-secondary-panel .fm-editor-header,
+.z-unified-secondary-panel .image-preview-header,
+.z-unified-secondary-panel .media-preview-header,
+.fm-props-modal .fm-props-head,
+.docker-log-drawer .docker-log-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  height: 42px !important;
+  min-height: 42px !important;
+  padding: 0 12px !important;
+  border-bottom: 1px solid var(--z-outline, rgba(128, 128, 128, 0.12)) !important;
+  box-sizing: border-box !important;
+  user-select: none !important;
+  border-radius: 15px 15px 0 0 !important;
+}
+.z-unified-panel.docked-left .panel-titlebar,
+.z-unified-panel.docked-right .panel-titlebar,
+.z-unified-panel.docked-left .fm-titlebar-head,
+.z-unified-panel.docked-right .fm-titlebar-head {
+  border-radius: 0 !important;
+  cursor: default !important;
+}
+.z-unified-panel:not(.docked-left):not(.docked-right) .panel-titlebar,
+.z-unified-panel:not(.docked-left):not(.docked-right) .fm-titlebar-head,
+.z-unified-secondary-panel .fm-editor-header,
+.z-unified-secondary-panel .image-preview-header,
+.z-unified-secondary-panel .media-preview-header,
+.fm-props-modal .fm-props-head {
+  cursor: grab !important;
+  touch-action: none !important;
+}
+.z-unified-panel.dragging .panel-titlebar,
+.z-unified-panel.dragging .fm-titlebar-head,
+.z-unified-secondary-panel.dragging .fm-editor-header,
+.z-unified-secondary-panel.dragging .image-preview-header,
+.z-unified-secondary-panel.dragging .media-preview-header {
+  cursor: grabbing !important;
+}
+
+.fm-title-left,
+.z-unified-panel .panel-titlebar strong,
+.z-unified-panel .docker-title,
+.z-unified-panel .monitor-title,
+.z-unified-secondary-panel #fmEditorTitle,
+.z-unified-secondary-panel .image-preview-title,
+.z-unified-secondary-panel .media-preview-title,
+.fm-props-modal .fm-props-head strong {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  font-size: 13.5px !important;
+  font-weight: 700 !important;
+}
+html[data-theme="light"] .fm-title-text,
+html[data-theme="light"] .z-panel-title-main,
+html[data-theme="light"] .z-unified-panel .panel-titlebar strong,
+html[data-theme="light"] .z-unified-panel .docker-title,
+html[data-theme="light"] .z-unified-panel .monitor-title,
+html[data-theme="light"] .z-unified-secondary-panel #fmEditorTitle,
+html[data-theme="light"] .z-unified-secondary-panel .image-preview-title,
+html[data-theme="light"] .z-unified-secondary-panel .media-preview-title {
+  color: #111418 !important;
+}
+html[data-theme="dark"] .fm-title-text,
+html[data-theme="dark"] .z-panel-title-main,
+html[data-theme="dark"] .z-unified-panel .panel-titlebar strong,
+html[data-theme="dark"] .z-unified-panel .docker-title,
+html[data-theme="dark"] .z-unified-panel .monitor-title,
+html[data-theme="dark"] .z-unified-secondary-panel #fmEditorTitle,
+html[data-theme="dark"] .z-unified-secondary-panel .image-preview-title,
+html[data-theme="dark"] .z-unified-secondary-panel .media-preview-title {
+  color: #F2F4F7 !important;
+}
+.fm-title-host {
+  color: var(--z-text-secondary, #8E99A6) !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+}
+.panel-head-controls {
+    margin-left: auto !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  margin-left: auto !important;
+}
+.panel-head-controls .tool-btn,
+.panel-head-controls #fmCloseBtn,
+.panel-head-controls .fm-close-btn,
+.panel-head-controls .panel-close-btn,
+.z-unified-secondary-panel .panel-close-btn,
+.z-unified-secondary-panel #fmEditorCloseBtn,
+.fm-props-modal .fm-props-close {
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  padding: 0 !important;
+  border-radius: 7px !important;
+  border: 1px solid transparent !important;
+  background: rgba(128, 128, 128, 0.006) !important;
+  color: var(--z-text-secondary, #8E99A6) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer;
+}
+.panel-head-controls .tool-btn:hover,
+.z-unified-secondary-panel .panel-close-btn:hover,
+.z-unified-secondary-panel #fmEditorCloseBtn:hover,
+.fm-props-modal .fm-props-close:hover {
+  background: rgba(128, 128, 128, 0.14) !important;
+  color: var(--z-text-primary, #F2F4F7) !important;
+}
+.panel-head-controls .panel-pin-toggle {
+  color: var(--accent, var(--z-accent, #0A84FF)) !important;
+}
+.panel-head-controls .panel-pin-toggle .z-pin-ico {
+  transform: rotate(45deg);
+}
+.panel-head-controls .panel-pin-toggle.active,
+.panel-head-controls .panel-pin-toggle.on,
+.pinned .panel-head-controls .panel-pin-toggle {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 18%, transparent)) !important;
+  border-color: var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 34%, transparent)) !important;
+  color: var(--accent, var(--z-accent, #0A84FF)) !important;
+}
+html[data-theme="light"] .panel-head-controls .panel-pin-toggle.active,
+html[data-theme="light"] .panel-head-controls .panel-pin-toggle.on,
+html[data-theme="light"] .pinned .panel-head-controls .panel-pin-toggle {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 14%, transparent)) !important;
+  border-color: var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent)) !important;
+  color: var(--accent, var(--z-accent, #0071E3)) !important;
+}
+
+/* Issue 4 修复：自由浮窗态绝不使用 !important 锁死 left/top/right/bottom/width/height/transform，
+ * 让 Motion.drag 与外圈缩放手柄 100% 自由控制位置与尺寸！ */
+.terminal-page > .z-unified-panel:not(.open):not(.panel-closing):not(.z-panel-morphing):not(.z-panel-closing) {
+  display: none !important;
+}
+.terminal-page > .z-unified-panel.open:not(.docked-right):not(.docked-left) {
+  position: fixed;
+  width: min(580px, calc(100vw - 36px));
+  height: min(390px, calc(100vh - 108px));
+  max-height: calc(100vh - 48px);
+  border-radius: 16px !important;
+  /* 允许外圈缩放手柄在浮窗外圈 (-7px) 露头显示 (Issue 6) */
+  overflow: visible !important;
+  display: flex !important;
+  flex-direction: column !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  z-index: 80;
+  transition: box-shadow 180ms ease, border-color 180ms ease !important;
+}
+html[data-theme="dark"] .terminal-page > .z-unified-panel.open:not(.docked-right):not(.docked-left),
+html[data-theme="dark"] .z-unified-secondary-panel,
+html[data-theme="dark"] .fm-props-modal {
+  background: rgba(20, 23, 28, 0.98) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 24px 60px rgba(0, 0, 0, 0.68) !important;
+}
+html[data-theme="light"] .terminal-page > .z-unified-panel.open:not(.docked-right):not(.docked-left),
+html[data-theme="light"] .z-unified-secondary-panel,
+html[data-theme="light"] .fm-props-modal {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border: 1px solid rgba(15, 23, 42, 0.10) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 20px 50px rgba(15, 23, 42, 0.18) !important;
+}
+
+/* Issue 8：二级浮窗（代码编辑器 #fmEditorModal、图片预览 .image-preview-modal、音视频预览 .media-preview-modal、属性框 .fm-props-modal、Docker 详情/日志）统一为同一套 v4.0 视觉规范 */
+.fm-editor-modal.editor-window,
+.image-preview-modal,
+.media-preview-modal {
+  border-radius: 16px !important;
+  overflow: visible !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transition: box-shadow 180ms ease, border-color 180ms ease !important;
+}
+.fm-editor-modal.editor-window .fm-editor-code-shell,
+.image-preview-modal .image-preview-meta,
+.media-preview-modal .media-preview-meta {
+  border-radius: 0 0 15px 15px !important;
+  overflow: hidden !important;
+}
+.fm-props-modal {
+  border-radius: 16px !important;
+  overflow: hidden !important;
+}
+.docker-log-drawer {
+  border-radius: 14px !important;
+  border: 1px solid var(--z-outline, rgba(128, 128, 128, 0.16)) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45) !important;
+}
+
+/* Issue 6：浮窗外圈双缩放手柄（左下角 & 右下角外圈弧形角标）—— 不点击浮窗时隐藏，点击/聚焦浮窗时由 WASM 动效引擎显示！ */
+.z-unified-panel > .panel-resize-handle,
+.z-unified-secondary-panel > .panel-resize-handle,
+.fm-editor-modal > .panel-resize-handle,
+.image-preview-modal > .panel-resize-handle,
+.media-preview-modal > .panel-resize-handle,
+.ai-agent-panel > .panel-resize-handle {
+  position: absolute !important;
+  bottom: -8px !important;
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+  min-height: 30px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  z-index: 65 !important;
+  overflow: visible !important;
+  opacity: 0;
+  pointer-events: none;
+  touch-action: none !important;
+}
+.z-unified-panel > .panel-resize-handle.left,
+.z-unified-secondary-panel > .panel-resize-handle.left,
+.fm-editor-modal > .panel-resize-handle.left,
+.image-preview-modal > .panel-resize-handle.left,
+.media-preview-modal > .panel-resize-handle.left,
+.ai-agent-panel > .panel-resize-handle.left {
+  left: -8px !important;
+  right: auto !important;
+  cursor: nesw-resize !important;
+}
+.z-unified-panel > .panel-resize-handle.right,
+.z-unified-secondary-panel > .panel-resize-handle.right,
+.fm-editor-modal > .panel-resize-handle.right,
+.image-preview-modal > .panel-resize-handle.right,
+.media-preview-modal > .panel-resize-handle.right,
+.ai-agent-panel > .panel-resize-handle.right {
+  right: -8px !important;
+  left: auto !important;
+  cursor: nwse-resize !important;
+}
+.z-unified-panel > .panel-resize-handle::before,
+.z-unified-secondary-panel > .panel-resize-handle::before,
+.fm-editor-modal > .panel-resize-handle::before,
+.image-preview-modal > .panel-resize-handle::before,
+.media-preview-modal > .panel-resize-handle::before,
+.ai-agent-panel > .panel-resize-handle::before {
+  content: '' !important;
+  position: absolute !important;
+  bottom: 2px !important;
+  width: 22px !important;
+  height: 22px !important;
+  border-color: var(--z-accent, var(--accent, var(--z-accent, #0A84FF))) !important;
+  border-style: solid !important;
+  pointer-events: none !important;
+  filter: drop-shadow(0 2px 6px var(--accent-glow, color-mix(in srgb, var(--accent, #0A84FF) 42%, transparent))) !important;
+}
+.z-unified-panel > .panel-resize-handle.right::before,
+.z-unified-secondary-panel > .panel-resize-handle.right::before,
+.fm-editor-modal > .panel-resize-handle.right::before,
+.image-preview-modal > .panel-resize-handle.right::before,
+.media-preview-modal > .panel-resize-handle.right::before,
+.ai-agent-panel > .panel-resize-handle.right::before {
+  right: 2px !important;
+  left: auto !important;
+  border-width: 0 3px 3px 0 !important;
+  border-radius: 0 0 18px 0 !important;
+}
+.z-unified-panel > .panel-resize-handle.left::before,
+.z-unified-secondary-panel > .panel-resize-handle.left::before,
+.fm-editor-modal > .panel-resize-handle.left::before,
+.image-preview-modal > .panel-resize-handle.left::before,
+.media-preview-modal > .panel-resize-handle.left::before,
+.ai-agent-panel > .panel-resize-handle.left::before {
+  left: 2px !important;
+  right: auto !important;
+  border-width: 0 0 3px 3px !important;
+  border-radius: 0 0 0 18px !important;
+}
+/* 点击/聚焦浮窗（.panel-focused）或正在缩放（.resizing）时显示外圈双缩放手柄 */
+.panel-focused > .panel-resize-handle,
+.resizing > .panel-resize-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* 停靠态下严禁显示外圈缩放手柄 */
+.docked-left > .panel-resize-handle,
+.docked-right > .panel-resize-handle,
+.pinned > .panel-resize-handle {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Issue 7：统一 v4.0 浮窗三点更多菜单（.z-panel-more-popover） */
+.z-panel-more-popover {
+  position: fixed;
+  z-index: 10200;
+  min-width: 176px;
+  padding: 6px;
+  border-radius: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  user-select: none;
+}
+html[data-theme="dark"] .z-panel-more-popover {
+  background: rgba(26, 30, 36, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+html[data-theme="light"] .z-panel-more-popover {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.z-panel-more-popover .z-more-item {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--z-text-primary, #F2F4F7);
+  font-size: 12.5px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+html[data-theme="light"] .z-panel-more-popover .z-more-item {
+  color: #1D1D1F;
+}
+.z-panel-more-popover .z-more-item:hover {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 14%, transparent));
+  color: var(--accent, var(--z-accent, #0A84FF));
+}
+html[data-theme="light"] .z-panel-more-popover .z-more-item:hover {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 10%, transparent));
+  color: var(--accent, var(--z-accent, #0071E3));
+}
+.z-panel-more-popover .z-more-item.active {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 18%, transparent));
+  color: var(--accent, var(--z-accent, #0A84FF));
+  font-weight: 600;
+}
+html[data-theme="light"] .z-panel-more-popover .z-more-item.active {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent));
+  color: var(--accent, var(--z-accent, #0071E3));
+}
+.z-panel-more-popover .z-more-item.danger {
+  color: #FF453A;
+}
+.z-panel-more-popover .z-more-item.danger:hover {
+  background: rgba(255, 69, 58, 0.15);
+}
+.z-panel-more-popover .z-more-check {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+}
+.z-panel-more-popover .z-more-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--z-outline, rgba(128, 128, 128, 0.16));
+}
+
+/* 20.8 SFTP 文件管理面板：停靠态 3 行 vs 浮窗态 1 行 + 三列表格（1:1 还原图 794–801） */
+#fileManager > .fm-header:not(.fm-titlebar-head),
+#fileManager .fm-legacy-header,
+#fileManager #fmAgentJumpBtn,
+#fileManager #fmGoBtn,
+#fileManager #fmSelectBtn,
+#fileManager #fmPasteBtn {
+  display: none !important;
+}
+.fm-tab-strip:not(:has(.fm-tab-pill:nth-of-type(2))) {
+  display: none !important;
+}
+
+#fileManager .fm-path-box,
+#fileManager .fm-search-box {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  height: 30px !important;
+  min-height: 30px !important;
+  border-radius: 8px !important;
+  padding: 0 8px !important;
+  box-sizing: border-box !important;
+}
+html[data-theme="light"] #fileManager .fm-path-box,
+html[data-theme="light"] #fileManager .fm-search-box {
+  background: #F1F3F6 !important;
+  border: 1px solid rgba(15, 20, 28, 0.06) !important;
+}
+html[data-theme="dark"] #fileManager .fm-path-box,
+html[data-theme="dark"] #fileManager .fm-search-box {
+  background: #171A1E !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+}
+#fileManager .fm-path-input,
+#fileManager .fm-search-input {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  height: 100% !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 4px !important;
+  font-size: 12px !important;
+  outline: none !important;
+}
+#fileManager .fm-path-input {
+  font-family: var(--font-mono, monospace) !important;
+}
+#fileManager .fm-path-chevron {
+  border: 0;
+  background: transparent;
+  color: var(--z-text-secondary, #8E939B);
+  font-size: 11px;
+  padding: 0 2px;
+  cursor: pointer;
+}
+#fileManager .fm-search-ico {
+  color: var(--z-text-secondary, #8E939B);
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
+/* 形态 A：停靠态（.docked-right / .docked-left，宽 360px）→ 3 行垂直堆叠（图 794–797） */
+#fileManager.docked-right .fm-toolbar,
+#fileManager.docked-left .fm-toolbar {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 8px 6px !important;
+  padding: 10px 12px !important;
+  border-bottom: 1px solid var(--z-outline-soft, rgba(128, 128, 128, 0.08)) !important;
+}
+#fileManager.docked-right .fm-toolbar .fm-path-box,
+#fileManager.docked-left .fm-toolbar .fm-path-box,
+#fileManager.docked-right .fm-toolbar .fm-search-box,
+#fileManager.docked-left .fm-toolbar .fm-search-box {
+  grid-column: 1 / -1 !important;
+  width: 100% !important;
+}
+
+/* 形态 B：自由浮窗态（:not(.docked-right):not(.docked-left)，宽 580px）→ 1 行水平排列（图 798–801） */
+#fileManager:not(.docked-right):not(.docked-left) .fm-toolbar {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 10px 12px !important;
+  border-bottom: 1px solid var(--z-outline-soft, rgba(128, 128, 128, 0.08)) !important;
+}
+#fileManager:not(.docked-right):not(.docked-left) .fm-toolbar .fm-path-box {
+  width: 104px !important;
+  flex: 0 0 104px !important;
+}
+#fileManager:not(.docked-right):not(.docked-left) .fm-toolbar .fm-search-box {
+  flex: 1 1 130px !important;
+  min-width: 100px !important;
+}
+
+/* SFTP 4 个胶囊按钮（[↻ 刷新] [新建文件夹] [新建文件] [↑ 上传]） */
+#fileManager .fm-toolbar > .tool-btn,
+#fileManager .fm-toolbar > label.fm-upload-label {
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 9px !important;
+  border-radius: 9999px !important;
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+html[data-theme="light"] #fileManager .fm-toolbar > .tool-btn:not(.fm-upload-label) {
+  background: #F1F3F6 !important;
+  color: #3A424D !important;
+  border: 1px solid rgba(15, 20, 28, 0.06) !important;
+}
+html[data-theme="dark"] #fileManager .fm-toolbar > .tool-btn:not(.fm-upload-label) {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #D1D5DB !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+}
+#fileManager .fm-toolbar > label.fm-upload-label {
+  background: var(--accent, var(--z-accent, #0071E3)) !important;
+  border-color: var(--accent, var(--z-accent, #0071E3)) !important;
+  color: #FFFFFF !important;
+  font-weight: 600 !important;
+}
+html[data-theme="dark"] #fileManager .fm-toolbar > label.fm-upload-label {
+  background: var(--accent, var(--z-accent, #0A84FF)) !important;
+  border-color: var(--accent, var(--z-accent, #0A84FF)) !important;
+}
+
+/* SFTP 表头列与三列数据行（名称 ↑↓ | 大小 | 修改时间） */
+.fm-col-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 14px !important;
+  font-size: 11.5px !important;
+  color: var(--z-text-secondary, #8E939B) !important;
+  border-bottom: 1px solid var(--z-outline-soft, rgba(128, 128, 128, 0.08)) !important;
+}
+.fm-col-name { flex: 1; }
+.fm-col-size { width: 72px; text-align: right; }
+.fm-col-mtime { width: 96px; text-align: right; }
+
+#fmList {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  border-radius: 0 !important;
+  border: 0 !important;
+}
+#fmList .fm-item {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 0 14px !important;
+  border-bottom: 1px solid var(--z-outline-soft, rgba(128, 128, 128, 0.06)) !important;
+  position: relative !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+}
+#fmList .fm-item-name {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  font-size: 13px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+#fmList .fm-item-size {
+  width: 72px !important;
+  flex: 0 0 72px !important;
+  text-align: right !important;
+  font-size: 12px !important;
+  color: var(--z-text-secondary, #8E939B) !important;
+}
+#fmList .fm-item-mtime {
+  width: 96px !important;
+  flex: 0 0 96px !important;
+  text-align: right !important;
+  font-size: 12px !important;
+  color: var(--z-text-secondary, #8E939B) !important;
+}
+#fmList .fm-item-actions {
+  position: absolute !important;
+  right: 12px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  gap: 2px !important;
+  transition: opacity 140ms ease !important;
+}
+#fmList .fm-item:hover .fm-item-actions {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+#fmFooter {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  flex-shrink: 0 !important;
+  padding: 0 14px !important;
+  font-size: 11.5px !important;
+  color: var(--z-text-secondary, #8E939B) !important;
+  border-top: 1px solid var(--z-outline-soft, rgba(128, 128, 128, 0.08)) !important;
+  border-radius: 0 0 15px 15px !important;
+}
+
+/* 其余 6 大一级面板在停靠与浮窗下的自适应内容区 */
+.z-unified-panel .info-modal-body,
+.z-unified-panel .docker-content,
+.z-unified-panel .snippet-panel-body,
+.z-unified-panel .shortcut-grid,
+.z-unified-panel .pf-panel-body,
+.z-unified-panel .terminal-notes-body {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  border-radius: 0 0 15px 15px !important;
+}
+.z-unified-panel .docker-header-actions {
+  margin-left: auto;
+  margin-right: 6px;
+  display: inline-flex;
+  gap: 4px;
+}
+
+/* 终端内联笔记面板（#terminalNotesPanel） */
+.terminal-notes-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.tn-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.tn-toolbar .snippet-search { flex: 1; margin: 0; }
+.tn-save-btn {
+  background: var(--z-accent, var(--accent, var(--z-accent, #0A84FF))) !important;
+  color: #FFFFFF !important;
+  border: 0 !important;
+  padding: 0 12px !important;
+  height: 30px !important;
+  border-radius: 8px !important;
+}
+.tn-textarea {
+  width: 100%;
+  min-height: 110px;
+  border-radius: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--z-outline, rgba(255, 255, 255, 0.1));
+  background: var(--z-surface-elevated, #16191D);
+  color: var(--z-text-primary, #E5E7EB);
+  font-family: var(--font-mono, monospace);
+  font-size: 12.5px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+html[data-theme="light"] .tn-textarea {
+  background: #F3F5F8;
+  color: #1D1D1F;
+  border-color: rgba(15, 20, 28, 0.08);
+}
+.tn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.tn-note-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  background: rgba(128, 128, 128, 0.06);
+}
+.tn-note-item:hover {
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 14%, transparent));
+}
+
+/* 20.9 全局 IP 保护模式（body.ip-protection-on）CSS 双重护栏 */
+body.ip-protection-on .terminal-window-titlebar .z1-host,
+body.ip-protection-on .terminal-window-titlebar .z1-host-badge,
+body.ip-protection-on .connection-card .host-line .host-addr-text,
+body.ip-protection-on #remoteServerList .server-check em,
+body.ip-protection-on #proxyList .resource-tag-host,
+body.ip-protection-on #jumpHostList .resource-tag-host,
+body.ip-protection-on #fmHostChip {
+  display: none !important;
+}
+body.ip-protection-on #infoModal.open [data-stat="ipv4"],
+body.ip-protection-on #infoModal.open [data-stat="ipv6"] {
+  display: inline !important;
+  visibility: visible !important;
+}
+body.ip-protection-on #connModal.show #connHost,
+body.ip-protection-on #proxyModal.show #proxyHost,
+body.ip-protection-on #jumpHostModal.show #jumpHost {
+  display: block !important;
+  visibility: visible !important;
+}
+
+/* 20.10 双分屏默认 50:50 等宽与防窄屏误触 mobile-stable-input */
+.terminal-workspace-grid {
+  --workspace-split-x: 49.6%;
+}
+html[data-zephyr-surface="desktop"] .terminal-page > .topbar-actions,
+body.desktop-embed .terminal-page > .topbar-actions {
+  order: 1 !important;
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 4px !important;
+  margin: 8px 12px 0 !important;
+  width: calc(100% - 24px) !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 0 8px !important;
+  border-radius: 10px !important;
+  box-sizing: border-box !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page.has-docked-right > .topbar-actions {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  margin-top: 50px !important;
+}
+
+/* 20.11 Issue 3 & Issue 9 修复：双分屏停靠态 80% 滑出布局（精确 14px 窗口间距，位移 100% 由 Motion.splitDockSlide M25 驱动） */
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) {
+  display: block !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .workspace-splitter {
+  display: none !important;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-1,
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-2 {
+  position: absolute !important;
+  top: 12px !important;
+  bottom: 18px !important;
+  height: auto !important;
+  width: calc(80% - 23px) !important;
+  transition: box-shadow 200ms ease !important;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-1 {
+  left: calc(16px + var(--split-slide-1-x, 0px)) !important;
+  right: auto !important;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-2 {
+  right: calc(16px - var(--split-slide-2-x, 0px)) !important;
+  left: auto !important;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-1 > .terminal-window.slot-1,
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-2 > .terminal-window.slot-2 {
+  z-index: 3 !important;
+}
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-1 > .terminal-window.slot-2,
+.terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active).active-slot-2 > .terminal-window.slot-1 {
+  z-index: 2 !important;
+}
+
+/* 20.12 停靠态 .fm-toolbar 3 行网格强制自适应高度（绝不裁切第 2/3 行） */
+.terminal-page.has-docked-right > #fileManager.docked-right .fm-toolbar,
+.terminal-page.has-docked-left > #fileManager.docked-left .fm-toolbar {
+  height: auto !important;
+  min-height: 114px !important;
+  max-height: none !important;
+  flex-shrink: 0 !important;
+  overflow: visible !important;
+}
+
+/* 20.13 终端页面“没有活跃终端会话”时：保持顶栏伸出架与中间小白条把手（Smartbar）与有会话时 100% 一致！ */
+#terminalWorkspace.layout-0 {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 24px !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+#terminalWorkspace.layout-0 > .terminal-placeholder {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.terminal-empty-card {
+  width: min(440px, calc(100vw - 48px));
+  padding: 36px 32px;
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+html[data-theme="dark"] .terminal-empty-card {
+  background: rgba(20, 24, 30, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+html[data-theme="light"] .terminal-empty-card {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 18px 44px rgba(15, 23, 42, 0.08);
+}
+.terminal-empty-icon-wrap {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent, var(--z-accent, #0A84FF));
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 14%, transparent));
+  border: 1px solid var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent));
+  margin-bottom: 4px;
+}
+html[data-theme="light"] .terminal-empty-icon-wrap {
+  color: var(--accent, var(--z-accent, #0071E3));
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 10%, transparent));
+  border-color: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 22%, transparent));
+}
+.terminal-empty-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--z-text-primary, #F2F4F7);
+}
+html[data-theme="light"] .terminal-empty-title {
+  color: #111418;
+}
+.terminal-empty-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--z-text-secondary, #8E99A6);
+}
+.terminal-empty-minimized-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.terminal-empty-restore-pill {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.terminal-empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.terminal-empty-actions .btn {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+  .fm-editor-modal .fm-editor-header,
+  .image-preview-modal .image-preview-header,
+  .media-preview-modal .media-preview-header,
+  .fm-props-modal .fm-props-head {
+    border-radius: 16px 16px 0 0 !important;
+    min-height: 42px !important;
+    height: 42px !important;
+    padding: 0 12px 0 14px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
+  }
+
+  .fm-editor-header-actions,
+  .image-preview-actions,
+  .media-preview-actions {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 5px !important;
+    margin-left: auto !important;
+  }
+
+  .fm-editor-header-actions .tool-btn,
+  .image-preview-actions .tool-btn,
+  .media-preview-actions .tool-btn {
+    height: 26px !important;
+    padding: 0 9px !important;
+    border-radius: 7px !important;
+    font-size: 11.5px !important;
+    font-weight: 500 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+    border: 1px solid rgba(60, 60, 67, 0.12) !important;
+    background: rgba(118, 118, 128, 0.08) !important;
+    color: #1D1D1F !important;
+  }
+
+  html[data-theme="dark"] .fm-editor-header-actions .tool-btn,
+  html[data-theme="dark"] .image-preview-actions .tool-btn,
+  html[data-theme="dark"] .media-preview-actions .tool-btn {
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    color: #F5F5F7 !important;
+  }
+
+  .fm-editor-header-actions #fmEditorSaveBtn {
+    background: var(--accent, var(--z-accent, #0071E3)) !important;
+    border-color: var(--accent, var(--z-accent, #0071E3)) !important;
+    color: #FFFFFF !important;
+    width: 26px !important;
+    padding: 0 !important;
+  }
+
+  .fm-editor-header-actions #fmEditorSaveBtn svg {
+    width: 13px !important;
+    height: 13px !important;
+    stroke: currentColor !important;
+    fill: none !important;
+    stroke-width: 2 !important;
+  }
+
+  .fm-editor-header-actions #fmEditorCloseBtn,
+  .image-preview-actions .panel-close-btn,
+  .media-preview-actions .panel-close-btn {
+    width: 26px !important;
+    height: 26px !important;
+    padding: 0 !important;
+    border-radius: 7px !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+  }
+
+  .fm-editor-header-actions #fmEditorCloseBtn:hover,
+  .image-preview-actions .panel-close-btn:hover,
+  .media-preview-actions .panel-close-btn:hover {
+    background: rgba(255, 59, 48, 0.12) !important;
+    color: #FF3B30 !important;
+  }
+
+
+  /* Ensure 3D card flip stage is display:none when idle so high-DPR WebView never blanks out iframes */
+  body:not(.terminal-card-flip-animating):not(.terminal-card-flip-preparing) #terminalCardFlipStage {
+    display: none !important;
+  }
+
+  /* Dedicated 42px v4.0 titlebar on #fmEditorModal + clean secondary toolbar row */
+  .fm-editor-modal > .fm-titlebar-head {
+    min-height: 42px !important;
+    height: 42px !important;
+    padding: 0 12px 0 14px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    border-bottom: 1px solid rgba(60, 60, 67, 0.1) !important;
+    background: rgba(255, 255, 255, 0.55) !important;
+    border-radius: 16px 16px 0 0 !important;
+    cursor: grab !important;
+    user-select: none !important;
+    flex-shrink: 0 !important;
+  }
+
+  html[data-theme="dark"] .fm-editor-modal > .fm-titlebar-head {
+    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+    background: rgba(36, 36, 38, 0.65) !important;
+  }
+
+  .fm-editor-modal > .fm-editor-header {
+    border-radius: 0 !important;
+    min-height: 38px !important;
+    height: auto !important;
+    padding: 6px 12px !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 6px !important;
+    background: rgba(248, 248, 250, 0.72) !important;
+    border-bottom: 1px solid rgba(60, 60, 67, 0.08) !important;
+  }
+
+  html[data-theme="dark"] .fm-editor-modal > .fm-editor-header {
+    background: rgba(28, 28, 30, 0.72) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .fm-editor-modal .fm-editor-header-actions {
+    margin-left: 0 !important;
+    flex-wrap: wrap !important;
+    width: 100% !important;
+    justify-content: flex-start !important;
+  }
+
+  .fm-editor-modal .fm-editor-header-actions #fmEditorSaveBtn {
+    margin-left: auto !important;
+    width: auto !important;
+    padding: 0 10px !important;
+  }
+
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 21. 针对用户 11 项细节反馈的终极统一修定
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* 21.1 修复双窗（layout-2）下子 iframe 宽度 < 760px 触发移动端规则导致 .topbar-actions 工具栏消失/文字透明的 Bug */
+html[data-zephyr-surface="desktop"] .terminal-page > .terminal-topbar,
+body.desktop-embed .terminal-page > .terminal-topbar,
+html.mobile-stable-input[data-zephyr-surface="desktop"] .terminal-page > .terminal-topbar,
+html.mobile-stable-input body.desktop-embed .terminal-page > .terminal-topbar {
+  display: flex !important;
+  order: 1 !important;
+  position: static !important;
+  width: 100% !important;
+  padding: 8px 12px 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions,
+body.desktop-embed .terminal-page .topbar-actions,
+html.mobile-stable-input[data-zephyr-surface="desktop"] .terminal-page .topbar-actions,
+html.mobile-stable-input body.desktop-embed .terminal-page .topbar-actions {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 4px !important;
+  width: 100% !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 0 8px !important;
+  border-radius: 10px !important;
+  overflow-x: auto !important;
+  scrollbar-width: none !important;
+  box-sizing: border-box !important;
+}
+
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions .btn-sm,
+body.desktop-embed .terminal-page .topbar-actions .btn-sm,
+html.mobile-stable-input[data-zephyr-surface="desktop"] .terminal-page .topbar-actions .btn-sm,
+html.mobile-stable-input body.desktop-embed .terminal-page .topbar-actions .btn-sm {
+  width: auto !important;
+  min-width: 0 !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 9px !important;
+  border-radius: 7px !important;
+  font-size: 12.5px !important;
+  line-height: 1.2 !important;
+  font-weight: 500 !important;
+  text-indent: 0 !important;
+  overflow: visible !important;
+  gap: 5px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+}
+
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions .btn-sm .tb-lbl,
+body.desktop-embed .terminal-page .topbar-actions .btn-sm .tb-lbl {
+  display: inline !important;
+  font-size: 12.5px !important;
+  line-height: 1.2 !important;
+  text-indent: 0 !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+html[data-theme="light"][data-zephyr-surface="desktop"] .terminal-page .topbar-actions .btn-sm:not(.active),
+html[data-theme="light"] body.desktop-embed .terminal-page .topbar-actions .btn-sm:not(.active) {
+  color: #4E5865 !important;
+  -webkit-text-fill-color: #4E5865 !important;
+}
+html[data-theme="dark"][data-zephyr-surface="desktop"] .terminal-page .topbar-actions .btn-sm:not(.active),
+html[data-theme="dark"] body.desktop-embed .terminal-page .topbar-actions .btn-sm:not(.active) {
+  color: #9AA4B0 !important;
+  -webkit-text-fill-color: #9AA4B0 !important;
+}
+html[data-theme="light"][data-zephyr-surface="desktop"] .terminal-page .topbar-actions .btn-sm.active,
+html[data-theme="light"] body.desktop-embed .terminal-page .topbar-actions .btn-sm.active {
+  color: var(--accent, var(--z-accent, #0071E3)) !important;
+  -webkit-text-fill-color: var(--accent, var(--z-accent, #0071E3)) !important;
+}
+html[data-theme="dark"][data-zephyr-surface="desktop"] .terminal-page .topbar-actions .btn-sm.active,
+html[data-theme="dark"] body.desktop-embed .terminal-page .topbar-actions .btn-sm.active {
+  color: var(--accent, var(--z-accent, #0A84FF)) !important;
+  -webkit-text-fill-color: var(--accent, var(--z-accent, #0A84FF)) !important;
+}
+
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions #wtermThemeToggle,
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions #reconnectBtn,
+body.desktop-embed .terminal-page .topbar-actions #wtermThemeToggle,
+body.desktop-embed .terminal-page .topbar-actions #reconnectBtn {
+  width: 28px !important;
+  min-width: 28px !important;
+  padding: 0 !important;
+}
+
+/* 彻底隐藏工具栏中重复的断开连接按钮（#disconnectBtn），统一由会话窗格右上角 × 关闭连接 */
+html[data-zephyr-surface="desktop"] .terminal-page .topbar-actions #disconnectBtn,
+body.desktop-embed .terminal-page .topbar-actions #disconnectBtn {
+  display: none !important;
+}
+
+/* 21.2 修复除文件管理外其他一级浮窗（#infoModal / #dockerPanel 等）右上角 × 按钮被 style.css:5441 隐藏的问题，
+ *      以及二级浮窗右上角统一为 [全屏 □ .panel-max-btn] + [关闭 × .panel-close-btn] */
+.panel-head-controls > .tool-btn,
+.panel-head-controls > #fmCloseBtn,
+.panel-head-controls > #infoCloseBtn,
+.panel-head-controls > #dockerCloseBtn,
+.panel-head-controls > #portForwardCloseBtn,
+.panel-head-controls > #fmEditorCloseBtn,
+.panel-head-controls > .panel-pin-toggle,
+.panel-head-controls > .panel-more-btn,
+.panel-head-controls > .panel-max-btn,
+.panel-head-controls > .panel-close-btn {
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  padding: 0 !important;
+  border-radius: 7px !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.panel-head-controls > .panel-close-btn:hover,
+.panel-head-controls > #fmCloseBtn:hover,
+.panel-head-controls > #infoCloseBtn:hover,
+.panel-head-controls > #dockerCloseBtn:hover,
+.panel-head-controls > #portForwardCloseBtn:hover,
+.panel-head-controls > #fmEditorCloseBtn:hover,
+.terminal-window-titlebar .z1-close:hover {
+  background: rgba(255, 59, 48, 0.14) !important;
+  color: #FF3B30 !important;
+}
+
+/* 21.3 修复有浮窗时 Smartbar 加号（+）点击无反应、被 dockItemBloom 卡在 opacity:0 或层级被挡的问题 */
+body.app-body.terminal-mode .terminal-smartbar {
+  z-index: 9500 !important;
+}
+.terminal-smartbar.open .smartbar-session,
+.terminal-smartbar.open .smartbar-add {
+  opacity: 1 !important;
+  animation: none !important;
+  pointer-events: auto !important;
+}
+#smartbarPickerLayer {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 9600 !important;
+  pointer-events: none !important;
+}
+#smartbarPickerLayer .smartbar-picker {
+  z-index: 9601 !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  animation: none !important;
+  filter: none !important;
+}
+
+/* 21.4 彻底移除旧时代突兀的实心分屏比例条外观（.workspace-splitter），改为全透明无痕缝隙 + 悬停微光胶囊 */
+.workspace-splitter,
+.workspace-splitter.vertical,
+.workspace-splitter.horizontal {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+.workspace-splitter::before {
+  display: none !important;
+}
+.workspace-splitter::after {
+  opacity: 0 !important;
+  background: var(--z-accent, var(--accent, var(--z-accent, #0A84FF))) !important;
+  box-shadow: 0 0 10px var(--accent-glow, color-mix(in srgb, var(--accent, #0A84FF) 45%, transparent)) !important;
+  transition: opacity 160ms ease !important;
+}
+.workspace-splitter.vertical::after {
+  width: 4px !important;
+  height: 36px !important;
+}
+.workspace-splitter.horizontal::after {
+  width: 36px !important;
+  height: 4px !important;
+}
+.workspace-splitter:hover::after,
+.workspace-splitter.dragging::after {
+  opacity: 0.85 !important;
+}
+
+/* 21.5 无活跃终端会话时：保持顶部小白条把手可见，工作区中央采用极简原生轻提示 */
+.terminal-empty-minimal {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px !important;
+  width: auto !important;
+  max-width: 520px !important;
+  padding: 10px 20px !important;
+  border-radius: 9999px !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  transition: background-color 180ms ease, border-color 180ms ease !important;
+}
+html[data-theme="light"] .terminal-empty-minimal {
+  background: rgba(255, 255, 255, 0.78) !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05) !important;
+  color: #5B6570 !important;
+}
+html[data-theme="dark"] .terminal-empty-minimal {
+  background: rgba(24, 28, 34, 0.78) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28) !important;
+  color: #8E99A6 !important;
+}
+.terminal-empty-minimal:hover {
+  border-color: var(--accent-soft-border, color-mix(in srgb, var(--accent, #0A84FF) 35%, transparent)) !important;
+  color: var(--z-text-primary, #111418) !important;
+}
+.terminal-empty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, var(--z-accent, #0A84FF));
+  box-shadow: 0 0 8px var(--accent-glow, color-mix(in srgb, var(--accent, #0A84FF) 60%, transparent));
+  flex-shrink: 0;
+}
+.terminal-empty-text {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.z-unified-panel, .z-unified-secondary-panel, .info-modal, .docker-panel, .snippet-panel, .shortcut-panel { filter: none !important; }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 22. 浮窗状态切换物理变形（.z-panel-morphing / .terminal-window-morphing）、
+ *     二级浮窗右上角 [□ 全屏][× 关闭] 100% 显现、以及全量浮窗内部排版精修
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* 22.1 浮窗与分屏全屏切换飞行态（由 zephyr_motion.wasm 驱动真实 left/top/width/height/borderRadius） */
+html body .terminal-page > .z-unified-panel.z-panel-morphing,
+html body .terminal-page > .z-unified-secondary-panel.z-panel-morphing,
+html body .terminal-page.has-docked-right > .z-unified-panel.docked-right.z-panel-morphing,
+html body .terminal-page.has-docked-left > .z-unified-panel.docked-left.z-panel-morphing,
+html body .z-panel-morphing {
+  inset: auto !important;
+  position: fixed !important;
+  left: var(--z-morph-l, 0px) !important;
+  top: var(--z-morph-t, 0px) !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: var(--z-morph-w, 360px) !important;
+  height: var(--z-morph-h, 390px) !important;
+  border-radius: var(--z-morph-r, 16px) !important;
+  z-index: 9200 !important;
+  margin: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  transition: none !important;
+  pointer-events: none !important;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.24) !important;
+}
+
+#terminalWorkspace > .terminal-window.terminal-window-morphing {
+  position: fixed !important;
+  left: var(--z-morph-l, 16px) !important;
+  top: var(--z-morph-t, 95px) !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: var(--z-morph-w, 936px) !important;
+  height: var(--z-morph-h, 965px) !important;
+  z-index: 65 !important;
+  margin: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  transition: none !important;
+  pointer-events: none !important;
+}
+
+/* 22.2 二级浮窗统一标题栏（42px）与右上角 [□ 全屏][× 关闭] 强制可见 */
+.image-preview-modal > .image-preview-header,
+.media-preview-modal > .media-preview-header,
+.fm-props-modal > .fm-props-head,
+.docker-log-drawer > .docker-log-header,
+.transfer-popover > .transfer-popover-head {
+  height: 42px !important;
+  min-height: 42px !important;
+  max-height: 42px !important;
+  padding: 0 12px 0 14px !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  border-radius: 16px 16px 0 0 !important;
+  box-sizing: border-box !important;
+}
+
+html[data-theme="light"] .image-preview-modal > .image-preview-header,
+html[data-theme="light"] .media-preview-modal > .media-preview-header,
+html[data-theme="light"] .fm-props-modal > .fm-props-head,
+html[data-theme="light"] .docker-log-drawer > .docker-log-header,
+html[data-theme="light"] .transfer-popover > .transfer-popover-head {
+  background: color-mix(in srgb, var(--surface, #FFFFFF) 94%, var(--bg, #F4F6F9)) !important;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.07) !important;
+}
+
+html[data-theme="dark"] .image-preview-modal > .image-preview-header,
+html[data-theme="dark"] .media-preview-modal > .media-preview-header,
+html[data-theme="dark"] .fm-props-modal > .fm-props-head,
+html[data-theme="dark"] .docker-log-drawer > .docker-log-header,
+html[data-theme="dark"] .transfer-popover > .transfer-popover-head {
+  background: #1B1F26 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.z-sec-title-left,
+.fm-props-head > strong,
+.docker-log-header > span,
+.transfer-popover-head > strong {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  font-size: 13.5px !important;
+  font-weight: 600 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.image-preview-actions,
+.media-preview-actions,
+.docker-log-actions {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  flex: 0 0 auto !important;
+  margin-left: auto !important;
+}
+
+.image-preview-actions .tool-btn,
+.media-preview-actions .tool-btn,
+.docker-log-actions .tool-btn {
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 0 9px !important;
+  border-radius: 7px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+
+.panel-head-controls {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  flex: 0 0 auto !important;
+  margin-left: 6px !important;
+}
+
+/* 22.3 容器管理（#dockerPanel）内部排版精修 */
+#dockerPanel .docker-status {
+  display: none !important;
+}
+
+#dockerPanel .docker-header-actions {
+  display: none !important;
+}
+
+#dockerPanel .docker-content {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+#dockerPanel .docker-tabs {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 8px 14px !important;
+  margin: 0 !important;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12) !important;
+  flex: 0 0 auto !important;
+}
+
+#dockerPanel .docker-tab {
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 11px !important;
+  border-radius: 7px !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+}
+
+#dockerPanel .docker-tabs-right {
+  margin-left: auto !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+#dockerPanel .docker-tabs-right .tool-btn {
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 0 9px !important;
+  border-radius: 7px !important;
+  font-size: 12px !important;
+}
+
+#dockerPanel .docker-overview:not([hidden]) {
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+  padding: 10px 14px 6px !important;
+  margin: 0 !important;
+  flex: 0 0 auto !important;
+}
+
+#dockerPanel .docker-overview-item {
+  padding: 7px 10px !important;
+  border-radius: 10px !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  gap: 2px !important;
+}
+
+#dockerPanel .docker-overview-label {
+  font-size: 11px !important;
+  opacity: 0.72 !important;
+}
+
+#dockerPanel .docker-overview-item strong {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#dockerPanel .docker-tab-panel.active {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  padding: 6px 14px 12px !important;
+  gap: 8px !important;
+  overflow: hidden !important;
+}
+
+#dockerPanel .docker-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  flex: 0 0 auto !important;
+}
+
+#dockerPanel .docker-table-wrap {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow: auto !important;
+  border-radius: 10px !important;
+  margin: 0 !important;
+}
+
+#dockerPanel .docker-table {
+  width: 100% !important;
+  height: auto !important;
+  border-collapse: collapse !important;
+  table-layout: auto !important;
+}
+
+#dockerPanel .docker-table thead th {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 2 !important;
+  height: 32px !important;
+  padding: 0 8px !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  text-align: left !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+}
+
+html[data-theme="light"] #dockerPanel .docker-table thead th {
+  background: #F4F6F9 !important;
+  color: #5B6570 !important;
+}
+html[data-theme="dark"] #dockerPanel .docker-table thead th {
+  background: #1A1E25 !important;
+  color: #9AA4B0 !important;
+}
+
+#dockerPanel .docker-table tbody tr {
+  height: auto !important;
+}
+
+#dockerPanel .docker-table tbody td {
+  padding: 7px 8px !important;
+  font-size: 12px !important;
+  line-height: 1.35 !important;
+  vertical-align: middle !important;
+  height: auto !important;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.08) !important;
+}
+
+#dockerPanel .docker-table tbody td:nth-child(6),
+#dockerPanel .docker-table tbody td:nth-child(7) {
+  max-width: 115px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#dockerPanel .docker-actions {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+
+#dockerPanel .docker-actions .docker-action-btn {
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 6px !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
+  white-space: nowrap !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+}
+
+/* 22.4 端口转发（#portForwardPanel）内部排版精修 */
+#portForwardPanel .port-forward-body {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  padding: 12px 14px !important;
+  gap: 10px !important;
+  overflow: hidden !important;
+}
+
+.pf-top-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  flex: 0 0 auto;
+}
+html[data-theme="light"] .pf-top-card {
+  background: #F6F8FB;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+html[data-theme="dark"] .pf-top-card {
+  background: #181C23;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.pf-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pf-mode-bar {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: 8px;
+  gap: 2px;
+}
+html[data-theme="light"] .pf-mode-bar { background: rgba(15, 23, 42, 0.06); }
+html[data-theme="dark"] .pf-mode-bar { background: rgba(255, 255, 255, 0.06); }
+
+.pf-mode-pill {
+  height: 25px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.72;
+}
+.pf-mode-pill.active {
+  opacity: 1;
+  font-weight: 600;
+}
+html[data-theme="light"] .pf-mode-pill.active {
+  background: #FFFFFF;
+  color: var(--accent, var(--z-accent, #0071E3));
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+html[data-theme="dark"] .pf-mode-pill.active {
+  background: #252B35;
+  color: var(--accent, var(--z-accent, #0A84FF));
+}
+
+.pf-agent-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft-bg, color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent));
+  color: var(--accent, var(--z-accent, #0A84FF));
+}
+
+.pf-form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.pf-field {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+html[data-theme="light"] .pf-field {
+  background: #FFFFFF;
+  border: 1px solid rgba(15, 23, 42, 0.09);
+}
+html[data-theme="dark"] .pf-field {
+  background: #12151B;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.pf-field-lbl {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.62;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pf-field .pf-input {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  height: 28px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 12.5px !important;
+  font-family: var(--font-mono, monospace) !important;
+}
+
+.pf-arrow {
+  font-size: 13px;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.pf-add-btn {
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 13px !important;
+  border-radius: 8px !important;
+  background: var(--accent, var(--z-accent, #0071E3)) !important;
+  color: #FFFFFF !important;
+  border: 0 !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+.pf-table-head {
+  display: grid;
+  grid-template-columns: 54px 1fr 1fr 68px 56px;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  opacity: 0.72;
+  flex: 0 0 auto;
+}
+html[data-theme="light"] .pf-table-head { background: #F4F6F9; }
+html[data-theme="dark"] .pf-table-head { background: #181C23; }
+
+.pf-list {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+}
+
+.pf-empty-card,
+#snippetEmpty {
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  padding: 24px 18px !important;
+  border-radius: 12px !important;
+  text-align: center !important;
+  margin: 0 !important;
+}
+html[data-theme="light"] .pf-empty-card,
+html[data-theme="light"] #snippetEmpty {
+  background: #F8FAFC;
+  border: 1px dashed rgba(15, 23, 42, 0.10);
+  color: #5B6570;
+}
+html[data-theme="dark"] .pf-empty-card,
+html[data-theme="dark"] #snippetEmpty {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px dashed rgba(255, 255, 255, 0.10);
+  color: #9AA4B0;
+}
+.pf-empty-card strong,
+#snippetEmpty strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--z-text-primary, inherit);
+}
+.pf-empty-card span,
+#snippetEmpty span {
+  font-size: 12px;
+  opacity: 0.78;
+  max-width: 340px;
+  line-height: 1.45;
+}
+
+.pf-row {
+  display: grid !important;
+  grid-template-columns: 54px 1fr 1fr 68px 56px !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 7px 12px !important;
+  border-radius: 9px !important;
+  font-size: 12px !important;
+}
+
+/* 22.5 运维笔记（#terminalNotesPanel）内部排版精修 */
+#terminalNotesPanel .terminal-notes-body {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  padding: 12px 14px !important;
+  gap: 10px !important;
+  overflow: hidden !important;
+}
+
+#terminalNotesPanel .tn-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex: 0 0 auto !important;
+  margin: 0 !important;
+}
+
+#terminalNotesPanel .tn-title-input {
+  flex: 1 1 auto !important;
+  height: 34px !important;
+  margin: 0 !important;
+}
+
+#terminalNotesPanel .tn-new-btn,
+#terminalNotesPanel .tn-save-btn {
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 0 13px !important;
+  border-radius: 8px !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  flex-shrink: 0 !important;
+}
+
+#terminalNotesPanel .tn-save-btn {
+  background: var(--accent, var(--z-accent, #0071E3)) !important;
+  color: #FFFFFF !important;
+  border: 0 !important;
+}
+
+#terminalNotesPanel .tn-textarea {
+  flex: 1 1 auto !important;
+  min-height: 140px !important;
+  width: 100% !important;
+  resize: none !important;
+  border-radius: 10px !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+}
+
+html[data-theme="light"] #terminalNotesPanel .tn-textarea {
+  background: #F6F8FB !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  color: #1D1D1F !important;
+}
+html[data-theme="dark"] #terminalNotesPanel .tn-textarea {
+  background: #151920 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: #E5E7EB !important;
+}
+
+#terminalNotesPanel .tn-footer-section {
+  flex: 0 0 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 5px !important;
+}
+
+#terminalNotesPanel .tn-section-label {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  opacity: 0.6 !important;
+}
+
+#terminalNotesPanel .tn-list {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  max-height: 68px !important;
+  overflow-y: auto !important;
+}
+
+#terminalNotesPanel .tn-note-item {
+  height: 26px !important;
+  padding: 0 10px !important;
+  border-radius: 7px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+}
+
+#terminalNotesPanel .tn-empty-chip {
+  font-size: 11.5px;
+  opacity: 0.62;
+  padding: 2px 0;
+}
+
+/* 22.6 代码片段（#snippetPanel）与快捷键（#shortcutPanel）内部排版精修 */
+#snippetPanel .snippet-panel-body {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  padding: 12px 14px !important;
+  gap: 10px !important;
+}
+
+#snippetPanel #snippetSearch {
+  height: 34px !important;
+  margin: 0 !important;
+  border-radius: 9px !important;
+}
+
+#shortcutPanel .shortcut-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)) !important;
+  gap: 7px !important;
+  padding: 12px 14px !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  align-content: start !important;
+  scrollbar-width: thin !important;
+}
+
+#shortcutPanel .shortcut-grid button {
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 8px !important;
+  border-radius: 8px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  font-family: var(--font-mono, monospace) !important;
+}
+html[data-theme="light"] #shortcutPanel .shortcut-grid button {
+  background: #F6F8FB !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.04), inset 0 -1px 0 rgba(15, 23, 42, 0.06) !important;
+  color: #1D1D1F !important;
+}
+html[data-theme="dark"] #shortcutPanel .shortcut-grid button {
+  background: #1B2028 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 -1px 0 rgba(255, 255, 255, 0.04) !important;
+  color: #E5E7EB !important;
+}
+
+/* 22.7 实时监控（#infoModal）顶部分页切换条修复（消除整条涂蓝看不见字的问题） */
+#infoModal .info-modal-body {
+  padding: 10px 14px 12px !important;
+}
+
+#infoModal .monitor-tabs {
+  position: relative !important;
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  height: 32px !important;
+  padding: 3px !important;
+  border-radius: 9px !important;
+  margin: 0 0 10px !important;
+  box-sizing: border-box !important;
+}
+html[data-theme="light"] #infoModal .monitor-tabs {
+  background: #EEF2F6 !important;
+  border: 1px solid rgba(15, 23, 42, 0.06) !important;
+}
+html[data-theme="dark"] #infoModal .monitor-tabs {
+  background: #161A21 !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+}
+
+#infoModal .monitor-tab-thumb {
+  display: none !important;
+}
+
+#infoModal .monitor-tab {
+  position: relative !important;
+  z-index: 2 !important;
+  height: 24px !important;
+  min-height: 24px !important;
+  border-radius: 6px !important;
+  border: 0 !important;
+  background: transparent !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+}
+
+html[data-theme="light"] #infoModal .monitor-tab:not(.active) {
+  color: #5B6570 !important;
+}
+html[data-theme="light"] #infoModal .monitor-tab.active {
+  background: #FFFFFF !important;
+  color: var(--accent, var(--z-accent, #0071E3)) !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.10) !important;
+}
+html[data-theme="dark"] #infoModal .monitor-tab:not(.active) {
+  color: #9AA4B0 !important;
+}
+html[data-theme="dark"] #infoModal .monitor-tab.active {
+  background: #252B35 !important;
+  color: var(--accent, var(--z-accent, #0A84FF)) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* 22.8 二级浮窗：代码编辑器（#fmEditorModal）内部工具栏紧凑化 */
+#fmEditorModal .fm-editor-header {
+  margin: 0 !important;
+  padding: 6px 12px !important;
+  min-height: 36px !important;
+  border-radius: 0 !important;
+  border-top: 0 !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.10) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+#fmEditorModal .fm-editor-toolbar {
+  margin: 0 !important;
+  padding: 4px 12px !important;
+  min-height: 32px !important;
+  border-radius: 0 !important;
+  border-top: 0 !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.10) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+#fmEditorModal .fm-editor-code-shell {
+  margin: 8px 12px 12px !important;
+  border-radius: 10px !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
+
+
+/* 22.9 顶栏（.main-nav）跨页面切换零弹跳伸出/缩回（由 zephyr_motion.wasm 驱动 --z-shelf-ext）
+ *      核心恒等式：height - padding-bottom = (56px + --z-shelf-ext) - --z-shelf-ext === 56px，
+ *      保证 .brand / .nav-tabs / .nav-actions 在任何帧都 0px 跳动！ */
+body.app-body:not(.terminal-mode) .main-nav {
+  --z-shelf-ext: 0px;
+  --topbar-collapse-offset: 0px;
+}
+body.app-body.terminal-mode .main-nav {
+  --z-shelf-ext: 27px;
+}
+body.app-body .main-nav {
+  height: calc(56px + var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px)) !important;
+  min-height: calc(56px + var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px)) !important;
+  max-height: calc(56px + var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px)) !important;
+  padding-top: 0 !important;
+  padding-bottom: max(0px, calc(var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px))) !important;
+  transition: background-color 0.25s ease, border-color 0.25s ease !important;
+  animation: none !important;
+}
+
+/* 22.10 消除 .terminal-page 上的 backdrop-filter/filter 形成包含块，且 .z-panel-morphing 跨满 1/-1 列 */
+html body .terminal-page {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  perspective: none !important;
+  contain: none !important;
+}
+
+html body .terminal-page > .z-unified-panel.z-panel-morphing,
+html body .terminal-page > .z-unified-secondary-panel.z-panel-morphing,
+html body .terminal-page.has-docked-right > .z-unified-panel.docked-right.z-panel-morphing,
+html body .terminal-page.has-docked-left > .z-unified-panel.docked-left.z-panel-morphing,
+html body .z-panel-morphing {
+  grid-column: 1 / -1 !important;
+  grid-row: 1 / -1 !important;
+  position: fixed !important;
+  inset: auto !important;
+  left: var(--z-morph-l, 0px) !important;
+  top: var(--z-morph-t, 0px) !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: var(--z-morph-w, 360px) !important;
+  height: var(--z-morph-h, 390px) !important;
+  border-radius: var(--z-morph-r, 16px) !important;
+  opacity: var(--z-morph-opacity, 1) !important;
+  display: flex !important;
+  z-index: 9200 !important;
+  margin: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  transition: none !important;
+  animation: none !important;
+  pointer-events: none !important;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.24) !important;
+}
+
+/* 禁用旧版 CSS @keyframes 抢占 WASM 开关动画 */
+.z-unified-panel,
+.z-unified-secondary-panel,
+.z-unified-panel.panel-opening,
+.z-unified-panel.panel-closing,
+.z-unified-secondary-panel.panel-opening,
+.z-unified-secondary-panel.panel-closing {
+  animation: none !important;
+}
+
+/* 22.11 一二级浮窗全屏态（.panel-fullscreen）统一权威尺寸规则 */
+html body .terminal-page > .panel-fullscreen:not(.z-panel-morphing),
+html body .z-unified-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .z-unified-secondary-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .fm-editor-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .image-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .media-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .fm-props-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .docker-log-drawer.panel-fullscreen:not(.z-panel-morphing) {
+  position: fixed !important;
+  inset: auto !important;
+  left: 12px !important;
+  top: 50px !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: calc(100vw - 24px) !important;
+  height: calc(100vh - 62px) !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  border-radius: 14px !important;
+  z-index: 9100 !important;
+  display: flex !important;
+}
+
+/* 修复 .fm-props-modal 默认 translate(-50%, -50%) 干扰定位与全屏 */
+html body .fm-props-modal.z-unified-secondary-panel:not(.dragging) {
+  transform: none;
+}
+html body .fm-props-modal.z-unified-secondary-panel {
+  max-width: none !important;
+  max-height: none !important;
+  padding: 0 !important;
+}
+html body .fm-props-modal.z-unified-secondary-panel .fm-props-body {
+  padding: 14px 16px !important;
+  flex: 1 1 auto !important;
+}
+html body .fm-props-modal.z-unified-secondary-panel .fm-props-actions {
+  padding: 10px 16px 14px !important;
+  margin-top: 0 !important;
+  border-top: 1px solid rgba(128, 128, 128, 0.10) !important;
+}
+
+
+/* 22.12 根治二级浮窗与一级浮窗拖拽“弹簧拉扯/乱飞”：
+ *       1) 全部一二级浮窗统一为 position: fixed，配合修复后的 floatingPanelDragBounds 读取 style.left/top；
+ *       2) 严禁任何 CSS transition 作用在浮窗本体（style.css:5378/8360 曾写 transition: transform/opacity），
+ *          让 zephyr_motion.wasm 100% 独占拖拽、缩放、开关、停靠与全屏通道！ */
+html body .z-unified-panel,
+html body .z-unified-secondary-panel,
+html body .fm-editor-modal,
+html body .image-preview-modal,
+html body .media-preview-modal,
+html body .fm-props-modal,
+html body .docker-log-drawer,
+html body .transfer-popover {
+  transition: none !important;
+  animation: none !important;
+}
+
+html body .z-unified-secondary-panel:not(.z-panel-morphing):not(.panel-fullscreen) {
+  position: fixed !important;
+  padding: 0 !important;
+  opacity: 1 !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 22.13 终端页点击收起顶栏（body.terminal-topbar-collapsed）时：
+ *       .main-nav 高度由 WASM 缩至 27px，同时开启 overflow: hidden 裁切上移的主顶栏内容，
+ *       仅露出底部 27px 伸出架（#terminalShelfBar）与正中小白条把手！ */
+body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav {
+  overflow: hidden !important;
+}
+body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav > .brand,
+body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav > .nav-tabs,
+body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav > .nav-actions {
+  pointer-events: none !important;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 23. 根治顶栏/工具栏穿模重合、钉住面板遮挡全屏浮窗、以及一二级浮窗实色防透底
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* 23.1 终端页顶栏（body.terminal-mode .main-nav）强制默认 --z-shelf-ext: 27px，
+ *      彻底杜绝因变量回退 0px 导致 27px 伸出架（^ 按钮与小白条）与主顶栏穿模重合！ */
+body.app-body.terminal-mode:not(.terminal-topbar-collapsed) .main-nav {
+  --z-shelf-ext: 27px;
+}
+/* 收起态的高度只由 zephyr_motion.wasm 逐帧写入 --topbar-collapse-offset 决定，
+ * 这里不再写死 height，也不再放 CSS transition，否则会和引擎抢同一条通道。 */
+
+/* 非终端页绝不显示 #terminalShelfBar 或小白条把手 */
+body.app-body:not(.terminal-mode) #terminalShelfBar,
+body.app-body:not(.terminal-mode) .terminal-shelf-bar {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* 23.2 钉在左右两侧的停靠面板（.docked-right / .docked-left）强制 z-index: 1，
+ *      确保任何一二级自由浮窗或全屏浮窗（z-index >= 260）永远在停靠面板之上，绝不被挡住！ */
+html body .terminal-page.has-docked-right > .docked-right:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left > .docked-left:not(.z-panel-morphing) {
+  z-index: 1 !important;
+}
+
+/* 23.3 浮窗全屏（.panel-fullscreen）自适应避让已钉住的左右面板，且位于次级工具栏（y=86px）正下方（top: 90px） */
+html body .terminal-page > .panel-fullscreen:not(.z-panel-morphing),
+html body .z-unified-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .z-unified-secondary-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .fm-editor-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .image-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .media-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .fm-props-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .docker-log-drawer.panel-fullscreen:not(.z-panel-morphing) {
+  position: fixed !important;
+  inset: auto !important;
+  left: 12px !important;
+  top: 90px !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: calc(100vw - 24px) !important;
+  height: calc(100vh - 102px) !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  border-radius: 14px !important;
+  z-index: 9100 !important;
+  display: flex !important;
+}
+
+/* 当右侧钉着面板（.has-docked-right，宽 360px）时，全屏浮窗精准填满左侧工作区，绝不被右侧钉住的面板挡住！ */
+html body .terminal-page.has-docked-right > .panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-right .z-unified-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-right .z-unified-secondary-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-right .fm-editor-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-right .image-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-right .media-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-right .fm-props-modal.panel-fullscreen:not(.z-panel-morphing) {
+  left: 12px !important;
+  width: calc(100vw - 360px - 24px) !important;
+}
+
+/* 当左侧钉着面板（.has-docked-left，宽 360px）时，全屏浮窗精准填满右侧工作区，绝不被左侧钉住的面板挡住！ */
+html body .terminal-page.has-docked-left > .panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left .z-unified-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left .z-unified-secondary-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left .fm-editor-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left .image-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left .media-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left .fm-props-modal.panel-fullscreen:not(.z-panel-morphing) {
+  left: calc(360px + 12px) !important;
+  width: calc(100vw - 360px - 24px) !important;
+}
+
+/* 23.4 一二级浮窗及标题栏采用 100% 不透明实色背景，彻底杜绝底下工具栏文字透出穿模！ */
+html[data-theme="light"] .terminal-page > .z-unified-panel.open:not(.docked-right):not(.docked-left),
+html[data-theme="light"] .z-unified-secondary-panel,
+html[data-theme="light"] .fm-props-modal {
+  background: #FFFFFF !important;
+}
+html[data-theme="dark"] .terminal-page > .z-unified-panel.open:not(.docked-right):not(.docked-left),
+html[data-theme="dark"] .z-unified-secondary-panel,
+html[data-theme="dark"] .fm-props-modal {
+  background: var(--surface, #161920) !important;
+}
+html[data-theme="light"] .z-unified-panel .fm-titlebar-head,
+html[data-theme="light"] .z-unified-panel .panel-titlebar,
+html[data-theme="light"] .z-unified-secondary-panel .fm-titlebar-head,
+html[data-theme="light"] .z-unified-secondary-panel .panel-titlebar {
+  background: color-mix(in srgb, var(--surface, #FFFFFF) 94%, var(--bg, #F4F6F9)) !important;
+}
+html[data-theme="dark"] .z-unified-panel .fm-titlebar-head,
+html[data-theme="dark"] .z-unified-panel .panel-titlebar,
+html[data-theme="dark"] .z-unified-secondary-panel .fm-titlebar-head,
+html[data-theme="dark"] .z-unified-secondary-panel .panel-titlebar {
+  background: color-mix(in srgb, var(--surface, #1C2029) 92%, var(--text, #FFFFFF)) !important;
+}
+
+
+/* 23.5 桌面端代码编辑器（.fm-editor-modal）紧凑单行工具栏 & 隐藏手机端底部重复按钮栏 .cm-mobile-toolbar */
+html[data-zephyr-surface="desktop"] .fm-editor-modal .cm-mobile-toolbar,
+body.desktop-embed .fm-editor-modal .cm-mobile-toolbar {
+  display: none !important;
+}
+@media (min-width: 761px) {
+  .fm-editor-modal .cm-mobile-toolbar {
+    display: none !important;
+  }
+}
+
+.fm-editor-modal .fm-editor-header {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 8px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  padding: 0 12px !important;
+  overflow-x: auto !important;
+  scrollbar-width: none !important;
+}
+
+.fm-editor-modal .fm-editor-tabs {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  flex: 0 1 auto !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+}
+
+.fm-editor-modal .fm-editor-header-actions {
+  display: inline-flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 4px !important;
+  margin-left: auto !important;
+  flex: 0 0 auto !important;
+}
+
+.fm-editor-modal .fm-editor-header-actions .tool-btn {
+  height: 25px !important;
+  min-height: 25px !important;
+  padding: 0 8px !important;
+  border-radius: 6px !important;
+  font-size: 11.5px !important;
+}
+
+.fm-editor-modal .fm-editor-toolbar {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 10px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  max-height: 32px !important;
+  padding: 0 12px !important;
+  font-size: 11.5px !important;
+  overflow-x: auto !important;
+  scrollbar-width: none !important;
+}
+
+.fm-editor-modal .fm-editor-toolbar .fm-editor-status {
+  margin-left: auto !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  font-size: 11px !important;
+  opacity: 0.72 !important;
+}
+
+.fm-editor-modal .fm-editor-toolbar > label,
+.fm-editor-modal .fm-editor-toolbar > .fm-editor-check {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 5px !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  margin: 0 !important;
+}
+.fm-editor-modal .fm-editor-toolbar .fm-editor-select {
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 22px 0 8px !important;
+  font-size: 11.5px !important;
+  border-radius: 6px !important;
+  white-space: nowrap !important;
+}
+
+.fm-editor-modal .fm-editor-header::-webkit-scrollbar,
+.fm-editor-modal .fm-editor-toolbar::-webkit-scrollbar,
+.fm-editor-modal .fm-editor-tabs::-webkit-scrollbar,
+.fm-editor-modal .fm-editor-header-actions::-webkit-scrollbar {
+  display: none !important;
+  height: 0 !important;
+}
+.fm-editor-modal .fm-editor-tabs {
+  flex-shrink: 0 !important;
+  max-width: 150px !important;
+  overflow: hidden !important;
+}
+.fm-editor-modal .fm-editor-tab {
+  max-width: 146px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+
+/* 23.6 #terminalShelfBar 物理锚定在主顶栏 56px 下方（top: calc(56px + var(--topbar-collapse-offset, 0px))），
+ *      即使在顶栏伸缩动画中途也绝不可能向上侵入 0..56px 的品牌标/导航胶囊/登出按钮区！ */
+body.app-body.terminal-mode #terminalShelfBar,
+body.app-body.terminal-mode .terminal-shelf-bar {
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: calc(56px + var(--topbar-collapse-offset, 0px)) !important;
+  bottom: auto !important;
+  height: 27px !important;
+  pointer-events: none !important;
+}
+
+/* 23.7 所有一级与二级浮窗标题栏强制 touch-action: none 与 user-select: none，
+ *      消除移动端/触控屏浏览器手势拦截导致的二级浮窗拖拽迟滞或中断，实现一二级浮窗 100% 同一物理手感！ */
+.z-unified-panel > .fm-titlebar-head,
+.z-unified-panel > .panel-titlebar,
+.z-unified-secondary-panel > .fm-titlebar-head,
+.z-unified-secondary-panel > .panel-titlebar,
+.fm-editor-modal > .fm-titlebar-head,
+.image-preview-modal > .image-preview-header,
+.media-preview-modal > .media-preview-header,
+.fm-props-modal > .fm-props-head,
+.docker-log-drawer > .docker-log-header {
+  touch-action: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: grab !important;
+}
+.z-unified-panel.dragging > .fm-titlebar-head,
+.z-unified-panel.dragging > .panel-titlebar,
+.z-unified-secondary-panel.dragging > .fm-titlebar-head,
+.z-unified-secondary-panel.dragging > .panel-titlebar {
+  cursor: grabbing !important;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 24. 移除右下角多余浮动修饰键栏、Google Pixel 圆形扩散主题切换动画、以及全量主题配色（极夜青/赤焰熔岩/浅葱/自定义）100% 覆盖
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* 24.1 彻底隐藏并移除桌面端右下角多余的 Esc/Tab/Ctrl/Alt 浮动栏 */
+#zephyrPadFloatingModifiers,
+.floating-modifier-capsule {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* 24.2 Google Pixel 风格以按钮为圆心的深浅色切换圆形扩散动画（View Transitions API + WASM 扩散波） */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none !important;
+  mix-blend-mode: normal !important;
+}
+::view-transition-old(root) {
+  z-index: 1 !important;
+}
+::view-transition-new(root) {
+  z-index: 9999 !important;
+  clip-path: circle(var(--theme-clip-r, 150vmax) at var(--theme-clip-x, calc(100% - 84px)) var(--theme-clip-y, 28px));
+}
+html.theme-circle-reveal,
+html.theme-circle-reveal *,
+html.theme-circle-reveal *::before,
+html.theme-circle-reveal *::after {
+  transition: none !important;
+}
+
+.zephyr-theme-circle-wave {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 99999 !important;
+  pointer-events: none !important;
+  background: radial-gradient(
+    circle at var(--wave-x, 50%) var(--wave-y, 50%),
+    transparent calc(var(--wave-r, 0px) - 28px),
+    color-mix(in srgb, var(--accent, #0A84FF) 22%, transparent) calc(var(--wave-r, 0px) - 4px),
+    color-mix(in srgb, var(--surface, #FFFFFF) 45%, transparent) var(--wave-r, 0px),
+    transparent calc(var(--wave-r, 0px) + 2px)
+  ) !important;
+}
+
+/* 24.3 全量主题配色（极夜青 cyber / 赤焰熔岩 lava / 浅葱竹青 asagi / 凝霜蓝 frost / 自定义 custom）与深浅色 100% 覆盖 */
+html[data-color-scheme] {
+  --z-accent: var(--accent);
+}
+
+/* 顶栏、背景、卡片、设置面板、模态框全面跟随当前配色的 --bg / --surface / --border / --text / --accent */
+body.app-body,
+.app-shell,
+.view {
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme="light"] .main-nav {
+  background: color-mix(in srgb, var(--surface, #FFFFFF) 86%, var(--bg, #F5F5F7)) !important;
+  border-bottom-color: var(--border) !important;
+}
+html[data-theme="dark"] .main-nav {
+  background: color-mix(in srgb, var(--surface, #1B1C20) 88%, var(--bg, #101114)) !important;
+  border-bottom-color: var(--border) !important;
+}
+
+html[data-theme="light"] .main-nav .nav-tabs {
+  background: color-mix(in srgb, var(--bg, #F5F5F7) 85%, var(--border, #DEDEE3)) !important;
+}
+html[data-theme="dark"] .main-nav .nav-tabs {
+  background: color-mix(in srgb, var(--bg, #101114) 78%, var(--surface, #1B1C20)) !important;
+}
+
+html[data-theme="light"] .main-nav .nav-tabs .nav-tab.active,
+html[data-theme="dark"] .main-nav .nav-tabs .nav-tab.active {
+  color: var(--accent) !important;
+}
+
+/* 主按钮、添加连接按钮、连接按钮、发送按钮、上传按钮、保存按钮 100% 跟随 --accent */
+.btn-primary,
+#addConnectionBtn,
+.connection-card .btn-primary,
+.terminal-page .cmd-send-btn,
+.terminal-page .terminal-top-input #cmdSendBtn,
+#fileManager .fm-toolbar > label.fm-upload-label,
+.pf-add-btn,
+#terminalNotesPanel .tn-save-btn,
+.fm-editor-header-actions #fmEditorSaveBtn {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #FFFFFF !important;
+}
+.btn-primary:hover,
+#addConnectionBtn:hover,
+.connection-card .btn-primary:hover,
+.terminal-page .cmd-send-btn:hover,
+.terminal-page .terminal-top-input #cmdSendBtn:hover,
+#fileManager .fm-toolbar > label.fm-upload-label:hover,
+.pf-add-btn:hover,
+#terminalNotesPanel .tn-save-btn:hover,
+.fm-editor-header-actions #fmEditorSaveBtn:hover {
+  background: var(--accent-hover, var(--accent)) !important;
+  border-color: var(--accent-hover, var(--accent)) !important;
+}
+
+/* 协议徽章、主机标签、直连文字、开关、选中态 100% 跟随 --accent 与 --protocol-badge-* */
+.protocol-badge,
+.connection-card .tag-row span,
+.z1-badge.z1-proto {
+  background: var(--protocol-badge-bg, color-mix(in srgb, var(--accent) 12%, transparent)) !important;
+  color: var(--protocol-badge-fg, var(--accent)) !important;
+}
+.host-line .route-mode-text {
+  color: var(--accent) !important;
+}
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: var(--accent) !important;
+}
+
+/* 仪表盘卡片、远程执行卡片、活动日志面板、设置菜单与设置内容区 100% 跟随 --surface 与 --border */
+.connection-card,
+.activity-panel,
+.empty-card,
+.settings-content,
+.settings-menu,
+.remote-servers,
+.remote-command,
+.result-card,
+.modal-content,
+.modal-card {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+/* 终端外框 2px 焦点高亮框与浮窗外圈缩放角标 100% 跟随 --accent */
+html[data-theme="light"] #terminalWorkspace > .terminal-window.active:not(.window-has-floating-panel)::after,
+html[data-theme="light"] #terminalWorkspace > .terminal-window:only-of-type:not(.window-has-floating-panel)::after,
+html[data-theme="dark"] #terminalWorkspace > .terminal-window.active:not(.window-has-floating-panel)::after,
+html[data-theme="dark"] #terminalWorkspace > .terminal-window:only-of-type:not(.window-has-floating-panel)::after {
+  box-shadow: inset 0 0 0 2px var(--accent) !important;
+}
+html[data-theme="light"] #terminalWorkspace > .terminal-window.active:not(.window-has-floating-panel),
+html[data-theme="light"] #terminalWorkspace > .terminal-window:only-of-type:not(.window-has-floating-panel),
+html[data-theme="dark"] #terminalWorkspace > .terminal-window.active:not(.window-has-floating-panel),
+html[data-theme="dark"] #terminalWorkspace > .terminal-window:only-of-type:not(.window-has-floating-panel) {
+  box-shadow: 0 0 20px -2px var(--accent-glow, color-mix(in srgb, var(--accent) 38%, transparent)), 0 14px 36px -16px rgba(0, 0, 0, 0.28) !important;
+}
+
+/* 终端内部顶栏、次级工具条、停靠面板与一二级浮窗表面 100% 跟随当前主题的 --surface 与 --bg */
+html[data-theme="light"] .terminal-window,
+html[data-theme="light"] .terminal-window-titlebar,
+html[data-theme="light"] .terminal-page > .z-unified-panel.open,
+html[data-theme="light"] .z-unified-secondary-panel,
+html[data-theme="light"] .fm-props-modal {
+  background: var(--surface, #FFFFFF) !important;
+  color: var(--text, #1D1D1F) !important;
+}
+html[data-theme="dark"] .terminal-window,
+html[data-theme="dark"] .terminal-window-titlebar,
+html[data-theme="dark"] .terminal-page > .z-unified-panel.open,
+html[data-theme="dark"] .z-unified-secondary-panel,
+html[data-theme="dark"] .fm-props-modal {
+  background: var(--surface, #161920) !important;
+  color: var(--text, #F4F4F6) !important;
+}
+
+html[data-theme="light"] .terminal-page > .terminal-topbar,
+html[data-theme="light"] .z-unified-panel .fm-titlebar-head,
+html[data-theme="light"] .z-unified-panel .panel-titlebar,
+html[data-theme="light"] .z-unified-secondary-panel .fm-titlebar-head,
+html[data-theme="light"] .z-unified-secondary-panel .panel-titlebar {
+  background: color-mix(in srgb, var(--surface, #FFFFFF) 92%, var(--bg, #F5F5F7)) !important;
+  border-bottom-color: var(--border) !important;
+}
+html[data-theme="dark"] .terminal-page > .terminal-topbar,
+html[data-theme="dark"] .z-unified-panel .fm-titlebar-head,
+html[data-theme="dark"] .z-unified-panel .panel-titlebar,
+html[data-theme="dark"] .z-unified-secondary-panel .fm-titlebar-head,
+html[data-theme="dark"] .z-unified-secondary-panel .panel-titlebar {
+  background: color-mix(in srgb, var(--surface, #1B1C20) 90%, var(--text, #FFFFFF)) !important;
+  border-bottom-color: var(--border) !important;
+}

@@ -1,0 +1,239 @@
+/* ==========================================================================
+ * public/zephyr-tokens.css — Zephyr Single Source of Truth Design Tokens
+ * Synchronized 1:1 with:
+ *   - Android: one.zephyr.mobile.ui.theme.{ZephyrPalette,Dimens,Motion,Typography}
+ *   - iOS:     ZephyrUI.ZephyrStyle
+ *   - Agent:   zephyr_agent/lib/theme/zephyr_colors.dart
+ *   - Spec:    FREEZE/zephyr one/ZEPHYR_ONE.md & demo.html
+ * ========================================================================== */
+
+@layer tokens, base, layout, components, views, surfaces, motion, utilities;
+
+@layer tokens {
+  :root {
+    /* ── 1. Spacing Ladder (Dimens.kt) ──────────────────────────────────── */
+    --z-space-xs: 4px;
+    --z-space-sm: 8px;
+    --z-space-md: 12px;
+    --z-space-lg: 16px;
+    --z-space-xl: 24px;
+    --z-space-xxl: 32px;
+
+    /* ── 2. Apple Continuous Corner Radius Ladder (HIG & Dimens.kt) ────── */
+    --z-radius-xs: 6px;    /* 微型徽章、协议标签、右下角跨端设备角标 */
+    --z-radius-sm: 10px;   /* 按钮、输入框、下拉项、辅助键盘按键 */
+    --z-radius-md: 14px;   /* 标准连接卡片、终端分屏窗格、列表分组容器 */
+    --z-radius-lg: 20px;   /* 桌面浮动窗口、模态弹窗、移动端底部弹出抽屉顶部圆角 */
+    --z-radius-xl: 28px;   /* Smartbar Dock 外壳、大型工作台容器 */
+    --z-radius-pill: 9999px; /* 顶栏导航胶囊、移动端 RootIsland、SmartDot、胶囊标签 */
+
+    /* ── 3. Layout & Chrome Geometry ────────────────────────────────────── */
+    --z-topbar-height: 56px;
+    --z-topbar-pill-height: 40px;
+    --z-main-max-width: min(1560px, calc(100% - 48px));
+    --z-card-grid-min: 340px;
+    --z-pane-titlebar-height: 40px;
+    --z-pane-toolbar-height: 44px;
+    --z-sftp-dock-width: 380px;
+    --z-sftp-float-width: 640px;
+    --z-sftp-float-height: 460px;
+
+    /* Mobile Island Spec (IslandSpec in Dimens.kt) */
+    --z-island-max-width: 340px;
+    --z-island-right-reserve: 96px;
+    --z-island-height: 62px;
+    --z-island-radius: 31px;
+    --z-island-padding: 5px;
+    --z-island-pill-radius: 26px;
+    --z-island-bottom-offset: 18px;
+    --z-ai-fab-size: 48px;
+    --z-ai-fab-right: 16px;
+    --z-ai-fab-bottom: 25px;
+
+    /* ── 4. Typography System (Typography.kt) ───────────────────────────── */
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+                 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI",
+                 system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code",
+                 Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+    /* ── 5. Motion Curves & Durations (Motion.kt & vendor/zephyr-motion) ── */
+    --z-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --z-ease-in-out: cubic-bezier(0.32, 0.72, 0, 1);
+    --z-ease-drawer: cubic-bezier(0.16, 1, 0.3, 1);
+    --z-dur-press: 120ms;
+    --z-dur-fast: 180ms;
+    --z-dur-med: 240ms;
+    --z-dur-island: 340ms;
+    --z-dur-sheet: 420ms;
+
+    /* ── 6. Z-Index Scale (Deterministic Layering) ──────────────────────── */
+    --z-idx-base: 1;
+    --z-idx-pane-active: 5;
+    --z-idx-dock: 40;
+    --z-idx-floating-panel: 80;
+    --z-idx-island: 90;
+    --z-idx-topbar: 120;
+    --z-idx-ai-panel: 200;
+    --z-idx-modal-scrim: 300;
+    --z-idx-modal: 310;
+    --z-idx-handoff-sheet: 400;
+    --z-idx-toast: 500;
+
+    /* ── 7. Constant Status & Protocol Colors (ZephyrStatusColors) ──────── */
+    --z-ok: #30D158;
+    --z-warn: #FFD60A;
+    --z-err: #FF453A;
+    --z-offline: #8E99A6;
+    --z-pending: #64D2FF;
+    --z-conflict: #FF9F0A;
+
+    --z-p-ssh: #0A84FF;
+    --z-p-telnet: #FFD60A;
+    --z-p-rdp: #BF5AF2;
+    --z-p-vnc: #30D158;
+    --z-p-sftp: #64D2FF;
+
+    /* ── 8. Default Brand Palette: Frost (冰川蓝) ───────────────────────── */
+    --z-brand-main: #EEF2F7;
+    --z-brand-mid: #A8B5C3;
+    --z-brand-dark: #6E7B88;
+    --z-accent: #0A84FF;
+    --z-accent-2: #5AC8FA;
+    --z-brand-muted: #8E99A6;
+
+    /* ── 9. Default Surface Scheme: Dark (ZephyrPalette.darkSurfaces) ───── */
+    --z-bg: #0A0C0F;
+    --z-bg-workspace: #0E0F11;
+    --z-surface-content: #13161B;
+    --z-surface-pane: #15181B;
+    --z-surface-elevated: #1B1F26;
+    --z-surface-pill-track: #191D20;
+    --z-surface-pill-active: #3D3E42;
+    --z-surface-floating: rgba(26, 30, 37, 0.78);
+    --z-surface-floating-solid: #1A1E25;
+    --z-term-bg: #0D0F11;
+    --z-term-fg: #EAECEF;
+    --z-scrim: rgba(0, 0, 0, 0.50);
+
+    --z-text-primary: #F2F4F7;
+    --z-text-secondary: #9AA4B0;
+    --z-text-tertiary: #7E8997; /* WCAG AA >= 4.5:1 on dark surfaces */
+    --z-on-floating: #F4F6F9;
+    --z-on-floating-muted: rgba(244, 246, 249, 0.62);
+    --z-on-floating-subtle: rgba(244, 246, 249, 0.42);
+
+    --z-outline: rgba(255, 255, 255, 0.08);
+    --z-outline-soft: rgba(255, 255, 255, 0.05);
+    --z-outline-strong: rgba(255, 255, 255, 0.14);
+    --z-specular-top: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+
+    /* ── 10. Legacy Variable Aliases (100% Backwards-Compatible Bridge) ─── */
+    --bg: var(--z-bg);
+    --bg-main: var(--z-bg);
+    --surface: var(--z-surface-content);
+    --surface-hover: var(--z-surface-elevated);
+    --input-bg: var(--z-surface-elevated);
+    --chrome: var(--z-surface-floating);
+    --chrome-solid: var(--z-surface-floating-solid);
+    --text: var(--z-text-primary);
+    --text-secondary: var(--z-text-secondary);
+    --t1: var(--z-text-primary);
+    --t2: var(--z-text-secondary);
+    --t3: var(--z-text-tertiary);
+    --border: var(--z-outline);
+    --bd: var(--z-outline);
+    --bd-sub: var(--z-outline-soft);
+    --accent: var(--z-accent);
+    --accent-2: var(--z-accent-2);
+    --accent-hover: color-mix(in srgb, var(--z-accent) 85%, #ffffff);
+    --accent-soft: color-mix(in srgb, var(--z-accent) 15%, transparent);
+    --danger: var(--z-err);
+    --success: var(--z-ok);
+    --warning: var(--z-warn);
+    --radius-sm: var(--z-radius-sm);
+    --radius: var(--z-radius-md);
+    --radius-lg: var(--z-radius-lg);
+  }
+
+  /* ── Light Scheme Override (html[data-theme="light"]) ─────────────────── */
+  html[data-theme="light"] {
+    --z-accent: #0071E3;
+    --z-bg: #EEF0F4;
+    --z-bg-workspace: #FFFFFF;
+    --z-surface-content: #F7F8FA;
+    --z-surface-pane: #FFFFFF;
+    --z-surface-elevated: #FFFFFF;
+    --z-surface-pill-track: #EBEFF2;
+    --z-surface-pill-active: #FFFFFF;
+    --z-surface-floating: rgba(255, 255, 255, 0.82);
+    --z-surface-floating-solid: #FFFFFF;
+    --z-term-bg: #FFFFFF;
+    --z-term-fg: #1D1D1F;
+    --z-scrim: rgba(20, 24, 30, 0.35);
+
+    --z-text-primary: #14181D;
+    --z-text-secondary: #5B6570;
+    --z-text-tertiary: #636E7B; /* Fixed from 0.42 alpha (3.03:1) -> 4.62:1 WCAG AA */
+    --z-on-floating: #111418;
+    --z-on-floating-muted: rgba(17, 20, 24, 0.65);
+    --z-on-floating-subtle: rgba(17, 20, 24, 0.48);
+
+    --z-outline: rgba(15, 20, 28, 0.10);
+    --z-outline-soft: rgba(15, 20, 28, 0.06);
+    --z-outline-strong: rgba(15, 20, 28, 0.16);
+    --z-specular-top: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  }
+
+  /* ── Brand Theme Overrides (lava / asagi / cyber) ─────────────────────── */
+  html[data-color-scheme="lava"] {
+    --z-brand-main: #F1E8DF;
+    --z-brand-mid: #C79672;
+    --z-brand-dark: #8D5A3A;
+    --z-accent: #BF5A1F;
+    --z-accent-2: #E07B3C;
+    --z-brand-muted: #A58A78;
+  }
+  html[data-color-scheme="lava"][data-theme="light"] {
+    --z-accent: #B85C22;
+  }
+
+  html[data-color-scheme="asagi"] {
+    --z-brand-main: #EDF4F2;
+    --z-brand-mid: #9BBDB5;
+    --z-brand-dark: #5E8F83;
+    --z-accent: #4D9C8A;
+    --z-accent-2: #74B9A8;
+    --z-brand-muted: #829B96;
+  }
+  html[data-color-scheme="asagi"][data-theme="light"] {
+    --z-accent: #3F8F82;
+  }
+
+  html[data-color-scheme="cyber"] {
+    --z-brand-main: #EEF3F5;
+    --z-brand-mid: #9EB7BD;
+    --z-brand-dark: #5D858D;
+    --z-accent: #4F9DA6;
+    --z-accent-2: #7CC2CA;
+    --z-brand-muted: #7F9298;
+  }
+  html[data-color-scheme="cyber"][data-theme="light"] {
+    --z-accent: #448E96;
+  }
+
+  html[data-color-scheme="custom"] {
+    --z-accent: var(--color-primary, #0A84FF);
+  }
+}
+
+/* ── Highest-Priority Utility Layer (Prevents .force-hidden Override Bugs) ── */
+@layer utilities {
+  .force-hidden,
+  [hidden] {
+    display: none !important;
+  }
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}

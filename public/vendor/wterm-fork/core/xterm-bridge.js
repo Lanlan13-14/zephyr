@@ -6,9 +6,15 @@ const FLAG_BOLD = 1;
 const FLAG_DIM = 2;
 const FLAG_ITALIC = 4;
 const FLAG_UNDERLINE = 8;
+const FLAG_BLINK = 16;
 const FLAG_REVERSE = 32;
 const FLAG_INVISIBLE = 64;
 const FLAG_STRIKETHROUGH = 128;
+const FLAG_OVERLINE = 256;
+const FLAG_UNDERLINE_DOUBLE = 512;
+const FLAG_UNDERLINE_CURLY = 1024;
+const FLAG_UNDERLINE_DOTTED = 2048;
+const FLAG_UNDERLINE_DASHED = 4096;
 const CM_DEFAULT = 0;
 const CM_P16 = 16777216;
 const CM_P256 = 33554432;
@@ -84,11 +90,29 @@ function cellFromXterm(cell, out) {
   if (cell.isBold()) flags |= FLAG_BOLD;
   if (cell.isDim()) flags |= FLAG_DIM;
   if (cell.isItalic()) flags |= FLAG_ITALIC;
-  if (cell.isUnderline()) flags |= FLAG_UNDERLINE;
+  if (cell.isBlink?.()) flags |= FLAG_BLINK;
+  if (cell.isOverline?.()) flags |= FLAG_OVERLINE;
+  if (cell.isUnderline()) {
+    flags |= FLAG_UNDERLINE;
+    const ulStyle = typeof cell.getUnderlineStyle === "function" ? cell.getUnderlineStyle() : 1;
+    if (ulStyle === 2) flags |= FLAG_UNDERLINE_DOUBLE;
+    else if (ulStyle === 3) flags |= FLAG_UNDERLINE_CURLY;
+    else if (ulStyle === 4) flags |= FLAG_UNDERLINE_DOTTED;
+    else if (ulStyle === 5) flags |= FLAG_UNDERLINE_DASHED;
+  }
   if (cell.isInverse()) flags |= FLAG_REVERSE;
   if (cell.isInvisible()) flags |= FLAG_INVISIBLE;
   if (cell.isStrikethrough()) flags |= FLAG_STRIKETHROUGH;
   result.flags = flags;
+  result.ul = WTERM_DEFAULT_COLOR;
+  result.ulRgb = void 0;
+  if ((flags & FLAG_UNDERLINE) && typeof cell.isUnderlineColorDefault === "function" && !cell.isUnderlineColorDefault()) {
+    if (cell.isUnderlineColorRGB?.()) {
+      result.ulRgb = cell.getUnderlineColor() & 16777215;
+    } else if (cell.isUnderlineColorPalette?.()) {
+      result.ul = cell.getUnderlineColor() & 255;
+    }
+  }
   result.fgRgb = void 0;
   if (cell.isFgDefault()) {
     result.fg = WTERM_DEFAULT_COLOR;
@@ -116,6 +140,116 @@ function cellFromXterm(cell, out) {
   result.linkId = urlId || 0;
   return result;
 }
+
+function _parseSixelToImageData(raw) {
+  const qIdx = raw.indexOf("q");
+  if (qIdx < 0) return null;
+  const body = raw.slice(qIdx + 1);
+  const palette = new Map([
+    [0, [0, 0, 0, 255]],
+    [1, [51, 102, 179, 255]],
+    [2, [204, 51, 51, 255]],
+    [3, [51, 179, 51, 255]],
+    [4, [179, 51, 179, 255]],
+    [5, [51, 179, 179, 255]],
+    [6, [179, 179, 51, 255]],
+    [7, [179, 179, 179, 255]]
+  ]);
+  let currentColor = 1;
+  let x = 0, y = 0, maxW = 0, maxH = 0;
+  const ops = [];
+  let i = 0;
+  const n = body.length;
+  while (i < n) {
+    const ch = body[i];
+    if (ch === '"') {
+      i++;
+      const nums = [];
+      let cur = "";
+      while (i < n && /[0-9;]/.test(body[i])) {
+        if (body[i] === ";") { nums.push(Number(cur) || 0); cur = ""; }
+        else cur += body[i];
+        i++;
+      }
+      if (cur) nums.push(Number(cur) || 0);
+      if (nums.length >= 4) {
+        maxW = Math.max(maxW, nums[2] | 0);
+        maxH = Math.max(maxH, nums[3] | 0);
+      }
+      continue;
+    }
+    if (ch === "#") {
+      i++;
+      const nums = [];
+      let cur = "";
+      while (i < n && /[0-9;]/.test(body[i])) {
+        if (body[i] === ";") { nums.push(Number(cur) || 0); cur = ""; }
+        else cur += body[i];
+        i++;
+      }
+      if (cur) nums.push(Number(cur) || 0);
+      const pc = nums[0] ?? 0;
+      if (nums.length >= 5 && nums[1] === 2) {
+        const r = Math.round(Math.min(100, Math.max(0, nums[2])) * 2.55);
+        const g = Math.round(Math.min(100, Math.max(0, nums[3])) * 2.55);
+        const b = Math.round(Math.min(100, Math.max(0, nums[4])) * 2.55);
+        palette.set(pc, [r, g, b, 255]);
+      }
+      currentColor = pc;
+      continue;
+    }
+    if (ch === "!") {
+      i++;
+      let countStr = "";
+      while (i < n && /[0-9]/.test(body[i])) { countStr += body[i]; i++; }
+      const repeat = Math.max(1, Math.min(4096, Number(countStr) || 1));
+      if (i < n) {
+        const code = body.charCodeAt(i) - 63;
+        if (code >= 0 && code <= 63) {
+          ops.push({ x, y, repeat, bits: code, color: currentColor });
+          x += repeat;
+          if (x > maxW) maxW = x;
+          if (y + 6 > maxH) maxH = y + 6;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (ch === "$") { x = 0; i++; continue; }
+    if (ch === "-") { x = 0; y += 6; i++; continue; }
+    const code = body.charCodeAt(i) - 63;
+    if (code >= 0 && code <= 63) {
+      ops.push({ x, y, repeat: 1, bits: code, color: currentColor });
+      x += 1;
+      if (x > maxW) maxW = x;
+      if (y + 6 > maxH) maxH = y + 6;
+    }
+    i++;
+  }
+  const width = Math.min(2048, Math.max(1, maxW));
+  const height = Math.min(2048, Math.max(1, maxH));
+  if (!ops.length) return null;
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  for (const op of ops) {
+    const rgba = palette.get(op.color) || [255, 255, 255, 255];
+    for (let bit = 0; bit < 6; bit++) {
+      if ((op.bits & (1 << bit)) === 0) continue;
+      const py = op.y + bit;
+      if (py >= height) continue;
+      for (let rx = 0; rx < op.repeat; rx++) {
+        const px = op.x + rx;
+        if (px >= width) break;
+        const off = (py * width + px) * 4;
+        pixels[off] = rgba[0];
+        pixels[off + 1] = rgba[1];
+        pixels[off + 2] = rgba[2];
+        pixels[off + 3] = rgba[3];
+      }
+    }
+  }
+  return { width, height, pixels };
+}
+
 class XtermBridge {
   constructor(options = {}) {
     __publicField(this, "kind", "xterm");
@@ -142,6 +276,16 @@ class XtermBridge {
     __publicField(this, "_cursorStyle", 0);
     // DECSCUSR; xterm headless does not expose full style — default block
     __publicField(this, "_ownsTerminal");
+        this._images = [];
+    this._nextImageId = 1;
+    this._kittyChunks = new Map();
+    this._clipboardQueue = [];
+    this._colorChangeQueue = [];
+    this._colorQueryQueue = [];
+    this._cwd = "";
+    this._semanticBlocks = [];
+    this._syncOutputActive = false;
+    this._syncOutputTimer = null;
     this._ownsTerminal = !options.terminal;
     this._term = createTerminal(options);
     this._cols = this._term.cols;
@@ -165,6 +309,112 @@ class XtermBridge {
     return new XtermBridge(options);
   }
   _bindEvents() {
+    
+    const parser = this._term.parser;
+    if (parser && typeof parser.registerOscHandler === "function") {
+      // OSC 52: Write-Only Clipboard Lock (drop '?' queries, cap at 1MB)
+      this._disposables.push(parser.registerOscHandler(52, (data) => {
+        const semi = data.indexOf(";");
+        if (semi < 0) return true;
+        const b64 = data.slice(semi + 1).trim();
+        if (!b64 || b64 === "?") return true; // Hard block remote clipboard read
+        if (b64.length > 1400000) return true;
+        try {
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+          this._clipboardQueue.push(text);
+        } catch {}
+        return true;
+      }));
+      // OSC 7: Working directory tracking (file://host/path)
+      this._disposables.push(parser.registerOscHandler(7, (data) => {
+        let p = String(data || "").trim();
+        if (p.startsWith("file://")) {
+          const slashIdx = p.indexOf("/", 7);
+          p = slashIdx >= 0 ? p.slice(slashIdx) : "/";
+        }
+        try { p = decodeURIComponent(p); } catch {}
+        if (p.startsWith("/")) {
+          this._cwd = p;
+          if (typeof this.onCwdChange === "function") {
+            try { this.onCwdChange(p); } catch {}
+          }
+        }
+        return true;
+      }));
+      // OSC 133: FinalTerm / Shell Integration semantic prompt marks (A/B/C/D;exitCode)
+      this._disposables.push(parser.registerOscHandler(133, (data) => {
+        const parts = String(data || "").split(";");
+        const mark = (parts[0] || "").trim().toUpperCase();
+        if (!["A", "B", "C", "D"].includes(mark)) return true;
+        const buf = this._active();
+        const absRow = (buf.baseY | 0) + (buf.cursorY | 0);
+        const exitCode = mark === "D" ? (Number(parts[1]) || 0) : 0;
+        this._semanticBlocks.push({ mark, absRow, exitCode, ts: Date.now() });
+        if (this._semanticBlocks.length > 200) this._semanticBlocks.shift();
+        if (typeof this.onSemanticMark === "function") {
+          try { this.onSemanticMark({ mark, absRow, exitCode }); } catch {}
+        }
+        return true;
+      }));
+      // OSC 4 / 10 / 11 / 12 / 104 / 110 / 111 / 112: Dynamic palette & queries
+      for (const oscCode of [4, 10, 11, 12, 104, 110, 111, 112]) {
+        this._disposables.push(parser.registerOscHandler(oscCode, (data) => {
+          const raw = String(data || "").trim();
+          if (oscCode === 4 || oscCode === 104) {
+            const parts = raw.split(";");
+            const idx = parts[0] !== undefined && parts[0] !== "" ? Number(parts[0]) : 65535;
+            const val = parts[1] || "";
+            if (val === "?") this._colorQueryQueue.push({ kind: 4, index: idx });
+            else if (oscCode === 104) this._colorChangeQueue.push({ kind: 104, index: idx, value: "" });
+            else if (val) this._colorChangeQueue.push({ kind: 4, index: idx, value: val });
+          } else {
+            if (raw === "?") this._colorQueryQueue.push({ kind: oscCode, index: 0 });
+            else this._colorChangeQueue.push({ kind: oscCode, index: 0, value: raw });
+          }
+          return true;
+        }));
+      }
+      // OSC 1337: iTerm2 Inline Images (File=[args]:base64)
+      this._disposables.push(parser.registerOscHandler(1337, (data) => {
+        const str = String(data || "");
+        if (!str.startsWith("File=")) return false;
+        const colonIdx = str.indexOf(":");
+        if (colonIdx < 0) return true;
+        const metaStr = str.slice(5, colonIdx);
+        const b64 = str.slice(colonIdx + 1).replace(/\s+/g, "");
+        if (!b64) return true;
+        const meta = {};
+        for (const kv of metaStr.split(";")) {
+          const eq = kv.indexOf("=");
+          if (eq > 0) meta[kv.slice(0, eq).trim()] = kv.slice(eq + 1).trim();
+        }
+        if (meta.inline === "0") return true;
+        this._addEncodedImage("data:image/png;base64," + b64, meta);
+        return true;
+      }));
+    }
+    if (parser && typeof parser.registerDcsHandler === "function") {
+      // DCS q: Sixel Graphics
+      this._disposables.push(parser.registerDcsHandler({ final: "q" }, (data, params) => {
+        const decoded = _parseSixelToImageData("q" + String(data || ""));
+        if (decoded) {
+          const buf = this._active();
+          this._images.push({
+            id: this._nextImageId++,
+            x: buf.cursorX | 0,
+            absRow: (buf.baseY | 0) + (buf.cursorY | 0),
+            width: decoded.width,
+            height: decoded.height,
+            pixels: decoded.pixels
+          });
+          this.markAllDirty();
+        }
+        return true;
+      }));
+    }
     this._disposables.push(
       this._term.onBell(() => {
         this._bellPending = true;
@@ -248,7 +498,150 @@ class XtermBridge {
     if (!data || data.length === 0) return;
     this._write(data);
   }
-  _write(data) {
+  _addEncodedImage(dataUrl, meta = {}) {
+    const buf = this._active();
+    const id = Number(meta.id) || this._nextImageId++;
+    const entry = {
+      id,
+      x: buf.cursorX | 0,
+      absRow: (buf.baseY | 0) + (buf.cursorY | 0),
+      width: Number(meta.width) || 160,
+      height: Number(meta.height) || 90,
+      pixels: null,
+      dataUrl
+    };
+    this._images.push(entry);
+    if (typeof Image !== "undefined" && typeof document !== "undefined") {
+      const img = new Image();
+      img.onload = () => {
+        const w = Math.min(2048, Math.max(1, img.naturalWidth || entry.width));
+        const h = Math.min(2048, Math.max(1, img.naturalHeight || entry.height));
+        entry.width = w;
+        entry.height = h;
+        try {
+          const c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          const ctx = c.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          entry.pixels = ctx.getImageData(0, 0, w, h).data;
+        } catch {}
+        this.markAllDirty();
+      };
+      img.src = dataUrl;
+    }
+    this.markAllDirty();
+    return entry;
+  }
+  _handleKittyApc(body) {
+    const semi = body.indexOf(";");
+    const ctrlStr = semi >= 0 ? body.slice(0, semi) : body;
+    const payload = semi >= 0 ? body.slice(semi + 1).replace(/\s+/g, "") : "";
+    const ctrl = {};
+    for (const part of ctrlStr.split(",")) {
+      const eq = part.indexOf("=");
+      if (eq > 0) ctrl[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+    }
+    const action = ctrl.a || "T";
+    if (action === "d") {
+      this._images = [];
+      this.markAllDirty();
+      return;
+    }
+    const id = Number(ctrl.i) || this._nextImageId++;
+    const more = ctrl.m === "1";
+    const prev = this._kittyChunks.get(id) || { ctrl, chunks: [] };
+    if (Object.keys(ctrl).length > 1) prev.ctrl = { ...prev.ctrl, ...ctrl };
+    if (payload) prev.chunks.push(payload);
+    if (more) {
+      this._kittyChunks.set(id, prev);
+      return;
+    }
+    this._kittyChunks.delete(id);
+    const fullB64 = prev.chunks.join("");
+    if (!fullB64) return;
+    const fmt = Number(prev.ctrl.f) || 32;
+    const w = Number(prev.ctrl.s) || 100;
+    const h = Number(prev.ctrl.v) || 100;
+    if (fmt === 100) {
+      this._addEncodedImage("data:image/png;base64," + fullB64, { id, width: w, height: h });
+    } else {
+      try {
+        const bin = atob(fullB64);
+        const pixels = new Uint8ClampedArray(w * h * 4);
+        if (fmt === 24) {
+          for (let p = 0, j = 0; p < w * h && j + 2 < bin.length; p++, j += 3) {
+            pixels[p * 4] = bin.charCodeAt(j);
+            pixels[p * 4 + 1] = bin.charCodeAt(j + 1);
+            pixels[p * 4 + 2] = bin.charCodeAt(j + 2);
+            pixels[p * 4 + 3] = 255;
+          }
+        } else {
+          for (let k = 0; k < Math.min(pixels.length, bin.length); k++) {
+            pixels[k] = bin.charCodeAt(k);
+          }
+        }
+        const buf = this._active();
+        this._images.push({
+          id,
+          x: buf.cursorX | 0,
+          absRow: (buf.baseY | 0) + (buf.cursorY | 0),
+          width: w,
+          height: h,
+          pixels
+        });
+        this.markAllDirty();
+      } catch {}
+    }
+    if (prev.ctrl.q !== "2" && prev.ctrl.i) {
+      this._responseQueue.push(`\x1b_Gi=${prev.ctrl.i};OK\x1b\\`);
+    }
+  }
+  _preprocessStream(data) {
+    let str = typeof data === "string" ? data : (data instanceof Uint8Array ? new TextDecoder("utf-8", { fatal: false }).decode(data) : String(data));
+    // DECSET 2026 Synchronized Output
+    if (str.includes("\x1b[?2026h")) {
+      this._syncOutputActive = true;
+      if (this._syncOutputTimer) clearTimeout(this._syncOutputTimer);
+      this._syncOutputTimer = setTimeout(() => {
+        this._syncOutputActive = false;
+        this.markAllDirty();
+      }, 100);
+    }
+    if (str.includes("\x1b[?2026l")) {
+      this._syncOutputActive = false;
+      if (this._syncOutputTimer) { clearTimeout(this._syncOutputTimer); this._syncOutputTimer = null; }
+    }
+    // Sniff Kitty Graphics APC G (_G ... \ or )
+    if (str.includes("\x1b_G")) {
+      str = str.replace(/\x1b_G([\s\S]*?)(?:\x1b\\|\x07)/g, (_m, body) => {
+        this._handleKittyApc(body);
+        return "";
+      });
+    }
+    // Sniff Sixel DCS (P...q...\) if xterm headless parser didn't consume it
+    if (str.includes("\x1bP") && /\x1bP[0-9;]*q/.test(str)) {
+      str = str.replace(/\x1bP([0-9;]*q[\s\S]*?)(?:\x1b\\|\x9c)/g, (_m, body) => {
+        const decoded = _parseSixelToImageData(body);
+        if (decoded) {
+          const buf = this._active();
+          this._images.push({
+            id: this._nextImageId++,
+            x: buf.cursorX | 0,
+            absRow: (buf.baseY | 0) + (buf.cursorY | 0),
+            width: decoded.width,
+            height: decoded.height,
+            pixels: decoded.pixels
+          });
+          this.markAllDirty();
+        }
+        return "";
+      });
+    }
+    return typeof data === "string" ? str : data;
+  }
+  _write(rawData) {
+    const data = this._preprocessStream(rawData);
     const wb = this._term._core?._writeBuffer;
     if (wb && typeof wb.writeSync === "function") {
       try {
@@ -618,16 +1011,38 @@ class XtermBridge {
   }
   // -- Optional extras (renderer / host) -----------------------------------
   getImages() {
-    return [];
+    if (!this._images.length) return [];
+    const vy = this.getViewportY();
+    return this._images.map((img) => ({
+      id: img.id,
+      x: img.x,
+      y: img.absRow - vy,
+      width: img.width,
+      height: img.height,
+      pixels: img.pixels,
+      dataUrl: img.dataUrl
+    })).filter((img) => img.y >= -20 && img.y <= this._rows + 20);
+  }
+  getCwd() {
+    return this._cwd || "";
+  }
+  getSemanticBlocks() {
+    return this._semanticBlocks;
+  }
+  isSyncOutputActive() {
+    return !!this._syncOutputActive;
   }
   takeClipboardRequest() {
-    return null;
+    if (!this._clipboardQueue.length) return null;
+    return this._clipboardQueue.shift() || null;
   }
   takeColorChanges() {
-    return [];
+    if (!this._colorChangeQueue.length) return [];
+    return this._colorChangeQueue.splice(0, this._colorChangeQueue.length);
   }
   takeColorQueries() {
-    return [];
+    if (!this._colorQueryQueue.length) return [];
+    return this._colorQueryQueue.splice(0, this._colorQueryQueue.length);
   }
   // -- Debug ---------------------------------------------------------------
   getUnhandledSequences() {
