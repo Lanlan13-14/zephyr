@@ -3558,47 +3558,119 @@ export const Motion = {
    * M25: Desktop 2-pane docked 80% slide-out & wake-shield retarget (Section 3.4.2 & 4.2.3).
    * Keeps an exact `gap` (14px) between the active 80% pane and the slid-out inactive pane.
    */
-  splitDockSlide(gridEl, { hasDockedPanel = false, activeSlot = 1, broadcastActive = false, gap = 14, animate = true } = {}) {
+  splitDockSlide(gridEl, { layoutCount = 2, hasDockedPanel = false, activeSlot = 1, broadcastActive = false, gap = 14, animate = true } = {}) {
     if (!gridEl || typeof gridEl.querySelector !== 'function') return Promise.resolve();
+    const wins = Array.from(gridEl.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)'));
+    wins.forEach((w) => { w.style.transform = ''; });
+
+    const wsWidth = gridEl.clientWidth || gridEl.getBoundingClientRect?.().width || 1280;
+    const wsHeight = gridEl.clientHeight || gridEl.getBoundingClientRect?.().height || 900;
+    const padX = 16;
+    const padTop = 12;
+    const padBottom = 18;
+    const availW = Math.max(320, wsWidth - padX * 2);
+    const availH = Math.max(200, wsHeight - padTop - padBottom);
+    const paneW = Math.round(wsWidth * 0.8 - 23);
+    const paneH = Math.round(availH * 0.82);
+    const slideSpring = { response: 0.24, damping: 1.0 };
+
+    // ── Case A: 3-Window Horizontal Strip (1: Left, 2: Middle, 3: Right) ──
+    // Always uses 80% pane width; when slot-2 is active, slot-1 & slot-3 each take 10% on left & right!
+    if (layoutCount === 3 && !broadcastActive) {
+      let camX = 0;
+      if (activeSlot === 2) {
+        // Center slot-2 in the viewport -> left 10% shows slot-1, center 80% shows slot-2, right 10% shows slot-3
+        const desiredSlot2Left = Math.round((wsWidth - paneW) / 2);
+        const baseSlot2Left = padX + paneW + gap;
+        camX = desiredSlot2Left - baseSlot2Left;
+      } else if (activeSlot === 3) {
+        const desiredSlot3Left = wsWidth - padX - paneW;
+        const baseSlot3Left = padX + 2 * (paneW + gap);
+        camX = desiredSlot3Left - baseSlot3Left;
+      } else {
+        camX = 0;
+      }
+      wins.forEach((w) => {
+        w.style.opacity = w.classList.contains('slot-' + activeSlot) ? '1' : '0.9';
+      });
+      const units = { '--split-cam-x': 'px', '--split-cam-y': 'px' };
+      if (!animate) {
+        gridEl.style.setProperty('--split-cam-x', camX + 'px');
+        gridEl.style.setProperty('--split-cam-y', '0px');
+      }
+      return this.cssVars(gridEl, {
+        '--split-cam-x': camX,
+        '--split-cam-y': 0,
+      }, animate ? { units, preset: slideSpring } : { units, immediate: true });
+    }
+
+    // ── Case B: 4-Window 2x2 Grid (Clockwise 1, 2, 4, 3 -> 1: TL, 2: TR, 3: BL, 4: BR) ──
+    if (layoutCount === 4 && !broadcastActive) {
+      const slideMagX = Math.max(0, Math.round(2 * paneW + gap - availW));
+      const slideMagY = Math.max(0, Math.round(2 * paneH + gap - availH));
+      const isRightCol = (activeSlot === 2 || activeSlot === 4);
+      const isBottomRow = (activeSlot === 3 || activeSlot === 4);
+      const camX = isRightCol ? -slideMagX : 0;
+      const camY = isBottomRow ? -slideMagY : 0;
+      wins.forEach((w) => {
+        w.style.opacity = w.classList.contains('slot-' + activeSlot) ? '1' : '0.9';
+      });
+      const units = { '--split-cam-x': 'px', '--split-cam-y': 'px' };
+      if (!animate) {
+        gridEl.style.setProperty('--split-cam-x', camX + 'px');
+        gridEl.style.setProperty('--split-cam-y', camY + 'px');
+      }
+      return this.cssVars(gridEl, {
+        '--split-cam-x': camX,
+        '--split-cam-y': camY,
+      }, animate ? { units, preset: slideSpring } : { units, immediate: true });
+    }
+
+    // ── Case C: 2-Window Mode (with or without docked panel) ──
     const win1 = gridEl.querySelector(':scope > .terminal-window.slot-1');
     const win2 = gridEl.querySelector(':scope > .terminal-window.slot-2');
-    if (win1) win1.style.transform = '';
-    if (win2) win2.style.transform = '';
     if (!win1 || !win2 || !hasDockedPanel || broadcastActive) {
-      if (win1) win1.style.opacity = '1';
-      if (win2) win2.style.opacity = '1';
+      wins.forEach((w) => { w.style.opacity = '1'; });
+      const units = { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px', '--split-cam-x': 'px', '--split-cam-y': 'px' };
+      if (!animate) {
+        gridEl.style.setProperty('--split-slide-1-x', '0px');
+        gridEl.style.setProperty('--split-slide-2-x', '0px');
+        gridEl.style.setProperty('--split-cam-x', '0px');
+        gridEl.style.setProperty('--split-cam-y', '0px');
+      }
       return this.cssVars(gridEl, {
         '--split-slide-1-x': 0,
         '--split-slide-2-x': 0,
+        '--split-cam-x': 0,
+        '--split-cam-y': 0,
       }, {
-        units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' },
-        preset: { response: 0.22, damping: 1.0 },
+        units,
+        preset: slideSpring,
         immediate: !animate,
       });
     }
-    const wsWidth = gridEl.clientWidth || gridEl.getBoundingClientRect?.().width || 1280;
-    const padX = 16;
     const activeWin = activeSlot === 2 ? win2 : win1;
     const inactiveWin = activeSlot === 2 ? win1 : win2;
-    const paneW = Math.round(wsWidth * 0.8 - 23);
     const slideMag = Math.max(0, Math.round(2 * paneW - wsWidth + 2 * padX + gap));
     const x1 = activeSlot === 2 ? -slideMag : 0;
     const x2 = activeSlot === 1 ? slideMag : 0;
     activeWin.style.opacity = '1';
     inactiveWin.style.opacity = '0.9';
+    const units = { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' };
+    if (!animate) {
+      gridEl.style.setProperty('--split-slide-1-x', x1 + 'px');
+      gridEl.style.setProperty('--split-slide-2-x', x2 + 'px');
+    }
     const readVar = (name) => Math.round(parseFloat(getComputedStyle(gridEl).getPropertyValue(name)) || 0);
-    if (readVar('--split-slide-1-x') === x1 && readVar('--split-slide-2-x') === x2) return Promise.resolve();
+    if (animate && readVar('--split-slide-1-x') === x1 && readVar('--split-slide-2-x') === x2) return Promise.resolve();
     return this.cssVars(gridEl, {
       '--split-slide-1-x': x1,
       '--split-slide-2-x': x2,
     }, animate
-      ? { units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' }, preset: { response: 0.22, damping: 1.0 } }
-      : { units: { '--split-slide-1-x': 'px', '--split-slide-2-x': 'px' }, immediate: true });
+      ? { units, preset: slideSpring }
+      : { units, immediate: true });
   },
 
-  /**
-   * M26: Terminal topbar shelf symmetric collapse/expand & chevron 180deg spring (Section 3.4.2 & 4.2.4).
-   */
   topbarShelfCollapse(mainNav, collapsed, { chevrons = [], headerItems = [], openHeight = 72, collapsedHeight = 22, animate = true } = {}) {
     if (!mainNav) return Promise.resolve();
     const targetH = collapsed ? collapsedHeight : openHeight;

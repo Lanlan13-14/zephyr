@@ -371,7 +371,7 @@ function defaultSettings(legacySettings = {}) {
             terminalFontColor: '',
         },
         terminal: {
-            maxWindows: 3,
+            maxWindows: 4,
             minimizedKeepAlive: 0,
             smartbarOrder: 'old-first',
             shortcutPlatform: 'auto',

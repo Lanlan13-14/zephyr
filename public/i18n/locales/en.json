@@ -2523,5 +2523,6 @@
   "提示：单指点远程桌面会发送鼠标左键点击；点“⌨ 键盘”可唤起手机输入法。": "Tip: Single-tap sends left click; tap \"Keyboard\" to open mobile IME.",
   "IP 保护模式": "IP Protection Mode",
   "开启后除打开监控卡片与编辑卡片外，其余所有位置隐藏真实 IP 地址。": "When enabled, hides real IP addresses everywhere except inside an open Monitor card or Edit modal.",
-  "已隐藏 IP": "IP Hidden"
+  "已隐藏 IP": "IP Hidden",
+  "四窗": "4 windows"
 }

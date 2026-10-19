@@ -1,4 +1,4 @@
-import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261018-ui103';
+import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui109';
 if (typeof window !== 'undefined' && ZephyrWasmMotion) { window.Motion = ZephyrWasmMotion; }
 
 export const IPV4_OR_IPV6_RE = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\[?(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]+\]?(?::\d{1,5})?/g;
@@ -935,14 +935,19 @@ export function installTerminalSftpPro(ctx) {
   window.addEventListener('resize', ensureDesktopEmbedFlag);
 
   function resolvePreferredDockSide() {
+    const slotSide = window.__zephyrPaneSlotSide || 'single';
+    if (slotSide === 'left' || slotSide === 'middle-force-left') return 'left';
+    if (slotSide === 'right' || slotSide === 'middle-force-right') return 'right';
+    if (window.__zephyrUserPreferredDockSide === 'left' || window.__zephyrUserPreferredDockSide === 'right') {
+      return window.__zephyrUserPreferredDockSide;
+    }
     try {
       const hostWin = window.frameElement?.closest?.('.terminal-window');
       const ws = hostWin?.closest?.('.terminal-workspace-grid');
-      if (ws?.classList.contains('layout-2') && hostWin?.classList.contains('slot-1')) {
-        return 'left';
-      }
+      if (ws?.classList.contains('layout-2') && hostWin?.classList.contains('slot-1')) return 'left';
+      if (ws?.classList.contains('layout-3') && hostWin?.classList.contains('slot-1')) return 'left';
+      if (ws?.classList.contains('layout-4') && (hostWin?.classList.contains('slot-1') || hostWin?.classList.contains('slot-3'))) return 'left';
     } catch {}
-    if (window.__zephyrPaneSlotSide === 'left') return 'left';
     return 'right';
   }
 
@@ -1228,9 +1233,18 @@ export function installTerminalSftpPro(ctx) {
         updateMaximizeButtonIcon(panel);
         setFocusedFloatingPanel(panel);
       } else {
+        const slotSide = window.__zephyrPaneSlotSide || 'single';
+        const canChooseFreely = (slotSide === 'single' || slotSide === 'middle-active');
         let side = (explicitSide === 'left' || explicitSide === 'right') ? explicitSide : resolvePreferredDockSide();
-        if (window.__zephyrPaneSlotSide === 'left') side = 'left';
-        else if (window.__zephyrPaneSlotSide === 'right') side = 'right';
+        if (userTriggered) {
+          if (explicitSide === 'left' || explicitSide === 'right') {
+            window.__zephyrUserPreferredDockSide = explicitSide;
+          } else if (canChooseFreely && !window.__zephyrUserPreferredDockSide) {
+            window.__zephyrUserPreferredDockSide = side;
+          }
+        }
+        if (slotSide === 'left' || slotSide === 'middle-force-left') side = 'left';
+        else if (slotSide === 'right' || slotSide === 'middle-force-right') side = 'right';
         panel.classList.remove('docked-right', 'docked-left', 'panel-fullscreen', 'panel-focused');
         panel.classList.add(side === 'left' ? 'docked-left' : 'docked-right', 'pinned', 'open');
         panel.style.display = 'flex';
@@ -1277,11 +1291,11 @@ export function installTerminalSftpPro(ctx) {
       closeUnifiedMorePopover();
       return;
     }
-    closeUnifiedMorePopover({ instant: true });
+    closeUnifiedMorePopover({ instant: true }); document.querySelectorAll('.z-panel-more-popover').forEach((el) => el.remove());
 
     const slotSide = window.__zephyrPaneSlotSide || 'single';
-    const allowLeft = slotSide !== 'right';
-    const allowRight = slotSide !== 'left';
+    const allowLeft = slotSide !== 'right' && slotSide !== 'middle-force-right';
+    const allowRight = slotSide !== 'left' && slotSide !== 'middle-force-left';
     const isDockedLeft = panel.classList.contains('docked-left');
     const isDockedRight = panel.classList.contains('docked-right');
     const isFullscreen = panel.classList.contains('panel-fullscreen');
@@ -1340,7 +1354,7 @@ export function installTerminalSftpPro(ctx) {
         closeUnifiedMorePopover();
       }
     }, true);
-    window.addEventListener('resize', () => closeUnifiedMorePopover({ instant: true }));
+    let _lastPopVw = window.innerWidth, _lastPopVh = window.innerHeight; window.addEventListener('resize', () => { if (window.innerWidth !== _lastPopVw || window.innerHeight !== _lastPopVh) { _lastPopVw = window.innerWidth; _lastPopVh = window.innerHeight; closeUnifiedMorePopover({ instant: true }); } });
   }
 
   function bindOuterRingResizeHandles(panel) {
@@ -2000,7 +2014,81 @@ export function installTerminalSftpPro(ctx) {
     });
   }
 
+  function isHostAiEnabled() {
+    try {
+      if (window.parent && window.parent !== window) {
+        if (typeof window.parent.__zephyrAiEnabled === 'boolean') return window.parent.__zephyrAiEnabled;
+        const pBtn = window.parent.document?.getElementById('aiFloatingBtn');
+        if (pBtn) return !pBtn.classList.contains('force-hidden') && !pBtn.hidden;
+      }
+    } catch (_) {}
+    if (typeof window.__zephyrAiEnabled === 'boolean') return window.__zephyrAiEnabled;
+    return false;
+  }
+
+  function isHostAiPanelOpen() {
+    try {
+      if (window.parent && window.parent !== window) {
+        if (typeof window.parent.__zephyrAiPanelOpen === 'boolean') return window.parent.__zephyrAiPanelOpen;
+        const pPanel = window.parent.document?.getElementById('aiAgentPanel');
+        if (pPanel) return pPanel.getAttribute('aria-hidden') === 'false' && pPanel.style.display !== 'none';
+      }
+    } catch (_) {}
+    return !!window.__zephyrAiPanelOpen;
+  }
+
+  function syncTerminalAiToolbarButton(enabledOverride, openOverride) {
+    const btn = document.getElementById('terminalAiBtn');
+    if (!btn) return;
+    const enabled = typeof enabledOverride === 'boolean' ? enabledOverride : isHostAiEnabled();
+    const isOpen = typeof openOverride === 'boolean' ? openOverride : isHostAiPanelOpen();
+    window.__zephyrAiEnabled = enabled;
+    window.__zephyrAiPanelOpen = isOpen;
+    btn.classList.toggle('force-hidden', !enabled);
+    btn.hidden = !enabled;
+    btn.style.display = enabled ? '' : 'none';
+    btn.classList.toggle('active', !!(enabled && isOpen));
+    btn.setAttribute('aria-pressed', (enabled && isOpen) ? 'true' : 'false');
+  }
+
   function upgradeTopbarAndCommandBar() {
+    const topbarActions = document.getElementById('topbarActions');
+    if (topbarActions && !document.getElementById('terminalAiBtn')) {
+      const aiBtn = document.createElement('button');
+      aiBtn.className = 'btn-sm force-hidden';
+      aiBtn.id = 'terminalAiBtn';
+      aiBtn.type = 'button';
+      aiBtn.hidden = true;
+      aiBtn.style.display = 'none';
+      aiBtn.title = t('AI 助手');
+      aiBtn.setAttribute('aria-label', t('AI 助手'));
+      const shortcutBtn = document.getElementById('shortcutBtn');
+      const copyBtn = document.getElementById('copyBtn');
+      if (shortcutBtn && shortcutBtn.parentElement === topbarActions) {
+        shortcutBtn.insertAdjacentElement('afterend', aiBtn);
+      } else if (copyBtn && copyBtn.parentElement === topbarActions) {
+        topbarActions.insertBefore(aiBtn, copyBtn);
+      } else {
+        topbarActions.appendChild(aiBtn);
+      }
+      aiBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        try {
+          const tabId = new URLSearchParams(location.search).get('tabId') || '';
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({
+              source: 'zephyr-terminal',
+              type: 'zephyr-toggle-ai-panel',
+              tabId,
+            }, '*');
+          } else {
+            document.getElementById('aiFloatingBtn')?.click();
+          }
+        } catch (_) {}
+      });
+    }
+
     const TOPBAR_BUTTON_SPECS = [
       { id: 'fileBtn', label: '文件', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>' },
       { id: 'infoBtn', label: '监控', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' },
@@ -2009,6 +2097,7 @@ export function installTerminalSftpPro(ctx) {
       { id: 'snippetBtn', label: '片段', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>' },
       { id: 'notesBtn', label: '笔记', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>' },
       { id: 'shortcutBtn', label: '快捷键', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="6" y1="9" x2="6.01" y2="9"/><line x1="10" y1="9" x2="10.01" y2="9"/><line x1="14" y1="9" x2="14.01" y2="9"/><line x1="18" y1="9" x2="18.01" y2="9"/><line x1="8" y1="15" x2="16" y2="15"/></svg>' },
+      { id: 'terminalAiBtn', label: 'AI', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10l1.4 1.4M5.6 18.4l1.4-1.4m10-10l1.4-1.4"/></svg>' },
       { id: 'copyBtn', label: '复制', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' },
       { id: 'pasteBtn', label: '粘贴', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>' },
     ];
@@ -2019,6 +2108,8 @@ export function installTerminalSftpPro(ctx) {
       btn.removeAttribute('data-i18n');
       btn.innerHTML = spec.svg + '<span class="tb-lbl" data-i18n="' + spec.label + '">' + spec.label + '</span>';
     }
+
+    syncTerminalAiToolbarButton();
 
     const RIGHT_ICON_SPECS = [
       { id: 'wtermThemeToggle', svg: '<svg class="tb-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg>' },
@@ -2067,7 +2158,6 @@ export function installTerminalSftpPro(ctx) {
     }
 
     const Motion = getMotion();
-    const topbarActions = document.getElementById('topbarActions');
     if (Motion?.press && topbarActions && !topbarActions.dataset.pressBound) {
       topbarActions.dataset.pressBound = '1';
       Motion.press(topbarActions.querySelectorAll('button'), { scale: 0.95 });
@@ -2314,15 +2404,29 @@ export function installTerminalSftpPro(ctx) {
   window.addEventListener('message', (ev) => {
     const d = ev?.data;
     if (d && d.source === 'zephyr-app' && d.type === 'zephyr-pane-slot') {
-      window.__zephyrPaneSlotSide = d.slotSide || 'single';
+      const nextSlotSide = d.slotSide || 'single';
+      window.__zephyrPaneSlotSide = nextSlotSide;
       const dockedPanel = document.querySelector('.z-unified-panel.docked-left, .z-unified-panel.docked-right');
       if (dockedPanel) {
-        if (d.slotSide === 'left' && dockedPanel.classList.contains('docked-right')) {
+        let targetSide = null;
+        if (nextSlotSide === 'left' || nextSlotSide === 'middle-force-left') {
+          targetSide = 'left';
+        } else if (nextSlotSide === 'right' || nextSlotSide === 'middle-force-right') {
+          targetSide = 'right';
+        } else if (nextSlotSide === 'middle-active' || nextSlotSide === 'single') {
+          if (window.__zephyrUserPreferredDockSide === 'left' || window.__zephyrUserPreferredDockSide === 'right') {
+            targetSide = window.__zephyrUserPreferredDockSide;
+          }
+        }
+        if (targetSide === 'left' && dockedPanel.classList.contains('docked-right')) {
           togglePanelDockState(dockedPanel, 'left', { userTriggered: false });
-        } else if (d.slotSide === 'right' && dockedPanel.classList.contains('docked-left')) {
+        } else if (targetSide === 'right' && dockedPanel.classList.contains('docked-left')) {
           togglePanelDockState(dockedPanel, 'right', { userTriggered: false });
         }
       }
+    }
+    if (d && d.source === 'zephyr-app' && d.type === 'zephyr-ai-state') {
+      syncTerminalAiToolbarButton(Boolean(d.enabled), Boolean(d.panelOpen));
     }
     if (d && d.source === 'zephyr-app' && d.type === 'ip-protection-change') {
       syncTerminalChildIpProtection(Boolean(d.enabled));

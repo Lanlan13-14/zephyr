@@ -576,20 +576,29 @@ function isDockablePanel(panel) {
 
 /* ── 文档 4.2.3 规则 B：接收宿主下行的窗格槽位约束 ───────────────────── */
 let currentSlotSide = 'single';
+let userPreferredPinSide = null;
 
 function applyPaneSlotConstraint(slotSide) {
-    const next = (slotSide === 'left' || slotSide === 'right') ? slotSide : 'single';
-    if (next === currentSlotSide) return;
+    const raw = slotSide || 'single';
+    const next = (raw === 'left' || raw === 'middle-force-left')
+        ? 'left'
+        : (raw === 'right' || raw === 'middle-force-right')
+            ? 'right'
+            : 'single';
+    if (next === currentSlotSide && raw !== 'middle-active') return;
     currentSlotSide = next;
 
     const forbidden = next === 'left' ? 'right' : next === 'right' ? 'left' : '';
 
     for (const panel of [...pinned]) {
         if (!panel.isConnected) continue;
-        /* 侧别与窗格不符：立即迁移到允许的一侧。 */
         const side = panel.dataset.pinSide;
         if (forbidden && side === forbidden) {
             pin(panel, next);
+            continue;
+        }
+        if (!forbidden && (userPreferredPinSide === 'left' || userPreferredPinSide === 'right') && side !== userPreferredPinSide) {
+            pin(panel, userPreferredPinSide);
             continue;
         }
         /* 隐藏不允许方向的图钉按钮。 */

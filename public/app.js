@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261018-ui103';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui109';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261018-ui103');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui109');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -2596,11 +2596,38 @@ function terminalCardFlipTargetRect(_origin) {
     const padX = vw >= 761 ? 16 : 0;
     const padTop = vw >= 761 ? 12 : 0;
     const padBottom = vw >= 761 ? 18 : 0;
+    const fullW = Math.max(200, vw - padX * 2);
     const fullH = Math.max(200, vh - navBottom - padTop - padBottom);
-    const visibleTabs = visibleTerminalTabs();
-    const visibleCount = visibleTabs.length;
-    const maxW = getEffectiveTerminalMaxWindows();
-    if (vw >= 761 && visibleCount >= 2 && maxW >= 2) {
+    const visibleCount = Math.min(visibleTerminalTabs().length, getEffectiveTerminalMaxWindows());
+    const pane80W = Math.round(vw * 0.8 - 23);
+    const pane80H = Math.round(fullH * 0.82);
+
+    if (vw >= 761 && visibleCount === 4) {
+        // 4-window mode: slot-1 is Top-Left (80% width x 82% height)
+        return {
+            left: padX,
+            top: navBottom + padTop,
+            stageTop: padTop,
+            width: pane80W,
+            height: pane80H,
+            topBound: navBottom,
+            fillStage: false,
+        };
+    }
+    if (vw >= 761 && visibleCount === 3) {
+        // 3-window mode: slot-1 is Left (80% width x 100% height)
+        return {
+            left: padX,
+            top: navBottom + padTop,
+            stageTop: padTop,
+            width: pane80W,
+            height: fullH,
+            topBound: navBottom,
+            fillStage: false,
+        };
+    }
+    if (vw >= 761 && visibleCount === 2) {
+        // 2-window mode: slot-1 is Left (80% if sibling is pinned, 50% otherwise)
         const ws = document.getElementById('terminalWorkspace');
         const siblingPinned = Array.from(ws?.querySelectorAll?.(':scope > .terminal-window:not(.minimized-keepalive)') || []).some((w) =>
             pinnedStateByTabId.get(String(w.dataset.window || '')) === true
@@ -2608,10 +2635,8 @@ function terminalCardFlipTargetRect(_origin) {
             || w.classList.contains('window-has-dock-right')
         );
         if (siblingPinned && settings?.terminal?.splitDockSlideOutInactive !== false) {
-            const pane80W = Math.round(vw * 0.8 - 23);
-            const rightSlotLeft = Math.max(padX, vw - padX - pane80W);
             return {
-                left: rightSlotLeft,
+                left: padX,
                 top: navBottom + padTop,
                 stageTop: padTop,
                 width: pane80W,
@@ -2620,22 +2645,17 @@ function terminalCardFlipTargetRect(_origin) {
                 fillStage: false,
             };
         }
-        const innerW = Math.max(320, vw - padX * 2);
-        const gutter = 14;
-        const slot1W = Math.round(innerW * 0.496);
-        const slot2Left = padX + slot1W + gutter;
-        const slot2W = Math.max(160, vw - padX - slot2Left);
+        const slot1W = Math.round(fullW * 0.496);
         return {
-            left: slot2Left,
+            left: padX,
             top: navBottom + padTop,
             stageTop: padTop,
-            width: slot2W,
+            width: slot1W,
             height: fullH,
             topBound: navBottom,
             fillStage: false,
         };
     }
-    const fullW = Math.max(200, vw - padX * 2);
     return {
         left: padX,
         top: navBottom + padTop,
@@ -2944,36 +2964,65 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
         const vw = window.innerWidth || document.documentElement.clientWidth || 1280;
         const vh = window.innerHeight || document.documentElement.clientHeight || 800;
         if (ws && vw >= 761 && Motion?.terminalWindowAvoidance) {
-            const siblingWins = Array.from(ws.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)'))
-                .filter((w) => w !== liveWindow);
-            if (siblingWins.length === 1) {
-                const win1 = siblingWins[0];
-                const padX = 16;
-                const padTop = 12;
-                const padBottom = 18;
-                const vTop = Math.round(topBound + padTop);
-                const fullH = Math.max(200, vh - topBound - padTop - padBottom);
-                const siblingPinned = pinnedStateByTabId.get(String(win1.dataset.window || '')) === true
-                    || win1.classList.contains('window-has-dock-left')
-                    || win1.classList.contains('window-has-dock-right');
+            const padX = 16;
+            const padTop = 12;
+            const padBottom = 18;
+            const gap = 14;
+            const vTop = Math.round(topBound + padTop);
+            const fullW = Math.max(320, vw - padX * 2);
+            const fullH = Math.max(200, vh - topBound - padTop - padBottom);
+            const pane80W = Math.round(vw * 0.8 - 23);
+            const pane80H = Math.round(fullH * 0.82);
+            const beforeMap = options.existingBeforeRects instanceof Map ? options.existingBeforeRects : null;
+
+            const win2 = ws.querySelector(':scope > .terminal-window.slot-2:not(.minimized-keepalive)');
+            const win3 = ws.querySelector(':scope > .terminal-window.slot-3:not(.minimized-keepalive)');
+            const win4 = ws.querySelector(':scope > .terminal-window.slot-4:not(.minimized-keepalive)');
+            const totalCount = Math.min(visibleTerminalTabs().length, getEffectiveTerminalMaxWindows());
+
+            if (totalCount === 2 && win2 && win2 !== liveWindow) {
+                const siblingPinned = pinnedStateByTabId.get(String(win2.dataset.window || '')) === true
+                    || win2.classList.contains('window-has-dock-left')
+                    || win2.classList.contains('window-has-dock-right');
                 if (siblingPinned && settings?.terminal?.splitDockSlideOutInactive !== false) {
-                    const pane80W = Math.round(vw * 0.8 - 23);
-                    const slideMag = Math.max(0, Math.round(vw * 0.6));
-                    const fromBox = { left: -pane80W, top: vTop, width: pane80W, height: fullH };
-                    const toBox = { left: padX - slideMag, top: vTop, width: pane80W, height: fullH };
-                    win1.style.opacity = '0.9';
-                    void Motion.terminalWindowAvoidance(win1, fromBox, toBox, {
-                        preset: { response: 0.46, damping: 0.98 },
-                    });
+                    const toBox2 = { left: padX + pane80W + gap, top: vTop, width: pane80W, height: fullH };
+                    const fromBox2 = beforeMap?.get(win2.dataset.window) || { left: vw + 24, top: vTop, width: pane80W, height: fullH };
+                    void Motion.terminalWindowAvoidance(win2, fromBox2, toBox2, { preset: { response: 0.46, damping: 0.98 } });
                 } else {
-                    const innerW = Math.max(320, vw - padX * 2);
-                    const slot1W = Math.round(innerW * 0.496);
-                    const fromBox = { left: -slot1W - 24, top: vTop, width: slot1W, height: fullH };
-                    const toBox = { left: padX, top: vTop, width: slot1W, height: fullH };
-                    win1.style.opacity = '1';
-                    void Motion.terminalWindowAvoidance(win1, fromBox, toBox, {
-                        preset: { response: 0.46, damping: 0.98 },
-                    });
+                    const slot1W = Math.round(fullW * 0.496);
+                    const slot2Left = padX + slot1W + gap;
+                    const slot2W = Math.max(160, vw - padX - slot2Left);
+                    const toBox2 = { left: slot2Left, top: vTop, width: slot2W, height: fullH };
+                    const fromBox2 = beforeMap?.get(win2.dataset.window) || { left: vw + 24, top: vTop, width: slot2W, height: fullH };
+                    void Motion.terminalWindowAvoidance(win2, fromBox2, toBox2, { preset: { response: 0.46, damping: 0.98 } });
+                }
+            } else if (totalCount === 3) {
+                if (win2 && win2 !== liveWindow) {
+                    const toBox2 = { left: padX + pane80W + gap, top: vTop, width: pane80W, height: fullH };
+                    const fromBox2 = beforeMap?.get(win2.dataset.window) || { left: vw + 24, top: vTop, width: pane80W, height: fullH };
+                    void Motion.terminalWindowAvoidance(win2, fromBox2, toBox2, { preset: { response: 0.46, damping: 0.98 } });
+                }
+                if (win3 && win3 !== liveWindow) {
+                    const toBox3 = { left: padX + 2 * (pane80W + gap), top: vTop, width: pane80W, height: fullH };
+                    const fromBox3 = beforeMap?.get(win3.dataset.window) || { left: vw + 24 + pane80W + gap, top: vTop, width: pane80W, height: fullH };
+                    void Motion.terminalWindowAvoidance(win3, fromBox3, toBox3, { preset: { response: 0.46, damping: 0.98 } });
+                }
+            } else if (totalCount === 4) {
+                const row2Top = vTop + pane80H + gap;
+                if (win2 && win2 !== liveWindow) {
+                    const toBox2 = { left: padX + pane80W + gap, top: vTop, width: pane80W, height: pane80H };
+                    const fromBox2 = beforeMap?.get(win2.dataset.window) || { left: vw + 24, top: vTop, width: pane80W, height: pane80H };
+                    void Motion.terminalWindowAvoidance(win2, fromBox2, toBox2, { preset: { response: 0.46, damping: 0.98 } });
+                }
+                if (win3 && win3 !== liveWindow) {
+                    const toBox3 = { left: padX, top: row2Top, width: pane80W, height: pane80H };
+                    const fromBox3 = beforeMap?.get(win3.dataset.window) || { left: -Math.round(pane80W * 0.35), top: row2Top, width: pane80W, height: pane80H };
+                    void Motion.terminalWindowAvoidance(win3, fromBox3, toBox3, { preset: { response: 0.46, damping: 0.98 } });
+                }
+                if (win4 && win4 !== liveWindow) {
+                    const toBox4 = { left: padX + pane80W + gap, top: row2Top, width: pane80W, height: pane80H };
+                    const fromBox4 = beforeMap?.get(win4.dataset.window) || { left: vw + 24, top: row2Top, width: pane80W, height: pane80H };
+                    void Motion.terminalWindowAvoidance(win4, fromBox4, toBox4, { preset: { response: 0.46, damping: 0.98 } });
                 }
             }
         }
@@ -3366,9 +3415,16 @@ async function playTerminalCardFlipClose(options = {}) {
  * Never wait for API before the first flip frame.
  */
 async function openConnectionWithCardFlip(id, sourceEl, extra = {}) {
-    const cardEl = sourceEl?.classList?.contains?.('connection-card')
+    let cardEl = sourceEl?.classList?.contains?.('connection-card')
         ? sourceEl : (sourceEl?.closest?.('.connection-card') || sourceEl);
-    const originRect = stableTerminalCardSourceRect(cardEl);
+    if (cardEl && !cardEl.isConnected) {
+        cardEl = document.querySelector(`.connection-card [data-connect="${CSS.escape(String(id))}"]`)?.closest('.connection-card')
+            || document.querySelector(`.connection-card[data-id="${CSS.escape(String(id))}"]`)
+            || cardEl;
+    }
+    const originRect = extra.originRect || stableTerminalCardSourceRect(cardEl);
+    const wasInTerminalMode = document.body.classList.contains('terminal-mode');
+    const existingBeforeRects = wasInTerminalMode ? captureVisibleWorkspaceWindowRects() : null;
     const connection = connections.find((item) => String(item.id) === String(id));
     if (!originRect || !connection) return openConnection(id, { ...extra, skipCardFlip: true });
     const cardRadius = terminalCardSourceRadius(cardEl);
@@ -3393,7 +3449,7 @@ async function openConnectionWithCardFlip(id, sourceEl, extra = {}) {
     const authorize = api(`/api/connections/${id}/open`, { method: 'POST' });
     const flight = playTerminalCardFlipOpen(cardEl, {
         originRect, connectionId:id, tabId:mountedId, liveWindow:liveWin,
-        radiusFrom:cardRadius, radiusTo:cardRadius, fromView:'dashboard',
+        radiusFrom:cardRadius, radiusTo:cardRadius, fromView: wasInTerminalMode ? 'terminal' : 'dashboard', existingBeforeRects,
     });
     let authorized = true;
     authorize.catch((err) => { authorized = false; console.warn('[terminal-card-flip] connect authorization failed', err); });
@@ -5150,8 +5206,8 @@ function isPhoneLikeEnvironment() {
 
 function isCompactTerminalWorkspace() { return isPhoneLikeEnvironment(); }
 function getConfiguredTerminalMaxWindows() {
-    const value = Number(settings?.terminal?.maxWindows || localStorage.getItem('zephyr-terminal-max-windows') || 3);
-    return Math.min(3, Math.max(1, Number.isFinite(value) ? value : 3));
+    const value = Number(settings?.terminal?.maxWindows || localStorage.getItem('zephyr-terminal-max-windows') || 4);
+    return Math.min(4, Math.max(1, Number.isFinite(value) ? value : 4));
 }
 function getConfiguredMinimizedKeepAlive() {
     const raw = settings?.terminal?.minimizedKeepAlive ?? localStorage.getItem('zephyr-terminal-minimized-keepalive') ?? 0;
@@ -5250,16 +5306,42 @@ function smartbarPlusHtml() { return `<span class="smartbar-add-icon">${smartbar
 function touchTerminalSession(id) { const t = getTerminalSession(id); if (t) t.lastUsedAt = Date.now(); recentUseStack = [id, ...recentUseStack.filter((x) => x !== id)].filter((x) => getTerminalSession(x)); }
 function orderedVisibleIds() { return openOrderStack.filter((id) => visibleTerminalTabs().some((t) => t.id === id)); }
 function computeDefaultVisualLayout() {
-    const ids = orderedVisibleIds();
-    if (ids.length <= 2) return ids;
-    return [ids[ids.length - 1], ids[1], ids[0]].filter(Boolean);
+    return orderedVisibleIds().slice().reverse();
 }
-function syncVisualLayout({ preserve = true } = {}) {
-    const visibleIds = orderedVisibleIds();
-    if (!preserve || !visualLayout.length) visualLayout = computeDefaultVisualLayout();
-    else visualLayout = [...visualLayout.filter((id) => visibleIds.includes(id)), ...visibleIds.filter((id) => !visualLayout.includes(id))];
-    if (visibleIds.length === 3 && (!preserve || visualLayout.length !== 3)) visualLayout = computeDefaultVisualLayout();
-    if (!activeTerminalTab || !getTerminalSession(activeTerminalTab) || getTerminalSession(activeTerminalTab)?.minimized) activeTerminalTab = visualLayout[0] || visibleIds[0] || terminalTabs[0]?.id || null;
+function animateWorkspaceRemainingWindows(beforeRectsMap, excludeId = null) {
+    if (!beforeRectsMap || !beforeRectsMap.size || !window.Motion?.terminalWindowAvoidance) return;
+    document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach((w) => {
+        const wid = w.dataset.window;
+        if (!wid || wid === excludeId) return;
+        const fromBox = beforeRectsMap.get(wid);
+        const toR = w.getBoundingClientRect();
+        if (fromBox && toR && toR.width > 20 && toR.height > 20) {
+            const toBox = { left: toR.left, top: toR.top, width: toR.width, height: toR.height };
+            const dist = Math.abs(fromBox.left - toBox.left) + Math.abs(fromBox.top - toBox.top) + Math.abs(fromBox.width - toBox.width) + Math.abs(fromBox.height - toBox.height);
+            if (dist >= 6) {
+                void window.Motion.terminalWindowAvoidance(w, fromBox, toBox, { preset: { response: 0.38, damping: 0.96 } });
+            }
+        }
+    });
+}
+function captureVisibleWorkspaceWindowRects(excludeId = null) {
+    const map = new Map();
+    document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach((w) => {
+        const wid = w.dataset.window;
+        if (wid && wid !== excludeId) {
+            const r = w.getBoundingClientRect();
+            if (r.width > 20 && r.height > 20) {
+                map.set(wid, { left: r.left, top: r.top, width: r.width, height: r.height });
+            }
+        }
+    });
+    return map;
+}
+function syncVisualLayout() {
+    visualLayout = computeDefaultVisualLayout();
+    if (!activeTerminalTab || !getTerminalSession(activeTerminalTab) || getTerminalSession(activeTerminalTab)?.minimized) {
+        activeTerminalTab = visualLayout[0] || terminalTabs[0]?.id || null;
+    }
 }
 function minimizeTerminalSession(id, { activateNext = true, animated = true } = {}) {
     const t = getTerminalSession(id); if (!t) return;
@@ -5268,9 +5350,12 @@ function minimizeTerminalSession(id, { activateNext = true, animated = true } = 
         minimizingTerminalTabs.add(id);
         renderTerminalTabs({ rebuildWorkspace: false });
         window.setTimeout(() => {
+            const beforeRects = captureVisibleWorkspaceWindowRects(id);
             minimizingTerminalTabs.delete(id);
             minimizeTerminalSession(id, { activateNext, animated: false });
             renderTerminalTabs();
+            applySplitSlideState({ animate: false });
+            animateWorkspaceRemainingWindows(beforeRects, id);
         }, 260);
         return;
     }
@@ -5281,38 +5366,30 @@ function minimizeTerminalSession(id, { activateNext = true, animated = true } = 
 }
 function restoreTerminalSession(id) {
     const t = getTerminalSession(id); if (!t) return;
+    const wasMinimized = !!t.minimized;
     t.minimized = false;
+    if (wasMinimized) {
+        openOrderStack = [...openOrderStack.filter((x) => x !== id), id];
+    }
     activeTerminalTab = id;
     touchTerminalSession(id);
     enforceTerminalWorkspaceLimit(id);
 }
 function showTerminalSessionInWorkspace(id) {
     const t = getTerminalSession(id); if (!t) return;
+    const beforeRects = captureVisibleWorkspaceWindowRects(id);
     resetTerminalWorkspaceKeyboard({ force: true });
+    const wasMinimized = !!t.minimized;
     t.minimized = false;
+    if (wasMinimized || !visualLayout.includes(id)) {
+        openOrderStack = [...openOrderStack.filter((x) => x !== id), id];
+    }
     activeTerminalTab = id;
     touchTerminalSession(id);
-    const maxWindows = getEffectiveTerminalMaxWindows();
-    if (maxWindows <= 1) {
-        terminalTabs.forEach((item) => { if (item.id !== id) item.minimized = true; });
-        visualLayout = [id];
-    } else {
-        const visibleIds = orderedVisibleIds();
-        if (!visualLayout.includes(id)) visualLayout.push(id);
-        while (visibleTerminalTabs().length > maxWindows) {
-            const victimId = visualLayout.find((itemId) => itemId !== id);
-            if (!victimId) break;
-            const victim = getTerminalSession(victimId);
-            if (victim) victim.minimized = true;
-            visualLayout = visualLayout.filter((itemId) => itemId !== victimId);
-        }
-        const stillVisibleIds = orderedVisibleIds();
-        visualLayout = [...visualLayout.filter((itemId) => stillVisibleIds.includes(itemId)), ...visibleIds.filter((itemId) => !visualLayout.includes(itemId) && stillVisibleIds.includes(itemId))];
-        if (!visualLayout.includes(id)) visualLayout.push(id);
-        visualLayout = visualLayout.slice(-maxWindows);
-    }
-    if (!visualLayout.includes(id)) visualLayout = [id, ...visualLayout].slice(0, maxWindows);
-    syncVisualLayout({ preserve: true });
+    enforceTerminalWorkspaceLimit(id);
+    renderTerminalTabs();
+    applySplitSlideState({ animate: false });
+    animateWorkspaceRemainingWindows(beforeRects, id);
 }
 function enforceTerminalWorkspaceLimit(newId) {
     const maxWindows = getEffectiveTerminalMaxWindows();
@@ -5435,6 +5512,10 @@ function applySplitSlideState({ animate = true } = {}) {
     const ws = document.getElementById('terminalWorkspace');
     if (!ws) return;
     const isTwoPane = ws.classList.contains('layout-2');
+    const isThreePane = ws.classList.contains('layout-3');
+    const isFourPane = ws.classList.contains('layout-4');
+    const layoutCount = isFourPane ? 4 : isThreePane ? 3 : isTwoPane ? 2 : 1;
+
     const visibleWinIds = Array.from(ws.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)'))
         .map((w) => String(w.dataset.window || ''));
     const anyPinned = visibleWinIds.some((id) => pinnedStateByTabId.get(id) === true)
@@ -5443,21 +5524,26 @@ function applySplitSlideState({ animate = true } = {}) {
     const slideSettingAllowed = settings?.terminal?.splitDockSlideOutInactive !== false;
     const hasDocked = isTwoPane && anyPinned && !broadcast && slideSettingAllowed;
 
-    ws.classList.toggle('split-dock-slide-enabled', isTwoPane && slideSettingAllowed);
-    ws.classList.toggle('has-docked-panel', hasDocked);
+    ws.classList.toggle('split-dock-slide-enabled', (isTwoPane && slideSettingAllowed) || isThreePane || isFourPane);
+    ws.classList.toggle('has-docked-panel', hasDocked || isThreePane || isFourPane);
 
-    const slots = ['slot-1', 'slot-2'];
-    // Default activeSlot to 2 (the newly opened 2nd terminal on the right keeps 80%) unless slot-1 is explicitly clicked
-    const activeSlot = slots.find((cls) => ws.querySelector(':scope > .terminal-window.' + cls + '.active')) || 'slot-2';
-    ws.classList.toggle('active-slot-1', activeSlot === 'slot-1');
-    ws.classList.toggle('active-slot-2', activeSlot === 'slot-2');
+    const slots = ['slot-1', 'slot-2', 'slot-3', 'slot-4'];
+    const activeSlotCls = slots.find((cls) => ws.querySelector(':scope > .terminal-window.' + cls + '.active')) || 'slot-1';
+    const activeSlotNum = Number(activeSlotCls.replace('slot-', '')) || 1;
+    ws.classList.toggle('active-slot-1', activeSlotNum === 1);
+    ws.classList.toggle('active-slot-2', activeSlotNum === 2);
+    ws.classList.toggle('active-slot-3', activeSlotNum === 3);
+    ws.classList.toggle('active-slot-4', activeSlotNum === 4);
 
     ensureSplitSlideShields();
 
+    broadcastPaneSlotConstraints();
+
     if (window.Motion?.splitDockSlide) {
         window.Motion.splitDockSlide(ws, {
+            layoutCount,
             hasDockedPanel: hasDocked,
-            activeSlot: activeSlot === 'slot-2' ? 2 : 1,
+            activeSlot: activeSlotNum,
             broadcastActive: broadcast,
             gap: 14,
             animate,
@@ -5489,18 +5575,18 @@ function bindTerminalPanelPinStateMessages() {
         const data = e.data;
         /* 文档 4.2.3 规则 B：子窗格加载完成后回问槽位，立即补发。 */
         if (data && data.source === 'zephyr-terminal' && data.type === 'zephyr-pane-slot-query') {
-            broadcastPaneSlotConstraints();
+            broadcastPaneSlotConstraints(); try { broadcastAiStateToTerminalFrames(); } catch (_) {}
             return;
         }
         /* 当用户在某个分屏终端内部点击/操作时，立即将该分屏设为活动窗格（.active），
          * 确保随后在该窗格固定磁贴时，滑出 80% 的一定是另一个未操作的终端！ */
         if (data && data.source === 'zephyr-terminal' && data.type === 'zephyr-pane-activate') {
-            // Remember which pane was touched, but do not recompute the slide
-            // here. This fires on every click inside a frame; recomputing made
-            // the slide restart on clicks that were never meant to move it.
-            // The pin handler and the wake shield are what move the panes.
             const tabId = String(data.tabId || '');
-            if (tabId && activeTerminalTab !== tabId) activeTerminalTab = tabId;
+            if (tabId && activeTerminalTab !== tabId) {
+                activateTerminalPaneById(tabId);
+                renderTerminalSmartbar();
+                broadcastPaneSlotConstraints();
+            }
             return;
         }
         if (!data || data.source !== 'zephyr-terminal' || data.type !== 'zephyr-panel-pin-state') return;
@@ -5509,16 +5595,14 @@ function bindTerminalPanelPinStateMessages() {
         const wasPinned = pinnedStateByTabId.get(tabId) === true;
         const nowPinned = !!data.hasPinnedPanel;
         pinnedStateByTabId.set(tabId, nowPinned);
-        /* 若该窗格刚刚由用户点击固定了磁贴（或触发了停靠切换），强制将该窗格设为活动窗格，
-         * 保证留在屏幕内 80% 的是刚操作磁贴的这个终端，被滑出 80% 的是没操作的另一个终端！ */
-        if (data.userTriggered || (!wasPinned && nowPinned)) {
+        if (data.userTriggered === false && wasPinned === nowPinned) {
+            return;
+        }
+        if (data.userTriggered !== false && (data.userTriggered || (!wasPinned && nowPinned))) {
             activateTerminalPaneById(tabId);
         }
-        // The dock classes are toggled by the other pin listener. Re-rendering
-        // the tabs here restarts the layout morph, which fights the slide and
-        // makes the pin feel like a jump. The slide is the whole response.
         const ws = document.getElementById('terminalWorkspace');
-        if (ws) ws.classList.toggle('has-docked-panel', [...pinnedStateByTabId.values()].some(Boolean));
+        if (ws) ws.classList.toggle('has-docked-panel', [...pinnedStateByTabId.values()].some(Boolean) || ws.classList.contains('layout-3') || ws.classList.contains('layout-4'));
         applySplitSlideState();
     });
     /* 点击 20% 露头遮罩：即时拉回该窗格 (指哪打哪) */
@@ -5544,7 +5628,14 @@ function broadcastPaneSlotConstraints() {
     const ws = document.getElementById('terminalWorkspace');
     if (!ws) return;
     const isTwo = ws.classList.contains('layout-2');
+    const isThree = ws.classList.contains('layout-3');
+    const isFour = ws.classList.contains('layout-4');
+    const layoutMode = isFour ? 'layout-4' : isThree ? 'layout-3' : isTwo ? 'layout-2' : 'layout-1';
     const broadcastActive = ws.classList.contains('broadcast-input-active');
+    const slots = ['slot-1', 'slot-2', 'slot-3', 'slot-4'];
+    const activeSlotCls = slots.find((cls) => ws.querySelector(':scope > .terminal-window.' + cls + '.active')) || 'slot-1';
+    const activeSlotNum = Number(activeSlotCls.replace('slot-', '')) || 1;
+
     ws.querySelectorAll(':scope > .terminal-window').forEach((win) => {
         const frame = win.querySelector('iframe.terminal-frame');
         if (!frame || !frame.contentWindow) return;
@@ -5552,16 +5643,36 @@ function broadcastPaneSlotConstraints() {
         if (isTwo) {
             if (win.classList.contains('slot-1')) slotSide = 'left';
             else if (win.classList.contains('slot-2')) slotSide = 'right';
+        } else if (isThree) {
+            if (win.classList.contains('slot-1')) {
+                slotSide = 'left';
+            } else if (win.classList.contains('slot-3')) {
+                slotSide = 'right';
+            } else if (win.classList.contains('slot-2')) {
+                // 3-window special rule for middle window (slot-2):
+                // - When user is using middle window (activeSlotNum === 2): allow left or right & restore user's choice
+                // - When user is using leftmost window (activeSlotNum === 1): move middle window's dock to right
+                // - When user is using rightmost window (activeSlotNum === 3): move middle window's dock to left
+                if (activeSlotNum === 1) slotSide = 'middle-force-right';
+                else if (activeSlotNum === 3) slotSide = 'middle-force-left';
+                else slotSide = 'middle-active';
+            }
+        } else if (isFour) {
+            // 4-window clockwise 1(TL), 2(TR), 4(BR), 3(BL):
+            // Left column (slot-1, slot-3) -> only left; Right column (slot-2, slot-4) -> only right
+            if (win.classList.contains('slot-1') || win.classList.contains('slot-3')) slotSide = 'left';
+            else if (win.classList.contains('slot-2') || win.classList.contains('slot-4')) slotSide = 'right';
         }
         try {
             frame.contentWindow.postMessage({
                 source: 'zephyr-app',
                 type: 'zephyr-pane-slot',
-                layoutMode: isTwo ? 'layout-2' : 'layout-1',
+                layoutMode,
                 slotSide,
+                activeSlot: activeSlotNum,
                 broadcastActive,
             }, '*');
-        } catch { /* 跨域/未加载完成时忽略 */ }
+        } catch { /* ignore */ }
     });
 }
 
@@ -5864,8 +5975,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261018-ui103`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261018-ui103`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui109`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui109`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -5925,7 +6036,7 @@ function renderTerminalWorkspace() {
     const workspace = $('#terminalWorkspace');
     const preservedWorkspaceClasses = ['custom-fullscreen', 'ssh-kb-open']
         .filter((className) => workspace.classList.contains(className));
-    workspace.className = `terminal-workspace terminal-workspace-grid layout-${Math.min(count, 3)} ${isCompactTerminalWorkspace() ? 'compact' : ''} ${preservedWorkspaceClasses.join(' ')}`;
+    workspace.className = `terminal-workspace terminal-workspace-grid layout-${Math.min(count, 4)} ${isCompactTerminalWorkspace() ? 'compact' : ''} ${preservedWorkspaceClasses.join(' ')}`;
     const visibleIds = new Set(visible.map((t) => t.id));
     const keepAliveIds = new Set([...visible.map((t) => t.id), ...keepAliveMinimized.map((t) => t.id)]);
     console.info('[terminal-keepalive]', 'workspace render decision', {
@@ -5999,7 +6110,8 @@ function renderTerminalWorkspace() {
             titlebar.innerHTML = terminalWindowTitlebarHtml(t);
         }
         const isActiveWindow = t.id === activeTerminalTab;
-        win.className = `terminal-window slot-${index + 1} ${isActiveWindow ? 'active' : 'background'} ${closingTerminalTabs.has(t.id) ? 'closing' : ''} ${minimizingTerminalTabs.has(t.id) ? 'minimizing' : ''} ${dockSwapAnimatingWindows.has(t.id) ? 'dock-swapping' : ''} ${dockLaunchAnimatingWindows.has(t.id) ? 'dock-launching' : ''}`;
+        const preservedWinClasses = ['window-has-dock-right', 'window-has-dock-left', 'window-has-floating-panel', 'terminal-window-morphing'].filter((cls) => win.classList.contains(cls));
+        win.className = `terminal-window slot-${index + 1} ${isActiveWindow ? 'active' : 'background'} ${closingTerminalTabs.has(t.id) ? 'closing' : ''} ${minimizingTerminalTabs.has(t.id) ? 'minimizing' : ''} ${dockSwapAnimatingWindows.has(t.id) ? 'dock-swapping' : ''} ${dockLaunchAnimatingWindows.has(t.id) ? 'dock-launching' : ''} ${preservedWinClasses.join(' ')}`.trim();
         win.querySelectorAll('.terminal-frame, .terminal-placeholder').forEach((frame) => frame.classList.toggle('active', isActiveWindow));
     });
     mountMobileDockToggle(workspace);
@@ -6013,17 +6125,11 @@ function renderTerminalWorkspace() {
         win.className = `terminal-window minimized-keepalive ${closingTerminalTabs.has(t.id) ? 'closing' : ''}`;
         win.querySelectorAll('.terminal-frame, .terminal-placeholder').forEach((frame) => frame.classList.remove('active'));
     });
-    if (count === 2 || count === 3) {
+    if (count === 2) {
         const splitterX = document.createElement('div');
         splitterX.className = 'workspace-splitter vertical';
         splitterX.dataset.splitter = 'x';
         workspace.appendChild(splitterX);
-    }
-    if (count === 3) {
-        const splitterY = document.createElement('div');
-        splitterY.className = 'workspace-splitter horizontal';
-        splitterY.dataset.splitter = 'y';
-        workspace.appendChild(splitterY);
     }
     applySplitSlideState();
     broadcastPaneSlotConstraints();
@@ -6171,7 +6277,29 @@ async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
         // 最后一个终端关闭后保留在终端页，显示空会话占位，不再自动回到首页。
         switchView('terminal');
     }
+    const remainingBeforeRects = new Map();
+    document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach((w) => {
+        const wid = w.dataset.window;
+        if (wid && wid !== tabId) {
+            const r = w.getBoundingClientRect();
+            if (r.width > 20 && r.height > 20) remainingBeforeRects.set(wid, { left: r.left, top: r.top, width: r.width, height: r.height });
+        }
+    });
     renderTerminalTabs();
+    applySplitSlideState({ animate: false });
+    if (remainingBeforeRects.size > 0 && window.Motion?.terminalWindowAvoidance) {
+        document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach((w) => {
+            const fromBox = remainingBeforeRects.get(w.dataset.window);
+            const toR = w.getBoundingClientRect();
+            if (fromBox && toR && toR.width > 20) {
+                const toBox = { left: toR.left, top: toR.top, width: toR.width, height: toR.height };
+                const dist = Math.abs(fromBox.left - toBox.left) + Math.abs(fromBox.top - toBox.top) + Math.abs(fromBox.width - toBox.width) + Math.abs(fromBox.height - toBox.height);
+                if (dist >= 6) {
+                    void window.Motion.terminalWindowAvoidance(w, fromBox, toBox, { preset: { response: 0.36, damping: 0.96 } });
+                }
+            }
+        });
+    }
     scheduleWorkspaceSave('close-terminal-tab', { immediate: true });
 }
 
@@ -7503,6 +7631,14 @@ function activateTerminalFromDock(tabId, sourceEl = null) {
     if (mobileSwitch) resetTerminalWorkspaceKeyboard({ force: true });
     dockLaunchAnimatingWindows.add(tabId);
     const mobileFullscreen = mobileSwitch && document.body.classList.contains('terminal-custom-fullscreen-open');
+    if (!mobileSwitch && t && !t.minimized && activeTerminalTab !== tabId && visualLayout.includes(tabId)) {
+        activateTerminalPaneById(tabId);
+        applySplitSlideState({ animate: true });
+        scheduleTerminalSmartbarAutoClose();
+        renderTerminalSmartbar();
+        dockLaunchAnimatingWindows.delete(tabId);
+        return;
+    }
     if (!mobileFullscreen && t && !t.minimized && activeTerminalTab === tabId) minimizeTerminalSession(tabId);
     else showTerminalSessionInWorkspace(tabId);
     if (!mobileFullscreen) scheduleTerminalSmartbarAutoClose();
@@ -8525,6 +8661,28 @@ function aiCurrentSession() {
     if (!aiChatSessions.length) createAiChat({ silent: true });
     return aiChatSessions.find((s) => s.id === aiCurrentSessionId) || aiChatSessions[0];
 }
+
+function broadcastAiStateToTerminalFrames() {
+    try {
+        const ai = normalizeAiSettings(settings?.ai || aiSettingsState || {});
+        const enabled = !!ai.enabled;
+        const panel = document.getElementById('aiAgentPanel');
+        const panelOpen = !!(panel && panel.style.display !== 'none' && aiPanelState !== 'closed' && aiPanelState !== 'closing');
+        window.__zephyrAiEnabled = enabled;
+        window.__zephyrAiPanelOpen = panelOpen;
+        document.querySelectorAll('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
+            try {
+                frame.contentWindow?.postMessage({
+                    source: 'zephyr-app',
+                    type: 'zephyr-ai-state',
+                    enabled,
+                    panelOpen,
+                }, '*');
+            } catch (_) {}
+        });
+    } catch (_) {}
+}
+
 function applyAiVisibility() {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const enabled = !!ai.enabled;
@@ -8533,6 +8691,7 @@ function applyAiVisibility() {
     if (enabled) $('#aiFloatingBtn')?.classList.toggle('active', $('#aiAgentPanel')?.getAttribute('aria-hidden') === 'false');
     if (document.querySelector('#view-ai')?.classList.contains('active')) switchView('dashboard');
     renderAiHeaderSelectors();
+    broadcastAiStateToTerminalFrames();
 }
 function renderAiProviderOptions() {
     // 与 CAPTCHA 同源：真实 <select> + enhanceToggleSelect；动态填供应商列表。
@@ -12685,12 +12844,13 @@ function openAiAssistantPanel(trigger = null) {
         startAiPanelWatchdog();
         if (window.innerWidth > 760) $('#aiUserInput')?.focus?.({ preventScroll: true });
     });
+    broadcastAiStateToTerminalFrames();
     scheduleWorkspaceSave('ai-panel-open');
 }
 openAiAssistantPanel._cycle = 0;
 function toggleAiAssistantPanel(trigger = null) {
     const panel = $('#aiAgentPanel');
-    const visible = panel && panel.style.display !== 'none' && aiPanelState !== 'closed';
+    const visible = panel && panel.style.display !== 'none' && panel.getAttribute('aria-hidden') === 'false' && aiPanelState !== 'closed' && aiPanelState !== 'closing';
     if (visible) {
         if (trigger) aiPanelMorphOriginButton = trigger;
         closeAiAssistantPanel();
@@ -12711,6 +12871,8 @@ function closeAiAssistantPanel() {
     panel.setAttribute('aria-hidden', 'true');
     closeAiBrowserForSession(aiCurrentSessionId);
     $('#aiFloatingBtn')?.classList.remove('active');
+    window.__zephyrAiPanelOpen = false;
+    broadcastAiStateToTerminalFrames();
 
     const isMobile = window.innerWidth <= 760 || panel.classList.contains('ai-narrow');
     if (isMobile) {
@@ -14470,7 +14632,7 @@ async function testMail() {
 }
 async function saveTerminalLayout(e) {
     e.preventDefault();
-    const maxWindows = Math.min(3, Math.max(1, Number($('#terminalMaxWindows').value) || 3));
+    const maxWindows = Math.min(4, Math.max(1, Number($('#terminalMaxWindows').value) || 4));
     const rawKeepAlive = Number($('#terminalMinimizedKeepAlive').value);
     const minimizedKeepAlive = rawKeepAlive === -1 ? -1 : Math.max(0, Math.floor(Number.isFinite(rawKeepAlive) ? rawKeepAlive : 0));
     const smartbarOrder = $('#terminalSmartbarOrder').value === 'new-first' ? 'new-first' : 'old-first';
@@ -15107,7 +15269,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261018-ui103')
+        return import('./vendor/zephyr-motion/index.js?v=20261019-ui109')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -15597,10 +15759,11 @@ function bindEvents() {
         if (e.target.closest?.('[data-smartbar-picker-close]')) { terminalSmartbarPickerOpen = false; renderTerminalSmartbar(); return; }
         const connect = e.target.closest?.('[data-smartbar-connect]')?.dataset.smartbarConnect;
         if (connect) {
+            const sourceBtn = e.target.closest?.('[data-smartbar-connect]') || document.querySelector(`[data-smartbar-connect="${CSS.escape(String(connect))}"]`);
+            const originRect = stableTerminalCardSourceRect(sourceBtn);
             terminalSmartbarPickerOpen = false;
             setTerminalSmartbarOpen(false);
-            const sourceBtn = e.target.closest?.('[data-smartbar-connect]') || document.querySelector(`[data-smartbar-connect="${CSS.escape(String(connect))}"]`);
-            openConnectionWithCardFlip(connect, sourceBtn).catch((err) => toast(err.message));
+            openConnectionWithCardFlip(connect, sourceBtn, { originRect }).catch((err) => toast(err.message));
         }
     }, true);
     $('#sessionTabs').addEventListener('pointerdown', (e) => {
@@ -17370,6 +17533,9 @@ function bindBroadcastAndDiagnoseMessages() {
                     } catch {}
                 }
             });
+        } else if (d.type === 'zephyr-toggle-ai-panel') {
+            toggleAiAssistantPanel(document.getElementById('aiFloatingBtn'));
+            broadcastAiStateToTerminalFrames();
         } else if (d.type === 'zephyr-ai-diagnose') {
             const aiBtn = document.getElementById('aiFloatingBtn') || document.getElementById('openAiAssistantBtn');
             aiBtn?.click?.();

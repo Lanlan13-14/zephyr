@@ -4037,3 +4037,83 @@ body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .
   pointer-events: none !important;
   z-index: 65 !important;
 }
+
+
+/* 24. 三窗（layout-3：左1 中2 右3，80% 主视口 + 左右各 10% 露头）与四窗（layout-4：顺时针 1,2,4,3 田字格 80%×82% 滑出） */
+.terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active),
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) {
+  display: block !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+.terminal-workspace-grid.layout-3:not(.compact) > .workspace-splitter,
+.terminal-workspace-grid.layout-4:not(.compact) > .workspace-splitter {
+  display: none !important;
+}
+
+/* 三窗（layout-3）：从左向右 1 (slot-1)、2 (slot-2)、3 (slot-3)，每窗恒定 80% 宽，中间激活时左右窗口各平分 10% */
+.terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.minimized-keepalive):not(.terminal-window-morphing) {
+  position: absolute !important;
+  top: 12px !important;
+  bottom: 18px !important;
+  height: auto !important;
+  width: calc(80% - 23px) !important;
+  right: auto !important;
+  transition: box-shadow 200ms ease !important;
+}
+.terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-1:not(.terminal-window-morphing) {
+  left: calc(16px + var(--split-cam-x, 0px)) !important;
+}
+.terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-2:not(.terminal-window-morphing) {
+  left: calc(16px + (80% - 23px) + 14px + var(--split-cam-x, 0px)) !important;
+}
+.terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-3:not(.terminal-window-morphing) {
+  left: calc(16px + 2 * ((80% - 23px) + 14px) + var(--split-cam-x, 0px)) !important;
+}
+
+/* 四窗（layout-4）：顺时针 1 (左上 slot-1) -> 2 (右上 slot-2) -> 4 (右下 slot-4) -> 3 (左下 slot-3)，四边间隙严格对齐 */
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.minimized-keepalive):not(.terminal-window-morphing) {
+  position: absolute !important;
+  width: calc(80% - 23px) !important;
+  height: calc((100% - 30px) * 0.82) !important;
+  right: auto !important;
+  bottom: auto !important;
+  transition: box-shadow 200ms ease !important;
+}
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-1:not(.terminal-window-morphing) {
+  left: calc(16px + var(--split-cam-x, 0px)) !important;
+  top: calc(12px + var(--split-cam-y, 0px)) !important;
+}
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-2:not(.terminal-window-morphing) {
+  left: calc(16px + (80% - 23px) + 14px + var(--split-cam-x, 0px)) !important;
+  top: calc(12px + var(--split-cam-y, 0px)) !important;
+}
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-3:not(.terminal-window-morphing) {
+  left: calc(16px + var(--split-cam-x, 0px)) !important;
+  top: calc(12px + ((100% - 30px) * 0.82) + 14px + var(--split-cam-y, 0px)) !important;
+}
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-4:not(.terminal-window-morphing) {
+  left: calc(16px + (80% - 23px) + 14px + var(--split-cam-x, 0px)) !important;
+  top: calc(12px + ((100% - 30px) * 0.82) + 14px + var(--split-cam-y, 0px)) !important;
+}
+
+/* 三窗与四窗下：当前活动窗格 z-index 置顶，其余露头窗格启用 .split-slide-wake-shield 点击即拉回主视野 */
+.terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window.active:not(.terminal-window-morphing),
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.active:not(.terminal-window-morphing) {
+  z-index: 4 !important;
+}
+.terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.active):not(.terminal-window-morphing),
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.active):not(.terminal-window-morphing) {
+  z-index: 2 !important;
+}
+.terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.active) > .split-slide-wake-shield,
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.active) > .split-slide-wake-shield {
+  display: block !important;
+}
+.terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window.active > .split-slide-wake-shield,
+.terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.active > .split-slide-wake-shield {
+  display: none !important;
+}
+#terminalCardFlipStage.terminal-card-flip-stage.is-active {
+  z-index: 80 !important;
+}
