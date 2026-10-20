@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui109';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui113';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui109');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui113');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -2441,6 +2441,11 @@ function setTerminalTopbarCollapsed(collapsed) {
     /* 折叠会改变顶栏高度，Smartbar 定位与终端可视高度都要重新测量。 */
     try {
         syncTerminalShelfLineState();
+        document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach((w) => {
+            const s = getTerminalSession(w.dataset.window);
+            const tb = w.querySelector('.terminal-window-titlebar');
+            if (s && tb) tb.innerHTML = terminalWindowTitlebarHtml(s);
+        });
         scheduleTerminalLayoutStabilize('shelf-collapse-toggle', { focus: true });
     } catch { /* 非终端页忽略 */ }
     try { scheduleWorkspaceSave('shelf-collapse-toggle'); } catch {}
@@ -3011,18 +3016,21 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
                 const row2Top = vTop + pane80H + gap;
                 if (win2 && win2 !== liveWindow) {
                     const toBox2 = { left: padX + pane80W + gap, top: vTop, width: pane80W, height: pane80H };
-                    const fromBox2 = beforeMap?.get(win2.dataset.window) || { left: vw + 24, top: vTop, width: pane80W, height: pane80H };
-                    void Motion.terminalWindowAvoidance(win2, fromBox2, toBox2, { preset: { response: 0.46, damping: 0.98 } });
+                    const prev2 = beforeMap?.get(win2.dataset.window);
+                    const fromBox2 = prev2
+                        ? { left: Math.max(padX + Math.round(pane80W * 0.48), prev2.left), top: vTop, width: pane80W, height: pane80H }
+                        : { left: vw + 24, top: vTop, width: pane80W, height: pane80H };
+                    void Motion.terminalWindowAvoidance(win2, fromBox2, toBox2, { preset: { response: 0.42, damping: 0.98 } });
                 }
                 if (win3 && win3 !== liveWindow) {
                     const toBox3 = { left: padX, top: row2Top, width: pane80W, height: pane80H };
-                    const fromBox3 = beforeMap?.get(win3.dataset.window) || { left: -Math.round(pane80W * 0.35), top: row2Top, width: pane80W, height: pane80H };
-                    void Motion.terminalWindowAvoidance(win3, fromBox3, toBox3, { preset: { response: 0.46, damping: 0.98 } });
+                    const fromBox3 = { left: padX, top: vh + 24, width: pane80W, height: pane80H };
+                    void Motion.terminalWindowAvoidance(win3, fromBox3, toBox3, { preset: { response: 0.42, damping: 0.98 } });
                 }
                 if (win4 && win4 !== liveWindow) {
                     const toBox4 = { left: padX + pane80W + gap, top: row2Top, width: pane80W, height: pane80H };
-                    const fromBox4 = beforeMap?.get(win4.dataset.window) || { left: vw + 24, top: row2Top, width: pane80W, height: pane80H };
-                    void Motion.terminalWindowAvoidance(win4, fromBox4, toBox4, { preset: { response: 0.46, damping: 0.98 } });
+                    const fromBox4 = { left: padX + pane80W + gap, top: vh + 24, width: pane80W, height: pane80H };
+                    void Motion.terminalWindowAvoidance(win4, fromBox4, toBox4, { preset: { response: 0.42, damping: 0.98 } });
                 }
             }
         }
@@ -3089,6 +3097,10 @@ async function finishTerminalCardFlipOpenHandoff() {
     // them in from outside the screen. The window that IS the flipping card is
     // excluded: it morphs from the card's end box, not from off screen.
     restoreCardFlipHostedWindow();
+    if (win.dataset.window) {
+        activeTerminalTab = String(win.dataset.window);
+        touchTerminalSession(activeTerminalTab);
+    }
     Object.assign(win.style, {
         visibility: 'visible', opacity: '1', pointerEvents: '', animation: 'none',
         transition: 'none', transform: 'none', filter: 'none',
@@ -5064,6 +5076,8 @@ function mountConnectionLocallyForCardFlip(connection, options = {}) {
     enforceTerminalWorkspaceLimit(tabId);
     const workspace = $('#terminalWorkspace');
     if (workspace) {
+        workspace.style.setProperty('--split-cam-x', '0px');
+        workspace.style.setProperty('--split-cam-y', '0px');
         // Never hardcode a layout class here. Any already-visible window stays
         // in the workspace, so a fixed single-cell template auto-placed the
         // second window into an implicit ROW — that is the "stacked instead of
@@ -5310,16 +5324,22 @@ function computeDefaultVisualLayout() {
 }
 function animateWorkspaceRemainingWindows(beforeRectsMap, excludeId = null) {
     if (!beforeRectsMap || !beforeRectsMap.size || !window.Motion?.terminalWindowAvoidance) return;
+    const ws = document.getElementById('terminalWorkspace');
+    const isFour = ws?.classList.contains('layout-4');
+    const vh = window.innerHeight || document.documentElement.clientHeight || 900;
     document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach((w) => {
         const wid = w.dataset.window;
         if (!wid || wid === excludeId) return;
-        const fromBox = beforeRectsMap.get(wid);
+        let fromBox = beforeRectsMap.get(wid);
         const toR = w.getBoundingClientRect();
         if (fromBox && toR && toR.width > 20 && toR.height > 20) {
             const toBox = { left: toR.left, top: toR.top, width: toR.width, height: toR.height };
+            if (isFour && (w.classList.contains('slot-3') || w.classList.contains('slot-4')) && fromBox.top < toBox.top - 120) {
+                fromBox = { left: toBox.left, top: vh + 20, width: toBox.width, height: toBox.height };
+            }
             const dist = Math.abs(fromBox.left - toBox.left) + Math.abs(fromBox.top - toBox.top) + Math.abs(fromBox.width - toBox.width) + Math.abs(fromBox.height - toBox.height);
             if (dist >= 6) {
-                void window.Motion.terminalWindowAvoidance(w, fromBox, toBox, { preset: { response: 0.38, damping: 0.96 } });
+                void window.Motion.terminalWindowAvoidance(w, fromBox, toBox, { preset: { response: 0.36, damping: 0.96 } });
             }
         }
     });
@@ -5478,13 +5498,13 @@ async function refreshBoundAgentDevices({ force = false } = {}) {
 }
 
 function remoteHandoffSectionHtml() {
-    if (!boundAgentDevices.length) return '';
-    const rows = boundAgentDevices.map((d) => {
-        const online = d.lastSeenAt && (Date.now() - Number(d.lastSeenAt) < 120000);
-        return '<button type="button" class="smartbar-handoff-row" data-handoff-device="' + escapeHtml(d.clientId || '') + '" data-handoff-online="' + (online ? '1' : '0') + '">'
+    const onlineDevices = (boundAgentDevices || []).filter((d) => d && d.lastSeenAt && (Date.now() - Number(d.lastSeenAt) < 120000));
+    if (!onlineDevices.length) return '';
+    const rows = onlineDevices.map((d) => {
+        return '<button type="button" class="smartbar-handoff-row" data-handoff-device="' + escapeHtml(d.clientId || '') + '" data-handoff-online="1">'
             + '<span class="smartbar-handoff-ico">' + renderDeviceBadgeHtml(d) + '</span>'
-            + '<strong>' + escapeHtml(d.deviceName || 'Zephyr Agent') + '</strong>'
-            + '<em>' + (online ? t('在线') : t('离线')) + '</em>'
+            + '<span class="smartbar-handoff-meta"><strong>' + escapeHtml(d.deviceName || 'Zephyr Agent') + '</strong><em>' + t('在线 · 点击无缝接力') + '</em></span>'
+            + '<span class="smartbar-handoff-pill">' + t('接管') + '</span>'
             + '</button>';
     }).join('');
     return '<div class="smartbar-picker-section">' + t('可从其他设备接管') + '</div>'
@@ -5581,6 +5601,12 @@ function bindTerminalPanelPinStateMessages() {
         /* 当用户在某个分屏终端内部点击/操作时，立即将该分屏设为活动窗格（.active），
          * 确保随后在该窗格固定磁贴时，滑出 80% 的一定是另一个未操作的终端！ */
         if (data && data.source === 'zephyr-terminal' && data.type === 'zephyr-pane-activate') {
+            if (terminalCardFlipMotion?.phase === 'opening'
+                || document.body.classList.contains('terminal-card-flip-preparing')
+                || document.body.classList.contains('terminal-card-flip-animating')
+                || document.body.classList.contains('terminal-card-flip-handoff')) {
+                return;
+            }
             const tabId = String(data.tabId || '');
             if (tabId && activeTerminalTab !== tabId) {
                 activateTerminalPaneById(tabId);
@@ -5676,33 +5702,134 @@ function broadcastPaneSlotConstraints() {
     });
 }
 
+function syncSmartbarOnScreenRing(dock = document.querySelector('#sessionTabs .smartbar-dock')) {
+    if (!dock) return;
+    let ring = dock.querySelector(':scope > .smartbar-onscreen-ring');
+    if (!ring) {
+        ring = document.createElement('div');
+        ring.className = 'smartbar-onscreen-ring';
+        ring.setAttribute('aria-hidden', 'true');
+        dock.prepend(ring);
+    }
+    const onScreenButtons = Array.from(dock.querySelectorAll(':scope > .smartbar-session.on-screen'));
+    if (!onScreenButtons.length) {
+        ring.style.setProperty('--ring-opacity', '0');
+        ring.style.setProperty('--ring-width', '0px');
+        return;
+    }
+    const first = onScreenButtons[0];
+    const last = onScreenButtons[onScreenButtons.length - 1];
+    const padX = 7;
+    const left = Math.max(2, first.offsetLeft - padX);
+    const right = last.offsetLeft + last.offsetWidth + padX;
+    const width = Math.max(0, right - left);
+    const top = Math.max(34, first.offsetTop - 16);
+    const height = Math.max(106, first.offsetHeight + 22);
+    ring.style.top = `${top}px`;
+    ring.style.height = `${height}px`;
+    ring.style.setProperty('--ring-left', `${left}px`);
+    ring.style.setProperty('--ring-width', `${width}px`);
+    ring.style.setProperty('--ring-opacity', '1');
+    requestAnimationFrame(() => ring.classList.add('ring-ready'));
+}
+
 function renderTerminalSmartbar() {
     const order = getTerminalSmartbarOrder();
-    const orderedIds = order === 'new-first' ? [...openOrderStack].reverse() : [...openOrderStack];
+    const rawOrderedIds = order === 'new-first' ? [...openOrderStack].reverse() : [...openOrderStack];
     const seen = new Set();
-    const sessions = orderedIds.map(getTerminalSession).filter(Boolean).filter((t) => {
+    const allSessions = rawOrderedIds.map(getTerminalSession).filter(Boolean).filter((t) => {
         if (seen.has(t.id)) return false;
         seen.add(t.id);
         return true;
     });
-    const icon = (t, index) => `<button class="smartbar-session ${t.id === activeTerminalTab ? 'active' : ''} ${t.minimized ? 'minimized' : ''}" style="--dock-index:${index}" data-smartbar-tab="${t.id}" title="${escapeHtml(t.protocol)} · ${escapeHtml(formatProtectedName(t.name, t.protocol, settings))} · ${escapeHtml(t.status)}" aria-label="${escapeHtml(formatProtectedName(t.name || 'Terminal', t.protocol, settings))}"><span class="smartbar-session-icon"><span class="proto-dot ${terminalProtocolClass(t.protocol)}"></span>${smartbarSessionInitialsHtml(t.name)}</span><span class="smartbar-session-label" aria-hidden="true">${smartbarSessionLabelHtml(t.name || 'Terminal')}</span></button>`;
-    const launchableConnections = connections.filter((c) => ['SSH', 'RDP', 'VNC'].includes(String(c.protocol || 'SSH').toUpperCase()));
+    const visibleLayoutIds = visualLayout.filter((id) => {
+        const s = getTerminalSession(id);
+        return s && !s.minimized && !closingTerminalTabs.has(id);
+    });
+    const onScreenSet = new Set(visibleLayoutIds);
+    const slotMap = new Map(visibleLayoutIds.map((id, idx) => [id, idx + 1]));
+    const onScreenSessions = (order === 'new-first' ? visibleLayoutIds : [...visibleLayoutIds].reverse())
+        .map(getTerminalSession)
+        .filter(Boolean);
+    const minimizedSessions = allSessions.filter((t) => !onScreenSet.has(t.id));
+    const sessions = order === 'new-first'
+        ? [...onScreenSessions, ...minimizedSessions]
+        : [...minimizedSessions, ...onScreenSessions];
+
+    const icon = (t, index) => {
+        const isOnScreen = onScreenSet.has(t.id);
+        const slotNum = slotMap.get(t.id) || 0;
+        const badgeHtml = isOnScreen && slotNum > 0
+            ? `<span class="smartbar-slot-badge" aria-hidden="true">${slotNum}</span>`
+            : '';
+        return `<button class="smartbar-session ${t.id === activeTerminalTab ? 'active' : ''} ${isOnScreen ? 'on-screen' : ''} ${t.minimized ? 'minimized' : ''}" style="--dock-index:${index}" data-smartbar-tab="${t.id}" data-slot="${slotNum || ''}" title="${escapeHtml(t.protocol)} · ${escapeHtml(formatProtectedName(t.name, t.protocol, settings))} · ${escapeHtml(t.status)}" aria-label="${escapeHtml(formatProtectedName(t.name || 'Terminal', t.protocol, settings))}"><span class="smartbar-session-icon">${badgeHtml}<span class="proto-dot ${terminalProtocolClass(t.protocol)}"></span>${smartbarSessionInitialsHtml(t.name)}</span><span class="smartbar-session-label" aria-hidden="true">${smartbarSessionLabelHtml(t.name || 'Terminal')}</span></button>`;
+    };
+    const launchableConnections = connections.filter((c) => ['SSH', 'RDP', 'VNC', 'TELNET'].includes(String(c.protocol || 'SSH').toUpperCase()));
+    const openCountByConnId = new Map();
+    terminalTabs.forEach((tab) => {
+        if (tab.connectionId && !closingTerminalTabs.has(tab.id)) {
+            openCountByConnId.set(tab.connectionId, (openCountByConnId.get(tab.connectionId) || 0) + 1);
+        }
+    });
+    const renderPickerConnItem = (c) => {
+        const proto = String(c.protocol || 'SSH').toUpperCase();
+        const pCls = terminalProtocolClass(proto);
+        const displayName = escapeHtml(formatProtectedName(c.name, proto, settings));
+        const hostMeta = isIpProtectionEnabled(settings)
+            ? escapeHtml(proto)
+            : `${escapeHtml(c.host || '')}${c.port ? ':' + escapeHtml(String(c.port)) : ''}`;
+        const openCnt = openCountByConnId.get(c.id) || 0;
+        const openBadge = openCnt > 0
+            ? `<span class="smartbar-picker-open-pill">${openCnt} ${t('已开')}</span>`
+            : '';
+        const protoSvg = (proto === 'RDP' || proto === 'VNC')
+            ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>'
+            : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
+        return `<button type="button" class="smartbar-picker-item" data-smartbar-connect="${escapeHtml(c.id)}">
+            <span class="smartbar-picker-item-icon proto-${pCls}" aria-hidden="true">
+                ${protoSvg}
+                <span class="proto-dot ${pCls}"></span>
+            </span>
+            <span class="smartbar-picker-item-body">
+                <span class="smartbar-picker-item-top">
+                    <strong>${displayName}</strong>
+                    <span class="smartbar-picker-proto-tag proto-${pCls}">${escapeHtml(proto)}</span>
+                    ${openBadge}
+                </span>
+                <em>${hostMeta}</em>
+            </span>
+            <span class="smartbar-picker-item-cta" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </span>
+        </button>`;
+    };
     const picker = terminalSmartbarPickerOpen ? `
         <div class="smartbar-picker" role="dialog" aria-label="${t('选择服务器连接')}">
-            <div class="smartbar-picker-head"><strong>${t('选择服务器')}</strong><button data-smartbar-picker-close title="${t('关闭')}">×</button></div>
+            <div class="smartbar-picker-head">
+                <div class="smartbar-picker-head-title">
+                    <span class="smartbar-picker-head-ico" aria-hidden="true">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                    </span>
+                    <strong>${t('新建终端连接')}</strong>
+                    <span class="smartbar-picker-count">${launchableConnections.length}</span>
+                </div>
+                <button type="button" class="smartbar-picker-close-btn" data-smartbar-picker-close title="${t('关闭')}" aria-label="${t('关闭')}">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
             <div class="smartbar-picker-list">
-                ${launchableConnections.length ? launchableConnections.map((c) => `<button data-smartbar-connect="${c.id}"><span class="proto-dot ${terminalProtocolClass(c.protocol)}"></span><strong>${escapeHtml(formatProtectedName(c.name, c.protocol, settings))}</strong><em>${isIpProtectionEnabled(settings) ? escapeHtml(c.protocol) : `${escapeHtml(c.protocol)} · ${escapeHtml(c.host)}:${escapeHtml(c.port)}`}</em></button>`).join('') : `<div class="smartbar-empty">${t('暂无 SSH/RDP/VNC 服务器')}</div>`}
+                ${launchableConnections.length ? launchableConnections.map(renderPickerConnItem).join('') : `<div class="smartbar-empty">${t('暂无 SSH/RDP/VNC 服务器')}</div>`}
                 ${remoteHandoffSectionHtml()}
             </div>
         </div>` : '';
-    /* 计划 4.2.4：picker 一打开就拉真实设备列表，渲染跨端接管分区。 */
     if (terminalSmartbarPickerOpen) {
         refreshBoundAgentDevices().then((devices) => {
             if (devices.length && terminalSmartbarPickerOpen) {
                 const mount = document.getElementById('smartbarPickerLayer');
                 const list = mount && mount.querySelector('.smartbar-picker-list');
-                if (list && !list.querySelector('.smartbar-handoff-list')) {
-                    list.insertAdjacentHTML('beforeend', remoteHandoffSectionHtml());
+                const handoffHtml = remoteHandoffSectionHtml();
+                if (list && handoffHtml && !list.querySelector('.smartbar-handoff-list')) {
+                    list.insertAdjacentHTML('beforeend', handoffHtml);
                 }
             }
         }).catch(() => {});
@@ -5713,27 +5840,55 @@ function renderTerminalSmartbar() {
         document.body.appendChild(el);
         return el;
     })();
-    pickerMount.innerHTML = picker;
+    if (pickerMount.dataset.pickerOpen !== String(!!terminalSmartbarPickerOpen) || terminalSmartbarPickerOpen) {
+        pickerMount.dataset.pickerOpen = String(!!terminalSmartbarPickerOpen);
+        pickerMount.innerHTML = picker;
+    }
     const smartbarRoot = $('#sessionTabs');
     if (!smartbarRoot) return;
     syncTerminalSmartbarTop();
-    smartbarRoot.className = `terminal-smartbar ${terminalSmartbarOpen ? 'open' : ''} ${terminalSmartbarClosing ? 'closing' : ''}`;
+    const preserveOutsideDrag = smartbarRoot.classList.contains('smartbar-dragging-outside');
+    smartbarRoot.className = `terminal-smartbar ${terminalSmartbarOpen ? 'open' : ''} ${terminalSmartbarClosing ? 'closing' : ''} ${preserveOutsideDrag ? 'smartbar-dragging-outside' : ''}`.trim();
     syncTerminalShelfLineState();
-    smartbarRoot.innerHTML = `
-        <button class="smartbar-handle" data-smartbar-toggle title="${t('展开/收回 Dock')}"><span></span></button>
-        <div class="smartbar-panel">
-            <div class="smartbar-dock" aria-label="${t('终端 Dock')}">
+
+    // Keep .smartbar-handle / .smartbar-panel / .smartbar-dock DOM persistent so WASM open/close animations never snap!
+    let handleEl = smartbarRoot.querySelector(':scope > .smartbar-handle');
+    let panelEl = smartbarRoot.querySelector(':scope > .smartbar-panel');
+    let dockEl = panelEl?.querySelector(':scope > .smartbar-dock');
+    if (!handleEl || !panelEl || !dockEl) {
+        smartbarRoot.innerHTML = `
+            <button class="smartbar-handle" data-smartbar-toggle title="${t('展开/收回 Dock')}"><span></span></button>
+            <div class="smartbar-panel">
+                <div class="smartbar-dock" aria-label="${t('终端 Dock')}"></div>
+            </div>`;
+        panelEl = smartbarRoot.querySelector(':scope > .smartbar-panel');
+        dockEl = panelEl?.querySelector(':scope > .smartbar-dock');
+    }
+
+    const themeKey = document.documentElement.getAttribute('data-theme') || 'light';
+    const dockSignature = `${themeKey}|${order}|${terminalSmartbarPickerOpen ? 1 : 0}|` + sessions.map((t) => `${t.id}:${t.id === activeTerminalTab ? 1 : 0}:${onScreenSet.has(t.id) ? 1 : 0}:${t.minimized ? 1 : 0}:${slotMap.get(t.id) || 0}:${t.name || ''}:${t.protocol || ''}`).join('|');
+    if (dockEl && !terminalSmartbarClosing && !smartbarDragState) {
+        if (dockEl.dataset.dockSignature !== dockSignature) {
+            dockEl.dataset.dockSignature = dockSignature;
+            const prevRing = dockEl.querySelector(':scope > .smartbar-onscreen-ring');
+            const prevLeft = prevRing?.style.getPropertyValue('--ring-left') || '';
+            const prevWidth = prevRing?.style.getPropertyValue('--ring-width') || '';
+            dockEl.innerHTML = `
+                <div class="smartbar-onscreen-ring" aria-hidden="true" style="${prevLeft ? `--ring-left:${prevLeft};--ring-width:${prevWidth};--ring-opacity:1;` : ''}"></div>
                 ${sessions.map(icon).join('') || `<span class="smartbar-empty">${t('暂无会话')}</span>`}
-                <button class="smartbar-add" style="--dock-index:${sessions.length}" data-smartbar-add title="${t('选择服务器连接')}" aria-label="${t('选择服务器连接')}">${smartbarPlusHtml()}</button>
-            </div>
-        </div>`;
+                <button class="smartbar-add ${terminalSmartbarPickerOpen ? 'active' : ''}" style="--dock-index:${sessions.length}" data-smartbar-add title="${t('新建终端连接')}" aria-label="${t('新建终端连接')}">${smartbarPlusHtml()}<span class="smartbar-session-label smartbar-add-label" aria-hidden="true">${smartbarSessionLabelHtml(t('新建'))}</span></button>`;
+        }
+        syncSmartbarOnScreenRing(dockEl);
+    }
     requestAnimationFrame(() => {
         const nav = $('.main-nav');
         const smartbar = $('#sessionTabs');
         const panel = smartbar?.querySelector('.smartbar-panel');
+        const dock = panel?.querySelector('.smartbar-dock');
         if (!nav || !smartbar || !panel) return;
         syncTerminalSmartbarTop();
         syncTerminalShelfLineState();
+        if (dock) syncSmartbarOnScreenRing(dock);
         positionSmartbarPicker();
     });
 }
@@ -5770,14 +5925,16 @@ function terminalWindowTitlebarHtml(session) {
         || fullscreenElement === workspace
         || fullscreenElement?.classList?.contains('terminal-window');
     const visibleCount = visibleTerminalTabs().length;
-    const showFullscreenBtn = visibleCount >= 2 || isFull || isCompactTerminalWorkspace();
-    const fullAction = isFull ? 'exit-fullscreen' : 'fullscreen';
-    const fullTitle = isFull ? t('退出全屏') : t('全屏');
-    const fullIconSvg = isFull
+    const isSingleTopbarFull = !isCompactTerminalWorkspace() && visibleCount <= 1 && !!terminalTopbarCollapsed;
+    const effectiveFull = isFull || isSingleTopbarFull;
+    const showFullscreenBtn = visibleCount >= 1 || effectiveFull || isCompactTerminalWorkspace();
+    const fullAction = effectiveFull ? 'exit-fullscreen' : 'fullscreen';
+    const fullTitle = effectiveFull ? t('退出全屏') : t('全屏');
+    const fullIconSvg = effectiveFull
         ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16"/></svg>'
         : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
     const fullBtnHtml = showFullscreenBtn
-        ? `<button type="button" class="pbtn z1-max" data-window-action="${fullAction}" data-window="${session.id}" title="${fullTitle}" aria-label="${fullTitle}">${fullIconSvg}</button>`
+        ? `<button type="button" class="pbtn z1-max${effectiveFull ? ' active' : ''}" data-window-action="${fullAction}" data-window="${session.id}" title="${fullTitle}" aria-label="${fullTitle}">${fullIconSvg}</button>`
         : '';
     return `<button class="terminal-grip terminal-window-center-dots" data-window-control="${session.id}" title="${t('拖动交换窗口位置')}" aria-label="${t('拖动交换窗口位置')}"><span></span></button><button class="mobile-fullscreen-dock-toggle" data-mobile-dock-toggle data-smartbar-toggle title="${t('展开/收回移动端 Dock')}" aria-label="${t('展开/收回移动端 Dock')}"><span></span></button><div class="z1-tb-left"><span class="proto-dot ${terminalProtocolClass(session.protocol)}"></span><strong class="terminal-window-title">${escapeHtml(formatProtectedName(terminalShortName(session.name), proto, settings))}</strong><span class="z1-badge z1-proto-badge">${escapeHtml(proto)}</span>${hostBadge ? `<span class="z1-badge z1-host z1-host-badge">${escapeHtml(hostBadge)}</span>` : ''}<span class="z1-ping" data-z1-ping="${session.id}"${probe?.level ? ` data-level="${probe.level}"` : ''}>${latencyMs == null ? '' : `${latencyMs}ms`}</span></div><div class="z1-tb-actions"><button type="button" class="pbtn z1-min" data-window-action="minimize" data-window="${session.id}" title="${t('最小化')}" aria-label="${t('最小化')}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>${fullBtnHtml}<button type="button" class="pbtn z1-close" data-window-action="close" data-window="${session.id}" title="${t('关闭')}" aria-label="${t('关闭')}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>`;
 }
@@ -5975,8 +6132,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui109`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui109`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui113`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui113`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -6057,14 +6214,9 @@ function renderTerminalWorkspace() {
         syncTerminalSmartbarTop();
         syncTerminalShelfLineState();
         const existingPlaceholder = workspace.querySelector(':scope > .terminal-placeholder');
-        const minimizedPillsHtml = keepAliveMinimized.length
-            ? `<div class="terminal-empty-minimized-list">${keepAliveMinimized.map((s) => `<button type="button" class="tool-btn terminal-empty-restore-pill" data-empty-restore-tab="${escapeHtml(s.id)}"><span class="proto-dot ${terminalProtocolClass(s.protocol)}"></span><span>${escapeHtml(formatProtectedName(s.name, s.protocol, settings))}</span></button>`).join('')}</div>`
-            : '';
-        const emptyMinimalHtml = `<div class="terminal-placeholder active">
-            <div class="terminal-empty-minimal terminal-empty-card" data-empty-open-picker role="button" tabindex="0" title="${t('点击展开顶部终端栏或选择连接')}">
-                <span class="terminal-empty-dot"></span>
-                <span class="terminal-empty-text">${keepAliveMinimized.length ? t('当前会话已最小化，点击顶部白条或此处恢复') : t('暂无会话 · 点击上方白条或此处打开连接')}</span>
-                ${minimizedPillsHtml}
+        const emptyMinimalHtml = `<div class="terminal-placeholder active" aria-hidden="true">
+            <div class="terminal-empty-minimal terminal-empty-card">
+                <span class="terminal-empty-text">${t('暂无打开的终端窗口')}</span>
             </div>
         </div>`;
         if (existingPlaceholder) {
@@ -6131,7 +6283,8 @@ function renderTerminalWorkspace() {
         splitterX.dataset.splitter = 'x';
         workspace.appendChild(splitterX);
     }
-    applySplitSlideState();
+    const isFlipPreparing = document.body.classList.contains('terminal-card-flip-preparing') || terminalCardFlipMotion?.phase === 'opening';
+    applySplitSlideState({ animate: !isFlipPreparing });
     broadcastPaneSlotConstraints();
     rememberCompactTerminalKeyboardBaseline('render-terminal-workspace');
     scheduleTerminalLayoutStabilize('render-terminal-workspace', { focus: true });
@@ -6327,6 +6480,17 @@ function applyTerminalWindowPreset(tabId, action) {
         return;
     }
     if (action === 'close') { closeTerminalTab(tabId); return; }
+    if (action === 'exit-fullscreen' || action === 'fullscreen') {
+        const workspace = $('#terminalWorkspace');
+        const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+        const isDomOrCustomFull = !!workspace?.classList.contains('custom-fullscreen')
+            || fullscreenElement === workspace
+            || !!fullscreenElement?.classList?.contains('terminal-window');
+        if (!isCompactTerminalWorkspace() && visibleTerminalTabs().length <= 1 && !isDomOrCustomFull) {
+            setTerminalTopbarCollapsed(action === 'fullscreen' ? true : !terminalTopbarCollapsed);
+            return;
+        }
+    }
     if (action === 'exit-fullscreen') { exitTerminalFullscreen(); return; }
     if (action === 'reconnect-mobile') {
         reconnectTerminalSession(tabId);
@@ -7447,41 +7611,59 @@ function scheduleTerminalSmartbarAutoClose(delay = TERMINAL_SMARTBAR_AUTO_CLOSE_
 function setTerminalSmartbarOpen(open) {
     window.clearTimeout(terminalSmartbarTimer);
     window.clearTimeout(setTerminalSmartbarOpen._closeTimer);
+    const smartbarRoot = $('#sessionTabs');
     if (!open) {
         document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = '');
         terminalSmartbarPointerInside = false;
-        if (!terminalSmartbarOpen) return;
+        if (!terminalSmartbarOpen && !terminalSmartbarClosing) return;
         terminalSmartbarOpen = false;
         terminalSmartbarPickerOpen = false;
         terminalSmartbarClosing = true;
         renderTerminalSmartbar();
         syncTerminalShelfLineState();
+        if (smartbarRoot && window.Motion?.smartbarExpand) {
+            void window.Motion.smartbarExpand(smartbarRoot, false);
+        }
         scheduleTerminalKeyboardReflow('smartbar-close');
         setTerminalSmartbarOpen._closeTimer = window.setTimeout(() => {
             terminalSmartbarClosing = false;
             renderTerminalSmartbar();
             syncTerminalShelfLineState();
             scheduleTerminalKeyboardReflow('smartbar-close-settled');
-        }, 760);
+        }, 250);
         return;
     }
+    const wasAlreadyOpen = terminalSmartbarOpen && !terminalSmartbarClosing;
     terminalSmartbarLastInnerPointerAt = Date.now();
-    // 不强制 inside：只有真实 pointer 在 dock 上才暂停；否则从打开起 10s 无交互关闭
     $('.main-nav')?.classList.remove('terminal-shelf-settled', 'terminal-shelf-dock-open');
     terminalSmartbarClosing = false;
     terminalSmartbarOpen = true;
     renderTerminalSmartbar();
     syncTerminalShelfLineState();
+    if (!wasAlreadyOpen && smartbarRoot && window.Motion?.smartbarExpand) {
+        void window.Motion.smartbarExpand(smartbarRoot, true);
+    }
     scheduleTerminalKeyboardReflow('smartbar-open');
     scheduleTerminalSmartbarAutoClose(TERMINAL_SMARTBAR_AUTO_CLOSE_MS);
 }
 function noteTerminalWorkspaceActivity() {}
 function swapTerminalWindows(a, b) {
-    if (!a || !b || a === b) return;
+    if (!a || !b || a === b) return false;
+    const beforeRects = captureVisibleWorkspaceWindowRects();
     const ia = visualLayout.indexOf(a), ib = visualLayout.indexOf(b);
-    if (ia < 0 || ib < 0) return;
-    [visualLayout[ia], visualLayout[ib]] = [visualLayout[ib], visualLayout[ia]];
+    if (ia >= 0 && ib >= 0) {
+        [visualLayout[ia], visualLayout[ib]] = [visualLayout[ib], visualLayout[ia]];
+    }
+    const oa = openOrderStack.indexOf(a), ob = openOrderStack.indexOf(b);
+    if (oa >= 0 && ob >= 0) {
+        [openOrderStack[oa], openOrderStack[ob]] = [openOrderStack[ob], openOrderStack[oa]];
+    }
+    activeTerminalTab = a;
+    touchTerminalSession(a);
     renderTerminalTabs();
+    applySplitSlideState({ animate: false });
+    animateWorkspaceRemainingWindows(beforeRects, null);
+    return true;
 }
 function snapTerminalWindowToEdge(tabId, clientX, clientY) {
     const workspace = $('#terminalWorkspace');
@@ -7517,7 +7699,6 @@ function isVerticalSmartbarDock() {
 }
 function resetDockMagnification(dock = document.querySelector('.smartbar-dock')) {
     if (!dock) return;
-    // 演示页 §9 同源：Motion.dockMagnifyReset 用 spring 收回，不是瞬间清 CSS 变量。
     const Motion = sshKeyMotion.engine;
     if (Motion?.dockMagnifyReset) {
         Motion.dockMagnifyReset(dock, {
@@ -7540,7 +7721,6 @@ function updateDockMagnification(clientX, dock = document.querySelector('.smartb
     const Motion = sshKeyMotion.engine;
     const y = clientY ?? smartbarDragState?.currentY ?? 0;
     if (verticalDock) {
-        // 全屏竖栏：横栏「左右推邻」→ 上下推邻；「上浮」仍为 −Y；无侧向弹出
         if (Motion?.dockMagnifyVerticalPointer) {
             Motion.dockMagnifyVerticalPointer(dock, clientX, y, {
                 itemSelector: DOCK_MAGNIFY_SELECTOR,
@@ -7555,20 +7735,18 @@ function updateDockMagnification(clientX, dock = document.querySelector('.smartb
             return;
         }
     } else if (Motion?.dockMagnifyPointer) {
-        // 横栏：演示页 §9 同源
         Motion.dockMagnifyPointer(dock, clientX, y, {
             itemSelector: DOCK_MAGNIFY_SELECTOR,
-            influence: 142,
-            maxScale: 1.26,
-            maxLift: 15,
-            maxShift: 8,
-            maxRotate: 0.7,
-            maxBlur: 0.14,
+            influence: 136,
+            maxScale: 1.12,
+            maxLift: 7,
+            maxShift: 5,
+            maxRotate: 0.4,
+            maxBlur: 0,
             preset: 'dock',
         });
         return;
     }
-    // 引擎未就绪瞬时回退
     if (verticalDock) {
         const influence = 110;
         const pointerCoord = y;
@@ -7580,7 +7758,6 @@ function updateDockMagnification(clientX, dock = document.querySelector('.smartb
             const eased = 1 - Math.pow(1 - t, 3);
             const direction = Math.sign(center - pointerCoord);
             item.style.setProperty('--dock-scale', (1 + eased * 0.22).toFixed(3));
-            // 上浮 + 上下推邻；shift 恒 0
             item.style.setProperty('--dock-lift', `${(-eased * 12 + direction * eased * 8).toFixed(2)}px`);
             item.style.setProperty('--dock-shift', '0px');
             item.style.setProperty('--dock-blur', `${((1 - eased) * 0.12).toFixed(2)}px`);
@@ -7604,23 +7781,22 @@ function updateDockMagnification(clientX, dock = document.querySelector('.smartb
         item.style.setProperty('--dock-rotate', `${(direction * eased * -0.7).toFixed(2)}deg`);
     });
 }
-function animateWindowFromDock(tabId, sourceRect, { swap = false } = {}) {
-    if (!tabId || !sourceRect) return;
+function animateWindowFromDock(tabId, sourceRect, { swap = false, outgoingRect = null, outgoingTitleHtml = '' } = {}) {
+    if (!tabId) return;
     requestAnimationFrame(() => {
         const win = document.querySelector(`#terminalWorkspace .terminal-window[data-window="${CSS.escape(tabId)}"]`);
         if (!win) return;
-        const rect = win.getBoundingClientRect();
-        if (!rect.width || !rect.height) return;
-        const sx = Math.max(0.08, sourceRect.width / rect.width);
-        const sy = Math.max(0.06, sourceRect.height / rect.height);
-        const dx = (sourceRect.left + sourceRect.width / 2) - (rect.left + rect.width / 2);
-        const dy = (sourceRect.top + sourceRect.height / 2) - (rect.top + rect.height / 2);
-        const shellRadius = `${parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--radius-lg')) || 18}px`;
-        win.animate([
-            { transform: `translate3d(${dx}px, ${dy}px, 0) scale3d(${sx}, ${sy}, 1)`, opacity: 0.28, filter: 'blur(18px) saturate(.82)', borderRadius: '30px' },
-            { transform: `translate3d(${dx * 0.16}px, ${dy * 0.16 - 8}px, 0) scale3d(1.025, 1.018, 1)`, opacity: 1, filter: 'blur(0) saturate(1.08)', borderRadius: shellRadius, offset: 0.72 },
-            { transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)', opacity: 1, filter: 'blur(0) saturate(1)', borderRadius: shellRadius }
-        ], { duration: swap ? 620 : 560, easing: 'cubic-bezier(.16,1,.3,1)' });
+        const toRect = win.getBoundingClientRect();
+        if (!toRect.width || !toRect.height) return;
+        const smartbarRect = document.querySelector('#sessionTabs .smartbar-handle')?.getBoundingClientRect() || sourceRect;
+        if (window.Motion?.terminalWindowReplaceMorph) {
+            void window.Motion.terminalWindowReplaceMorph(win, sourceRect || smartbarRect, toRect, {
+                outgoingRect: swap ? outgoingRect : null,
+                outgoingTitleHtml: swap ? outgoingTitleHtml : '',
+                smartbarRect,
+                preset: swap ? { response: 0.36, damping: 0.92 } : { response: 0.34, damping: 0.94 },
+            });
+        }
     });
 }
 function activateTerminalFromDock(tabId, sourceEl = null) {
@@ -7639,43 +7815,78 @@ function activateTerminalFromDock(tabId, sourceEl = null) {
         dockLaunchAnimatingWindows.delete(tabId);
         return;
     }
-    if (!mobileFullscreen && t && !t.minimized && activeTerminalTab === tabId) minimizeTerminalSession(tabId);
-    else showTerminalSessionInWorkspace(tabId);
+    const wasMinimized = !!t.minimized;
+    if (!mobileFullscreen && t && !t.minimized && activeTerminalTab === tabId) {
+        minimizeTerminalSession(tabId);
+        renderTerminalTabs();
+    } else {
+        showTerminalSessionInWorkspace(tabId);
+    }
     if (!mobileFullscreen) scheduleTerminalSmartbarAutoClose();
-    renderTerminalTabs();
     if (mobileSwitch) {
         forceCompactTerminalWorkspaceFill('dock-activate');
         scheduleTerminalLayoutStabilize('dock-activate-mobile', { focus: true, tabId });
         window.setTimeout(() => scheduleTerminalLayoutStabilize('dock-activate-mobile-settled', { focus: true, tabId }), 180);
     }
-    animateWindowFromDock(tabId, sourceRect, { swap: false });
+    if (wasMinimized) {
+        animateWindowFromDock(tabId, sourceRect, { swap: false });
+    }
     window.setTimeout(() => {
         dockLaunchAnimatingWindows.delete(tabId);
         renderTerminalTabs({ rebuildWorkspace: false });
         if (mobileSwitch) scheduleTerminalLayoutStabilize('dock-activate-animation-settled', { focus: true, tabId });
-    }, 620);
+    }, 520);
 }
-function replaceWindowWithDockTab(targetWindowId, draggedTabId) {
+function replaceWindowWithDockTab(targetWindowId, draggedTabId, { dropRect = null } = {}) {
     if (!targetWindowId || !draggedTabId || targetWindowId === draggedTabId) return false;
     const target = getTerminalSession(targetWindowId);
     const dragged = getTerminalSession(draggedTabId);
     if (!target || !dragged) return false;
+
+    // If BOTH windows are currently open on screen, swap their slots instead of minimizing target!
+    if (!target.minimized && !dragged.minimized && visualLayout.includes(targetWindowId) && visualLayout.includes(draggedTabId)) {
+        return swapTerminalWindows(draggedTabId, targetWindowId);
+    }
+
+    const outgoingWin = document.querySelector(`#terminalWorkspace > .terminal-window[data-window="${CSS.escape(targetWindowId)}"]`);
+    const outgoingRect = outgoingWin?.getBoundingClientRect?.() || null;
+    const outgoingTitleHtml = outgoingWin?.querySelector('.terminal-window-titlebar')?.innerHTML || '';
+
     dockSwapAnimatingWindows.add(targetWindowId);
     dockSwapAnimatingWindows.add(draggedTabId);
     target.minimized = true;
     dragged.minimized = false;
+
+    // Swap positions in openOrderStack so computeDefaultVisualLayout() places draggedTabId at targetWindowId's exact slot!
+    const iTargetOrder = openOrderStack.indexOf(targetWindowId);
+    const iDraggedOrder = openOrderStack.indexOf(draggedTabId);
+    if (iTargetOrder >= 0 && iDraggedOrder >= 0) {
+        [openOrderStack[iTargetOrder], openOrderStack[iDraggedOrder]] = [openOrderStack[iDraggedOrder], openOrderStack[iTargetOrder]];
+    } else if (iTargetOrder >= 0) {
+        openOrderStack[iTargetOrder] = draggedTabId;
+    }
+
     const idx = visualLayout.indexOf(targetWindowId);
     if (idx >= 0) visualLayout[idx] = draggedTabId;
     else visualLayout.unshift(draggedTabId);
+
     activeTerminalTab = draggedTabId;
     touchTerminalSession(draggedTabId);
     syncVisualLayout({ preserve: true });
     renderTerminalTabs();
+    applySplitSlideState({ animate: false });
+
+    animateWindowFromDock(draggedTabId, dropRect, {
+        swap: true,
+        outgoingRect,
+        outgoingTitleHtml,
+    });
+
     window.setTimeout(() => {
         dockSwapAnimatingWindows.delete(targetWindowId);
         dockSwapAnimatingWindows.delete(draggedTabId);
         renderTerminalTabs({ rebuildWorkspace: false });
-    }, 560);
+    }, 540);
     return true;
 }
 function ensureSmartbarTrashTarget() {
@@ -7683,15 +7894,102 @@ function ensureSmartbarTrashTarget() {
     if (!trash) {
         trash = document.createElement('div');
         trash.className = 'smartbar-trash-target';
-        trash.innerHTML = '<span>×</span>';
+        trash.setAttribute('role', 'region');
+        trash.setAttribute('aria-label', t('拖到此处关闭会话'));
+        trash.innerHTML = `
+            <span class="smartbar-trash-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 6h18"/>
+                    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                    <line x1="10" y1="11" x2="10" y2="17"/>
+                    <line x1="14" y1="11" x2="14" y2="17"/>
+                </svg>
+            </span>
+            <span class="smartbar-trash-label">${t('拖到此处关闭会话')}</span>`;
         document.body.appendChild(trash);
     }
     return trash;
+}
+function updateSmartbarTrashTargetHover(trash, hovering) {
+    if (!trash) return;
+    smartbarTrashHover = !!hovering;
+    document.body.classList.toggle('smartbar-trash-hover', smartbarTrashHover);
+    trash.classList.toggle('hover', smartbarTrashHover);
+    const label = trash.querySelector('.smartbar-trash-label');
+    if (label) {
+        label.textContent = smartbarTrashHover ? t('松手立即关闭会话') : t('拖到此处关闭会话');
+    }
 }
 function removeSmartbarTrashTarget() {
     document.querySelector('.smartbar-trash-target')?.remove();
     document.body.classList.remove('smartbar-trash-hover');
     smartbarTrashHover = false;
+}
+function updateWindowDropTargetBadges(hoverWinId, draggedTabId) {
+    const draggedSession = getTerminalSession(draggedTabId);
+    const isDraggedOnScreen = draggedSession && !draggedSession.minimized && visualLayout.includes(draggedTabId);
+    const draggedSlot = visualLayout.indexOf(draggedTabId) + 1;
+    document.querySelectorAll('#terminalWorkspace > .terminal-window').forEach((el) => {
+        const wid = el.dataset.window;
+        const isTarget = !!hoverWinId && wid === hoverWinId && wid !== draggedTabId;
+        el.classList.toggle('dock-drop-target', isTarget);
+        let badge = el.querySelector(':scope > .smartbar-window-drop-badge');
+        if (isTarget) {
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.className = 'smartbar-window-drop-badge';
+                el.appendChild(badge);
+            }
+            const targetSlot = visualLayout.indexOf(wid) + 1;
+            const actionText = isDraggedOnScreen
+                ? `⇄ 松手交换窗口位置（窗口 ${draggedSlot} ⇄ 窗口 ${targetSlot}）`
+                : `⇄ 松手替换此窗口（窗口 ${targetSlot}）`;
+            badge.innerHTML = `<div class="smartbar-window-drop-badge-pill"><span>${actionText}</span></div>`;
+        } else if (badge) {
+            badge.remove();
+        }
+    });
+}
+function clearWindowDropTargetBadges() {
+    document.querySelectorAll('#terminalWorkspace > .terminal-window').forEach((el) => {
+        el.classList.remove('dock-drop-target');
+        el.querySelector(':scope > .smartbar-window-drop-badge')?.remove();
+    });
+}
+function findSmartbarTabAtPoint(clientX, clientY, excludeTabId = null) {
+    if (typeof document.elementsFromPoint === 'function') {
+        const els = document.elementsFromPoint(clientX, clientY);
+        for (const el of els) {
+            if (el.classList?.contains('smartbar-drag-ghost')) continue;
+            const btn = el.closest?.('.smartbar-dock [data-smartbar-tab]');
+            if (btn && btn.dataset.smartbarTab && btn.dataset.smartbarTab !== excludeTabId) {
+                return btn.dataset.smartbarTab;
+            }
+        }
+    }
+    const buttons = document.querySelectorAll('#sessionTabs .smartbar-dock [data-smartbar-tab]');
+    for (const btn of buttons) {
+        const id = btn.dataset.smartbarTab;
+        if (!id || id === excludeTabId) continue;
+        const r = btn.getBoundingClientRect();
+        if (clientX >= r.left - 4 && clientX <= r.right + 4 && clientY >= r.top - 4 && clientY <= r.bottom + 4) {
+            return id;
+        }
+    }
+    return null;
+}
+function findWorkspaceWindowAtPoint(clientX, clientY) {
+    if (typeof document.elementsFromPoint === 'function') {
+        const els = document.elementsFromPoint(clientX, clientY);
+        for (const el of els) {
+            const win = el.closest?.('.terminal-window[data-window]');
+            if (win && !win.classList.contains('minimized-keepalive')) {
+                return win.dataset.window || null;
+            }
+        }
+    }
+    return document.elementFromPoint(clientX, clientY)?.closest?.('.terminal-window[data-window]:not(.minimized-keepalive)')?.dataset.window || null;
 }
 function isPointInRect(x, y, rect, pad = 0) {
     return x >= rect.left - pad && x <= rect.right + pad && y >= rect.top - pad && y <= rect.bottom + pad;
@@ -7699,24 +7997,28 @@ function isPointInRect(x, y, rect, pad = 0) {
 function startSmartbarIconDrag(e, tabId) {
     const btn = e.target.closest?.('[data-smartbar-tab]');
     if (!btn || e.button === 2) return;
-    e.preventDefault();
+    e.preventDefault?.();
     suppressSmartbarClick = false;
     const ghost = btn.cloneNode(true);
     ghost.classList.add('smartbar-drag-ghost');
+    ghost.style.pointerEvents = 'none';
     document.body.appendChild(ghost);
     const trash = ensureSmartbarTrashTarget();
     document.body.classList.add('smartbar-dragging-dock');
     document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = 'none');
     const sourceRect = btn.getBoundingClientRect();
+    const smartbarRoot = $('#sessionTabs');
     const dock = btn.closest('.smartbar-dock');
     const fullscreenDock = isCompactTerminalWorkspace() && document.body.classList.contains('terminal-custom-fullscreen-open');
+    const initStartX = Number.isFinite(e.initialStartX) ? e.initialStartX : e.clientX;
+    const initStartY = Number.isFinite(e.initialStartY) ? e.initialStartY : e.clientY;
     smartbarDragState = {
         tabId,
-        startX: e.clientX,
-        startY: e.clientY,
+        startX: initStartX,
+        startY: initStartY,
         currentX: e.clientX,
         currentY: e.clientY,
-        moved: false,
+        moved: !!e.alreadyMoved || Math.hypot(e.clientX - initStartX, e.clientY - initStartY) > 4,
         ghost,
         sourceRect,
         dock,
@@ -7731,43 +8033,59 @@ function startSmartbarIconDrag(e, tabId) {
         state.raf = 0;
         const dx = state.currentX - state.startX;
         const dy = state.currentY - state.startY;
+        const scale = smartbarTrashHover ? 0.86 : (state.moved ? 1.08 : 1.03);
         ghost.style.left = `${state.currentX}px`;
         ghost.style.top = `${state.currentY}px`;
-        ghost.style.transform = `translate(-50%, -50%) scale(${state.moved ? 1.11 : 1.035}) rotate(${Math.max(-6, Math.min(6, dx * 0.018))}deg)`;
+        ghost.style.transform = `translate(-50%, -50%) scale(${scale}) rotate(${Math.max(-5, Math.min(5, dx * 0.015))}deg)`;
+        ghost.classList.toggle('over-trash', !!smartbarTrashHover);
         ghost.style.setProperty('--ghost-dx', `${dx}px`);
         ghost.style.setProperty('--ghost-dy', `${dy}px`);
-        if (state.dock) updateDockMagnification(state.currentX, state.dock, state.currentY);
+        if (state.dock && !smartbarRoot?.classList.contains('smartbar-dragging-outside')) {
+            updateDockMagnification(state.currentX, state.dock, state.currentY);
+        }
     };
     const schedulePaint = () => {
         if (smartbarDragState?.raf) return;
         smartbarDragState.raf = requestAnimationFrame(paintGhost);
     };
-    paintGhost();
     const onMove = (ev) => {
         if (!smartbarDragState) return;
         smartbarDragState.currentX = ev.clientX;
         smartbarDragState.currentY = ev.clientY;
         const dx = ev.clientX - smartbarDragState.startX;
         const dy = ev.clientY - smartbarDragState.startY;
-        if (Math.hypot(dx, dy) > 5) smartbarDragState.moved = true;
+        if (Math.hypot(dx, dy) > 4) smartbarDragState.moved = true;
         ev.preventDefault?.();
         window.getSelection?.()?.removeAllRanges?.();
         schedulePaint();
         ghost.style.pointerEvents = 'none';
+
         const trashRect = trash.getBoundingClientRect();
-        smartbarTrashHover = isPointInRect(ev.clientX, ev.clientY, trashRect, 18);
-        document.body.classList.toggle('smartbar-trash-hover', smartbarTrashHover);
-        trash.classList.toggle('hover', smartbarTrashHover);
-        const hoverWin = smartbarTrashHover ? null : document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.terminal-window[data-window]')?.dataset.window || null;
-        if (hoverWin !== smartbarHoverWindowId) {
-            smartbarHoverWindowId = hoverWin;
-            document.querySelectorAll('.terminal-window').forEach((el) => el.classList.toggle('dock-drop-target', !!hoverWin && el.dataset.window === hoverWin && hoverWin !== tabId));
-        }
-        const targetDock = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-smartbar-tab]')?.dataset.smartbarTab;
+        const overTrash = isPointInRect(ev.clientX, ev.clientY, trashRect, 20);
+        updateSmartbarTrashTargetHover(trash, overTrash);
+
+        const dockRect = dock?.getBoundingClientRect();
+        const insideDock = dockRect ? isPointInRect(ev.clientX, ev.clientY, dockRect, 8) : false;
+        smartbarRoot?.classList.toggle('smartbar-dragging-outside', !insideDock && smartbarDragState.moved);
+        if (!insideDock && dock) resetDockMagnification(dock);
+
+        const targetDock = (!overTrash && insideDock)
+            ? findSmartbarTabAtPoint(ev.clientX, ev.clientY, tabId)
+            : null;
         document.querySelectorAll('[data-smartbar-tab]').forEach((el) => {
             el.classList.toggle('dock-reorder-target', !!targetDock && el.dataset.smartbarTab === targetDock && targetDock !== tabId);
         });
+
+        const hoverWin = (overTrash || insideDock) ? null : findWorkspaceWindowAtPoint(ev.clientX, ev.clientY);
+        if (hoverWin !== smartbarHoverWindowId) {
+            smartbarHoverWindowId = hoverWin;
+            updateWindowDropTargetBadges(hoverWin, tabId);
+        }
     };
+    paintGhost();
+    if (smartbarDragState.moved) {
+        onMove(e);
+    }
     const cleanup = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
@@ -7775,9 +8093,10 @@ function startSmartbarIconDrag(e, tabId) {
         if (smartbarDragState?.raf) cancelAnimationFrame(smartbarDragState.raf);
         resetDockMagnification(dock);
         btn.classList.remove('dragging', 'dock-press-armed');
+        smartbarRoot?.classList.remove('smartbar-dragging-outside');
         document.body.classList.remove('smartbar-dragging-dock');
         document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = '');
-        document.querySelectorAll('.terminal-window.dock-drop-target').forEach((el) => el.classList.remove('dock-drop-target'));
+        clearWindowDropTargetBadges();
         document.querySelectorAll('[data-smartbar-tab].dock-reorder-target').forEach((el) => el.classList.remove('dock-reorder-target'));
         smartbarHoverWindowId = null;
         window.setTimeout(removeSmartbarTrashTarget, 180);
@@ -7789,9 +8108,13 @@ function startSmartbarIconDrag(e, tabId) {
     };
     const onUp = (ev) => {
         const moved = smartbarDragState?.moved;
-        const source = smartbarDragState?.sourceRect || ghost.getBoundingClientRect();
-        const targetWin = smartbarHoverWindowId || document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.terminal-window[data-window]')?.dataset.window;
-        const targetDock = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-smartbar-tab]')?.dataset.smartbarTab;
+        const dropRect = ghost.getBoundingClientRect();
+        const dockRect = dock?.getBoundingClientRect();
+        const insideDock = dockRect ? isPointInRect(ev.clientX, ev.clientY, dockRect, 8) : false;
+        const targetWin = smartbarHoverWindowId || (!insideDock ? findWorkspaceWindowAtPoint(ev.clientX, ev.clientY) : null);
+        const targetDock = insideDock
+            ? findSmartbarTabAtPoint(ev.clientX, ev.clientY, tabId)
+            : null;
         const dropToTrash = smartbarTrashHover;
         cleanup();
         if (moved || fullscreenDock) {
@@ -7803,29 +8126,50 @@ function startSmartbarIconDrag(e, tabId) {
                 return;
             }
             if (targetWin && targetWin !== tabId) {
-                replaceWindowWithDockTab(targetWin, tabId);
-                animateWindowFromDock(tabId, source, { swap: true });
+                replaceWindowWithDockTab(targetWin, tabId, { dropRect });
                 ghost.remove();
                 return;
             }
             if (targetDock && targetDock !== tabId) {
+                const draggedSession = getTerminalSession(tabId);
+                const targetSession = getTerminalSession(targetDock);
+                if (draggedSession && targetSession) {
+                    if (draggedSession.minimized && !targetSession.minimized) {
+                        replaceWindowWithDockTab(targetDock, tabId, { dropRect });
+                        ghost.remove();
+                        return;
+                    }
+                    if (!draggedSession.minimized && targetSession.minimized) {
+                        replaceWindowWithDockTab(tabId, targetDock, { dropRect });
+                        ghost.remove();
+                        return;
+                    }
+                    if (!draggedSession.minimized && !targetSession.minimized) {
+                        swapTerminalWindows(tabId, targetDock);
+                        ghost.remove();
+                        return;
+                    }
+                }
                 reorderTerminalOrder(tabId, targetDock);
                 renderTerminalSmartbar();
                 ghost.remove();
                 return;
             }
             if (!fullscreenDock && !targetWin && !targetDock) {
-                showTerminalSessionInWorkspace(tabId);
-                renderTerminalTabs();
-                animateWindowFromDock(tabId, source, { swap: true });
+                const draggedSession = getTerminalSession(tabId);
+                if (draggedSession?.minimized) {
+                    showTerminalSessionInWorkspace(tabId);
+                    renderTerminalTabs();
+                    animateWindowFromDock(tabId, dropRect, { swap: false });
+                }
                 ghost.remove();
                 return;
             }
         }
         ghost.animate([
-            { transform: ghost.style.transform || 'translate(-50%, -50%) scale(1.1)', opacity: 1 },
+            { transform: ghost.style.transform || 'translate(-50%, -50%) scale(1.08)', opacity: 1 },
             { transform: 'translate(-50%, -50%) scale(.78)', opacity: 0 }
-        ], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' }).onfinish = () => ghost.remove();
+        ], { duration: 160, easing: 'cubic-bezier(.2,.8,.2,1)' }).onfinish = () => ghost.remove();
     };
     window.addEventListener('pointermove', onMove, { passive: false });
     window.addEventListener('pointerup', onUp, { once: true });
@@ -7839,7 +8183,8 @@ function startSmartbarPress(e, tabBtn) {
     const tabId = tabBtn.dataset.smartbarTab;
     if (!tabId) return;
     const isDesktopLike = window.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches;
-    const holdMs = isDesktopLike && e.pointerType !== 'touch' ? 260 : 420;
+    const holdMs = isDesktopLike && e.pointerType !== 'touch' ? 180 : 320;
+    const moveThreshold = e.pointerType === 'touch' ? 10 : 5;
     window.clearTimeout(smartbarPressState?.timer);
     smartbarPressState = {
         tabId,
@@ -7863,32 +8208,42 @@ function startSmartbarPress(e, tabBtn) {
         window.removeEventListener('pointercancel', onCancel);
         if (!keepClick) smartbarPressState = null;
     };
-    const beginDrag = (ev = e) => {
+    const beginDrag = (ev = e, alreadyMoved = false) => {
         if (!smartbarPressState || smartbarPressState.dragStarted || smartbarPressState.cancelled) return;
+        const initX = smartbarPressState.startX;
+        const initY = smartbarPressState.startY;
+        const targetBtn = smartbarPressState.tabBtn;
+        const dragTabId = smartbarPressState.tabId;
+        const origEv = smartbarPressState.originalEvent;
+        const ptrId = smartbarPressState.pointerId;
         smartbarPressState.dragStarted = true;
+        cleanup();
         if (navigator.vibrate) navigator.vibrate(12);
-        smartbarPressState.tabBtn?.setPointerCapture?.(smartbarPressState.pointerId);
+        try { targetBtn?.setPointerCapture?.(ptrId); } catch (_) {}
         const dragEvent = {
-            ...smartbarPressState.originalEvent,
-            target: smartbarPressState.tabBtn,
-            currentTarget: smartbarPressState.tabBtn,
+            ...origEv,
+            target: targetBtn,
+            currentTarget: targetBtn,
             clientX: ev.clientX,
             clientY: ev.clientY,
-            button: smartbarPressState.originalEvent.button,
-            pointerType: smartbarPressState.originalEvent.pointerType,
+            initialStartX: initX,
+            initialStartY: initY,
+            alreadyMoved,
+            button: origEv.button,
+            pointerType: origEv.pointerType,
             preventDefault: () => {},
         };
-        startSmartbarIconDrag(dragEvent, smartbarPressState.tabId);
+        startSmartbarIconDrag(dragEvent, dragTabId);
     };
-    smartbarPressState.timer = window.setTimeout(() => beginDrag(), holdMs);
+    smartbarPressState.timer = window.setTimeout(() => beginDrag(e, false), holdMs);
     const onMove = (ev) => {
         if (!smartbarPressState || ev.pointerId !== smartbarPressState.pointerId) return;
         const dx = ev.clientX - smartbarPressState.startX;
         const dy = ev.clientY - smartbarPressState.startY;
         ev.preventDefault?.();
         window.getSelection?.()?.removeAllRanges?.();
-        if (!smartbarPressState.dragStarted && Math.hypot(dx, dy) > 24) {
-            beginDrag(ev);
+        if (!smartbarPressState.dragStarted && Math.hypot(dx, dy) > moveThreshold) {
+            beginDrag(ev, true);
             return;
         }
     };
@@ -7923,37 +8278,48 @@ function startTerminalWindowDrag(e, tabId) {
     e.preventDefault();
     activeTerminalTab = tabId;
     touchTerminalSession(tabId);
-    terminalDragState = { id: tabId, startX: e.clientX, startY: e.clientY, moved: false };
+    const trash = ensureSmartbarTrashTarget();
+    terminalDragState = { id: tabId, startX: e.clientX, startY: e.clientY, moved: false, hoverWin: null };
     win.classList.add('dragging');
     document.body.classList.add('terminal-window-dragging');
+    document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = 'none');
     const onMove = (ev) => {
+        if (!terminalDragState) return;
         const dx = ev.clientX - terminalDragState.startX, dy = ev.clientY - terminalDragState.startY;
-        if (Math.abs(dx) + Math.abs(dy) > 6) terminalDragState.moved = true;
+        if (Math.hypot(dx, dy) > 6) terminalDragState.moved = true;
         win.style.setProperty('--drag-x', `${dx}px`);
         win.style.setProperty('--drag-y', `${dy}px`);
+        const trashRect = trash.getBoundingClientRect();
+        const overTrash = isPointInRect(ev.clientX, ev.clientY, trashRect, 20);
+        updateSmartbarTrashTargetHover(trash, overTrash);
+        const hoverWin = overTrash ? null : findWorkspaceWindowAtPoint(ev.clientX, ev.clientY);
+        if (hoverWin !== terminalDragState.hoverWin) {
+            terminalDragState.hoverWin = hoverWin;
+            updateWindowDropTargetBadges(hoverWin, tabId);
+        }
     };
     const onUp = (ev) => {
-        win.style.pointerEvents = 'none';
-        const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.terminal-window')?.dataset.window;
-        win.style.pointerEvents = '';
+        const dropToTrash = smartbarTrashHover;
+        const target = terminalDragState?.hoverWin || findWorkspaceWindowAtPoint(ev.clientX, ev.clientY);
         win.classList.remove('dragging');
         win.style.removeProperty('--drag-x');
         win.style.removeProperty('--drag-y');
         document.body.classList.remove('terminal-window-dragging');
+        document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = '');
+        clearWindowDropTargetBadges();
+        window.setTimeout(removeSmartbarTrashTarget, 180);
         window.removeEventListener('pointermove', onMove);
+        terminalDragState = null;
+        if (dropToTrash) {
+            closeTerminalTab(tabId, { reason: 'window-drag-trash' });
+            return;
+        }
         if (target && target !== tabId) swapTerminalWindows(tabId, target);
         else if (!snapTerminalWindowToEdge(tabId, ev.clientX, ev.clientY)) renderTerminalTabs({ rebuildWorkspace: false });
-        terminalDragState = null;
     };
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp, { once: true });
 }
-/**
- * Grid track percentages (--workspace-split-x/y) resolve against the grid
- * container's CONTENT box, while getBoundingClientRect() is the BORDER box.
- * Mixing the two drifts the gutter away from the pointer, so measure the
- * content box explicitly and read the real gutter track width.
- */
 function workspaceGridMetrics(workspace) {
     const rect = workspace.getBoundingClientRect();
     const cs = getComputedStyle(workspace);
@@ -15269,7 +15635,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261019-ui109')
+        return import('./vendor/zephyr-motion/index.js?v=20261019-ui113')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -17611,37 +17977,7 @@ function bindTerminalEmptyAndAiResizeFocus() {
     try { applyAppearance(getAppearance()); } catch (_) {}
     try { applyAiVisibility(); } catch (_) {}
 
-    // Terminal empty state actions (Issue 10)
-    document.addEventListener('click', (ev) => {
-        const pickerBtn = ev.target.closest?.('[data-empty-open-picker]');
-        if (pickerBtn) {
-            ev.preventDefault();
-            if (!connections || !connections.length) {
-                switchView('dashboard');
-                return;
-            }
-            terminalSmartbarOpen = true;
-            terminalSmartbarPickerOpen = true;
-            renderTerminalSmartbar();
-            return;
-        }
-        const dashBtn = ev.target.closest?.('[data-empty-go-dashboard]');
-        if (dashBtn) {
-            ev.preventDefault();
-            switchView('dashboard');
-            return;
-        }
-        const restoreBtn = ev.target.closest?.('[data-empty-restore-tab]');
-        if (restoreBtn) {
-            ev.preventDefault();
-            const tabId = restoreBtn.dataset.emptyRestoreTab;
-            if (tabId) {
-                restoreTerminalSession(tabId);
-                showTerminalSessionInWorkspace(tabId);
-                renderTerminalTabs();
-            }
-        }
-    });
+    // Terminal empty state is non-interactive plain text per user preference
 
     // AI floating panel outer-ring resize handle focus show/hide (Issue 6)
     document.addEventListener('pointerdown', (ev) => {

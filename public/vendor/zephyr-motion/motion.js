@@ -4042,6 +4042,200 @@ export const Motion = {
     return true;
   },
 
+  async smartbarExpand(smartbarEl, open, { immediate = false } = {}) {
+    if (!smartbarEl) return false;
+    const panel = smartbarEl.querySelector('.smartbar-panel');
+    if (!panel) return false;
+    const token = this._bump(panel);
+    const panelUnits = {
+      '--sb-panel-y': 'px',
+      '--sb-panel-sx': '',
+      '--sb-panel-sy': '',
+      '--sb-panel-alpha': '',
+    };
+    const barUnits = {
+      '--smartbar-bar-width': 'px',
+      '--smartbar-bar-height': 'px',
+    };
+
+    if (open) {
+      const curAlpha = parseFloat(panel.style.getPropertyValue('--sb-panel-alpha'));
+      if (!Number.isFinite(curAlpha) || curAlpha <= 0.02) {
+        this.stop(panel, ['--sb-panel-y', '--sb-panel-sx', '--sb-panel-sy', '--sb-panel-alpha']);
+        panel.style.setProperty('--sb-panel-y', '-14px');
+        panel.style.setProperty('--sb-panel-sx', '0.72');
+        panel.style.setProperty('--sb-panel-sy', '0.38');
+        panel.style.setProperty('--sb-panel-alpha', '0');
+        this.cssVars(panel, {
+          '--sb-panel-y': -14,
+          '--sb-panel-sx': 0.72,
+          '--sb-panel-sy': 0.38,
+          '--sb-panel-alpha': 0,
+        }, { immediate: true, units: panelUnits });
+      }
+      this.cssVars(smartbarEl, {
+        '--smartbar-bar-width': 92,
+        '--smartbar-bar-height': 5,
+      }, immediate ? { immediate: true, units: barUnits } : { preset: { response: 0.28, damping: 0.88 }, units: barUnits });
+
+      const items = Array.from(smartbarEl.querySelectorAll('.smartbar-session, .smartbar-add'));
+      const itemUnits = { '--dock-lift': 'px', '--dock-scale': '' };
+      items.forEach((item, idx) => {
+        this.stop(item, ['--dock-lift', '--dock-scale']);
+        item.style.setProperty('--dock-lift', '-8px');
+        item.style.setProperty('--dock-scale', '0.88');
+        this.cssVars(item, { '--dock-lift': -8, '--dock-scale': 0.88 }, { immediate: true, units: itemUnits });
+        window.setTimeout(() => {
+          if (this._genOf(panel) !== token) return;
+          this.cssVars(item, { '--dock-lift': 0, '--dock-scale': 1 }, {
+            preset: { response: 0.28, damping: 0.84 },
+            units: itemUnits,
+          });
+        }, idx * 16);
+      });
+
+      await this.cssVars(panel, {
+        '--sb-panel-y': 0,
+        '--sb-panel-sx': 1,
+        '--sb-panel-sy': 1,
+        '--sb-panel-alpha': 1,
+      }, immediate ? { immediate: true, units: panelUnits } : { preset: { response: 0.30, damping: 0.86 }, units: panelUnits });
+      return this._genOf(panel) === token;
+    } else {
+      this.cssVars(smartbarEl, {
+        '--smartbar-bar-width': 72,
+        '--smartbar-bar-height': 4,
+      }, immediate ? { immediate: true, units: barUnits } : { preset: { response: 0.22, damping: 0.96 }, units: barUnits });
+
+      await this.cssVars(panel, {
+        '--sb-panel-y': -12,
+        '--sb-panel-sx': 0.76,
+        '--sb-panel-sy': 0.38,
+        '--sb-panel-alpha': 0,
+      }, immediate ? { immediate: true, units: panelUnits } : { preset: { response: 0.20, damping: 0.96 }, units: panelUnits });
+      return this._genOf(panel) === token;
+    }
+  },
+
+  async terminalWindowReplaceMorph(newWin, fromRect, toRect, {
+    outgoingRect = null,
+    outgoingTitleHtml = '',
+    smartbarRect = null,
+    preset = { response: 0.36, damping: 0.92 },
+  } = {}) {
+    if (!newWin || !toRect || toRect.width < 40 || toRect.height < 40) return false;
+    const token = this._bump(newWin);
+
+    // 1. Outgoing replaced window shrinks & flies back up into the Smartbar
+    if (outgoingRect && outgoingRect.width > 40 && outgoingRect.height > 40 && typeof document !== 'undefined') {
+      const outGhost = document.createElement('div');
+      outGhost.className = 'terminal-replace-outgoing-ghost';
+      outGhost.innerHTML = '<div class="terminal-window-titlebar">' + (outgoingTitleHtml || '') + '</div><div class="terminal-replace-outgoing-body"></div>';
+      document.body.appendChild(outGhost);
+
+      const sbCenterX = smartbarRect && smartbarRect.width > 0
+        ? (smartbarRect.left + smartbarRect.width / 2)
+        : (window.innerWidth || 1280) / 2;
+      const sbCenterY = smartbarRect && smartbarRect.height > 0
+        ? (smartbarRect.top + smartbarRect.height / 2 + 18)
+        : 68;
+      const endW = 96;
+      const endH = 62;
+      const outUnits = {
+        '--z-morph-l': 'px',
+        '--z-morph-t': 'px',
+        '--z-morph-w': 'px',
+        '--z-morph-h': 'px',
+        '--z-morph-r': 'px',
+        '--z-morph-opacity': '',
+      };
+      this.cssVars(outGhost, {
+        '--z-morph-l': Math.round(outgoingRect.left),
+        '--z-morph-t': Math.round(outgoingRect.top),
+        '--z-morph-w': Math.round(outgoingRect.width),
+        '--z-morph-h': Math.round(outgoingRect.height),
+        '--z-morph-r': 14,
+        '--z-morph-opacity': 0.92,
+      }, { immediate: true, units: outUnits });
+      this.cssVars(outGhost, {
+        '--z-morph-l': Math.round(sbCenterX - endW / 2),
+        '--z-morph-t': Math.round(sbCenterY - endH / 2),
+        '--z-morph-w': endW,
+        '--z-morph-h': endH,
+        '--z-morph-r': 20,
+        '--z-morph-opacity': 0,
+      }, { preset: { response: 0.28, damping: 0.94 }, units: outUnits }).finally(() => {
+        outGhost.remove();
+      });
+      window.setTimeout(() => outGhost.remove(), 420);
+    }
+
+    // 2. Incoming window morphs from drop/dock rect into exact target slot rect
+    const vw = (typeof window !== 'undefined' && window.innerWidth) || 1920;
+    const vh = (typeof window !== 'undefined' && window.innerHeight) || 1080;
+    const srcCx = fromRect && fromRect.width > 0
+      ? (fromRect.left + fromRect.width / 2)
+      : (toRect.left + toRect.width / 2);
+    const srcCy = fromRect && fromRect.height > 0
+      ? (fromRect.top + fromRect.height / 2)
+      : Math.max(88, toRect.top + 40);
+    const startW = Math.max(220, Math.round(toRect.width * 0.34));
+    const startH = Math.max(140, Math.round(toRect.height * 0.34));
+    const startL = Math.max(12, Math.min(vw - startW - 12, Math.round(srcCx - startW / 2)));
+    const startT = Math.max(56, Math.min(vh - startH - 12, Math.round(srcCy - startH / 2)));
+
+    const units = {
+      '--z-morph-l': 'px',
+      '--z-morph-t': 'px',
+      '--z-morph-w': 'px',
+      '--z-morph-h': 'px',
+      '--z-morph-r': 'px',
+      '--z-morph-opacity': '',
+    };
+
+    this.stop(newWin, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']);
+    newWin.classList.add('terminal-window-morphing');
+    newWin.style.setProperty('--z-morph-l', startL + 'px');
+    newWin.style.setProperty('--z-morph-t', startT + 'px');
+    newWin.style.setProperty('--z-morph-w', startW + 'px');
+    newWin.style.setProperty('--z-morph-h', startH + 'px');
+    newWin.style.setProperty('--z-morph-r', '22px');
+    newWin.style.setProperty('--z-morph-opacity', '0.32');
+    await this.cssVars(newWin, {
+      '--z-morph-l': startL,
+      '--z-morph-t': startT,
+      '--z-morph-w': startW,
+      '--z-morph-h': startH,
+      '--z-morph-r': 22,
+      '--z-morph-opacity': 0.32,
+    }, { immediate: true, units });
+
+    const cleanup = () => {
+      if (this._genOf(newWin) === token) {
+        this.stop(newWin, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']);
+        newWin.classList.remove('terminal-window-morphing');
+        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => {
+          newWin.style.removeProperty(k);
+        });
+      }
+    };
+    const guard = withSettleSafetyGuard(newWin, 540, cleanup);
+    try {
+      await this.cssVars(newWin, {
+        '--z-morph-l': Math.round(toRect.left),
+        '--z-morph-t': Math.round(toRect.top),
+        '--z-morph-w': Math.round(toRect.width),
+        '--z-morph-h': Math.round(toRect.height),
+        '--z-morph-r': 14,
+        '--z-morph-opacity': 1,
+      }, { preset, units });
+    } finally {
+      guard();
+      cleanup();
+    }
+    return true;
+  },
+
   async terminalWindowAvoidance(existingWin, fromBox, toBox, { preset = { response: 0.46, damping: 0.96 } } = {}) {
     if (!existingWin || !fromBox || !toBox) return false;
     const token = this._bump(existingWin);
@@ -4052,6 +4246,10 @@ export const Motion = {
       '--z-morph-h': 'px',
     };
     this.stop(existingWin, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h']);
+    existingWin.style.setProperty('--z-morph-l', Math.round(fromBox.left) + 'px');
+    existingWin.style.setProperty('--z-morph-t', Math.round(fromBox.top) + 'px');
+    existingWin.style.setProperty('--z-morph-w', Math.round(fromBox.width) + 'px');
+    existingWin.style.setProperty('--z-morph-h', Math.round(fromBox.height) + 'px');
     existingWin.classList.add('terminal-window-morphing');
     await this.cssVars(existingWin, {
       '--z-morph-l': Math.round(fromBox.left),
@@ -4059,7 +4257,7 @@ export const Motion = {
       '--z-morph-w': Math.round(fromBox.width),
       '--z-morph-h': Math.round(fromBox.height),
     }, { immediate: true, units });
-    const guard = withSettleSafetyGuard(existingWin, 660, () => {
+    const guard = withSettleSafetyGuard(existingWin, 760, () => {
       if (this._genOf(existingWin) === token) {
         existingWin.classList.remove('terminal-window-morphing');
       }

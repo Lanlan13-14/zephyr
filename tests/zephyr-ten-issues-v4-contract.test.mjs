@@ -66,8 +66,9 @@ test('Card flip target rect and surface placement land 1:1 on final terminal win
   assert.match(appJs, /navBottom = collapsed \? 22 : 72;/);
 });
 
-test('Terminal window top-right hides Fullscreen button when only 1 terminal is visible, shows it when 2 are visible, and animates fullscreen via WASM', () => {
-  assert.match(appJs, /const showFullscreenBtn = visibleCount >= 2 \|\| isFull \|\| isCompactTerminalWorkspace\(\);/);
+test('Terminal window top-right always shows Fullscreen button; single-window fullscreen toggles topbar collapse, multi-window uses WASM morph', () => {
+  assert.match(appJs, /const showFullscreenBtn = visibleCount >= 1 \|\| effectiveFull \|\| isCompactTerminalWorkspace\(\);/);
+  assert.match(appJs, /setTerminalTopbarCollapsed\(action === 'fullscreen' \? true : !terminalTopbarCollapsed\);/);
   assert.match(appJs, /Motion\.terminalWindowFullscreenMorph\(win,\s*applyFullscreenLayout/);
 });
 

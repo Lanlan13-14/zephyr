@@ -23,7 +23,7 @@ function formatMockupSize(file) {
     if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
 }
-import { installTerminalSftpPro, isAgentVfsPath, fetchAgentVfsListing, sanitizeTerminalPaste, classifyTerminalCommandRisk } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui109';
+import { installTerminalSftpPro, isAgentVfsPath, fetchAgentVfsListing, sanitizeTerminalPaste, classifyTerminalCommandRisk } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui113';
 // terminal-grid-converge1 supersedes terminal-stability1 / kb-xterm-fit2 / aux-bar-fly1.
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 import {
@@ -58,7 +58,7 @@ import {
     ensureFloatingPanelPhysicsDrag,
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
-} from './floating-panel.js?v=20261019-ui109';
+} from './floating-panel.js?v=20261019-ui113';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
@@ -4656,7 +4656,7 @@ const terminalToastMotion = {
     _ensure() {
         if (this.engine) return Promise.resolve(this.engine);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui109')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui113')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
@@ -8747,7 +8747,7 @@ const dockerMotion = {
     _ensure() {
         if (this.engine) return Promise.resolve(this.engine);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui109')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui113')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion?.to) throw new Error('Motion unavailable');

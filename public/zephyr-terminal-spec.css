@@ -4117,3 +4117,687 @@ body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .
 #terminalCardFlipStage.terminal-card-flip-stage.is-active {
   z-index: 80 !important;
 }
+
+/* 25. Smartbar 全面升级：屏幕内全终端圈选、WASM 展开收起、拖拽替换预览与动画、液态玻璃关闭胶囊 */
+
+/* 25.1 终端窗口 WASM 变形支持圆角与透明度通道 + 被替换窗口飞回 Smartbar 残影卡 */
+#terminalWorkspace > .terminal-window.terminal-window-morphing {
+  border-radius: var(--z-morph-r, 14px) !important;
+  opacity: var(--z-morph-opacity, 1) !important;
+}
+.terminal-replace-outgoing-ghost {
+  position: fixed !important;
+  left: var(--z-morph-l, 16px) !important;
+  top: var(--z-morph-t, 95px) !important;
+  width: var(--z-morph-w, 480px) !important;
+  height: var(--z-morph-h, 320px) !important;
+  border-radius: var(--z-morph-r, 14px) !important;
+  opacity: var(--z-morph-opacity, 0.9) !important;
+  z-index: 9400 !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  background: var(--surface, #161920) !important;
+  border: 1.5px solid color-mix(in srgb, var(--accent, #0A84FF) 45%, transparent) !important;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32) !important;
+}
+.terminal-replace-outgoing-ghost > .terminal-window-titlebar {
+  height: 42px !important;
+  flex: 0 0 42px !important;
+  overflow: hidden !important;
+}
+.terminal-replace-outgoing-ghost > .terminal-replace-outgoing-body {
+  flex: 1 1 auto !important;
+  background: var(--bg, #0D1117) !important;
+}
+
+/* 25.2 Smartbar 展开/收起动画由 zephyr_motion.wasm (Motion.smartbarExpand) 驱动 */
+body.app-body.terminal-mode #sessionTabs:not(.custom-fullscreen) .smartbar-panel {
+  transform-origin: 50% 0% !important;
+  filter: none !important;
+  animation: none !important;
+  transition: none !important;
+}
+body.app-body.terminal-mode #sessionTabs:not(.open):not(.closing) .smartbar-panel {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translate3d(-50%, -14px, 0) scale3d(0.72, 0.38, 1) !important;
+}
+body.app-body.terminal-mode #sessionTabs.open .smartbar-panel,
+body.app-body.terminal-mode #sessionTabs.closing .smartbar-panel {
+  opacity: var(--sb-panel-alpha, 1) !important;
+  transform: translate3d(-50%, var(--sb-panel-y, 0px), 0) scale3d(var(--sb-panel-sx, 1), var(--sb-panel-sy, 1), 1) !important;
+}
+body.app-body.terminal-mode #sessionTabs.open .smartbar-panel {
+  pointer-events: auto !important;
+}
+body.app-body.terminal-mode #sessionTabs.closing .smartbar-panel {
+  pointer-events: none !important;
+}
+body.app-body.terminal-mode #sessionTabs.open .smartbar-panel .smartbar-dock,
+body.app-body.terminal-mode #sessionTabs.closing .smartbar-panel .smartbar-dock {
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
+}
+body.app-body.terminal-mode #sessionTabs.closing .smartbar-session,
+body.app-body.terminal-mode #sessionTabs.closing .smartbar-add {
+  opacity: 1 !important;
+  animation: none !important;
+}
+
+/* 当从 Smartbar 拖出会话图标移向下方终端窗口时，Smartbar 面板自动半透明避让，绝不遮挡下方目标窗口 */
+body.app-body.terminal-mode #sessionTabs.smartbar-dragging-outside .smartbar-panel {
+  opacity: 0.16 !important;
+  pointer-events: none !important;
+  transform: translate3d(-50%, -6px, 0) scale3d(0.96, 0.96, 1) !important;
+  transition: opacity 160ms ease, transform 160ms ease !important;
+}
+
+/* 25.3 Smartbar 圈出所有正在屏幕上打开的终端（整体连续胶囊框 .smartbar-onscreen-ring + 每个屏幕内终端蓝框 + 槽位角标） */
+.smartbar-dock > .smartbar-onscreen-ring {
+  position: absolute !important;
+  top: 48px !important;
+  height: 98px !important;
+  left: var(--ring-left, 0px) !important;
+  width: var(--ring-width, 0px) !important;
+  opacity: var(--ring-opacity, 0) !important;
+  border-radius: 24px !important;
+  border: 1.5px solid color-mix(in srgb, var(--accent, #0A84FF) 58%, transparent) !important;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent, #0A84FF) 10%, transparent), color-mix(in srgb, var(--accent, #0A84FF) 4%, transparent)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 4px 16px color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent) !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
+  transition: none !important;
+}
+.smartbar-dock > .smartbar-onscreen-ring.ring-ready {
+  transition: left 220ms cubic-bezier(0.16, 1, 0.3, 1), width 220ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms ease !important;
+}
+
+/* 所有正在屏幕上打开的终端（.on-screen）统一加上主题高亮描边环与底部指示点 */
+.smartbar-session.on-screen .smartbar-session-icon {
+  border: 1.8px solid color-mix(in srgb, var(--accent, #0A84FF) 82%, transparent) !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.20), 0 0 0 3px color-mix(in srgb, var(--accent, #0A84FF) 15%, transparent) !important;
+}
+.smartbar-session.active .smartbar-session-icon {
+  border: 2px solid var(--accent, #0A84FF) !important;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.24), 0 0 0 3.5px color-mix(in srgb, var(--accent, #0A84FF) 26%, transparent) !important;
+}
+.smartbar-session.on-screen::after {
+  content: '' !important;
+  position: absolute !important;
+  left: 50% !important;
+  bottom: 0 !important;
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 999px !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 75%, transparent) !important;
+  transform: translateX(-50%) !important;
+  transition: width 200ms cubic-bezier(0.16, 1, 0.3, 1), background-color 200ms ease !important;
+}
+.smartbar-session.active::after {
+  width: 18px !important;
+  height: 4px !important;
+  border-radius: 999px !important;
+  background: var(--accent, #0A84FF) !important;
+}
+
+/* 屏幕内终端左上角槽位角标（1 / 2 / 3 / 4） */
+.smartbar-session-icon .smartbar-slot-badge {
+  position: absolute !important;
+  left: 5px !important;
+  top: 5px !important;
+  min-width: 15px !important;
+  height: 15px !important;
+  padding: 0 4px !important;
+  border-radius: 6px !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  line-height: 15px !important;
+  text-align: center !important;
+  color: #FFFFFF !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 88%, #000000) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24) !important;
+  pointer-events: none !important;
+  z-index: 4 !important;
+}
+.smartbar-session.on-screen:not(.active) .smartbar-session-icon .smartbar-slot-badge {
+  background: color-mix(in srgb, var(--accent, #0A84FF) 72%, rgba(15, 23, 42, 0.65)) !important;
+}
+
+/* Smartbar 内拖拽目标高亮提示 */
+.smartbar-session.dock-reorder-target .smartbar-session-icon {
+  transform: translateY(-6px) scale(1.10) !important;
+  border: 2px solid var(--accent, #0A84FF) !important;
+  box-shadow: 0 18px 40px color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent), 0 0 0 5px color-mix(in srgb, var(--accent, #0A84FF) 20%, transparent) !important;
+}
+
+/* 25.4 终端窗口替换/交换目标高亮环与中央液态玻璃提示胶囊（不破坏 .terminal-window::after 护栏） */
+html[data-theme="light"] #terminalWorkspace > .terminal-window.dock-drop-target::after,
+html[data-theme="dark"] #terminalWorkspace > .terminal-window.dock-drop-target::after {
+  box-shadow: inset 0 0 0 3px var(--accent, #0A84FF), inset 0 0 36px color-mix(in srgb, var(--accent, #0A84FF) 20%, transparent) !important;
+}
+.terminal-window > .smartbar-window-drop-badge {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 64 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  pointer-events: none !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 7%, transparent) !important;
+  backdrop-filter: blur(3px) !important;
+  -webkit-backdrop-filter: blur(3px) !important;
+  opacity: 0 !important;
+  transition: opacity 150ms ease !important;
+}
+.terminal-window.dock-drop-target > .smartbar-window-drop-badge {
+  opacity: 1 !important;
+}
+.smartbar-window-drop-badge-pill {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 10px 18px !important;
+  border-radius: 999px !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em !important;
+  color: #FFFFFF !important;
+  background: linear-gradient(135deg, var(--accent, #0A84FF), color-mix(in srgb, var(--accent, #0A84FF) 82%, #000000)) !important;
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--accent, #0A84FF) 38%, rgba(0, 0, 0, 0.35)), 0 0 0 1px rgba(255, 255, 255, 0.24) inset !important;
+  transform: scale(1) !important;
+}
+
+/* 25.5 重新设计「拖动窗口/会话关闭」目标区：精致液态玻璃危险胶囊（取代原先粗糙的大圆叉） */
+.smartbar-trash-target {
+  position: fixed !important;
+  left: 50% !important;
+  bottom: max(28px, env(safe-area-inset-bottom)) !important;
+  z-index: 9800 !important;
+  width: auto !important;
+  min-width: 172px !important;
+  height: 44px !important;
+  padding: 0 20px !important;
+  border-radius: 999px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 9px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translate3d(-50%, 20px, 0) scale(0.88) !important;
+  transition:
+    transform 280ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 180ms ease,
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 200ms ease !important;
+  backdrop-filter: blur(22px) saturate(1.6) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.6) !important;
+}
+html[data-theme="light"] .smartbar-trash-target {
+  background: rgba(255, 245, 245, 0.92) !important;
+  border: 1px solid rgba(255, 59, 48, 0.32) !important;
+  color: #D70015 !important;
+  box-shadow: 0 14px 34px -6px rgba(255, 59, 48, 0.18), 0 4px 12px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+}
+html[data-theme="dark"] .smartbar-trash-target {
+  background: rgba(40, 18, 22, 0.88) !important;
+  border: 1px solid rgba(255, 69, 58, 0.38) !important;
+  color: #FF6961 !important;
+  box-shadow: 0 18px 42px -6px rgba(0, 0, 0, 0.55), 0 0 24px rgba(255, 69, 58, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+body.smartbar-dragging-dock .smartbar-trash-target,
+body.terminal-window-dragging .smartbar-trash-target {
+  opacity: 1 !important;
+  transform: translate3d(-50%, 0, 0) scale(1) !important;
+}
+.smartbar-trash-target .smartbar-trash-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 18px !important;
+  height: 18px !important;
+  font-size: 0 !important;
+  transform: none !important;
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+.smartbar-trash-target .smartbar-trash-label {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  transform: none !important;
+}
+html[data-theme="light"] .smartbar-trash-target.hover,
+html[data-theme="light"] body.smartbar-trash-hover .smartbar-trash-target,
+html[data-theme="dark"] .smartbar-trash-target.hover,
+html[data-theme="dark"] body.smartbar-trash-hover .smartbar-trash-target {
+  background: linear-gradient(135deg, #FF3B30, #D70015) !important;
+  border-color: rgba(255, 255, 255, 0.32) !important;
+  color: #FFFFFF !important;
+  transform: translate3d(-50%, -4px, 0) scale(1.06) !important;
+  box-shadow: 0 18px 44px rgba(255, 59, 48, 0.42), 0 0 0 6px rgba(255, 59, 48, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.32) !important;
+}
+.smartbar-trash-target.hover .smartbar-trash-icon,
+body.smartbar-trash-hover .smartbar-trash-target .smartbar-trash-icon {
+  transform: scale(1.12) rotate(-8deg) !important;
+}
+
+/* 拖拽图标悬停在关闭胶囊上时的磁吸缩小态 */
+.smartbar-drag-ghost {
+  z-index: 9900 !important;
+}
+.smartbar-drag-ghost.over-trash .smartbar-session-icon {
+  border-color: #FF3B30 !important;
+  box-shadow: 0 12px 28px rgba(255, 59, 48, 0.35), 0 0 0 3px rgba(255, 59, 48, 0.26) !important;
+}
+
+/* 26. UI113：单窗全屏按钮恢复、纯文字无交互空状态、Smartbar 防遮挡与添加连接面板重设计 */
+
+/* 26.1 终端页无窗口空状态：纯静态文字，无卡片外框、无圆点、不可点击 */
+#terminalWorkspace.layout-0 > .terminal-placeholder,
+#terminalWorkspace.layout-0 > .terminal-placeholder.active {
+  pointer-events: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+html body #terminalWorkspace .terminal-empty-minimal,
+html body #terminalWorkspace .terminal-empty-card,
+html[data-theme="light"] body #terminalWorkspace .terminal-empty-minimal,
+html[data-theme="dark"] body #terminalWorkspace .terminal-empty-minimal,
+html[data-theme="light"] body #terminalWorkspace .terminal-empty-card,
+html[data-theme="dark"] body #terminalWorkspace .terminal-empty-card {
+  display: inline-flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: auto !important;
+  max-width: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  cursor: default !important;
+  pointer-events: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+html body #terminalWorkspace .terminal-empty-dot,
+html body #terminalWorkspace .terminal-empty-minimized-list {
+  display: none !important;
+}
+html body #terminalWorkspace .terminal-empty-text {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.02em !important;
+  line-height: 1.5 !important;
+  color: color-mix(in srgb, var(--text-secondary, #8E99A6) 76%, transparent) !important;
+  pointer-events: none !important;
+  user-select: none !important;
+}
+
+/* 26.2 根治 Smartbar 被下方窗口或拖拽替换高亮层遮挡 / 透底问题 + 消除顶部双白条重影 */
+html body.app-body.terminal-mode #sessionTabs.terminal-smartbar {
+  z-index: 9650 !important;
+  top: calc(var(--smartbar-top, 72px) - 19px) !important;
+}
+/* 仅由 #sessionTabs .smartbar-handle 渲染唯一可交互小白条，隐藏 .main-nav::after 防止双白条上下重影 */
+html body.app-body.terminal-mode .main-nav::after {
+  opacity: 0 !important;
+  display: none !important;
+}
+html body.app-body.terminal-mode #sessionTabs.terminal-smartbar .smartbar-handle {
+  opacity: var(--z-shelf-alpha, 1) !important;
+  pointer-events: auto !important;
+  clip-path: none !important;
+  transform: translate3d(-50%, 0, 0) !important;
+  transition: none !important;
+}
+
+/* Smartbar 面板采用高不透明度实感毛玻璃（96%），绝不让下方窗口蓝框或文字透上来造成视觉遮挡 */
+html[data-theme="light"] body.app-body.terminal-mode #sessionTabs .smartbar-panel {
+  background:
+    radial-gradient(ellipse 75% 50% at 50% 0%, rgba(255, 255, 255, 0.95), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(246, 248, 252, 0.95)) !important;
+  border: 1px solid rgba(15, 23, 42, 0.10) !important;
+  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.16), 0 4px 14px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
+}
+html[data-theme="dark"] body.app-body.terminal-mode #sessionTabs .smartbar-panel {
+  background:
+    radial-gradient(ellipse 75% 50% at 50% 0%, rgba(255, 255, 255, 0.08), transparent 62%),
+    linear-gradient(180deg, rgba(26, 30, 38, 0.97), rgba(18, 22, 28, 0.96)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 24px 68px rgba(0, 0, 0, 0.52), 0 4px 16px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
+}
+
+/* 拖拽替换窗口时：Smartbar 保持 100% 清晰在最顶层（绝不变淡被下方窗口反盖），仅穿透鼠标事件 */
+html body.app-body.terminal-mode #sessionTabs.smartbar-dragging-outside .smartbar-panel {
+  opacity: 1 !important;
+  pointer-events: none !important;
+  transform: translate3d(-50%, 0px, 0) scale3d(1, 1, 1) !important;
+}
+
+/* 目标窗口替换提示层：移除模糊白雾遮罩，保留 3px 主题蓝框与居中胶囊，终端文字清晰可见且不干扰顶栏 */
+.terminal-window > .smartbar-window-drop-badge {
+  background: color-mix(in srgb, var(--accent, #0A84FF) 5%, transparent) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  z-index: 40 !important;
+}
+
+/* 屏幕内终端圈选框高度与内边距加宽，确保鼠标悬停图标微抬时 100% 包裹在圈选框内 */
+.smartbar-dock > .smartbar-onscreen-ring {
+  top: 40px !important;
+  height: 106px !important;
+  border-radius: 22px !important;
+}
+
+/* 卡片翻转期间背景避让窗口 z-index 严格处于翻转舞台（80）之下 */
+body.terminal-card-flip-preparing #terminalWorkspace > .terminal-window.terminal-window-morphing,
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window.terminal-window-morphing {
+  z-index: 18 !important;
+}
+
+/* 26.3 Smartbar 「+ 新建」按钮与会话图标完美对齐 + 激活高亮态 */
+.smartbar-add {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 8px !important;
+}
+.smartbar-add .smartbar-add-label {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 82px !important;
+  height: 14px !important;
+  opacity: 0.78 !important;
+}
+.smartbar-add.active .smartbar-add-icon {
+  border-color: var(--accent, #0A84FF) !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 14%, var(--surface, #FFFFFF)) !important;
+  box-shadow: 0 12px 26px color-mix(in srgb, var(--accent, #0A84FF) 22%, rgba(0, 0, 0, 0.18)), 0 0 0 3px color-mix(in srgb, var(--accent, #0A84FF) 20%, transparent) !important;
+}
+.smartbar-add.active .smartbar-plus-img {
+  transform: rotate(45deg) !important;
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+/* 26.4 Smartbar「新建终端连接」选择器弹窗（#smartbarPickerLayer .smartbar-picker）v4.0 全面重设计 */
+#smartbarPickerLayer {
+  z-index: 9700 !important;
+}
+#smartbarPickerLayer .smartbar-picker {
+  z-index: 9701 !important;
+  width: min(344px, calc(100vw - 28px)) !important;
+  min-height: 0 !important;
+  height: auto !important;
+  max-height: min(440px, calc(100dvh - var(--smartbar-picker-top, 140px) - 20px)) !important;
+  border-radius: 18px !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  animation: none !important;
+  filter: none !important;
+}
+html[data-theme="light"] #smartbarPickerLayer .smartbar-picker {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border: 1px solid rgba(15, 23, 42, 0.10) !important;
+  box-shadow: 0 24px 60px -8px rgba(15, 23, 42, 0.18), 0 6px 18px rgba(15, 23, 42, 0.06), inset 0 1px 0 #FFFFFF !important;
+}
+html[data-theme="dark"] #smartbarPickerLayer .smartbar-picker {
+  background: rgba(22, 26, 34, 0.98) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 26px 68px -6px rgba(0, 0, 0, 0.62), 0 6px 20px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+#smartbarPickerLayer .smartbar-picker::before {
+  display: none !important;
+}
+
+/* 弹窗头部 */
+#smartbarPickerLayer .smartbar-picker-head {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  height: 46px !important;
+  padding: 0 14px !important;
+  border-bottom: 1px solid color-mix(in srgb, var(--border, rgba(139, 148, 158, 0.2)) 75%, transparent) !important;
+  flex-shrink: 0 !important;
+}
+#smartbarPickerLayer .smartbar-picker-head-title {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+}
+#smartbarPickerLayer .smartbar-picker-head-ico {
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 7px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: var(--accent, #0A84FF) !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent) !important;
+}
+#smartbarPickerLayer .smartbar-picker-head strong {
+  font-size: 13.5px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--text, #111418) !important;
+}
+#smartbarPickerLayer .smartbar-picker-count {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 20px !important;
+  height: 18px !important;
+  padding: 0 6px !important;
+  border-radius: 999px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: var(--text-secondary, #64748B) !important;
+  background: color-mix(in srgb, var(--text-secondary, #64748B) 12%, transparent) !important;
+}
+#smartbarPickerLayer .smartbar-picker-close-btn {
+  width: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: transparent !important;
+  color: var(--text-secondary, #64748B) !important;
+  cursor: pointer !important;
+  transition: background-color 150ms ease, color 150ms ease !important;
+}
+#smartbarPickerLayer .smartbar-picker-close-btn:hover {
+  background: rgba(255, 59, 48, 0.12) !important;
+  color: #FF3B30 !important;
+}
+
+/* 弹窗服务器列表与卡片项 */
+#smartbarPickerLayer .smartbar-picker-list {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  padding: 10px !important;
+  overflow-y: auto !important;
+  max-height: 360px !important;
+}
+#smartbarPickerLayer .smartbar-picker-list > button.smartbar-picker-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 11px !important;
+  width: 100% !important;
+  min-height: 54px !important;
+  padding: 8px 11px !important;
+  border-radius: 13px !important;
+  border: 1px solid color-mix(in srgb, var(--border, rgba(139, 148, 158, 0.2)) 55%, transparent) !important;
+  background: color-mix(in srgb, var(--bg, #F4F6F9) 55%, transparent) !important;
+  color: var(--text, #111418) !important;
+  text-align: left !important;
+  cursor: pointer !important;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease !important;
+}
+html[data-theme="light"] #smartbarPickerLayer .smartbar-picker-list > button.smartbar-picker-item:hover {
+  background: color-mix(in srgb, var(--accent, #0071E3) 7%, #FFFFFF) !important;
+  border-color: color-mix(in srgb, var(--accent, #0071E3) 34%, transparent) !important;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06) !important;
+}
+html[data-theme="dark"] #smartbarPickerLayer .smartbar-picker-list > button.smartbar-picker-item:hover {
+  background: color-mix(in srgb, var(--accent, #0A84FF) 12%, rgba(30, 35, 45, 0.95)) !important;
+  border-color: color-mix(in srgb, var(--accent, #0A84FF) 42%, transparent) !important;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28) !important;
+}
+
+/* 左侧协议图标方砖 */
+#smartbarPickerLayer .smartbar-picker-item-icon {
+  position: relative !important;
+  width: 38px !important;
+  height: 38px !important;
+  flex: 0 0 38px !important;
+  border-radius: 11px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: var(--accent, #0A84FF) !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--accent, #0A84FF) 22%, transparent) !important;
+}
+#smartbarPickerLayer .smartbar-picker-item-icon.proto-ssh { color: #16A34A !important; background: rgba(22, 163, 74, 0.12) !important; border-color: rgba(22, 163, 74, 0.25) !important; }
+#smartbarPickerLayer .smartbar-picker-item-icon.proto-rdp { color: #D97706 !important; background: rgba(217, 119, 6, 0.12) !important; border-color: rgba(217, 119, 6, 0.25) !important; }
+#smartbarPickerLayer .smartbar-picker-item-icon.proto-vnc { color: #7C3AED !important; background: rgba(124, 58, 237, 0.12) !important; border-color: rgba(124, 58, 237, 0.25) !important; }
+#smartbarPickerLayer .smartbar-picker-item-icon.proto-telnet { color: #0284C7 !important; background: rgba(2, 132, 199, 0.12) !important; border-color: rgba(2, 132, 199, 0.25) !important; }
+#smartbarPickerLayer .smartbar-picker-item-icon .proto-dot {
+  position: absolute !important;
+  right: -2px !important;
+  bottom: -2px !important;
+  width: 9px !important;
+  height: 9px !important;
+  border: 2px solid var(--surface, #FFFFFF) !important;
+  box-shadow: none !important;
+}
+
+/* 中间主机信息 */
+#smartbarPickerLayer .smartbar-picker-item-body {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 3px !important;
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+}
+#smartbarPickerLayer .smartbar-picker-item-top {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  min-width: 0 !important;
+}
+#smartbarPickerLayer .smartbar-picker-item-top strong {
+  font-size: 13.5px !important;
+  font-weight: 650 !important;
+  color: var(--text, #111418) !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+#smartbarPickerLayer .smartbar-picker-proto-tag {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 17px !important;
+  padding: 0 6px !important;
+  border-radius: 5px !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.03em !important;
+  color: var(--accent, #0A84FF) !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent) !important;
+  flex-shrink: 0 !important;
+}
+#smartbarPickerLayer .smartbar-picker-open-pill {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 17px !important;
+  padding: 0 6px !important;
+  border-radius: 999px !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  color: #16A34A !important;
+  background: rgba(34, 197, 94, 0.12) !important;
+  flex-shrink: 0 !important;
+}
+html[data-theme="dark"] #smartbarPickerLayer .smartbar-picker-open-pill {
+  color: #4ADE80 !important;
+  background: rgba(34, 197, 94, 0.18) !important;
+}
+#smartbarPickerLayer .smartbar-picker-item-body em {
+  grid-column: auto !important;
+  font-size: 11.5px !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-style: normal !important;
+  color: var(--text-secondary, #64748B) !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* 右侧新建加号胶囊 */
+#smartbarPickerLayer .smartbar-picker-item-cta {
+  width: 28px !important;
+  height: 28px !important;
+  flex: 0 0 28px !important;
+  border-radius: 9px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: var(--text-secondary, #64748B) !important;
+  background: color-mix(in srgb, var(--text-secondary, #64748B) 10%, transparent) !important;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease !important;
+}
+#smartbarPickerLayer .smartbar-picker-list > button.smartbar-picker-item:hover .smartbar-picker-item-cta {
+  background: var(--accent, #0A84FF) !important;
+  color: #FFFFFF !important;
+  transform: scale(1.05) !important;
+}
+
+/* 跨端接管行（仅当有在线设备时显示） */
+#smartbarPickerLayer .smartbar-handoff-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  min-height: 48px !important;
+  padding: 8px 10px !important;
+  border-radius: 12px !important;
+}
+#smartbarPickerLayer .smartbar-handoff-ico .smartbar-device-badge {
+  position: static !important;
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 9px !important;
+}
+#smartbarPickerLayer .smartbar-handoff-meta {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+#smartbarPickerLayer .smartbar-handoff-pill {
+  padding: 3px 8px !important;
+  border-radius: 999px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--accent, #0A84FF) !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent) !important;
+}
