@@ -4801,3 +4801,264 @@ html[data-theme="dark"] #smartbarPickerLayer .smartbar-picker-open-pill {
   color: var(--accent, #0A84FF) !important;
   background: color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent) !important;
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 27. UI114 四项交互与动效精修：
+ *     1) Smartbar 小白条 (.smartbar-handle) 与顶栏及折叠箭头 100% 同帧零延迟同步
+ *     2) Smartbar 点击「+」无缝胶囊变形为新建连接面板（0 重叠 + WASM 进退场动画 + 返回按钮）
+ *     3) 磁贴支持左右双钉（Left + Right 三列网格）+ 多窗防交界侧自动同侧上下叠放与切回还原
+ *     4) 浮窗默认位置贴合顶部工具栏下方顺手热区
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* 27.1 彻底根治 Smartbar 小白条比顶栏与箭头慢半拍的问题：
+ *      剥离 style.css 遗留的 560ms top/transform/opacity transition，
+ *      直接与 .main-nav 共享 --z-shelf-ext / --topbar-collapse-offset / --z-shelf-alpha 同帧计算！ */
+html body.app-body #sessionTabs.terminal-smartbar {
+  z-index: 9650 !important;
+  top: calc(56px + var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px) - 19px) !important;
+  transition: none !important;
+  animation: none !important;
+}
+html body.app-body.terminal-mode #sessionTabs.terminal-smartbar {
+  top: calc(56px + var(--z-shelf-ext, 16px) + var(--topbar-collapse-offset, 0px) - 19px) !important;
+}
+html:not([data-shelf-transitioning="1"]) body.app-body:not(.terminal-mode) #sessionTabs.terminal-smartbar:not(.open):not(.closing) .smartbar-handle {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: none !important;
+  animation: none !important;
+}
+html[data-shelf-transitioning="1"] body.app-body #terminalShelfBar,
+html[data-shelf-transitioning="1"] body.app-body .terminal-shelf-bar {
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: max(0px, calc(50px + var(--topbar-collapse-offset, 0px))) !important;
+  bottom: 0 !important;
+  height: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 20px !important;
+  transform: none !important;
+  opacity: var(--z-shelf-alpha, 0) !important;
+  visibility: visible !important;
+  transition: none !important;
+  pointer-events: none !important;
+  z-index: 95 !important;
+}
+html body.app-body.terminal-mode #sessionTabs.terminal-smartbar .smartbar-handle,
+html[data-shelf-transitioning="1"] body.app-body #sessionTabs.terminal-smartbar .smartbar-handle {
+  display: grid !important;
+  opacity: var(--z-shelf-alpha, 1) !important;
+  pointer-events: auto !important;
+  clip-path: none !important;
+  transform: translate3d(-50%, 0, 0) !important;
+  transition: none !important;
+  animation: none !important;
+}
+html body.app-body #sessionTabs.terminal-smartbar .smartbar-handle span {
+  width: var(--smartbar-bar-width, 72px) !important;
+  height: var(--smartbar-bar-height, 4px) !important;
+  transition: background-color 140ms ease !important;
+  animation: none !important;
+}
+
+/* 27.2 Smartbar 点击「+」进入 Picker 视图及返回/收起：双向同胶囊无缝变形（True Shared-Bounds Morph） */
+html body.app-body.terminal-mode #sessionTabs.picker-open:not(.picker-morphing) .smartbar-panel,
+html body.app-body.terminal-mode #sessionTabs[data-closing-from-picker="1"] .smartbar-panel {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: none !important;
+  animation: none !important;
+}
+html body.app-body.terminal-mode #sessionTabs.picker-morphing .smartbar-panel {
+  opacity: var(--sb-panel-alpha, 0) !important;
+  pointer-events: none !important;
+  transform-origin: 50% 0% !important;
+  transform: translate3d(-50%, var(--sb-panel-y, 0px), 0) scale3d(var(--sb-panel-sx, 1), var(--sb-panel-sy, 1), 1) !important;
+  transition: none !important;
+  animation: none !important;
+}
+.smartbar-dock > .smartbar-empty {
+  white-space: nowrap !important;
+  padding: 0 10px !important;
+}
+#smartbarPickerLayer .smartbar-picker {
+  left: var(--smartbar-picker-left, 50%) !important;
+  top: var(--smartbar-picker-top, 86px) !important;
+  width: min(356px, calc(100vw - 28px)) !important;
+  transform-origin: 50% 0% !important;
+  opacity: var(--sb-picker-alpha, 1) !important;
+  transform: translate3d(0, var(--sb-picker-y, 0px), 0) scale3d(var(--sb-picker-sx, 1), var(--sb-picker-sy, 1), 1) !important;
+  transition: none !important;
+  animation: none !important;
+}
+#smartbarPickerLayer .smartbar-picker-back-btn {
+  width: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  margin-right: 2px !important;
+  border: 1px solid color-mix(in srgb, var(--border, rgba(139, 148, 158, 0.22)) 70%, transparent) !important;
+  border-radius: 8px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: color-mix(in srgb, var(--bg, #F4F6F9) 65%, transparent) !important;
+  color: var(--text-secondary, #64748B) !important;
+  cursor: pointer !important;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, transform 140ms ease !important;
+}
+#smartbarPickerLayer .smartbar-picker-back-btn:hover {
+  background: color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent, #0A84FF) 35%, transparent) !important;
+  color: var(--accent, #0A84FF) !important;
+  transform: translateX(-1px) !important;
+}
+
+/* 27.3 磁贴支持左右双钉（操作终端一律按单窗左右排，非操作终端放到外侧同一边全高侧栏，无上下排法）+ 左右等宽锁死 100% 一致 */
+html body .z-panel-morphing {
+  overflow: hidden !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
+
+/* 彻底清除 style.css 中给不同面板写的不同 min-width（540px / 460px / 430px），确保任何面板钉在左侧或右侧时宽度 100% 相等！ */
+.terminal-page > .docked-left,
+.terminal-page > .docked-right,
+.terminal-page.has-docked-left > .docked-left,
+.terminal-page.has-docked-right > .docked-right,
+.terminal-page.has-docked-left.has-docked-right > .docked-left,
+.terminal-page.has-docked-left.has-docked-right > .docked-right {
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.terminal-window.window-has-dock-left.window-has-dock-right {
+  --z-dual-dock-w: 360px;
+}
+.terminal-window.window-has-dock-left.window-has-dock-right > .terminal-window-titlebar {
+  margin-left: var(--z-dual-dock-w, 360px) !important;
+  width: calc(100% - 2 * var(--z-dual-dock-w, 360px)) !important;
+  box-sizing: border-box !important;
+  border-left: 1px solid var(--z-outline, rgba(128, 128, 128, 0.14)) !important;
+  border-right: 1px solid var(--z-outline, rgba(128, 128, 128, 0.14)) !important;
+  position: relative !important;
+  z-index: 6 !important;
+}
+.terminal-window.window-has-dock-left.window-has-dock-right > .terminal-window-body {
+  margin-top: -42px !important;
+  height: calc(100% + 42px) !important;
+}
+
+/* 当磁贴钉入/解钉/换边（.z-dock-cols-morphing）时，父窗口标题栏与子页面 Grid 列宽随 WASM 同帧平滑伸缩 */
+.terminal-window.z-dock-cols-morphing > .terminal-window-titlebar {
+  margin-left: var(--z-dock-left-w, 0px) !important;
+  width: calc(100% - var(--z-dock-left-w, 0px) - var(--z-dock-right-w, 0px)) !important;
+  box-sizing: border-box !important;
+  position: relative !important;
+  z-index: 6 !important;
+}
+.terminal-window.z-dock-cols-morphing > .terminal-window-body {
+  margin-top: -42px !important;
+  height: calc(100% + 42px) !important;
+}
+
+html[data-zephyr-surface="desktop"] .terminal-page.z-dock-cols-morphing,
+body.desktop-embed .terminal-page.z-dock-cols-morphing,
+.terminal-page.z-dock-cols-morphing {
+  display: grid !important;
+  grid-template-columns: var(--z-dock-left-w, 0px) minmax(0, 1fr) var(--z-dock-right-w, 0px) !important;
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+  height: 100vh !important;
+}
+.terminal-page.z-dock-cols-morphing > .terminal-topbar,
+html[data-zephyr-surface="desktop"] .terminal-page.z-dock-cols-morphing > .topbar-actions {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  margin-top: 42px !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page.z-dock-cols-morphing > .topbar-actions {
+  margin-top: 50px !important;
+}
+.terminal-page.z-dock-cols-morphing > .terminal-container {
+  grid-column: 2 !important;
+  grid-row: 2 !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+}
+.terminal-page.z-dock-cols-morphing > .terminal-top-input {
+  grid-column: 2 !important;
+  grid-row: 3 !important;
+}
+.terminal-page.z-dock-cols-morphing > .docked-left:not(.z-panel-morphing) {
+  grid-column: 1 !important;
+  grid-row: 1 / -1 !important;
+  width: var(--z-dock-left-w, 360px) !important;
+  min-width: 0 !important;
+  max-width: var(--z-dock-left-w, 360px) !important;
+}
+.terminal-page.z-dock-cols-morphing > .docked-right:not(.z-panel-morphing) {
+  grid-column: 3 !important;
+  grid-row: 1 / -1 !important;
+  width: var(--z-dock-right-w, 360px) !important;
+  min-width: 0 !important;
+  max-width: var(--z-dock-right-w, 360px) !important;
+}
+
+html[data-zephyr-surface="desktop"] .terminal-page.has-docked-left.has-docked-right:not(.z-dock-cols-morphing),
+body.desktop-embed .terminal-page.has-docked-left.has-docked-right:not(.z-dock-cols-morphing),
+.terminal-page.has-docked-left.has-docked-right:not(.z-dock-cols-morphing) {
+  --z-dual-dock-w: min(360px, max(280px, 28vw));
+  display: grid !important;
+  grid-template-columns: var(--z-dual-dock-w) minmax(0, 1fr) var(--z-dual-dock-w) !important;
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+  height: 100vh !important;
+}
+.terminal-page.has-docked-left.has-docked-right > .docked-left:not(.z-panel-morphing) {
+  grid-column: 1 !important;
+  grid-row: 1 / -1 !important;
+  width: var(--z-dual-dock-w, 360px) !important;
+  min-width: 0 !important;
+  max-width: var(--z-dual-dock-w, 360px) !important;
+}
+.terminal-page.has-docked-left.has-docked-right > .terminal-topbar,
+html[data-zephyr-surface="desktop"] .terminal-page.has-docked-left.has-docked-right > .topbar-actions {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  margin-top: 42px !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page.has-docked-left.has-docked-right > .topbar-actions {
+  margin-top: 50px !important;
+}
+.terminal-page.has-docked-left.has-docked-right > .terminal-container {
+  grid-column: 2 !important;
+  grid-row: 2 !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+}
+.terminal-page.has-docked-left.has-docked-right > .terminal-top-input {
+  grid-column: 2 !important;
+  grid-row: 3 !important;
+}
+.terminal-page.has-docked-left.has-docked-right > .docked-right:not(.z-panel-morphing) {
+  grid-column: 3 !important;
+  grid-row: 1 / -1 !important;
+  width: var(--z-dual-dock-w, 360px) !important;
+  min-width: 0 !important;
+  max-width: var(--z-dual-dock-w, 360px) !important;
+}
+
+/* 当左右两侧同时钉着面板时，全屏浮窗精准填满中间工作区 */
+html body .terminal-page.has-docked-left.has-docked-right > .panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left.has-docked-right .z-unified-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left.has-docked-right .z-unified-secondary-panel.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left.has-docked-right .fm-editor-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left.has-docked-right .image-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left.has-docked-right .media-preview-modal.panel-fullscreen:not(.z-panel-morphing),
+html body .terminal-page.has-docked-left.has-docked-right .fm-props-modal.panel-fullscreen:not(.z-panel-morphing) {
+  left: calc(var(--z-dual-dock-w, 360px) + 12px) !important;
+  width: calc(100vw - 2 * var(--z-dual-dock-w, 360px) - 24px) !important;
+}

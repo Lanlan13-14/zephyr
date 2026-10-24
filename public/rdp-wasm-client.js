@@ -2180,6 +2180,14 @@ function updateInfo() {
 function escapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 /* ─── Parent frame communication ──────────────────────────────────── */
+function notifyParentActivity() {
+    if (embeddedMode && window.parent && window.parent !== window) {
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'activity', tabId: params?.tabId || tabId }, '*');
+    }
+}
+['pointerdown', 'mousedown', 'touchstart', 'keydown'].forEach((evName) => {
+    document.addEventListener(evName, notifyParentActivity, { passive: true, capture: true });
+});
 function notifyParentStatus(status) {
     if (embeddedMode && window.parent && window.parent !== window) {
         window.parent.postMessage({ source: 'zephyr-terminal', tabId: params?.tabId || tabId, status }, '*');

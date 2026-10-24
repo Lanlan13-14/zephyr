@@ -1,4 +1,4 @@
-import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui113';
+import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui116';
 if (typeof window !== 'undefined' && ZephyrWasmMotion) { window.Motion = ZephyrWasmMotion; }
 
 export const IPV4_OR_IPV6_RE = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\[?(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]+\]?(?::\d{1,5})?/g;
@@ -507,7 +507,7 @@ export function installTerminalSftpPro(ctx) {
     if (!panel) return;
     const Motion = window.Motion;
     if (open) {
-      ensureFloatingDefaultPosition(panel);
+      ensureFloatingDefaultPosition(panel, { triggerBtn: btn });
       panel.style.display = 'flex';
       panel.classList.add('open');
       btn?.classList.add('active');
@@ -516,20 +516,8 @@ export function installTerminalSftpPro(ctx) {
       Motion?.panelOpenWasm?.(panel, btn, { preset: 'mac' });
       syncHostWindowDockAndFloatState();
     } else {
-      if (panel.classList.contains('docked-right') || panel.classList.contains('docked-left')) {
-        togglePanelDockState(panel, 'float');
-      }
       btn?.classList.remove('active');
-      if (Motion?.panelCloseWasm) {
-        void Motion.panelCloseWasm(panel, btn, {
-          preset: 'snappy',
-          onDone: () => syncHostWindowDockAndFloatState(),
-        });
-      } else {
-        panel.classList.remove('open');
-        panel.style.display = 'none';
-        syncHostWindowDockAndFloatState();
-      }
+      closeUnifiedPanel(panel, { triggerBtn: btn });
     }
   }
 
@@ -934,21 +922,90 @@ export function installTerminalSftpPro(ctx) {
   ensureDesktopEmbedFlag();
   window.addEventListener('resize', ensureDesktopEmbedFlag);
 
-  function resolvePreferredDockSide() {
+  let pinnedSeqCounter = 0;
+
+  function resolvePreferredDockSide(excludePanel = null) {
+    const page = document.querySelector('.terminal-page') || document.body;
+    const otherPinned = Array.from(page.querySelectorAll('.z-unified-panel.pinned, .z-unified-panel.docked-left, .z-unified-panel.docked-right'))
+      .filter((p) => p !== excludePanel && p.classList.contains('open') && p.style.display !== 'none');
+    if (otherPinned.length === 1) {
+      const otherPref = otherPinned[0].dataset.preferredDockSide || otherPinned[0].dataset.unifiedDockSide || 'right';
+      return otherPref === 'left' ? 'right' : 'left';
+    }
     const slotSide = window.__zephyrPaneSlotSide || 'single';
     if (slotSide === 'left' || slotSide === 'middle-force-left') return 'left';
     if (slotSide === 'right' || slotSide === 'middle-force-right') return 'right';
     if (window.__zephyrUserPreferredDockSide === 'left' || window.__zephyrUserPreferredDockSide === 'right') {
       return window.__zephyrUserPreferredDockSide;
     }
-    try {
-      const hostWin = window.frameElement?.closest?.('.terminal-window');
-      const ws = hostWin?.closest?.('.terminal-workspace-grid');
-      if (ws?.classList.contains('layout-2') && hostWin?.classList.contains('slot-1')) return 'left';
-      if (ws?.classList.contains('layout-3') && hostWin?.classList.contains('slot-1')) return 'left';
-      if (ws?.classList.contains('layout-4') && (hostWin?.classList.contains('slot-1') || hostWin?.classList.contains('slot-3'))) return 'left';
-    } catch {}
     return 'right';
+  }
+
+  function computeForcedBoundaryDockSide(slotSide = window.__zephyrPaneSlotSide || 'single') {
+    // Active / operated terminal ('single', 'active', 'middle-active') NEVER forces a single side:
+    // it always arranges tiles Left & Right just like single-window mode!
+    // Only inactive / non-operated multi-window terminals ('left', 'right', 'middle-force-left', 'middle-force-right')
+    // place their tiles on the outer non-boundary side.
+    if (slotSide === 'left' || slotSide === 'middle-force-left') return 'left';
+    if (slotSide === 'right' || slotSide === 'middle-force-right') return 'right';
+    return null;
+  }
+
+  function applyPinnedPanelsGridAssignment(page) {
+    if (!page) return;
+    const pinnedPanels = Array.from(page.querySelectorAll('.z-unified-panel.pinned'))
+      .filter((p) => p.classList.contains('open') && p.style.display !== 'none')
+      .sort((a, b) => (Number(a.dataset.pinnedSeq) || 0) - (Number(b.dataset.pinnedSeq) || 0));
+
+    // At most 2 pinned tiles per terminal
+    while (pinnedPanels.length > 2) {
+      const oldest = pinnedPanels.shift();
+      if (oldest) {
+        oldest.classList.remove('docked-right', 'docked-left', 'pinned', 'panel-fullscreen', 'docked-slot-top', 'docked-slot-bottom');
+        delete oldest.dataset.unifiedDockSide;
+        delete oldest.dataset.preferredDockSide;
+        restorePreDockOrDefaultRect(oldest);
+        oldest.querySelectorAll('.panel-pin-toggle').forEach((b) => {
+          b.classList.remove('active', 'on');
+          b.setAttribute('aria-pressed', 'false');
+        });
+      }
+    }
+
+    if (pinnedPanels.length === 2) {
+      const p0 = pinnedPanels[0];
+      const p1 = pinnedPanels[1];
+      const s0 = p0.dataset.preferredDockSide === 'left' ? 'left' : 'right';
+      let s1 = p1.dataset.preferredDockSide === 'left' ? 'left' : 'right';
+      if (s0 === s1) {
+        s1 = s0 === 'left' ? 'right' : 'left';
+        p1.dataset.preferredDockSide = s1;
+      }
+    }
+
+    const forcedSide = computeForcedBoundaryDockSide(window.__zephyrPaneSlotSide || 'single');
+    page.classList.remove('has-dual-dock-left', 'has-dual-dock-right');
+
+    for (let idx = 0; idx < pinnedPanels.length; idx++) {
+      const p = pinnedPanels[idx];
+      const pref = (p.dataset.preferredDockSide === 'left' || p.dataset.preferredDockSide === 'right')
+        ? p.dataset.preferredDockSide
+        : 'right';
+      p.dataset.preferredDockSide = pref;
+      const effectiveSide = forcedSide || pref;
+      p.classList.remove('docked-left', 'docked-right', 'docked-slot-top', 'docked-slot-bottom', 'panel-fullscreen', 'panel-focused');
+      p.classList.add(effectiveSide === 'left' ? 'docked-left' : 'docked-right', 'pinned', 'open');
+      p.style.display = 'flex';
+      p.dataset.unifiedDockSide = effectiveSide;
+      clearFloatingInlineGeometry(p);
+      // When two tiles are placed on the same outer side of an inactive pane, stack them full-height in the same rail (no top/bottom split!)
+      p.style.zIndex = String(idx + 1);
+      p.style.removeProperty('--panel-z');
+      p.querySelectorAll('.panel-pin-toggle').forEach((b) => {
+        b.classList.add('active', 'on');
+        b.setAttribute('aria-pressed', 'true');
+      });
+    }
   }
 
   function syncHostWindowDockAndFloatState({ userTriggered = false } = {}) {
@@ -959,7 +1016,7 @@ export function installTerminalSftpPro(ctx) {
     const anyFloating = !!page.querySelector('.z-unified-panel.open:not(.docked-right):not(.docked-left)');
 
     if (!anyDocked) {
-      page.classList.remove('has-docked-right', 'has-docked-left');
+      page.classList.remove('has-docked-right', 'has-docked-left', 'has-dual-dock-left', 'has-dual-dock-right');
     } else {
       page.classList.toggle('has-docked-right', dockedRight);
       page.classList.toggle('has-docked-left', dockedLeft);
@@ -988,9 +1045,13 @@ export function installTerminalSftpPro(ctx) {
     const pinSides = [];
     if (dockedLeft) pinSides.push('left');
     if (dockedRight) pinSides.push('right');
+    const prW = page.getBoundingClientRect?.().width || window.innerWidth || 1280;
+    const dualDockW = (dockedLeft && dockedRight) ? Math.min(360, Math.max(280, Math.round(prW * 0.28))) : 360;
+    page.style.setProperty('--z-dual-dock-w', `${dualDockW}px`);
     try {
       const hostWin = window.frameElement?.closest?.('.terminal-window');
       if (hostWin) {
+        hostWin.style.setProperty('--z-dual-dock-w', `${dualDockW}px`);
         hostWin.classList.toggle('window-has-dock-right', dockedRight);
         hostWin.classList.toggle('window-has-dock-left', dockedLeft);
         hostWin.classList.toggle('window-has-floating-panel', anyFloating && !anyDocked);
@@ -1031,6 +1092,7 @@ export function installTerminalSftpPro(ctx) {
     return window.Motion || null;
   }
 
+  let floatingFocusZSeed = 120;
   function setFocusedFloatingPanel(targetPanel) {
     const allFloaters = document.querySelectorAll(
       '.z-unified-panel, .z-unified-secondary-panel, .fm-editor-modal, .image-preview-modal, .media-preview-modal, .fm-props-modal'
@@ -1039,6 +1101,11 @@ export function installTerminalSftpPro(ctx) {
     allFloaters.forEach((p) => {
       const isDocked = p.classList.contains('docked-left') || p.classList.contains('docked-right') || !!p.dataset.unifiedDockSide;
       const shouldFocus = p === targetPanel && !isDocked && p.classList.contains('open') !== false && p.style.display !== 'none';
+      if (shouldFocus) {
+        const nextZ = ++floatingFocusZSeed;
+        p.style.zIndex = String(nextZ);
+        p.style.setProperty('--panel-z', String(nextZ));
+      }
       if (Motion?.panelResizeRing) {
         Motion.panelResizeRing(p, shouldFocus);
       } else {
@@ -1058,40 +1125,181 @@ export function installTerminalSftpPro(ctx) {
     }, true);
   }
 
+  function getWorkspaceTopInset(page) {
+    const topbarEl = page?.querySelector?.(':scope > .terminal-topbar, :scope > .topbar-actions');
+    const pr = page?.getBoundingClientRect?.() || { top: 0 };
+    if (topbarEl) {
+      const tr = topbarEl.getBoundingClientRect();
+      if (tr.height > 0) {
+        return Math.max(48, Math.round(tr.bottom - (pr.top || 0) + 8));
+      }
+    }
+    const anyDocked = page?.classList?.contains?.('has-docked-left') || page?.classList?.contains?.('has-docked-right');
+    return anyDocked ? 94 : 52;
+  }
+
   function computeAvailableFullscreenBox(panel, pageEl) {
     const page = pageEl || panel?.closest?.('.terminal-page, .rdp-page, .app-shell') || document.querySelector('.terminal-page') || document.body;
     const pr = page.getBoundingClientRect?.() || { width: window.innerWidth || 1280, height: window.innerHeight || 800 };
     const isSelfDocked = panel?.classList?.contains?.('docked-right') || panel?.classList?.contains?.('docked-left');
-    const dockRightW = (!isSelfDocked && page.classList.contains('has-docked-right')) ? 360 : 0;
-    const dockLeftW = (!isSelfDocked && page.classList.contains('has-docked-left')) ? 360 : 0;
+    const bothDocked = !isSelfDocked && page.classList.contains('has-docked-right') && page.classList.contains('has-docked-left');
+    const singleDockW = bothDocked ? Math.min(360, Math.max(280, Math.round(pr.width * 0.27))) : 360;
+    const dockRightW = (!isSelfDocked && page.classList.contains('has-docked-right')) ? singleDockW : 0;
+    const dockLeftW = (!isSelfDocked && page.classList.contains('has-docked-left')) ? singleDockW : 0;
     const left = dockLeftW + 12;
-    const top = 90;
+    const top = getWorkspaceTopInset(page);
     const width = Math.max(320, Math.round(pr.width - dockLeftW - dockRightW - 24));
     const height = Math.max(240, Math.round(pr.height - top - 12));
     return { left, top, width, height };
   }
 
-  function ensureFloatingDefaultPosition(panel, { defaultW = 580, defaultH = 390 } = {}) {
-    if (!panel) return;
-    if (panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || panel.dataset.unifiedDockSide) return;
-    if (panel.classList.contains('panel-fullscreen')) return;
-    if ((panel.dataset.userPlaced === '1' || panel.classList.contains('editor-window')) && panel.style.left && panel.style.top && parseFloat(panel.style.top) >= 88) return;
+  function rememberPreDockRect(panel) {
+    if (!panel || panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || panel.classList.contains('panel-fullscreen')) return;
     const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
-    const pr = page.getBoundingClientRect?.() || { width: window.innerWidth || 1280, height: window.innerHeight || 800 };
-    const dockRightW = page.classList.contains('has-docked-right') ? 360 : 0;
-    const dockLeftW = page.classList.contains('has-docked-left') ? 360 : 0;
+    const pr = page.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const r = panel.getBoundingClientRect();
+    const frameTop = (typeof window !== 'undefined' && window.frameElement?.getBoundingClientRect)
+      ? window.frameElement.getBoundingClientRect().top
+      : 0;
+    if (r.width > 120 && r.height > 120) {
+      const styleL = parseFloat(panel.style.left);
+      const styleT = parseFloat(panel.style.top);
+      const styleW = parseFloat(panel.style.width);
+      const styleH = parseFloat(panel.style.height);
+      panel._preDockBox = {
+        left: Number.isFinite(styleL) ? Math.round(styleL) : Math.round(r.left - pr.left),
+        top: Number.isFinite(styleT) ? Math.round(styleT) : Math.round(r.top - pr.top),
+        width: Number.isFinite(styleW) ? Math.round(styleW) : Math.round(r.width),
+        height: Number.isFinite(styleH) ? Math.round(styleH) : Math.round(r.height),
+        frameTop,
+      };
+    }
+  }
+
+  function restorePreDockOrDefaultRect(panel) {
+    if (!panel) return;
+    const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    const pr = page.getBoundingClientRect?.() || { width: window.innerWidth || 1280, height: window.innerHeight || 800, left: 0, top: 0 };
+    const bothDocked = page.classList.contains('has-docked-right') && page.classList.contains('has-docked-left');
+    const singleDockW = bothDocked ? Math.min(360, Math.max(280, Math.round(pr.width * 0.27))) : 360;
+    const dockRightW = page.classList.contains('has-docked-right') ? singleDockW : 0;
+    const dockLeftW = page.classList.contains('has-docked-left') ? singleDockW : 0;
     const availW = Math.max(360, pr.width - dockLeftW - dockRightW);
+    const minTop = getWorkspaceTopInset(page);
+
+    const box = panel._preDockBox;
+    if (box && box.width > 120 && box.height > 120) {
+      const nowFrameTop = (typeof window !== 'undefined' && window.frameElement?.getBoundingClientRect)
+        ? window.frameElement.getBoundingClientRect().top
+        : 0;
+      const shiftY = Math.round((box.frameTop || 0) - nowFrameTop);
+      const w = Math.min(box.width, Math.max(340, availW - 24));
+      const h = Math.min(box.height, Math.max(260, pr.height - minTop - 20));
+      const minLeft = dockLeftW + 14;
+      const maxLeft = Math.max(minLeft, pr.width - dockRightW - w - 14);
+      const maxTop = Math.max(minTop, pr.height - h - 20);
+      const left = Math.min(Math.max(box.left, minLeft), maxLeft);
+      const top = Math.min(Math.max(box.top + shiftY, minTop), maxTop);
+      panel.style.width = `${w}px`;
+      panel.style.height = `${h}px`;
+      panel.style.left = `${left}px`;
+      panel.style.top = `${top}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      panel.dataset.floatingPositionLocked = '1';
+      return;
+    }
+    ensureFloatingDefaultPosition(panel, { forceReset: true });
+  }
+
+  function ensureFloatingDefaultPosition(panel, { defaultW = 580, defaultH = 390, triggerBtn = null, forceReset = false } = {}) {
+    if (!panel) return;
+    if (panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || panel.classList.contains('pinned') || panel.dataset.unifiedDockSide) return;
+    if (panel.classList.contains('panel-fullscreen')) return;
+
+    const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    const pr = page.getBoundingClientRect?.() || { width: window.innerWidth || 1280, height: window.innerHeight || 800, left: 0, top: 0 };
+    const bothDocked = page.classList.contains('has-docked-right') && page.classList.contains('has-docked-left');
+    const singleDockW = bothDocked ? Math.min(360, Math.max(280, Math.round(pr.width * 0.27))) : 360;
+    const dockRightW = page.classList.contains('has-docked-right') ? singleDockW : 0;
+    const dockLeftW = page.classList.contains('has-docked-left') ? singleDockW : 0;
+    const availW = Math.max(360, pr.width - dockLeftW - dockRightW);
+    const minTop = getWorkspaceTopInset(page);
+
+    // If panel already has an initialized floating position, keep it stable (only soft-clamp to available bounds)
+    const curL = parseFloat(panel.style.left);
+    const curT = parseFloat(panel.style.top);
+    const curW = parseFloat(panel.style.width) || defaultW;
+    const curH = parseFloat(panel.style.height) || defaultH;
+    if (!forceReset && (panel.dataset.floatingPositionLocked === '1' || panel.dataset.userPlaced === '1' || panel.classList.contains('editor-window')) && Number.isFinite(curL) && Number.isFinite(curT)) {
+      const minLeft = dockLeftW + 14;
+      const maxLeft = Math.max(minLeft, pr.width - dockRightW - curW - 14);
+      const maxTop = Math.max(minTop, pr.height - curH - 20);
+      const clampedL = Math.min(Math.max(curL, minLeft), maxLeft);
+      const clampedT = Math.min(Math.max(curT, minTop - 6), maxTop);
+      if (Math.abs(clampedL - curL) >= 1) panel.style.left = `${Math.round(clampedL)}px`;
+      if (Math.abs(clampedT - curT) >= 1) panel.style.top = `${Math.round(clampedT)}px`;
+      return;
+    }
+
+    const isSecondary = panel.classList.contains('z-unified-secondary-panel')
+      || panel.classList.contains('fm-editor-modal')
+      || panel.classList.contains('image-preview-modal')
+      || panel.classList.contains('media-preview-modal')
+      || panel.classList.contains('fm-props-modal')
+      || panel.classList.contains('docker-log-drawer');
     const w = Math.min(defaultW, Math.max(340, availW - 36));
-    const h = Math.min(defaultH, Math.max(260, pr.height - 148));
-    const left = Math.max(dockLeftW + 16, Math.round(dockLeftW + availW - w - 24));
-    const top = Math.max(96, Math.round(pr.height - h - 58));
+    const h = Math.min(defaultH, Math.max(260, pr.height - minTop - 48));
+
+    const minLeft = dockLeftW + 18;
+    const maxLeft = Math.max(minLeft, pr.width - dockRightW - w - 18);
+    const maxTop = Math.max(minTop, pr.height - h - 32);
+
+    let left;
+    let top;
+    if (isSecondary) {
+      left = Math.round(dockLeftW + (availW - w) / 2);
+      top = Math.round(minTop + Math.max(0, (pr.height - minTop - h - 48)) * 0.25);
+    } else {
+      const orderIdx = Math.max(0, Object.keys(PANEL_TO_BTN_ID).indexOf(panel.id));
+      const btnId = PANEL_TO_BTN_ID[panel.id];
+      const btn = triggerBtn || (btnId ? document.getElementById(btnId) : null);
+      const btnRect = btn?.getBoundingClientRect?.();
+      if (btnRect && btnRect.width > 0 && pr.width > 0) {
+        left = Math.round(btnRect.left - (pr.left || 0));
+      } else {
+        left = minLeft + orderIdx * 32;
+      }
+      top = minTop;
+      left = Math.min(Math.max(left, minLeft), maxLeft);
+      top = Math.min(Math.max(top, minTop), maxTop);
+
+      const openOthers = Array.from(page.querySelectorAll('.z-unified-panel.open:not(.docked-left):not(.docked-right):not(.panel-fullscreen)'))
+        .filter((other) => other !== panel && other.style.display !== 'none' && other.dataset.floatingPositionLocked === '1');
+      for (let i = 0; i < openOthers.length; i++) {
+        const oLeft = parseFloat(openOthers[i].style.left) || 0;
+        const oTop = parseFloat(openOthers[i].style.top) || 0;
+        if (Math.abs(oTop - top) < 28 && Math.abs(oLeft - left) < 72) {
+          left += 32;
+          top += 28;
+        }
+      }
+    }
+
+    left = Math.min(Math.max(left, minLeft), maxLeft);
+    top = Math.min(Math.max(top, minTop), maxTop);
+
     panel.style.width = `${w}px`;
     panel.style.height = `${h}px`;
     panel.style.left = `${left}px`;
     panel.style.top = `${top}px`;
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
+    if (panel.classList.contains('open') || panel.classList.contains('show') || panel.style.display === 'flex') {
+      panel.dataset.floatingPositionLocked = '1';
+    }
   }
+  window.__zephyrEnsureFloatingDefaultPosition = ensureFloatingDefaultPosition;
 
   function rememberPreFullscreenRect(panel) {
     if (!panel || panel.classList.contains('panel-fullscreen') || panel.classList.contains('docked-left') || panel.classList.contains('docked-right')) return;
@@ -1139,7 +1347,7 @@ export function installTerminalSftpPro(ctx) {
           panel.style.bottom = 'auto';
         } else {
           clearFloatingInlineGeometry(panel);
-          ensureFloatingDefaultPosition(panel, { defaultW: 680, defaultH: 440 });
+          ensureFloatingDefaultPosition(panel, { defaultW: 680, defaultH: 440, forceReset: true });
         }
       } else {
         const fbox = computeAvailableFullscreenBox(panel, page);
@@ -1164,10 +1372,43 @@ export function installTerminalSftpPro(ctx) {
     }
   }
 
+  function reconcilePinnedPanelsForSlotSide(page, { animate = true } = {}) {
+    if (!page) return;
+    const pinned = Array.from(page.querySelectorAll('.z-unified-panel.pinned'))
+      .filter((p) => p.classList.contains('open') && p.style.display !== 'none');
+    if (!pinned.length) return;
+
+    const forcedSide = computeForcedBoundaryDockSide(window.__zephyrPaneSlotSide || 'single');
+    let needsChange = false;
+    for (const p of pinned) {
+      const pref = (p.dataset.preferredDockSide === 'left' || p.dataset.preferredDockSide === 'right')
+        ? p.dataset.preferredDockSide
+        : 'right';
+      const targetSide = forcedSide || pref;
+      const currentSide = p.dataset.unifiedDockSide || (p.classList.contains('docked-left') ? 'left' : (p.classList.contains('docked-right') ? 'right' : ''));
+      if (currentSide !== targetSide) {
+        needsChange = true;
+        break;
+      }
+    }
+    if (!needsChange) return;
+
+    const Motion = getMotion();
+    const mutate = () => {
+      applyPinnedPanelsGridAssignment(page);
+      syncHostWindowDockAndFloatState({ userTriggered: false });
+    };
+    if (animate && Motion?.panelDockMorph) {
+      void Motion.panelDockMorph(pinned, mutate, { preset: { response: 0.22, damping: 0.98 } });
+    } else {
+      mutate();
+    }
+  }
+
   function togglePanelDockState(panel, explicitSide, { userTriggered = true } = {}) {
     if (!panel) return;
     const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
-    const isDocked = panel.classList.contains('docked-right') || panel.classList.contains('docked-left') || !!panel.dataset.unifiedDockSide;
+    const isDocked = panel.classList.contains('docked-right') || panel.classList.contains('docked-left') || panel.classList.contains('pinned') || !!panel.dataset.unifiedDockSide;
     const isFullscreen = panel.classList.contains('panel-fullscreen');
     const Motion = getMotion();
 
@@ -1176,34 +1417,27 @@ export function installTerminalSftpPro(ctx) {
       return;
     }
 
+    if (!isDocked && !isFullscreen && explicitSide !== 'float') {
+      rememberPreDockRect(panel);
+    }
     if (explicitSide === 'fullscreen' && !isFullscreen && !isDocked) {
       rememberPreFullscreenRect(panel);
     }
 
-    // ONLY unpin other docked panels when THIS panel is actually entering a left/right dock!
-    const willEnterDock = (explicitSide === 'left' || explicitSide === 'right')
-      || (!explicitSide && !isDocked);
-
     const applyMutation = () => {
-      if (willEnterDock) {
-        page.querySelectorAll('.docked-right, .docked-left').forEach((other) => {
-          if (other !== panel) {
-            other.classList.remove('docked-right', 'docked-left', 'pinned', 'panel-fullscreen');
-            delete other.dataset.unifiedDockSide;
-            ensureFloatingDefaultPosition(other);
-            other.querySelectorAll('.panel-pin-toggle').forEach((b) => {
-              b.classList.remove('active', 'on');
-              b.setAttribute('aria-pressed', 'false');
-            });
-          }
-        });
-      }
-
       if ((isDocked && !explicitSide) || explicitSide === 'float' || (explicitSide === 'fullscreen' && isFullscreen)) {
-        panel.classList.remove('docked-right', 'docked-left', 'pinned', 'panel-fullscreen');
+        panel.classList.remove('docked-right', 'docked-left', 'pinned', 'panel-fullscreen', 'docked-slot-top', 'docked-slot-bottom');
         delete panel.dataset.unifiedDockSide;
+        delete panel.dataset.preferredDockSide;
         const box = panel._preFullscreenBox;
         clearFloatingInlineGeometry(panel);
+        panel.querySelectorAll('.panel-pin-toggle').forEach((b) => {
+          b.classList.remove('active', 'on');
+          b.setAttribute('aria-pressed', 'false');
+        });
+        updateMaximizeButtonIcon(panel);
+        applyPinnedPanelsGridAssignment(page);
+        syncHostWindowDockAndFloatState({ userTriggered });
         if (box && explicitSide === 'fullscreen') {
           panel.style.left = box.left;
           panel.style.top = box.top;
@@ -1212,13 +1446,8 @@ export function installTerminalSftpPro(ctx) {
           panel.style.right = 'auto';
           panel.style.bottom = 'auto';
         } else {
-          ensureFloatingDefaultPosition(panel);
+          restorePreDockOrDefaultRect(panel);
         }
-        panel.querySelectorAll('.panel-pin-toggle').forEach((b) => {
-          b.classList.remove('active', 'on');
-          b.setAttribute('aria-pressed', 'false');
-        });
-        updateMaximizeButtonIcon(panel);
         setFocusedFloatingPanel(panel);
       } else if (explicitSide === 'fullscreen') {
         const fbox = computeAvailableFullscreenBox(panel, page);
@@ -1233,40 +1462,128 @@ export function installTerminalSftpPro(ctx) {
         updateMaximizeButtonIcon(panel);
         setFocusedFloatingPanel(panel);
       } else {
-        const slotSide = window.__zephyrPaneSlotSide || 'single';
-        const canChooseFreely = (slotSide === 'single' || slotSide === 'middle-active');
-        let side = (explicitSide === 'left' || explicitSide === 'right') ? explicitSide : resolvePreferredDockSide();
-        if (userTriggered) {
-          if (explicitSide === 'left' || explicitSide === 'right') {
+        const otherPinned = Array.from(page.querySelectorAll('.z-unified-panel.pinned, .z-unified-panel.docked-left, .z-unified-panel.docked-right'))
+          .filter((p) => p !== panel && p.classList.contains('open') && p.style.display !== 'none');
+
+        let preferredSide;
+        if (explicitSide === 'left' || explicitSide === 'right') {
+          preferredSide = explicitSide;
+          if (userTriggered) {
             window.__zephyrUserPreferredDockSide = explicitSide;
-          } else if (canChooseFreely && !window.__zephyrUserPreferredDockSide) {
-            window.__zephyrUserPreferredDockSide = side;
+          }
+          if (otherPinned.length === 1 && otherPinned[0].dataset.preferredDockSide === preferredSide) {
+            otherPinned[0].dataset.preferredDockSide = preferredSide === 'left' ? 'right' : 'left';
+          } else if (otherPinned.length >= 2) {
+            const victim = otherPinned.find((p) => p.dataset.preferredDockSide === preferredSide) || otherPinned[0];
+            if (victim) {
+              victim.classList.remove('docked-right', 'docked-left', 'pinned', 'panel-fullscreen', 'docked-slot-top', 'docked-slot-bottom');
+              delete victim.dataset.unifiedDockSide;
+              delete victim.dataset.preferredDockSide;
+              restorePreDockOrDefaultRect(victim);
+              victim.querySelectorAll('.panel-pin-toggle').forEach((b) => {
+                b.classList.remove('active', 'on');
+                b.setAttribute('aria-pressed', 'false');
+              });
+            }
+          }
+        } else {
+          if (otherPinned.length === 1) {
+            const otherPref = otherPinned[0].dataset.preferredDockSide || otherPinned[0].dataset.unifiedDockSide || 'right';
+            preferredSide = otherPref === 'left' ? 'right' : 'left';
+          } else if (otherPinned.length >= 2) {
+            const victim = otherPinned[0];
+            preferredSide = victim.dataset.preferredDockSide || 'right';
+            victim.classList.remove('docked-right', 'docked-left', 'pinned', 'panel-fullscreen', 'docked-slot-top', 'docked-slot-bottom');
+            delete victim.dataset.unifiedDockSide;
+            delete victim.dataset.preferredDockSide;
+            restorePreDockOrDefaultRect(victim);
+            victim.querySelectorAll('.panel-pin-toggle').forEach((b) => {
+              b.classList.remove('active', 'on');
+              b.setAttribute('aria-pressed', 'false');
+            });
+          } else {
+            preferredSide = panel.dataset.preferredDockSide || resolvePreferredDockSide(panel);
+            const slotSide = window.__zephyrPaneSlotSide || 'single';
+            if (userTriggered && (slotSide === 'single' || slotSide === 'active' || slotSide === 'middle-active') && !window.__zephyrUserPreferredDockSide) {
+              window.__zephyrUserPreferredDockSide = preferredSide;
+            }
           }
         }
-        if (slotSide === 'left' || slotSide === 'middle-force-left') side = 'left';
-        else if (slotSide === 'right' || slotSide === 'middle-force-right') side = 'right';
-        panel.classList.remove('docked-right', 'docked-left', 'panel-fullscreen', 'panel-focused');
-        panel.classList.add(side === 'left' ? 'docked-left' : 'docked-right', 'pinned', 'open');
+
+        if (!panel.dataset.pinnedSeq) {
+          panel.dataset.pinnedSeq = String(++pinnedSeqCounter);
+        }
+        panel.dataset.preferredDockSide = preferredSide;
+        panel.classList.add('pinned', 'open');
         panel.style.display = 'flex';
-        panel.dataset.unifiedDockSide = side;
-        clearFloatingInlineGeometry(panel);
-        panel.style.zIndex = '';
-        panel.style.removeProperty('--panel-z');
-        panel.querySelectorAll('.panel-pin-toggle').forEach((b) => {
-          b.classList.add('active', 'on');
-          b.setAttribute('aria-pressed', 'true');
-        });
         if (Motion?.panelResizeRing) Motion.panelResizeRing(panel, false);
+        applyPinnedPanelsGridAssignment(page);
       }
       syncHostWindowDockAndFloatState({ userTriggered });
     };
 
     if (Motion?.panelDockMorph) {
-      Motion.panelDockMorph(panel, applyMutation, { preset: { response: 0.24, damping: 1.0 } });
+      Motion.panelDockMorph(panel, applyMutation, { preset: { response: 0.22, damping: 0.98 } });
     } else {
       applyMutation();
     }
   }
+
+  function closeUnifiedPanel(panel, { triggerBtn = null, onAfterClose = null } = {}) {
+    if (!panel) {
+      onAfterClose?.();
+      return;
+    }
+    closeUnifiedMorePopover({ instant: true });
+    const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    const isDocked = panel.classList.contains('docked-right') || panel.classList.contains('docked-left') || panel.classList.contains('pinned') || !!panel.dataset.unifiedDockSide;
+    const Motion = getMotion();
+    const btnId = PANEL_TO_BTN_ID[panel.id];
+    const btn = triggerBtn || (btnId ? document.getElementById(btnId) : null);
+
+    panel.classList.remove('panel-focused');
+    if (Motion?.panelResizeRing) Motion.panelResizeRing(panel, false);
+
+    if (isDocked) {
+      const mutateClose = () => {
+        panel.classList.remove('docked-right', 'docked-left', 'pinned', 'open', 'show', 'panel-fullscreen', 'docked-slot-top', 'docked-slot-bottom');
+        delete panel.dataset.unifiedDockSide;
+        delete panel.dataset.preferredDockSide;
+        panel.querySelectorAll('.panel-pin-toggle').forEach((b) => {
+          b.classList.remove('active', 'on');
+          b.setAttribute('aria-pressed', 'false');
+        });
+        applyPinnedPanelsGridAssignment(page);
+        syncHostWindowDockAndFloatState({ userTriggered: true });
+        onAfterClose?.();
+      };
+      if (Motion?.panelDockMorph) {
+        void Motion.panelDockMorph(panel, mutateClose, { preset: { response: 0.20, damping: 1.0 } });
+      } else {
+        mutateClose();
+        panel.style.display = 'none';
+      }
+      return;
+    }
+
+    if (Motion?.panelCloseWasm) {
+      void Motion.panelCloseWasm(panel, btn, {
+        preset: 'snappy',
+        onDone: () => {
+          panel.classList.remove('open', 'show', 'panel-fullscreen');
+          panel.style.display = 'none';
+          syncHostWindowDockAndFloatState();
+          onAfterClose?.();
+        },
+      });
+      return;
+    }
+    panel.classList.remove('open', 'show', 'panel-fullscreen');
+    panel.style.display = 'none';
+    syncHostWindowDockAndFloatState();
+    onAfterClose?.();
+  }
+  window.__zephyrCloseUnifiedPanel = closeUnifiedPanel;
 
   let activeMorePopover = null;
   let activeMoreAnchor = null;
@@ -1294,19 +1611,20 @@ export function installTerminalSftpPro(ctx) {
     closeUnifiedMorePopover({ instant: true }); document.querySelectorAll('.z-panel-more-popover').forEach((el) => el.remove());
 
     const slotSide = window.__zephyrPaneSlotSide || 'single';
-    const allowLeft = slotSide !== 'right' && slotSide !== 'middle-force-right';
-    const allowRight = slotSide !== 'left' && slotSide !== 'middle-force-left';
-    const isDockedLeft = panel.classList.contains('docked-left');
-    const isDockedRight = panel.classList.contains('docked-right');
+    const allowLeft = true;
+    const allowRight = true;
+    const prefSide = panel.dataset.preferredDockSide || panel.dataset.unifiedDockSide || '';
+    const isDockedLeft = panel.classList.contains('pinned') ? prefSide === 'left' : panel.classList.contains('docked-left');
+    const isDockedRight = panel.classList.contains('pinned') ? prefSide === 'right' : panel.classList.contains('docked-right');
     const isFullscreen = panel.classList.contains('panel-fullscreen');
-    const isFloating = !isDockedLeft && !isDockedRight && !isFullscreen;
+    const isFloating = !panel.classList.contains('docked-left') && !panel.classList.contains('docked-right') && !isFullscreen;
 
     // Requirement 1: Tier-1 three-dots menu ONLY contains layout options (NO Close button!)
     const pop = document.createElement('div');
     pop.className = 'z-panel-more-popover z-glass-thick';
     pop.setAttribute('role', 'menu');
     pop.innerHTML = `
-      ${(!isDockedLeft && !isDockedRight) ? `<button type="button" class="z-more-item ${isFullscreen ? 'active' : ''}" data-more-action="fullscreen">
+      ${(!panel.classList.contains('docked-left') && !panel.classList.contains('docked-right')) ? `<button type="button" class="z-more-item ${isFullscreen ? 'active' : ''}" data-more-action="fullscreen">
         ${isFullscreen ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16"/></svg>' : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'}
         <span>${isFullscreen ? t('还原窗口') : t('全屏')}</span>
         ${isFullscreen ? '<span class="z-more-check">✓</span>' : ''}
@@ -1507,26 +1825,21 @@ export function installTerminalSftpPro(ctx) {
 
     const triggerClose = () => {
       closeUnifiedMorePopover({ instant: true });
-      if (panel.classList.contains('docked-right') || panel.classList.contains('docked-left')) {
-        togglePanelDockState(panel, 'float');
-      }
       if (typeof onClose === 'function') {
-        animateCloseFloatingPanel(panel, () => {
-          onClose();
-          syncHostWindowDockAndFloatState();
+        closeUnifiedPanel(panel, {
+          onAfterClose: () => {
+            onClose();
+            syncHostWindowDockAndFloatState();
+          },
         });
       } else {
         const closeTarget = closeBtnSelector ? panel.querySelector(closeBtnSelector) : null;
-        if (closeTarget && closeTarget.dataset.nativeCloseClick !== '1') {
+        if (closeTarget && closeTarget.dataset.nativeCloseClick !== '1' && !panel.classList.contains('docked-left') && !panel.classList.contains('docked-right')) {
           closeTarget.dataset.nativeCloseClick = '1';
           closeTarget.click();
           delete closeTarget.dataset.nativeCloseClick;
         } else {
-          animateCloseFloatingPanel(panel, () => {
-            panel.classList.remove('open', 'show', 'panel-fullscreen');
-            panel.style.display = 'none';
-            syncHostWindowDockAndFloatState();
-          });
+          closeUnifiedPanel(panel);
         }
       }
     };
@@ -1654,7 +1967,8 @@ export function installTerminalSftpPro(ctx) {
       const obs = new MutationObserver(() => {
         if (panel.classList.contains('z-panel-morphing') || panel.classList.contains('dragging') || panel.classList.contains('resizing') || panel.classList.contains('panel-physics-baking')) return;
         const isOpen = (panel.classList.contains('open') || panel.classList.contains('show') || (isSecondary && panel.style.display === 'flex')) && panel.style.display !== 'none';
-        const isDocked = panel.classList.contains('docked-right') || panel.classList.contains('docked-left');
+        const isDocked = panel.classList.contains('docked-right') || panel.classList.contains('docked-left') || panel.classList.contains('pinned') || !!panel.dataset.unifiedDockSide;
+        const stateChanged = isOpen !== wasOpen;
         if (isOpen && !wasOpen) {
           wasOpen = true;
           if (!isDocked) {
@@ -1664,8 +1978,11 @@ export function installTerminalSftpPro(ctx) {
           }
         } else if (!isOpen && wasOpen) {
           wasOpen = false;
+          delete panel.dataset.floatingPositionLocked;
         }
-        syncHostWindowDockAndFloatState();
+        if (stateChanged) {
+          syncHostWindowDockAndFloatState();
+        }
       });
       obs.observe(panel, { attributes: true, attributeFilter: ['class', 'style'] });
       panel._unifiedObserver = obs;
@@ -1929,15 +2246,8 @@ export function installTerminalSftpPro(ctx) {
         ev.stopImmediatePropagation();
         const isOpen = panel.classList.contains('open');
         if (isOpen) {
-          if (panel.classList.contains('docked-right') || panel.classList.contains('docked-left')) {
-            togglePanelDockState(panel, 'float');
-          }
-          animateCloseFloatingPanel(panel, () => {
-            panel.classList.remove('open');
-            panel.style.display = 'none';
-            notesBtn.classList.remove('active');
-            syncHostWindowDockAndFloatState();
-          });
+          notesBtn.classList.remove('active');
+          closeUnifiedPanel(panel, { triggerBtn: notesBtn });
         } else {
           ensureFloatingDefaultPosition(panel);
           panel.style.display = 'flex';
@@ -2405,8 +2715,9 @@ export function installTerminalSftpPro(ctx) {
     if (d && d.source === 'zephyr-app' && d.type === 'zephyr-pane-slot') {
       const nextSlotSide = d.slotSide || 'single';
       window.__zephyrPaneSlotSide = nextSlotSide;
-      const dockedPanel = document.querySelector('.z-unified-panel.docked-left, .z-unified-panel.docked-right');
-      if (dockedPanel) {
+      const page = document.querySelector('.terminal-page') || document.body;
+      const dockedPanels = page.querySelectorAll('.z-unified-panel.pinned, .z-unified-panel.docked-left, .z-unified-panel.docked-right');
+      if (dockedPanels.length) {
         let targetSide = null;
         if (nextSlotSide === 'left' || nextSlotSide === 'middle-force-left') {
           targetSide = 'left';
@@ -2417,11 +2728,8 @@ export function installTerminalSftpPro(ctx) {
             targetSide = window.__zephyrUserPreferredDockSide;
           }
         }
-        if (targetSide === 'left' && dockedPanel.classList.contains('docked-right')) {
-          togglePanelDockState(dockedPanel, 'left', { userTriggered: false });
-        } else if (targetSide === 'right' && dockedPanel.classList.contains('docked-left')) {
-          togglePanelDockState(dockedPanel, 'right', { userTriggered: false });
-        }
+        void targetSide;
+        reconcilePinnedPanelsForSlotSide(page, { animate: true });
       }
     }
     if (d && d.source === 'zephyr-app' && d.type === 'zephyr-ai-state') {

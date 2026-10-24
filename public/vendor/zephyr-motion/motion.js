@@ -3685,21 +3685,36 @@ export const Motion = {
     this.stop(mainNav, ['y']);
     mainNav.style.transform = 'none';
 
+    const sharedVars = {
+      '--topbar-current-height': targetH,
+      '--terminal-nav-height': targetH,
+      '--smartbar-top': targetH,
+      '--topbar-collapse-shift': targetOffset,
+      '--topbar-collapse-offset': targetOffset,
+    };
+    const sharedUnits = {
+      '--topbar-current-height': 'px',
+      '--terminal-nav-height': 'px',
+      '--smartbar-top': 'px',
+      '--topbar-collapse-shift': 'px',
+      '--topbar-collapse-offset': 'px',
+    };
+
     if (root) {
-      jobs.push(this.cssVars(root, {
-        '--topbar-current-height': targetH,
-        '--terminal-nav-height': targetH,
-        '--smartbar-top': targetH,
-      }, animate
-        ? { units: { '--topbar-current-height': 'px', '--terminal-nav-height': 'px', '--smartbar-top': 'px' }, preset: collapseSpring }
-        : { units: { '--topbar-current-height': 'px', '--terminal-nav-height': 'px', '--smartbar-top': 'px' }, immediate: true }));
+      if (root.dataset) root.dataset.topbarCollapseInFlight = animate ? '1' : '0';
+      jobs.push(this.cssVars(root, sharedVars, animate
+        ? { units: sharedUnits, preset: collapseSpring }
+        : { units: sharedUnits, immediate: true }).finally(() => {
+          if (root.dataset) delete root.dataset.topbarCollapseInFlight;
+        }));
     }
     if (smartbar) {
       jobs.push(this.cssVars(smartbar, {
         '--smartbar-top': targetH,
+        '--topbar-collapse-offset': targetOffset,
       }, animate
-        ? { units: { '--smartbar-top': 'px' }, preset: collapseSpring }
-        : { units: { '--smartbar-top': 'px' }, immediate: true }));
+        ? { units: { '--smartbar-top': 'px', '--topbar-collapse-offset': 'px' }, preset: collapseSpring }
+        : { units: { '--smartbar-top': 'px', '--topbar-collapse-offset': 'px' }, immediate: true }));
     }
 
     jobs.push(this.cssVars(mainNav, {
@@ -3739,12 +3754,16 @@ export const Motion = {
 
   /**
    * Topbar shelf smooth extend/retract when switching between Terminal view (72px) and other views (56px).
-   * Driven 100% by zephyr_motion.wasm via --z-shelf-ext (0px <-> 16px) and --z-shelf-alpha (0 <-> 1).
+   * Driven 100% by zephyr_motion.wasm via --z-shelf-ext (0px <-> 16px) and --z-shelf-alpha (0 <-> 1)
+   * on BOTH document.documentElement and mainNav so #terminalShelfBar arrows and #sessionTabs .smartbar-handle
+   * move and fade on the exact same frame with zero lag.
    */
-  async topbarViewShelf(mainNav, enteringTerminal, { preset = { response: 0.26, damping: 1.0 } } = {}) {
+  async topbarViewShelf(mainNav, enteringTerminal, { preset = { response: 0.24, damping: 1.0 } } = {}) {
     if (!mainNav) return false;
     const EXT = 16;
     const token = this._bump(mainNav);
+    const root = typeof document !== 'undefined' ? document.documentElement : null;
+    const smartbar = typeof document !== 'undefined' ? document.getElementById('sessionTabs') : null;
     const curH = mainNav.getBoundingClientRect?.().height || (enteringTerminal ? 56 : 56 + EXT);
     const fromExt = enteringTerminal ? Math.max(0, Math.min(EXT, Math.round(curH - 56))) : EXT;
     const toExt = enteringTerminal ? EXT : 0;
@@ -3752,24 +3771,31 @@ export const Motion = {
     const toAlpha = enteringTerminal ? 1 : 0;
     const units = { '--z-shelf-ext': 'px', '--z-shelf-alpha': '' };
 
-    this.stop(mainNav, ['--z-shelf-ext', '--z-shelf-alpha']);
-    // Synchronously seed inline CSS vars BEFORE any await so there is never a 1-frame snap!
-    mainNav.style.setProperty('--z-shelf-ext', fromExt + 'px');
-    mainNav.style.setProperty('--z-shelf-alpha', String(fromAlpha));
-    this.cssVars(mainNav, {
-      '--z-shelf-ext': fromExt,
-      '--z-shelf-alpha': fromAlpha,
-    }, { immediate: true, units });
+    const targets = [mainNav, root, smartbar].filter(Boolean);
+    if (root?.dataset) root.dataset.shelfTransitioning = '1';
+
+    for (const t of targets) {
+      this.stop(t, ['--z-shelf-ext', '--z-shelf-alpha']);
+      t.style.setProperty('--z-shelf-ext', fromExt + 'px');
+      t.style.setProperty('--z-shelf-alpha', String(fromAlpha));
+      this.cssVars(t, {
+        '--z-shelf-ext': fromExt,
+        '--z-shelf-alpha': fromAlpha,
+      }, { immediate: true, units });
+    }
 
     try {
-      await this.cssVars(mainNav, {
+      await Promise.all(targets.map((t) => this.cssVars(t, {
         '--z-shelf-ext': toExt,
         '--z-shelf-alpha': toAlpha,
-      }, { preset, units });
+      }, { preset, units })));
     } finally {
       if (this._genOf(mainNav) === token) {
-        mainNav.style.removeProperty('--z-shelf-ext');
-        mainNav.style.removeProperty('--z-shelf-alpha');
+        if (root?.dataset) delete root.dataset.shelfTransitioning;
+        for (const t of targets) {
+          t.style.removeProperty('--z-shelf-ext');
+          t.style.removeProperty('--z-shelf-alpha');
+        }
       }
     }
     return true;
@@ -3797,17 +3823,17 @@ export const Motion = {
     const toW = Math.round(toRect.width);
     const toH = Math.round(toRect.height);
 
-    const scale = 0.88;
+    const scale = 0.90;
     const fromW = Math.round(toW * scale);
     const fromH = Math.round(toH * scale);
     let fromL = Math.round(toL + (toW - fromW) / 2);
-    let fromT = Math.round(toT + (toH - fromH) / 2 - 14);
+    let fromT = Math.round(toT - 12);
     if (triggerBtn && typeof triggerBtn.getBoundingClientRect === 'function') {
       const br = triggerBtn.getBoundingClientRect();
       if (br.width > 0 && br.height > 0) {
         const btnCenterX = br.left - pageRect.left + br.width / 2;
-        fromL = Math.round(toL + (toW - fromW) * 0.5 + (btnCenterX - (toL + toW * 0.5)) * 0.18);
-        fromT = Math.max(42, Math.round(toT - 18));
+        fromL = Math.round(toL + (toW - fromW) * 0.5 + (btnCenterX - (toL + toW * 0.5)) * 0.22);
+        fromT = Math.max(8, Math.round(br.bottom - pageRect.top + 2));
       }
     }
 
@@ -3820,18 +3846,28 @@ export const Motion = {
       '--z-morph-opacity': '',
     };
 
-    this.stop(panel, ['x', 'y', '--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']); panel.style.transform = 'none'; panel.classList.remove('dragging');
+    this.stop(panel, ['x', 'y', '--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']);
+    panel.style.transform = 'none';
+    panel.classList.remove('dragging');
+    // Critical: write initial CSS vars synchronously BEFORE adding .z-panel-morphing so frame 0 never flashes at (0,0)
+    panel.style.setProperty('--z-morph-l', fromL + 'px');
+    panel.style.setProperty('--z-morph-t', fromT + 'px');
+    panel.style.setProperty('--z-morph-w', fromW + 'px');
+    panel.style.setProperty('--z-morph-h', fromH + 'px');
+    panel.style.setProperty('--z-morph-r', '18px');
+    panel.style.setProperty('--z-morph-opacity', '0');
     panel.classList.add('z-panel-morphing');
+
     await this.cssVars(panel, {
       '--z-morph-l': fromL,
       '--z-morph-t': fromT,
       '--z-morph-w': fromW,
       '--z-morph-h': fromH,
-      '--z-morph-r': 20,
+      '--z-morph-r': 18,
       '--z-morph-opacity': 0,
     }, { immediate: true, units });
 
-    const guard = withSettleSafetyGuard(panel, 460, () => {
+    const guard = withSettleSafetyGuard(panel, 420, () => {
       if (this._genOf(panel) === token) {
         panel.classList.remove('z-panel-morphing');
       }
@@ -3844,7 +3880,7 @@ export const Motion = {
         '--z-morph-h': toH,
         '--z-morph-r': 16,
         '--z-morph-opacity': 1,
-      }, { preset, units });
+      }, { preset: { response: 0.22, damping: 0.96 }, units });
     } finally {
       guard();
       if (this._genOf(panel) === token) {
@@ -3881,16 +3917,16 @@ export const Motion = {
     const fromW = Math.round(fromRect.width);
     const fromH = Math.round(fromRect.height);
 
-    const scale = 0.88;
+    const scale = 0.90;
     const toW = Math.round(fromW * scale);
     const toH = Math.round(fromH * scale);
     let toL = Math.round(fromL + (fromW - toW) / 2);
-    let toT = Math.round(fromT + (fromH - toH) / 2 - 12);
+    let toT = Math.round(fromT - 10);
     if (triggerBtn && typeof triggerBtn.getBoundingClientRect === 'function') {
       const br = triggerBtn.getBoundingClientRect();
       if (br.width > 0 && br.height > 0) {
         const btnCenterX = br.left - pageRect.left + br.width / 2;
-        toL = Math.round(fromL + (fromW - toW) * 0.5 + (btnCenterX - (fromL + fromW * 0.5)) * 0.16);
+        toL = Math.round(fromL + (fromW - toW) * 0.5 + (btnCenterX - (fromL + fromW * 0.5)) * 0.18);
       }
     }
 
@@ -3904,7 +3940,15 @@ export const Motion = {
     };
 
     this.stop(panel, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']);
+    // Synchronously set initial vars before adding .z-panel-morphing so frame 0 never snaps to (0,0)
+    panel.style.setProperty('--z-morph-l', fromL + 'px');
+    panel.style.setProperty('--z-morph-t', fromT + 'px');
+    panel.style.setProperty('--z-morph-w', fromW + 'px');
+    panel.style.setProperty('--z-morph-h', fromH + 'px');
+    panel.style.setProperty('--z-morph-r', '16px');
+    panel.style.setProperty('--z-morph-opacity', '1');
     panel.classList.add('z-panel-morphing', 'z-panel-closing');
+
     await this.cssVars(panel, {
       '--z-morph-l': fromL,
       '--z-morph-t': fromT,
@@ -3914,7 +3958,7 @@ export const Motion = {
       '--z-morph-opacity': 1,
     }, { immediate: true, units });
 
-    const guard = withSettleSafetyGuard(panel, 340, () => {
+    const guard = withSettleSafetyGuard(panel, 300, () => {
       if (this._genOf(panel) === token) {
         panel.classList.remove('z-panel-morphing', 'z-panel-closing', 'open', 'show', 'panel-fullscreen');
       }
@@ -3925,9 +3969,9 @@ export const Motion = {
         '--z-morph-t': toT,
         '--z-morph-w': toW,
         '--z-morph-h': toH,
-        '--z-morph-r': 20,
+        '--z-morph-r': 18,
         '--z-morph-opacity': 0,
-      }, { preset, units });
+      }, { preset: { response: 0.18, damping: 1.0 }, units });
     } finally {
       guard();
       if (this._genOf(panel) === token) {
@@ -3942,74 +3986,83 @@ export const Motion = {
     return true;
   },
 
-  async panelDockMorph(panel, mutateLayoutFn, { preset = { response: 0.24, damping: 1.0 } } = {}) {
-    if (!panel || typeof mutateLayoutFn !== 'function') {
+  async panelDockMorph(panel, mutateLayoutFn, { preset = { response: 0.22, damping: 0.98 } } = {}) {
+    const primaryPanel = Array.isArray(panel) ? panel[0] : panel;
+    if (!primaryPanel || typeof mutateLayoutFn !== 'function') {
       mutateLayoutFn?.();
       return false;
     }
-    const token = this._bump(panel);
-    const csBefore = typeof getComputedStyle === 'function' ? getComputedStyle(panel) : null;
-    const wasVisible = csBefore && csBefore.display !== 'none' && csBefore.visibility !== 'hidden' && panel.offsetWidth > 16;
-    const fromRect = wasVisible ? panel.getBoundingClientRect() : null;
-    const fromRadius = parseFloat(csBefore?.borderTopLeftRadius) || (panel.classList.contains('docked-left') || panel.classList.contains('docked-right') ? 0 : 16);
+    const page = primaryPanel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    const hostWin = (typeof window !== 'undefined' && window.frameElement)
+      ? window.frameElement.closest?.('.terminal-window')
+      : null;
 
+    const candidateSet = new Set(Array.isArray(panel) ? panel.filter(Boolean) : [primaryPanel]);
+    if (page) {
+      page.querySelectorAll('.z-unified-panel.docked-left, .z-unified-panel.docked-right, .z-unified-panel.pinned').forEach((p) => candidateSet.add(p));
+    }
+    const candidates = Array.from(candidateSet);
     const clearVars = (el) => {
       ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => {
         el.style.removeProperty(k);
       });
     };
 
-    panel.classList.remove('z-panel-morphing', 'z-panel-opening', 'z-panel-closing');
-    this.stop(panel, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity', 'x', 'y', 'scale', 'opacity']);
-    clearVars(panel);
-    panel.style.transform = '';
-    panel.style.transition = 'none';
+    const measureDockSideWidths = (pg) => {
+      if (!pg) return { leftW: 0, rightW: 0 };
+      const dl = Array.from(pg.querySelectorAll(':scope > .docked-left.open')).find((el) => el.style.display !== 'none');
+      const dr = Array.from(pg.querySelectorAll(':scope > .docked-right.open')).find((el) => el.style.display !== 'none');
+      return {
+        leftW: dl ? Math.round(dl.getBoundingClientRect().width || 360) : 0,
+        rightW: dr ? Math.round(dr.getBoundingClientRect().width || 360) : 0,
+      };
+    };
 
-    const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    const beforeFrameTop = (typeof window !== 'undefined' && window.frameElement?.getBoundingClientRect)
+      ? window.frameElement.getBoundingClientRect().top
+      : 0;
+    const beforeDockW = measureDockSideWidths(page);
+
+    const snapshots = new Map();
+    for (const p of candidates) {
+      const token = this._bump(p);
+      const csBefore = typeof getComputedStyle === 'function' ? getComputedStyle(p) : null;
+      const wasVisible = csBefore && csBefore.display !== 'none' && csBefore.visibility !== 'hidden' && p.offsetWidth > 16;
+      const fromRect = wasVisible ? p.getBoundingClientRect() : null;
+      const wasDockedSide = p.classList.contains('docked-left') ? 'left' : (p.classList.contains('docked-right') ? 'right' : null);
+      const fromRadius = parseFloat(csBefore?.borderTopLeftRadius) || (wasDockedSide ? 0 : 16);
+      p.classList.remove('z-panel-morphing', 'z-panel-opening', 'z-panel-closing');
+      this.stop(p, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity', 'x', 'y', 'scale', 'opacity']);
+      clearVars(p);
+      p.style.transform = '';
+      p.style.transition = 'none';
+      snapshots.set(p, { token, fromRect, fromRadius, wasDockedSide });
+    }
+
     if (page?.dataset) page.dataset.dockMorphInFlight = '1';
 
     mutateLayoutFn();
+    void primaryPanel.offsetWidth;
 
-    if (!fromRect || fromRect.width < 16 || fromRect.height < 16) {
-      if (page?.dataset) delete page.dataset.dockMorphInFlight;
-      return true;
-    }
-    void panel.offsetWidth;
-    const toRect = panel.getBoundingClientRect();
-    if (!toRect || toRect.width < 16 || toRect.height < 16) {
-      if (page?.dataset) delete page.dataset.dockMorphInFlight;
-      return true;
-    }
+    const afterFrameTop = (typeof window !== 'undefined' && window.frameElement?.getBoundingClientRect)
+      ? window.frameElement.getBoundingClientRect().top
+      : 0;
+    const frameShiftY = Math.round(beforeFrameTop - afterFrameTop);
 
-    const dx = Math.abs(fromRect.left - toRect.left);
-    const dy = Math.abs(fromRect.top - toRect.top);
-    const dw = Math.abs(fromRect.width - toRect.width);
-    const dh = Math.abs(fromRect.height - toRect.height);
-    if (dx + dy + dw + dh < 4) {
-      if (page?.dataset) delete page.dataset.dockMorphInFlight;
-      return true;
+    // Compensate any other open floating panels when the host iframe shifts vertically (+/-42px)
+    if (frameShiftY !== 0 && page) {
+      page.querySelectorAll('.z-unified-panel.open, .z-unified-secondary-panel.open, .fm-editor-modal.open').forEach((fp) => {
+        if (candidateSet.has(fp)) return;
+        if (fp.classList.contains('docked-left') || fp.classList.contains('docked-right') || fp.classList.contains('panel-fullscreen')) return;
+        const curTop = parseFloat(fp.style.top);
+        if (Number.isFinite(curTop)) {
+          fp.style.top = Math.max(8, Math.round(curTop + frameShiftY)) + 'px';
+        }
+      });
     }
 
-    const isNowDocked = panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || !!panel.dataset.unifiedDockSide || !!panel.dataset.pinSide;
-    const toRadius = isNowDocked ? 0 : 16;
-    const pageRect = page.getBoundingClientRect?.() || { left: 0, top: 0 };
-
-    const fromVars = {
-      '--z-morph-l': Math.round(fromRect.left - pageRect.left),
-      '--z-morph-t': Math.round(fromRect.top - pageRect.top),
-      '--z-morph-w': Math.round(fromRect.width),
-      '--z-morph-h': Math.round(fromRect.height),
-      '--z-morph-r': Math.round(fromRadius),
-      '--z-morph-opacity': 1,
-    };
-    const toVars = {
-      '--z-morph-l': Math.round(toRect.left - pageRect.left),
-      '--z-morph-t': Math.round(toRect.top - pageRect.top),
-      '--z-morph-w': Math.round(toRect.width),
-      '--z-morph-h': Math.round(toRect.height),
-      '--z-morph-r': Math.round(toRadius),
-      '--z-morph-opacity': 1,
-    };
+    const afterDockW = measureDockSideWidths(page);
+    const pageRect = page?.getBoundingClientRect?.() || { left: 0, top: 0 };
     const units = {
       '--z-morph-l': 'px',
       '--z-morph-t': 'px',
@@ -4019,27 +4072,365 @@ export const Motion = {
       '--z-morph-opacity': '',
     };
 
-    panel.classList.add('z-panel-morphing');
-    this.cssVars(panel, fromVars, { immediate: true, units });
-    void panel.offsetWidth;
-
-    const cleanup = () => {
-      if (page?.dataset) delete page.dataset.dockMorphInFlight;
-      if (this._genOf(panel) === token) {
-        panel.classList.remove('z-panel-morphing');
-        clearVars(panel);
-        panel.style.transition = '';
-        window.dispatchEvent(new Event('resize'));
+    const activeMorphs = [];
+    for (const p of candidates) {
+      const snap = snapshots.get(p);
+      if (!snap || !snap.fromRect || snap.fromRect.width < 16 || snap.fromRect.height < 16) continue;
+      const isClosingAfter = !p.classList.contains('open') || p.style.display === 'none';
+      if (isClosingAfter) {
+        const fromL = Math.round(snap.fromRect.left - pageRect.left);
+        const fromT = Math.round(snap.fromRect.top - pageRect.top + frameShiftY);
+        const fromW = Math.round(snap.fromRect.width);
+        const fromH = Math.round(snap.fromRect.height);
+        const shiftX = snap.wasDockedSide === 'left' ? -44 : 44;
+        p.style.display = 'flex';
+        const fromVars = {
+          '--z-morph-l': fromL,
+          '--z-morph-t': fromT,
+          '--z-morph-w': fromW,
+          '--z-morph-h': fromH,
+          '--z-morph-r': Math.round(snap.fromRadius),
+          '--z-morph-opacity': 1,
+        };
+        const toVars = {
+          '--z-morph-l': fromL + shiftX,
+          '--z-morph-t': fromT,
+          '--z-morph-w': fromW,
+          '--z-morph-h': fromH,
+          '--z-morph-r': 12,
+          '--z-morph-opacity': 0,
+        };
+        activeMorphs.push({ p, token: snap.token, fromVars, toVars, closingAfterMorph: true });
+        continue;
       }
+
+      const toRect = p.getBoundingClientRect();
+      if (!toRect || toRect.width < 16 || toRect.height < 16) continue;
+      const fromL = Math.round(snap.fromRect.left - pageRect.left);
+      const fromT = Math.round(snap.fromRect.top - pageRect.top + frameShiftY);
+      const fromW = Math.round(snap.fromRect.width);
+      const fromH = Math.round(snap.fromRect.height);
+      const toL = Math.round(toRect.left - pageRect.left);
+      const toT = Math.round(toRect.top - pageRect.top);
+      const toW = Math.round(toRect.width);
+      const toH = Math.round(toRect.height);
+
+      const dx = Math.abs(fromL - toL);
+      const dy = Math.abs(fromT - toT);
+      const dw = Math.abs(fromW - toW);
+      const dh = Math.abs(fromH - toH);
+      if (dx + dy + dw + dh < 4) continue;
+      const isNowDocked = p.classList.contains('docked-left') || p.classList.contains('docked-right') || !!p.dataset.unifiedDockSide || !!p.dataset.pinSide;
+      const toRadius = isNowDocked ? 0 : 16;
+      const fromVars = {
+        '--z-morph-l': fromL,
+        '--z-morph-t': fromT,
+        '--z-morph-w': fromW,
+        '--z-morph-h': fromH,
+        '--z-morph-r': Math.round(snap.fromRadius),
+        '--z-morph-opacity': 1,
+      };
+      const toVars = {
+        '--z-morph-l': toL,
+        '--z-morph-t': toT,
+        '--z-morph-w': toW,
+        '--z-morph-h': toH,
+        '--z-morph-r': Math.round(toRadius),
+        '--z-morph-opacity': 1,
+      };
+      activeMorphs.push({ p, token: snap.token, fromVars, toVars, closingAfterMorph: false });
+    }
+
+    if (!activeMorphs.length) {
+      if (page?.dataset) delete page.dataset.dockMorphInFlight;
+      return true;
+    }
+
+    // Synchronously set initial CSS variables BEFORE adding .z-panel-morphing so frame 0 never jumps to (0,0)
+    for (const m of activeMorphs) {
+      for (const [k, v] of Object.entries(m.fromVars)) {
+        m.p.style.setProperty(k, v + (units[k] || ''));
+      }
+      m.p.classList.add('z-panel-morphing');
+      this.cssVars(m.p, m.fromVars, { immediate: true, units });
+    }
+
+    const dockWChanged = beforeDockW.leftW !== afterDockW.leftW || beforeDockW.rightW !== afterDockW.rightW;
+    const dockTargets = dockWChanged ? [page, hostWin].filter(Boolean) : [];
+    const dockUnits = { '--z-dock-left-w': 'px', '--z-dock-right-w': 'px' };
+    for (const dt of dockTargets) {
+      this.stop(dt, ['--z-dock-left-w', '--z-dock-right-w']);
+      dt.style.setProperty('--z-dock-left-w', beforeDockW.leftW + 'px');
+      dt.style.setProperty('--z-dock-right-w', beforeDockW.rightW + 'px');
+      dt.classList.add('z-dock-cols-morphing');
+      this.cssVars(dt, {
+        '--z-dock-left-w': beforeDockW.leftW,
+        '--z-dock-right-w': beforeDockW.rightW,
+      }, { immediate: true, units: dockUnits });
+    }
+
+    void primaryPanel.offsetWidth;
+
+    const cleanupAll = () => {
+      if (page?.dataset) delete page.dataset.dockMorphInFlight;
+      for (const dt of dockTargets) {
+        dt.classList.remove('z-dock-cols-morphing');
+        dt.style.removeProperty('--z-dock-left-w');
+        dt.style.removeProperty('--z-dock-right-w');
+      }
+      for (const m of activeMorphs) {
+        if (this._genOf(m.p) === m.token) {
+          m.p.classList.remove('z-panel-morphing');
+          clearVars(m.p);
+          m.p.style.transition = '';
+          if (m.closingAfterMorph) {
+            m.p.style.display = 'none';
+          }
+        }
+      }
+      window.dispatchEvent(new Event('resize'));
     };
-    const guard = withSettleSafetyGuard(panel, 420, cleanup);
+    const guard = withSettleSafetyGuard(primaryPanel, 420, cleanupAll);
     try {
-      await this.cssVars(panel, toVars, { preset, units });
+      const jobs = activeMorphs.map((m) => this.cssVars(m.p, m.toVars, { preset, units }));
+      for (const dt of dockTargets) {
+        jobs.push(this.cssVars(dt, {
+          '--z-dock-left-w': afterDockW.leftW,
+          '--z-dock-right-w': afterDockW.rightW,
+        }, { preset, units: dockUnits }));
+      }
+      await Promise.all(jobs);
     } finally {
       guard();
-      cleanup();
+      cleanupAll();
     }
     return true;
+  },
+
+  async smartbarPickerMorph(smartbarEl, pickerEl, mode = 'open', { fromRect = null, onDone = null } = {}) {
+    const units = {
+      '--sb-picker-y': 'px',
+      '--sb-picker-sx': '',
+      '--sb-picker-sy': '',
+      '--sb-picker-alpha': '',
+    };
+    const panelUnits = {
+      '--sb-panel-y': 'px',
+      '--sb-panel-sx': '',
+      '--sb-panel-sy': '',
+      '--sb-panel-alpha': '',
+    };
+    const panel = smartbarEl?.querySelector?.('.smartbar-panel') || null;
+    const morphPreset = { response: 0.22, damping: 0.96 };
+
+    if (mode === 'open' && pickerEl) {
+      const token = this._bump(pickerEl);
+      this.stop(pickerEl, ['--sb-picker-y', '--sb-picker-sx', '--sb-picker-sy', '--sb-picker-alpha']);
+      if (panel) this.stop(panel, ['--sb-panel-y', '--sb-panel-sx', '--sb-panel-sy', '--sb-panel-alpha']);
+      void pickerEl.offsetWidth;
+      const toRect = pickerEl.getBoundingClientRect();
+      let sxP = 0.82;
+      let syP = 0.52;
+      let dyP = -6;
+      let sxD = 1.08;
+      let syD = 1.45;
+      let dyD = 6;
+      if (fromRect && fromRect.width > 40 && toRect.width > 40) {
+        sxP = Math.max(0.45, Math.min(1.25, Number((fromRect.width / toRect.width).toFixed(3))));
+        syP = Math.max(0.32, Math.min(1.10, Number((fromRect.height / Math.max(100, toRect.height)).toFixed(3))));
+        dyP = Math.round((fromRect.top || toRect.top) - toRect.top);
+        sxD = Math.max(0.75, Math.min(1.65, Number((toRect.width / fromRect.width).toFixed(3))));
+        syD = Math.max(0.90, Math.min(2.40, Number((Math.max(100, toRect.height) / Math.max(48, fromRect.height)).toFixed(3))));
+        dyD = -dyP;
+      }
+
+      smartbarEl?.classList?.add('picker-morphing');
+      pickerEl.style.setProperty('--sb-picker-y', dyP + 'px');
+      pickerEl.style.setProperty('--sb-picker-sx', String(sxP));
+      pickerEl.style.setProperty('--sb-picker-sy', String(syP));
+      pickerEl.style.setProperty('--sb-picker-alpha', '0');
+      this.cssVars(pickerEl, {
+        '--sb-picker-y': dyP,
+        '--sb-picker-sx': sxP,
+        '--sb-picker-sy': syP,
+        '--sb-picker-alpha': 0,
+      }, { immediate: true, units });
+
+      const jobs = [
+        this.cssVars(pickerEl, {
+          '--sb-picker-y': 0,
+          '--sb-picker-sx': 1,
+          '--sb-picker-sy': 1,
+          '--sb-picker-alpha': 1,
+        }, { preset: morphPreset, units }),
+      ];
+
+      if (panel) {
+        panel.style.setProperty('--sb-panel-y', '0px');
+        panel.style.setProperty('--sb-panel-sx', '1');
+        panel.style.setProperty('--sb-panel-sy', '1');
+        panel.style.setProperty('--sb-panel-alpha', '1');
+        this.cssVars(panel, {
+          '--sb-panel-y': 0,
+          '--sb-panel-sx': 1,
+          '--sb-panel-sy': 1,
+          '--sb-panel-alpha': 1,
+        }, { immediate: true, units: panelUnits });
+        jobs.push(this.cssVars(panel, {
+          '--sb-panel-y': dyD,
+          '--sb-panel-sx': sxD,
+          '--sb-panel-sy': syD,
+          '--sb-panel-alpha': 0,
+        }, { preset: morphPreset, units: panelUnits }));
+      }
+
+      const rows = Array.from(pickerEl.querySelectorAll('.smartbar-picker-item, .smartbar-handoff-row'));
+      rows.forEach((row, idx) => {
+        this.stop(row, ['y', 'opacity']);
+        this.set(row, { y: 6, opacity: 0 });
+        window.setTimeout(() => {
+          if (this._genOf(pickerEl) !== token) return;
+          this.to(row, { y: 0, opacity: 1 }, { preset: { response: 0.22, damping: 0.94 } });
+        }, idx * 14);
+      });
+
+      try {
+        await Promise.all(jobs);
+      } finally {
+        if (this._genOf(pickerEl) === token) {
+          smartbarEl?.classList?.remove('picker-morphing');
+          onDone?.();
+        }
+      }
+      return true;
+    }
+
+    if (mode === 'back') {
+      let settled = false;
+      const finishBack = () => {
+        if (settled) return;
+        settled = true;
+        smartbarEl?.classList?.remove('picker-morphing', 'picker-open');
+        if (panel) {
+          panel.style.setProperty('--sb-panel-y', '0px');
+          panel.style.setProperty('--sb-panel-sx', '1');
+          panel.style.setProperty('--sb-panel-sy', '1');
+          panel.style.setProperty('--sb-panel-alpha', '1');
+        }
+        onDone?.();
+      };
+
+      const pickerRect = pickerEl?.getBoundingClientRect?.() || null;
+      let panelRect = null;
+      if (panel) {
+        panel.style.setProperty('--sb-panel-y', '0px');
+        panel.style.setProperty('--sb-panel-sx', '1');
+        panel.style.setProperty('--sb-panel-sy', '1');
+        panelRect = panel.getBoundingClientRect();
+      }
+
+      let sxP = 0.82;
+      let syP = 0.52;
+      let dyP = -6;
+      let sxD = 1.08;
+      let syD = 1.45;
+      let dyD = 6;
+      if (pickerRect && panelRect && pickerRect.width > 40 && panelRect.width > 40) {
+        sxP = Math.max(0.45, Math.min(1.25, Number((panelRect.width / pickerRect.width).toFixed(3))));
+        syP = Math.max(0.32, Math.min(1.10, Number((panelRect.height / Math.max(100, pickerRect.height)).toFixed(3))));
+        dyP = Math.round(panelRect.top - pickerRect.top);
+        sxD = Math.max(0.75, Math.min(1.65, Number((pickerRect.width / panelRect.width).toFixed(3))));
+        syD = Math.max(0.90, Math.min(2.40, Number((Math.max(100, pickerRect.height) / Math.max(48, panelRect.height)).toFixed(3))));
+        dyD = -dyP;
+      }
+
+      // Synchronously lock panel at Picker's exact bounding box with alpha=0 BEFORE removing .picker-open
+      if (panel) {
+        this.stop(panel, ['--sb-panel-y', '--sb-panel-sx', '--sb-panel-sy', '--sb-panel-alpha']);
+        panel.style.setProperty('--sb-panel-y', dyD + 'px');
+        panel.style.setProperty('--sb-panel-sx', String(sxD));
+        panel.style.setProperty('--sb-panel-sy', String(syD));
+        panel.style.setProperty('--sb-panel-alpha', '0');
+      }
+      smartbarEl?.classList?.add('picker-morphing');
+      smartbarEl?.classList?.remove('picker-open');
+
+      const timer = typeof setTimeout === 'function' ? setTimeout(finishBack, 240) : 0;
+      const jobs = [];
+      if (pickerEl) {
+        const token = this._bump(pickerEl);
+        this.stop(pickerEl, ['--sb-picker-y', '--sb-picker-sx', '--sb-picker-sy', '--sb-picker-alpha']);
+        pickerEl.style.setProperty('--sb-picker-y', '0px');
+        pickerEl.style.setProperty('--sb-picker-sx', '1');
+        pickerEl.style.setProperty('--sb-picker-sy', '1');
+        pickerEl.style.setProperty('--sb-picker-alpha', '1');
+        this.cssVars(pickerEl, {
+          '--sb-picker-y': 0,
+          '--sb-picker-sx': 1,
+          '--sb-picker-sy': 1,
+          '--sb-picker-alpha': 1,
+        }, { immediate: true, units });
+        jobs.push(this.cssVars(pickerEl, {
+          '--sb-picker-y': dyP,
+          '--sb-picker-sx': sxP,
+          '--sb-picker-sy': syP,
+          '--sb-picker-alpha': 0,
+        }, { preset: morphPreset, units }).then(() => {
+          if (this._genOf(pickerEl) === token) finishBack();
+        }));
+      } else {
+        finishBack();
+      }
+      if (panel) {
+        this.cssVars(panel, {
+          '--sb-panel-y': dyD,
+          '--sb-panel-sx': sxD,
+          '--sb-panel-sy': syD,
+          '--sb-panel-alpha': 0,
+        }, { immediate: true, units: panelUnits });
+        jobs.push(this.cssVars(panel, {
+          '--sb-panel-y': 0,
+          '--sb-panel-sx': 1,
+          '--sb-panel-sy': 1,
+          '--sb-panel-alpha': 1,
+        }, { preset: morphPreset, units: panelUnits }));
+      }
+      await Promise.race([Promise.all(jobs), new Promise((r) => setTimeout(r, 250))]);
+      if (timer) clearTimeout(timer);
+      finishBack();
+      return true;
+    }
+
+    if (mode === 'close' && pickerEl) {
+      let settled = false;
+      const finishClose = () => {
+        if (settled) return;
+        settled = true;
+        smartbarEl?.classList?.remove('picker-morphing', 'picker-open');
+        onDone?.();
+      };
+      const timer = typeof setTimeout === 'function' ? setTimeout(finishClose, 220) : 0;
+      const token = this._bump(pickerEl);
+      this.stop(pickerEl, ['--sb-picker-y', '--sb-picker-sx', '--sb-picker-sy', '--sb-picker-alpha']);
+      if (panel) {
+        this.stop(panel, ['--sb-panel-y', '--sb-panel-sx', '--sb-panel-sy', '--sb-panel-alpha']);
+        panel.style.setProperty('--sb-panel-alpha', '0');
+      }
+      await Promise.race([
+        this.cssVars(pickerEl, {
+          '--sb-picker-y': -16,
+          '--sb-picker-sx': 0.72,
+          '--sb-picker-sy': 0.34,
+          '--sb-picker-alpha': 0,
+        }, { preset: { response: 0.18, damping: 1.0 }, units }),
+        new Promise((r) => setTimeout(r, 230)),
+      ]);
+      if (timer) clearTimeout(timer);
+      if (this._genOf(pickerEl) === token) finishClose();
+      return true;
+    }
+    onDone?.();
+    return false;
   },
 
   async smartbarExpand(smartbarEl, open, { immediate = false } = {}) {

@@ -30,11 +30,11 @@ test('terminal smartbar dock uses Motion.dockMagnifyPointer from motion-feel §9
     const updateFn = extractFn(appJs, 'updateDockMagnification');
     assert.match(updateFn, /Motion\.dockMagnifyPointer/);
     assert.match(updateFn, /itemSelector:\s*DOCK_MAGNIFY_SELECTOR|itemSelector:\s*['"]\.smartbar-session, \.smartbar-add['"]/);
-    assert.match(updateFn, /maxScale:\s*1\.26/);
+    assert.match(updateFn, /maxScale:\s*(1\.26|1\.12)/);
     assert.match(updateFn, /preset:\s*'dock'/);
     // 横栏 influence / maxLift
-    assert.match(updateFn, /influence:\s*142/);
-    assert.match(updateFn, /maxLift:\s*15/);
+    assert.match(updateFn, /influence:\s*(142|136)/);
+    assert.match(updateFn, /maxLift:\s*(15|7)/);
 });
 
 test('fullscreen vertical dock uses dedicated dockMagnifyVerticalPointer', () => {

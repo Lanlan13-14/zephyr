@@ -122,14 +122,19 @@ export function getDefaultPanelOptions(panel, kind = '') {
 }
 
 export function clampPanel(panel) {
-    if (!panel?.parentElement || panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('docked-right') || panel.classList?.contains('docked-left') || panel.classList?.contains('panel-fullscreen')) return;
-    const rect = panel.getBoundingClientRect();
+    if (!panel?.parentElement || panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('docked-right') || panel.classList?.contains('docked-left') || panel.classList?.contains('pinned') || panel.classList?.contains('panel-fullscreen') || panel.classList?.contains('dragging') || panel.classList?.contains('resizing') || panel.dataset?.unifiedDockSide) return;
     const parentRect = panel.parentElement.getBoundingClientRect();
     const minVisible = isCompactScreen() ? 140 : 80;
-    const left = Math.min(Math.max(rect.left - parentRect.left, -rect.width + minVisible), parentRect.width - minVisible);
-    const top = Math.min(Math.max(rect.top - parentRect.top, 8), parentRect.height - minVisible);
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
+    const styleL = parseFloat(panel.style.left);
+    const styleT = parseFloat(panel.style.top);
+    const rect = panel.getBoundingClientRect();
+    const curL = Number.isFinite(styleL) ? styleL : (rect.left - parentRect.left);
+    const curT = Number.isFinite(styleT) ? styleT : (rect.top - parentRect.top);
+    const left = Math.min(Math.max(curL, -rect.width + minVisible), parentRect.width - minVisible);
+    const top = Math.min(Math.max(curT, 8), parentRect.height - minVisible);
+    if (Math.abs(left - curL) < 1 && Math.abs(top - curT) < 1) return;
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
 }
@@ -343,7 +348,7 @@ const floatingPanelMotion = {
         if (this.engine) return Promise.resolve(this.engine);
         if (this.failed && !this._p) return Promise.resolve(null);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui113')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui114')
             .then(async (mod) => {
                 const Motion = mod?.Motion || (typeof window !== 'undefined' ? window.Motion : null);
                 if (!Motion || typeof Motion.drag !== 'function') throw new Error('Motion.drag unavailable');

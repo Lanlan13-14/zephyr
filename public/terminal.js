@@ -23,7 +23,7 @@ function formatMockupSize(file) {
     if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
 }
-import { installTerminalSftpPro, isAgentVfsPath, fetchAgentVfsListing, sanitizeTerminalPaste, classifyTerminalCommandRisk } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui113';
+import { installTerminalSftpPro, isAgentVfsPath, fetchAgentVfsListing, sanitizeTerminalPaste, classifyTerminalCommandRisk } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui116';
 // terminal-grid-converge1 supersedes terminal-stability1 / kb-xterm-fit2 / aux-bar-fly1.
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 import {
@@ -58,7 +58,7 @@ import {
     ensureFloatingPanelPhysicsDrag,
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
-} from './floating-panel.js?v=20261019-ui113';
+} from './floating-panel.js?v=20261019-ui116';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
@@ -4656,7 +4656,7 @@ const terminalToastMotion = {
     _ensure() {
         if (this.engine) return Promise.resolve(this.engine);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui113')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui116')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
@@ -5070,11 +5070,12 @@ function showFileManager() {
         if (fmPathInput) fmPathInput.value = currentPath;
     }
     ensureFloatingPanel(fileManager, getDefaultPanelOptions(fileManager));
+    fileManager.style.display = 'flex';
     fileManager.classList.add('open');
     updateFileButtonActiveState();
     updateMobileFileActions();
     bringPanelToFront(fileManager);
-    requestAnimationFrame(() => animatePanelFromButton(fileManager, fileBtn, true));
+    animatePanelFromButton(fileManager, fileBtn, true);
     if (!sftpReady) {
         initSFTP();
     } else {
@@ -5084,14 +5085,22 @@ function showFileManager() {
 function hideFileManager() {
     if (typeof closePanelLayoutMenu === 'function') closePanelLayoutMenu({ instant: true });
     if (typeof closeEditorCommandPalette === 'function') closeEditorCommandPalette(fileManager);
-    if (fileManager.classList.contains('docked-right') || fileManager.classList.contains('docked-left')) {
-        fileManager.querySelector('.panel-pin-toggle')?.click();
+    mobileFileSelectMode = false;
+    updateMobileFileActions();
+    if (window.__zephyrCloseUnifiedPanel) {
+        window.__zephyrCloseUnifiedPanel(fileManager, {
+            triggerBtn: fileBtn,
+            onAfterClose: () => {
+                updateFileButtonActiveState();
+                clearPanelMotion(fileManager);
+            },
+        });
+        updateFileButtonActiveState();
+        return;
     }
     animatePanelFromButton(fileManager, fileBtn, false);
     fileManager.classList.remove('open');
     updateFileButtonActiveState();
-    mobileFileSelectMode = false;
-    updateMobileFileActions();
     window.setTimeout(() => clearPanelMotion(fileManager), 320);
 }
 fileBtn.addEventListener('click', (e) => {
@@ -5139,35 +5148,39 @@ function showSnippetPanel() {
     ensureFloatingPanel(snippetPanel, getDefaultPanelOptions(snippetPanel));
     snippetPanel.style.display = 'flex';
     renderSnippetPanel();
-    requestAnimationFrame(() => {
-        snippetPanel.classList.add('open');
-        snippetBtn?.classList.add('active');
-        bringPanelToFront(snippetPanel);
-        animatePanelFromButton(snippetPanel, snippetBtn, true);
-    });
+    snippetPanel.classList.add('open');
+    snippetBtn?.classList.add('active');
+    bringPanelToFront(snippetPanel);
+    animatePanelFromButton(snippetPanel, snippetBtn, true);
 }
 function hideSnippetPanel() {
     if (typeof closePanelLayoutMenu === 'function') closePanelLayoutMenu({ instant: true });
+    snippetBtn?.classList.remove('active');
+    if (window.__zephyrCloseUnifiedPanel) {
+        window.__zephyrCloseUnifiedPanel(snippetPanel, { triggerBtn: snippetBtn, onAfterClose: () => clearPanelMotion(snippetPanel) });
+        return;
+    }
     animatePanelFromButton(snippetPanel, snippetBtn, false);
     snippetPanel.classList.remove('open');
-    snippetBtn?.classList.remove('active');
     window.setTimeout(() => { clearPanelMotion(snippetPanel); if (!snippetPanel.classList.contains('open')) snippetPanel.style.display = 'none'; }, 320);
 }
 function showShortcutPanel() {
     ensureFloatingPanel(shortcutPanel, getDefaultPanelOptions(shortcutPanel));
     shortcutPanel.style.display = 'flex';
-    requestAnimationFrame(() => {
-        shortcutPanel.classList.add('open');
-        shortcutBtn?.classList.add('active');
-        bringPanelToFront(shortcutPanel);
-        animatePanelFromButton(shortcutPanel, shortcutBtn, true);
-    });
+    shortcutPanel.classList.add('open');
+    shortcutBtn?.classList.add('active');
+    bringPanelToFront(shortcutPanel);
+    animatePanelFromButton(shortcutPanel, shortcutBtn, true);
 }
 function hideShortcutPanel() {
     if (typeof closePanelLayoutMenu === 'function') closePanelLayoutMenu({ instant: true });
+    shortcutBtn?.classList.remove('active');
+    if (window.__zephyrCloseUnifiedPanel) {
+        window.__zephyrCloseUnifiedPanel(shortcutPanel, { triggerBtn: shortcutBtn, onAfterClose: () => clearPanelMotion(shortcutPanel) });
+        return;
+    }
     animatePanelFromButton(shortcutPanel, shortcutBtn, false);
     shortcutPanel.classList.remove('open');
-    shortcutBtn?.classList.remove('active');
     window.setTimeout(() => { clearPanelMotion(shortcutPanel); if (!shortcutPanel.classList.contains('open')) shortcutPanel.style.display = 'none'; }, 320);
 }
 snippetBtn?.addEventListener('click', () => snippetPanel.classList.contains('open') ? hideSnippetPanel() : showSnippetPanel());
@@ -8074,12 +8087,10 @@ function showDockerPanel() {
     }
     ensureFloatingPanel(dockerPanel, getDefaultPanelOptions(dockerPanel));
     dockerPanel.style.display = 'flex';
-    requestAnimationFrame(() => {
-        dockerPanel.classList.add('open');
-        dockerBtn.classList.add('active');
-        bringPanelToFront(dockerPanel);
-        animatePanelFromButton(dockerPanel, dockerBtn, true);
-    });
+    dockerPanel.classList.add('open');
+    dockerBtn.classList.add('active');
+    bringPanelToFront(dockerPanel);
+    animatePanelFromButton(dockerPanel, dockerBtn, true);
     checkDockerStatus();
     startDockerStatsLoop();
     armDockerMotion();
@@ -8088,9 +8099,13 @@ function showDockerPanel() {
 function hideDockerPanel() {
     if (typeof closePanelLayoutMenu === 'function') closePanelLayoutMenu({ instant: true });
     stopDockerStatsLoop();
+    dockerBtn.classList.remove('active');
+    if (window.__zephyrCloseUnifiedPanel) {
+        window.__zephyrCloseUnifiedPanel(dockerPanel, { triggerBtn: dockerBtn, onAfterClose: () => clearPanelMotion(dockerPanel) });
+        return;
+    }
     animatePanelFromButton(dockerPanel, dockerBtn, false);
     dockerPanel.classList.remove('open');
-    dockerBtn.classList.remove('active');
     window.setTimeout(() => {
         clearPanelMotion(dockerPanel);
         if (!dockerPanel.classList.contains('open')) dockerPanel.style.display = 'none';
@@ -8747,7 +8762,7 @@ const dockerMotion = {
     _ensure() {
         if (this.engine) return Promise.resolve(this.engine);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui113')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui116')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion?.to) throw new Error('Motion unavailable');
@@ -11680,7 +11695,8 @@ function setInfoButtonActive(active = infoModal?.classList?.contains('open')) {
 }
 
 function positionMonitorPanel() {
-    if (!infoModal) return;
+    if (!infoModal || infoModal.classList.contains('docked-left') || infoModal.classList.contains('docked-right') || infoModal.classList.contains('pinned') || infoModal.dataset.unifiedDockSide) return;
+    if (window.__zephyrEnsureFloatingDefaultPosition) { window.__zephyrEnsureFloatingDefaultPosition(infoModal, { triggerBtn: infoBtn }); return; }
     const defaults = getDefaultPanelOptions(infoModal);
     const rect = infoModal.parentElement?.getBoundingClientRect?.() || { width: window.innerWidth, height: window.innerHeight };
     const wasInitialized = panelState.has(infoModal);
@@ -11735,13 +11751,10 @@ function showInfoModal() {
     if (wsConnection?.readyState === WebSocket.OPEN) {
         wsConnection.send(JSON.stringify({ type: 'stats-request' }));
     }
-    // display 从 none 切换为 flex 后，下一帧再加 open，确保浏览器能播放开启动画。
-    requestAnimationFrame(() => {
-        infoModal.classList.add('open');
-        setInfoButtonActive(true);
-        bringPanelToFront(infoModal);
-        animatePanelFromButton(infoModal, infoBtn, true);
-    });
+    infoModal.classList.add('open');
+    setInfoButtonActive(true);
+    bringPanelToFront(infoModal);
+    animatePanelFromButton(infoModal, infoBtn, true);
 }
 
 function patchWTermScrollBehavior() {
@@ -12085,23 +12098,25 @@ function hideInfoModal() {
     if (typeof closePanelLayoutMenu === 'function') closePanelLayoutMenu({ instant: true });
     window.cancelAnimationFrame(monitorRenderRaf);
     monitorRenderRaf = 0;
-    animatePanelFromButton(infoModal, infoBtn, false);
-    infoModal.classList.remove('open');
     setInfoButtonActive(false);
-    window.setTimeout(() => {
+    const cleanupInfo = () => {
         clearPanelMotion(infoModal);
         if (!infoModal.classList.contains('open')) {
             infoModal.style.display = 'none';
-            // Tear down the skeleton so the next open starts fresh (new disk
-            // set, theme, or terminal instance). Charts are destroyed here,
-            // not on every stats tick (FREEZE plan §2.3).
             try { destroyCharts(); } catch (_) {}
             if (infoBody) {
                 delete infoBody.dataset.statsSkeleton;
                 infoBody.innerHTML = `<div class="info-loading">${t('正在加载服务器实时监控数据...')}</div>`;
             }
         }
-    }, 320);
+    };
+    if (window.__zephyrCloseUnifiedPanel) {
+        window.__zephyrCloseUnifiedPanel(infoModal, { triggerBtn: infoBtn, onAfterClose: cleanupInfo });
+        return;
+    }
+    animatePanelFromButton(infoModal, infoBtn, false);
+    infoModal.classList.remove('open');
+    window.setTimeout(cleanupInfo, 320);
 }
 
 function toggleInfoModal() {
@@ -12117,7 +12132,9 @@ infoCloseBtn.addEventListener('click', hideInfoModal);
 const panelState = new WeakMap();
 
 function ensureFloatingPanel(panel, defaults = {}) {
-    if (!panel || panelState.has(panel)) return;
+    if (!panel || panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || panel.classList.contains('pinned') || panel.dataset.unifiedDockSide) return;
+    if (window.__zephyrEnsureFloatingDefaultPosition && panel.classList.contains('z-unified-panel')) { window.__zephyrEnsureFloatingDefaultPosition(panel); panelState.set(panel, defaults); return; }
+    if (panelState.has(panel)) return;
     const parentRect = panel.parentElement.getBoundingClientRect();
     const width = defaults.width || Math.min(parentRect.width * 0.72, 760);
     const height = defaults.height || Math.min(parentRect.height * 0.72, 560);
@@ -12186,29 +12203,34 @@ function getDefaultPanelOptions(panel) {
         };
     }
     if (panel === fileManager) {
-        return { width: Math.min(parentRect.width * 0.72, 820), height: Math.min(parentRect.height * 0.68, 620), left: 16, top: 52 };
+        return { width: Math.min(parentRect.width * 0.72, 620), height: Math.min(parentRect.height * 0.68, 430), left: 20, top: 94 };
     }
     if (panel === dockerPanel) {
-        return { width: Math.min(parentRect.width * 0.8, 980), height: Math.min(parentRect.height * 0.72, 660), left: 28, top: 52 };
+        return { width: Math.min(parentRect.width * 0.8, 640), height: Math.min(parentRect.height * 0.72, 440), left: 88, top: 94 };
     }
     if (panel === snippetPanel) {
-        return { width: Math.min(460, parentRect.width - 24), height: Math.min(parentRect.height * 0.62, 520), left: 42, top: 64 };
+        return { width: Math.min(480, parentRect.width - 24), height: Math.min(parentRect.height * 0.62, 420), left: 160, top: 94 };
     }
     if (panel === shortcutPanel) {
-        return { width: Math.min(420, parentRect.width - 24), height: Math.min(parentRect.height * 0.46, 360), left: 72, top: 74 };
+        return { width: Math.min(440, parentRect.width - 24), height: Math.min(parentRect.height * 0.46, 380), left: 220, top: 94 };
     }
-    return { width: Math.min(480, parentRect.width - 24), height: Math.min(parentRect.height * 0.72, 620), top: 52 };
+    return { width: Math.min(540, parentRect.width - 24), height: Math.min(parentRect.height * 0.68, 420), left: 52, top: 94 };
 }
 
 function clampPanel(panel) {
-    if (!panel?.parentElement || !panel.classList?.contains('open') || panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('docked-right') || panel.classList?.contains('docked-left') || panel.classList?.contains('panel-fullscreen') || panel.dataset?.unifiedDockSide || panel.dataset?.pinSide) return;
-    const rect = panel.getBoundingClientRect();
+    if (!panel?.parentElement || !panel.classList?.contains('open') || panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('docked-right') || panel.classList?.contains('docked-left') || panel.classList?.contains('pinned') || panel.classList?.contains('panel-fullscreen') || panel.classList?.contains('dragging') || panel.classList?.contains('resizing') || panel.dataset?.unifiedDockSide || panel.dataset?.pinSide) return;
     const parentRect = panel.parentElement.getBoundingClientRect();
     const minVisible = isCompactScreen() ? 140 : 80;
-    const left = Math.min(Math.max(rect.left - parentRect.left, -rect.width + minVisible), parentRect.width - minVisible);
-    const top = Math.min(Math.max(rect.top - parentRect.top, 8), parentRect.height - minVisible);
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
+    const styleL = parseFloat(panel.style.left);
+    const styleT = parseFloat(panel.style.top);
+    const rect = panel.getBoundingClientRect();
+    const curL = Number.isFinite(styleL) ? styleL : (rect.left - parentRect.left);
+    const curT = Number.isFinite(styleT) ? styleT : (rect.top - parentRect.top);
+    const left = Math.min(Math.max(curL, -rect.width + minVisible), parentRect.width - minVisible);
+    const top = Math.min(Math.max(curT, 8), parentRect.height - minVisible);
+    if (Math.abs(left - curL) < 1 && Math.abs(top - curT) < 1) return;
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
 }
 
 function applyPanelLayout(panel, layout) {

@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui113';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui116';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui113');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui116');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -2375,7 +2375,12 @@ function syncTerminalSmartbarTop() {
     const nav = $('.main-nav');
     const smartbar = $('#sessionTabs');
     if (!nav || !smartbar) return;
-    const smartbarTop = `${Math.round(nav.getBoundingClientRect().bottom)}px`;
+    if (document.documentElement.dataset.topbarCollapseInFlight === '1'
+        || document.documentElement.dataset.shelfTransitioning === '1') {
+        return;
+    }
+    const navBottom = Math.max(0, Math.round(nav.getBoundingClientRect().bottom));
+    const smartbarTop = `${navBottom}px`;
     smartbar.style.setProperty('--smartbar-top', smartbarTop);
     document.documentElement.style.setProperty('--smartbar-top', smartbarTop);
 }
@@ -2394,7 +2399,7 @@ function syncTerminalShelfLineState() {
 function scheduleTerminalSmartbarTopSync(reason = 'smartbar-top') {
     if (Array.isArray(scheduleTerminalSmartbarTopSync._timers)) scheduleTerminalSmartbarTopSync._timers.forEach((timer) => window.clearTimeout(timer));
     const run = () => requestAnimationFrame(() => { syncTerminalSmartbarTop(); syncTerminalShelfLineState(); });
-    scheduleTerminalSmartbarTopSync._timers = [0, 32, 80, 140, 220, 340, 500, 680].map((delay) => window.setTimeout(run, delay));
+    scheduleTerminalSmartbarTopSync._timers = [0, 32, 80, 160, 280].map((delay) => window.setTimeout(run, delay));
     console.debug('[terminal-smartbar]', 'scheduled top sync', { reason });
 }
 function closeTerminalSmartbarForViewLeave() {
@@ -2405,9 +2410,12 @@ function closeTerminalSmartbarForViewLeave() {
     terminalSmartbarPickerOpen = false;
     document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = '');
     const pickerLayer = document.getElementById('smartbarPickerLayer');
-    if (pickerLayer) pickerLayer.innerHTML = '';
+    if (pickerLayer) {
+        pickerLayer.dataset.pickerOpen = 'false';
+        pickerLayer.innerHTML = '';
+    }
     const root = $('#sessionTabs');
-    root?.classList.remove('open', 'closing', 'shelf-line-active', 'dock-open');
+    root?.classList.remove('open', 'closing', 'picker-open', 'shelf-line-active', 'dock-open');
     $('.main-nav')?.classList.remove('terminal-shelf-settled', 'terminal-shelf-dock-open');
 }
 /* ── 计划 4.2.4 第 4 项：终端顶栏伸出架折叠状态机 ──────────────────────
@@ -2424,21 +2432,18 @@ function setTerminalTopbarCollapsed(collapsed) {
     document.querySelectorAll('[data-shelf-collapse-toggle]').forEach((btn) => {
         btn.setAttribute('aria-expanded', String(!next));
     });
-    // Drive the collapse through the shared offset. CSS height is
-    // calc(56px + shelf + offset), and the shelf is pinned at
-    // calc(56px + offset), so offset -56px pulls the shelf to the top of the
-    // viewport and the nav shrinks to the 27px rail. Without this the class
-    // only hides the nav content and a blank band stays above the terminal.
     const nav = document.querySelector('.main-nav');
     if (nav && window.Motion?.topbarShelfCollapse) {
         const chevrons = Array.from(document.querySelectorAll('[data-shelf-collapse-toggle] .shelf-collapse-ico'));
         window.Motion.topbarShelfCollapse(nav, next, { chevrons, animate: true });
     } else if (nav) {
-        nav.style.setProperty('--topbar-collapse-offset', next ? '-50px' : '0px');
-        nav.style.setProperty('--topbar-collapse-shift', next ? '-50px' : '0px');
+        const offsetVal = next ? '-50px' : '0px';
+        nav.style.setProperty('--topbar-collapse-offset', offsetVal);
+        nav.style.setProperty('--topbar-collapse-shift', offsetVal);
+        document.documentElement.style.setProperty('--topbar-collapse-offset', offsetVal);
+        document.documentElement.style.setProperty('--topbar-collapse-shift', offsetVal);
     }
     window.clearTimeout(shelfCollapseTimer);
-    /* 折叠会改变顶栏高度，Smartbar 定位与终端可视高度都要重新测量。 */
     try {
         syncTerminalShelfLineState();
         document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach((w) => {
@@ -2465,6 +2470,8 @@ function resetTerminalTopbarCollapsedIfLeaving(isTerminal) {
         } else if (nav) {
             nav.style.removeProperty('--topbar-collapse-offset');
             nav.style.removeProperty('--topbar-collapse-shift');
+            document.documentElement.style.removeProperty('--topbar-collapse-offset');
+            document.documentElement.style.removeProperty('--topbar-collapse-shift');
         }
     }
 }
@@ -2494,14 +2501,18 @@ function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     if (leavingTerminal) closeTerminalSmartbarForViewLeave();
     const navEl = document.querySelector('.main-nav');
     if (navEl && (enteringTerminal || leavingTerminal) && window.Motion?.topbarViewShelf) {
-        void window.Motion.topbarViewShelf(navEl, enteringTerminal, { preset: { response: 0.26, damping: 1.0 } });
+        void window.Motion.topbarViewShelf(navEl, enteringTerminal, { preset: { response: 0.24, damping: 1.0 } });
     } else if (navEl) {
         try {
             window.Motion?._bump?.(navEl);
             window.Motion?.stop?.(navEl, ['--z-shelf-ext', '--z-shelf-alpha']);
+            window.Motion?.stop?.(document.documentElement, ['--z-shelf-ext', '--z-shelf-alpha']);
         } catch {}
         navEl.style.removeProperty('--z-shelf-ext');
         navEl.style.removeProperty('--z-shelf-alpha');
+        document.documentElement.style.removeProperty('--z-shelf-ext');
+        document.documentElement.style.removeProperty('--z-shelf-alpha');
+        delete document.documentElement.dataset.shelfTransitioning;
     }
     document.body.classList.toggle('terminal-mode', target === 'terminal');
     document.body.classList.toggle('terminal-mode-entering', enteringTerminal && !enteringAnimated);
@@ -5428,26 +5439,29 @@ function terminalProtocolClass(protocol) { return String(protocol || 'SSH').toLo
 function positionSmartbarPicker() {
     const smartbar = $('#sessionTabs');
     const picker = document.querySelector('#smartbarPickerLayer .smartbar-picker');
-    const addButton = smartbar?.querySelector('[data-smartbar-add]');
-    if (!smartbar || !picker || !addButton) return;
+    if (!smartbar || !picker) return;
     const viewport = window.visualViewport;
     const vvLeft = viewport?.offsetLeft || 0;
     const vvTop = viewport?.offsetTop || 0;
     const vvWidth = viewport?.width || window.innerWidth;
     const vvHeight = viewport?.height || window.innerHeight;
     const margin = 14;
-    const addRect = addButton.getBoundingClientRect();
     const mobileFullscreen = isCompactTerminalWorkspace() && document.body.classList.contains('terminal-custom-fullscreen-open');
     const targetWidth = mobileFullscreen
         ? Math.min(340, Math.max(240, vvWidth - margin * 2))
-        : Math.min(360, Math.max(300, vvWidth - margin * 2));
-    const anchorX = addRect.left + addRect.width / 2;
-    const desiredLeft = mobileFullscreen ? addRect.right + 12 : anchorX - targetWidth / 2;
+        : Math.min(356, Math.max(304, vvWidth - margin * 2));
+    const navEl = document.querySelector('.main-nav');
+    const navBottom = navEl ? Math.max(0, Math.round(navEl.getBoundingClientRect().bottom)) : (terminalTopbarCollapsed ? 22 : 72);
+    const desiredLeft = mobileFullscreen
+        ? Math.max(margin, vvWidth - targetWidth - margin)
+        : Math.round(vvLeft + (vvWidth - targetWidth) / 2);
     const left = Math.min(Math.max(desiredLeft, vvLeft + margin), vvLeft + vvWidth - targetWidth - margin);
-    const preferredTop = mobileFullscreen ? Math.round(addRect.top) : Math.round(addRect.bottom + 14);
+    const preferredTop = mobileFullscreen
+        ? Math.max(64, vvTop + 64)
+        : Math.round(navBottom + 14);
     const maxTop = vvTop + Math.max(margin, vvHeight - 280 - margin);
     const top = Math.min(Math.max(preferredTop, vvTop + margin), maxTop);
-    const arrowLeft = Math.min(targetWidth - 20, Math.max(20, anchorX - left));
+    const arrowLeft = Math.round(targetWidth / 2);
     picker.style.width = `${targetWidth}px`;
     picker.style.setProperty('--smartbar-picker-left', `${left}px`);
     picker.style.setProperty('--smartbar-picker-top', `${top}px`);
@@ -5601,6 +5615,9 @@ function bindTerminalPanelPinStateMessages() {
         /* 当用户在某个分屏终端内部点击/操作时，立即将该分屏设为活动窗格（.active），
          * 确保随后在该窗格固定磁贴时，滑出 80% 的一定是另一个未操作的终端！ */
         if (data && data.source === 'zephyr-terminal' && data.type === 'zephyr-pane-activate') {
+            if (terminalSmartbarOpen || terminalSmartbarPickerOpen) {
+                setTerminalSmartbarOpen(false);
+            }
             if (terminalCardFlipMotion?.phase === 'opening'
                 || document.body.classList.contains('terminal-card-flip-preparing')
                 || document.body.classList.contains('terminal-card-flip-animating')
@@ -5621,7 +5638,9 @@ function bindTerminalPanelPinStateMessages() {
         const wasPinned = pinnedStateByTabId.get(tabId) === true;
         const nowPinned = !!data.hasPinnedPanel;
         pinnedStateByTabId.set(tabId, nowPinned);
-        if (data.userTriggered === false && wasPinned === nowPinned) {
+        if (data.userTriggered === false) {
+            const wsPassive = document.getElementById('terminalWorkspace');
+            if (wsPassive) wsPassive.classList.toggle('has-docked-panel', [...pinnedStateByTabId.values()].some(Boolean) || wsPassive.classList.contains('layout-3') || wsPassive.classList.contains('layout-4'));
             return;
         }
         if (data.userTriggered !== false && (data.userTriggered || (!wasPinned && nowPinned))) {
@@ -5665,8 +5684,12 @@ function broadcastPaneSlotConstraints() {
     ws.querySelectorAll(':scope > .terminal-window').forEach((win) => {
         const frame = win.querySelector('iframe.terminal-frame');
         if (!frame || !frame.contentWindow) return;
+        const isActiveWin = win.classList.contains('active') || (!isTwo && !isThree && !isFour);
         let slotSide = 'single';
-        if (isTwo) {
+        if (isActiveWin) {
+            // Operated / active terminal ALWAYS behaves like single-window mode (Left & Right both allowed)
+            slotSide = isThree && win.classList.contains('slot-2') ? 'middle-active' : 'single';
+        } else if (isTwo) {
             if (win.classList.contains('slot-1')) slotSide = 'left';
             else if (win.classList.contains('slot-2')) slotSide = 'right';
         } else if (isThree) {
@@ -5675,17 +5698,11 @@ function broadcastPaneSlotConstraints() {
             } else if (win.classList.contains('slot-3')) {
                 slotSide = 'right';
             } else if (win.classList.contains('slot-2')) {
-                // 3-window special rule for middle window (slot-2):
-                // - When user is using middle window (activeSlotNum === 2): allow left or right & restore user's choice
-                // - When user is using leftmost window (activeSlotNum === 1): move middle window's dock to right
-                // - When user is using rightmost window (activeSlotNum === 3): move middle window's dock to left
                 if (activeSlotNum === 1) slotSide = 'middle-force-right';
                 else if (activeSlotNum === 3) slotSide = 'middle-force-left';
                 else slotSide = 'middle-active';
             }
         } else if (isFour) {
-            // 4-window clockwise 1(TL), 2(TR), 4(BR), 3(BL):
-            // Left column (slot-1, slot-3) -> only left; Right column (slot-2, slot-4) -> only right
             if (win.classList.contains('slot-1') || win.classList.contains('slot-3')) slotSide = 'left';
             else if (win.classList.contains('slot-2') || win.classList.contains('slot-4')) slotSide = 'right';
         }
@@ -5807,6 +5824,9 @@ function renderTerminalSmartbar() {
         <div class="smartbar-picker" role="dialog" aria-label="${t('选择服务器连接')}">
             <div class="smartbar-picker-head">
                 <div class="smartbar-picker-head-title">
+                    <button type="button" class="smartbar-picker-back-btn" data-smartbar-picker-back title="${t('返回会话列表')}" aria-label="${t('返回会话列表')}">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    </button>
                     <span class="smartbar-picker-head-ico" aria-hidden="true">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
                     </span>
@@ -5840,15 +5860,23 @@ function renderTerminalSmartbar() {
         document.body.appendChild(el);
         return el;
     })();
-    if (pickerMount.dataset.pickerOpen !== String(!!terminalSmartbarPickerOpen) || terminalSmartbarPickerOpen) {
-        pickerMount.dataset.pickerOpen = String(!!terminalSmartbarPickerOpen);
-        pickerMount.innerHTML = picker;
+    if (terminalSmartbarPickerOpen) {
+        if (pickerMount.dataset.pickerOpen !== 'true' || !pickerMount.querySelector('.smartbar-picker')) {
+            pickerMount.dataset.pickerOpen = 'true';
+            pickerMount.innerHTML = picker;
+            positionSmartbarPicker();
+        } else {
+            positionSmartbarPicker();
+        }
+    } else if (pickerMount.dataset.pickerOpen === 'true' && pickerMount.dataset.pickerClosing !== '1') {
+        pickerMount.dataset.pickerOpen = 'false';
+        pickerMount.innerHTML = '';
     }
     const smartbarRoot = $('#sessionTabs');
     if (!smartbarRoot) return;
     syncTerminalSmartbarTop();
     const preserveOutsideDrag = smartbarRoot.classList.contains('smartbar-dragging-outside');
-    smartbarRoot.className = `terminal-smartbar ${terminalSmartbarOpen ? 'open' : ''} ${terminalSmartbarClosing ? 'closing' : ''} ${preserveOutsideDrag ? 'smartbar-dragging-outside' : ''}`.trim();
+    smartbarRoot.className = `terminal-smartbar ${terminalSmartbarOpen ? 'open' : ''} ${terminalSmartbarClosing ? 'closing' : ''} ${terminalSmartbarPickerOpen ? 'picker-open' : ''} ${preserveOutsideDrag ? 'smartbar-dragging-outside' : ''}`.trim();
     syncTerminalShelfLineState();
 
     // Keep .smartbar-handle / .smartbar-panel / .smartbar-dock DOM persistent so WASM open/close animations never snap!
@@ -5866,7 +5894,7 @@ function renderTerminalSmartbar() {
     }
 
     const themeKey = document.documentElement.getAttribute('data-theme') || 'light';
-    const dockSignature = `${themeKey}|${order}|${terminalSmartbarPickerOpen ? 1 : 0}|` + sessions.map((t) => `${t.id}:${t.id === activeTerminalTab ? 1 : 0}:${onScreenSet.has(t.id) ? 1 : 0}:${t.minimized ? 1 : 0}:${slotMap.get(t.id) || 0}:${t.name || ''}:${t.protocol || ''}`).join('|');
+    const dockSignature = `${themeKey}|${order}|` + sessions.map((t) => `${t.id}:${t.id === activeTerminalTab ? 1 : 0}:${onScreenSet.has(t.id) ? 1 : 0}:${t.minimized ? 1 : 0}:${slotMap.get(t.id) || 0}:${t.name || ''}:${t.protocol || ''}`).join('|');
     if (dockEl && !terminalSmartbarClosing && !smartbarDragState) {
         if (dockEl.dataset.dockSignature !== dockSignature) {
             dockEl.dataset.dockSignature = dockSignature;
@@ -5876,7 +5904,7 @@ function renderTerminalSmartbar() {
             dockEl.innerHTML = `
                 <div class="smartbar-onscreen-ring" aria-hidden="true" style="${prevLeft ? `--ring-left:${prevLeft};--ring-width:${prevWidth};--ring-opacity:1;` : ''}"></div>
                 ${sessions.map(icon).join('') || `<span class="smartbar-empty">${t('暂无会话')}</span>`}
-                <button class="smartbar-add ${terminalSmartbarPickerOpen ? 'active' : ''}" style="--dock-index:${sessions.length}" data-smartbar-add title="${t('新建终端连接')}" aria-label="${t('新建终端连接')}">${smartbarPlusHtml()}<span class="smartbar-session-label smartbar-add-label" aria-hidden="true">${smartbarSessionLabelHtml(t('新建'))}</span></button>`;
+                <button class="smartbar-add" style="--dock-index:${sessions.length}" data-smartbar-add title="${t('新建终端连接')}" aria-label="${t('新建终端连接')}">${smartbarPlusHtml()}<span class="smartbar-session-label smartbar-add-label" aria-hidden="true">${smartbarSessionLabelHtml(t('新建'))}</span></button>`;
         }
         syncSmartbarOnScreenRing(dockEl);
     }
@@ -5889,7 +5917,7 @@ function renderTerminalSmartbar() {
         syncTerminalSmartbarTop();
         syncTerminalShelfLineState();
         if (dock) syncSmartbarOnScreenRing(dock);
-        positionSmartbarPicker();
+        if (terminalSmartbarPickerOpen) positionSmartbarPicker();
     });
 }
 function terminalWindowMenu(session) {
@@ -6132,8 +6160,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui113`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui113`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui116`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui116`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -7579,7 +7607,7 @@ async function fullscreenTerminalTab(tabId) {
 
 function isTerminalSmartbarInteractionTarget(target) {
     return !!target?.closest?.(
-        '.terminal-smartbar, .smartbar-panel, .smartbar-dock, .smartbar-session, .smartbar-add, .smartbar-handle, .smartbar-picker, .mobile-fullscreen-dock-toggle, [data-smartbar-toggle], [data-smartbar-tab], [data-smartbar-add], [data-smartbar-connect], [data-smartbar-picker-close]'
+        '.terminal-smartbar, .smartbar-panel, .smartbar-dock, .smartbar-session, .smartbar-add, .smartbar-handle, .smartbar-picker, .mobile-fullscreen-dock-toggle, [data-smartbar-toggle], [data-smartbar-tab], [data-smartbar-add], [data-smartbar-connect], [data-smartbar-picker-close], [data-smartbar-picker-back]'
     );
 }
 
@@ -7608,6 +7636,54 @@ function scheduleTerminalSmartbarAutoClose(delay = TERMINAL_SMARTBAR_AUTO_CLOSE_
     }, wait);
 }
 
+function openSmartbarPickerFromDock() {
+    const smartbarRoot = $('#sessionTabs');
+    const panelEl = smartbarRoot?.querySelector('.smartbar-panel');
+    const fromRect = panelEl?.getBoundingClientRect?.() || null;
+    resetDockMagnification(smartbarRoot?.querySelector('.smartbar-dock'));
+    terminalSmartbarPickerOpen = true;
+    terminalSmartbarClosing = false;
+    terminalSmartbarOpen = true;
+    renderTerminalSmartbar();
+    syncTerminalShelfLineState();
+    positionSmartbarPicker();
+    const pickerEl = document.querySelector('#smartbarPickerLayer .smartbar-picker');
+    if (pickerEl && window.Motion?.smartbarPickerMorph) {
+        void window.Motion.smartbarPickerMorph(smartbarRoot, pickerEl, 'open', { fromRect });
+    }
+    scheduleTerminalSmartbarAutoClose(TERMINAL_SMARTBAR_AUTO_CLOSE_MS);
+}
+
+function closeSmartbarPicker({ backToDock = false } = {}) {
+    const smartbarRoot = $('#sessionTabs');
+    const pickerMount = document.getElementById('smartbarPickerLayer');
+    const pickerEl = pickerMount?.querySelector('.smartbar-picker');
+    if (!backToDock) {
+        setTerminalSmartbarOpen(false);
+        return;
+    }
+    terminalSmartbarPickerOpen = false;
+    if (pickerMount && pickerEl && window.Motion?.smartbarPickerMorph) {
+        pickerMount.dataset.pickerClosing = '1';
+        void window.Motion.smartbarPickerMorph(smartbarRoot, pickerEl, 'back', {
+            onDone: () => {
+                delete pickerMount.dataset.pickerClosing;
+                pickerMount.dataset.pickerOpen = 'false';
+                pickerMount.innerHTML = '';
+                renderTerminalSmartbar();
+            },
+        });
+    } else {
+        if (pickerMount) {
+            delete pickerMount.dataset.pickerClosing;
+            pickerMount.dataset.pickerOpen = 'false';
+            pickerMount.innerHTML = '';
+        }
+        renderTerminalSmartbar();
+    }
+    scheduleTerminalSmartbarAutoClose(TERMINAL_SMARTBAR_AUTO_CLOSE_MS);
+}
+
 function setTerminalSmartbarOpen(open) {
     window.clearTimeout(terminalSmartbarTimer);
     window.clearTimeout(setTerminalSmartbarOpen._closeTimer);
@@ -7615,10 +7691,27 @@ function setTerminalSmartbarOpen(open) {
     if (!open) {
         document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = '');
         terminalSmartbarPointerInside = false;
-        if (!terminalSmartbarOpen && !terminalSmartbarClosing) return;
+        if (!terminalSmartbarOpen && !terminalSmartbarClosing && !terminalSmartbarPickerOpen) return;
+        const wasPickerOpen = terminalSmartbarPickerOpen;
         terminalSmartbarOpen = false;
         terminalSmartbarPickerOpen = false;
         terminalSmartbarClosing = true;
+        const pickerMount = document.getElementById('smartbarPickerLayer');
+        const pickerEl = pickerMount?.querySelector('.smartbar-picker');
+        if (wasPickerOpen && smartbarRoot) {
+            smartbarRoot.dataset.closingFromPicker = '1';
+        }
+        if (wasPickerOpen && pickerMount && pickerEl && window.Motion?.smartbarPickerMorph) {
+            pickerMount.dataset.pickerClosing = '1';
+            void window.Motion.smartbarPickerMorph(smartbarRoot, pickerEl, 'close', {
+                onDone: () => {
+                    if (smartbarRoot) delete smartbarRoot.dataset.closingFromPicker;
+                    delete pickerMount.dataset.pickerClosing;
+                    pickerMount.dataset.pickerOpen = 'false';
+                    pickerMount.innerHTML = '';
+                },
+            });
+        }
         renderTerminalSmartbar();
         syncTerminalShelfLineState();
         if (smartbarRoot && window.Motion?.smartbarExpand) {
@@ -7627,12 +7720,19 @@ function setTerminalSmartbarOpen(open) {
         scheduleTerminalKeyboardReflow('smartbar-close');
         setTerminalSmartbarOpen._closeTimer = window.setTimeout(() => {
             terminalSmartbarClosing = false;
+            if (smartbarRoot) delete smartbarRoot.dataset.closingFromPicker;
+            if (pickerMount) {
+                delete pickerMount.dataset.pickerClosing;
+                pickerMount.dataset.pickerOpen = 'false';
+                pickerMount.innerHTML = '';
+            }
             renderTerminalSmartbar();
             syncTerminalShelfLineState();
             scheduleTerminalKeyboardReflow('smartbar-close-settled');
-        }, 250);
+        }, 240);
         return;
     }
+    if (smartbarRoot) delete smartbarRoot.dataset.closingFromPicker;
     const wasAlreadyOpen = terminalSmartbarOpen && !terminalSmartbarClosing;
     terminalSmartbarLastInnerPointerAt = Date.now();
     $('.main-nav')?.classList.remove('terminal-shelf-settled', 'terminal-shelf-dock-open');
@@ -7646,7 +7746,11 @@ function setTerminalSmartbarOpen(open) {
     scheduleTerminalKeyboardReflow('smartbar-open');
     scheduleTerminalSmartbarAutoClose(TERMINAL_SMARTBAR_AUTO_CLOSE_MS);
 }
-function noteTerminalWorkspaceActivity() {}
+function noteTerminalWorkspaceActivity() {
+    if (terminalSmartbarOpen || terminalSmartbarPickerOpen) {
+        setTerminalSmartbarOpen(false);
+    }
+}
 function swapTerminalWindows(a, b) {
     if (!a || !b || a === b) return false;
     const beforeRects = captureVisibleWorkspaceWindowRects();
@@ -15635,7 +15739,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261019-ui113')
+        return import('./vendor/zephyr-motion/index.js?v=20261019-ui116')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -16028,32 +16132,16 @@ function bindEvents() {
     });
     $('#sessionTabs').addEventListener('click', (e) => {
         if (e.target.closest?.('[data-smartbar-add]')) {
+            e.preventDefault();
+            e.stopPropagation();
             suppressSmartbarClick = false;
-            terminalSmartbarPickerOpen = !terminalSmartbarPickerOpen;
-            setTerminalSmartbarOpen(true);
-            requestAnimationFrame(() => {
-                positionSmartbarPicker();
-                const pickerEl = document.querySelector('#smartbarPickerLayer .smartbar-picker');
-                if (pickerEl && window.Motion?.present) {
-                    window.Motion.present(pickerEl, { preset: 'snappy', fromScale: 0.95 }).finally(() => {
-                        window.Motion.release?.(pickerEl);
-                        pickerEl.style.transform = '';
-                        pickerEl.style.opacity = '1';
-                    });
-                }
-            });
+            openSmartbarPickerFromDock();
             return;
         }
         if (suppressSmartbarClick) { suppressSmartbarClick = false; return; }
         const toggle = e.target.closest?.('[data-smartbar-toggle]');
         if (toggle) { setTerminalSmartbarOpen(!terminalSmartbarOpen); return; }
         if (e.target.closest?.('[data-mobile-exit-fullscreen]')) { exitTerminalFullscreen(); setTerminalSmartbarOpen(false); return; }
-        if (e.target.closest?.('[data-smartbar-add]')) {
-            terminalSmartbarPickerOpen = !terminalSmartbarPickerOpen;
-            setTerminalSmartbarOpen(true);
-            requestAnimationFrame(positionSmartbarPicker);
-            return;
-        }
         const tabButton = e.target.closest?.('[data-smartbar-tab]');
         const tab = tabButton?.dataset.smartbarTab;
         if (tab) activateTerminalFromDock(tab, tabButton);
@@ -16122,12 +16210,22 @@ function bindEvents() {
             }
             return;
         }
-        if (e.target.closest?.('[data-smartbar-picker-close]')) { terminalSmartbarPickerOpen = false; renderTerminalSmartbar(); return; }
+        if (e.target.closest?.('[data-smartbar-picker-back]')) {
+            e.preventDefault();
+            e.stopPropagation();
+            closeSmartbarPicker({ backToDock: true });
+            return;
+        }
+        if (e.target.closest?.('[data-smartbar-picker-close]')) {
+            e.preventDefault();
+            e.stopPropagation();
+            closeSmartbarPicker({ backToDock: false });
+            return;
+        }
         const connect = e.target.closest?.('[data-smartbar-connect]')?.dataset.smartbarConnect;
         if (connect) {
             const sourceBtn = e.target.closest?.('[data-smartbar-connect]') || document.querySelector(`[data-smartbar-connect="${CSS.escape(String(connect))}"]`);
             const originRect = stableTerminalCardSourceRect(sourceBtn);
-            terminalSmartbarPickerOpen = false;
             setTerminalSmartbarOpen(false);
             openConnectionWithCardFlip(connect, sourceBtn, { originRect }).catch((err) => toast(err.message));
         }
@@ -16378,6 +16476,8 @@ function bindEvents() {
             window.setTimeout(() => { try { a.remove(); } catch {} }, 1000);
             return;
         }
+        if (e.data.type && e.data.type !== 'status') return;
+        if (typeof e.data.status !== 'string' || !e.data.status) return;
         const t = terminalTabs.find((x) => x.id === e.data.tabId);
         if (t) {
             const reconnectTimer = terminalReconnectFallbackTimers.get(t.id);
