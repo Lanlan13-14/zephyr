@@ -3564,16 +3564,27 @@ export const Motion = {
    * M25: Desktop 2-pane docked 80% slide-out & wake-shield retarget (Section 3.4.2 & 4.2.3).
    * Keeps an exact `gap` (14px) between the active 80% pane and the slid-out inactive pane.
    */
-  splitDockSlide(gridEl, { layoutCount = 2, hasDockedPanel = false, activeSlot = 1, broadcastActive = false, gap = 14, animate = true } = {}) {
+  splitDockSlide(gridEl, { layoutCount = 2, hasDockedPanel = false, activeSlot = 1, broadcastActive = false, gap = 14, animate = true, wsWidthOverride = 0 } = {}) {
     if (!gridEl || typeof gridEl.querySelector !== 'function') return Promise.resolve();
     const wins = Array.from(gridEl.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)'));
     wins.forEach((w) => { w.style.transform = ''; });
 
-    const wsWidth = gridEl.clientWidth || gridEl.getBoundingClientRect?.().width || 1280;
+    let wsWidth = Number(wsWidthOverride) > 0 ? Number(wsWidthOverride) : (gridEl.clientWidth || gridEl.getBoundingClientRect?.().width || 1280);
+    if (!wsWidthOverride && typeof window !== 'undefined' && window.innerWidth >= 761 && typeof document !== 'undefined' && gridEl.id === 'terminalWorkspace') {
+      const body = document.body;
+      if (body && (body.classList.contains('ai-docked-left') || body.classList.contains('ai-docked-right') || body.classList.contains('z-dock-cols-morphing'))) {
+        const aiPanel = document.getElementById('aiAgentPanel');
+        const dockW = (aiPanel && aiPanel._customDockWidth ? aiPanel._customDockWidth : 380) + 14;
+        const leftW = body.classList.contains('ai-docked-left') ? dockW : 0;
+        const rightW = body.classList.contains('ai-docked-right') ? dockW : 0;
+        wsWidth = Math.max(320, window.innerWidth - leftW - rightW);
+      }
+    }
     const wsHeight = gridEl.clientHeight || gridEl.getBoundingClientRect?.().height || 900;
+    const csGrid = typeof getComputedStyle === 'function' ? getComputedStyle(gridEl) : null;
     const padX = 16;
-    const padTop = 12;
-    const padBottom = 18;
+    const padTop = csGrid ? (parseFloat(csGrid.paddingTop) || 12) : 12;
+    const padBottom = csGrid ? (parseFloat(csGrid.paddingBottom) || 18) : 18;
     const availW = Math.max(320, wsWidth - padX * 2);
     const availH = Math.max(200, wsHeight - padTop - padBottom);
     const paneW = Math.round(wsWidth * 0.8 - 23);
@@ -3956,7 +3967,8 @@ export const Motion = {
     panel.style.setProperty('--z-morph-t', fromT + 'px');
     panel.style.setProperty('--z-morph-w', fromW + 'px');
     panel.style.setProperty('--z-morph-h', fromH + 'px');
-    panel.style.setProperty('--z-morph-r', '16px');
+    const closeFromRadius = Math.round(parseFloat(typeof getComputedStyle === 'function' ? getComputedStyle(panel)?.borderTopLeftRadius : '') || 16);
+    panel.style.setProperty('--z-morph-r', closeFromRadius + 'px');
     panel.style.setProperty('--z-morph-opacity', '1');
     panel.classList.add('z-panel-morphing', 'z-panel-closing');
 
@@ -3965,7 +3977,7 @@ export const Motion = {
       '--z-morph-t': fromT,
       '--z-morph-w': fromW,
       '--z-morph-h': fromH,
-      '--z-morph-r': 16,
+      '--z-morph-r': closeFromRadius,
       '--z-morph-opacity': 1,
     }, { immediate: true, units });
 
@@ -4024,9 +4036,10 @@ export const Motion = {
       if (!pg) return { leftW: 0, rightW: 0 };
       const dl = Array.from(pg.querySelectorAll(':scope > .docked-left.open')).find((el) => el.style.display !== 'none');
       const dr = Array.from(pg.querySelectorAll(':scope > .docked-right.open')).find((el) => el.style.display !== 'none');
+      const extraGap = (typeof document !== 'undefined' && pg === document.body) ? 14 : 0;
       return {
-        leftW: dl ? Math.round(dl.getBoundingClientRect().width || 360) : 0,
-        rightW: dr ? Math.round(dr.getBoundingClientRect().width || 360) : 0,
+        leftW: dl ? (Math.round(dl.getBoundingClientRect().width || 360) + extraGap) : 0,
+        rightW: dr ? (Math.round(dr.getBoundingClientRect().width || 360) + extraGap) : 0,
       };
     };
 
@@ -4135,7 +4148,9 @@ export const Motion = {
       const dh = Math.abs(fromH - toH);
       if (dx + dy + dw + dh < 4) continue;
       const isNowDocked = p.classList.contains('docked-left') || p.classList.contains('docked-right') || !!p.dataset.unifiedDockSide || !!p.dataset.pinSide;
-      const toRadius = isNowDocked ? 0 : 16;
+      const csAfter = typeof getComputedStyle === 'function' ? getComputedStyle(p) : null;
+      const parsedAfterR = parseFloat(csAfter?.borderTopLeftRadius);
+      const toRadius = Number.isFinite(parsedAfterR) ? parsedAfterR : (isNowDocked ? 0 : 16);
       const fromVars = {
         '--z-morph-l': fromL,
         '--z-morph-t': fromT,
@@ -4542,7 +4557,7 @@ export const Motion = {
 
       const sbCenterX = smartbarRect && smartbarRect.width > 0
         ? (smartbarRect.left + smartbarRect.width / 2)
-        : (window.innerWidth || 1280) / 2;
+        : (toRect.left + toRect.width / 2);
       const sbCenterY = smartbarRect && smartbarRect.height > 0
         ? (smartbarRect.top + smartbarRect.height / 2 + 18)
         : 68;

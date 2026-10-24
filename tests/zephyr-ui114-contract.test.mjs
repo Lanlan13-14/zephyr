@@ -70,3 +70,14 @@ test('5. Desktop/Web AI Floating & Docked Panel (#aiAgentPanel) uses Unified Tie
   assert.match(specCss, /#aiAgentPanel\.ai-agent-panel\.pinned\.docked-right:not\(\.z-panel-morphing\)/);
   assert.match(specCss, /body\.app-body\.terminal-mode\.ai-docked-right \.app-main/);
 });
+
+test('UI118 Contract: AI docked card uses 14px radius + concentric 12px composer, terminal has no double bottom radius, animations exclude AI dock width, topbar has frosted glass, and Dashboard/Notes use full width', () => {
+  assert.match(appJs, /function getTerminalWorkspaceStageMetrics\(\)/);
+  assert.match(motionJs, /wsWidthOverride = 0/);
+  assert.match(specCss, /#aiAgentPanel\.ai-agent-panel\.pinned\.docked-right:not\(\.z-panel-morphing\)[\s\S]*?border-radius:\s*14px\s*!important/);
+  assert.match(specCss, /#aiAgentPanel\.pinned\s+\.ai-composer-box\.ai-input-area[\s\S]*?border-radius:\s*12px\s*!important/);
+  assert.match(specCss, /#terminalWorkspace:not\(\.custom-fullscreen\)[\s\S]*?border:\s*0\s*!important;\s*border-radius:\s*0\s*!important/);
+  assert.match(specCss, /\.terminal-page\s+\.terminal-container[\s\S]*?margin:\s*0\s*!important;\s*border:\s*0\s*!important;\s*border-radius:\s*0\s*!important/);
+  assert.match(specCss, /html\[data-theme="light"\]\s+\.main-nav[\s\S]*?backdrop-filter:\s*blur\(24px\)\s+saturate\(180%\)\s*!important/);
+  assert.match(specCss, /--z-main-max-width:\s*100%/);
+});

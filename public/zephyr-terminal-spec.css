@@ -855,7 +855,9 @@ html[data-theme="dark"] .main-nav .nav-actions #logoutBtn {
   border-radius: 14px !important;
   overflow: hidden !important;
   position: relative !important;
-  /* Issue 9: 严禁在 .terminal-window 上写 CSS animation/transition: transform 抢占 zephyr_motion.wasm */
+}
+.terminal-window:not(.motion-closing):not(.minimizing):not(.dragging):not(.layout-morphing):not(.dock-swapping) {
+  /* Issue 9: 严禁在常态 .terminal-window 上写 CSS animation/transition: transform 抢占 zephyr_motion.wasm */
   animation: none !important;
   transform: none !important;
   filter: none !important;
@@ -3890,12 +3892,18 @@ body.app-body,
 }
 
 html[data-theme="light"] .main-nav {
-  background: color-mix(in srgb, var(--surface, #FFFFFF) 86%, var(--bg, #F5F5F7)) !important;
-  border-bottom-color: var(--border) !important;
+  background: color-mix(in srgb, var(--surface, #FFFFFF) 68%, transparent) !important;
+  backdrop-filter: blur(24px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+  border-bottom-color: color-mix(in srgb, var(--border, #DEDEE3) 72%, transparent) !important;
+  z-index: 90 !important;
 }
 html[data-theme="dark"] .main-nav {
-  background: color-mix(in srgb, var(--surface, #1B1C20) 88%, var(--bg, #101114)) !important;
-  border-bottom-color: var(--border) !important;
+  background: color-mix(in srgb, var(--surface, #161920) 68%, transparent) !important;
+  backdrop-filter: blur(24px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+  border-bottom-color: color-mix(in srgb, var(--border, #2C3036) 72%, transparent) !important;
+  z-index: 90 !important;
 }
 
 html[data-theme="light"] .main-nav .nav-tabs {
@@ -5067,16 +5075,16 @@ html body .terminal-page.has-docked-left.has-docked-right .fm-props-modal.panel-
 body.app-body {
   --z-ai-dock-top: calc(56px + var(--z-shelf-ext, 0px) + var(--topbar-collapse-offset, 0px));
 }
-body.app-body.terminal-mode:not(.terminal-topbar-collapsed) {
+body.app-body.terminal-mode {
   --z-ai-dock-top: calc(56px + var(--z-shelf-ext, 16px) + var(--topbar-collapse-offset, 0px));
 }
 body.app-body.ai-docked-left:not(.z-dock-cols-morphing) {
-  --z-dock-left-w: var(--z-ai-dock-w, 380px);
+  --z-dock-left-w: calc(var(--z-ai-dock-w, 380px) + 14px);
   --z-dock-right-w: 0px;
 }
 body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
   --z-dock-left-w: 0px;
-  --z-dock-right-w: var(--z-ai-dock-w, 380px);
+  --z-dock-right-w: calc(var(--z-ai-dock-w, 380px) + 14px);
 }
 
 /* 宿主页面工作区 (.app-main) 随 AI 侧边磁贴同步平滑伸缩，顶栏 (.main-nav) 永远保持 100% 全宽不裁切 */
@@ -5093,16 +5101,43 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
     max-width: none !important;
   }
 
+  /* Smartbar 小白条与会话胶囊始终居中于排除了 AI 磁贴后的终端工作区正上方 */
+  html body.app-body.terminal-mode #sessionTabs.terminal-smartbar:not(.custom-fullscreen) {
+    left: calc(var(--z-dock-left-w, 0px) + (100vw - var(--z-dock-left-w, 0px) - var(--z-dock-right-w, 0px)) / 2) !important;
+  }
+
+  /* 27.5 首页（#view-dashboard）、笔记页（#view-notes）及非终端页全宽空间利用优化（消除两侧大面积空白） */
+  body.app-body:not(.terminal-mode) .app-main,
   body.app-body:not(.terminal-mode).ai-docked-left .app-main,
   body.app-body:not(.terminal-mode).ai-docked-right .app-main,
   body.app-body:not(.terminal-mode).z-dock-cols-morphing .app-main {
+    --z-main-max-width: 100%;
     box-sizing: border-box !important;
     margin-left: var(--z-dock-left-w, 0px) !important;
     margin-right: var(--z-dock-right-w, 0px) !important;
     width: calc(100% - var(--z-dock-left-w, 0px) - var(--z-dock-right-w, 0px)) !important;
     max-width: none !important;
-    padding-left: max(20px, calc((100% - var(--z-dock-left-w, 0px) - var(--z-dock-right-w, 0px) - 1180px) / 2)) !important;
-    padding-right: max(20px, calc((100% - var(--z-dock-left-w, 0px) - var(--z-dock-right-w, 0px) - 1180px) / 2)) !important;
+    padding: 20px 24px 36px !important;
+  }
+
+  /* 笔记页（#view-notes）采用与终端工作区 1:1 一致的 12px 16px 18px 留白与 14px 圆角全宽三栏工作台 */
+  body.app-body:not(.terminal-mode) .app-main:has(#view-notes.active) {
+    padding: 12px 16px 18px !important;
+    overflow: hidden !important;
+  }
+  body.app-body:not(.terminal-mode) #view-notes.notes-view.active {
+    margin: 0 !important;
+    width: 100% !important;
+    height: calc(100vh - var(--z-ai-dock-top, 56px) - 30px) !important;
+    max-height: calc(100vh - var(--z-ai-dock-top, 56px) - 30px) !important;
+  }
+  body.app-body:not(.terminal-mode) #view-notes .notes-shell,
+  body.app-body:not(.terminal-mode) #view-notes .notes-workspace {
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 14px !important;
+    --notes-sidebar-w: clamp(200px, 15vw, 240px);
+    --notes-list-w: clamp(260px, 21vw, 320px);
   }
 
   /* 桌面端彻底移除旧版顶部灰色拖拽横条 (.panel-drag-handle) */
@@ -5113,10 +5148,11 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
     overflow: hidden !important;
   }
 
-  /* AI 浮窗本体：100% 不透明实色材质、允许外圈缩放角标露头、内部 .ai-agent-window 负责圆角裁切 */
+  /* AI 浮窗本体：自由浮窗态 16px 圆角，磁贴态 14px 圆角（与终端大卡片 1:1 严丝合缝） */
   #aiAgentPanel.ai-agent-panel.file-manager {
     min-width: 320px !important;
     min-height: 320px !important;
+    border-radius: 16px !important;
     overflow: visible !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
@@ -5142,37 +5178,38 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
     position: relative !important;
   }
 
-  /* AI 侧边停靠态 (.docked-left / .docked-right)：紧贴顶栏正下方至屏幕底部 */
+  /* AI 侧边磁贴态 (.docked-left / .docked-right)：14px 圆角独立磁贴大卡片，上下左右边距与 .terminal-window 1:1 对齐！ */
   #aiAgentPanel.ai-agent-panel.pinned.docked-left:not(.z-panel-morphing),
   #aiAgentPanel.ai-agent-panel.pinned.docked-right:not(.z-panel-morphing) {
     position: fixed !important;
-    top: var(--z-ai-dock-top, 56px) !important;
-    bottom: 0 !important;
+    top: calc(var(--z-ai-dock-top, 56px) + 12px) !important;
+    bottom: 18px !important;
     width: var(--z-ai-dock-w, 380px) !important;
     min-width: 0 !important;
     max-width: var(--z-ai-dock-w, 380px) !important;
-    height: calc(100vh - var(--z-ai-dock-top, 56px)) !important;
+    height: calc(100vh - var(--z-ai-dock-top, 56px) - 30px) !important;
     max-height: none !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
+    border-radius: 14px !important;
     margin: 0 !important;
     z-index: 85 !important;
   }
+  html[data-theme="light"] #aiAgentPanel.ai-agent-panel.pinned.docked-left:not(.z-panel-morphing),
+  html[data-theme="light"] #aiAgentPanel.ai-agent-panel.pinned.docked-right:not(.z-panel-morphing) {
+    border: 1px solid rgba(17, 20, 24, 0.12) !important;
+    box-shadow: 0 14px 36px -16px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
+  }
+  html[data-theme="dark"] #aiAgentPanel.ai-agent-panel.pinned.docked-left:not(.z-panel-morphing),
+  html[data-theme="dark"] #aiAgentPanel.ai-agent-panel.pinned.docked-right:not(.z-panel-morphing) {
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  }
   #aiAgentPanel.ai-agent-panel.pinned.docked-left:not(.z-panel-morphing) {
-    left: 0 !important;
+    left: 16px !important;
     right: auto !important;
-    border-left: 0 !important;
-    border-bottom: 0 !important;
-    border-top: 1px solid var(--z-outline, rgba(128, 128, 128, 0.16)) !important;
-    border-right: 1px solid var(--z-outline, rgba(128, 128, 128, 0.16)) !important;
   }
   #aiAgentPanel.ai-agent-panel.pinned.docked-right:not(.z-panel-morphing) {
-    right: 0 !important;
+    right: 16px !important;
     left: auto !important;
-    border-right: 0 !important;
-    border-bottom: 0 !important;
-    border-top: 1px solid var(--z-outline, rgba(128, 128, 128, 0.16)) !important;
-    border-left: 1px solid var(--z-outline, rgba(128, 128, 128, 0.16)) !important;
   }
 
   /* AI 全屏态 (.panel-fullscreen)：避让顶栏并留出 12px 呼吸边距 */
@@ -5194,9 +5231,10 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
   #aiAgentPanel > .ai-dock-edge-resizer {
     display: none;
     position: absolute;
-    top: 0;
-    bottom: 0;
+    top: 10px;
+    bottom: 10px;
     width: 8px;
+    border-radius: 4px;
     z-index: 95;
     cursor: ew-resize;
     touch-action: none;
@@ -5205,12 +5243,12 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
   }
   #aiAgentPanel.pinned.docked-left > .ai-dock-edge-resizer {
     display: block;
-    right: -4px;
+    right: -5px;
     left: auto;
   }
   #aiAgentPanel.pinned.docked-right > .ai-dock-edge-resizer {
     display: block;
-    left: -4px;
+    left: -5px;
     right: auto;
   }
   #aiAgentPanel.pinned > .ai-dock-edge-resizer:hover,
@@ -5376,6 +5414,7 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
     height: 100% !important;
     flex: none !important;
     z-index: 60 !important;
+    border-radius: 14px 0 0 14px !important;
     box-shadow: 12px 0 36px rgba(0, 0, 0, 0.28) !important;
     transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease !important;
   }
@@ -5404,6 +5443,7 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
     position: absolute !important;
     inset: 0 !important;
     z-index: 55 !important;
+    border-radius: inherit !important;
     background: rgba(0, 0, 0, 0.32) !important;
     backdrop-filter: blur(4px) !important;
     -webkit-backdrop-filter: blur(4px) !important;
@@ -5412,10 +5452,15 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
     pointer-events: auto !important;
   }
 
-  /* 侧边磁贴或窄窗下输入胶囊与沙箱抽屉自适应宽度 */
+  /* 侧边磁贴或窄窗下输入胶囊与底部 14px 圆角同心嵌套（外 14px / 内 12px），彻底消除方圆冲突 */
   #aiAgentPanel.pinned .ai-composer,
   #aiAgentPanel.ai-narrow .ai-composer {
-    width: calc(100% - 24px) !important;
+    width: 100% !important;
+    padding: 0 10px 10px !important;
+  }
+  #aiAgentPanel.pinned .ai-composer-box.ai-input-area,
+  #aiAgentPanel.ai-narrow .ai-composer-box.ai-input-area {
+    border-radius: 12px !important;
   }
   #aiAgentPanel .ai-cell-inspector {
     top: 42px !important;
@@ -5425,4 +5470,114 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
     width: min(360px, 92%) !important;
     max-width: 92% !important;
   }
+}
+
+/* 27.6 彻底根治终端底部双层圆角 + 顶栏遮挡终端窗口时的半透明毛玻璃透视 + 释放终端最小化/关闭/拖拽动效 */
+body.app-body.terminal-mode #terminalWorkspace:not(.custom-fullscreen),
+body.app-body.terminal-mode .terminal-workspace:not(.custom-fullscreen),
+body.app-body.terminal-mode .terminal-workspace-grid:not(.custom-fullscreen),
+#terminalWorkspace:not(.custom-fullscreen) {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+.terminal-window > .terminal-window-body,
+.terminal-window > .terminal-window-body > iframe.terminal-frame {
+  border-radius: 0 0 14px 14px !important;
+  border: 0 !important;
+}
+
+html[data-zephyr-surface="desktop"] .terminal-page,
+body.desktop-embed .terminal-page {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+html[data-zephyr-surface="desktop"] .terminal-page > .terminal-container,
+body.desktop-embed .terminal-page > .terminal-container {
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+@media (min-width: 761px) {
+  .terminal-page {
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .terminal-page .terminal-container {
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  /* 顶栏（.main-nav）固定在 z-index: 90，而 #terminalWorkspace 向上延伸至 y=0（顶栏背面）并保持 overflow: hidden，
+   * 既保证任何分屏绝不触发页面滚动条，又让四分屏上滑或拖拽上移的终端窗口真实进入顶栏背面并透过毛玻璃折射！ */
+  body.app-body.terminal-mode .main-nav {
+    position: relative !important;
+    z-index: 90 !important;
+  }
+  body.app-body.terminal-mode .app-main,
+  body.app-body.terminal-mode .app-main:has(#view-terminal.active) {
+    position: static !important;
+    z-index: auto !important;
+    overflow: visible !important;
+  }
+  body.app-body.terminal-mode #view-terminal.terminal-view.active {
+    position: static !important;
+    z-index: auto !important;
+    overflow: visible !important;
+  }
+  body.app-body.terminal-mode #terminalWorkspace:not(.custom-fullscreen) {
+    position: relative !important;
+    z-index: 10 !important;
+    margin-top: calc(-1 * var(--z-ai-dock-top, 72px)) !important;
+    height: calc(100% + var(--z-ai-dock-top, 72px)) !important;
+    max-height: calc(100% + var(--z-ai-dock-top, 72px)) !important;
+    padding: calc(12px + var(--z-ai-dock-top, 72px)) 16px 18px !important;
+    overflow: hidden !important;
+  }
+  body.app-body.terminal-mode.ai-docked-right #terminalWorkspace:not(.custom-fullscreen) {
+    clip-path: inset(0px 14px 0px 0px) !important;
+  }
+  body.app-body.terminal-mode.ai-docked-left #terminalWorkspace:not(.custom-fullscreen) {
+    clip-path: inset(0px 0px 0px 14px) !important;
+  }
+  .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-1,
+  .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-2,
+  .terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    top: calc(12px + var(--z-ai-dock-top, 72px)) !important;
+  }
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    height: calc((100% - var(--z-ai-dock-top, 72px) - 30px) * 0.82) !important;
+  }
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-1:not(.terminal-window-morphing),
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-2:not(.terminal-window-morphing) {
+    top: calc(12px + var(--z-ai-dock-top, 72px) + var(--split-cam-y, 0px)) !important;
+  }
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-3:not(.terminal-window-morphing),
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-4:not(.terminal-window-morphing) {
+    top: calc(12px + var(--z-ai-dock-top, 72px) + (100% - var(--z-ai-dock-top, 72px) - 30px) * 0.82 + 14px + var(--split-cam-y, 0px)) !important;
+  }
+}
+
+/* 释放 .terminal-window 的最小化 (.minimizing)、关闭 (.motion-closing) 与拖拽 (.dragging) 动效 */
+body.terminal-card-flip-open:not(.terminal-card-flip-animating) #terminalWorkspace > .terminal-window.minimizing,
+body:not(.terminal-card-flip-open) #terminalWorkspace > .terminal-window.minimizing,
+#terminalWorkspace > .terminal-window.minimizing {
+  opacity: 0 !important;
+  transform: translate3d(0, -34px, 0) scale(0.76) !important;
+  filter: blur(10px) !important;
+  transition: transform 250ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease, filter 220ms ease !important;
+  pointer-events: none !important;
+}
+
+#terminalWorkspace > .terminal-window.dragging {
+  transform: translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0) scale(0.985) !important;
+  z-index: 45 !important;
+  transition: box-shadow 180ms ease !important;
 }
