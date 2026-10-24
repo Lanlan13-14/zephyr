@@ -3415,6 +3415,9 @@ export const Motion = {
    */
   async aiPanelOpen(panel, trigger = null, opts = {}) {
     if (!panel) return false;
+    if (opts.mode === 'wasm' || (panel.classList?.contains?.('z-unified-panel') && opts.mode !== 'flip')) {
+      return this.panelOpenWasm(panel, trigger, opts);
+    }
     const contentEl = opts.contentEl
       || panel.querySelector?.('.ai-agent-window')
       || null;
@@ -3453,6 +3456,9 @@ export const Motion = {
    */
   async aiPanelClose(panel, trigger = null, opts = {}) {
     if (!panel) return false;
+    if (opts.mode === 'wasm' || (panel.classList?.contains?.('z-unified-panel') && opts.mode !== 'flip')) {
+      return this.panelCloseWasm(panel, trigger, opts);
+    }
     const token = this._bump(panel);
     const contentEl = opts.contentEl
       || panel.querySelector?.('.ai-agent-window')
@@ -3817,13 +3823,15 @@ export const Motion = {
     if (!toRect || toRect.width < 20 || toRect.height < 20) return false;
 
     const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
-    const pageRect = page.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const pageRect = (page && page !== document.body && page.getBoundingClientRect)
+      ? page.getBoundingClientRect()
+      : { left: 0, top: 0 };
     const toL = Math.round(toRect.left - pageRect.left);
     const toT = Math.round(toRect.top - pageRect.top);
     const toW = Math.round(toRect.width);
     const toH = Math.round(toRect.height);
 
-    const scale = 0.90;
+    const scale = 0.88;
     const fromW = Math.round(toW * scale);
     const fromH = Math.round(toH * scale);
     let fromL = Math.round(toL + (toW - fromW) / 2);
@@ -3832,8 +3840,8 @@ export const Motion = {
       const br = triggerBtn.getBoundingClientRect();
       if (br.width > 0 && br.height > 0) {
         const btnCenterX = br.left - pageRect.left + br.width / 2;
-        fromL = Math.round(toL + (toW - fromW) * 0.5 + (btnCenterX - (toL + toW * 0.5)) * 0.22);
-        fromT = Math.max(8, Math.round(br.bottom - pageRect.top + 2));
+        fromL = Math.round(toL + (toW - fromW) * 0.5 + (btnCenterX - (toL + toW * 0.5)) * 0.28);
+        fromT = Math.max(8, Math.round(toT - 14 + (br.bottom - pageRect.top - toT) * 0.25));
       }
     }
 
@@ -3911,22 +3919,25 @@ export const Motion = {
     }
 
     const page = panel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
-    const pageRect = page.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const pageRect = (page && page !== document.body && page.getBoundingClientRect)
+      ? page.getBoundingClientRect()
+      : { left: 0, top: 0 };
     const fromL = Math.round(fromRect.left - pageRect.left);
     const fromT = Math.round(fromRect.top - pageRect.top);
     const fromW = Math.round(fromRect.width);
     const fromH = Math.round(fromRect.height);
 
-    const scale = 0.90;
+    const scale = 0.88;
     const toW = Math.round(fromW * scale);
     const toH = Math.round(fromH * scale);
     let toL = Math.round(fromL + (fromW - toW) / 2);
-    let toT = Math.round(fromT - 10);
+    let toT = Math.round(fromT - 12);
     if (triggerBtn && typeof triggerBtn.getBoundingClientRect === 'function') {
       const br = triggerBtn.getBoundingClientRect();
       if (br.width > 0 && br.height > 0) {
         const btnCenterX = br.left - pageRect.left + br.width / 2;
-        toL = Math.round(fromL + (fromW - toW) * 0.5 + (btnCenterX - (fromL + fromW * 0.5)) * 0.18);
+        toL = Math.round(fromL + (fromW - toW) * 0.5 + (btnCenterX - (fromL + fromW * 0.5)) * 0.24);
+        toT = Math.max(8, Math.round(fromT - 12 + (br.bottom - pageRect.top - fromT) * 0.20));
       }
     }
 
@@ -3958,9 +3969,10 @@ export const Motion = {
       '--z-morph-opacity': 1,
     }, { immediate: true, units });
 
-    const guard = withSettleSafetyGuard(panel, 300, () => {
+    const guard = withSettleSafetyGuard(panel, 420, () => {
       if (this._genOf(panel) === token) {
         panel.classList.remove('z-panel-morphing', 'z-panel-closing', 'open', 'show', 'panel-fullscreen');
+        panel.style.display = 'none';
       }
     });
     try {
@@ -3986,7 +3998,7 @@ export const Motion = {
     return true;
   },
 
-  async panelDockMorph(panel, mutateLayoutFn, { preset = { response: 0.22, damping: 0.98 } } = {}) {
+  async panelDockMorph(panel, mutateLayoutFn, { preset = { response: 0.22, damping: 0.98 }, onDone = null } = {}) {
     const primaryPanel = Array.isArray(panel) ? panel[0] : panel;
     if (!primaryPanel || typeof mutateLayoutFn !== 'function') {
       mutateLayoutFn?.();
@@ -4062,7 +4074,9 @@ export const Motion = {
     }
 
     const afterDockW = measureDockSideWidths(page);
-    const pageRect = page?.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const pageRect = (page && page !== document.body && page.getBoundingClientRect)
+      ? page.getBoundingClientRect()
+      : { left: 0, top: 0 };
     const units = {
       '--z-morph-l': 'px',
       '--z-morph-t': 'px',
@@ -4156,7 +4170,8 @@ export const Motion = {
     }
 
     const dockWChanged = beforeDockW.leftW !== afterDockW.leftW || beforeDockW.rightW !== afterDockW.rightW;
-    const dockTargets = dockWChanged ? [page, hostWin].filter(Boolean) : [];
+    const extraRoot = (page === document.body && typeof document !== 'undefined') ? document.documentElement : null;
+    const dockTargets = dockWChanged ? [page, extraRoot, hostWin].filter(Boolean) : [];
     const dockUnits = { '--z-dock-left-w': 'px', '--z-dock-right-w': 'px' };
     for (const dt of dockTargets) {
       this.stop(dt, ['--z-dock-left-w', '--z-dock-right-w']);
@@ -4188,6 +4203,7 @@ export const Motion = {
           }
         }
       }
+      onDone?.();
       window.dispatchEvent(new Event('resize'));
     };
     const guard = withSettleSafetyGuard(primaryPanel, 420, cleanupAll);

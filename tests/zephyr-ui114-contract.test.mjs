@@ -58,3 +58,15 @@ test('4. Floating panels never drift (+1px clampPanel bug and status message loo
   assert.match(sftpProJs, /function restorePreDockOrDefaultRect\(panel\)/);
   assert.match(sftpProJs, /function closeUnifiedPanel\(panel/);
 });
+
+test('5. Desktop/Web AI Floating & Docked Panel (#aiAgentPanel) uses Unified Tier-1 Chrome, WASM Open/Close/Dock Morphs, and Host Workspace Reflow', () => {
+  assert.match(appJs, /function toggleAiPanelDockState\(panel,\s*explicitSide\)/);
+  assert.match(appJs, /function openAiUnifiedMorePopover\(panel,\s*moreBtn\)/);
+  assert.match(appJs, /function syncHostAiDockState\(panel\)/);
+  assert.match(appJs, /window\.__zephyrCloseDockedAiPanel\s*=\s*function closeDockedAiPanel/);
+  assert.match(motionJs, /if \(opts\.mode === 'wasm' \|\| \(panel\.classList\?\.contains\?\.\('z-unified-panel'\) && opts\.mode !== 'flip'\)\) \{\s*return this\.panelOpenWasm\(panel, trigger, opts\);/);
+  assert.match(motionJs, /if \(opts\.mode === 'wasm' \|\| \(panel\.classList\?\.contains\?\.\('z-unified-panel'\) && opts\.mode !== 'flip'\)\) \{\s*return this\.panelCloseWasm\(panel, trigger, opts\);/);
+  assert.match(specCss, /#aiAgentPanel\.ai-agent-panel\.pinned\.docked-left:not\(\.z-panel-morphing\)/);
+  assert.match(specCss, /#aiAgentPanel\.ai-agent-panel\.pinned\.docked-right:not\(\.z-panel-morphing\)/);
+  assert.match(specCss, /body\.app-body\.terminal-mode\.ai-docked-right \.app-main/);
+});

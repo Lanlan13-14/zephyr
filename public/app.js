@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui116';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui117';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui116');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui117');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -6160,8 +6160,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui116`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui116`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui117`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui117`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -7749,6 +7749,13 @@ function setTerminalSmartbarOpen(open) {
 function noteTerminalWorkspaceActivity() {
     if (terminalSmartbarOpen || terminalSmartbarPickerOpen) {
         setTerminalSmartbarOpen(false);
+    }
+    window.__zephyrCloseAiMorePopover?.();
+    closeAiPickerPopover?.();
+    const aiPanel = document.getElementById('aiAgentPanel');
+    if (aiPanel && aiPanel.classList.contains('panel-focused')) {
+        if (window.Motion?.panelResizeRing) window.Motion.panelResizeRing(aiPanel, false);
+        else aiPanel.classList.remove('panel-focused');
     }
 }
 function swapTerminalWindows(a, b) {
@@ -9465,6 +9472,11 @@ function openAiChoiceModal({ title = '请选择', current = '', choices = [], on
 }
 
 function openAiPicker(kind = '', anchor = null) {
+    const existing = document.querySelector('.ai-picker-popover');
+    if (existing && existing.dataset.pickerKind === kind && existing.dataset.closing !== '1') {
+        closeAiPickerPopover();
+        return null;
+    }
     closeAiPickerPopover({ instant: true });
     const choices = aiHeaderChoices(kind);
     if (!choices.length) {
@@ -9479,10 +9491,11 @@ function openAiPicker(kind = '', anchor = null) {
     /* 锚点优先用调用方传入的，其次回退到对应触发器按钮。 */
     anchor = anchor
         || (kind === 'provider' ? $('#aiProviderPickerBtn') : kind === 'model' ? $('#aiModelPickerBtn') : $('#aiThinkPickerBtn'))
+        || $('#aiMicroIsland')
         || aiPanelMorphOriginButton;
 
     const pop = document.createElement('div');
-    pop.className = 'ai-picker-popover';
+    pop.className = 'ai-picker-popover z-glass-thick';
     pop.dataset.pickerKind = kind;
     pop.setAttribute('role', 'listbox');
     pop.setAttribute('aria-label', kind === 'provider' ? t('选择供应商') : kind === 'model' ? t('选择模型') : t('调整推理深度'));
@@ -9491,15 +9504,30 @@ function openAiPicker(kind = '', anchor = null) {
         const active = item.value === current;
         return '<button type="button" role="option" aria-selected="' + active + '"'
             + ' class="ai-picker-option' + (active ? ' active' : '') + '"'
+            + ' data-kind="' + escapeAttr(kind) + '"'
             + ' data-value="' + escapeHtml(item.value) + '">'
-            + escapeHtml(item.label)
+            + '<span>' + escapeHtml(item.label) + '</span>'
+            + (active ? '<span class="z-more-check">✓</span>' : '')
             + '</button>';
     }).join('');
 
     document.body.appendChild(pop);
 
+    if (anchor && typeof anchor.getBoundingClientRect === 'function') {
+        const ar = anchor.getBoundingClientRect();
+        const vw = window.innerWidth || 1280;
+        const vh = window.innerHeight || 800;
+        const pw = Math.max(200, pop.offsetWidth || 220);
+        const ph = Math.min(360, pop.offsetHeight || 180);
+        const left = Math.max(10, Math.min(vw - pw - 10, Math.round(ar.left)));
+        const top = Math.max(10, Math.min(vh - ph - 10, Math.round(ar.bottom + 6)));
+        pop.style.left = `${left}px`;
+        pop.style.top = `${top}px`;
+    }
+
     pop.querySelectorAll('.ai-picker-option').forEach((btn) => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
             const value = btn.dataset.value;
             closeAiPickerPopover();
             applyAiPickerChoice(kind, value);
@@ -11323,33 +11351,26 @@ function updateAiPanelResponsiveState() {
     const rect = panel.getBoundingClientRect?.();
     const width = Math.max(220, rect?.width || panel.offsetWidth || 0);
     const isMobile = window.innerWidth <= 760;
-    const compact = isMobile || width < 680;
-    const narrow = isMobile || width < 600;
+    const isDocked = panel.classList.contains('pinned') || panel.classList.contains('docked-left') || panel.classList.contains('docked-right');
+    const compact = isMobile || isDocked || width < 680;
+    const narrow = isMobile || isDocked || width < 640;
     panel.classList.toggle('ai-compact', compact);
     panel.classList.toggle('ai-narrow', narrow);
     panel.classList.toggle('ai-mobile-mode', isMobile);
 
-    if (isMobile) {
-        // Mobile bottom drawer float
+    if (isMobile || narrow) {
         if (!panel.classList.contains('sidebar-open')) {
             panel.classList.add('sidebar-collapsed');
+            aiSidebarCollapsedBySize = true;
         }
         return;
     }
 
-    // Desktop mode: Only collapse sidebar when panel width is actually constrained (< 640px)
+    // Wide desktop floating/fullscreen mode: inline sidebar
     panel.classList.remove('sidebar-open');
-    if (width < 640) {
-        if (!panel.classList.contains('sidebar-collapsed')) {
-            panel.classList.add('sidebar-collapsed');
-            aiSidebarCollapsedBySize = true;
-        }
-    } else {
-        // Broad panel: Keep sidebar expanded unless explicitly collapsed by user
-        if (aiSidebarCollapsedBySize) {
-            panel.classList.remove('sidebar-collapsed');
-            aiSidebarCollapsedBySize = false;
-        }
+    if (aiSidebarCollapsedBySize) {
+        panel.classList.remove('sidebar-collapsed');
+        aiSidebarCollapsedBySize = false;
     }
 }
 function setAiTyping(show) {
@@ -13072,6 +13093,13 @@ function startAiPanelWatchdog() {
     aiPanelWatchdogTimer = window.setInterval(() => {
         const panel = $('#aiAgentPanel');
         if (!panel || aiPanelState !== 'open') return;
+        if (panel.classList.contains('z-panel-morphing')
+            || panel.classList.contains('pinned')
+            || panel.classList.contains('docked-left')
+            || panel.classList.contains('docked-right')
+            || panel.classList.contains('panel-fullscreen')) {
+            return;
+        }
         const rect = panel.getBoundingClientRect();
         const bad = panel.style.display === 'none' || panel.getAttribute('aria-hidden') === 'true' || rect.width < 120 || rect.height < 160 || getComputedStyle(panel).opacity === '0';
         if (!bad) return;
@@ -13092,14 +13120,16 @@ function startAiPanelWatchdog() {
     }, 1200);
 }
 function stopAiPanelWatchdog() { window.clearInterval(aiPanelWatchdogTimer); aiPanelWatchdogTimer = 0; }
-function prepareAiPanelLayout(panel) {
-    if (!panel || panel.dataset.positioned) return;
+function prepareAiPanelLayout(panel, triggerBtn = null) {
+    if (!panel) return;
+    if (panel.classList.contains('pinned') || panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || panel.classList.contains('panel-fullscreen')) {
+        return;
+    }
     const isMobile = window.innerWidth <= 760;
     const vvWidth = window.visualViewport?.width || window.innerWidth;
     const vvHeight = window.visualViewport?.height || window.innerHeight;
 
     if (isMobile) {
-        // Mobile: Elegant bottom-docked floating panel (Apple HIG card)
         panel.style.position = 'fixed';
         panel.style.left = '0';
         panel.style.right = '0';
@@ -13112,16 +13142,46 @@ function prepareAiPanelLayout(panel) {
         return;
     }
 
-    // Desktop: generous, elegant floating window (min 880px, max 1020px)
-    const width = Math.min(1020, Math.max(880, Math.round(vvWidth * 0.72)));
-    const height = Math.min(840, Math.max(620, Math.round(vvHeight * 0.8)));
-    const left = Math.max(20, Math.round((vvWidth - width) / 2));
-    const top = Math.max(30, Math.round((vvHeight - height) / 2));
+    if (panel.dataset.positioned === '1' && panel._savedFloatingBox) {
+        const b = panel._savedFloatingBox;
+        panel.style.position = 'fixed';
+        panel.style.left = b.left;
+        panel.style.top = b.top;
+        panel.style.width = b.width;
+        panel.style.height = b.height;
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+        clampAiPanel(panel);
+        updateAiPanelResponsiveState();
+        return;
+    }
 
+    const navBottom = Math.max(56, Math.round(document.querySelector('.main-nav')?.getBoundingClientRect?.()?.bottom || 56));
+    const width = Math.min(760, Math.max(540, Math.round(vvWidth * 0.54)));
+    const height = Math.min(620, Math.max(460, Math.round(vvHeight * 0.68)));
+    let top = Math.max(navBottom + 14, 72);
+    let left = Math.max(20, vvWidth - width - 24);
+    if (triggerBtn && typeof triggerBtn.getBoundingClientRect === 'function') {
+        const tr = triggerBtn.getBoundingClientRect();
+        if (tr && tr.width > 0 && tr.bottom > 0) {
+            top = Math.min(vvHeight - height - 16, Math.max(navBottom + 10, Math.round(tr.bottom + 10)));
+            left = Math.max(16, Math.min(vvWidth - width - 16, Math.round(tr.right - width * 0.72)));
+        }
+    }
+
+    panel.style.position = 'fixed';
     panel.style.left = `${left}px`;
     panel.style.top = `${top}px`;
     panel.style.width = `${width}px`;
     panel.style.height = `${height}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    panel._savedFloatingBox = {
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${width}px`,
+        height: `${height}px`,
+    };
     panel.dataset.positioned = '1';
     updateAiPanelResponsiveState();
 }
@@ -13232,23 +13292,24 @@ function openAiAssistantPanel(trigger = null) {
     if (!ai.enabled) { toast(t('请先在设置中启用 AI 助理')); return; }
     const panel = $('#aiAgentPanel');
     if (!panel) return;
-    const wasHidden = panel.style.display === 'none' || panel.getAttribute('aria-hidden') === 'true' || aiPanelState === 'closed';
+    upgradeHostAiAgentPanelHeader();
     const sourceButton = trigger || aiPanelMorphOriginButton || $('#aiFloatingBtn') || $('#openAiAssistantBtn') || $('#openAiAssistantBtn2') || $('#aiNavTab');
     aiPanelMorphOriginButton = sourceButton || aiPanelMorphOriginButton;
     window.clearTimeout(aiPanelCloseTimer);
     ++openAiAssistantPanel._cycle; // cancel any in-flight close hide
     aiPanelState = 'opening';
+    panel.classList.remove('z-panel-closing', 'panel-closing');
     panel.style.display = 'flex';
     panel.classList.add('open');
     panel.setAttribute('aria-hidden', 'false');
     $('#aiFloatingBtn')?.classList.add('active');
-    prepareAiPanelLayout(panel);
+    prepareAiPanelLayout(panel, sourceButton);
     bringAiPanelToFront();
     updateAiPanelResponsiveState();
     if (!aiChatSessions.length) createAiChat({ silent: true });
     renderAiHeaderSelectors(); renderAiBrowserPreview(); renderAiChat();
 
-    const isMobile = window.innerWidth <= 760 || panel.classList.contains('ai-narrow');
+    const isMobile = window.innerWidth <= 760;
     if (isMobile) {
         stopAiMobileSpring();
         resetAiPanelMotionStyles(panel);
@@ -13267,8 +13328,7 @@ function openAiAssistantPanel(trigger = null) {
         panel.setAttribute('aria-hidden', 'false');
         $('#aiFloatingBtn')?.classList.add('active');
 
-        // Engine only. Do not write panel.style.transform here.
-        const cycle = openAiAssistantPanel._cycle; // already incremented on entry
+        const cycle = openAiAssistantPanel._cycle;
         sshKeyMotion._ensure().then(async (Motion) => {
             if (!Motion || cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'opening') return;
             Motion.stop(panel);
@@ -13283,21 +13343,26 @@ function openAiAssistantPanel(trigger = null) {
         return;
     }
 
-    // 桌面端：在面板自身位置缩放淡入。不从 AI 按钮 FLIP。
+    // Desktop unified floating panel open animation (zero frame-0 flash)
     panel.style.visibility = 'visible';
     panel.style.pointerEvents = 'auto';
+    if (!sshKeyMotion.engine) {
+        panel.style.opacity = '0';
+    }
 
     const cycle = ++openAiAssistantPanel._cycle;
-
-    sshKeyMotion._ensure().then(async (Motion) => {
+    const runOpen = async (Motion) => {
         if (cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'opening') return;
+        panel.style.opacity = '';
         const contentEl = panel.querySelector('.ai-agent-window');
+        if (Motion?.panelResizeRing) Motion.panelResizeRing(panel, true);
+        else panel.classList.add('panel-focused');
         if (Motion && typeof Motion.aiPanelOpen === 'function') {
             try {
                 await Motion.aiPanelOpen(panel, sourceButton, {
                     contentEl,
                     contentWithPanel: true,
-                    mode: 'origin',
+                    mode: 'wasm',
                     preset: 'mac',
                 });
             } catch (err) {
@@ -13313,7 +13378,13 @@ function openAiAssistantPanel(trigger = null) {
         aiPanelState = 'open';
         startAiPanelWatchdog();
         if (window.innerWidth > 760) $('#aiUserInput')?.focus?.({ preventScroll: true });
-    });
+    };
+
+    if (sshKeyMotion.engine) {
+        void runOpen(sshKeyMotion.engine);
+    } else {
+        sshKeyMotion._ensure().then(runOpen);
+    }
     broadcastAiStateToTerminalFrames();
     scheduleWorkspaceSave('ai-panel-open');
 }
@@ -13329,22 +13400,25 @@ function toggleAiAssistantPanel(trigger = null) {
     openAiAssistantPanel(trigger);
 }
 function closeAiAssistantPanel() {
-    /* Exit retraces the entry path (plan 3.4.2 M11). */
     const trigger = aiPanelMorphOriginButton || $('#aiFloatingBtn') || $('#openAiAssistantBtn') || $('#openAiAssistantBtn2') || $('#aiNavTab');
     const panel = $('#aiAgentPanel');
     if (!panel || panel.style.display === 'none' || aiPanelState === 'closed' || aiPanelState === 'closing') return;
     stopAiPanelWatchdog();
     closeAiPanelLayoutMenu({ instant: true });
+    window.__zephyrCloseAiMorePopover?.({ instant: true });
+    closeAiPickerPopover?.({ instant: true });
     window.clearTimeout(aiPanelCloseTimer);
     aiPanelState = 'closing';
     const cycle = ++openAiAssistantPanel._cycle;
     panel.setAttribute('aria-hidden', 'true');
+    panel.classList.remove('panel-focused', 'sidebar-open');
+    if (window.Motion?.panelResizeRing) window.Motion.panelResizeRing(panel, false);
     closeAiBrowserForSession(aiCurrentSessionId);
     $('#aiFloatingBtn')?.classList.remove('active');
     window.__zephyrAiPanelOpen = false;
     broadcastAiStateToTerminalFrames();
 
-    const isMobile = window.innerWidth <= 760 || panel.classList.contains('ai-narrow');
+    const isMobile = window.innerWidth <= 760;
     if (isMobile) {
         sshKeyMotion._ensure().then(async (Motion) => {
             if (cycle !== openAiAssistantPanel._cycle) return;
@@ -13355,10 +13429,6 @@ function closeAiAssistantPanel() {
                 return;
             }
             Motion.stop(panel);
-            // NEVER reset y here. A previous interrupted animation leaves the
-            // slot mid-flight; set(y:0) snaps the panel back on screen for one
-            // frame — the reported "flash up then slide down again". Retarget
-            // from the live value instead; sheet()'s to() animates from current.
             Motion.set(panel, { scaleX: 1, scaleY: 1, opacity: 1 });
             try {
                 await Motion.sheet(panel, { edge: 'bottom', open: false, preset: 'sheetDismiss' });
@@ -13377,15 +13447,21 @@ function closeAiAssistantPanel() {
         return;
     }
 
-    // 桌面端：在面板自身位置淡出。不收回 AI 按钮。
-    sshKeyMotion._ensure().then(async (Motion) => {
+    // If #aiAgentPanel is currently docked (pinned left or right), slide-close it in place via panelDockMorph!
+    const isDocked = panel.classList.contains('pinned') || panel.classList.contains('docked-left') || panel.classList.contains('docked-right');
+    if (isDocked && typeof window.__zephyrCloseDockedAiPanel === 'function') {
+        window.__zephyrCloseDockedAiPanel(panel, cycle);
+        return;
+    }
+
+    const runClose = async (Motion) => {
         if (cycle !== openAiAssistantPanel._cycle) return;
         const contentEl = panel.querySelector('.ai-agent-window');
         if (Motion && typeof Motion.aiPanelClose === 'function') {
             try {
                 await Motion.aiPanelClose(panel, trigger, {
                     contentEl,
-                    mode: 'origin',
+                    mode: 'wasm',
                     preset: 'macClose',
                     thenDisplayNone: true,
                 });
@@ -13399,11 +13475,17 @@ function closeAiAssistantPanel() {
             panel.style.visibility = 'hidden';
         }
         if (cycle !== openAiAssistantPanel._cycle) return;
-        panel.classList.remove('open');
+        panel.classList.remove('open', 'panel-fullscreen');
         aiPanelState = 'closed';
         stopAiPanelWatchdog();
         scheduleWorkspaceSave('ai-panel-close');
-    });
+    };
+
+    if (sshKeyMotion.engine) {
+        void runClose(sshKeyMotion.engine);
+    } else {
+        sshKeyMotion._ensure().then(runClose);
+    }
 }
 function bringAiPanelToFront() { const p = $('#aiAgentPanel'); if (!p) return; p.style.zIndex = String(10080 + Math.floor(Date.now() % 40)); p.style.setProperty('--panel-z', p.style.zIndex); }
 
@@ -13628,10 +13710,7 @@ function initZephyrAiPhase68Interactions() {
     });
     refreshAiCellInspector();
 
-    // 4. Micro-Island Click -> Model/Cell Router
-    microIsland?.addEventListener('click', () => {
-        openAiPicker('model', microIsland);
-    });
+    // 4. Micro-Island Click -> handled in bindEvents without duplicate firing
 
     // 5. Global Keyboard Shortcuts
     document.addEventListener('keydown', (e) => {
@@ -13761,11 +13840,22 @@ function aiPanelMinVisiblePx(panel) {
 }
 function clampAiPanel(panel) {
     if (!panel) return;
+    if (panel.classList.contains('pinned')
+        || panel.classList.contains('docked-left')
+        || panel.classList.contains('docked-right')
+        || panel.classList.contains('panel-fullscreen')
+        || panel.classList.contains('z-panel-morphing')) {
+        return;
+    }
     const rect = panel.getBoundingClientRect();
     const parentRect = aiPanelParentRect(panel);
     const minVisible = aiPanelMinVisiblePx(panel);
-    const left = Math.min(Math.max(rect.left - parentRect.left, -rect.width + minVisible), parentRect.width - minVisible);
-    const top = Math.min(Math.max(rect.top - parentRect.top, 8), parentRect.height - minVisible);
+    const curL = Number.isFinite(parseFloat(panel.style.left)) ? parseFloat(panel.style.left) : (rect.left - parentRect.left);
+    const curT = Number.isFinite(parseFloat(panel.style.top)) ? parseFloat(panel.style.top) : (rect.top - parentRect.top);
+    const navBottom = Math.max(8, Math.round(document.querySelector('.main-nav')?.getBoundingClientRect?.()?.bottom || 56));
+    const left = Math.round(Math.min(Math.max(curL, -rect.width + minVisible), parentRect.width - minVisible));
+    const top = Math.round(Math.min(Math.max(curT, navBottom + 4), parentRect.height - minVisible));
+    if (Math.abs(left - curL) < 1 && Math.abs(top - curT) < 1) return;
     panel.style.left = `${left}px`;
     panel.style.top = `${top}px`;
 }
@@ -14679,14 +14769,18 @@ function setupAiAssistant() {
         clearCurrentAiChat().catch((error) => { toast(error.message || t('清空对话失败')); scheduleAiHistoryReload(0); });
     });
 
-    // Navigation Drawer / Sidebar Toggle
+    // Navigation Drawer / Sidebar Toggle (supports both wide split sidebar & narrow/docked slide-over drawer)
     $('#aiNavToggleBtn')?.addEventListener('click', (e) => {
         e.stopPropagation();
         const panel = $('#aiAgentPanel');
         if (!panel) return;
-        const isMobile = window.innerWidth <= 760;
-        if (isMobile) {
-            panel.classList.remove('sidebar-collapsed');
+        const isDrawerMode = window.innerWidth <= 760
+            || panel.classList.contains('pinned')
+            || panel.classList.contains('docked-left')
+            || panel.classList.contains('docked-right')
+            || panel.classList.contains('ai-narrow');
+        if (isDrawerMode) {
+            panel.classList.add('sidebar-collapsed');
             panel.classList.toggle('sidebar-open');
         } else {
             panel.classList.remove('sidebar-open');
@@ -14702,16 +14796,18 @@ function setupAiAssistant() {
 
     $('#aiChatList')?.addEventListener('click', (e) => {
         if (e.target.closest('.ai-chat-item, .ai-chat-row')) {
-            if (window.innerWidth <= 760) {
-                $('#aiAgentPanel')?.classList.remove('sidebar-open');
+            const panel = $('#aiAgentPanel');
+            if (window.innerWidth <= 760 || panel?.classList.contains('pinned') || panel?.classList.contains('ai-narrow')) {
+                panel?.classList.remove('sidebar-open');
             }
         }
     });
 
     $('#aiNewChatBtn')?.addEventListener('click', () => {
         createAiChat();
-        if (window.innerWidth <= 760) {
-            $('#aiAgentPanel')?.classList.remove('sidebar-open');
+        const panel = $('#aiAgentPanel');
+        if (window.innerWidth <= 760 || panel?.classList.contains('pinned') || panel?.classList.contains('ai-narrow')) {
+            panel?.classList.remove('sidebar-open');
         }
     });
 
@@ -15739,7 +15835,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261019-ui116')
+        return import('./vendor/zephyr-motion/index.js?v=20261019-ui117')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -18000,7 +18096,10 @@ function bindBroadcastAndDiagnoseMessages() {
                 }
             });
         } else if (d.type === 'zephyr-toggle-ai-panel') {
-            toggleAiAssistantPanel(document.getElementById('aiFloatingBtn'));
+            const triggerArg = (d.triggerRect && d.triggerRect.width > 0)
+                ? { getBoundingClientRect: () => d.triggerRect }
+                : document.getElementById('aiFloatingBtn');
+            toggleAiAssistantPanel(triggerArg);
             broadcastAiStateToTerminalFrames();
         } else if (d.type === 'zephyr-ai-diagnose') {
             const aiBtn = document.getElementById('aiFloatingBtn') || document.getElementById('openAiAssistantBtn');
@@ -18150,18 +18249,612 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
 else bindIpProtectionToggle();
 
 
+let activeAiMorePopover = null;
+let activeAiMoreAnchor = null;
+
+function closeAiUnifiedMorePopover({ instant = false } = {}) {
+    if (!activeAiMorePopover) return;
+    const pop = activeAiMorePopover;
+    const btn = activeAiMoreAnchor;
+    activeAiMorePopover = null;
+    activeAiMoreAnchor = null;
+    btn?.classList?.remove('active');
+    const Motion = sshKeyMotion.engine || window.Motion;
+    if (!instant && Motion?.panelMorePopover) {
+        Motion.panelMorePopover(pop, btn, false, { onClosed: () => pop.remove() });
+    } else {
+        pop.remove();
+    }
+}
+window.__zephyrCloseAiMorePopover = closeAiUnifiedMorePopover;
+
+function rememberAiPreDockRect(panel) {
+    if (!panel || panel.classList.contains('pinned') || panel.classList.contains('docked-left') || panel.classList.contains('docked-right') || panel.classList.contains('panel-fullscreen')) {
+        return;
+    }
+    const r = panel.getBoundingClientRect();
+    if (r.width >= 260 && r.height >= 240) {
+        panel._preDockBox = {
+            left: `${Math.round(r.left)}px`,
+            top: `${Math.round(r.top)}px`,
+            width: `${Math.round(r.width)}px`,
+            height: `${Math.round(r.height)}px`,
+        };
+        panel._savedFloatingBox = { ...panel._preDockBox };
+    }
+}
+
+function rememberAiPreFullscreenRect(panel) {
+    if (!panel || panel.classList.contains('panel-fullscreen') || panel.classList.contains('pinned')) return;
+    const r = panel.getBoundingClientRect();
+    if (r.width >= 260 && r.height >= 240) {
+        panel._preFullscreenBox = {
+            left: `${Math.round(r.left)}px`,
+            top: `${Math.round(r.top)}px`,
+            width: `${Math.round(r.width)}px`,
+            height: `${Math.round(r.height)}px`,
+        };
+    }
+}
+
+function restoreAiPreDockOrDefaultRect(panel) {
+    if (!panel) return;
+    const box = panel._preDockBox || panel._savedFloatingBox;
+    if (box) {
+        panel.style.position = 'fixed';
+        panel.style.left = box.left;
+        panel.style.top = box.top;
+        panel.style.width = box.width;
+        panel.style.height = box.height;
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+        clampAiPanel(panel);
+    } else {
+        delete panel.dataset.positioned;
+        prepareAiPanelLayout(panel);
+    }
+}
+
+function syncHostAiDockState(panel) {
+    if (!panel) return;
+    const isOpen = panel.classList.contains('open') && panel.style.display !== 'none' && aiPanelState !== 'closed' && aiPanelState !== 'closing';
+    const isLeft = isOpen && panel.classList.contains('docked-left');
+    const isRight = isOpen && panel.classList.contains('docked-right');
+    const dockW = panel._customDockWidth || 380;
+
+    document.documentElement.style.setProperty('--z-ai-dock-w', `${dockW}px`);
+    document.body.style.setProperty('--z-ai-dock-w', `${dockW}px`);
+    panel.style.setProperty('--z-ai-dock-w', `${dockW}px`);
+
+    document.body.classList.toggle('ai-docked-left', isLeft);
+    document.body.classList.toggle('ai-docked-right', isRight);
+    document.documentElement.classList.toggle('ai-docked-left', isLeft);
+    document.documentElement.classList.toggle('ai-docked-right', isRight);
+
+    // Ensure legacy panel-pin.js classes never pollute .app-shell or body
+    const appShell = document.querySelector('.app-shell');
+    if (appShell) {
+        appShell.classList.remove('has-docked-left', 'has-docked-right', 'pin-has-left', 'pin-has-right', 'pin-has-bottom');
+        appShell.style.removeProperty('--pin-inset-left');
+        appShell.style.removeProperty('--pin-inset-right');
+        appShell.style.removeProperty('--pin-inset-bottom');
+    }
+
+    const isDocked = isLeft || isRight;
+    panel.querySelectorAll('.panel-pin-toggle').forEach((b) => {
+        b.classList.toggle('active', isDocked);
+        b.classList.toggle('on', isDocked);
+        b.setAttribute('aria-pressed', String(isDocked));
+    });
+}
+
+function toggleAiPanelDockState(panel, explicitSide) {
+    if (!panel) return;
+    const isDocked = panel.classList.contains('pinned') || panel.classList.contains('docked-left') || panel.classList.contains('docked-right');
+    const isFullscreen = panel.classList.contains('panel-fullscreen');
+    const Motion = sshKeyMotion.engine || window.Motion;
+
+    if (explicitSide === 'fullscreen' && isDocked) return;
+
+    if (!isDocked && !isFullscreen && explicitSide !== 'float') {
+        rememberAiPreDockRect(panel);
+    }
+    if (explicitSide === 'fullscreen' && !isFullscreen && !isDocked) {
+        rememberAiPreFullscreenRect(panel);
+    }
+
+    const applyMutation = () => {
+        if ((isDocked && !explicitSide) || explicitSide === 'float' || (explicitSide === 'fullscreen' && isFullscreen)) {
+            panel.classList.remove('pinned', 'docked-left', 'docked-right', 'panel-fullscreen', 'sidebar-open');
+            delete panel.dataset.aiDockSide;
+            delete panel.dataset.pinSide;
+            delete panel.dataset.pinMode;
+            syncHostAiDockState(panel);
+            if (explicitSide === 'fullscreen' && panel._preFullscreenBox) {
+                const b = panel._preFullscreenBox;
+                panel.style.position = 'fixed';
+                panel.style.left = b.left;
+                panel.style.top = b.top;
+                panel.style.width = b.width;
+                panel.style.height = b.height;
+                panel.style.right = 'auto';
+                panel.style.bottom = 'auto';
+            } else {
+                restoreAiPreDockOrDefaultRect(panel);
+            }
+            if (Motion?.panelResizeRing) Motion.panelResizeRing(panel, true);
+            else panel.classList.add('panel-focused');
+            updateAiPanelResponsiveState();
+        } else if (explicitSide === 'fullscreen') {
+            const navBottom = Math.max(56, Math.round(document.querySelector('.main-nav')?.getBoundingClientRect?.()?.bottom || 56));
+            const vw = window.innerWidth || 1280;
+            const vh = window.innerHeight || 800;
+            panel.classList.remove('pinned', 'docked-left', 'docked-right');
+            panel.classList.add('panel-fullscreen', 'open');
+            panel.style.display = 'flex';
+            panel.style.position = 'fixed';
+            panel.style.left = '12px';
+            panel.style.top = `${navBottom + 8}px`;
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+            panel.style.width = `${vw - 24}px`;
+            panel.style.height = `${vh - navBottom - 20}px`;
+            syncHostAiDockState(panel);
+            updateAiPanelResponsiveState();
+        } else {
+            const targetSide = (explicitSide === 'left' || explicitSide === 'right')
+                ? explicitSide
+                : (panel.dataset.preferredDockSide === 'left' ? 'left' : 'right');
+            panel.dataset.preferredDockSide = targetSide;
+            panel.dataset.aiDockSide = targetSide;
+            delete panel.dataset.pinSide;
+            delete panel.dataset.pinMode;
+            panel.classList.remove('docked-left', 'docked-right', 'panel-fullscreen', 'panel-focused');
+            panel.classList.add('pinned', targetSide === 'left' ? 'docked-left' : 'docked-right', 'open');
+            panel.style.display = 'flex';
+            if (Motion?.panelResizeRing) Motion.panelResizeRing(panel, false);
+            syncHostAiDockState(panel);
+            updateAiPanelResponsiveState();
+        }
+    };
+
+    const onSettled = () => {
+        updateAiPanelResponsiveState();
+        if (document.body.classList.contains('terminal-mode')) {
+            try { applySplitSlideState({ animate: false }); } catch {}
+        }
+    };
+
+    if (Motion?.panelDockMorph) {
+        void Motion.panelDockMorph(panel, applyMutation, {
+            preset: { response: 0.22, damping: 0.98 },
+            onDone: onSettled,
+        });
+    } else {
+        applyMutation();
+        onSettled();
+    }
+}
+
+window.__zephyrCloseDockedAiPanel = function closeDockedAiPanel(panel, cycle) {
+    const Motion = sshKeyMotion.engine || window.Motion;
+    const mutateClose = () => {
+        panel.classList.remove('open', 'pinned', 'docked-left', 'docked-right', 'panel-fullscreen', 'sidebar-open');
+        delete panel.dataset.aiDockSide;
+        delete panel.dataset.pinSide;
+        delete panel.dataset.pinMode;
+        syncHostAiDockState(panel);
+    };
+    const finishClose = () => {
+        if (cycle !== openAiAssistantPanel._cycle) return;
+        panel.style.display = 'none';
+        panel.style.visibility = 'hidden';
+        restoreAiPreDockOrDefaultRect(panel);
+        aiPanelState = 'closed';
+        stopAiPanelWatchdog();
+        if (document.body.classList.contains('terminal-mode')) {
+            try { applySplitSlideState({ animate: false }); } catch {}
+        }
+        scheduleWorkspaceSave('ai-panel-close');
+    };
+    if (Motion?.panelDockMorph) {
+        void Motion.panelDockMorph(panel, mutateClose, {
+            preset: { response: 0.20, damping: 1.0 },
+            onDone: finishClose,
+        });
+    } else {
+        mutateClose();
+        finishClose();
+    }
+};
+
+function openAiUnifiedMorePopover(panel, moreBtn) {
+    if (activeAiMorePopover && activeAiMoreAnchor === moreBtn) {
+        closeAiUnifiedMorePopover();
+        return;
+    }
+    closeAiUnifiedMorePopover({ instant: true });
+    document.querySelectorAll('.z-panel-more-popover').forEach((el) => el.remove());
+
+    const isDockedLeft = panel.classList.contains('docked-left');
+    const isDockedRight = panel.classList.contains('docked-right');
+    const isDocked = isDockedLeft || isDockedRight || panel.classList.contains('pinned');
+    const isFullscreen = panel.classList.contains('panel-fullscreen');
+    const isFloating = !isDocked && !isFullscreen;
+
+    const pop = document.createElement('div');
+    pop.className = 'z-panel-more-popover z-glass-thick';
+    pop.setAttribute('role', 'menu');
+    pop.innerHTML = `
+      ${!isDocked ? `<button type="button" class="z-more-item ${isFullscreen ? 'active' : ''}" data-more-action="fullscreen">
+        ${isFullscreen ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16"/></svg>' : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'}
+        <span>${isFullscreen ? t('还原窗口') : t('全屏')}</span>
+        ${isFullscreen ? '<span class="z-more-check">✓</span>' : ''}
+      </button>` : ''}
+      <button type="button" class="z-more-item ${isDockedLeft ? 'active' : ''}" data-more-action="left">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+        <span>${t('钉到左侧')}</span>
+        ${isDockedLeft ? '<span class="z-more-check">✓</span>' : ''}
+      </button>
+      <button type="button" class="z-more-item ${isDockedRight ? 'active' : ''}" data-more-action="right">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>
+        <span>${t('钉到右侧')}</span>
+        ${isDockedRight ? '<span class="z-more-check">✓</span>' : ''}
+      </button>
+      ${!isFloating ? `<button type="button" class="z-more-item" data-more-action="float">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="6" width="14" height="12" rx="2"/><path d="M9 10h6"/></svg>
+        <span>${t('自由浮窗')}</span>
+      </button>` : ''}
+    `;
+    document.body.appendChild(pop);
+    activeAiMorePopover = pop;
+    activeAiMoreAnchor = moreBtn;
+    moreBtn.classList.add('active');
+
+    const Motion = sshKeyMotion.engine || window.Motion;
+    if (Motion?.panelMorePopover) {
+        void Motion.panelMorePopover(pop, moreBtn, true);
+    }
+
+    pop.addEventListener('click', (ev) => {
+        const item = ev.target.closest('[data-more-action]');
+        if (!item) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const action = item.dataset.moreAction;
+        closeAiUnifiedMorePopover({ instant: true });
+        toggleAiPanelDockState(panel, action);
+    });
+}
+
+function bindAiUnifiedDragAndResize(panel) {
+    if (!panel || panel.dataset.aiUnifiedDragResizeBound === '1') return;
+    panel.dataset.aiUnifiedDragResizeBound = '1';
+
+    // 1. Unified Header Dragging on .ai-title-bar and .ai-sidebar-header (vetoed when docked or fullscreen)
+    const startHeaderDrag = (e) => {
+        if (window.innerWidth <= 760) return;
+        if (e.button != null && e.button !== 0) return;
+        if (panel.classList.contains('pinned')
+            || panel.classList.contains('docked-left')
+            || panel.classList.contains('docked-right')
+            || panel.classList.contains('panel-fullscreen')
+            || panel.classList.contains('z-panel-morphing')) {
+            return;
+        }
+        if (e.target.closest('button, a, input, textarea, select, [role="button"], .panel-head-controls, .ai-model-pill')) {
+            return;
+        }
+        bringAiPanelToFront();
+        closeAiUnifiedMorePopover({ instant: true });
+        closeAiPickerPopover({ instant: true });
+        if (window.Motion?.panelResizeRing) window.Motion.panelResizeRing(panel, true);
+        else panel.classList.add('panel-focused');
+
+        const rect = panel.getBoundingClientRect();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startL = rect.left;
+        const startT = rect.top;
+        let dragging = false;
+        let raf = 0;
+        let curX = startX;
+        let curY = startY;
+
+        const paint = () => {
+            raf = 0;
+            const navBottom = Math.max(8, Math.round(document.querySelector('.main-nav')?.getBoundingClientRect?.()?.bottom || 56));
+            const vw = window.innerWidth || 1280;
+            const vh = window.innerHeight || 800;
+            const minVis = aiPanelMinVisiblePx(panel);
+            const nextL = Math.round(Math.min(Math.max(startL + (curX - startX), -rect.width + minVis), vw - minVis));
+            const nextT = Math.round(Math.min(Math.max(startT + (curY - startY), navBottom + 4), vh - minVis));
+            panel.style.left = `${nextL}px`;
+            panel.style.top = `${nextT}px`;
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+            panel.style.transform = '';
+        };
+
+        const onMove = (ev) => {
+            curX = ev.clientX;
+            curY = ev.clientY;
+            if (!dragging && Math.hypot(curX - startX, curY - startY) > 3) {
+                dragging = true;
+                panel.classList.add('dragging');
+                panel._suppressHeaderClick = true;
+            }
+            if (!dragging) return;
+            ev.preventDefault();
+            if (!raf) raf = requestAnimationFrame(paint);
+        };
+
+        const onUp = () => {
+            if (raf) cancelAnimationFrame(raf);
+            if (dragging) {
+                paint();
+                const r = panel.getBoundingClientRect();
+                panel._savedFloatingBox = {
+                    left: `${Math.round(r.left)}px`,
+                    top: `${Math.round(r.top)}px`,
+                    width: `${Math.round(r.width)}px`,
+                    height: `${Math.round(r.height)}px`,
+                };
+            }
+            panel.classList.remove('dragging');
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+        };
+
+        window.addEventListener('pointermove', onMove, { passive: false });
+        window.addEventListener('pointerup', onUp, { once: true });
+        window.addEventListener('pointercancel', onUp, { once: true });
+    };
+
+    panel.querySelector('.ai-title-bar')?.addEventListener('pointerdown', startHeaderDrag);
+    panel.querySelector('.ai-sidebar-header')?.addEventListener('pointerdown', startHeaderDrag);
+
+    // 2. Outer-Ring Corner Resize Handles (.panel-resize-handle.left & .right)
+    let leftH = panel.querySelector(':scope > .panel-resize-handle.left');
+    let rightH = panel.querySelector(':scope > .panel-resize-handle.right');
+    if (!leftH) {
+        leftH = document.createElement('div');
+        leftH.className = 'panel-resize-handle left';
+        leftH.dataset.resizeEdge = 'left';
+        panel.appendChild(leftH);
+    }
+    if (!rightH) {
+        rightH = document.createElement('div');
+        rightH.className = 'panel-resize-handle right';
+        rightH.dataset.resizeEdge = 'right';
+        panel.appendChild(rightH);
+    }
+
+    // Clone handles to replace legacy 540x460 resize listeners
+    [leftH, rightH].forEach((origHandle) => {
+        const handle = origHandle.cloneNode(true);
+        origHandle.replaceWith(handle);
+        const edge = handle.dataset.resizeEdge || (handle.classList.contains('left') ? 'left' : 'right');
+        handle.addEventListener('pointerdown', (e) => {
+            if (window.innerWidth <= 760) return;
+            if (panel.classList.contains('pinned') || panel.classList.contains('docked-left') || panel.classList.contains('docked-right')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            handle.setPointerCapture?.(e.pointerId);
+            bringAiPanelToFront();
+            panel.classList.remove('panel-fullscreen');
+            panel.classList.add('resizing');
+            const rect = panel.getBoundingClientRect();
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startW = rect.width;
+            const startH = rect.height;
+            const startL = rect.left;
+            const startT = rect.top;
+            const minW = 380;
+            const minH = 360;
+            const vw = window.innerWidth || 1280;
+            const vh = window.innerHeight || 800;
+
+            const onMove = (ev) => {
+                ev.preventDefault();
+                const dx = ev.clientX - startX;
+                const dy = ev.clientY - startY;
+                let nextW = startW + dx;
+                let nextL = startL;
+                if (edge === 'left') {
+                    nextW = startW - dx;
+                    nextL = startL + dx;
+                    if (nextW < minW) {
+                        nextL -= (minW - nextW);
+                        nextW = minW;
+                    }
+                    if (nextL < 8) {
+                        nextW += (nextL - 8);
+                        nextL = 8;
+                    }
+                    panel.style.left = `${Math.round(nextL)}px`;
+                }
+                const maxW = edge === 'left' ? (startL + startW - 8) : (vw - nextL - 8);
+                const maxH = vh - startT - 8;
+                panel.style.width = `${Math.round(Math.min(Math.max(minW, nextW), Math.max(minW, maxW)))}px`;
+                panel.style.height = `${Math.round(Math.min(Math.max(minH, startH + dy), Math.max(minH, maxH)))}px`;
+                updateAiPanelResponsiveState();
+            };
+            const onUp = () => {
+                panel.classList.remove('resizing');
+                const r = panel.getBoundingClientRect();
+                panel._savedFloatingBox = {
+                    left: `${Math.round(r.left)}px`,
+                    top: `${Math.round(r.top)}px`,
+                    width: `${Math.round(r.width)}px`,
+                    height: `${Math.round(r.height)}px`,
+                };
+                updateAiPanelResponsiveState();
+                window.removeEventListener('pointermove', onMove);
+                window.removeEventListener('pointerup', onUp);
+                window.removeEventListener('pointercancel', onUp);
+            };
+            window.addEventListener('pointermove', onMove, { passive: false });
+            window.addEventListener('pointerup', onUp, { once: true });
+            window.addEventListener('pointercancel', onUp, { once: true });
+        });
+    });
+
+    // 3. Inner-Edge Dock Width Resizer (.ai-dock-edge-resizer) when docked left or right
+    let dockResizer = panel.querySelector(':scope > .ai-dock-edge-resizer');
+    if (!dockResizer) {
+        dockResizer = document.createElement('div');
+        dockResizer.className = 'ai-dock-edge-resizer';
+        dockResizer.title = t('拖动调整侧栏宽度');
+        panel.appendChild(dockResizer);
+    }
+    dockResizer.addEventListener('pointerdown', (e) => {
+        const isLeft = panel.classList.contains('docked-left');
+        const isRight = panel.classList.contains('docked-right');
+        if (!isLeft && !isRight) return;
+        e.preventDefault();
+        e.stopPropagation();
+        dockResizer.setPointerCapture?.(e.pointerId);
+        panel.classList.add('resizing');
+        const startX = e.clientX;
+        const startW = panel.getBoundingClientRect().width || panel._customDockWidth || 380;
+        const maxW = Math.min(620, Math.round((window.innerWidth || 1280) * 0.46));
+        const minW = 320;
+
+        const onMove = (ev) => {
+            ev.preventDefault();
+            const delta = isLeft ? (ev.clientX - startX) : (startX - ev.clientX);
+            const nextW = Math.round(Math.min(maxW, Math.max(minW, startW + delta)));
+            panel._customDockWidth = nextW;
+            syncHostAiDockState(panel);
+            updateAiPanelResponsiveState();
+            if (document.body.classList.contains('terminal-mode')) {
+                try { applySplitSlideState({ animate: false }); } catch {}
+            }
+        };
+        const onUp = () => {
+            panel.classList.remove('resizing');
+            updateAiPanelResponsiveState();
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+        };
+        window.addEventListener('pointermove', onMove, { passive: false });
+        window.addEventListener('pointerup', onUp, { once: true });
+        window.addEventListener('pointercancel', onUp, { once: true });
+    });
+}
+
 function upgradeHostAiAgentPanelHeader() {
     const aiPanel = document.getElementById('aiAgentPanel');
     if (!aiPanel || aiPanel.dataset.unifiedAiUpgraded === '1') return;
-    const chatHeader = aiPanel.querySelector('.ai-chat-header');
-    const actions = chatHeader?.querySelector('.ai-header-actions');
-    if (!chatHeader || !actions) return;
+    const titleBar = aiPanel.querySelector('.ai-title-bar');
+    const rightGroup = titleBar?.querySelector('.ai-titlebar-right');
+    if (!titleBar || !rightGroup) return;
+
     aiPanel.dataset.unifiedAiUpgraded = '1';
-    chatHeader.classList.add('panel-titlebar');
-    const closeBtn = actions.querySelector('#aiCloseBtn');
+    aiPanel.classList.add('z-unified-panel');
+    titleBar.classList.add('panel-titlebar');
+    rightGroup.classList.add('panel-head-controls');
+
+    // Neutralize legacy panel-pin.js observer & remove any stray pin buttons outside .ai-titlebar-right
+    if (aiPanel._pinObserver) {
+        try { aiPanel._pinObserver.disconnect(); } catch {}
+        delete aiPanel._pinObserver;
+    }
+    aiPanel.querySelectorAll('.panel-pin-btn').forEach((b) => b.remove());
+    titleBar.querySelectorAll(':scope > .panel-pin-toggle').forEach((b) => b.remove());
+
+    // Upgrade left sidebar toggle button (#aiNavToggleBtn) to crisp sidebar icon
+    const navToggleBtn = titleBar.querySelector('#aiNavToggleBtn');
+    if (navToggleBtn) {
+        navToggleBtn.classList.add('tool-btn');
+        navToggleBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>';
+    }
+
+    // Upgrade right-side action buttons in .ai-titlebar-right.panel-head-controls
+    const cellBtn = rightGroup.querySelector('#aiCellHeaderBtn');
+    if (cellBtn) {
+        cellBtn.classList.add('tool-btn');
+        cellBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
+    }
+
+    const newChatBtn = rightGroup.querySelector('#aiNewChatHeaderBtn');
+    if (newChatBtn) {
+        newChatBtn.classList.add('tool-btn');
+        newChatBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+    }
+
+    let sep = rightGroup.querySelector('.ai-head-sep');
+    if (!sep) {
+        sep = document.createElement('span');
+        sep.className = 'ai-head-sep';
+        sep.setAttribute('aria-hidden', 'true');
+        rightGroup.appendChild(sep);
+    }
+
+    let pinBtn = rightGroup.querySelector('#aiPinPanelBtn, .panel-pin-toggle');
+    if (!pinBtn) {
+        pinBtn = document.createElement('button');
+        pinBtn.type = 'button';
+        pinBtn.id = 'aiPinPanelBtn';
+        pinBtn.className = 'tool-btn panel-pin-toggle';
+        pinBtn.dataset.cleanCloned = '1';
+        pinBtn.dataset.dockBound = '1';
+        pinBtn.dataset.pinToggleBound = '1';
+        pinBtn.title = t('停靠/悬浮切换');
+        pinBtn.setAttribute('aria-label', t('停靠/悬浮切换'));
+        pinBtn.setAttribute('aria-pressed', 'false');
+        pinBtn.innerHTML = '<svg class="z-pin-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"/></svg>';
+        pinBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+            closeAiUnifiedMorePopover({ instant: true });
+            toggleAiPanelDockState(aiPanel);
+        }, true);
+    }
+
+    let moreBtn = rightGroup.querySelector('#aiMorePanelBtn, .panel-more-btn');
+    if (!moreBtn) {
+        moreBtn = document.createElement('button');
+        moreBtn.type = 'button';
+        moreBtn.id = 'aiMorePanelBtn';
+        moreBtn.className = 'tool-btn panel-more-btn';
+        moreBtn.title = t('窗口布局');
+        moreBtn.setAttribute('aria-label', t('窗口布局'));
+        moreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>';
+        moreBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            openAiUnifiedMorePopover(aiPanel, moreBtn);
+        });
+    }
+
+    const closeBtn = rightGroup.querySelector('#aiClosePanelBtn');
     if (closeBtn) {
-        closeBtn.classList.add('panel-close-btn');
-        closeBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+        closeBtn.classList.add('tool-btn', 'panel-close-btn');
+        closeBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    }
+
+    // Order right-hand controls cleanly: [Cell] [NewChat] | [Pin] [More] [Close]
+    if (cellBtn) rightGroup.appendChild(cellBtn);
+    if (newChatBtn) rightGroup.appendChild(newChatBtn);
+    rightGroup.appendChild(sep);
+    rightGroup.appendChild(pinBtn);
+    rightGroup.appendChild(moreBtn);
+    if (closeBtn) rightGroup.appendChild(closeBtn);
+
+    bindAiUnifiedDragAndResize(aiPanel);
+
+    if (!document.documentElement.dataset.aiMorePopoverOutsideBound) {
+        document.documentElement.dataset.aiMorePopoverOutsideBound = '1';
+        document.addEventListener('pointerdown', (ev) => {
+            if (activeAiMorePopover && !ev.target.closest('.z-panel-more-popover') && !ev.target.closest('#aiMorePanelBtn')) {
+                closeAiUnifiedMorePopover();
+            }
+        }, true);
     }
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', upgradeHostAiAgentPanelHeader);
