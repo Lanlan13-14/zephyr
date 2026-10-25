@@ -8,14 +8,14 @@
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
     <link rel="modulepreload" href="i18n/runtime.js?v=20261018-ui1">
-    <link rel="modulepreload" href="app.js?v=20261019-ui126">
+    <link rel="modulepreload" href="app.js?v=20261019-ui127">
     <link rel="modulepreload" href="floating-panel.js?v=20261018-ui1">
-    <link rel="stylesheet" href="style.css?v=20261019-ui126">
-    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261019-ui126">
-    <script src="liquid-glass-renderer.js?v=20260916-agent-devices1" defer></script>
-    <script src="liquid-glass-tab-layout.js?v=20260916-agent-devices1" defer></script>
-    <script src="liquid-glass-nav.js?v=20260916-agent-devices1" defer></script>
-    <script src="liquid-glass-slider.js?v=20261019-ui126" defer></script>
+    <link rel="stylesheet" href="style.css?v=20261019-ui127">
+    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261019-ui127">
+    <script src="liquid-glass-renderer.js?v=20261019-ui127" defer></script>
+    <script src="liquid-glass-tab-layout.js?v=20261019-ui127" defer></script>
+    <script src="liquid-glass-nav.js?v=20261019-ui127" defer></script>
+    <script src="liquid-glass-slider.js?v=20261019-ui127" defer></script>
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
 </head>
 <body class="app-body">
@@ -479,8 +479,12 @@
                                     <p class="field-hint" data-i18n="自定义 CSS/JS 只在选择“自定义”配色时生效；JS 会在登录页、后台和远程窗口前端执行，请只保存你信任的代码。">自定义 CSS/JS 只在选择“自定义”配色时生效；JS 会在登录页、后台和远程窗口前端执行，请只保存你信任的代码。</p>
                                 </div>
                                 <h3 data-i18n="全局壁纸">全局壁纸</h3>
+                                <label class="settings-switch-option" for="defaultGlobalWallpaperToggle" id="defaultGlobalWallpaperToggleRow">
+                                    <span class="settings-switch-copy"><strong data-i18n="启用默认壁纸">启用默认壁纸</strong><small data-i18n="开启后自动加载与当前配色方案及深浅模式匹配的内置高清壁纸，并自动调优舒适的壁纸强度与模糊度（也可随时在下方手动微调）。">开启后自动加载与当前配色方案及深浅模式匹配的内置高清壁纸，并自动调优舒适的壁纸强度与模糊度（也可随时在下方手动微调）。</small></span>
+                                    <span class="connection-share-switch"><input type="checkbox" id="defaultGlobalWallpaperToggle"><span aria-hidden="true"></span></span>
+                                </label>
                                 <div class="form-row wallpaper-source-fit-row">
-                                    <div class="form-group"><label data-i18n="全局背景来源">全局背景来源</label><select id="globalBgSource"><option value="none" data-i18n="不使用自定义背景">不使用自定义背景</option><option value="upload" data-i18n="上传图片">上传图片</option><option value="url" data-i18n="图片 URL">图片 URL</option></select></div>
+                                    <div class="form-group"><label data-i18n="全局背景来源">全局背景来源</label><select id="globalBgSource"><option value="none" data-i18n="不使用自定义背景">不使用自定义背景</option><option value="default" data-i18n="使用内置默认壁纸">使用内置默认壁纸</option><option value="upload" data-i18n="上传图片">上传图片</option><option value="url" data-i18n="图片 URL">图片 URL</option></select></div>
                                     <div class="form-group"><label data-i18n="背景适配">背景适配</label><select id="globalBgFit"><option value="cover" data-i18n="覆盖">覆盖</option><option value="contain" data-i18n="完整显示">完整显示</option><option value="auto" data-i18n="原始尺寸">原始尺寸</option></select></div>
                                 </div>
                                 <input id="globalBgFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/svg+xml">
@@ -1716,7 +1720,7 @@
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
 <script src="preview-mock.js?v=20261004-dashboard-fit1" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20261019-ui126" type="module"></script>
+<script src="app.js?v=20261019-ui127" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

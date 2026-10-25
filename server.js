@@ -3840,9 +3840,9 @@ function normalizeSettingsInput(body) {
             return [key, /^#[0-9a-f]{6}$/i.test(value) ? value : fallback];
         }));
         const globalBg = body.appearance.globalBackground || currentAppearance.globalBackground || {};
-        const globalBgType = ['none', 'upload', 'url'].includes(globalBg.type) ? globalBg.type : 'none';
+        const globalBgType = ['none', 'default', 'upload', 'url'].includes(globalBg.type) ? globalBg.type : 'none';
         const globalBgUrlRaw = globalBgType === 'none' ? '' : String(globalBg.url || '').trim();
-        const allowedGlobalBgUrl = /^https?:\/\//i.test(globalBgUrlRaw) || /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml|avif);base64,/i.test(globalBgUrlRaw);
+        const allowedGlobalBgUrl = globalBgType === 'default' || /^\/wallpapers\/zephyr-(frost|lava|asagi|cyber)-(light|dark)\.png$/i.test(globalBgUrlRaw) || /^https?:\/\//i.test(globalBgUrlRaw) || /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml|avif);base64,/i.test(globalBgUrlRaw);
         const globalBackground = {
             type: allowedGlobalBgUrl ? globalBgType : 'none',
             url: allowedGlobalBgUrl ? globalBgUrlRaw.slice(0, 20 * 1024 * 1024) : '',

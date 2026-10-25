@@ -282,7 +282,8 @@ uniform float uContainerCornerRadius; // canvas px (dpr-scaled)
 uniform vec4  uIndicatorAccent;      // (r, g, b, a) \u2014 accentColor + unused
 uniform float uInsetPx;              // indicator backdrop inset in device px (4dp * dpr)
 uniform float uIndicatorPressProgress; // 0..1 press progress (for 2nd-layer scale)
-uniform float uIndicatorPanelOffset; // panel offset in device px (2nd-layer x translation)
+uniform float uIndicatorPanelOffset; // panel offset in device px (2nd-layer translation)
+uniform float uIndicatorAxisY;       // 0 = horizontal (X), 1 = vertical (Y)
 uniform float uDpr;                 // device pixel ratio (for dp\u2192px conversion)
 uniform vec2  uContainerCenter;      // container center (scale origin) in canvas px (dpr-scaled)
 uniform float uContainerScale;       // container layerBlock scale (1 + 16dp/width * pressProgress)
@@ -781,7 +782,8 @@ vec4 sampleIndicatorBackdrop(vec2 canvasPx, float radius) {
     vec2 capsuleHalf = max(uContainerRect.zw, vec2(0.0));
     float cr = max(uContainerCornerRadius, 0.0);
     // Center = rectCenter + panelOffset (NO container scale).
-    vec2 scaledCenter = uContainerRect.xy + vec2(uIndicatorPanelOffset, 0.0);
+    vec2 indPanelShift = uIndicatorAxisY > 0.5 ? vec2(0.0, uIndicatorPanelOffset) : vec2(uIndicatorPanelOffset, 0.0);
+    vec2 scaledCenter = uContainerRect.xy + indPanelShift;
     vec2 capsuleLocal = canvasPx - scaledCenter;
     vec2 cq = abs(capsuleLocal) - capsuleHalf + vec2(cr);
     float capsuleSd = length(max(cq, vec2(0.0))) + min(max(cq.x, cq.y), 0.0) - cr;
@@ -832,7 +834,7 @@ vec4 sampleIndicatorBackdrop(vec2 canvasPx, float radius) {
     //    This is a snapshot taken after the container glass is rendered but
     //    before tab-content is drawn \u2014 so it has no white/black text to bleed
     //    through. The blue tab text is drawn on top via fgTexture (step 4).
-    vec2 sceneUv2 = sceneUv(canvasPx - vec2(uIndicatorPanelOffset, 0.0));
+    vec2 sceneUv2 = sceneUv(canvasPx - indPanelShift);
     vec4 scene = texture2D(uTabsGlassLayer, sceneUv2);
 
     // 4. Draw blue \u6807\u7B7E\u5185\u5BB9 (tab content: icons/labels) on top of the glass layer.
@@ -843,18 +845,16 @@ vec4 sampleIndicatorBackdrop(vec2 canvasPx, float radius) {
     //    LocalLiquidBottomTabScale = lerp(1, 1.2, pressProgress) + panelOffset
     //    (NOT the container scale \u2014 the hidden Row is a sibling of the
     //    container, not a child, so the container layerBlock doesn't apply).
-    float contentScale = 1.0 + 0.2 * uIndicatorPressProgress;
+    float contentScale = (uIndicatorAxisY > 0.5) ? (1.0 + 0.07 * uIndicatorPressProgress) : (1.0 + 0.2 * uIndicatorPressProgress);
     float tabMask = 0.0;
     for (int i = 0; i < 8; i++) {
         if (float(i) >= uTabContentCount) break;
         vec4 r = uTabContentRects[i];
         if (r.z > 0.5 && r.w > 0.5) {
-            // Tab content scales around its OWN center (not container center)
-            // by contentScale, then shifts by panelOffset.
-            vec2 tabCenter = r.xy + vec2(uIndicatorPanelOffset, 0.0);
-            vec2 scaledHalf = r.zw * contentScale;
-            vec2 localPx = canvasPx - (tabCenter - scaledHalf);
-            vec2 uv = localPx / (scaledHalf * 2.0);
+            vec2 tabCenter = r.xy + indPanelShift;
+            vec2 pivot = (uIndicatorAxisY > 0.5) ? vec2(tabCenter.x - r.z + 54.0 * uDpr, tabCenter.y) : tabCenter;
+            vec2 localPx = (canvasPx - pivot) / contentScale + (pivot - (tabCenter - r.zw));
+            vec2 uv = localPx / (r.zw * 2.0);
             if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
                 float a = 0.0;
                 if (i == 0) a = texture2D(uTabContentTex0, uv).a;
@@ -3967,6 +3967,43 @@ void main() {
       this.markAllDirty();
       this.requestRender();
     },
+    loadWallpaperFromCanvas(sourceCanvas, cacheKey) {
+      if (!this._wpTexPool) this._wpTexPool = new Map();
+      if (cacheKey && this._wpTexPool.has(cacheKey)) {
+        const cached = this._wpTexPool.get(cacheKey);
+        this.wallpaperTexture = cached.tex;
+        this.wallpaperSize = cached.size;
+        this.wallpaperReady = true;
+        this.clearBackdropBlurCache();
+        this.wallpaperVersion++;
+        this.markAllDirty();
+        this.requestRender();
+        return;
+      }
+      if (!sourceCanvas) return;
+      const gl = this.gl;
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const size = [sourceCanvas.width || 1, sourceCanvas.height || 1];
+      if (cacheKey) {
+        this._wpTexPool.set(cacheKey, { tex, size });
+      } else if (this.wallpaperTexture) {
+        gl.deleteTexture(this.wallpaperTexture);
+      }
+      this.wallpaperTexture = tex;
+      this.wallpaperSize = size;
+      this.wallpaperReady = true;
+      this.clearBackdropBlurCache();
+      this.wallpaperVersion++;
+      this.markAllDirty();
+      this.requestRender();
+    },
     /** Load the SDF texture (clock_sdf) for LockScreen glass. */
     async loadSdfTexture(src) {
       const img = new Image();
@@ -4105,7 +4142,7 @@ void main() {
      */
     resize(cssW, cssH) {
       if (this.dpr <= 0) {
-        this.dpr = Math.min(window.devicePixelRatio || 1, 3);
+        this.dpr = Math.max(2, Math.min(window.devicePixelRatio || 1, 3));
       }
       const w = Math.round(cssW * this.dpr);
       const h = Math.round(cssH * this.dpr);
@@ -5164,6 +5201,15 @@ void main() {
       const dpr = this.dpr;
       const w = Math.max(1, Math.round(cfg.rect.w * dpr));
       const h = Math.max(1, Math.round(cfg.rect.h * dpr));
+      const poolKey = `${cfg.id}|${w}x${h}|${cfg.text.content}|${(cfg.text.color || []).join(",")}`;
+      if (!this._fgTexPool) this._fgTexPool = new Map();
+      const pooledTex = this._fgTexPool.get(poolKey);
+      if (pooledTex) {
+        this.fgTextures.set(cfg.id, pooledTex);
+        this.fgDirtyIds.delete(cfg.id);
+        return;
+      }
+      this._currentFgPoolKey = poolKey;
       if (this.fgCanvas.width !== w) this.fgCanvas.width = w;
       if (this.fgCanvas.height !== h) this.fgCanvas.height = h;
       const ctx = this.fgCtx;
@@ -5199,6 +5245,78 @@ void main() {
       )}, ${Math.round(t.color[2] * 255)}, ${t.color[3]})`;
       ctx.fillStyle = colorStr;
       let textYOffset = 0;
+      if (t.icon && (t.icon.layout === "inline-center" || t.icon.layout === "inline-left")) {
+        const iconDrawSize = t.icon.size || 15;
+        const gap = t.content ? (t.icon.gap != null ? t.icon.gap : 7) : 0;
+        const textW = t.content ? ctx.measureText(t.content).width : 0;
+        const totalW = iconDrawSize + gap + textW;
+        const startX = t.icon.layout === "inline-left" ? pad : Math.max(4, (cssW - totalW) / 2);
+        const iconY = cssH / 2 - iconDrawSize / 2;
+        const ic = t.icon.color || t.color;
+        const icStr = `rgba(${Math.round(ic[0] * 255)}, ${Math.round(ic[1] * 255)}, ${Math.round(ic[2] * 255)}, ${ic[3]})`;
+        ctx.save();
+        ctx.translate(startX, iconY);
+        const vp = (_c = t.icon.viewport) != null ? _c : 24;
+        ctx.scale(iconDrawSize / vp, iconDrawSize / vp);
+        ctx.strokeStyle = icStr;
+        ctx.fillStyle = icStr;
+        ctx.lineWidth = t.icon.strokeWidth || 2;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        if (Array.isArray(t.icon.commands)) {
+          for (const cmd of t.icon.commands) {
+            if (cmd.op === "path" && cmd.d) {
+              const p = new Path2D(cmd.d);
+              if (cmd.fill) ctx.fill(p);
+              if (cmd.stroke !== false) ctx.stroke(p);
+            } else if (cmd.op === "rect") {
+              ctx.beginPath();
+              if (typeof ctx.roundRect === "function" && cmd.rx) {
+                ctx.roundRect(cmd.x, cmd.y, cmd.w, cmd.h, cmd.rx);
+              } else {
+                ctx.rect(cmd.x, cmd.y, cmd.w, cmd.h);
+              }
+              if (cmd.fill) ctx.fill();
+              if (cmd.stroke !== false) ctx.stroke();
+            } else if (cmd.op === "circle") {
+              ctx.beginPath();
+              ctx.arc(cmd.cx, cmd.cy, cmd.r, 0, Math.PI * 2);
+              if (cmd.fill) ctx.fill();
+              if (cmd.stroke !== false) ctx.stroke();
+            } else if (cmd.op === "ellipse") {
+              ctx.beginPath();
+              ctx.ellipse(cmd.cx, cmd.cy, cmd.rx, cmd.ry, 0, 0, Math.PI * 2);
+              if (cmd.fill) ctx.fill();
+              if (cmd.stroke !== false) ctx.stroke();
+            } else if (cmd.op === "line") {
+              ctx.beginPath();
+              ctx.moveTo(cmd.x1, cmd.y1);
+              ctx.lineTo(cmd.x2, cmd.y2);
+              ctx.stroke();
+            } else if (cmd.op === "poly" && Array.isArray(cmd.pts) && cmd.pts.length >= 2) {
+              ctx.beginPath();
+              ctx.moveTo(cmd.pts[0][0], cmd.pts[0][1]);
+              for (let k = 1; k < cmd.pts.length; k++) ctx.lineTo(cmd.pts[k][0], cmd.pts[k][1]);
+              if (cmd.close) ctx.closePath();
+              if (cmd.fill) ctx.fill();
+              if (cmd.stroke !== false) ctx.stroke();
+            }
+          }
+        } else if (t.icon.path) {
+          const p = new Path2D(t.icon.path);
+          if (t.icon.stroke) ctx.stroke(p);
+          else ctx.fill(p);
+        }
+        ctx.restore();
+        if (t.content) {
+          ctx.fillStyle = colorStr;
+          ctx.textAlign = "left";
+          ctx.fillText(t.content, startX + iconDrawSize + gap, cssH / 2 + 0.5);
+        }
+        this.uploadForegroundTexture(cfg.id);
+        this.fgDirtyIds.delete(cfg.id);
+        return;
+      }
       if (t.icon) {
         const iconDrawSize = t.icon.size;
         const iconLayoutSize = (_b = t.icon.layoutSize) != null ? _b : iconDrawSize;
@@ -5277,10 +5395,16 @@ void main() {
     },
     uploadForegroundTexture(id) {
       const gl = this.gl;
-      let tex = this.fgTextures.get(id);
+      const poolKey = this._currentFgPoolKey || null;
+      this._currentFgPoolKey = null;
+      let tex = poolKey ? null : this.fgTextures.get(id);
       if (!tex) {
         tex = gl.createTexture();
         this.fgTextures.set(id, tex);
+        if (poolKey) {
+          if (!this._fgTexPool) this._fgTexPool = new Map();
+          this._fgTexPool.set(poolKey, tex);
+        }
       }
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
@@ -5422,18 +5546,22 @@ void main() {
     if (el.isBottomTabContainer) {
       const tg = this.toggleStates.get(el.isBottomTabContainer.groupId);
       if (tg) {
+        const isVert = el.isBottomTabContainer.axis === "y";
+        const mainDim = Math.max(1, isVert ? el.rect.h : el.rect.w);
         if (!el.freezePressScale) {
-          const containerScale = 1 + 16 * DP / el.rect.w * tg.pressProgress;
+          const containerScale = 1 + 16 * DP / mainDim * tg.pressProgress;
           scaleX *= containerScale;
           scaleY *= containerScale;
         }
-        translationX += tg.panelOffset;
+        if (isVert) translationY += tg.panelOffset;
+        else translationX += tg.panelOffset;
         togglePressProgress = tg.pressProgress;
       }
     }
     if (el.isBottomTabContent) {
       const tg = this.toggleStates.get(el.isBottomTabContent.groupId);
       if (tg) {
+        const isVert = el.isBottomTabContent.axis === "y";
         if (!el.freezePressScale) {
           const containerW = (_c = el.isBottomTabContent.containerWidth) != null ? _c : el.rect.w;
           const containerScale = 1 + 16 * DP / containerW * tg.pressProgress;
@@ -5441,22 +5569,48 @@ void main() {
           scaleX *= containerScale * contentScale;
           scaleY *= containerScale * contentScale;
         }
-        translationX += tg.panelOffset;
+        if (isVert) translationY += tg.panelOffset;
+        else translationX += tg.panelOffset;
       }
     }
     if (el.isBottomTabIndicator) {
       const tg = this.toggleStates.get(el.isBottomTabIndicator.groupId);
       if (tg) {
-        toggleXOffset += tg.fraction * el.isBottomTabIndicator.dragWidth;
-        toggleXOffset += tg.panelOffset;
+        const isVert = el.isBottomTabIndicator.axis === "y";
+        const offsets = el.isBottomTabIndicator.tabOffsets;
+        let slideDelta = 0;
+        if (Array.isArray(offsets) && offsets.length > 0) {
+          const f = Math.max(0, Math.min(offsets.length - 1, tg.fraction));
+          const i0 = Math.floor(f);
+          const i1 = Math.min(offsets.length - 1, i0 + 1);
+          const tFrac = f - i0;
+          slideDelta = offsets[i0] + (offsets[i1] - offsets[i0]) * tFrac;
+        } else {
+          const stepSpan = isVert && el.isBottomTabIndicator.dragHeight != null
+            ? el.isBottomTabIndicator.dragHeight
+            : el.isBottomTabIndicator.dragWidth;
+          slideDelta = tg.fraction * stepSpan;
+        }
+        if (isVert) {
+          translationY += slideDelta + tg.panelOffset;
+        } else {
+          toggleXOffset += slideDelta + tg.panelOffset;
+        }
         if (!el.freezePressScale) {
-          const indScaleX = tg.scaleX;
-          const indScaleY = tg.scaleY;
+          const sxf = el.isBottomTabIndicator.scaleXFactor != null ? el.isBottomTabIndicator.scaleXFactor : 1;
+          const syf = el.isBottomTabIndicator.scaleYFactor != null ? el.isBottomTabIndicator.scaleYFactor : 1;
+          const indScaleX = 1 + (tg.scaleX - 1) * sxf;
+          const indScaleY = 1 + (tg.scaleY - 1) * syf;
           const vel = tg.velocity / 10;
-          const velX = Math.max(-0.2, Math.min(0.2, vel * 0.75));
-          const velY = Math.max(-0.2, Math.min(0.2, vel * 0.25));
-          scaleX *= indScaleX / (1 - velX);
-          scaleY *= indScaleY * (1 - velY);
+          const velMain = Math.max(-0.2, Math.min(0.2, vel * 0.75));
+          const velCross = Math.max(-0.2, Math.min(0.2, vel * 0.25));
+          if (isVert) {
+            scaleX *= indScaleX * (1 - velCross * sxf);
+            scaleY *= indScaleY / (1 - velMain * syf);
+          } else {
+            scaleX *= indScaleX / (1 - velMain * sxf);
+            scaleY *= indScaleY * (1 - velCross * syf);
+          }
         }
         togglePressProgress = Math.max(togglePressProgress, tg.pressProgress);
       }
@@ -5532,7 +5686,7 @@ void main() {
       togglePressProgress,
       // For toggle knobs + bottom-tab indicators, the rim highlight alpha is
       // modulated by pressProgress (faithful to Highlight.Default.copy(alpha=progress)).
-      elHighlightAlpha: el.isToggleKnob || el.isBottomTabIndicator ? (el.highlight ? el.highlight.alpha : 0) * togglePressProgress : el.highlight ? el.highlight.alpha : 0,
+      elHighlightAlpha: el.isToggleKnob ? (el.highlight ? el.highlight.alpha : 0) * togglePressProgress : el.isBottomTabIndicator ? ((el.isBottomTabIndicator.restHighlightAlpha != null ? el.isBottomTabIndicator.restHighlightAlpha : 0.36) * (1 - togglePressProgress) + (el.highlight ? el.highlight.alpha : 0.5) * togglePressProgress) : el.highlight ? el.highlight.alpha : 0,
       // Faithful to ControlCenterContent.kt: alpha = EaseIn.transform(safeProgress)
       // where safeProgress = safeEnterProgressAnimation.value (clamped 0..1).
       // EaseIn = CubicBezierEasing(0.42, 0, 1, 1). Use enterSafeProgress if
@@ -5703,7 +5857,7 @@ void main() {
       this.perfMonitor.incBlurPass();
       this.perfMonitor.incDrawCall(3);
       gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       this.bindFBO(outFbo);
       gl.viewport(0, 0, this.fboW, this.fboH);
       const passState = { ...state, independent: false };
@@ -5869,7 +6023,7 @@ void main() {
       this.perfMonitor.incDrawCall(2);
       const gl = this.gl;
       gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       this.bindFBO(outFbo);
       gl.viewport(0, 0, this.fboW, this.fboH);
       const passState = el.backdropFbo ? { ...state, el: { ...el, backdropFbo: false } } : state;
@@ -5922,7 +6076,7 @@ void main() {
     this.drawCopy(curTex);
     this.perfMonitor.incDrawCall();
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     const MARGIN_CSS = computeScissorMarginCss(el, Math.min(scaleX, scaleY), this.quickToggles);
     const scissorX = Math.max(0, Math.round((sx - MARGIN_CSS) * this.dpr));
     const scissorY = Math.max(0, Math.round((this.cssHeight - (sy + sh + MARGIN_CSS)) * this.dpr));
@@ -6177,7 +6331,7 @@ void main() {
     gl.enable(gl.SCISSOR_TEST);
     gl.scissor(shadowClip.x, shadowClip.y, shadowClip.w, shadowClip.h);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     this.renderGlassShadowPass(state);
     if (!cache.cacheHit) {
       this.dirtyRectsThisFrame.push({
@@ -6257,7 +6411,8 @@ void main() {
     if (!this.quickToggles.outerShadow) return;
     let shadowAlpha = el.outerShadow.alpha;
     if (el.isBottomTabIndicator) {
-      shadowAlpha *= state.togglePressProgress;
+      const restShadow = el.isBottomTabIndicator.restShadowAlpha != null ? el.isBottomTabIndicator.restShadowAlpha : 0.055;
+      shadowAlpha = restShadow * (1 - state.togglePressProgress) + shadowAlpha * state.togglePressProgress;
     }
     if (this.showShadowBbox) {
       const bbox = shadowBboxCss(el, sx, sy, sw, sh, state.layerScaleX, state.layerScaleY, this.quickToggles);
@@ -6277,7 +6432,7 @@ void main() {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
     gl.enableVertexAttribArray(this.aPosLocSh);
     gl.vertexAttribPointer(this.aPosLocSh, 2, gl.FLOAT, false, 0, 0);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.uniform2f(this.uSh["uCanvasSize"], this.canvas.width, this.canvas.height);
     gl.uniform2f(this.uSh["uElementOffset"], sx * this.dpr, sy * this.dpr);
     gl.uniform2f(this.uSh["uElementSize"], sw * this.dpr, sh * this.dpr);
@@ -6382,14 +6537,14 @@ void main() {
         this.perfMonitor.incDrawCall(2);
       }
       gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       const isolate = this.quickToggles.isolateBackdrop;
       if (isolate && this.bgOnlyFbo && this.bgOnlyTex) {
         this.bindFBO(this.bgOnlyFbo);
         this.gl.viewport(0, 0, this.fboW, this.fboH);
         this.drawCopy(this.fboATex);
         this.gl.enable(this.gl.BLEND);
-        this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+        this.gl.blendFuncSeparate(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA, this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA);
       }
       const scrollY = this.scrollY;
       const CULL_MARGIN = 120;
@@ -6461,7 +6616,7 @@ void main() {
           this.drawCopy(curTex);
           this.bindFBO(curFbo);
           this.gl.enable(this.gl.BLEND);
-          this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+          this.gl.blendFuncSeparate(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA, this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA);
         }
       }
       for (const el of this.buttonConfigs) {
@@ -6628,7 +6783,7 @@ void main() {
         gl.enable(gl.BLEND);
         gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         this.drawSolidFill(scrim[0], scrim[1], scrim[2], scrim[3]);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       }
       this.bindFBO(this.blurFboA);
       this.drawColorControls(this.dialogBackdropTex, brightness, contrast, saturation);
@@ -6840,8 +6995,9 @@ void main() {
           const pivotY = (_c = el.isBottomTabContent.containerCenterY) != null ? _c : el.rect.y + el.rect.h / 2;
           const tabCenterX = el.rect.x + el.rect.w / 2;
           const tabCenterY = el.rect.y + el.rect.h / 2;
-          const cx = pivotX + (tabCenterX - pivotX) * containerScale + tg.panelOffset;
-          const cy = pivotY + (tabCenterY - pivotY) * containerScale;
+          const isVert = el.isBottomTabContent.axis === "y";
+          const cx = pivotX + (tabCenterX - pivotX) * containerScale + (isVert ? 0 : tg.panelOffset);
+          const cy = pivotY + (tabCenterY - pivotY) * containerScale + (isVert ? tg.panelOffset : 0);
           const sw = el.rect.w * fgScaleX;
           const sh = el.rect.h * fgScaleY;
           drawRect = { x: cx - sw / 2, y: cy - sh / 2, w: sw, h: sh };
@@ -6866,9 +7022,9 @@ void main() {
         gl.enableVertexAttribArray(this.aPosLocTn);
         gl.vertexAttribPointer(this.aPosLocTn, 2, gl.FLOAT, false, 0, 0);
         if (pressTint) {
-          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         } else {
-          gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+          gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ZERO, gl.ONE);
         }
         gl.uniform2f(this.uTn["uCanvasSize"], this.canvas.width, this.canvas.height);
         gl.uniform2f(this.uTn["uOffset"], drawRect.x * this.dpr, drawRect.y * this.dpr);
@@ -6883,7 +7039,7 @@ void main() {
           gl.uniform4f(this.uTn["uColor"], 1, 1, 1, 0.1 * pText);
         }
         gl.drawArrays(gl.TRIANGLES, 0, 6);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       }
       const fgTex = this.fgTextures.get(el.id);
       if (fgTex) {
@@ -6915,7 +7071,7 @@ void main() {
           return easeIn(sp);
         })() : 1);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       }
       this.perfMonitor.incNonGlass();
       this.perfMonitor.incDrawCall();
@@ -7050,6 +7206,7 @@ void main() {
     if (!el.isBottomTabIndicator) {
       gl.uniform1f(renderer.uEl["uIndicatorPressProgress"], 0);
       gl.uniform1f(renderer.uEl["uIndicatorPanelOffset"], 0);
+      gl.uniform1f(renderer.uEl["uIndicatorAxisY"], 0);
       gl.uniform1f(renderer.uEl["uDpr"], renderer.dpr);
       gl.uniform2f(renderer.uEl["uContainerCenter"], 0, 0);
       gl.uniform1f(renderer.uEl["uContainerScale"], 1);
@@ -7059,10 +7216,13 @@ void main() {
       return;
     }
     const progress = togglePressProgress;
-    ctx.elRefractionHeight = el.refractionHeight * progress;
-    ctx.elRefractionAmount = el.refractionAmount * progress;
+    const restRefract = el.isBottomTabIndicator.restRefractionFactor != null ? el.isBottomTabIndicator.restRefractionFactor : 0.36;
+    const effRefract = restRefract + (1 - restRefract) * progress;
+    ctx.elRefractionHeight = el.refractionHeight * effRefract;
+    ctx.elRefractionAmount = el.refractionAmount * effRefract;
     ctx.elBlurRadius = 0;
-    ctx.elHighlightAlpha = ((_b = (_a = el.highlight) == null ? void 0 : _a.alpha) != null ? _b : 0) * progress;
+    const restRim = el.isBottomTabIndicator.restHighlightAlpha != null ? el.isBottomTabIndicator.restHighlightAlpha : 0.36;
+    ctx.elHighlightAlpha = restRim * (1 - progress) + ((_b = (_a = el.highlight) == null ? void 0 : _a.alpha) != null ? _b : 0.5) * progress;
     if (el.isBottomTabIndicator.accentColor && el.isBottomTabIndicator.containerRect) {
       const ac = el.isBottomTabIndicator.accentColor;
       const cr = el.isBottomTabIndicator.containerRect;
@@ -7074,12 +7234,14 @@ void main() {
       ctx.containerRectY = (cr.y + cr.h / 2) * renderer.dpr;
       ctx.containerHalfW = cr.w / 2 * renderer.dpr;
       ctx.containerHalfH = cr.h / 2 * renderer.dpr;
-      ctx.containerCornerRadius = cr.h / 2 * renderer.dpr;
+      const ccr = el.isBottomTabIndicator.containerCornerRadius != null ? el.isBottomTabIndicator.containerCornerRadius : Math.min(cr.w, cr.h) / 2;
+      ctx.containerCornerRadius = ccr * renderer.dpr;
       ctx.useIndicatorBackdrop = 1;
     }
     const tg = renderer.toggleStates.get(el.isBottomTabIndicator.groupId);
     gl.uniform1f(renderer.uEl["uIndicatorPressProgress"], tg ? tg.pressProgress : 0);
     gl.uniform1f(renderer.uEl["uIndicatorPanelOffset"], tg ? tg.panelOffset * renderer.dpr : 0);
+    gl.uniform1f(renderer.uEl["uIndicatorAxisY"], el.isBottomTabIndicator.axis === "y" ? 1 : 0);
     gl.uniform1f(renderer.uEl["uDpr"], renderer.dpr);
     const ccx = (_c = el.isBottomTabIndicator.containerCenterX) != null ? _c : 0;
     const ccy = (_d = el.isBottomTabIndicator.containerCenterY) != null ? _d : 0;
@@ -7089,16 +7251,20 @@ void main() {
     gl.uniform1f(renderer.uEl["uContainerScale"], cScale);
     const ids = (_f = el.isBottomTabIndicator.tabContentIds) != null ? _f : [];
     const rects = (_g = el.isBottomTabIndicator.tabContentRects) != null ? _g : [];
-    const n = Math.min(ids.length, rects.length, 8);
+    const totalTabs = Math.min(ids.length, rects.length);
+    const curFrac = tg ? tg.fraction : 0;
+    const startIdx = totalTabs > 8 ? Math.max(0, Math.min(totalTabs - 8, Math.round(curFrac) - 3)) : 0;
+    const n = Math.min(totalTabs - startIdx, 8);
     let boundCount = 0;
     for (let i = 0; i < 8; i++) {
       if (i < n) {
-        const tex = renderer.fgTextures.get(ids[i]);
+        const idx = startIdx + i;
+        const tex = renderer.fgTextures.get(ids[idx]);
         if (tex) {
           gl.activeTexture(gl.TEXTURE3 + boundCount);
           gl.bindTexture(gl.TEXTURE_2D, tex);
           gl.uniform1i(renderer.uEl[`uTabContentTex${boundCount}`], 3 + boundCount);
-          const r = rects[i];
+          const r = rects[idx];
           gl.uniform4f(
             renderer.uEl[`uTabContentRects[${boundCount}]`],
             (r.x + r.w / 2) * renderer.dpr,
@@ -7756,7 +7922,7 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, renderer.quadBuffer);
       gl.enableVertexAttribArray(renderer.aPosLocTn);
       gl.vertexAttribPointer(renderer.aPosLocTn, 2, gl.FLOAT, false, 0, 0);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ZERO, gl.ONE);
       gl.uniform2f(renderer.uTn["uCanvasSize"], renderer.canvas.width, renderer.canvas.height);
       gl.uniform2f(renderer.uTn["uOffset"], sx * renderer.dpr, sy * renderer.dpr);
       gl.uniform2f(renderer.uTn["uSize"], sw * renderer.dpr, sh * renderer.dpr);
@@ -7779,7 +7945,7 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, renderer.quadBuffer);
       gl.enableVertexAttribArray(renderer.aPosLocHl);
       gl.vertexAttribPointer(renderer.aPosLocHl, 2, gl.FLOAT, false, 0, 0);
-      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.blendFuncSeparate(gl.DST_ALPHA, gl.ONE, gl.ZERO, gl.ONE);
       gl.uniform2f(renderer.uHl["uCanvasSize"], renderer.canvas.width, renderer.canvas.height);
       gl.uniform2f(renderer.uHl["uOffset"], sx * renderer.dpr, sy * renderer.dpr);
       gl.uniform2f(renderer.uHl["uSize"], sw * renderer.dpr, sh * renderer.dpr);
@@ -7802,19 +7968,27 @@ void main() {
       if (isContainer) {
         const tg = renderer.toggleStates.get(el.isBottomTabContainer.groupId);
         const tabsCount = (_a = el.isBottomTabContainer.tabsCount) != null ? _a : 4;
-        const tabW = el.rect.w / tabsCount;
         const fraction = tg ? tg.fraction : 0;
-        const indCenterX = (fraction + 0.5) * tabW;
-        const scaleToLocal = sw / el.rect.w;
-        px = Math.max(0, Math.min(sw, indCenterX * scaleToLocal)) * renderer.dpr;
-        py = sh / 2 * renderer.dpr;
+        if (el.isBottomTabContainer.axis === "y") {
+          const tabH = el.rect.h / tabsCount;
+          const indCenterY = (fraction + 0.5) * tabH;
+          const scaleToLocalY = sh / el.rect.h;
+          px = sw / 2 * renderer.dpr;
+          py = Math.max(0, Math.min(sh, indCenterY * scaleToLocalY)) * renderer.dpr;
+        } else {
+          const tabW = el.rect.w / tabsCount;
+          const indCenterX = (fraction + 0.5) * tabW;
+          const scaleToLocal = sw / el.rect.w;
+          px = Math.max(0, Math.min(sw, indCenterX * scaleToLocal)) * renderer.dpr;
+          py = sh / 2 * renderer.dpr;
+        }
       } else {
         px = Math.max(0, Math.min(sw, st.dragX * state.layerScaleX)) * renderer.dpr;
         py = Math.max(0, Math.min(sh, st.dragY * state.layerScaleY)) * renderer.dpr;
       }
       gl.uniform2f(renderer.uHl["uPosition"], px, py);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     }
     if (el.isToggleKnob && togglePressProgress < 0.999) {
       const whiteAlpha = 1 * (1 - togglePressProgress);
@@ -7822,7 +7996,7 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, renderer.quadBuffer);
       gl.enableVertexAttribArray(renderer.aPosLocTn);
       gl.vertexAttribPointer(renderer.aPosLocTn, 2, gl.FLOAT, false, 0, 0);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.uniform2f(renderer.uTn["uCanvasSize"], renderer.canvas.width, renderer.canvas.height);
       gl.uniform2f(renderer.uTn["uOffset"], sx * renderer.dpr, sy * renderer.dpr);
       gl.uniform2f(renderer.uTn["uSize"], sw * renderer.dpr, sh * renderer.dpr);
@@ -7849,7 +8023,7 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, renderer.quadBuffer);
       gl.enableVertexAttribArray(renderer.aPosLocTn);
       gl.vertexAttribPointer(renderer.aPosLocTn, 2, gl.FLOAT, false, 0, 0);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.uniform2f(renderer.uTn["uCanvasSize"], renderer.canvas.width, renderer.canvas.height);
       gl.uniform2f(renderer.uTn["uOffset"], sx * renderer.dpr, sy * renderer.dpr);
       gl.uniform2f(renderer.uTn["uSize"], sw * renderer.dpr, sh * renderer.dpr);
@@ -7866,11 +8040,11 @@ void main() {
       gl.uniform1f(renderer.uTn["uElementRotation"], state.elementRotation);
       gl.uniform1f(renderer.uTn["uCornerStyle"], renderer.cornerStyle);
       bindTintContinuousSdf();
-      gl.uniform4f(renderer.uTn["uColor"], dc[0], dc[1], dc[2], 0.1 * (1 - prog));
+      gl.uniform4f(renderer.uTn["uColor"], dc[0], dc[1], dc[2], 0.08 * (1 - prog));
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.uniform4f(renderer.uTn["uColor"], 0, 0, 0, 0.03 * prog);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     }
   }
 
@@ -7981,7 +8155,7 @@ void main() {
     if (el.highlight.mode === 1) {
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     } else {
-      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.blendFuncSeparate(gl.DST_ALPHA, gl.ONE, gl.ZERO, gl.ONE);
     }
     gl.useProgram(renderer.strokeMaskCompositeProgram);
     gl.bindBuffer(gl.ARRAY_BUFFER, renderer.quadBuffer);
@@ -8021,7 +8195,7 @@ void main() {
     gl.uniform2f(renderer.uSm["uLayerScale"], layerScaleX, layerScaleY);
     gl.uniform1f(renderer.uSm["uElementRotation"], state.elementRotation);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   }
 
   // ../../var/minis/workspace/liquid-glass-webgl/src/components/liquid-glass/renderer/methods-render-glass-post-passes.ts
@@ -8089,7 +8263,7 @@ void main() {
           }
           gl.uniform1f(this.uFg["uAlpha"], 1 - 0.15 * p);
           gl.drawArrays(gl.TRIANGLES, 0, 6);
-          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         }
       }
       renderGlassRimHighlight(this, state);
@@ -8126,8 +8300,10 @@ void main() {
     markGroupDirty(groupId) {
       var _a, _b, _c, _d, _e, _f;
       for (const el of this.buttonConfigs) {
-        if (((_a = el.isToggleKnob) == null ? void 0 : _a.groupId) === groupId || ((_b = el.isToggleTrack) == null ? void 0 : _b.groupId) === groupId || ((_c = el.isSliderFill) == null ? void 0 : _c.groupId) === groupId || ((_d = el.isBottomTabContainer) == null ? void 0 : _d.groupId) === groupId || ((_e = el.isBottomTabContent) == null ? void 0 : _e.groupId) === groupId || ((_f = el.isBottomTabIndicator) == null ? void 0 : _f.groupId) === groupId) {
+        if (((_a = el.isToggleKnob) == null ? void 0 : _a.groupId) === groupId || ((_c = el.isSliderFill) == null ? void 0 : _c.groupId) === groupId || ((_f = el.isBottomTabIndicator) == null ? void 0 : _f.groupId) === groupId) {
           this.markElementDirty(el.id);
+        } else if (((_b = el.isToggleTrack) == null ? void 0 : _b.groupId) === groupId || ((_d = el.isBottomTabContainer) == null ? void 0 : _d.groupId) === groupId || ((_e = el.isBottomTabContent) == null ? void 0 : _e.groupId) === groupId) {
+          this.dirtyElementIds.add(el.id);
         }
       }
     },
@@ -9948,7 +10124,7 @@ void main() {
       var _a;
       this.canvas = canvas;
       const gl = canvas.getContext("webgl", {
-        premultipliedAlpha: false,
+        premultipliedAlpha: true,
         alpha: true,
         antialias: false,
         preserveDrawingBuffer: false,

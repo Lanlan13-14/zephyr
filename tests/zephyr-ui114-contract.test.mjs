@@ -166,3 +166,59 @@ test('UI126 Contract: iOS Global Wallpaper + Simultaneous Terminal Wallpaper + 4
   assert.ok(serverJs.includes('globalBackground'), 'server.js must sanitize and persist appearance.globalBackground');
   assert.ok(appJs.includes('applyGlobalWallpaper'), 'app.js must implement applyGlobalWallpaper with dual-layer crossfade');
 });
+
+
+test("UI127 & UI128 Contract: Topbar & Settings Sidebar LiquidBottomTabs WebGL Pipeline, Brightened Multi-Tier Translucent Glass (Zero White Blocks in Modals/Settings/Activity), Terminal Translucent Chrome (Except .wterm-screen), and High-FPS GPU Theme Switch", () => {
+  const lgNavJs = read("public/liquid-glass-nav.js");
+  const lgRendererJs = read("public/liquid-glass-renderer.js");
+  const appJs = read("public/app.js");
+  const specCss = read("public/zephyr-terminal-spec.css");
+
+  // 1. Topbar & Settings Sidebar LiquidBottomTabs WebGL pipeline + GPU texture pools
+  assert.ok(lgNavJs.includes("function bootTopNav()"), "liquid-glass-nav.js must boot topbar LiquidBottomTabs");
+  assert.ok(lgNavJs.includes("function bootSettingsSidebar()"), "liquid-glass-nav.js must boot settings sidebar vertical LiquidBottomTabs");
+  assert.ok(lgRendererJs.includes("uniform float uIndicatorAxisY;"), "liquid-glass-renderer.js must support vertical axis indicator shader");
+  assert.ok(lgRendererJs.includes("loadWallpaperFromCanvas(sourceCanvas, cacheKey)"), "liquid-glass-renderer.js must cache wallpaper textures in _wpTexPool");
+  assert.ok(lgRendererJs.includes("this._fgTexPool"), "liquid-glass-renderer.js must cache foreground text/icon textures in _fgTexPool");
+
+  // 2. Brightened global wallpaper scrim & multi-tier translucent glass tokens (zero white blocks in modals/views/settings)
+  assert.ok(specCss.includes("--z-glass-tray-bg: rgba(255, 255, 255, 0.16);"), "zephyr-terminal-spec.css must define brightened translucent tray token");
+  assert.ok(specCss.includes("--z-glass-card-bg: rgba(255, 255, 255, 0.48);"), "zephyr-terminal-spec.css must define brightened translucent card token");
+  assert.ok(specCss.includes("html body.app-body #connectionModal > #connectionForm"), "#connectionForm must use translucent modal glass");
+  assert.ok(specCss.includes("html body.app-body:has(#connectionModal.show:not(.opening):not(.closing)) #connectionMotionSurface"), "#connectionMotionSurface must hide when modal is open to prevent double-layer white stacking");
+
+  // 3. Terminal workspace translucency except .wterm-screen
+  assert.ok(specCss.includes("html body.app-body #terminalWorkspace:not(.custom-fullscreen) .terminal-window:not(:fullscreen):not(.minimized-keepalive)"), ".terminal-window shell must be transparent so panels/bars refract global wallpaper");
+  assert.ok(specCss.includes(".terminal-page #topbarActions.topbar-actions"), "terminal topbar-actions must be translucent");
+  assert.ok(specCss.includes("html body.app-body #sessionTabs .smartbar-handle"), "smartbar-handle wrapper must be transparent without box mismatch");
+  assert.ok(specCss.includes("backdrop-filter: blur(38px) saturate(185%) !important;"), "terminal container below toolbar must use high-blur translucent Gaussian glass");
+  assert.ok(specCss.includes(".terminal-page .wterm-screen"), ".wterm-screen must retain solid terminal background");
+
+  // 4. High-FPS zero-readback GPU circular theme reveal
+  assert.ok(appJs.includes("zephyrGpuThemeVeil"), "applyTheme must use zero-readback GPU circular theme veil");
+  assert.ok(appJs.includes("deferWebglRefresh: true"), "applyTheme must defer heavy WebGL rebuilds until after the GPU theme transition");
+});
+
+test('UI129 Contract: Topbar Settings Pill Exact Bounds, 2x Supersampled Crisp Liquid Glass Typography, Un-washed Sidebar Glass, Built-in Default Wallpaper Toggle (Default Off, Auto 72%/6.5px Presets), and High-Blur Translucent Terminal Screen', () => {
+  const appHtml = read('public/app.html');
+  const appJs = read('public/app.js');
+  const lgNavJs = read('public/liquid-glass-nav.js');
+  const lgRendererJs = read('public/liquid-glass-renderer.js');
+  const specCss = read('public/zephyr-terminal-spec.css');
+  const serverJs = read('server.js');
+
+  assert.ok(lgNavJs.includes('var tabW = tabRects[0] && tabRects[0].w > 0 ? tabRects[0].w :'), 'topbar indicator width must match actual tab width to prevent right-edge overflow');
+  assert.ok(lgNavJs.includes('tabsTextHalo: "none"') || lgNavJs.includes("tabsTextHalo: 'none'"), 'Liquid Glass text must disable muddy shadowBlur halo for crisp typography');
+  assert.ok(lgRendererJs.includes('this.dpr = Math.max(2, Math.min(window.devicePixelRatio || 1, 3));'), 'LiquidGlassRenderer must use >=2x supersampling DPR for sharp text and icons');
+  assert.ok(lgNavJs.includes('sidebarContainer: [0xf8 / 255, 0xfa / 255, 0xfc / 255, 0.20]'), 'Settings sidebar must use un-washed 0.20 alpha surfaceColor');
+
+  assert.ok(appHtml.includes('id="defaultGlobalWallpaperToggle"'), 'app.html must include #defaultGlobalWallpaperToggle');
+  assert.ok(appHtml.includes('<option value="default" data-i18n="使用内置默认壁纸">使用内置默认壁纸</option>'), '#globalBgSource must include default option');
+  assert.ok(appJs.includes('const DEFAULT_GLOBAL_WALLPAPER_OPACITY = 0.72;'), 'app.js must define comfortable default opacity 0.72');
+  assert.ok(appJs.includes('const DEFAULT_GLOBAL_WALLPAPER_BLUR = 6.5;'), 'app.js must define comfortable default blur 6.5px');
+  assert.ok(appJs.includes('function resolveBuiltInDefaultWallpaperUrl'), 'app.js must resolve built-in wallpaper URL by scheme and theme');
+  assert.ok(serverJs.includes("'none', 'default', 'upload', 'url'"), 'server.js must allow globalBackground.type === default');
+
+  assert.ok(specCss.includes('backdrop-filter: blur(38px) saturate(185%) !important;'), 'terminal container must use 38px Gaussian blur translucency');
+  assert.ok(specCss.includes('backdrop-filter: blur(32px) saturate(180%) !important;'), 'terminal input bar must use 32px Gaussian blur translucency');
+});

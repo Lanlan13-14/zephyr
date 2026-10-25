@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui126';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui127';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui126');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui127');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -1192,7 +1192,7 @@ function playPixelCircularThemeWave(cx, cy, maxR, nextTheme) {
     }
 }
 
-function applyThemeCoreMutations(theme, { persist = false } = {}) {
+function applyThemeCoreMutations(theme, { persist = false, deferWebglRefresh = false } = {}) {
     const root = document.documentElement;
     try {
         localStorage.removeItem('zephyr-terminal-theme-override');
@@ -1200,14 +1200,20 @@ function applyThemeCoreMutations(theme, { persist = false } = {}) {
     } catch {}
     root.setAttribute('data-theme', theme);
     applyZephyrColorScheme(getAppearance(), { theme, page: 'app' });
+    if (!document.getElementById('zephyrGlobalWallpaper') || getAppearance()?.globalBackground?.type === 'default') {
+        applyGlobalWallpaper(getAppearance());
+    }
     setFavicon(pendingBrandIcon || DEFAULT_BRAND_ICON);
     SMARTBAR_TEXT_IMAGE_CACHE.clear();
     if (terminalTabs.length) renderTerminalSmartbar();
     if (persist || getAppearance().autoThemeEnabled === false) localStorage.setItem('zephyr-theme', theme);
     applyThemeToggleIcon($('#appThemeToggle'), theme);
     applyThemeToggleIcon($('#settingsThemeToggle'), theme);
-    syncAppearanceSchemeControls();
-    broadcastThemeToTerminals(theme);
+    if (!deferWebglRefresh) {
+        window.ZephyrLiquidGlassBars?.refreshAll(false);
+        syncAppearanceSchemeControls();
+        broadcastThemeToTerminals(theme);
+    }
 }
 
 function applyTheme(theme, { persist = false, originEl = null, animateCircle = false } = {}) {
@@ -1220,62 +1226,77 @@ function applyTheme(theme, { persist = false, originEl = null, animateCircle = f
         const vw = window.innerWidth || document.documentElement.clientWidth || 1280;
         const vh = window.innerHeight || document.documentElement.clientHeight || 800;
         const maxR = Math.ceil(Math.hypot(Math.max(cx, vw - cx), Math.max(cy, vh - cy)) + 24);
+        const diam = maxR * 2;
         lastThemeTriggerPoint = null;
 
-        root.style.setProperty('--theme-clip-x', `${cx}px`);
-        root.style.setProperty('--theme-clip-y', `${cy}px`);
-        root.style.setProperty('--theme-clip-r', '0px');
+        root.classList.add('theme-circle-reveal');
+        window.__zephyrThemeTransitioning = true;
 
-        if (typeof document.startViewTransition === 'function') {
-            root.classList.add('theme-circle-reveal');
-            try {
-                const vt = document.startViewTransition(() => {
-                    applyThemeCoreMutations(theme, { persist });
-                });
-                vt.ready.then(() => {
-                    const anim = root.animate(
-                        [
-                            { clipPath: `circle(0px at ${cx}px ${cy}px)` },
-                            { clipPath: `circle(${maxR}px at ${cx}px ${cy}px)` },
-                        ],
-                        {
-                            duration: 520,
-                            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-                            pseudoElement: '::view-transition-new(root)',
+        // Pure GPU-composited transform+opacity circular veil (0 clip-path mask rasterization, 0 WebGL readback!)
+        let veil = document.getElementById('zephyrGpuThemeVeil');
+        if (!veil && document.body) {
+            veil = document.createElement('div');
+            veil.id = 'zephyrGpuThemeVeil';
+            document.body.appendChild(veil);
+        }
+        if (veil) {
+            veil.style.cssText = [
+                'position:fixed',
+                `left:${cx - maxR}px`,
+                `top:${cy - maxR}px`,
+                `width:${diam}px`,
+                `height:${diam}px`,
+                'border-radius:50%',
+                'z-index:99998',
+                'pointer-events:none',
+                'transform-origin:50% 50%',
+                'will-change:transform,opacity',
+                previousTheme === 'dark'
+                    ? 'background:radial-gradient(circle, rgba(13,17,24,0.35) 0%, rgba(13,17,24,0.86) 65%, rgba(13,17,24,0.94) 100%)'
+                    : 'background:radial-gradient(circle, rgba(242,246,252,0.35) 0%, rgba(242,246,252,0.86) 65%, rgba(242,246,252,0.94) 100%)',
+            ].join(';');
+        }
+
+        applyThemeCoreMutations(theme, { persist, deferWebglRefresh: true });
+
+        if (veil && typeof veil.animate === 'function') {
+            const anim = veil.animate(
+                [
+                    { transform: 'scale(0.04)', opacity: 0.92 },
+                    { transform: 'scale(1)', opacity: 0 },
+                ],
+                {
+                    duration: 260,
+                    easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                    fill: 'forwards',
+                }
+            );
+            anim.finished.catch(() => {}).finally(() => {
+                window.__zephyrThemeTransitioning = false;
+                root.classList.remove('theme-circle-reveal');
+                veil.remove();
+                requestAnimationFrame(() => {
+                    window.ZephyrLiquidGlassBars?.topNav?.refresh(false);
+                    requestAnimationFrame(() => {
+                        if (document.getElementById('view-settings')?.classList.contains('active')) {
+                            window.ZephyrLiquidGlassBars?.settingsSidebar?.refresh(false);
                         }
-                    );
-                    const Motion = window.Motion || sshKeyMotion?.engine;
-                    if (Motion?.cssVars) {
-                        void Motion.cssVars(root, { '--theme-clip-r': maxR }, {
-                            preset: { response: 0.50, damping: 0.98 },
-                            units: { '--theme-clip-r': 'px' },
-                        });
-                    }
-                    return anim.finished;
-                }).catch(() => {}).finally(() => {
-                    vt.finished.finally(() => {
-                        root.classList.remove('theme-circle-reveal');
-                        root.style.removeProperty('--theme-clip-r');
+                        syncAppearanceSchemeControls();
+                        broadcastThemeToTerminals(theme);
                     });
                 });
-                playPixelCircularThemeWave(cx, cy, maxR, theme);
-                return;
-            } catch (_) {
-                root.classList.remove('theme-circle-reveal');
-            }
+            });
+            return;
         }
-        playPixelCircularThemeWave(cx, cy, maxR, theme);
+        window.__zephyrThemeTransitioning = false;
+        root.classList.remove('theme-circle-reveal');
+        if (veil) veil.remove();
+        window.ZephyrLiquidGlassBars?.refreshAll(false);
+        syncAppearanceSchemeControls();
+        broadcastThemeToTerminals(theme);
+        return;
     }
 
-    root.classList.remove('theme-transitioning');
-    void root.offsetWidth;
-    root.classList.add('theme-transitioning');
-    document.body?.classList.toggle('theme-ripple-active', changed);
-    window.clearTimeout(applyTheme._timer);
-    applyTheme._timer = window.setTimeout(() => {
-        root.classList.remove('theme-transitioning');
-        document.body?.classList.remove('theme-ripple-active');
-    }, 460);
     applyThemeCoreMutations(theme, { persist });
     console.debug('[appearance-client]', 'theme transition applied', { previousTheme, theme, changed });
 }
@@ -1344,14 +1365,31 @@ function ensureGlobalWallpaperDom() {
     }
     return host;
 }
+const DEFAULT_GLOBAL_WALLPAPER_OPACITY = 0.72;
+const DEFAULT_GLOBAL_WALLPAPER_BLUR = 6.5;
+
+function resolveBuiltInDefaultWallpaperUrl(appearance = getAppearance()) {
+    const root = document.documentElement;
+    const rawScheme = String(appearance?.colorScheme || root?.getAttribute('data-color-scheme') || 'frost').toLowerCase();
+    const scheme = ['frost', 'lava', 'asagi', 'cyber'].includes(rawScheme) ? rawScheme : 'frost';
+    const domTheme = root?.getAttribute('data-theme');
+    const effTheme = (domTheme === 'dark' || domTheme === 'light')
+        ? domTheme
+        : (getPreferredTheme?.() || 'light');
+    const suffix = effTheme === 'dark' ? 'dark' : 'light';
+    return '/wallpapers/zephyr-' + scheme + '-' + suffix + '.png';
+}
+
 function applyGlobalWallpaper(appearance = getAppearance()) {
     const root = document.documentElement;
     const host = ensureGlobalWallpaperDom();
     if (!root || !host) return;
     const gbg = appearance?.globalBackground || {};
     const bgType = gbg.type || 'none';
-    const rawUrl = String(gbg.url || '').trim();
-    const hasBg = (bgType === 'upload' || bgType === 'url') && Boolean(rawUrl);
+    const rawUrl = bgType === 'default'
+        ? resolveBuiltInDefaultWallpaperUrl(appearance)
+        : String(gbg.url || '').trim();
+    const hasBg = (bgType === 'default' || bgType === 'upload' || bgType === 'url') && Boolean(rawUrl);
     const fit = ['cover', 'contain', 'auto'].includes(gbg.fit) ? gbg.fit : 'cover';
     const opacity = Math.max(0, Math.min(1, Number(gbg.opacity ?? 0.45)));
     const blur = Math.max(0, Math.min(20, Number(gbg.blur ?? 0)));
@@ -1404,8 +1442,10 @@ function applyGlobalWallpaper(appearance = getAppearance()) {
 function renderWallpaperPreviewBox(previewEl, bg = {}, defaultOpacity = 0.35) {
     if (!previewEl) return;
     const bgType = bg.type || 'none';
-    const rawUrl = String(bg.url || '').trim();
-    const hasBg = (bgType === 'upload' || bgType === 'url') && Boolean(rawUrl);
+    const rawUrl = bgType === 'default'
+        ? resolveBuiltInDefaultWallpaperUrl(getAppearance())
+        : String(bg.url || '').trim();
+    const hasBg = (bgType === 'default' || bgType === 'upload' || bgType === 'url') && Boolean(rawUrl);
     const fit = ['cover', 'contain', 'auto'].includes(bg.fit) ? bg.fit : 'cover';
     const opacity = Math.max(0, Math.min(1, Number(bg.opacity ?? defaultOpacity)));
     const blur = Math.max(0, Math.min(20, Number(bg.blur ?? 0)));
@@ -1642,6 +1682,9 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
     if ($('#customJsInput')) $('#customJsInput').value = appearance.customJs || '';
     const gbg = appearance.globalBackground || {};
     const gbgType = gbg.type || 'none';
+    if ($('#defaultGlobalWallpaperToggle')) {
+        $('#defaultGlobalWallpaperToggle').checked = (gbgType === 'default');
+    }
     if ($('#globalBgSource')) {
         $('#globalBgSource').value = gbgType;
         syncToggleSelectFace($('#globalBgSource'));
@@ -1731,7 +1774,11 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
     if ($('#rdpDefaultQuality')) $('#rdpDefaultQuality').value = normalizeRdpDefaultQuality(rdp.defaultQuality || 'balanced');
     if ($('#rdpDefaultFps')) $('#rdpDefaultFps').value = String(rdp.defaultFps || 60);
     if ($('#globalBgPreview')) {
-        const gUrl = gbg.type === 'url' ? ($('#globalBgUrl')?.value.trim() || gbg.url || '') : (gbg.url || '');
+        const gUrl = gbgType === 'default'
+            ? resolveBuiltInDefaultWallpaperUrl(appearance)
+            : gbgType === 'url'
+                ? ($('#globalBgUrl')?.value.trim() || gbg.url || '')
+                : (gbg.url || '');
         renderWallpaperPreviewBox($('#globalBgPreview'), { ...gbg, type: gbgType, url: gUrl }, 0.45);
     }
     if ($('#terminalBgPreview')) {
@@ -1951,6 +1998,7 @@ function setupAppearanceControls() {
         const appearance = { ...getAppearance(), colorScheme: $('#colorSchemeSelect').value, customThemeMode: $('#customThemeMode')?.value || 'dark', customColors: readCustomThemeColors(), customCss: $('#customCssInput')?.value || '', customJs: $('#customJsInput')?.value || '' };
         settings.appearance = appearance;
         applyTheme(getPreferredTheme());
+        applyGlobalWallpaper(appearance);
         syncAppearanceSchemeControls(appearance);
     });
     $('#themeModeSelect')?.addEventListener('change', () => { const mode = $('#themeModeSelect').value; settings.appearance = { ...getAppearance(), theme: mode, autoThemeEnabled: mode === 'auto' }; if ($('#autoThemeEnabled')) $('#autoThemeEnabled').checked = mode === 'auto'; applyTheme(getPreferredTheme()); });
@@ -1964,7 +2012,13 @@ function setupAppearanceControls() {
     }));
     const buildDraftGlobalBg = () => {
         const src = $('#globalBgSource')?.value || 'none';
-        const url = src === 'upload' ? ($('#globalBgDataUrl')?.value || getAppearance().globalBackground?.url || '') : src === 'url' ? ($('#globalBgUrl')?.value.trim() || '') : '';
+        const url = src === 'default'
+            ? resolveBuiltInDefaultWallpaperUrl()
+            : src === 'upload'
+                ? ($('#globalBgDataUrl')?.value || getAppearance().globalBackground?.url || '')
+                : src === 'url'
+                    ? ($('#globalBgUrl')?.value.trim() || '')
+                    : '';
         return {
             type: src,
             url,
@@ -1996,7 +2050,38 @@ function setupAppearanceControls() {
         syncAppearanceSchemeControls(settings.appearance);
         broadcastThemeToTerminals(getPreferredTheme());
     };
-    $('#globalBgSource')?.addEventListener('change', syncLiveGlobalBgDraft);
+    const applyComfortableDefaultWallpaperPresets = () => {
+        if ($('#globalBgFit')) {
+            $('#globalBgFit').value = 'cover';
+            syncToggleSelectFace($('#globalBgFit'));
+        }
+        if ($('#globalBgOpacity')) $('#globalBgOpacity').value = String(DEFAULT_GLOBAL_WALLPAPER_OPACITY);
+        if ($('#globalBgOpacityValue')) $('#globalBgOpacityValue').textContent = formatSteplessPercent(DEFAULT_GLOBAL_WALLPAPER_OPACITY, 0.45);
+        if ($('#globalBgBlur')) $('#globalBgBlur').value = String(DEFAULT_GLOBAL_WALLPAPER_BLUR);
+        if ($('#globalBgBlurValue')) $('#globalBgBlurValue').textContent = formatSteplessBlurPx(DEFAULT_GLOBAL_WALLPAPER_BLUR, 0);
+        window.ZephyrLiquidGlassSliders?.refreshAll(false);
+    };
+    $('#defaultGlobalWallpaperToggle')?.addEventListener('change', () => {
+        const enabled = Boolean($('#defaultGlobalWallpaperToggle')?.checked);
+        if ($('#globalBgSource')) {
+            $('#globalBgSource').value = enabled ? 'default' : 'none';
+            syncToggleSelectFace($('#globalBgSource'));
+        }
+        if (enabled) {
+            applyComfortableDefaultWallpaperPresets();
+        }
+        syncLiveGlobalBgDraft();
+    });
+    $('#globalBgSource')?.addEventListener('change', () => {
+        const src = $('#globalBgSource')?.value || 'none';
+        if ($('#defaultGlobalWallpaperToggle')) {
+            $('#defaultGlobalWallpaperToggle').checked = (src === 'default');
+        }
+        if (src === 'default') {
+            applyComfortableDefaultWallpaperPresets();
+        }
+        syncLiveGlobalBgDraft();
+    });
     $('#globalBgFit')?.addEventListener('change', syncLiveGlobalBgDraft);
     $('#globalBgUrl')?.addEventListener('input', () => {
         if ($('#globalBgSource') && $('#globalBgSource').value !== 'url') $('#globalBgSource').value = 'url';
@@ -6503,8 +6588,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui126`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui126`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui127`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui127`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -16196,7 +16281,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261019-ui126')
+        return import('./vendor/zephyr-motion/index.js?v=20261019-ui127')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

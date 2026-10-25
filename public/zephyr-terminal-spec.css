@@ -6944,3 +6944,812 @@ html[data-global-wallpaper="1"][data-theme="dark"] #view-settings #settings-appe
   opacity: 0 !important;
   pointer-events: none !important;
 }
+
+/* ── D. UI127：顶栏与设置侧栏 Liquid Glass WebGL 折射胶囊 + 全站毛玻璃透视化 ── */
+
+/* 1) 全局默认壁纸与明亮通透遮罩（消除偏暗感，浅色提亮、深色通透；支持 --z-global-bg-blur 无极调节） */
+#zephyrGlobalWallpaper.zephyr-global-wallpaper {
+  opacity: 1 !important;
+  contain: strict !important;
+}
+#zephyrGlobalWallpaper .global-wp-layer {
+  filter: saturate(1.06) blur(var(--z-global-bg-blur, 0px)) !important;
+  will-change: transform, opacity !important;
+}
+html[data-theme="light"] #zephyrGlobalWallpaper .global-wp-scrim {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(255, 255, 255, 0.16) 50%,
+    rgba(255, 255, 255, 0.20) 100%
+  ) !important;
+}
+html[data-theme="dark"] #zephyrGlobalWallpaper .global-wp-scrim {
+  background: linear-gradient(
+    180deg,
+    rgba(8, 12, 20, 0.20) 0%,
+    rgba(8, 12, 20, 0.28) 100%
+  ) !important;
+}
+
+/* 2) 全站明亮毛玻璃设计 Token（消除多层容器叠加后 alpha 乘积 > 0.90 导致的假白块；保证 2~3 层嵌套后依然通透透出 30%~50% 壁纸色彩） */
+:root,
+html[data-theme="light"] {
+  --z-glass-tray-bg: rgba(255, 255, 255, 0.16);
+  --z-glass-card-bg: rgba(255, 255, 255, 0.48);
+  --z-glass-card-hover-bg: rgba(255, 255, 255, 0.58);
+  --z-glass-subcard-bg: rgba(255, 255, 255, 0.38);
+  --z-glass-ctl-bg: rgba(255, 255, 255, 0.44);
+  --z-glass-ctl-focus-bg: rgba(255, 255, 255, 0.64);
+  --z-glass-modal-bg: rgba(255, 255, 255, 0.54);
+  --z-glass-border: rgba(255, 255, 255, 0.66);
+  --z-glass-outer-border: rgba(15, 23, 42, 0.08);
+  --z-glass-shadow: 0 10px 30px -10px rgba(15, 23, 42, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  --z-glass-blur: none;
+  --z-glass-subcard-blur: none;
+}
+html[data-theme="dark"] {
+  --z-glass-tray-bg: rgba(14, 18, 28, 0.18);
+  --z-glass-card-bg: rgba(22, 28, 40, 0.48);
+  --z-glass-card-hover-bg: rgba(28, 36, 52, 0.58);
+  --z-glass-subcard-bg: rgba(26, 33, 48, 0.38);
+  --z-glass-ctl-bg: rgba(32, 40, 56, 0.44);
+  --z-glass-ctl-focus-bg: rgba(38, 48, 68, 0.64);
+  --z-glass-modal-bg: rgba(20, 26, 38, 0.56);
+  --z-glass-border: rgba(255, 255, 255, 0.13);
+  --z-glass-outer-border: rgba(255, 255, 255, 0.11);
+  --z-glass-shadow: 0 12px 34px -10px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.11);
+  --z-glass-blur: none;
+  --z-glass-subcard-blur: none;
+}
+
+/* 3) 深浅色切换高帧率优化（切换期间彻底冻结子元素 CSS transition，仅做纯 GPU 硬件合成） */
+html.theme-circle-reveal *,
+html.theme-circle-reveal *::before,
+html.theme-circle-reveal *::after,
+html.theme-circle-transition *,
+html.theme-circle-transition *::before,
+html.theme-circle-transition *::after {
+  transition: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none !important;
+  mix-blend-mode: normal !important;
+  clip-path: none;
+}
+
+/* 4) 顶栏 (.main-nav .nav-tabs) 与设置侧栏 (#view-settings .settings-menu) WebGL 液态玻璃胶囊容器 */
+.main-nav.liquid-glass-on > #liquidGlassCanvas {
+  display: block !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: auto !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+  overflow: visible !important;
+}
+body.app-body.terminal-mode.terminal-topbar-collapsed .main-nav.liquid-glass-on > #liquidGlassCanvas {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+html[data-theme="light"] .main-nav.liquid-glass-on .nav-tabs,
+html[data-theme="dark"] .main-nav.liquid-glass-on .nav-tabs {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+.main-nav.liquid-glass-on .nav-tabs .nav-tab,
+html[data-theme="light"] .main-nav.liquid-glass-on .nav-tabs .nav-tab,
+html[data-theme="dark"] .main-nav.liquid-glass-on .nav-tabs .nav-tab,
+html[data-theme="light"] .main-nav.liquid-glass-on .nav-tabs .nav-tab.active,
+html[data-theme="dark"] .main-nav.liquid-glass-on .nav-tabs .nav-tab.active {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+.main-nav.liquid-glass-on .nav-tabs .nav-tab svg,
+.main-nav.liquid-glass-on .nav-tabs .nav-tab .nav-tab-ico,
+.main-nav.liquid-glass-on .nav-tabs .nav-tab .nav-tab-txt {
+  opacity: 0 !important;
+}
+.main-nav.liquid-glass-on .nav-tabs .nav-tab.active::before,
+html[data-theme="light"] .main-nav.liquid-glass-on .nav-tabs .nav-tab.active::before,
+html[data-theme="dark"] .main-nav.liquid-glass-on .nav-tabs .nav-tab.active::before {
+  display: none !important;
+  opacity: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
+#view-settings .settings-menu {
+  position: sticky !important;
+  top: 16px !important;
+  overflow: visible !important;
+}
+#view-settings .settings-menu.liquid-glass-on > #settingsLiquidGlassCanvas {
+  display: block !important;
+  position: absolute !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+html[data-theme="light"] #view-settings .settings-menu.liquid-glass-on,
+html[data-theme="dark"] #view-settings .settings-menu.liquid-glass-on,
+html[data-global-wallpaper="1"][data-theme="light"] #view-settings .settings-menu.liquid-glass-on,
+html[data-global-wallpaper="1"][data-theme="dark"] #view-settings .settings-menu.liquid-glass-on {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+#view-settings .settings-menu.liquid-glass-on .settings-tab,
+#view-settings .settings-menu.liquid-glass-on .settings-tab:hover,
+#view-settings .settings-menu.liquid-glass-on:not(.settings-pill-sliding) .settings-tab:hover:not(.active),
+html[data-theme="light"] #view-settings .settings-menu.liquid-glass-on .settings-tab,
+html[data-theme="dark"] #view-settings .settings-menu.liquid-glass-on .settings-tab,
+html[data-theme="light"] #view-settings .settings-menu.liquid-glass-on .settings-tab:hover,
+html[data-theme="dark"] #view-settings .settings-menu.liquid-glass-on .settings-tab:hover,
+html[data-theme="light"] #view-settings .settings-menu.liquid-glass-on:not(.settings-pill-sliding) .settings-tab:hover:not(.active),
+html[data-theme="dark"] #view-settings .settings-menu.liquid-glass-on:not(.settings-pill-sliding) .settings-tab:hover:not(.active),
+html[data-theme="light"] #view-settings .settings-menu.liquid-glass-on .settings-tab.active,
+html[data-theme="dark"] #view-settings .settings-menu.liquid-glass-on .settings-tab.active {
+  position: relative !important;
+  z-index: 1 !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  touch-action: none !important;
+  user-select: none !important;
+}
+#view-settings .settings-menu.liquid-glass-on .settings-tab::before,
+#view-settings .settings-menu.liquid-glass-on .settings-tab.active::before {
+  opacity: 0 !important;
+}
+html[data-theme="light"] #view-settings .settings-menu.liquid-glass-on .settings-tab.active::after,
+html[data-theme="dark"] #view-settings .settings-menu.liquid-glass-on .settings-tab.active::after {
+  opacity: 0 !important;
+  background: rgba(255, 255, 255, 0.28) !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
+@media (min-width: 761px) {
+  body.app-body .main-nav {
+    background: var(--z-glass-subcard-bg) !important;
+    backdrop-filter: var(--z-glass-blur) !important;
+    -webkit-backdrop-filter: var(--z-glass-blur) !important;
+    border-bottom: 1px solid var(--z-glass-outer-border) !important;
+  }
+  /* 消除进入/离开终端视图时 #terminalWorkspace 使用 transform(z-view-entering) 与内部 backdrop-filter 冲突引发的首帧闪白 */
+  body.app-body.terminal-mode #terminalWorkspace.z-view-entering {
+    transform: none !important;
+    opacity: 1 !important;
+    will-change: auto !important;
+  }
+  body.app-body .main-nav .nav-tabs.z-lg-bar-ready,
+  body.app-body #view-settings .settings-menu.z-lg-bar-ready {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  body.app-body .main-nav .nav-tabs.z-lg-bar-ready .nav-tab.active::before,
+  body.app-body .main-nav .nav-tabs.z-lg-bar-ready .nav-tab::before,
+  body.app-body #view-settings .settings-menu.z-lg-bar-ready .settings-tab.active::after,
+  body.app-body #view-settings .settings-menu.z-lg-bar-ready .settings-tab::after {
+    display: none !important;
+    opacity: 0 !important;
+    content: none !important;
+  }
+  body.app-body .main-nav .nav-tabs.z-lg-bar-ready .nav-tab,
+  body.app-body #view-settings .settings-menu.z-lg-bar-ready .settings-tab {
+    position: relative !important;
+    z-index: 2 !important;
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+}
+
+/* 顶栏右侧按钮 (#aiFloatingBtn / #appThemeToggle) 明亮毛玻璃化 */
+html body.app-body .nav-actions > #aiFloatingBtn.btn-sm,
+html body.app-body .nav-actions > #appThemeToggle.btn-sm,
+html body.app-body .nav-actions > .btn-sm {
+  background: var(--z-glass-ctl-bg) !important;
+  backdrop-filter: var(--z-glass-subcard-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-subcard-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+/* 5) 首页、活动页、远程执行页、笔记页全量卡片与列表项毛玻璃透视化（0 纯白块） */
+html body.app-body .connection-card,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body .connection-card,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body .connection-card,
+html body.app-body .stat-card,
+html body.app-body .empty-state,
+html body.app-body .empty-card,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body .empty-card,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body .empty-card,
+html body.app-body .activity-card,
+html body.app-body .activity-panel,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body .activity-panel,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body .activity-panel,
+html body.app-body .remote-card,
+html body.app-body .remote-servers,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body .remote-servers,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body .remote-servers,
+html body.app-body .remote-command,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body .remote-command,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body .remote-command,
+html body.app-body .result-card,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body .result-card,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body .result-card,
+html body.app-body .remote-layout > *,
+html body.app-body .remote-result-card,
+html body.app-body .notes-shell,
+html body.app-body .notes-sidebar,
+html body.app-body .notes-list-pane,
+html body.app-body .notes-editor-pane {
+  background: var(--z-glass-card-bg) !important;
+  backdrop-filter: var(--z-glass-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  box-shadow: var(--z-glass-shadow) !important;
+}
+html body.app-body .connection-card:hover {
+  background: var(--z-glass-card-hover-bg) !important;
+}
+
+/* 活动页、远程页、笔记页内部子项 */
+html body.app-body .activity-session-item,
+html body.app-body .activity-item,
+html body.app-body .history-item,
+html body.app-body #remoteServerList > .server-check,
+html body.app-body .remote-servers > .server-check,
+html body.app-body label.server-check,
+html body.app-body .remote-output-item,
+html body.app-body .note-item,
+html body.app-body .notes-folder-item {
+  background: var(--z-glass-subcard-bg) !important;
+  backdrop-filter: var(--z-glass-subcard-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-subcard-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+/* 6) 设置页（#view-settings）右侧舞台、14 个子面板全部卡片、双 ID 表单与子列表项毛玻璃透视化 */
+html[data-theme="light"] body.app-body #view-settings .settings-content,
+html[data-theme="dark"] body.app-body #view-settings .settings-content,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body #view-settings .settings-content,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body #view-settings .settings-content {
+  background: var(--z-glass-tray-bg) !important;
+  backdrop-filter: var(--z-glass-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+html[data-theme="light"] body.app-body #view-settings .security-card,
+html[data-theme="dark"] body.app-body #view-settings .security-card,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body #view-settings .security-card,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body #view-settings .security-card,
+html[data-theme="light"] body.app-body #view-settings .data-settings-section,
+html[data-theme="dark"] body.app-body #view-settings .data-settings-section,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body #view-settings .data-settings-section,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body #view-settings .data-settings-section,
+html[data-theme="light"] body.app-body #view-settings #platformSecuritySettings > form,
+html[data-theme="dark"] body.app-body #view-settings #platformSecuritySettings > form,
+html[data-theme="light"] body.app-body #view-settings #settings-appearance > #appearanceForm,
+html[data-theme="dark"] body.app-body #view-settings #settings-appearance > #appearanceForm,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body #view-settings #settings-appearance > #appearanceForm,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body #view-settings #settings-appearance > #appearanceForm,
+html[data-theme="light"] body.app-body #view-settings #settings-appearance > #terminalLayoutForm,
+html[data-theme="dark"] body.app-body #view-settings #settings-appearance > #terminalLayoutForm,
+html[data-global-wallpaper="1"][data-theme="light"] body.app-body #view-settings #settings-appearance > #terminalLayoutForm,
+html[data-global-wallpaper="1"][data-theme="dark"] body.app-body #view-settings #settings-appearance > #terminalLayoutForm,
+html[data-theme="light"] body.app-body #view-settings #settings-mail > #mailForm,
+html[data-theme="dark"] body.app-body #view-settings #settings-mail > #mailForm,
+html[data-theme="light"] body.app-body #view-settings #settings-beian > #beianForm,
+html[data-theme="dark"] body.app-body #view-settings #settings-beian > #beianForm,
+html[data-theme="light"] body.app-body #view-settings #settings-language > #languageForm,
+html[data-theme="dark"] body.app-body #view-settings #settings-language > #languageForm,
+html[data-theme="light"] body.app-body #view-settings #settings-notes > #notesSettingsForm,
+html[data-theme="dark"] body.app-body #view-settings #settings-notes > #notesSettingsForm,
+html body.app-body #view-settings .settings-panel > .settings-form,
+html body.app-body #view-settings .settings-card,
+html body.app-body #view-settings .ai-settings-card,
+html body.app-body #view-settings .ai-model-card,
+html body.app-body #view-settings .about-hero-card,
+html body.app-body #view-settings .about-stat-card,
+html body.app-body #view-settings .about-meta-card {
+  background: var(--z-glass-card-bg) !important;
+  backdrop-filter: var(--z-glass-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  box-shadow: var(--z-glass-shadow) !important;
+}
+html body.app-body #view-settings .security-card > form,
+html body.app-body #view-settings .data-settings-section > form,
+html body.app-body #view-settings .settings-card > form {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+/* 设置页内部子卡片、列表项 (.mini-item / .admin-user-row / .z-lg-slider-card / .appearance-subcard 等) */
+html body.app-body #view-settings .security-overview-card,
+html body.app-body #view-settings .security-factor-item,
+html body.app-body #view-settings .security-status-pill,
+html body.app-body #view-settings .settings-switch-option,
+html body.app-body #view-settings .appearance-subcard,
+html body.app-body #view-settings .theme-option,
+html body.app-body #view-settings .z-lg-slider-card,
+html body.app-body #view-settings .lg-sliders-grid > .form-group.lg-slider-group,
+html body.app-body #view-settings .brand-icon-preview,
+html body.app-body #view-settings .webdav-config-badge,
+html body.app-body #view-settings .security-card-action,
+html body.app-body #view-settings .wallpaper-adjust-panel,
+html body.app-body #view-settings .shortcut-row,
+html body.app-body #view-settings .ai-provider-card,
+html body.app-body #view-settings .ssh-key-item,
+html body.app-body #view-settings .snippet-settings-item,
+html body.app-body #view-settings .proxy-settings-item,
+html body.app-body #view-settings .mini-list > .mini-item,
+html body.app-body .mini-list > .mini-item,
+html body.app-body #view-settings #adminUserList > .admin-user-row,
+html body.app-body #adminUserList.admin-user-list > .admin-user-row,
+html body.app-body #view-settings .admin-role-pill,
+html body.app-body #view-settings .about-link-pill,
+html body.app-body #view-settings pre,
+html body.app-body #view-settings code,
+html body.app-body #view-settings kbd,
+html body.app-body .connection-card .remark-md {
+  background: var(--z-glass-subcard-bg) !important;
+  backdrop-filter: var(--z-glass-subcard-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-subcard-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+html body.app-body #view-settings .mini-item > button,
+html body.app-body .mini-item > button,
+html body.app-body #view-settings .admin-user-actions > .admin-action-btn,
+html body.app-body .admin-user-actions > .admin-action-btn,
+html body.app-body #view-settings .btn:not(.btn-primary):not(.btn-danger),
+html body.app-body .connection-card .card-actions .btn:not(.btn-primary):not(.btn-danger) {
+  background: var(--z-glass-ctl-bg) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+/* 7) 首页「新建连接」弹窗及全站所有弹窗 (.modal-backdrop / #connectionModal / #proxyModal / #sshKeyModal / #snippetModal / #aiProviderModal / #adminUserModal) */
+html[data-theme="light"] body.app-body #connectionModalScrim,
+html[data-theme="light"] body.app-body #proxyModalScrim,
+html[data-theme="light"] body.app-body #sshKeyModalScrim,
+html[data-theme="light"] body.app-body #adminUserModalScrim,
+html[data-theme="light"] body.app-body #snippetModalScrim,
+html[data-theme="light"] body.app-body #aiProviderModalScrim,
+html[data-theme="light"] body.app-body .modal-backdrop {
+  background: rgba(15, 23, 42, 0.08) !important;
+}
+html[data-theme="dark"] body.app-body #connectionModalScrim,
+html[data-theme="dark"] body.app-body #proxyModalScrim,
+html[data-theme="dark"] body.app-body #sshKeyModalScrim,
+html[data-theme="dark"] body.app-body #adminUserModalScrim,
+html[data-theme="dark"] body.app-body #snippetModalScrim,
+html[data-theme="dark"] body.app-body #aiProviderModalScrim,
+html[data-theme="dark"] body.app-body .modal-backdrop {
+  background: rgba(4, 8, 16, 0.24) !important;
+}
+/* 当 #connectionModal 展开静止时隐藏背后的 #connectionMotionSurface 代理层，杜绝双层毛玻璃叠加变白 */
+html body.app-body:has(#connectionModal.show:not(.opening):not(.closing)) #connectionMotionSurface {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+html body.app-body .modal-backdrop > .connection-modal,
+html body.app-body .modal-backdrop > form,
+html body.app-body .modal-backdrop > div,
+html body.app-body #connectionModal > #connectionForm,
+html body.app-body #proxyModal > #proxyForm,
+html body.app-body #sshKeyModal > #sshKeyForm,
+html body.app-body #snippetModal > #snippetForm,
+html body.app-body #aiProviderModal > #aiProviderForm,
+html body.app-body #adminUserModal > #adminUserForm,
+html body.app-body #passwordChangedModal > div,
+html body.app-body #connectionMotionSurface,
+html body.app-body #aiComposerSheet,
+html body.app-body #aiThinkingPopover,
+html body.app-body .zephyr-color-popover,
+html body.app-body .custom-select-menu,
+html body.app-body .ui-toggle-select-menu,
+html body.app-body .dropdown-menu,
+html body .toast,
+.terminal-page .toast {
+  background: var(--z-glass-modal-bg) !important;
+  backdrop-filter: blur(22px) saturate(185%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(185%) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  box-shadow: var(--z-glass-shadow) !important;
+}
+/* 弹窗内部 *-modal-inner 仅作内容排版层，保持 100% 透明不叠加第二层白底 */
+html body.app-body #connectionModalInner,
+html body.app-body #proxyModalInner,
+html body.app-body #sshKeyModalInner,
+html body.app-body #snippetModalInner,
+html body.app-body #aiProviderModalInner,
+html body.app-body #adminUserModalInner {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html body.app-body .modal-backdrop .modal-head > .icon-btn,
+html body.app-body .modal-backdrop .icon-btn,
+html body.app-body .modal-backdrop .modal-actions > .btn:not(.btn-primary):not(.btn-danger),
+html body.app-body #connectionModalActions > .btn:not(.btn-primary):not(.btn-danger) {
+  background: var(--z-glass-ctl-bg) !important;
+  backdrop-filter: var(--z-glass-subcard-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-subcard-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+html body.app-body .modal-backdrop .connection-share-options > .connection-share-option,
+html body.app-body .modal-backdrop .connection-share-option,
+html body.app-body .connection-share-option,
+html body.app-body .modal-backdrop .advanced-route-panel,
+html body.app-body .modal-backdrop .route-type-tabs {
+  background: var(--z-glass-subcard-bg) !important;
+  backdrop-filter: var(--z-glass-subcard-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-subcard-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+html body.app-body .modal-backdrop .route-type-tabs > .route-type-tab:not(.active) {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+html body.app-body .modal-backdrop .route-type-tabs > .route-type-tab.active {
+  background: var(--z-glass-ctl-focus-bg) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+/* 全站输入框、下拉框、文本域、次级按钮统一半透毛玻璃（含弹窗与设置页） */
+html body.app-body input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
+html body.app-body select,
+html body.app-body textarea,
+html body.app-body .modal-backdrop input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
+html body.app-body .modal-backdrop select,
+html body.app-body .modal-backdrop textarea,
+html body.app-body #view-settings input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
+html body.app-body #view-settings select,
+html body.app-body #view-settings textarea,
+html body.app-body .search-box,
+html body.app-body .filter-pill,
+html body.app-body .custom-select-trigger,
+html body.app-body .ui-toggle-select-trigger,
+html body.app-body .activity-filter-select,
+html body.app-body .activity-page-btn,
+html body.app-body .btn-secondary,
+html body.app-body .btn-ghost {
+  background: var(--z-glass-ctl-bg) !important;
+  backdrop-filter: var(--z-glass-subcard-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-subcard-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+html body.app-body input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):focus,
+html body.app-body select:focus,
+html body.app-body textarea:focus,
+html body.app-body .modal-backdrop input:focus,
+html body.app-body .modal-backdrop select:focus,
+html body.app-body .modal-backdrop textarea:focus {
+  background: var(--z-glass-ctl-focus-bg) !important;
+}
+
+/* 复选框未选中态采用半透玻璃底，避免扫描为纯白小方块 */
+html body.app-body input[type="checkbox"]:not(:checked) {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 15px !important;
+  height: 15px !important;
+  border-radius: 4px !important;
+  background: var(--z-glass-ctl-bg) !important;
+  border: 1px solid rgba(100, 116, 139, 0.45) !important;
+  display: inline-grid !important;
+  place-content: center !important;
+  cursor: pointer !important;
+}
+html body.app-body input[type="checkbox"]:checked {
+  accent-color: var(--accent, #1a73e8) !important;
+}
+
+/* 8) 桌面端/Web端 AI 浮窗与侧边磁贴 (#aiAgentPanel) 全面透视毛玻璃化 */
+html[data-theme="light"] body.app-body #aiAgentPanel.ai-agent-panel.file-manager,
+html[data-theme="dark"] body.app-body #aiAgentPanel.ai-agent-panel.file-manager,
+html[data-theme="light"] body.app-body #aiAgentPanel.ai-agent-panel.pinned.docked-left:not(.z-panel-morphing),
+html[data-theme="light"] body.app-body #aiAgentPanel.ai-agent-panel.pinned.docked-right:not(.z-panel-morphing),
+html[data-theme="dark"] body.app-body #aiAgentPanel.ai-agent-panel.pinned.docked-left:not(.z-panel-morphing),
+html[data-theme="dark"] body.app-body #aiAgentPanel.ai-agent-panel.pinned.docked-right:not(.z-panel-morphing) {
+  background: var(--z-glass-card-bg) !important;
+  backdrop-filter: blur(22px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(180%) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  box-shadow: var(--z-glass-shadow) !important;
+}
+html body.app-body #aiAgentPanel.ai-agent-panel > .ai-agent-window,
+html body.app-body #aiAgentPanel #aiStagePane.ai-agent-main.ai-stage-pane,
+html body.app-body #aiAgentPanel #aiChatArea.ai-chat-area,
+html body.app-body #aiAgentPanel .ai-agent-sidebar.ai-nav-pane:not(.sidebar-open) {
+  background: transparent !important;
+}
+html[data-theme="light"] body.app-body #aiAgentPanel .ai-title-bar.panel-titlebar,
+html[data-theme="light"] body.app-body #aiAgentPanel .ai-sidebar-header,
+html[data-theme="dark"] body.app-body #aiAgentPanel .ai-title-bar.panel-titlebar,
+html[data-theme="dark"] body.app-body #aiAgentPanel .ai-sidebar-header {
+  background: var(--z-glass-subcard-bg) !important;
+  border-bottom: 1px solid var(--z-glass-outer-border) !important;
+}
+html body.app-body #aiAgentPanel .ai-sidebar-footer > .ui-btn,
+html body.app-body #aiAgentPanel .ai-cell-matrix-card,
+html body.app-body #aiAgentPanel .ai-cell-card,
+html body.app-body #aiAgentPanel #aiFloatingCapsule.ai-composer > .ai-composer-box.ai-input-area {
+  background: var(--z-glass-ctl-bg) !important;
+  backdrop-filter: var(--z-glass-subcard-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-subcard-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+/* 9) 终端工作区：除实际终端显示屏幕 (.wterm-screen / .wterm-wrapper) 外，全部壳体、顶栏、底部栏与 SFTP/Docker/监控浮窗均单层透视毛玻璃化（外层 .terminal-window 透明，绝不多层叠加发白） */
+html body.app-body #terminalWorkspace,
+html body.app-body .terminal-workspace-grid,
+html body.app-body .terminal-window-body,
+html body.app-body iframe.terminal-frame {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+html body.app-body #terminalWorkspace .terminal-window,
+html body.app-body #terminalWorkspace .terminal-window.active,
+html body.app-body #terminalWorkspace:not(.custom-fullscreen) .terminal-window:not(:fullscreen):not(.minimized-keepalive),
+html[data-theme="light"] body.app-body #terminalWorkspace .terminal-window,
+html[data-theme="dark"] body.app-body #terminalWorkspace .terminal-window,
+html body.app-body .terminal-window {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  box-shadow: var(--z-glass-shadow) !important;
+}
+html[data-theme="light"] body.app-body #terminalWorkspace .terminal-window > .terminal-window-titlebar,
+html[data-theme="dark"] body.app-body #terminalWorkspace .terminal-window > .terminal-window-titlebar,
+html body.app-body .terminal-window > .terminal-window-titlebar {
+  background: var(--z-glass-card-bg) !important;
+  border-bottom: 1px solid var(--z-glass-outer-border) !important;
+}
+html body.app-body #sessionTabs .smartbar-panel,
+html body.app-body #sessionTabs .smartbar-picker {
+  background: var(--z-glass-card-bg) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+/* Smartbar 点击条外围热区 (.smartbar-handle) 必须 100% 透明无边框，与顶栏底色完全融为一体，仅保留内部胶囊横条 span；同时彻底禁用旧版 .main-nav::after 双重把手避免切换终端时顶栏下沿飞起闪烁 */
+body.terminal-mode .main-nav::after,
+body.terminal-mode .main-nav.terminal-shelf-settled::after {
+  display: none !important;
+  content: none !important;
+  opacity: 0 !important;
+  transition: none !important;
+  animation: none !important;
+}
+html[data-shelf-transitioning="1"] body.app-body:not(.terminal-mode) #sessionTabs.terminal-smartbar,
+html[data-shelf-transitioning="1"] body.app-body:not(.terminal-mode) #sessionTabs.terminal-smartbar .smartbar-handle {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+html body.app-body #sessionTabs .smartbar-handle,
+html body.app-body.terminal-mode #sessionTabs.terminal-smartbar .smartbar-handle {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 子终端 iframe (terminal.html / telnet-terminal.html / rdp.html / novnc.html)：
+ * 「文件 监控 容器 片段...」所在那一栏 (.terminal-topbar / #topbarActions) 透视毛玻璃化，
+ * 往下那个（终端主区域 #terminalContainer / #wtermWrapper 与底部输入区 .terminal-top-input）保持实底不透视！ */
+html:has(body .terminal-page),
+body:has(.terminal-page),
+.terminal-page,
+.rdp-page,
+.novnc-page,
+.terminal-page .terminal-workspace,
+.terminal-page .terminal-grid {
+  background: transparent !important;
+}
+html[data-theme="light"] body .terminal-page > .terminal-topbar,
+html[data-theme="dark"] body .terminal-page > .terminal-topbar,
+html[data-zephyr-surface="desktop"] .terminal-page > .terminal-topbar,
+body.desktop-embed .terminal-page > .terminal-topbar,
+.terminal-page > .terminal-topbar,
+.rdp-page > .rdp-topbar,
+.novnc-page > .novnc-topbar {
+  background: var(--z-glass-tray-bg) !important;
+  border-bottom: 1px solid var(--z-glass-outer-border) !important;
+}
+html[data-theme="light"] .terminal-page > .terminal-topbar > .topbar-actions,
+html[data-theme="light"] .terminal-page > .topbar-actions,
+html[data-theme="dark"] .terminal-page > .terminal-topbar > .topbar-actions,
+html[data-theme="dark"] .terminal-page > .topbar-actions,
+.terminal-page #topbarActions.topbar-actions,
+.terminal-page .topbar-actions,
+.rdp-page .topbar-actions,
+.novnc-page .topbar-actions {
+  background: var(--z-glass-subcard-bg) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+/* 往下那个（#terminalContainer / #wtermWrapper 与底部输入栏 .terminal-top-input）也采用透视毛玻璃，并使用更高模糊度的高斯模糊（blur(38px) saturate(185%)），消除生硬实心断层同时确保终端字符清晰可读 */
+html[data-theme="light"] .terminal-page > .terminal-container,
+:root[data-theme="light"] .terminal-container .wterm-wrapper,
+:root[data-theme="light"][data-wterm-theme] .terminal-container .wterm-wrapper,
+:root[data-theme="light"][data-wterm-theme] .terminal-container .wterm-wrapper.wterm {
+  background: transparent !important;
+}
+html[data-theme="light"] .terminal-page > .terminal-container {
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(38px) saturate(185%) !important;
+  -webkit-backdrop-filter: blur(38px) saturate(185%) !important;
+}
+html[data-theme="dark"] .terminal-page > .terminal-container,
+:root[data-theme="dark"] .terminal-container .wterm-wrapper,
+:root[data-theme="dark"][data-wterm-theme] .terminal-container .wterm-wrapper,
+:root[data-theme="dark"][data-wterm-theme] .terminal-container .wterm-wrapper.wterm {
+  background: transparent !important;
+}
+html[data-theme="dark"] .terminal-page > .terminal-container {
+  background: rgba(13, 17, 23, 0.72) !important;
+  backdrop-filter: blur(38px) saturate(185%) !important;
+  -webkit-backdrop-filter: blur(38px) saturate(185%) !important;
+}
+html[data-theme="light"] .terminal-page > .terminal-top-input {
+  background: rgba(255, 255, 255, 0.64) !important;
+  backdrop-filter: blur(32px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(180%) !important;
+  border-top: 1px solid var(--z-glass-outer-border) !important;
+}
+html[data-theme="dark"] .terminal-page > .terminal-top-input {
+  background: rgba(16, 20, 28, 0.64) !important;
+  backdrop-filter: blur(32px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(180%) !important;
+  border-top: 1px solid var(--z-glass-outer-border) !important;
+}
+html[data-theme="light"] .terminal-page .terminal-top-input #cmdInput,
+.terminal-page .terminal-top-input .cmd-input,
+.terminal-page #cmdInput.cmd-input {
+  background: rgba(255, 255, 255, 0.56) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+html[data-theme="dark"] .terminal-page .terminal-top-input #cmdInput {
+  background: rgba(24, 30, 42, 0.56) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+/* 终端内部一级/二级浮窗与侧边磁贴 (SFTP #fileManager / Docker #dockerPanel / 监控 #infoModal / 片段 #snippetPanel / 快捷键 #shortcutPanel / 编辑器 #fmEditorModal / 预览 #fmPreviewModal) */
+html[data-theme="light"] .terminal-page > .z-unified-panel.open:not(.docked-right):not(.docked-left),
+html[data-theme="dark"] .terminal-page > .z-unified-panel.open:not(.docked-right):not(.docked-left),
+html[data-theme="light"] .terminal-page > .z-unified-panel.pinned,
+html[data-theme="dark"] .terminal-page > .z-unified-panel.pinned,
+html[data-theme="light"] .z-unified-secondary-panel,
+html[data-theme="dark"] .z-unified-secondary-panel,
+html[data-theme="light"] .fm-props-modal,
+html[data-theme="dark"] .fm-props-modal,
+.terminal-page .z-unified-panel,
+.terminal-page .file-manager,
+.terminal-page .docker-panel,
+.terminal-page .monitor-panel,
+.terminal-page .info-modal,
+.terminal-page .snippet-panel,
+.terminal-page .shortcut-panel,
+.terminal-page .editor-modal,
+.terminal-page .fm-editor-modal,
+.terminal-page .preview-modal,
+.terminal-page .fm-preview-modal,
+.terminal-page .rdp-floating-panel {
+  background: var(--z-glass-card-bg) !important;
+  backdrop-filter: blur(26px) saturate(185%) !important;
+  -webkit-backdrop-filter: blur(26px) saturate(185%) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  box-shadow: var(--z-glass-shadow) !important;
+}
+html[data-theme="light"] .z-unified-panel .fm-titlebar-head,
+html[data-theme="light"] .z-unified-panel .panel-titlebar,
+html[data-theme="light"] .z-unified-secondary-panel .fm-titlebar-head,
+html[data-theme="light"] .z-unified-secondary-panel .panel-titlebar,
+html[data-theme="dark"] .z-unified-panel .fm-titlebar-head,
+html[data-theme="dark"] .z-unified-panel .panel-titlebar,
+html[data-theme="dark"] .z-unified-secondary-panel .fm-titlebar-head,
+html[data-theme="dark"] .z-unified-secondary-panel .panel-titlebar,
+.terminal-page .z-unified-panel .panel-titlebar,
+.terminal-page .z-unified-panel .fm-header,
+.terminal-page .z-unified-panel .fm-toolbar,
+.terminal-page .z-unified-panel .fm-breadcrumb,
+.terminal-page .z-unified-panel .fm-statusbar,
+.terminal-page .z-unified-panel .docker-header,
+.terminal-page .z-unified-panel .monitor-header,
+.terminal-page .z-unified-panel .info-header,
+.terminal-page .z-unified-panel .info-modal-header,
+.terminal-page .z-unified-panel .snippet-panel-header {
+  background: var(--z-glass-subcard-bg) !important;
+  border-bottom: 1px solid var(--z-glass-outer-border) !important;
+}
+html[data-theme="light"] #fileManager .fm-path-box,
+html[data-theme="light"] #fileManager .fm-search-box,
+html[data-theme="dark"] #fileManager .fm-path-box,
+html[data-theme="dark"] #fileManager .fm-search-box,
+html[data-theme="light"] #fileManager .fm-toolbar > .tool-btn:not(.fm-upload-label),
+html[data-theme="dark"] #fileManager .fm-toolbar > .tool-btn:not(.fm-upload-label),
+html[data-theme="light"] #dockerPanel .docker-table thead th,
+html[data-theme="dark"] #dockerPanel .docker-table thead th,
+#dockerPanel .docker-overview-item,
+#dockerPanel .docker-table-wrap,
+.terminal-page .z-unified-panel .docker-section,
+.terminal-page .z-unified-panel .docker-card,
+.terminal-page .z-unified-panel .docker-item,
+.terminal-page .z-unified-panel .monitor-card,
+.terminal-page .z-unified-panel .info-card,
+.terminal-page .z-unified-panel .stat-box,
+.terminal-page .z-unified-panel .stat-card {
+  background: var(--z-glass-subcard-bg) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+.terminal-page .z-unified-panel .fm-body,
+.terminal-page .z-unified-panel .fm-pane,
+.terminal-page .z-unified-panel .fm-list,
+.terminal-page .z-unified-panel .fm-table,
+.terminal-page .z-unified-panel .docker-body,
+.terminal-page .z-unified-panel .docker-content,
+.terminal-page .z-unified-panel .monitor-body,
+.terminal-page .z-unified-panel .info-body,
+.terminal-page .z-unified-panel .info-modal-body,
+.terminal-page .z-unified-panel .snippet-panel-body,
+.terminal-page .z-unified-panel .shortcut-grid,
+.terminal-page .z-unified-panel .rdp-panel-content {
+  background: transparent !important;
+}
+.terminal-page .z-unified-panel input:not([type="checkbox"]):not([type="radio"]),
+.terminal-page .z-unified-panel select,
+.terminal-page .z-unified-panel textarea,
+.terminal-page .terminal-command-bar input,
+.terminal-page .terminal-command-bar select {
+  background: var(--z-glass-ctl-bg) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+/* 顶栏右侧 #aiFloatingBtn 高优先级透视化 */
+html[data-theme="light"] body.app-body .main-nav .nav-actions #aiFloatingBtn:not(.force-hidden),
+html[data-theme="dark"] body.app-body .main-nav .nav-actions #aiFloatingBtn:not(.force-hidden) {
+  background: var(--z-glass-ctl-bg) !important;
+  backdrop-filter: var(--z-glass-subcard-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-subcard-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+}
+
+/* 唯一保留不透明实底的真正终端屏幕区域 (.wterm-screen)，保证终端字符对比度与可读性 */
+html[data-theme="dark"] .terminal-page .wterm-screen,
+:root:not([data-theme="light"]) .terminal-page .wterm-screen {
+  background: var(--term-bg, #0d1117) !important;
+}
+html[data-theme="light"] .terminal-page .wterm-screen {
+  background: var(--term-bg, #ffffff) !important;
+}

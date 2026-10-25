@@ -97,15 +97,15 @@
    */
   function resolveSliderCardBg01(cardEl) {
     var light = isLightTheme();
-    var fallback = light ? [244, 246, 250] : [26, 30, 38];
+    var fallback = light ? [248, 250, 253] : [30, 35, 45];
     var rootStyle = getComputedStyle(document.documentElement);
-    var surfaceRgb = parseCssColorToRgb255(rootStyle.getPropertyValue('--surface'), light ? [255, 255, 255] : [22, 25, 32]);
-    var bgRgb = parseCssColorToRgb255(rootStyle.getPropertyValue('--bg'), light ? [234, 238, 244] : [13, 16, 21]);
-    var mixR = Math.round(surfaceRgb[0] * 0.62 + bgRgb[0] * 0.38);
-    var mixG = Math.round(surfaceRgb[1] * 0.62 + bgRgb[1] * 0.38);
-    var mixB = Math.round(surfaceRgb[2] * 0.62 + bgRgb[2] * 0.38);
+    var surfaceRgb = parseCssColorToRgb255(rootStyle.getPropertyValue('--surface'), light ? [255, 255, 255] : [26, 30, 38]);
+    var bgRgb = parseCssColorToRgb255(rootStyle.getPropertyValue('--bg'), light ? [240, 244, 249] : [15, 19, 26]);
+    var mixR = Math.round(surfaceRgb[0] * 0.72 + bgRgb[0] * 0.28);
+    var mixG = Math.round(surfaceRgb[1] * 0.72 + bgRgb[1] * 0.28);
+    var mixB = Math.round(surfaceRgb[2] * 0.72 + bgRgb[2] * 0.28);
     if (cardEl) {
-      cardEl.style.setProperty('--lg-slider-card-bg', 'rgb(' + mixR + ', ' + mixG + ', ' + mixB + ')');
+      cardEl.style.setProperty('--lg-slider-card-bg', 'rgba(' + mixR + ', ' + mixG + ', ' + mixB + ', ' + (light ? '0.42' : '0.42') + ')');
     }
     return [
       (Number.isFinite(mixR) ? mixR : fallback[0]) / 255,
@@ -523,22 +523,51 @@
     });
   }
 
+  function isSettingsAppearanceVisible() {
+    var settingsView = document.getElementById('view-settings');
+    var appearPanel = document.getElementById('settings-appearance');
+    return (!settingsView || settingsView.classList.contains('active')) &&
+           (!appearPanel || appearPanel.classList.contains('active'));
+  }
+
   function refreshAllSliders(force) {
     initAllSliders();
+    if (!force && !isSettingsAppearanceVisible()) return;
     instances.forEach(function (ctrl) {
       ctrl.refresh(Boolean(force));
     });
   }
 
-  // Watch for theme or color-scheme changes on <html> so bottom fill line & track update immediately
+  var sliderRafPending = false;
+  function scheduleRefreshAllSliders(force) {
+    if (sliderRafPending) return;
+    sliderRafPending = true;
+    requestAnimationFrame(function () {
+      sliderRafPending = false;
+      if (isSettingsAppearanceVisible()) {
+        refreshAllSliders(Boolean(force));
+      }
+    });
+  }
+
+  // Watch for theme or color-scheme changes on <html> so bottom fill line & track update immediately without firing on every --theme-clip-r style mutation
   if (typeof MutationObserver !== 'undefined') {
     var rootObserver = new MutationObserver(function () {
-      refreshAllSliders(true);
+      if (window.__zephyrThemeTransitioning) return;
+      scheduleRefreshAllSliders(false);
     });
     rootObserver.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['data-theme', 'data-color-scheme', 'style'],
+      attributeFilter: ['data-theme', 'data-color-scheme'],
     });
+    var appearPanel = document.getElementById('settings-appearance');
+    if (appearPanel) {
+      new MutationObserver(function () {
+        if (appearPanel.classList.contains('active')) {
+          scheduleRefreshAllSliders(true);
+        }
+      }).observe(appearPanel, { attributes: true, attributeFilter: ['class'] });
+    }
   }
 
   window.addEventListener('resize', function () {
