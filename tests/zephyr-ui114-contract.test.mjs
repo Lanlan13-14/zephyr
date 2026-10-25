@@ -123,3 +123,17 @@ test('UI123 Contract: Telnet, RDP, and VNC are unified onto v4.0 floating/docked
   assert.ok(specCss.includes('html[data-theme="light"] #view-settings .settings-menu .settings-tab.active'));
   assert.ok(specCss.includes('#view-settings #settings-appearance.active'));
 });
+
+test("UI124 Contract: Smooth Google M3 / Apple pill & view transitions (zero CSS transition fight), full English i18n parity, and commented-out Initiate via Primary & Port Forwarding UI", () => {
+  const termHtml = read("public/terminal.html");
+  const runtimeJs = read("public/i18n/runtime.js");
+  assert.equal(typeof Motion.settingsTabSlide, "function");
+  assert.ok(motionJs.includes("const startAlpha = isTerminalTarget ? 0.86 : 0.76;"));
+  assert.ok(specCss.includes("#view-settings .settings-menu .settings-tab.active::after"));
+  assert.ok(specCss.includes("transform: translate3d(0, var(--settings-pill-dy, 0px), 0) !important;"));
+  assert.ok(specCss.includes("#view-settings .settings-panel.active {"));
+  assert.ok(runtimeJs.includes("globalThis.__zephyrI18nState"));
+  assert.ok(termHtml.includes('<!-- <button class="btn-sm" id="portForwardBtn"'));
+  assert.ok(sftpProJs.includes("// UI124: temporarily commented out per user request (hide Port Forwarding UI without deleting code)"));
+  assert.ok(appJs.includes("// UI124: temporarily commented out per user request (hide Initiate via Primary UI without deleting code)"));
+});

@@ -1,6 +1,6 @@
 import { installTerminalSftpPro } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui123';
 import RFB from '/vendor/novnc/core/rfb.js';
-import { t, initI18n } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
+import { t, initI18n, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20261019-ui124';
 import KeyTable from '/vendor/novnc/core/input/keysym.js';
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 import {
@@ -1035,6 +1035,12 @@ function bindEvents() {
 
 applyDisplayOptions();
 bindEvents();
+initI18n({ applyDom: true }).then(() => {
+    try { applyDomI18n(document); applyDisplayOptions(); } catch (_) {}
+}).catch(() => {});
+onLocaleChange(() => {
+    try { applyDomI18n(document); applyDisplayOptions(); } catch (_) {}
+});
 try {
     installTerminalSftpPro({
         showToast: (m, k) => showNotesToast(m, k),

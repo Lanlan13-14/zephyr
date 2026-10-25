@@ -12,7 +12,7 @@ import { installTerminalSftpPro } from './vendor/zephyr-pro/terminal-sftp-pro.js
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { t, initI18n } from './i18n/runtime.js?v=20260729-ai-rdp-cert1';
+import { t, initI18n, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20261019-ui124';
 import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260720-zft2';
 import { computeSafeRdpSize } from './rdp-resolution-policy.js?v=20260801-rdp-motion9';
 import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260802-rdp-input-render20';
@@ -1771,7 +1771,7 @@ function maybeAutoReconnect({ reason = t('连接已断开') } = {}) {
     if (rdpManualDisconnect) return;
     if (rdpReconnecting) return;
     if (rdpReconnectAttempts >= 5) {
-        setStatus('error', '自动重连失败，请手动点击“重连”');
+        setStatus('error', t('自动重连失败，请手动点击“重连”'));
         return;
     }
     /* Clear any existing timer to prevent parallel reconnect chains. */
@@ -3408,6 +3408,7 @@ window.addEventListener('message', (e) => {
  * ═══════════════════════════════════════════════════════════════════════ */
 (async function boot() {
     updateInfo();
+    try { await initI18n({ applyDom: true }); applyDomI18n(document); } catch (_) {}
     initToolbar();
     initFilePanel();
     try {
@@ -3417,6 +3418,14 @@ window.addEventListener('message', (e) => {
             hostName: params?.name || params?.host || 'RDP',
         });
     } catch (_) {}
+    try { applyDomI18n(document); } catch (_) {}
+    onLocaleChange(() => {
+        try {
+            applyDomI18n(document);
+            const qBtn = document.getElementById('qualityBtn');
+            if (qBtn) qBtn.textContent = qualityMode === 'performance' ? t('性能') : qualityMode === 'quality' ? t('画质') : t('平衡');
+        } catch (_) {}
+    });
     loadRemoteNotesSettings();
     // render20 no longer navigates the iframe for resize reconnects. Discard
     // any transition snapshot left by the legacy reload path.

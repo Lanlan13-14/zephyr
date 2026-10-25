@@ -4823,17 +4823,20 @@ export const Motion = {
   async navTabSlide(navTabsEl, fromRect, toRect, { preset = { response: 0.22, damping: 1.0 } } = {}) {
     if (!navTabsEl || !fromRect || !toRect) return false;
     if (fromRect.width < 10 || toRect.width < 10) return false;
-    const dx = Math.round((fromRect.left + fromRect.width / 2) - (toRect.left + toRect.width / 2));
-    if (Math.abs(dx) < 2) return false;
+    const dx = Math.round(fromRect.left - toRect.left);
+    const dw = Math.abs(Math.round(fromRect.width - toRect.width));
+    if (Math.abs(dx) < 2 && dw < 2) return false;
 
     const token = this._bump(navTabsEl);
-    const units = { '--nav-pill-dx': 'px', '--nav-pill-sx': '' };
-    this.stop(navTabsEl, ['--nav-pill-dx', '--nav-pill-sx']);
+    const units = { '--nav-pill-dx': 'px', '--nav-pill-w': 'px', '--nav-pill-sx': '' };
+    this.stop(navTabsEl, ['--nav-pill-dx', '--nav-pill-w', '--nav-pill-sx']);
     navTabsEl.classList.add('nav-pill-sliding');
     navTabsEl.style.setProperty('--nav-pill-dx', dx + 'px');
+    navTabsEl.style.setProperty('--nav-pill-w', Math.round(fromRect.width) + 'px');
     navTabsEl.style.setProperty('--nav-pill-sx', '1');
     this.cssVars(navTabsEl, {
       '--nav-pill-dx': dx,
+      '--nav-pill-w': Math.round(fromRect.width),
       '--nav-pill-sx': 1,
     }, { immediate: true, units });
 
@@ -4841,12 +4844,14 @@ export const Motion = {
       if (this._genOf(navTabsEl) === token) {
         navTabsEl.classList.remove('nav-pill-sliding');
         navTabsEl.style.removeProperty('--nav-pill-dx');
+        navTabsEl.style.removeProperty('--nav-pill-w');
         navTabsEl.style.removeProperty('--nav-pill-sx');
       }
     });
     try {
       await this.cssVars(navTabsEl, {
         '--nav-pill-dx': 0,
+        '--nav-pill-w': Math.round(toRect.width),
         '--nav-pill-sx': 1,
       }, { preset, units });
     } finally {
@@ -4854,6 +4859,7 @@ export const Motion = {
       if (this._genOf(navTabsEl) === token) {
         navTabsEl.classList.remove('nav-pill-sliding');
         navTabsEl.style.removeProperty('--nav-pill-dx');
+        navTabsEl.style.removeProperty('--nav-pill-w');
         navTabsEl.style.removeProperty('--nav-pill-sx');
       }
     }
@@ -4861,8 +4867,45 @@ export const Motion = {
   },
 
   /**
-   * Apple-style critically-damped (damping: 1.0, zero bounce/overshoot) view transition.
-   * Synchronous frame-0 seed + subtle 6px single-axis micro-glide + smooth opacity dissolve.
+   * Google M3 / Apple critically-damped vertical pill glide for Settings sidebar (.settings-menu).
+   */
+  async settingsTabSlide(menuEl, fromRect, toRect, { preset = { response: 0.22, damping: 1.0 } } = {}) {
+    if (!menuEl || !fromRect || !toRect) return false;
+    const dy = Math.round(fromRect.top - toRect.top);
+    if (Math.abs(dy) < 2) return false;
+
+    const token = this._bump(menuEl);
+    const units = { '--settings-pill-dy': 'px' };
+    this.stop(menuEl, ['--settings-pill-dy']);
+    menuEl.classList.add('settings-pill-sliding');
+    menuEl.style.setProperty('--settings-pill-dy', dy + 'px');
+    this.cssVars(menuEl, {
+      '--settings-pill-dy': dy,
+    }, { immediate: true, units });
+
+    const guard = withSettleSafetyGuard(menuEl, 340, () => {
+      if (this._genOf(menuEl) === token) {
+        menuEl.classList.remove('settings-pill-sliding');
+        menuEl.style.removeProperty('--settings-pill-dy');
+      }
+    });
+    try {
+      await this.cssVars(menuEl, {
+        '--settings-pill-dy': 0,
+      }, { preset, units });
+    } finally {
+      guard();
+      if (this._genOf(menuEl) === token) {
+        menuEl.classList.remove('settings-pill-sliding');
+        menuEl.style.removeProperty('--settings-pill-dy');
+      }
+    }
+    return true;
+  },
+
+  /**
+   * Google M3 Emphasized Decelerate / critically-damped (damping: 1.0, zero bounce/overshoot) view transition.
+   * Synchronous frame-0 seed + subtle 6px single-axis micro-glide + non-flashing opacity dissolve (0.76 -> 1.0).
    */
   async viewSwitch(fromViewEl, toViewEl, { dir = 1, axis = 'x', preset = { response: 0.18, damping: 1.0 } } = {}) {
     if (!toViewEl) return false;
@@ -4887,7 +4930,7 @@ export const Motion = {
     const startX = axis === 'x' ? Math.round((dir >= 0 ? 1 : -1) * 6) : 0;
     const startY = axis === 'y' ? Math.round((dir >= 0 ? 1 : -1) * 6) : 0;
     const startScale = 1;
-    const startAlpha = 0.28;
+    const startAlpha = isTerminalTarget ? 0.86 : 0.76;
     const units = {
       '--z-view-enter-x': 'px',
       '--z-view-enter-y': 'px',
@@ -4897,14 +4940,14 @@ export const Motion = {
 
     this.stop(enterEl, ['--z-view-enter-x', '--z-view-enter-y', '--z-view-enter-scale', '--z-view-enter-alpha']);
     enterEl.classList.add('z-view-entering');
-    enterEl.style.setProperty('--z-view-enter-x', startX + 'px');
-    enterEl.style.setProperty('--z-view-enter-y', startY + 'px');
+    enterEl.style.setProperty('--z-view-enter-x', (isTerminalTarget ? 0 : startX) + 'px');
+    enterEl.style.setProperty('--z-view-enter-y', (isTerminalTarget ? 0 : startY) + 'px');
     enterEl.style.setProperty('--z-view-enter-scale', String(startScale));
     enterEl.style.setProperty('--z-view-enter-alpha', String(startAlpha));
 
     this.cssVars(enterEl, {
-      '--z-view-enter-x': startX,
-      '--z-view-enter-y': startY,
+      '--z-view-enter-x': isTerminalTarget ? 0 : startX,
+      '--z-view-enter-y': isTerminalTarget ? 0 : startY,
       '--z-view-enter-scale': startScale,
       '--z-view-enter-alpha': startAlpha,
     }, { immediate: true, units });

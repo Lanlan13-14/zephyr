@@ -9516,7 +9516,7 @@ function openAiInlineConfirm({ title = t('确认'), body = '', confirmLabel = t(
     });
     mask.querySelector('[data-ai-inline-ok]')?.focus?.();
 }
-function openAiChoiceModal({ title = '请选择', current = '', choices = [], onSelect = null } = {}) {
+function openAiChoiceModal({ title = t('请选择'), current = '', choices = [], onSelect = null } = {}) {
     document.querySelectorAll('.ai-choice-modal-mask').forEach((el) => el.remove());
     const isMobile = window.innerWidth <= 760;
     const mask = document.createElement('div');
@@ -9680,8 +9680,8 @@ function applyAiPickerChoice(kind = '', value = '') {
         renderAiThinkingSelector(p, $('#aiModelSelect')?.value || '');
         const badge = $('#aiThinkingActiveBadge');
         if (badge) {
-            const map = { off: '关闭', low: '微推', med: '均衡', high: '高推', max: '极深' };
-            badge.textContent = map[value] || value || '均衡';
+            const map = { off: t('关闭'), low: t('微推'), med: t('均衡'), high: t('高推'), max: t('极深') };
+        badge.textContent = map[value] || value || t('均衡');
         }
     }
     persistAiSessionSelection(session);
@@ -10944,7 +10944,7 @@ function aiShowImageLightbox(src, name = '') {
         lightbox.id = 'aiImageLightbox';
         lightbox.className = 'ai-image-lightbox';
         lightbox.innerHTML = `
-            <button type="button" class="ai-lightbox-close" aria-label="关闭预览">×</button>
+            <button type="button" class="ai-lightbox-close" aria-label="${t('关闭预览')}">×</button>
             <div class="ai-lightbox-content">
                 <img class="ai-lightbox-img" src="" alt="preview">
             </div>
@@ -13611,11 +13611,11 @@ async function refreshAiCellInspector(sessionId = aiCurrentSessionId) {
         if (authVal) authVal.textContent = 'Cell Direct';
         if (leaseVal) leaseVal.textContent = 'Pending';
         if (isoVal) isoVal.textContent = 'Sandbox';
-        if (filesCount) filesCount.textContent = '0 个文件';
+        if (filesCount) filesCount.textContent = t('0 个文件');
         if (output && !output.querySelector('.ai-cell-terminal-line')) {
-            output.innerHTML = '<div class="ai-cell-empty-state">会话沙箱控制台已就绪，发送消息即可激活沙箱执行…</div>';
+            output.innerHTML = `<div class="ai-cell-empty-state" data-i18n="会话沙箱控制台已就绪，发送消息即可激活沙箱执行…">${t('会话沙箱控制台已就绪，发送消息即可激活沙箱执行…')}</div>`;
         }
-        if (files) files.innerHTML = '<div class="ai-cell-empty-state">沙箱工作区根目录为空</div>';
+        if (files) files.innerHTML = `<div class="ai-cell-empty-state" data-i18n="沙箱工作区根目录为空">${t('沙箱工作区根目录为空')}</div>`;
         return;
     }
 
@@ -13653,18 +13653,18 @@ async function refreshAiCellInspector(sessionId = aiCurrentSessionId) {
                 <div class="ai-cell-terminal-line" style="color:#58a6ff;">[zephyr-cell] Session: ${escapeHtml(runtimeSessionId)}</div>
                 <div class="ai-cell-terminal-line" style="color:#34c759;">[zephyr-cell] Mode: ${escapeHtml(status.mode || 'Direct Sandbox')} | Ready</div>
                 <div class="ai-cell-terminal-line" style="color:#8b949e;margin-top:4px;">Available binaries: ${escapeHtml(commands || 'sh, python3, curl, git, jq')}</div>
-                ${historyLines ? `<div class="ai-cell-terminal-line" style="color:#58a6ff;margin-top:8px;">[exec history] ${historyItems.length} command(s)</div>${historyLines}` : '<div class="ai-cell-terminal-line" style="color:#6e7681;margin-top:8px;">[exec history] 尚无执行记录</div>'}
+                ${historyLines ? `<div class="ai-cell-terminal-line" style="color:#58a6ff;margin-top:8px;">[exec history] ${historyItems.length} command(s)</div>${historyLines}` : `<div class="ai-cell-terminal-line" style="color:#6e7681;margin-top:8px;">[exec history] ${t('尚无执行记录')}</div>`}
             `;
         }
         const items = Array.isArray(list.items) ? list.items : [];
-        if (filesCount) filesCount.textContent = `${items.length} 个文件`;
+        if (filesCount) filesCount.textContent = t('{count} 个文件', { count: items.length });
         if (files) {
             files.innerHTML = items.length ? items.map((item) => `
                 <div class="ai-cell-file" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;border-radius:6px;background:color-mix(in srgb,var(--text) 4%,transparent);margin-bottom:4px;">
                     <span style="font-family:monospace;font-size:12px;color:var(--text);">${escapeHtml(item.name || item.path || '')}</span>
                     <small style="color:var(--muted);font-size:11px;">${escapeHtml(item.type || 'file')}</small>
                 </div>
-            `).join('') : '<div class="ai-cell-empty-state">沙箱工作区根目录为空</div>';
+            `).join('') : `<div class="ai-cell-empty-state" data-i18n="沙箱工作区根目录为空">${t('沙箱工作区根目录为空')}</div>`;
         }
     } catch (error) {
         if (statusText) statusText.textContent = 'Offline';
@@ -13707,8 +13707,8 @@ function initZephyrAiPhase68Interactions() {
         });
         const badge = $('#aiThinkingActiveBadge');
         if (badge) {
-            const map = { off: '关闭', low: '微推', med: '均衡', high: '高推', max: '极深' };
-            badge.textContent = map[currentLevel] || currentLevel || '均衡';
+            const map = { off: t('关闭'), low: t('微推'), med: t('均衡'), high: t('高推'), max: t('极深') };
+        badge.textContent = map[currentLevel] || currentLevel || t('均衡');
         }
         popover.querySelectorAll('.ai-menu-choices').forEach((group) => {
             const target = document.getElementById(group.dataset.target || '');
@@ -13809,7 +13809,7 @@ function initZephyrAiPhase68Interactions() {
     $('#aiCellRefreshBtn')?.addEventListener('click', () => refreshAiCellInspector());
     $('#aiCellClearTermBtn')?.addEventListener('click', () => {
         const term = $('#aiCellTerminalContainer');
-        if (term) term.innerHTML = '<div class="ai-cell-empty-state">控制台已清屏</div>';
+        if (term) term.innerHTML = `<div class="ai-cell-empty-state" data-i18n="控制台已清屏">${t('控制台已清屏')}</div>`;
     });
     refreshAiCellInspector();
 
@@ -16213,11 +16213,17 @@ function bindEvents() {
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => {
         const allTabs = $$('.settings-tab');
         const prevTab = document.querySelector('.settings-tab.active');
+        const prevTabRect = prevTab ? { top: prevTab.offsetTop, height: prevTab.offsetHeight } : null;
         const prevIdx = prevTab ? allTabs.indexOf(prevTab) : -1;
         const nextIdx = allTabs.indexOf(btn);
         const prevPanel = document.querySelector('.settings-panel.active');
         allTabs.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
+        const menuEl = btn.closest('.settings-menu');
+        if (menuEl && prevTab && prevTab !== btn && prevTabRect && window.Motion?.settingsTabSlide) {
+            const nextTabRect = { top: btn.offsetTop, height: btn.offsetHeight };
+            if (nextTabRect.height > 0) void window.Motion.settingsTabSlide(menuEl, prevTabRect, nextTabRect);
+        }
         $$('.settings-panel').forEach((p) => p.classList.remove('active'));
         const nextPanel = $(`#settings-${btn.dataset.settings}`);
         nextPanel?.classList.add('active');
@@ -18085,26 +18091,27 @@ function syncActiveSurfaceAttribute() {
 }
 
 function ensureInitiateViaPrimaryField() {
-    const shareGroup = document.getElementById('connectionShareGroup') || document.querySelector('#connectionForm .connection-share-options');
-    if (!shareGroup || document.getElementById('connInitiateViaPrimary')) return;
-    const container = shareGroup.classList.contains('connection-share-options')
-        ? shareGroup
-        : (shareGroup.querySelector('.connection-share-options') || shareGroup);
-    const label = document.createElement('label');
-    label.className = 'connection-share-option';
-    label.id = 'initiateViaPrimaryRow';
-    label.setAttribute('for', 'connInitiateViaPrimary');
-    label.innerHTML = `
-        <span class="connection-share-copy">
-            <strong>Initiate via Primary (Handoff Ready)</strong>
-            <small>Anchor session on Zephyr Primary Server for seamless cross-device handoff</small>
-        </span>
-        <span class="connection-share-switch">
-            <input type="checkbox" id="connInitiateViaPrimary" name="initiateViaPrimary">
-            <span aria-hidden="true"></span>
-        </span>
-    `;
-    container.appendChild(label);
+    // UI124: temporarily commented out per user request (hide Initiate via Primary UI without deleting code)
+    // const shareGroup = document.getElementById('connectionShareGroup') || document.querySelector('#connectionForm .connection-share-options');
+    //     if (!shareGroup || document.getElementById('connInitiateViaPrimary')) return;
+    //     const container = shareGroup.classList.contains('connection-share-options')
+    //         ? shareGroup
+    //         : (shareGroup.querySelector('.connection-share-options') || shareGroup);
+    //     const label = document.createElement('label');
+    //     label.className = 'connection-share-option';
+    //     label.id = 'initiateViaPrimaryRow';
+    //     label.setAttribute('for', 'connInitiateViaPrimary');
+    //     label.innerHTML = `
+    //         <span class="connection-share-copy">
+    //             <strong>Initiate via Primary (Handoff Ready)</strong>
+    //             <small>Anchor session on Zephyr Primary Server for seamless cross-device handoff</small>
+    //         </span>
+    //         <span class="connection-share-switch">
+    //             <input type="checkbox" id="connInitiateViaPrimary" name="initiateViaPrimary">
+    //             <span aria-hidden="true"></span>
+    //         </span>
+    //     `;
+    //     container.appendChild(label);
 }
 
 function installSshConfigDragAndPasteImport() {
@@ -18256,7 +18263,7 @@ function bindGlobalHapticsAndAiSecretGuard() {
 function initZephyrProHostFeatures() {
     syncActiveSurfaceAttribute();
     window.addEventListener('resize', syncActiveSurfaceAttribute);
-    ensureInitiateViaPrimaryField();
+    // ensureInitiateViaPrimaryField();
     installSshConfigDragAndPasteImport();
     bindBroadcastAndDiagnoseMessages();
     bindGlobalHapticsAndAiSecretGuard();

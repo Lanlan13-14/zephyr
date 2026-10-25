@@ -5621,38 +5621,57 @@ html[data-theme="dark"] .main-nav.liquid-glass-on .nav-tabs {
   font-weight: 600 !important;
 }
 
-/* 激活页签采用可滑动的半透明毛玻璃胶囊滑块 (::before)，支持跨 Tab 切换时的临界阻尼平滑滑动 */
+/* 激活页签采用可滑动的纯白胶囊滑块 (::before)，支持跨 Tab 切换时的临界阻尼平滑滑动（z-index: -1 置于 .nav-tabs 栈底，绝不遮挡或模糊其它 Tab 文字） */
+.main-nav .nav-tabs,
+.main-nav.liquid-glass-on .nav-tabs {
+  position: relative !important;
+  isolation: isolate !important;
+}
+.main-nav .nav-tabs .nav-tab,
+.main-nav.liquid-glass-on .nav-tabs .nav-tab,
 html[data-theme="light"] .main-nav .nav-tabs .nav-tab.active,
 html[data-theme="dark"] .main-nav .nav-tabs .nav-tab.active {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
-  isolation: isolate !important;
+  isolation: auto !important;
+  z-index: auto !important;
+  overflow: visible !important;
+  transform: none !important;
+  transition: color 160ms cubic-bezier(0.2, 0, 0, 1) !important;
+}
+.main-nav .nav-tabs.nav-pill-sliding .nav-tab:hover:not(.active) {
+  background: transparent !important;
 }
 .main-nav .nav-tabs .nav-tab.active::before {
   display: block !important;
   content: '' !important;
   position: absolute !important;
-  inset: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: auto !important;
+  width: var(--nav-pill-w, 100%) !important;
   border-radius: 9999px !important;
   z-index: -1 !important;
   pointer-events: none !important;
   transform-origin: center center !important;
   transform: translate3d(var(--nav-pill-dx, 0px), 0, 0) !important;
-  will-change: transform !important;
+  transition: none !important;
+  will-change: transform, width !important;
 }
 html[data-theme="light"] .main-nav .nav-tabs .nav-tab.active::before {
-  background: color-mix(in srgb, var(--surface, #FFFFFF) 68%, transparent) !important;
-  backdrop-filter: blur(10px) saturate(140%) !important;
-  -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.72) !important;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+  background: #FFFFFF !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid rgba(15, 23, 42, 0.06) !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
 }
 html[data-theme="dark"] .main-nav .nav-tabs .nav-tab.active::before {
-  background: color-mix(in srgb, var(--surface, #2C3036) 68%, transparent) !important;
-  backdrop-filter: blur(10px) saturate(140%) !important;
-  -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  background: color-mix(in srgb, var(--surface, #2C3036) 88%, #FFFFFF) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
 }
 
@@ -6032,17 +6051,29 @@ body.desktop-embed .terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) 
   }
 }
 
-/* 5) 全站页面切换 (Dashboard / Activity / Terminal / Remote / Notes / Settings) 与设置子页切换 Apple 临界阻尼过渡动效（无过冲回弹、无上下跳动） */
+/* 5) 全站页面切换 (Dashboard / Activity / Terminal / Remote / Notes / Settings) 与设置子页切换 Google M3 / Apple 临界阻尼平滑过渡（彻底消除 style.css 320ms/220ms 过渡冲突、消除白屏闪烁与回跳） */
+.view,
+.view.active,
+#view-settings .settings-panel,
+#view-settings .settings-panel.active {
+  transition: none !important;
+}
+.view.active:not(.z-view-entering),
+#view-settings .settings-panel.active:not(.z-view-entering) {
+  opacity: 1 !important;
+  transform: none !important;
+}
 .view.active.z-view-entering,
 body.app-body.terminal-mode #terminalWorkspace.z-view-entering,
-.settings-panel.active.z-view-entering {
+.settings-panel.active.z-view-entering,
+#view-settings .settings-panel.active.z-view-entering {
   opacity: var(--z-view-enter-alpha, 1) !important;
   transform: translate3d(var(--z-view-enter-x, 0px), var(--z-view-enter-y, 0px), 0) !important;
+  transition: none !important;
   will-change: transform, opacity !important;
 }
 
-
-/* 27.8 UI123：Telnet / RDP / VNC 终端与远程桌面 UI 全面统一（对齐 v4.0 浮窗/磁贴/工具栏/AI磁贴零割裂） + 设置页面（#view-settings）Apple System Settings 级重设计 */
+/* 27.8 UI123/UI124：Telnet / RDP / VNC 终端与远程桌面 UI 全面统一（对齐 v4.0 浮窗/磁贴/工具栏/AI磁贴零割裂） + 设置页面（#view-settings）与顶栏同源胶囊滑块与卡片系统重设计 */
 
 /* ── A. Telnet / RDP / VNC 与 SSH 终端 v4.0 全面统一（消除双顶栏、内层双圆角、AI磁贴背面白边与旧版浮窗） ── */
 html[data-zephyr-surface="desktop"] .rdp-page,
@@ -6207,7 +6238,7 @@ body.desktop-embed .novnc-stage {
   display: none !important;
 }
 
-/* ── B. 设置页面（#view-settings）与顶栏导航 (.main-nav .nav-tabs) 同源配色与卡片系统重设计 ── */
+/* ── B. 设置页面（#view-settings）与顶栏导航 (.main-nav .nav-tabs) 同源配色、可滑动白底胶囊与卡片系统重设计 ── */
 @media (min-width: 761px) {
   #view-settings > .section-head {
     margin-bottom: 14px !important;
@@ -6234,10 +6265,11 @@ body.desktop-embed .novnc-stage {
     align-items: start !important;
   }
 
-  /* 左侧导航栏 (.settings-menu)：与顶栏 .main-nav .nav-tabs 完全同源的浅灰毛玻璃凹槽底座 + 选中项纯白凸起胶囊 + 彩色文字 */
+  /* 左侧导航栏 (.settings-menu)：与顶栏 .main-nav .nav-tabs 完全同源的浅灰毛玻璃凹槽底座 + 纵向平滑滑动的纯白胶囊滑块 + 彩色文字 */
   #view-settings .settings-menu {
     position: sticky !important;
     top: 72px !important;
+    isolation: isolate !important;
     display: flex !important;
     flex-direction: column !important;
     gap: 4px !important;
@@ -6260,6 +6292,10 @@ body.desktop-embed .novnc-stage {
   }
 
   #view-settings .settings-menu .settings-tab {
+    position: relative !important;
+    isolation: auto !important;
+    z-index: auto !important;
+    overflow: visible !important;
     display: flex !important;
     align-items: center !important;
     gap: 10px !important;
@@ -6275,31 +6311,51 @@ body.desktop-embed .novnc-stage {
     text-align: left !important;
     transform: none !important;
     box-shadow: none !important;
-    transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, border-color 150ms ease !important;
+    transition: color 160ms cubic-bezier(0.2, 0, 0, 1), background-color 150ms ease !important;
   }
   #view-settings .settings-menu .settings-tab.force-hidden {
     display: none !important;
   }
-  /* 彻底移除旧版 .settings-tab 底部蓝色横线 (::after) */
-  #view-settings .settings-menu .settings-tab::after {
+  /* 非激活项隐藏 ::after；激活项通过 ::after 渲染与顶栏完全同源的可纵向平滑滑动纯白胶囊滑块（位于 z-index: -1，绝不遮挡任何菜单项文字） */
+  #view-settings .settings-menu .settings-tab:not(.active)::after {
     display: none !important;
     content: none !important;
   }
-  #view-settings .settings-menu .settings-tab:hover:not(.active) {
+  #view-settings .settings-menu:not(.settings-pill-sliding) .settings-tab:hover:not(.active) {
     background: color-mix(in srgb, var(--surface, #FFFFFF) 45%, transparent) !important;
     color: var(--text) !important;
     transform: none !important;
   }
-  /* 选中项：与顶栏 .nav-tab.active 一致——纯白底色（深色模式下高亮浮层底色）+ 主题色文字与图标 + 立体柔光阴影 */
-  html[data-theme="light"] #view-settings .settings-menu .settings-tab.active {
-    background: #FFFFFF !important;
+  #view-settings .settings-menu.settings-pill-sliding .settings-tab:hover:not(.active) {
+    background: transparent !important;
+  }
+  html[data-theme="light"] #view-settings .settings-menu .settings-tab.active,
+  html[data-theme="dark"] #view-settings .settings-menu .settings-tab.active {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
     color: var(--accent, #0A84FF) !important;
+  }
+  #view-settings .settings-menu .settings-tab.active::after {
+    display: block !important;
+    content: '' !important;
+    position: absolute !important;
+    inset: 0 !important;
+    border-radius: 10px !important;
+    z-index: -1 !important;
+    pointer-events: none !important;
+    opacity: 1 !important;
+    transform: translate3d(0, var(--settings-pill-dy, 0px), 0) !important;
+    transition: none !important;
+    will-change: transform !important;
+  }
+  html[data-theme="light"] #view-settings .settings-menu .settings-tab.active::after {
+    background: #FFFFFF !important;
     border: 1px solid rgba(15, 23, 42, 0.06) !important;
     box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
   }
-  html[data-theme="dark"] #view-settings .settings-menu .settings-tab.active {
+  html[data-theme="dark"] #view-settings .settings-menu .settings-tab.active::after {
     background: color-mix(in srgb, var(--surface, #2C3036) 88%, #FFFFFF) !important;
-    color: var(--accent, #0A84FF) !important;
     border: 1px solid rgba(255, 255, 255, 0.12) !important;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
   }

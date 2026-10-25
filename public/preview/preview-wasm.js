@@ -1,5 +1,6 @@
 (function () {
     'use strict';
+    const t = (k, p) => (typeof window !== 'undefined' && typeof window.__zephyrI18n?.t === 'function') ? window.__zephyrI18n.t(k, p) : k;
 
     const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
     const MAX_MEDIA_BYTES = 256 * 1024 * 1024;
@@ -21,13 +22,13 @@
 
     async function readBounded(url, maxBytes, signal) {
         const response = await fetch(url, { credentials: 'same-origin', signal });
-        if (!response.ok) throw new Error(`读取预览文件失败（${response.status}）`);
+        if (!response.ok) throw new Error(t('读取预览文件失败（{status}）', { status: response.status }));
         const declared = Number(response.headers.get('content-length'));
-        if (Number.isFinite(declared) && declared > maxBytes) throw new Error('文件超过浏览器预览大小限制');
+        if (Number.isFinite(declared) && declared > maxBytes) throw new Error(t('文件超过浏览器预览大小限制'));
         const reader = response.body?.getReader?.();
         if (!reader) {
             const buffer = new Uint8Array(await response.arrayBuffer());
-            if (buffer.byteLength > maxBytes) throw new Error('文件超过浏览器预览大小限制');
+            if (buffer.byteLength > maxBytes) throw new Error(t('文件超过浏览器预览大小限制'));
             return buffer;
         }
         const chunks = [];
@@ -38,7 +39,7 @@
             total += value.byteLength;
             if (total > maxBytes) {
                 try { await reader.cancel(); } catch {}
-                throw new Error('文件超过浏览器预览大小限制');
+                throw new Error(t('文件超过浏览器预览大小限制'));
             }
             chunks.push(value);
         }
@@ -110,7 +111,7 @@
             const width = image.width;
             const height = image.height;
             if (!width || !height || width > 8192 || height > 8192 || width * height > MAX_IMAGE_BYTES) {
-                throw new Error('图片超过浏览器解码安全限制');
+                throw new Error(t('图片超过浏览器解码安全限制'));
             }
             const encoded = image.webpsaveBuffer({ Q: 82, keep: 0 });
             const copy = new Uint8Array(encoded.byteLength);
@@ -154,10 +155,10 @@
                 await ffmpeg.writeFile(input, bytes);
                 const code = await ffmpeg.exec(args, 120000);
                 signal?.throwIfAborted();
-                if (code !== 0) throw new Error(`浏览器转码失败（${code}）`);
+                if (code !== 0) throw new Error(t('浏览器转码失败（{code}）', { code }));
                 const data = await ffmpeg.readFile(output);
                 signal?.throwIfAborted();
-                if (!(data instanceof Uint8Array) || !data.byteLength) throw new Error('浏览器转码未生成媒体文件');
+                if (!(data instanceof Uint8Array) || !data.byteLength) throw new Error(t('浏览器转码未生成媒体文件'));
                 const type = kind === 'audio' ? 'audio/mp4' : 'video/mp4';
                 return {
                     url: URL.createObjectURL(new Blob([data], { type })),

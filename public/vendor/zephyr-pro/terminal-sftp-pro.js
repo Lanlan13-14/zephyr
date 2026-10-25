@@ -227,9 +227,10 @@ export function installTerminalSftpPro(ctx) {
     openEditor,
     requestDownload,
     showToast,
-    t = (k) => k,
+    t: rawT = (k) => k,
     hostName = '',
   } = ctx || {};
+  const t = (k, p) => (typeof window !== 'undefined' && typeof window.__zephyrI18n?.t === 'function') ? window.__zephyrI18n.t(k, p) : rawT(k, p);
 
   /* ── 1. cd tracking state machine (4.2.5 #2: lastCdCwd + sftpOpenedSinceLastCd) ── */
   const cdState = {
@@ -522,117 +523,118 @@ export function installTerminalSftpPro(ctx) {
   }
 
   function ensurePortForwardPanel() {
-    if (!document.getElementById('fileBtn')) return;
-    const topbarActions = document.getElementById('topbarActions');
-    if (topbarActions && !document.getElementById('portForwardBtn')) {
-      const btn = document.createElement('button');
-      btn.className = 'btn-sm';
-      btn.id = 'portForwardBtn';
-      btn.type = 'button';
-      btn.title = t('端口转发 (-L/-R/-D)');
-      btn.setAttribute('aria-label', t('端口转发'));
-      btn.innerHTML = `<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg><span class="tb-lbl" data-i18n="端口转发">${t('端口转发')}</span>`;
-      const dockerBtn = document.getElementById('dockerBtn');
-      if (dockerBtn && dockerBtn.parentNode === topbarActions) {
-        dockerBtn.insertAdjacentElement('afterend', btn);
-      } else {
-        topbarActions.prepend(btn);
-      }
-    }
-
-    const page = document.querySelector('.terminal-page');
-    if (page && !document.getElementById('portForwardPanel')) {
-      const panel = document.createElement('div');
-      panel.id = 'portForwardPanel';
-      panel.className = 'snippet-panel port-forward-panel';
-      panel.style.display = 'none';
-      panel.innerHTML = `
-        <div class="panel-drag-handle" data-drag-panel="portForwardPanel" title="${t('拖动移动窗口')}">
-          <button class="panel-traffic-btn" data-layout-panel="portForwardPanel" type="button" title="${t('窗口布局')}"><span></span></button>
-        </div>
-        <div class="snippet-panel-header panel-titlebar">
-          <strong>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
-            <span class="z-panel-title-main">${t('端口转发')}</span>
-          </strong>
-          <button type="button" class="tool-btn panel-close-btn" id="portForwardCloseBtn" aria-label="${t('关闭')}">×</button>
-        </div>
-        <div class="snippet-panel-body port-forward-body">
-          <div class="pf-top-card">
-            <div class="pf-mode-row">
-              <div class="pf-mode-bar" role="tablist" aria-label="转发模式">
-                <button type="button" class="pf-mode-pill active" data-pf-mode="L">本地转发 (-L)</button>
-                <button type="button" class="pf-mode-pill" data-pf-mode="R">远程转发 (-R)</button>
-                <button type="button" class="pf-mode-pill" data-pf-mode="D">动态代理 (-D)</button>
-              </div>
-              <span class="pf-agent-badge" title="Web 端端口转发通过本机 Zephyr Agent 落盘监听">Agent 隧道桥</span>
-            </div>
-            <div class="pf-form-row">
-              <div class="pf-field">
-                <span class="pf-field-lbl" id="pfBindLbl">本地监听</span>
-                <input type="text" class="snippet-search pf-input" id="pfBindInput" placeholder="127.0.0.1:8080" value="127.0.0.1:8080">
-              </div>
-              <span class="pf-arrow" id="pfArrowSpan" aria-hidden="true">→</span>
-              <div class="pf-field" id="pfTargetField">
-                <span class="pf-field-lbl">目标地址</span>
-                <input type="text" class="snippet-search pf-input" id="pfTargetInput" placeholder="127.0.0.1:80" value="127.0.0.1:80">
-              </div>
-              <button type="button" class="tool-btn pf-add-btn" id="pfAddBtn">+ 添加规则</button>
-            </div>
-          </div>
-          <div class="pf-table-head">
-            <span>模式</span>
-            <span>监听地址</span>
-            <span>目标地址</span>
-            <span>状态</span>
-            <span>操作</span>
-          </div>
-          <div class="snippet-list pf-list" id="pfList"></div>
-        </div>
-        <div class="panel-resize-handle left" data-resize-panel="portForwardPanel" data-resize-edge="left"></div>
-        <div class="panel-resize-handle right" data-resize-panel="portForwardPanel" data-resize-edge="right"></div>
-      `;
-      page.appendChild(panel);
-
-      let activeMode = 'L';
-      panel.querySelectorAll('[data-pf-mode]').forEach((b) => {
-        b.addEventListener('click', () => {
-          activeMode = b.dataset.pfMode || 'L';
-          panel.querySelectorAll('[data-pf-mode]').forEach((x) => x.classList.toggle('active', x === b));
-          const targetField = panel.querySelector('#pfTargetField');
-          const arrow = panel.querySelector('#pfArrowSpan');
-          const bindLbl = panel.querySelector('#pfBindLbl');
-          if (bindLbl) bindLbl.textContent = activeMode === 'R' ? '远端监听' : '本地监听';
-          if (targetField) targetField.style.display = activeMode === 'D' ? 'none' : '';
-          if (arrow) arrow.style.display = activeMode === 'D' ? 'none' : '';
-        });
-      });
-
-      panel.querySelector('#portForwardCloseBtn')?.addEventListener('click', () => {
-        panel.classList.remove('open');
-        panel.style.display = 'none';
-        document.getElementById('portForwardBtn')?.classList.remove('active');
-      });
-
-      panel.querySelector('#pfAddBtn')?.addEventListener('click', () => {
-        const bind = panel.querySelector('#pfBindInput')?.value?.trim() || '127.0.0.1:8080';
-        const target = activeMode === 'D' ? 'SOCKS5 动态代理' : (panel.querySelector('#pfTargetInput')?.value?.trim() || '127.0.0.1:80');
-        const id = `pf_${Date.now().toString(36)}`;
-        tunnels.push({ id, mode: activeMode, bind, target, bytes: 0, active: true });
-        sendWs({ type: 'ssh-port-forward-start', id, mode: activeMode, bind, target });
-        renderPortForwards();
-      });
-    }
-
-    const pfBtn = document.getElementById('portForwardBtn');
-    const pfPanel = document.getElementById('portForwardPanel');
-    if (pfBtn && pfPanel && !pfBtn.dataset.pfBound) {
-      pfBtn.dataset.pfBound = '1';
-      pfBtn.addEventListener('click', () => {
-        const isOpen = pfPanel.classList.contains('open');
-        togglePortForwardPanel(!isOpen);
-      });
-    }
+    // UI124: temporarily commented out per user request (hide Port Forwarding UI without deleting code)
+    // if (!document.getElementById('fileBtn')) return;
+    //     const topbarActions = document.getElementById('topbarActions');
+    //     if (topbarActions && !document.getElementById('portForwardBtn')) {
+    //       const btn = document.createElement('button');
+    //       btn.className = 'btn-sm';
+    //       btn.id = 'portForwardBtn';
+    //       btn.type = 'button';
+    //       btn.title = t('端口转发 (-L/-R/-D)');
+    //       btn.setAttribute('aria-label', t('端口转发'));
+    //       btn.innerHTML = `<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg><span class="tb-lbl" data-i18n="端口转发">${t('端口转发')}</span>`;
+    //       const dockerBtn = document.getElementById('dockerBtn');
+    //       if (dockerBtn && dockerBtn.parentNode === topbarActions) {
+    //         dockerBtn.insertAdjacentElement('afterend', btn);
+    //       } else {
+    //         topbarActions.prepend(btn);
+    //       }
+    //     }
+    // 
+    //     const page = document.querySelector('.terminal-page');
+    //     if (page && !document.getElementById('portForwardPanel')) {
+    //       const panel = document.createElement('div');
+    //       panel.id = 'portForwardPanel';
+    //       panel.className = 'snippet-panel port-forward-panel';
+    //       panel.style.display = 'none';
+    //       panel.innerHTML = `
+    //         <div class="panel-drag-handle" data-drag-panel="portForwardPanel" title="${t('拖动移动窗口')}">
+    //           <button class="panel-traffic-btn" data-layout-panel="portForwardPanel" type="button" title="${t('窗口布局')}"><span></span></button>
+    //         </div>
+    //         <div class="snippet-panel-header panel-titlebar">
+    //           <strong>
+    //             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
+    //             <span class="z-panel-title-main">${t('端口转发')}</span>
+    //           </strong>
+    //           <button type="button" class="tool-btn panel-close-btn" id="portForwardCloseBtn" aria-label="${t('关闭')}">×</button>
+    //         </div>
+    //         <div class="snippet-panel-body port-forward-body">
+    //           <div class="pf-top-card">
+    //             <div class="pf-mode-row">
+    //               <div class="pf-mode-bar" role="tablist" aria-label="转发模式">
+    //                 <button type="button" class="pf-mode-pill active" data-pf-mode="L">本地转发 (-L)</button>
+    //                 <button type="button" class="pf-mode-pill" data-pf-mode="R">远程转发 (-R)</button>
+    //                 <button type="button" class="pf-mode-pill" data-pf-mode="D">动态代理 (-D)</button>
+    //               </div>
+    //               <span class="pf-agent-badge" title="Web 端端口转发通过本机 Zephyr Agent 落盘监听">Agent 隧道桥</span>
+    //             </div>
+    //             <div class="pf-form-row">
+    //               <div class="pf-field">
+    //                 <span class="pf-field-lbl" id="pfBindLbl">本地监听</span>
+    //                 <input type="text" class="snippet-search pf-input" id="pfBindInput" placeholder="127.0.0.1:8080" value="127.0.0.1:8080">
+    //               </div>
+    //               <span class="pf-arrow" id="pfArrowSpan" aria-hidden="true">→</span>
+    //               <div class="pf-field" id="pfTargetField">
+    //                 <span class="pf-field-lbl">目标地址</span>
+    //                 <input type="text" class="snippet-search pf-input" id="pfTargetInput" placeholder="127.0.0.1:80" value="127.0.0.1:80">
+    //               </div>
+    //               <button type="button" class="tool-btn pf-add-btn" id="pfAddBtn">+ 添加规则</button>
+    //             </div>
+    //           </div>
+    //           <div class="pf-table-head">
+    //             <span>模式</span>
+    //             <span>监听地址</span>
+    //             <span>目标地址</span>
+    //             <span>状态</span>
+    //             <span>操作</span>
+    //           </div>
+    //           <div class="snippet-list pf-list" id="pfList"></div>
+    //         </div>
+    //         <div class="panel-resize-handle left" data-resize-panel="portForwardPanel" data-resize-edge="left"></div>
+    //         <div class="panel-resize-handle right" data-resize-panel="portForwardPanel" data-resize-edge="right"></div>
+    //       `;
+    //       page.appendChild(panel);
+    // 
+    //       let activeMode = 'L';
+    //       panel.querySelectorAll('[data-pf-mode]').forEach((b) => {
+    //         b.addEventListener('click', () => {
+    //           activeMode = b.dataset.pfMode || 'L';
+    //           panel.querySelectorAll('[data-pf-mode]').forEach((x) => x.classList.toggle('active', x === b));
+    //           const targetField = panel.querySelector('#pfTargetField');
+    //           const arrow = panel.querySelector('#pfArrowSpan');
+    //           const bindLbl = panel.querySelector('#pfBindLbl');
+    //           if (bindLbl) bindLbl.textContent = activeMode === 'R' ? '远端监听' : '本地监听';
+    //           if (targetField) targetField.style.display = activeMode === 'D' ? 'none' : '';
+    //           if (arrow) arrow.style.display = activeMode === 'D' ? 'none' : '';
+    //         });
+    //       });
+    // 
+    //       panel.querySelector('#portForwardCloseBtn')?.addEventListener('click', () => {
+    //         panel.classList.remove('open');
+    //         panel.style.display = 'none';
+    //         document.getElementById('portForwardBtn')?.classList.remove('active');
+    //       });
+    // 
+    //       panel.querySelector('#pfAddBtn')?.addEventListener('click', () => {
+    //         const bind = panel.querySelector('#pfBindInput')?.value?.trim() || '127.0.0.1:8080';
+    //         const target = activeMode === 'D' ? 'SOCKS5 动态代理' : (panel.querySelector('#pfTargetInput')?.value?.trim() || '127.0.0.1:80');
+    //         const id = `pf_${Date.now().toString(36)}`;
+    //         tunnels.push({ id, mode: activeMode, bind, target, bytes: 0, active: true });
+    //         sendWs({ type: 'ssh-port-forward-start', id, mode: activeMode, bind, target });
+    //         renderPortForwards();
+    //       });
+    //     }
+    // 
+    //     const pfBtn = document.getElementById('portForwardBtn');
+    //     const pfPanel = document.getElementById('portForwardPanel');
+    //     if (pfBtn && pfPanel && !pfBtn.dataset.pfBound) {
+    //       pfBtn.dataset.pfBound = '1';
+    //       pfBtn.addEventListener('click', () => {
+    //         const isOpen = pfPanel.classList.contains('open');
+    //         togglePortForwardPanel(!isOpen);
+    //       });
+    //     }
   }
 
   function renderPortForwards() {
@@ -1636,22 +1638,22 @@ export function installTerminalSftpPro(ctx) {
     pop.innerHTML = `
       ${(!panel.classList.contains('docked-left') && !panel.classList.contains('docked-right')) ? `<button type="button" class="z-more-item ${isFullscreen ? 'active' : ''}" data-more-action="fullscreen">
         ${isFullscreen ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16"/></svg>' : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'}
-        <span>${isFullscreen ? t('还原窗口') : t('全屏')}</span>
+        <span data-i18n="${isFullscreen ? '还原窗口' : '全屏'}">${isFullscreen ? t('还原窗口') : t('全屏')}</span>
         ${isFullscreen ? '<span class="z-more-check">✓</span>' : ''}
       </button>` : ''}
       ${allowLeft ? `<button type="button" class="z-more-item ${isDockedLeft ? 'active' : ''}" data-more-action="left">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
-        <span>${t('钉到左侧')}</span>
+        <span data-i18n="钉到左侧">${t('钉到左侧')}</span>
         ${isDockedLeft ? '<span class="z-more-check">✓</span>' : ''}
       </button>` : ''}
       ${allowRight ? `<button type="button" class="z-more-item ${isDockedRight ? 'active' : ''}" data-more-action="right">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>
-        <span>${t('钉到右侧')}</span>
+        <span data-i18n="钉到右侧">${t('钉到右侧')}</span>
         ${isDockedRight ? '<span class="z-more-check">✓</span>' : ''}
       </button>` : ''}
       ${!isFloating ? `<button type="button" class="z-more-item" data-more-action="float">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="6" width="14" height="12" rx="2"/><path d="M9 10h6"/></svg>
-        <span>${t('自由浮窗')}</span>
+        <span data-i18n="自由浮窗">${t('自由浮窗')}</span>
       </button>` : ''}
     `;
     document.body.appendChild(pop);
@@ -1822,7 +1824,7 @@ export function installTerminalSftpPro(ctx) {
       const leftTitle = titlebar.querySelector('.monitor-title, .docker-title, strong, .image-preview-title, .media-preview-title, #fmEditorTitle, #dockerInspectTitle, #dockerLogTitle');
       if (leftTitle && !leftTitle.dataset.unifiedUpgraded) {
         leftTitle.dataset.unifiedUpgraded = '1';
-        leftTitle.innerHTML = `${iconSvg}<span class="z-panel-title-main">${escapeHtml(titleText)}</span><span class="fm-title-host">${escapeHtml(hostName || '')}</span>`;
+        leftTitle.innerHTML = `${iconSvg}<span class="z-panel-title-main" data-i18n="${escapeHtml(titleText)}">${escapeHtml(t(titleText))}</span><span class="fm-title-host">${escapeHtml(hostName || '')}</span>`;
       }
     }
 
@@ -2019,7 +2021,7 @@ export function installTerminalSftpPro(ctx) {
         titleHead.className = 'fm-titlebar-head panel-titlebar';
         const leftWrap = document.createElement('div');
         leftWrap.className = 'fm-title-left';
-        leftWrap.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><strong class="fm-title-text">代码编辑器</strong>';
+        leftWrap.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><strong class="fm-title-text" data-i18n="代码编辑器">' + t('代码编辑器') + '</strong>';
         if (titleEl) {
           titleEl.className = 'fm-title-host';
           leftWrap.appendChild(titleEl);
@@ -2225,19 +2227,19 @@ export function installTerminalSftpPro(ctx) {
       <div class="snippet-panel-header panel-titlebar">
         <strong>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          <span class="z-panel-title-main">运维笔记</span>
+          <span class="z-panel-title-main" data-i18n="运维笔记">${t('运维笔记')}</span>
           <span class="fm-title-host">${escapeHtml(hostName || '')}</span>
         </strong>
       </div>
       <div class="snippet-panel-body terminal-notes-body">
         <div class="tn-toolbar">
-          <input type="text" id="tnTitleInput" class="snippet-search tn-title-input" placeholder="输入笔记标题...">
-          <button type="button" class="tool-btn tn-new-btn" id="tnNewBtn">新建</button>
-          <button type="button" class="tool-btn tn-save-btn" id="tnSaveBtn">保存</button>
+          <input type="text" id="tnTitleInput" class="snippet-search tn-title-input" placeholder="${t('输入笔记标题...')}" data-i18n-placeholder="输入笔记标题...">
+          <button type="button" class="tool-btn tn-new-btn" id="tnNewBtn" data-i18n="新建">${t('新建')}</button>
+          <button type="button" class="tool-btn tn-save-btn" id="tnSaveBtn" data-i18n="保存">${t('保存')}</button>
         </div>
-        <textarea id="tnContentArea" class="tn-textarea" placeholder="记录当前服务器的排障笔记、常用命令或配置说明（支持 Markdown）..."></textarea>
+        <textarea id="tnContentArea" class="tn-textarea" placeholder="${t('记录当前服务器的排障笔记、常用命令或配置说明（支持 Markdown）...')}" data-i18n-placeholder="记录当前服务器的排障笔记、常用命令或配置说明（支持 Markdown）..."></textarea>
         <div class="tn-footer-section">
-          <div class="tn-section-label">最近保存</div>
+          <div class="tn-section-label" data-i18n="最近保存">${t('最近保存')}</div>
           <div class="tn-list" id="tnNotesList"></div>
         </div>
       </div>
@@ -2280,7 +2282,7 @@ export function installTerminalSftpPro(ctx) {
         const data = await res.json();
         const notes = Array.isArray(data?.notes) ? data.notes.slice(0, 8) : [];
         if (!notes.length) {
-          listEl.innerHTML = '<div class="tn-empty-chip">暂无历史笔记 · 点击右上「保存」即可归档</div>';
+          listEl.innerHTML = `<div class="tn-empty-chip" data-i18n="暂无历史笔记 · 点击右上「保存」即可归档">${t('暂无历史笔记 · 点击右上「保存」即可归档')}</div>`;
           return;
         }
         listEl.innerHTML = notes.map((n) => `
@@ -2424,7 +2426,7 @@ export function installTerminalSftpPro(ctx) {
       { id: 'fileBtn', label: '文件', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>' },
       { id: 'infoBtn', label: '监控', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' },
       { id: 'dockerBtn', label: '容器', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 21 7v10l-9 4.5L3 17V7z"/><path d="M3 7l9 4.5L21 7"/><path d="M12 11.5V21.5"/></svg>' },
-      { id: 'portForwardBtn', label: '端口转发', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>' },
+      //       { id: 'portForwardBtn', label: '端口转发', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>' },
       { id: 'snippetBtn', label: '片段', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>' },
       { id: 'notesBtn', label: '笔记', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>' },
       { id: 'shortcutBtn', label: '快捷键', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="6" y1="9" x2="6.01" y2="9"/><line x1="10" y1="9" x2="10.01" y2="9"/><line x1="14" y1="9" x2="14.01" y2="9"/><line x1="18" y1="9" x2="18.01" y2="9"/><line x1="8" y1="15" x2="16" y2="15"/></svg>' },
@@ -2444,7 +2446,7 @@ export function installTerminalSftpPro(ctx) {
       const btn = document.getElementById(spec.id);
       if (!btn) continue;
       btn.removeAttribute('data-i18n');
-      btn.innerHTML = spec.svg + '<span class="tb-lbl" data-i18n="' + spec.label + '">' + spec.label + '</span>';
+      btn.innerHTML = spec.svg + '<span class="tb-lbl" data-i18n="' + spec.label + '">' + t(spec.label) + '</span>';
     }
 
     syncTerminalAiToolbarButton();
@@ -2495,7 +2497,7 @@ export function installTerminalSftpPro(ctx) {
     const cmdInput = document.getElementById('cmdInput');
     if (cmdInput) {
       cmdInput.removeAttribute('data-i18n-placeholder');
-      cmdInput.placeholder = '输入命令，支持多行输入...';
+      cmdInput.placeholder = t('输入命令，支持多行输入...'); cmdInput.setAttribute('data-i18n-placeholder', '输入命令，支持多行输入...');
     }
     const cmdSendBtn = document.getElementById('cmdSendBtn');
     if (cmdSendBtn) {
@@ -2519,7 +2521,7 @@ export function installTerminalSftpPro(ctx) {
           leftArrow = document.createElement('button');
           leftArrow.type = 'button';
           leftArrow.className = 'topbar-scroll-btn left';
-          leftArrow.setAttribute('aria-label', '向左滚动工具栏');
+          leftArrow.setAttribute('aria-label', t('向左滚动工具栏')); leftArrow.setAttribute('data-i18n-aria-label', '向左滚动工具栏');
           leftArrow.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>';
           topbarHost.appendChild(leftArrow);
         }
@@ -2527,7 +2529,7 @@ export function installTerminalSftpPro(ctx) {
           rightArrow = document.createElement('button');
           rightArrow.type = 'button';
           rightArrow.className = 'topbar-scroll-btn right';
-          rightArrow.setAttribute('aria-label', '向右滚动工具栏');
+          rightArrow.setAttribute('aria-label', t('向右滚动工具栏')); rightArrow.setAttribute('data-i18n-aria-label', '向右滚动工具栏');
           rightArrow.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>';
           topbarHost.appendChild(rightArrow);
         }
@@ -2651,7 +2653,7 @@ export function installTerminalSftpPro(ctx) {
         fmTitleHead.innerHTML = `
           <div class="fm-title-left">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-            <strong class="fm-title-text">文件管理</strong>
+            <strong class="fm-title-text" data-i18n="文件管理">${t('文件管理')}</strong>
             <span class="fm-title-host">${escapeHtml(hostName || '')}</span>
           </div>
         `;
@@ -2678,18 +2680,18 @@ export function installTerminalSftpPro(ctx) {
           fmSearchBox = document.createElement('div');
           fmSearchBox.className = 'fm-search-box';
           fmSearchInput.removeAttribute('data-i18n-placeholder');
-          fmSearchInput.placeholder = '搜索文件...';
+          fmSearchInput.placeholder = t('搜索文件...'); fmSearchInput.setAttribute('data-i18n-placeholder', '搜索文件...');
           fmSearchBox.innerHTML = '<svg class="fm-search-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
           fmSearchBox.appendChild(fmSearchInput);
         }
 
         if (fmRefreshBtn) {
-          fmRefreshBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg><span>刷新</span>';
+          fmRefreshBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg><span data-i18n="刷新">' + t('刷新') + '</span>';
         }
-        if (fmNewFolderBtn) fmNewFolderBtn.innerHTML = '<span>新建文件夹</span>';
-        if (fmNewFileBtn) fmNewFileBtn.innerHTML = '<span>新建文件</span>';
+        if (fmNewFolderBtn) fmNewFolderBtn.innerHTML = `<span data-i18n="新建文件夹">${t('新建文件夹')}</span>`;
+        if (fmNewFileBtn) fmNewFileBtn.innerHTML = `<span data-i18n="新建文件">${t('新建文件')}</span>`;
         if (fmUploadLabel) {
-          fmUploadLabel.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg><span>上传</span>';
+          fmUploadLabel.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg><span data-i18n="上传">' + t('上传') + '</span>';
         }
 
         const ordered = [fmPathBox, fmSearchBox, fmRefreshBtn, fmNewFolderBtn, fmNewFileBtn, fmUploadLabel].filter(Boolean);
@@ -2710,7 +2712,7 @@ export function installTerminalSftpPro(ctx) {
           const chev = document.createElement('button');
           chev.type = 'button';
           chev.className = 'fm-path-chevron';
-          chev.title = '返回上级目录';
+          chev.title = t('返回上级目录'); chev.setAttribute('data-i18n-title', '返回上级目录');
           chev.innerHTML = '▾';
           chev.addEventListener('click', (e) => {
             e.preventDefault();
@@ -2729,7 +2731,7 @@ export function installTerminalSftpPro(ctx) {
       if (fmList && !fileManager.querySelector('.fm-col-header')) {
         const colHead = document.createElement('div');
         colHead.className = 'fm-col-header';
-        colHead.innerHTML = '<span class="fm-col-name">名称 ↑↓</span><span class="fm-col-size">大小</span><span class="fm-col-mtime">修改时间</span>';
+        colHead.innerHTML = `<span class="fm-col-name" data-i18n="名称 ↑↓">${t('名称 ↑↓')}</span><span class="fm-col-size" data-i18n="大小">${t('大小')}</span><span class="fm-col-mtime" data-i18n="修改时间">${t('修改时间')}</span>`;
         fileManager.insertBefore(colHead, fmList);
       }
     }
@@ -2769,8 +2771,7 @@ export function installTerminalSftpPro(ctx) {
       if (snipEmpty && !snipEmpty.querySelector('svg')) {
         snipEmpty.innerHTML = `
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-          <strong>暂无代码片段</strong>
-          <span>可在首页「设置 → 代码片段」中添加常用运维脚本，点击即可一键发送至当前终端执行</span>
+          <strong data-i18n="暂无代码片段">${t('暂无代码片段')}</strong><span data-i18n="可在首页「设置 → 代码片段」中添加常用运维脚本，点击即可一键发送至当前终端执行">${t('可在首页「设置 → 代码片段」中添加常用运维脚本，点击即可一键发送至当前终端执行')}</span>
         `;
       }
       ensureUnifiedPanelTitlebar(snippetPanel, {
@@ -2796,15 +2797,17 @@ export function installTerminalSftpPro(ctx) {
         },
       });
     }
-
-    const pfPanel = document.getElementById('portForwardPanel');
-    if (pfPanel) {
-      ensureUnifiedPanelTitlebar(pfPanel, {
-        iconSvg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>',
-        titleText: '端口转发',
-        closeBtnSelector: '#portForwardCloseBtn',
-      });
-    }
+    // UI124: temporarily commented out Port Forwarding panel upgrade
+    // 
+    // 
+    //     const pfPanel = document.getElementById('portForwardPanel');
+    //     if (pfPanel) {
+    //       ensureUnifiedPanelTitlebar(pfPanel, {
+    //         iconSvg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>',
+    //         titleText: '端口转发',
+    //         closeBtnSelector: '#portForwardCloseBtn',
+    //       });
+    //     }
 
     const tnPanel = document.getElementById('terminalNotesPanel');
     if (tnPanel) {
@@ -2856,7 +2859,7 @@ export function installTerminalSftpPro(ctx) {
       if (!topHead) {
         topHead = document.createElement('div');
         topHead.className = 'snippet-panel-header panel-titlebar';
-        topHead.innerHTML = '<strong>' + rspec.title + '</strong>';
+        topHead.innerHTML = '<strong data-i18n="' + rspec.title + '">' + t(rspec.title) + '</strong>';
         rPanel.insertBefore(topHead, rPanel.firstChild);
       }
       if (!rPanel.classList.contains('open')) {
@@ -2987,7 +2990,7 @@ export function installTerminalSftpPro(ctx) {
     }
   });
 
-  ensurePortForwardPanel();
+  // ensurePortForwardPanel();
   upgradeAllTerminalFloatingPanels();
   ensureTerminalOverlays();
   bindTerminalPathClick();

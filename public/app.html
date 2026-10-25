@@ -805,7 +805,7 @@
                                         <p class="link-hero-phase" id="linkSyncStatus" role="status" aria-live="polite"></p>
                                         <p class="link-hero-sub" id="linkSyncSub"></p>
                                     </div>
-                                    <label class="connection-share-switch" for="linkAutoSyncToggle" title="自动同步">
+                                    <label class="connection-share-switch" for="linkAutoSyncToggle" title="自动同步" data-i18n-title="自动同步">
                                         <input type="checkbox" id="linkAutoSyncToggle" />
                                         <span aria-hidden="true"></span>
                                     </label>
@@ -851,12 +851,12 @@
                             <p class="link-section-label" id="linkPolicyLabel" hidden data-i18n="策略">策略</p>
                             <div class="link-filter-bar" id="linkFilterBar" hidden>
                                 <select id="linkIntervalSelect">
-                                    <option value="30">30 秒</option>
-                                    <option value="60">1 分钟</option>
-                                    <option value="300">5 分钟</option>
-                                    <option value="900">15 分钟</option>
-                                    <option value="1800">30 分钟</option>
-                                    <option value="3600">1 小时</option>
+                                    <option value="30" data-i18n="30 秒">30 秒</option>
+                                    <option value="60" data-i18n="1 分钟">1 分钟</option>
+                                    <option value="300" data-i18n="5 分钟">5 分钟</option>
+                                    <option value="900" data-i18n="15 分钟">15 分钟</option>
+                                    <option value="1800" data-i18n="30 分钟">30 分钟</option>
+                                    <option value="3600" data-i18n="1 小时">1 小时</option>
                                 </select>
                                 <select id="linkNetworkPolicySelect">
                                     <option value="any" data-i18n="任意网络">任意网络</option>
@@ -1125,7 +1125,7 @@
             <aside class="ai-agent-sidebar ai-nav-pane" id="aiNavPane">
                 <div class="ai-sidebar-header">
                     <span class="ai-sidebar-title" data-i18n="对话历史">对话历史</span>
-                    <button class="new-chat-btn" type="button" id="aiNewChatBtn" aria-label="新建对话" data-i18n-aria-label="新建对话" title="新建对话">
+                    <button class="new-chat-btn" type="button" id="aiNewChatBtn" aria-label="新建对话" data-i18n-aria-label="新建对话" title="新建对话" data-i18n-title="新建对话">
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <line x1="12" y1="5" x2="12" y2="19"></line>
                             <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -1143,7 +1143,7 @@
                 <!-- Navigation Bar (Apple / ChatGPT Desktop & Mobile style) -->
                 <header class="ai-title-bar panel-titlebar">
                     <div class="ai-titlebar-left">
-                        <button class="ai-round-btn" type="button" id="aiNavToggleBtn" aria-label="对话列表" title="切换对话侧边栏">
+                        <button class="ai-round-btn" type="button" id="aiNavToggleBtn" aria-label="对话列表" data-i18n-aria-label="对话列表" title="切换对话侧边栏" data-i18n-title="切换对话侧边栏">
                             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <line x1="3" y1="6" x2="21" y2="6"></line>
                                 <line x1="3" y1="12" x2="21" y2="12"></line>
@@ -1151,8 +1151,8 @@
                             </svg>
                         </button>
 
-                        <button class="ai-model-pill" type="button" id="aiMicroIsland" title="切换模型与供应商">
-                            <span id="aiIslandModelName">模型</span>
+                        <button class="ai-model-pill" type="button" id="aiMicroIsland" title="切换模型与供应商" data-i18n-title="切换模型与供应商">
+                            <span id="aiIslandModelName" data-i18n="模型">模型</span>
                             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-left:5px;opacity:0.6;">
                                 <polyline points="6 9 12 15 18 9"></polyline>
                             </svg>
@@ -1160,23 +1160,23 @@
                     </div>
 
                     <div class="ai-titlebar-center">
-                        <span class="ai-current-title" id="aiCurrentChatTitle">新对话</span>
+                        <span class="ai-current-title" id="aiCurrentChatTitle" data-i18n="新对话">新对话</span>
                     </div>
 
                     <div class="ai-titlebar-right">
-                        <button class="ai-round-btn" type="button" id="aiCellHeaderBtn" aria-label="会话沙箱" title="会话沙箱 (Cell)">
+                        <button class="ai-round-btn" type="button" id="aiCellHeaderBtn" aria-label="会话沙箱" data-i18n-aria-label="会话沙箱" title="会话沙箱 (Cell)" data-i18n-title="会话沙箱 (Cell)">
                             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <polyline points="4 17 10 11 4 5"></polyline>
                                 <line x1="12" y1="19" x2="20" y2="19"></line>
                             </svg>
                         </button>
-                        <button class="ai-round-btn" type="button" id="aiNewChatHeaderBtn" aria-label="新建对话" title="新建对话">
+                        <button class="ai-round-btn" type="button" id="aiNewChatHeaderBtn" aria-label="新建对话" data-i18n-aria-label="新建对话" title="新建对话" data-i18n-title="新建对话">
                             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <path d="M12 20h9"></path>
                                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
                             </svg>
                         </button>
-                        <button class="ai-round-btn" type="button" id="aiClosePanelBtn" aria-label="关闭窗口" title="关闭窗口">
+                        <button class="ai-round-btn" type="button" id="aiClosePanelBtn" aria-label="关闭窗口" data-i18n-aria-label="关闭窗口" title="关闭窗口" data-i18n-title="关闭窗口">
                             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -1204,7 +1204,7 @@
                 <!-- Chat History / Messages Stage -->
                 <div class="ai-chat-area" id="aiChatArea" role="log" aria-live="polite">
                     <!-- Typing / Reasoning Status Indicator inside Chat Area -->
-                    <div class="ai-typing-indicator" id="aiTypingIndicator" aria-label="正在回复">
+                    <div class="ai-typing-indicator" id="aiTypingIndicator" aria-label="正在回复" data-i18n-aria-label="正在回复">
                         <div class="ai-typing-dots">
                             <span class="ai-typing-dot"></span>
                             <span class="ai-typing-dot"></span>
@@ -1214,7 +1214,7 @@
                 </div>
 
                 <!-- Floating Scroll-To-Bottom Arrow Button (Gemini / Apple style) -->
-                <button class="ai-scroll-bottom-btn" id="aiScrollBottomBtn" type="button" aria-label="回到底部" title="回到底部" hidden>
+                <button class="ai-scroll-bottom-btn" id="aiScrollBottomBtn" type="button" aria-label="回到底部" data-i18n-aria-label="回到底部" title="回到底部" data-i18n-title="回到底部" hidden>
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
                         <polyline points="19 12 12 19 5 12"></polyline>
@@ -1231,51 +1231,51 @@
                         <div class="ai-sheet-drag-pill" aria-hidden="true"></div>
                         <div class="ai-sheet-page" data-page="root">
                             <div class="ai-sheet-head">
-                                <strong>工具与能力</strong>
-                                <button type="button" id="aiComposerSheetClose" aria-label="关闭">×</button>
+                                <strong data-i18n="工具与能力">工具与能力</strong>
+                                <button type="button" id="aiComposerSheetClose" aria-label="关闭" data-i18n-aria-label="关闭">×</button>
                             </div>
                             <div class="ai-sheet-list">
                                 <button class="ai-sheet-row" type="button" id="aiAttachFileBtn">
                                     <div class="ai-sheet-row-lead">
                                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-                                        <span>添加附件</span>
+                                        <span data-i18n="添加附件">添加附件</span>
                                     </div>
-                                    <small>图片与文件</small>
+                                    <small data-i18n="图片与文件">图片与文件</small>
                                 </button>
                                 <button class="ai-sheet-row" type="button" id="aiCellToggleBtn">
                                     <div class="ai-sheet-row-lead">
                                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
-                                        <span>会话沙箱 (Cell)</span>
+                                        <span data-i18n="会话沙箱 (Cell)">会话沙箱 (Cell)</span>
                                     </div>
-                                    <small>查看实时沙箱</small>
+                                    <small data-i18n="查看实时沙箱">查看实时沙箱</small>
                                 </button>
                                 <button class="ai-sheet-row" type="button" id="aiUsageBtn">
                                     <div class="ai-sheet-row-lead">
                                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
-                                        <span>Token 用量统计</span>
+                                        <span data-i18n="Token 用量统计">Token 用量统计</span>
                                     </div>
-                                    <small>查看消耗</small>
+                                    <small data-i18n="查看消耗">查看消耗</small>
                                 </button>
                                 <button class="ai-sheet-row" type="button" id="aiBrowserPreviewToggleBtn">
                                     <div class="ai-sheet-row-lead">
                                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                                        <span>浏览器实时预览</span>
+                                        <span data-i18n="浏览器实时预览">浏览器实时预览</span>
                                     </div>
-                                    <small>开关</small>
+                                    <small data-i18n="开关">开关</small>
                                 </button>
                                 <button class="ai-sheet-row" type="button" id="aiCompressChatBtn">
                                     <div class="ai-sheet-row-lead">
                                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
-                                        <span>压缩上下文摘要</span>
+                                        <span data-i18n="压缩上下文摘要">压缩上下文摘要</span>
                                     </div>
-                                    <small>节省 Token</small>
+                                    <small data-i18n="节省 Token">节省 Token</small>
                                 </button>
                                 <button class="ai-sheet-row danger" type="button" id="aiClearChatBtn">
                                     <div class="ai-sheet-row-lead">
                                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                                        <span>清空当前对话</span>
+                                        <span data-i18n="清空当前对话">清空当前对话</span>
                                     </div>
-                                    <small>不可撤销</small>
+                                    <small data-i18n="不可撤销">不可撤销</small>
                                 </button>
                             </div>
                         </div>
@@ -1289,15 +1289,15 @@
                         <!-- Lower Row: Plus tool btn + textarea + send btn -->
                         <div class="ai-composer-controls-row">
                             <input type="file" id="aiFileUpload" hidden multiple>
-                            <button class="ai-composer-plus ai-tool-btn" type="button" id="aiUploadBtn" aria-label="功能与附件" title="功能与附件">
+                            <button class="ai-composer-plus ai-tool-btn" type="button" id="aiUploadBtn" aria-label="功能与附件" data-i18n-aria-label="功能与附件" title="功能与附件" data-i18n-title="功能与附件">
                                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <line x1="12" y1="5" x2="12" y2="19"></line>
                                     <line x1="5" y1="12" x2="19" y2="12"></line>
                                 </svg>
                             </button>
                             <textarea class="ai-capsule-input ai-input-box" id="aiUserInput" rows="1" placeholder="给 Zephyr AI 发消息" data-i18n-placeholder="给 Zephyr AI 发消息"></textarea>
-                            <button class="ai-cancel-edit-btn" type="button" id="aiCancelEditBtn" hidden>退出编辑</button>
-                            <button class="ai-capsule-send-btn ai-send-btn" type="button" id="aiSendBtn" aria-label="发送 (长按调节推理与模型设置)" title="发送 (长按调节推理与模型设置)">
+                            <button class="ai-cancel-edit-btn" type="button" id="aiCancelEditBtn" data-i18n="退出编辑" hidden>退出编辑</button>
+                            <button class="ai-capsule-send-btn ai-send-btn" type="button" id="aiSendBtn" aria-label="发送 (长按调节推理与模型设置)" data-i18n-aria-label="发送 (长按调节推理与模型设置)" title="发送 (长按调节推理与模型设置)" data-i18n-title="发送 (长按调节推理与模型设置)">
                                 <svg class="ai-send-icon-idle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <path d="M12 19V5M6 11l6-6 6 6"></path>
                                 </svg>
@@ -1312,38 +1312,38 @@
                     <div class="ai-thinking-popover" id="aiThinkingPopover" hidden>
                         <div class="ai-thinking-popover-arrow" aria-hidden="true"></div>
                         <div class="ai-thinking-header">
-                            <span class="ai-thinking-title">模型推理与模式配置</span>
+                            <span class="ai-thinking-title" data-i18n="模型推理与模式配置">模型推理与模式配置</span>
                             <span class="ai-thinking-badge" id="aiThinkingActiveBadge">Balanced</span>
                         </div>
                         <div class="ai-thinking-body">
                             <div class="ai-thinking-section">
-                                <span class="ai-thinking-label">思考深度调节</span>
+                                <span class="ai-thinking-label" data-i18n="思考深度调节">思考深度调节</span>
                                 <div class="ai-thinking-slider-track" id="aiThinkingSliderTrack">
-                                    <div class="ai-thinking-step" data-level="off">关闭</div>
-                                    <div class="ai-thinking-step" data-level="low">微推</div>
-                                    <div class="ai-thinking-step active" data-level="med">均衡</div>
-                                    <div class="ai-thinking-step" data-level="high">高推</div>
-                                    <div class="ai-thinking-step" data-level="max">极深</div>
+                                    <div class="ai-thinking-step" data-level="off" data-i18n="关闭">关闭</div>
+                                    <div class="ai-thinking-step" data-level="low" data-i18n="微推">微推</div>
+                                    <div class="ai-thinking-step active" data-level="med" data-i18n="均衡">均衡</div>
+                                    <div class="ai-thinking-step" data-level="high" data-i18n="高推">高推</div>
+                                    <div class="ai-thinking-step" data-level="max" data-i18n="极深">极深</div>
                                 </div>
                             </div>
                             <div class="ai-thinking-section">
-                                <span class="ai-thinking-label">协作模式</span>
+                                <span class="ai-thinking-label" data-i18n="协作模式">协作模式</span>
                                 <div class="ai-menu-choices" data-target="aiCollabMode">
-                                    <button type="button" data-value="standard">标准</button>
-                                    <button type="button" data-value="plan">计划</button>
+                                    <button type="button" data-value="standard" data-i18n="标准">标准</button>
+                                    <button type="button" data-value="plan" data-i18n="计划">计划</button>
                                     <button type="button" data-value="goal">Goal</button>
                                 </div>
                             </div>
                             <div class="ai-thinking-section">
-                                <span class="ai-thinking-label">运行模式</span>
+                                <span class="ai-thinking-label" data-i18n="运行模式">运行模式</span>
                                 <div class="ai-menu-choices" data-target="aiRunProfile">
-                                    <button type="button" data-value="economy">省 token</button>
-                                    <button type="button" data-value="balanced">均衡</button>
-                                    <button type="button" data-value="delivery">交付</button>
+                                    <button type="button" data-value="economy" data-i18n="省 token">省 token</button>
+                                    <button type="button" data-value="balanced" data-i18n="均衡">均衡</button>
+                                    <button type="button" data-value="delivery" data-i18n="交付">交付</button>
                                 </div>
                             </div>
                             <div class="ai-thinking-section">
-                                <span class="ai-thinking-label">权限模式</span>
+                                <span class="ai-thinking-label" data-i18n="权限模式">权限模式</span>
                                 <div class="ai-menu-choices" data-target="aiChatPermissionMode">
                                     <button type="button" data-value="ask">Ask</button>
                                     <button type="button" data-value="auto">Auto</button>
@@ -1364,14 +1364,14 @@
                             <polyline points="4 17 10 11 4 5"></polyline>
                             <line x1="12" y1="19" x2="20" y2="19"></line>
                         </svg>
-                        <strong>沙箱监控 (Cell)</strong>
+                        <strong data-i18n="沙箱监控 (Cell)">沙箱监控 (Cell)</strong>
                         <span class="ai-cell-status-pill"><span class="ai-cell-status-dot"></span><span id="aiCellStatusText">Active</span></span>
                     </div>
                     <div class="ai-cell-head-actions">
-                        <button type="button" id="aiCellRefreshBtn" class="ai-cell-action-icon" aria-label="刷新沙箱" title="刷新沙箱状态">
+                        <button type="button" id="aiCellRefreshBtn" class="ai-cell-action-icon" aria-label="刷新沙箱" data-i18n-aria-label="刷新沙箱" title="刷新沙箱状态" data-i18n-title="刷新沙箱状态">
                             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
                         </button>
-                        <button type="button" id="aiCellInspectorCloseBtn" class="ai-cell-action-icon" aria-label="关闭" title="收起沙箱监控">×</button>
+                        <button type="button" id="aiCellInspectorCloseBtn" class="ai-cell-action-icon" aria-label="关闭" data-i18n-aria-label="关闭" title="收起沙箱监控" data-i18n-title="收起沙箱监控">×</button>
                     </div>
                 </div>
 
@@ -1379,15 +1379,15 @@
                     <!-- Matrix Cards -->
                     <div class="ai-cell-matrix-grid">
                         <div class="ai-cell-matrix-card">
-                            <span class="ai-cell-matrix-label">执行权威</span>
+                            <span class="ai-cell-matrix-label" data-i18n="执行权威">执行权威</span>
                             <strong class="ai-cell-matrix-val" id="aiCellAuthorityVal">Cell Direct</strong>
                         </div>
                         <div class="ai-cell-matrix-card">
-                            <span class="ai-cell-matrix-label">租约生命周期</span>
+                            <span class="ai-cell-matrix-label" data-i18n="租约生命周期">租约生命周期</span>
                             <strong class="ai-cell-matrix-val" id="aiCellLeaseVal">Active</strong>
                         </div>
                         <div class="ai-cell-matrix-card">
-                            <span class="ai-cell-matrix-label">隔离模式</span>
+                            <span class="ai-cell-matrix-label" data-i18n="隔离模式">隔离模式</span>
                             <strong class="ai-cell-matrix-val" id="aiCellIsolationVal">Sandbox</strong>
                         </div>
                     </div>
@@ -1398,22 +1398,22 @@
                             <div class="ai-cell-terminal-traffic">
                                 <span></span><span></span><span></span>
                             </div>
-                            <span class="ai-cell-card-title">实时执行控制台 (PTY)</span>
-                            <button type="button" id="aiCellClearTermBtn" class="ai-cell-micro-btn" title="清空输出">清屏</button>
+                            <span class="ai-cell-card-title" data-i18n="实时执行控制台 (PTY)">实时执行控制台 (PTY)</span>
+                            <button type="button" id="aiCellClearTermBtn" class="ai-cell-micro-btn" title="清空输出" data-i18n-title="清空输出" data-i18n="清屏">清屏</button>
                         </div>
                         <div id="aiCellTerminalContainer" class="ai-cell-terminal-screen">
-                            <div class="ai-cell-empty-state">会话沙箱控制台已就绪，等待执行指令…</div>
+                            <div class="ai-cell-empty-state" data-i18n="会话沙箱控制台已就绪，等待执行指令…">会话沙箱控制台已就绪，等待执行指令…</div>
                         </div>
                     </div>
 
                     <!-- Workspace Files Tree -->
                     <div class="ai-cell-card">
                         <div class="ai-cell-card-head">
-                            <span class="ai-cell-card-title">工作区文件 (Workspace)</span>
-                            <span class="ai-cell-card-badge" id="aiCellFilesCount">0 个文件</span>
+                            <span class="ai-cell-card-title" data-i18n="工作区文件 (Workspace)">工作区文件 (Workspace)</span>
+                            <span class="ai-cell-card-badge" id="aiCellFilesCount" data-i18n="0 个文件">0 个文件</span>
                         </div>
                         <div id="aiCellWorkspaceTree" class="ai-cell-tree-screen">
-                            <div class="ai-cell-empty-state">沙箱工作区根目录为空</div>
+                            <div class="ai-cell-empty-state" data-i18n="沙箱工作区根目录为空">沙箱工作区根目录为空</div>
                         </div>
                     </div>
                 </div>
@@ -1430,17 +1430,17 @@
             <input id="aiModelSelect" type="hidden">
             <input id="aiThinkIntensity" type="hidden">
             <span id="aiIslandThinkingBadge" hidden></span>
-            <button type="button" class="ai-provider-picker-proxy" hidden>供应商</button>
-            <button type="button" class="ai-model-picker-proxy" hidden>模型</button>
+            <button type="button" class="ai-provider-picker-proxy" data-i18n="供应商" hidden>供应商</button>
+            <button type="button" class="ai-model-picker-proxy" data-i18n="模型" hidden>模型</button>
             <div class="ai-segment" id="aiCollabMode" data-value="standard">
-                <button type="button" class="ai-segment-btn active" data-value="standard">标准</button>
-                <button type="button" class="ai-segment-btn" data-value="plan">计划</button>
+                <button type="button" class="ai-segment-btn active" data-value="standard" data-i18n="标准">标准</button>
+                <button type="button" class="ai-segment-btn" data-value="plan" data-i18n="计划">计划</button>
                 <button type="button" class="ai-segment-btn" data-value="goal">Goal</button>
             </div>
             <div class="ai-segment" id="aiRunProfile" data-value="balanced">
-                <button type="button" class="ai-segment-btn" data-value="economy">省 token</button>
-                <button type="button" class="ai-segment-btn active" data-value="balanced">均衡</button>
-                <button type="button" class="ai-segment-btn" data-value="delivery">交付</button>
+                <button type="button" class="ai-segment-btn" data-value="economy" data-i18n="省 token">省 token</button>
+                <button type="button" class="ai-segment-btn active" data-value="balanced" data-i18n="均衡">均衡</button>
+                <button type="button" class="ai-segment-btn" data-value="delivery" data-i18n="交付">交付</button>
             </div>
             <div class="ai-segment" id="aiChatPermissionMode" data-value="ask">
                 <button type="button" class="ai-segment-btn active" data-value="ask">Ask</button>
@@ -1541,7 +1541,7 @@
             <div class="form-group force-hidden" id="rdpDomainGroup"><label data-i18n="Windows 域（可选）">Windows 域（可选）</label><input id="rdpDomain" placeholder="例如 CORP 或 WORKGROUP" data-i18n-placeholder="例如 CORP 或 WORKGROUP"><p class="field-hint" data-i18n="Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。">Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。</p></div>
             <div class="form-group"><label data-i18n="选择已保存 SSH 密钥">选择已保存 SSH 密钥</label><select id="connSshKey"><option value="" data-i18n="不使用密钥库">不使用密钥库</option></select><p class="field-hint" data-i18n="选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。">选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。</p></div>
             <div class="form-group"><label data-i18n="标签（逗号分隔）">标签（逗号分隔）</label><input id="connTags" placeholder="生产, 数据库, 海外" data-i18n-placeholder="生产, 数据库, 海外"></div>
-            <div class="form-group"><label data-i18n="系统图标">系统图标</label><select id="connIcon"><option value="auto" data-i18n="自动识别">自动识别 (Auto)</option><option value="windows">Windows</option><option value="macos">macOS</option><option value="ubuntu">Ubuntu</option><option value="debian">Debian</option><option value="arch">Arch Linux</option><option value="alpine">Alpine Linux</option><option value="raspberry">Raspberry Pi</option><option value="redhat">Red Hat / CentOS / Fedora</option><option value="linux">Linux (通用)</option><option value="unknown" data-i18n="未识别 (?)">未识别 (?)</option></select><p class="field-hint" data-i18n="默认根据名称与协议自动识别；可手动指定图标以防识别不准。">默认根据名称与协议自动识别；可手动指定图标以防识别不准。</p></div>
+            <div class="form-group"><label data-i18n="系统图标">系统图标</label><select id="connIcon"><option value="auto" data-i18n="自动识别">自动识别 (Auto)</option><option value="windows">Windows</option><option value="macos">macOS</option><option value="ubuntu">Ubuntu</option><option value="debian">Debian</option><option value="arch">Arch Linux</option><option value="alpine">Alpine Linux</option><option value="raspberry">Raspberry Pi</option><option value="redhat">Red Hat / CentOS / Fedora</option><option value="linux" data-i18n="Linux (通用)">Linux (通用)</option><option value="unknown" data-i18n="未识别 (?)">未识别 (?)</option></select><p class="field-hint" data-i18n="默认根据名称与协议自动识别；可手动指定图标以防识别不准。">默认根据名称与协议自动识别；可手动指定图标以防识别不准。</p></div>
             <section class="advanced-route-panel" aria-label="高级选项" data-i18n-aria-label="高级选项">
                 <h3 data-i18n="高级选项">高级选项</h3>
                 <div class="advanced-route-divider"></div>

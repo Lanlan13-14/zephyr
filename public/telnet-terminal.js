@@ -7,7 +7,7 @@ import {
     proposeDimensions as xtermProposeDimensions,
     getWTermCellMetrics as xtermGetCellMetrics,
 } from './wterm-xterm-fit.js?v=20260728-ai-handle-only-drag1';
-import { t, initI18n } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
+import { t, initI18n, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20261019-ui124';
 window.__zephyrT = t;
 import {
     createSshKeyboard,
@@ -12532,7 +12532,7 @@ function setStatus(state, msg) {
     if (state === 'connecting') {
         statusText.textContent = msg || t('连接中...');
         terminalOverlay.classList.remove('hidden');
-        overlayMsg.textContent = msg || '正在建立 Telnet 连接...';
+        overlayMsg.textContent = msg || t('正在建立 Telnet 连接...');
     } else if (state === 'connected') {
         statusDot.classList.add('connected');
         statusText.textContent = msg || t('已连接');
@@ -12684,7 +12684,7 @@ function sleep(ms) {
     return new Promise((resolve) => { reconnectTimer = window.setTimeout(resolve, ms); });
 }
 
-async function startFreshConnection({ message = '正在建立 Telnet 连接...', resetAttempts = false, followOnConnect = true } = {}) {
+async function startFreshConnection({ message = t('正在建立 Telnet 连接...'), resetAttempts = false, followOnConnect = true } = {}) {
     clearReconnectTimer();
     userClosedConnection = false;
     activeConnectionToken += 1;
@@ -12725,8 +12725,8 @@ async function startAutoReconnect(reason = t('连接已断开')) {
     }
     reconnectInProgress = false;
     if (!userClosedConnection && !isConnected) {
-        setStatus('error', '自动重连失败，请手动点击“重连”');
-        showToast('自动重连失败，请手动点击“重连”', 'error', 4200);
+        setStatus('error', t('自动重连失败，请手动点击“重连”'));
+        showToast(t('自动重连失败，请手动点击“重连”'), 'error', 4200);
     }
 }
 
@@ -13237,6 +13237,20 @@ async function reconnect() {
 async function main() {
     try {
         await initI18n({ applyDom: true });
+        try { applyDomI18n(document); } catch (_) {}
+        onLocaleChange(() => { try { applyDomI18n(document); } catch (_) {} });
+        try { applyDomI18n(document); } catch (_) {}
+        onLocaleChange(() => { try { applyDomI18n(document); } catch (_) {} });
+        try { applyDomI18n(document); } catch (_) {}
+        onLocaleChange(() => { try { applyDomI18n(document); } catch (_) {} });
+        try { applyDomI18n(document); } catch (_) {}
+        onLocaleChange(() => { try { applyDomI18n(document); } catch (_) {} });
+        try { applyDomI18n(document); } catch (_) {}
+        onLocaleChange(() => { try { applyDomI18n(document); } catch (_) {} });
+        try { applyDomI18n(document); } catch (_) {}
+        onLocaleChange(() => { try { applyDomI18n(document); } catch (_) {} });
+        try { applyDomI18n(document); } catch (_) {}
+        onLocaleChange(() => { try { applyDomI18n(document); } catch (_) {} });
         await startFreshConnection({ message: t('正在初始化终端...'), resetAttempts: true });
     } catch (err) {
         setStatus('error', err.message);

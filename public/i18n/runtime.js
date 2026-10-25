@@ -2,19 +2,22 @@
  * Zephyr i18n runtime — lightweight gettext-style catalog loader.
  * Keys are source Chinese strings (or stable ids); values are locale translations.
  * Supports {name} / {0} interpolation.
+ * Shared across all ES module specifiers via globalThis.__zephyrI18nState.
  */
 const SUPPORTED = Object.freeze(['zh-CN', 'en']);
 const STORAGE_KEY = 'zephyr-locale';
 const DEFAULT_LOCALE = 'zh-CN';
 
-/** @type {Record<string, Record<string, string>>} */
-const catalogs = Object.create(null);
-/** @type {string} */
-let currentLocale = DEFAULT_LOCALE;
-/** @type {Set<(locale: string) => void>} */
-const listeners = new Set();
-/** @type {Promise<void> | null} */
-let loadPromise = null;
+const sharedState = (typeof globalThis !== 'undefined' && globalThis.__zephyrI18nState) || {
+    catalogs: Object.create(null),
+    currentLocale: DEFAULT_LOCALE,
+    listeners: new Set(),
+    loadPromise: null,
+    syncBound: false,
+};
+if (typeof globalThis !== 'undefined') {
+    globalThis.__zephyrI18nState = sharedState;
+}
 
 function normalizeLocale(value) {
     const raw = String(value || '').trim();
@@ -35,6 +38,12 @@ function detectBrowserLocale() {
 }
 
 function readStoredLocale() {
+    try {
+        if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+            const parentLoc = window.parent.document?.documentElement?.dataset?.locale;
+            if (parentLoc) return normalizeLocale(parentLoc);
+        }
+    } catch {}
     try {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) return normalizeLocale(stored);
@@ -73,11 +82,10 @@ function interpolate(template, params) {
 function lookup(key) {
     if (key == null || key === '') return '';
     const k = String(key);
-    const cat = catalogs[currentLocale];
+    const cat = sharedState.catalogs[sharedState.currentLocale];
     if (cat && Object.prototype.hasOwnProperty.call(cat, k) && cat[k] != null) return cat[k];
-    // zh-CN is source language: missing entry means identity.
-    if (currentLocale === 'zh-CN') return k;
-    const zh = catalogs['zh-CN'];
+    if (sharedState.currentLocale === 'zh-CN') return k;
+    const zh = sharedState.catalogs['zh-CN'];
     if (zh && Object.prototype.hasOwnProperty.call(zh, k) && zh[k] != null) return zh[k];
     return k;
 }
@@ -91,7 +99,7 @@ export function t(key, params) {
 export const i18n = t;
 
 export function getLocale() {
-    return currentLocale;
+    return sharedState.currentLocale;
 }
 
 export function getSupportedLocales() {
@@ -99,33 +107,38 @@ export function getSupportedLocales() {
 }
 
 export function onLocaleChange(fn) {
-    if (typeof fn === 'function') listeners.add(fn);
-    return () => listeners.delete(fn);
+    if (typeof fn === 'function') sharedState.listeners.add(fn);
+    return () => sharedState.listeners.delete(fn);
 }
 
 export function registerCatalog(locale, dict) {
     const loc = normalizeLocale(locale);
-    catalogs[loc] = { ...(catalogs[loc] || {}), ...(dict || {}) };
+    sharedState.catalogs[loc] = { ...(sharedState.catalogs[loc] || {}), ...(dict || {}) };
 }
 
 async function fetchCatalog(locale) {
     const loc = normalizeLocale(locale);
-    if (catalogs[loc] && Object.keys(catalogs[loc]).length) return catalogs[loc];
+    if (sharedState.catalogs[loc] && Object.keys(sharedState.catalogs[loc]).length) return sharedState.catalogs[loc];
+    try {
+        if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+            const parentCat = window.parent.__zephyrI18nState?.catalogs?.[loc];
+            if (parentCat && Object.keys(parentCat).length) {
+                registerCatalog(loc, parentCat);
+                return sharedState.catalogs[loc];
+            }
+        }
+    } catch {}
     const url = new URL(`./locales/${loc}.json`, import.meta.url);
-    url.searchParams.set('v', '20261018-ui1');
+    url.searchParams.set('v', '20261019-ui124');
     const res = await fetch(url.href, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`i18n catalog ${loc} HTTP ${res.status}`);
     const dict = await res.json();
     registerCatalog(loc, dict);
-    return catalogs[loc];
+    return sharedState.catalogs[loc];
 }
 
 export async function ensureCatalogs(locales = SUPPORTED) {
-    /* A failed first fetch must not permanently poison the module: pages can
-     * load before a service worker/network transition settles. Keep a promise
-     * only for the in-flight batch, then clear it so a later locale change can
-     * retry catalogs that are still empty. */
-    if (loadPromise) return loadPromise;
+    if (sharedState.loadPromise) return sharedState.loadPromise;
     const requested = [...new Set(locales.map(normalizeLocale))];
     const pending = Promise.all(
         requested.map((loc) => fetchCatalog(loc).catch((err) => {
@@ -133,11 +146,11 @@ export async function ensureCatalogs(locales = SUPPORTED) {
             return null;
         })),
     ).then(() => undefined);
-    loadPromise = pending;
+    sharedState.loadPromise = pending;
     try {
         await pending;
     } finally {
-        if (loadPromise === pending) loadPromise = null;
+        if (sharedState.loadPromise === pending) sharedState.loadPromise = null;
     }
 }
 
@@ -148,16 +161,6 @@ function setDocumentLang(locale) {
     } catch {}
 }
 
-/**
- * Apply static DOM translations:
- *  data-i18n="key"            → textContent
- *  data-i18n-html="key"       → innerHTML (trusted catalog only)
- *  data-i18n-placeholder="k"  → placeholder
- *  data-i18n-title="k"        → title
- *  data-i18n-aria-label="k"   → aria-label
- *  data-i18n-value="k"        → value (buttons/inputs)
- *  data-i18n-label="k" on <option> → textContent
- */
 export function applyDomI18n(root = document) {
     const scope = root && root.querySelectorAll ? root : document;
     const nodes = scope.querySelectorAll
@@ -185,50 +188,59 @@ export function applyDomI18n(root = document) {
     });
 }
 
-export async function setLocale(next, { persist = true, applyDom = true } = {}) {
+function broadcastLocaleToChildFrames(locale) {
+    if (typeof document === 'undefined') return;
+    try {
+        document.querySelectorAll('iframe').forEach((frame) => {
+            try {
+                frame.contentWindow?.postMessage({
+                    source: 'zephyr-app',
+                    type: 'locale-change',
+                    locale,
+                }, '*');
+            } catch {}
+        });
+    } catch {}
+}
+
+export async function setLocale(next, { persist = true, applyDom = true, broadcast = true } = {}) {
     const locale = normalizeLocale(next);
     await ensureCatalogs([locale, 'zh-CN']);
-    const changed = locale !== currentLocale;
-    currentLocale = locale;
+    const changed = locale !== sharedState.currentLocale;
+    sharedState.currentLocale = locale;
     if (persist) writeStoredLocale(locale);
     setDocumentLang(locale);
     if (applyDom) applyDomI18n(document);
+    if (broadcast) broadcastLocaleToChildFrames(locale);
     if (changed) {
-        listeners.forEach((fn) => {
+        sharedState.listeners.forEach((fn) => {
             try { fn(locale); } catch (err) { console.warn('[i18n] listener error', err); }
         });
     }
     return locale;
 }
 
-/**
- * Resolve initial locale:
- * 1) explicit override (settings)
- * 2) localStorage
- * 3) browser
- * 4) zh-CN
- */
 export async function initI18n({ locale, applyDom = true } = {}) {
     const resolved = locale
         ? normalizeLocale(locale)
         : (readStoredLocale() || detectBrowserLocale() || DEFAULT_LOCALE);
-    currentLocale = resolved;
+    sharedState.currentLocale = resolved;
     await ensureCatalogs(SUPPORTED);
     if (applyDom) {
-        setDocumentLang(currentLocale);
+        setDocumentLang(sharedState.currentLocale);
         applyDomI18n(document);
     }
-    return currentLocale;
+    return sharedState.currentLocale;
 }
 
 export function localeCompareValue(a, b) {
-    const loc = currentLocale === 'zh-CN' ? 'zh-CN' : 'en';
+    const loc = sharedState.currentLocale === 'zh-CN' ? 'zh-CN' : 'en';
     return String(a).localeCompare(String(b), loc);
 }
 
 export function formatNumber(n, options) {
     try {
-        return new Intl.NumberFormat(currentLocale === 'zh-CN' ? 'zh-CN' : 'en', options).format(n);
+        return new Intl.NumberFormat(sharedState.currentLocale === 'zh-CN' ? 'zh-CN' : 'en', options).format(n);
     } catch {
         return String(n);
     }
@@ -237,12 +249,27 @@ export function formatNumber(n, options) {
 export function formatDateTime(ts, options) {
     if (!ts) return t('从未连接');
     try {
-        return new Date(ts).toLocaleString(currentLocale === 'zh-CN' ? 'zh-CN' : 'en', options);
+        return new Date(ts).toLocaleString(sharedState.currentLocale === 'zh-CN' ? 'zh-CN' : 'en', options);
     } catch {
         return String(ts);
     }
 }
 
-// Eager identity catalog so t() works before fetch resolves for zh-CN keys.
-registerCatalog('zh-CN', {});
-registerCatalog('en', {});
+if (!sharedState.catalogs['zh-CN']) registerCatalog('zh-CN', {});
+if (!sharedState.catalogs['en']) registerCatalog('en', {});
+
+if (typeof window !== 'undefined' && !sharedState.syncBound) {
+    sharedState.syncBound = true;
+    window.__zephyrI18n = { t, setLocale, getLocale, applyDomI18n, onLocaleChange, initI18n };
+    window.addEventListener('message', (ev) => {
+        const d = ev?.data;
+        if (d && d.source === 'zephyr-app' && d.type === 'locale-change' && d.locale) {
+            setLocale(d.locale, { persist: false, applyDom: true, broadcast: false }).catch(() => {});
+        }
+    });
+    window.addEventListener('storage', (ev) => {
+        if (ev && ev.key === STORAGE_KEY && ev.newValue) {
+            setLocale(ev.newValue, { persist: false, applyDom: true, broadcast: false }).catch(() => {});
+        }
+    });
+}
