@@ -1,4 +1,4 @@
-import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui114';
+import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui122';
 if (typeof window !== 'undefined' && ZephyrWasmMotion) { window.Motion = ZephyrWasmMotion; }
 /* ══════════════════════════════════════════════════════════════════════════
  * public/vendor/zephyr-pro/app-continuity-guard-pro.js

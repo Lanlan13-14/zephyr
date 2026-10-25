@@ -233,6 +233,8 @@
       );
     }
 
+    var cachedTabWKey = '';
+    var cachedTabWVal = 0;
     function equalizeDomTabs(tabs) {
       var Layout = window.LiquidGlassTabLayout;
       if (!Layout || !tabs.length) {
@@ -240,14 +242,22 @@
         return 0;
       }
       var fill = islandMode() === 'fill';
-      navTabs.style.removeProperty('--lg-tab-w');
-      var naturals = tabs.map(function (t) { return t.getBoundingClientRect().width; });
       var available = remainingInnerWidth();
       if (fill) {
         var glass = glassClient();
         if (glass.w > available) available = glass.w;
       }
+      var textSig = tabs.map(function (t) { return (t.textContent || '').trim(); }).join('|');
+      var key = tabs.length + ':' + (fill ? 'F' : 'H') + ':' + Math.round(available) + ':' + textSig;
+      if (key === cachedTabWKey && cachedTabWVal > 0) {
+        navTabs.style.setProperty('--lg-tab-w', cachedTabWVal + 'px');
+        return cachedTabWVal;
+      }
+      navTabs.style.removeProperty('--lg-tab-w');
+      var naturals = tabs.map(function (t) { return t.offsetWidth || t.getBoundingClientRect().width; });
       var tabW = Layout.chooseTabWidth(naturals, available, fill);
+      cachedTabWKey = key;
+      cachedTabWVal = tabW;
       if (tabW > 0) navTabs.style.setProperty('--lg-tab-w', tabW + 'px');
       else navTabs.style.removeProperty('--lg-tab-w');
       return tabW;

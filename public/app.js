@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui118';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui122';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui118');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui122');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -2490,11 +2490,27 @@ function bindTerminalShelfCollapse() {
 
 function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     const target = name === 'ai' ? 'dashboard' : name;
+    const prevTabEl = document.querySelector('.main-nav .nav-tabs .nav-tab.active');
+    const prevTabRect = prevTabEl ? { left: prevTabEl.offsetLeft, width: prevTabEl.offsetWidth } : null;
+    const prevViewEl = document.querySelector('.app-main > .view.active');
+    const prevViewId = prevViewEl ? prevViewEl.id.replace(/^view-/, '') : '';
+    const nowSwitchTs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (!enteringAnimated && prevViewId === target && currentAppView === target && applySwitchViewCore._lastTarget === target && (nowSwitchTs - (applySwitchViewCore._lastTs || 0)) < 120) {
+        return { target, wasTerminal: document.body.classList.contains('terminal-mode'), enteringTerminal: false, leavingTerminal: false };
+    }
+    applySwitchViewCore._lastTarget = target;
+    applySwitchViewCore._lastTs = nowSwitchTs;
     currentAppView = target;
     rememberLastAppView(target);
     if (target !== 'notes') notesController?.leave?.().catch(() => {});
     $$('.nav-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === target));
     $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${target}`));
+    const nextTabEl = document.querySelector('.main-nav .nav-tabs .nav-tab.active');
+    const navTabsEl = document.querySelector('.main-nav .nav-tabs');
+    if (navTabsEl && prevTabEl && nextTabEl && prevTabEl !== nextTabEl && prevTabRect && window.Motion?.navTabSlide) {
+        const nextTabRect = { left: nextTabEl.offsetLeft, width: nextTabEl.offsetWidth };
+        if (nextTabRect.width > 0) void window.Motion.navTabSlide(navTabsEl, prevTabRect, nextTabRect);
+    }
     const wasTerminal = document.body.classList.contains('terminal-mode');
     const enteringTerminal = target === 'terminal' && !wasTerminal;
     const leavingTerminal = target !== 'terminal' && wasTerminal;
@@ -2551,6 +2567,14 @@ function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     }
     if (target === 'notes') {
         notesController?.activate?.().catch((err) => toast(err.message || t('加载笔记失败')));
+    }
+    const nextViewEl = document.getElementById(`view-${target}`);
+    if (prevViewId && prevViewId !== target && !enteringAnimated && nextViewEl && window.Motion?.viewSwitch) {
+        const viewOrder = ['dashboard', 'activity', 'terminal', 'remote', 'notes', 'settings'];
+        const fromIdx = viewOrder.indexOf(prevViewId);
+        const toIdx = viewOrder.indexOf(target);
+        const viewDir = (fromIdx >= 0 && toIdx >= 0 && fromIdx !== toIdx) ? (toIdx > fromIdx ? 1 : -1) : 1;
+        void window.Motion.viewSwitch(prevViewEl, nextViewEl, { dir: viewDir, axis: 'x' });
     }
     scheduleWorkspaceSave('view-change');
     return { target, wasTerminal, enteringTerminal, leavingTerminal };
@@ -5290,6 +5314,17 @@ function getTerminalShortcutPlatform() {
     const value = settings?.terminal?.shortcutPlatform || localStorage.getItem('zephyr-shortcut-platform') || 'auto';
     return ['auto', 'windows', 'mac'].includes(value) ? value : 'auto';
 }
+function resolveEffectiveShortcutPlatform() {
+    const lsVal = localStorage.getItem('zephyr-shortcut-platform');
+    const pref = (lsVal === 'mac' || lsVal === 'windows') ? lsVal : getTerminalShortcutPlatform();
+    const resolved = (pref === 'mac' || pref === 'windows')
+        ? pref
+        : (/Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '') ? 'mac' : 'windows');
+    if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.dataset.shortcutPlatform = resolved;
+    }
+    return resolved;
+}
 function getEffectiveTerminalMaxWindows() { return isCompactTerminalWorkspace() ? 1 : getConfiguredTerminalMaxWindows(); }
 function getTerminalSession(id) { return terminalTabs.find((t) => t.id === id); }
 function visibleTerminalTabs() { return terminalTabs.filter((t) => !t.minimized && !closingTerminalTabs.has(t.id)); }
@@ -5639,6 +5674,9 @@ function activateTerminalPaneById(tabId) {
     ws.querySelectorAll(':scope > .terminal-window').forEach((w) => {
         const isAct = w === targetWin;
         w.classList.toggle('active', isAct);
+        if (!w.classList.contains('minimized-keepalive')) {
+            w.classList.toggle('background', !isAct);
+        }
         w.querySelectorAll('.terminal-frame, .terminal-placeholder').forEach((f) => f.classList.toggle('active', isAct));
     });
     return true;
@@ -5670,7 +5708,7 @@ function bindTerminalPanelPinStateMessages() {
             if (tabId && activeTerminalTab !== tabId) {
                 activateTerminalPaneById(tabId);
                 renderTerminalSmartbar();
-                broadcastPaneSlotConstraints();
+                applySplitSlideState({ animate: true });
             }
             return;
         }
@@ -6000,13 +6038,30 @@ function terminalWindowTitlebarHtml(session) {
     const showFullscreenBtn = visibleCount >= 1 || effectiveFull || isCompactTerminalWorkspace();
     const fullAction = effectiveFull ? 'exit-fullscreen' : 'fullscreen';
     const fullTitle = effectiveFull ? t('退出全屏') : t('全屏');
+    const isMac = resolveEffectiveShortcutPlatform() === 'mac';
+
+    const leftMetaHtml = `<div class="z1-tb-left"><span class="proto-dot ${terminalProtocolClass(session.protocol)}"></span><strong class="terminal-window-title">${escapeHtml(formatProtectedName(terminalShortName(session.name), proto, settings))}</strong><span class="z1-badge z1-proto-badge">${escapeHtml(proto)}</span>${hostBadge ? `<span class="z1-badge z1-host z1-host-badge">${escapeHtml(hostBadge)}</span>` : ''}<span class="z1-ping" data-z1-ping="${session.id}"${probe?.level ? ` data-level="${probe.level}"` : ''}>${latencyMs == null ? '' : `${latencyMs}ms`}</span></div>`;
+
+    if (isMac) {
+        const macCloseSvg = '<svg class="mac-tl-glyph" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>';
+        const macMinSvg = '<svg class="mac-tl-glyph" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" aria-hidden="true"><line x1="1.8" y1="5" x2="8.2" y2="5"/></svg>';
+        const macMaxSvg = effectiveFull
+            ? '<svg class="mac-tl-glyph" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1.5 4.2 4.2 4.2 4.2 1.5"/><polyline points="8.5 5.8 5.8 5.8 5.8 8.5"/></svg>'
+            : '<svg class="mac-tl-glyph" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="2 6.5 2 2 6.5 2"/><polyline points="8 3.5 8 8 3.5 8"/></svg>';
+        const macFullBtnHtml = showFullscreenBtn
+            ? `<button type="button" class="pbtn mac-tl mac-tl-max z1-max${effectiveFull ? ' active' : ''}" data-window-action="${fullAction}" data-window="${session.id}" title="${fullTitle}" aria-label="${fullTitle}">${macMaxSvg}</button>`
+            : '';
+        const macTrafficHtml = `<div class="z1-tb-actions mac-traffic-lights" data-platform="mac"><button type="button" class="pbtn mac-tl mac-tl-close z1-close" data-window-action="close" data-window="${session.id}" title="${t('关闭')}" aria-label="${t('关闭')}">${macCloseSvg}</button><button type="button" class="pbtn mac-tl mac-tl-min z1-min" data-window-action="minimize" data-window="${session.id}" title="${t('最小化')}" aria-label="${t('最小化')}">${macMinSvg}</button>${macFullBtnHtml}</div>`;
+        return `<button class="terminal-grip terminal-window-center-dots" data-window-control="${session.id}" title="${t('拖动交换窗口位置')}" aria-label="${t('拖动交换窗口位置')}"><span></span></button><button class="mobile-fullscreen-dock-toggle" data-mobile-dock-toggle data-smartbar-toggle title="${t('展开/收回移动端 Dock')}" aria-label="${t('展开/收回移动端 Dock')}"><span></span></button>${macTrafficHtml}${leftMetaHtml}`;
+    }
+
     const fullIconSvg = effectiveFull
         ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16"/></svg>'
         : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
     const fullBtnHtml = showFullscreenBtn
         ? `<button type="button" class="pbtn z1-max${effectiveFull ? ' active' : ''}" data-window-action="${fullAction}" data-window="${session.id}" title="${fullTitle}" aria-label="${fullTitle}">${fullIconSvg}</button>`
         : '';
-    return `<button class="terminal-grip terminal-window-center-dots" data-window-control="${session.id}" title="${t('拖动交换窗口位置')}" aria-label="${t('拖动交换窗口位置')}"><span></span></button><button class="mobile-fullscreen-dock-toggle" data-mobile-dock-toggle data-smartbar-toggle title="${t('展开/收回移动端 Dock')}" aria-label="${t('展开/收回移动端 Dock')}"><span></span></button><div class="z1-tb-left"><span class="proto-dot ${terminalProtocolClass(session.protocol)}"></span><strong class="terminal-window-title">${escapeHtml(formatProtectedName(terminalShortName(session.name), proto, settings))}</strong><span class="z1-badge z1-proto-badge">${escapeHtml(proto)}</span>${hostBadge ? `<span class="z1-badge z1-host z1-host-badge">${escapeHtml(hostBadge)}</span>` : ''}<span class="z1-ping" data-z1-ping="${session.id}"${probe?.level ? ` data-level="${probe.level}"` : ''}>${latencyMs == null ? '' : `${latencyMs}ms`}</span></div><div class="z1-tb-actions"><button type="button" class="pbtn z1-min" data-window-action="minimize" data-window="${session.id}" title="${t('最小化')}" aria-label="${t('最小化')}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>${fullBtnHtml}<button type="button" class="pbtn z1-close" data-window-action="close" data-window="${session.id}" title="${t('关闭')}" aria-label="${t('关闭')}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>`;
+    return `<button class="terminal-grip terminal-window-center-dots" data-window-control="${session.id}" title="${t('拖动交换窗口位置')}" aria-label="${t('拖动交换窗口位置')}"><span></span></button><button class="mobile-fullscreen-dock-toggle" data-mobile-dock-toggle data-smartbar-toggle title="${t('展开/收回移动端 Dock')}" aria-label="${t('展开/收回移动端 Dock')}"><span></span></button>${leftMetaHtml}<div class="z1-tb-actions win-controls" data-platform="windows"><button type="button" class="pbtn z1-min" data-window-action="minimize" data-window="${session.id}" title="${t('最小化')}" aria-label="${t('最小化')}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>${fullBtnHtml}<button type="button" class="pbtn z1-close" data-window-action="close" data-window="${session.id}" title="${t('关闭')}" aria-label="${t('关闭')}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>`;
 }
 function positionTerminalWindowMenu(titlebar, { collapsed = false, force = false } = {}) {
     if (!force && !titlebar?.classList.contains('menu-open')) return;
@@ -6202,8 +6257,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui118`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui118`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui122`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui122`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -15263,7 +15318,13 @@ async function saveTerminalLayout(e) {
     renderTerminalTabs();
     const keepAliveText = minimizedKeepAlive === -1 ? '最小化无限保活' : `最小化保活 ${minimizedKeepAlive} 个`;
     toast(t('终端布局已保存：最多 {count} 窗，{keepAlive}', { count: maxWindows, keepAlive: keepAliveText }));
-    broadcastTerminalSettings({ allowLigatures });
+    resolveEffectiveShortcutPlatform();
+    $$('#terminalWorkspace > .terminal-window').forEach((win) => {
+        const s = getTerminalSession(win.dataset.window);
+        const tb = win.querySelector('.terminal-window-titlebar');
+        if (s && tb) tb.innerHTML = terminalWindowTitlebarHtml(s);
+    });
+    broadcastTerminalSettings({ allowLigatures, shortcutPlatform });
 }
 
 const SNIPPET_STORAGE_KEY = 'zephyr-ssh-snippets';
@@ -15883,7 +15944,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261019-ui118')
+        return import('./vendor/zephyr-motion/index.js?v=20261019-ui122')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -16150,10 +16211,20 @@ function bindEvents() {
     bindConnectionPressFeedback();
     $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view, { cardFlipSource: btn })));
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => {
-        $$('.settings-tab').forEach((b) => b.classList.remove('active'));
+        const allTabs = $$('.settings-tab');
+        const prevTab = document.querySelector('.settings-tab.active');
+        const prevIdx = prevTab ? allTabs.indexOf(prevTab) : -1;
+        const nextIdx = allTabs.indexOf(btn);
+        const prevPanel = document.querySelector('.settings-panel.active');
+        allTabs.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         $$('.settings-panel').forEach((p) => p.classList.remove('active'));
-        $(`#settings-${btn.dataset.settings}`).classList.add('active');
+        const nextPanel = $(`#settings-${btn.dataset.settings}`);
+        nextPanel?.classList.add('active');
+        if (prevPanel && nextPanel && prevPanel !== nextPanel && window.Motion?.viewSwitch) {
+            const dir = (prevIdx >= 0 && nextIdx >= 0 && nextIdx < prevIdx) ? -1 : 1;
+            void window.Motion.viewSwitch(prevPanel, nextPanel, { dir, axis: 'y' });
+        }
         // Leaving AI settings collapses model subpages without trapping navigation.
         if (btn.dataset.settings !== 'ai') {
             if ($('#settingsAiModelDetailPage')?.classList.contains('is-open')) closeAiModelDetailPage({ skipParent: true }).catch(() => {});
@@ -18916,3 +18987,13 @@ function upgradeHostAiAgentPanelHeader() {
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', upgradeHostAiAgentPanelHeader);
 else upgradeHostAiAgentPanelHeader();
+
+window.__zephyrSyncShortcutPlatform = () => {
+    resolveEffectiveShortcutPlatform();
+    $$('#terminalWorkspace > .terminal-window').forEach((win) => {
+        const s = getTerminalSession(win.dataset.window);
+        const tb = win.querySelector('.terminal-window-titlebar');
+        if (s && tb) tb.innerHTML = terminalWindowTitlebarHtml(s);
+    });
+    broadcastTerminalSettings({ shortcutPlatform: getTerminalShortcutPlatform() });
+};

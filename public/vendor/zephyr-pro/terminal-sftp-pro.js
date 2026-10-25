@@ -1,4 +1,4 @@
-import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui117';
+import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui122';
 if (typeof window !== 'undefined' && ZephyrWasmMotion) { window.Motion = ZephyrWasmMotion; }
 
 export const IPV4_OR_IPV6_RE = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\[?(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]+\]?(?::\d{1,5})?/g;
@@ -1010,12 +1010,15 @@ export function installTerminalSftpPro(ctx) {
 
   function syncHostWindowDockAndFloatState({ userTriggered = false } = {}) {
     const page = document.querySelector('.terminal-page') || document.body;
-    const dockedRight = !!page.querySelector('.z-unified-panel.open.docked-right, .docked-right.open');
-    const dockedLeft = !!page.querySelector('.z-unified-panel.open.docked-left, .docked-left.open');
-    const anyDocked = dockedRight || dockedLeft;
+    const isInactiveSlot = page.classList.contains('pane-slot-inactive');
+    const rawDockedRight = !!page.querySelector('.z-unified-panel.open.docked-right, .docked-right.open');
+    const rawDockedLeft = !!page.querySelector('.z-unified-panel.open.docked-left, .docked-left.open');
+    const dockedRight = !isInactiveSlot && rawDockedRight;
+    const dockedLeft = !isInactiveSlot && rawDockedLeft;
+    const anyDocked = rawDockedRight || rawDockedLeft;
     const anyFloating = !!page.querySelector('.z-unified-panel.open:not(.docked-right):not(.docked-left)');
 
-    if (!anyDocked) {
+    if (!dockedRight && !dockedLeft) {
       page.classList.remove('has-docked-right', 'has-docked-left', 'has-dual-dock-left', 'has-dual-dock-right');
     } else {
       page.classList.toggle('has-docked-right', dockedRight);
@@ -1398,8 +1401,10 @@ export function installTerminalSftpPro(ctx) {
       applyPinnedPanelsGridAssignment(page);
       syncHostWindowDockAndFloatState({ userTriggered: false });
     };
-    if (animate && Motion?.panelDockMorph) {
-      void Motion.panelDockMorph(pinned, mutate, { preset: { response: 0.22, damping: 0.98 } });
+    // When a pane becomes an inactive multi-window slot (forcedSide !== null), immediately place its docked tile
+    // onto the outer side so it slides off-screen with the pane and never lingers in the 20% boundary strip.
+    if (animate && !forcedSide && Motion?.panelDockMorph) {
+      void Motion.panelDockMorph(pinned, mutate, { preset: { response: 0.24, damping: 1.0 } });
     } else {
       mutate();
     }
@@ -2483,6 +2488,126 @@ export function installTerminalSftpPro(ctx) {
       topbarActions.dataset.pressBound = '1';
       Motion.press(topbarActions.querySelectorAll('button'), { scale: 0.95 });
     }
+    if (topbarActions && !topbarActions.dataset.hScrollEnhanced) {
+      topbarActions.dataset.hScrollEnhanced = '1';
+      const topbarHost = topbarActions.closest('.terminal-topbar') || topbarActions.parentElement;
+      if (topbarHost) {
+        topbarHost.classList.add('topbar-scroll-host');
+        let leftArrow = topbarHost.querySelector('.topbar-scroll-btn.left');
+        let rightArrow = topbarHost.querySelector('.topbar-scroll-btn.right');
+        if (!leftArrow) {
+          leftArrow = document.createElement('button');
+          leftArrow.type = 'button';
+          leftArrow.className = 'topbar-scroll-btn left';
+          leftArrow.setAttribute('aria-label', '向左滚动工具栏');
+          leftArrow.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>';
+          topbarHost.appendChild(leftArrow);
+        }
+        if (!rightArrow) {
+          rightArrow = document.createElement('button');
+          rightArrow.type = 'button';
+          rightArrow.className = 'topbar-scroll-btn right';
+          rightArrow.setAttribute('aria-label', '向右滚动工具栏');
+          rightArrow.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>';
+          topbarHost.appendChild(rightArrow);
+        }
+        const syncScrollArrows = () => {
+          const maxScroll = Math.max(0, topbarActions.scrollWidth - topbarActions.clientWidth);
+          const sl = topbarActions.scrollLeft;
+          const offL = topbarActions.offsetLeft || 0;
+          const offT = topbarActions.offsetTop || 0;
+          const offW = topbarActions.offsetWidth || 0;
+          const offH = topbarActions.offsetHeight || 36;
+          const btnT = offT + Math.max(0, Math.round((offH - 28) / 2));
+          leftArrow.style.left = (offL + 4) + 'px';
+          leftArrow.style.top = btnT + 'px';
+          leftArrow.style.right = 'auto';
+          rightArrow.style.left = Math.max(offL + 4, offL + offW - 28) + 'px';
+          rightArrow.style.top = btnT + 'px';
+          rightArrow.style.right = 'auto';
+          leftArrow.classList.toggle('visible', maxScroll > 3 && sl > 3);
+          rightArrow.classList.toggle('visible', maxScroll > 3 && sl < maxScroll - 3);
+        };
+        leftArrow.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          topbarActions.scrollBy({ left: -180, behavior: 'smooth' });
+          setTimeout(syncScrollArrows, 220);
+        });
+        rightArrow.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          topbarActions.scrollBy({ left: 180, behavior: 'smooth' });
+          setTimeout(syncScrollArrows, 220);
+        });
+        topbarActions.addEventListener('scroll', syncScrollArrows, { passive: true });
+        window.addEventListener('resize', syncScrollArrows, { passive: true });
+    if (typeof ResizeObserver !== 'undefined') {
+          new ResizeObserver(syncScrollArrows).observe(topbarActions);
+          if (topbarHost && topbarHost !== topbarActions) {
+            new ResizeObserver(syncScrollArrows).observe(topbarHost);
+          }
+        }
+        const mutObs = new MutationObserver(syncScrollArrows);
+        if (topbarHost) mutObs.observe(topbarHost, { attributes: true, attributeFilter: ['class', 'style'] });
+        requestAnimationFrame(syncScrollArrows);
+        window.__zephyrSyncTopbarScrollArrows = syncScrollArrows;
+      }
+
+      // 1) Mouse wheel vertical/horizontal -> smooth horizontal scroll
+      topbarActions.addEventListener('wheel', (ev) => {
+        if (topbarActions.scrollWidth <= topbarActions.clientWidth + 2) return;
+        const delta = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY;
+        if (!delta) return;
+        ev.preventDefault();
+        topbarActions.scrollLeft += delta;
+        window.__zephyrSyncTopbarScrollArrows?.();
+      }, { passive: false });
+
+      // 2) Pointer grab-and-pan horizontal drag with 5px click hysteresis
+      let dragState = null;
+      let suppressNextClick = false;
+      topbarActions.addEventListener('pointerdown', (ev) => {
+        if (ev.button != null && ev.button !== 0) return;
+        if (topbarActions.scrollWidth <= topbarActions.clientWidth + 2) return;
+        dragState = {
+          pointerId: ev.pointerId,
+          startX: ev.clientX,
+          startScrollLeft: topbarActions.scrollLeft,
+          moved: false,
+        };
+      }, true);
+      window.addEventListener('pointermove', (ev) => {
+        if (!dragState || ev.pointerId !== dragState.pointerId) return;
+        const dx = ev.clientX - dragState.startX;
+        if (!dragState.moved && Math.abs(dx) > 5) {
+          dragState.moved = true;
+          topbarActions.classList.add('is-dragging-scroll');
+        }
+        if (dragState.moved) {
+          topbarActions.scrollLeft = dragState.startScrollLeft - dx;
+          window.__zephyrSyncTopbarScrollArrows?.();
+        }
+      }, { passive: true });
+      const endDrag = (ev) => {
+        if (!dragState || (ev && ev.pointerId != null && ev.pointerId !== dragState.pointerId)) return;
+        if (dragState.moved) {
+          suppressNextClick = true;
+          setTimeout(() => { suppressNextClick = false; }, 80);
+        }
+        topbarActions.classList.remove('is-dragging-scroll');
+        dragState = null;
+      };
+      window.addEventListener('pointerup', endDrag, true);
+      window.addEventListener('pointercancel', endDrag, true);
+      topbarActions.addEventListener('click', (ev) => {
+        if (!suppressNextClick) return;
+        suppressNextClick = false;
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.stopImmediatePropagation();
+      }, true);
+    }
   }
 
   function upgradeAllTerminalFloatingPanels() {
@@ -2727,20 +2852,15 @@ export function installTerminalSftpPro(ctx) {
       const nextSlotSide = d.slotSide || 'single';
       window.__zephyrPaneSlotSide = nextSlotSide;
       const page = document.querySelector('.terminal-page') || document.body;
+      const isInactiveSlot = (nextSlotSide === 'left' || nextSlotSide === 'right' || nextSlotSide === 'middle-force-left' || nextSlotSide === 'middle-force-right');
+      const wasInactiveSlot = page.classList.contains('pane-slot-inactive');
+      page.classList.toggle('pane-slot-inactive', isInactiveSlot);
       const dockedPanels = page.querySelectorAll('.z-unified-panel.pinned, .z-unified-panel.docked-left, .z-unified-panel.docked-right');
       if (dockedPanels.length) {
-        let targetSide = null;
-        if (nextSlotSide === 'left' || nextSlotSide === 'middle-force-left') {
-          targetSide = 'left';
-        } else if (nextSlotSide === 'right' || nextSlotSide === 'middle-force-right') {
-          targetSide = 'right';
-        } else if (nextSlotSide === 'middle-active' || nextSlotSide === 'single') {
-          if (window.__zephyrUserPreferredDockSide === 'left' || window.__zephyrUserPreferredDockSide === 'right') {
-            targetSide = window.__zephyrUserPreferredDockSide;
-          }
-        }
-        void targetSide;
         reconcilePinnedPanelsForSlotSide(page, { animate: true });
+      }
+      if (wasInactiveSlot !== isInactiveSlot || dockedPanels.length) {
+        syncHostWindowDockAndFloatState({ userTriggered: false });
       }
     }
     if (d && d.source === 'zephyr-app' && d.type === 'zephyr-ai-state') {

@@ -81,3 +81,22 @@ test('UI118 Contract: AI docked card uses 14px radius + concentric 12px composer
   assert.match(specCss, /html\[data-theme="light"\]\s+\.main-nav[\s\S]*?backdrop-filter:\s*blur\(24px\)\s+saturate\(180%\)\s*!important/);
   assert.match(specCss, /--z-main-max-width:\s*100%/);
 });
+
+
+test('UI120 & UI121 Contract: Zero-jump page transitions, toolbar horizontal scroll (wheel/drag/arrows), full-width behind-AI terminal & bottom alignment, and unified macOS traffic lights vs Windows controls', () => {
+  assert.ok(motionJs.includes('async navTabSlide(navTabsEl, fromRect, toRect, { preset = { response: 0.22, damping: 1.0 } } = {})'));
+  assert.ok(motionJs.includes("async viewSwitch(fromViewEl, toViewEl, { dir = 1, axis = 'x', preset = { response: 0.18, damping: 1.0 } } = {})"));
+  assert.ok(motionJs.includes("const startX = axis === 'x' ? Math.round((dir >= 0 ? 1 : -1) * 6) : 0;"));
+  assert.ok(motionJs.includes('const startScale = 1;'));
+  assert.ok(appJs.includes('function resolveEffectiveShortcutPlatform()'));
+  assert.ok(appJs.includes('mac-traffic-lights'));
+  assert.ok(sftpProJs.includes('topbarActions.dataset.hScrollEnhanced'));
+  assert.ok(sftpProJs.includes('pane-slot-inactive'));
+  assert.ok(specCss.includes('margin-bottom: calc(-1 * var(--z-shelf-ext, 0px)) !important;'));
+  assert.ok(specCss.includes('.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights'));
+  assert.ok(specCss.includes('.terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .z-unified-panel.pinned'));
+  assert.ok(specCss.includes('--z-pane-w: calc(var(--z-stage-w) * 0.8 - 23px);'));
+  assert.ok(specCss.includes('.terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .terminal-topbar'));
+  assert.ok(specCss.includes('calc(100% - 16px) 100%,'));
+  assert.ok(sftpProJs.includes('const dockedRight = !isInactiveSlot && rawDockedRight;'));
+});

@@ -5541,12 +5541,7 @@ body.desktop-embed .terminal-page > .terminal-container {
     padding: calc(12px + var(--z-ai-dock-top, 72px)) 16px 18px !important;
     overflow: hidden !important;
   }
-  body.app-body.terminal-mode.ai-docked-right #terminalWorkspace:not(.custom-fullscreen) {
-    clip-path: inset(0px 14px 0px 0px) !important;
-  }
-  body.app-body.terminal-mode.ai-docked-left #terminalWorkspace:not(.custom-fullscreen) {
-    clip-path: inset(0px 0px 0px 14px) !important;
-  }
+
   .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-1,
   .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-2,
   .terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.minimized-keepalive):not(.terminal-window-morphing) {
@@ -5580,4 +5575,468 @@ body:not(.terminal-card-flip-open) #terminalWorkspace > .terminal-window.minimiz
   transform: translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0) scale(0.985) !important;
   z-index: 45 !important;
   transition: box-shadow 180ms ease !important;
+}
+
+
+/* 27.7 UI119/UI121：顶栏毛玻璃与零跳动切页、工具栏横向滚动与箭头、多窗与 AI 磁贴全宽对齐、macOS 左上角红绿灯与 Windows 右上角控制按钮自适应 */
+
+/* 1) 顶栏导航胶囊条 (.main-nav .nav-tabs)、选中项滑块 (.nav-tab.active::before) 与两侧折叠箭头 (.terminal-shelf-collapse-btn) 适度减弱的毛玻璃效果 + 零垂直/水平布局跳动 */
+body.app-body .main-nav {
+  margin-bottom: calc(-1 * var(--z-shelf-ext, 0px)) !important;
+}
+
+html[data-theme="light"] .main-nav {
+  background: color-mix(in srgb, var(--surface, #FFFFFF) 68%, transparent) !important;
+  backdrop-filter: blur(24px) saturate(180%) brightness(1.04) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) brightness(1.04) !important;
+}
+html[data-theme="dark"] .main-nav {
+  background: color-mix(in srgb, var(--surface, #161920) 68%, transparent) !important;
+  backdrop-filter: blur(24px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+}
+
+html[data-theme="light"] .main-nav .nav-tabs,
+html[data-theme="light"] .main-nav.liquid-glass-on .nav-tabs {
+  background: color-mix(in srgb, var(--bg, #EAEEF4) 44%, transparent) !important;
+  backdrop-filter: blur(14px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(145%) !important;
+  border: 1px solid rgba(15, 23, 42, 0.07) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 4px 12px rgba(15, 23, 42, 0.04) !important;
+}
+html[data-theme="dark"] .main-nav .nav-tabs,
+html[data-theme="dark"] .main-nav.liquid-glass-on .nav-tabs {
+  background: color-mix(in srgb, var(--bg, #0D1015) 46%, transparent) !important;
+  backdrop-filter: blur(14px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(145%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 6px 16px rgba(0, 0, 0, 0.28) !important;
+}
+
+/* 锁定 .nav-tab 字重一致 (font-weight: 600)，杜绝切换激活态时因字重变化引发胶囊总宽度抖动 */
+.main-nav .nav-tabs .nav-tab,
+.main-nav.liquid-glass-on .nav-tabs .nav-tab,
+.main-nav .nav-tabs .nav-tab.active,
+.main-nav.liquid-glass-on .nav-tabs .nav-tab.active {
+  font-weight: 600 !important;
+}
+
+/* 激活页签采用可滑动的半透明毛玻璃胶囊滑块 (::before)，支持跨 Tab 切换时的临界阻尼平滑滑动 */
+html[data-theme="light"] .main-nav .nav-tabs .nav-tab.active,
+html[data-theme="dark"] .main-nav .nav-tabs .nav-tab.active {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  isolation: isolate !important;
+}
+.main-nav .nav-tabs .nav-tab.active::before {
+  display: block !important;
+  content: '' !important;
+  position: absolute !important;
+  inset: 0 !important;
+  border-radius: 9999px !important;
+  z-index: -1 !important;
+  pointer-events: none !important;
+  transform-origin: center center !important;
+  transform: translate3d(var(--nav-pill-dx, 0px), 0, 0) !important;
+  will-change: transform !important;
+}
+html[data-theme="light"] .main-nav .nav-tabs .nav-tab.active::before {
+  background: color-mix(in srgb, var(--surface, #FFFFFF) 68%, transparent) !important;
+  backdrop-filter: blur(10px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.72) !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+}
+html[data-theme="dark"] .main-nav .nav-tabs .nav-tab.active::before {
+  background: color-mix(in srgb, var(--surface, #2C3036) 68%, transparent) !important;
+  backdrop-filter: blur(10px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+
+/* 顶栏伸出架两侧折叠箭头按钮 (.terminal-shelf-collapse-btn) 适度减弱的毛玻璃胶囊效果 */
+html[data-theme="light"] body.app-body.terminal-mode .terminal-shelf-collapse-btn {
+  background: color-mix(in srgb, var(--surface, #FFFFFF) 44%, transparent) !important;
+  backdrop-filter: blur(12px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(145%) !important;
+  border: 1px solid color-mix(in srgb, var(--border, #CBD5E1) 52%, transparent) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 2px 6px rgba(15, 23, 42, 0.06) !important;
+}
+html[data-theme="dark"] body.app-body.terminal-mode .terminal-shelf-collapse-btn {
+  background: color-mix(in srgb, var(--surface, #1E222B) 46%, transparent) !important;
+  backdrop-filter: blur(12px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(145%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 2px 8px rgba(0, 0, 0, 0.32) !important;
+}
+html[data-theme="light"] body.app-body.terminal-mode .terminal-shelf-collapse-btn:hover,
+html[data-theme="dark"] body.app-body.terminal-mode .terminal-shelf-collapse-btn:hover {
+  background: color-mix(in srgb, var(--accent, #0A84FF) 18%, color-mix(in srgb, var(--surface, #FFFFFF) 54%, transparent)) !important;
+  border-color: color-mix(in srgb, var(--accent, #0A84FF) 38%, transparent) !important;
+}
+
+/* 统一桌面端所有非终端视图 (#view-dashboard / #view-activity / #view-remote / #view-notes / #view-settings) 容器左/上基准，消除切页时页面标题与布局跳动 */
+@media (min-width: 761px) {
+  body.app-body:not(.terminal-mode) #view-activity.activity-view {
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+  }
+  body.app-body:not(.terminal-mode) .app-main:has(#view-notes.active) {
+    padding: 20px 24px 24px !important;
+    overflow: hidden !important;
+  }
+  body.app-body:not(.terminal-mode) #view-notes.notes-view.active {
+    margin: 0 !important;
+    width: 100% !important;
+    height: calc(100vh - 56px - 44px) !important;
+    max-height: calc(100vh - 56px - 44px) !important;
+  }
+}
+
+/* 2) 终端工具栏 (.topbar-actions) 按钮溢出时的拖拽滚动与左右浮动滚动箭头 (.topbar-scroll-btn) */
+.terminal-page > .terminal-topbar.topbar-scroll-host {
+  position: relative !important;
+}
+.terminal-page .topbar-actions {
+  scroll-behavior: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.terminal-page .topbar-actions.is-dragging-scroll,
+.terminal-page .topbar-actions.is-dragging-scroll * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+.terminal-page .topbar-scroll-btn {
+  position: absolute !important;
+  width: 24px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  border-radius: 7px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  z-index: 12 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 150ms ease, transform 140ms ease, background-color 140ms ease !important;
+}
+.terminal-page .topbar-scroll-btn.visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+html[data-theme="light"] .terminal-page .topbar-scroll-btn {
+  background: rgba(255, 255, 255, 0.88) !important;
+  backdrop-filter: blur(10px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(150%) !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+  color: #1E293B !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12) !important;
+}
+html[data-theme="dark"] .terminal-page .topbar-scroll-btn {
+  background: rgba(28, 32, 40, 0.88) !important;
+  backdrop-filter: blur(10px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(150%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  color: #F1F5F9 !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45) !important;
+}
+.terminal-page .topbar-scroll-btn:hover {
+  transform: scale(1.05) !important;
+  color: var(--accent, #0A84FF) !important;
+}
+.terminal-page .topbar-scroll-btn:active {
+  transform: scale(0.95) !important;
+}
+
+/* 3) 终端大窗口 (.terminal-window) 顶栏控制按钮：macOS 左上角红绿灯 vs Windows 右上角控制按钮自适应 */
+.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights {
+  order: -1 !important;
+  margin-left: 0 !important;
+  margin-right: 10px !important;
+  gap: 8px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  flex-shrink: 0 !important;
+}
+.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights ~ .z1-tb-left {
+  margin-right: auto !important;
+}
+.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights .pbtn.mac-tl {
+  width: 12px !important;
+  height: 12px !important;
+  min-width: 12px !important;
+  min-height: 12px !important;
+  max-width: 12px !important;
+  max-height: 12px !important;
+  padding: 0 !important;
+  border-radius: 9999px !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: relative !important;
+  transition: transform 120ms ease, filter 140ms ease, background-color 140ms ease !important;
+}
+.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights .pbtn.mac-tl.mac-tl-close {
+  background: #FF5F56 !important;
+  border: 1px solid #E0443E !important;
+  color: #4D0000 !important;
+}
+.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights .pbtn.mac-tl.mac-tl-min {
+  background: #FFBD2E !important;
+  border: 1px solid #DEA123 !important;
+  color: #995700 !important;
+}
+.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights .pbtn.mac-tl.mac-tl-max {
+  background: #28C840 !important;
+  border: 1px solid #1AAB29 !important;
+  color: #006500 !important;
+}
+.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights .pbtn.mac-tl .mac-tl-glyph {
+  width: 8px !important;
+  height: 8px !important;
+  opacity: 0 !important;
+  transition: opacity 120ms ease !important;
+  pointer-events: none !important;
+}
+.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights:hover .pbtn.mac-tl .mac-tl-glyph,
+.terminal-window-titlebar .z1-tb-actions.mac-traffic-lights .pbtn.mac-tl:focus-visible .mac-tl-glyph {
+  opacity: 1 !important;
+}
+.terminal-window:not(.active):not(:hover) .terminal-window-titlebar .z1-tb-actions.mac-traffic-lights:not(:hover) .pbtn.mac-tl {
+  background: rgba(142, 142, 147, 0.32) !important;
+  border-color: rgba(142, 142, 147, 0.24) !important;
+}
+
+/* 4) 多窗口（layout-2 滑出 / layout-3 / layout-4）保持完整 80% 宽度将非操作窗口真实推出显示范围外 + AI 磁贴背面全宽对齐与底边收口 */
+/* 非激活槽位 (.pane-slot-inactive) 内部终端占满 100% 80% 窗宽，绝不因隐藏磁贴缩窄终端画布（从而在 AI 磁贴背面 100% 全宽铺满） */
+html[data-zephyr-surface="desktop"] .terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing),
+body.desktop-embed .terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing),
+.terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) {
+  display: flex !important;
+  flex-direction: column !important;
+}
+.terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .terminal-topbar,
+html[data-zephyr-surface="desktop"] .terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .topbar-actions,
+body.desktop-embed .terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .topbar-actions,
+.terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .topbar-actions {
+  margin-top: 0 !important;
+}
+.terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .z-unified-panel.pinned {
+  display: none !important;
+}
+
+@media (min-width: 761px) {
+  body.app-body.terminal-mode .main-nav {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 90 !important;
+  }
+
+  /* 非操作终端窗口 (.terminal-window:not(.active)) 标题栏与内容区占满 100% 窗口宽度，不缩进 360px */
+  .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window:not(.active):not(.terminal-window-morphing) > .terminal-window-titlebar,
+  .terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.active):not(.terminal-window-morphing) > .terminal-window-titlebar,
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.active):not(.terminal-window-morphing) > .terminal-window-titlebar {
+    margin-left: 0 !important;
+    width: 100% !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-radius: 14px 14px 0 0 !important;
+  }
+  .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window:not(.active):not(.terminal-window-morphing) > .terminal-window-body,
+  .terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.active):not(.terminal-window-morphing) > .terminal-window-body,
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.active):not(.terminal-window-morphing) > .terminal-window-body {
+    margin-top: 0 !important;
+    height: calc(100% - 42px) !important;
+    width: 100% !important;
+  }
+
+  /* 隐藏态 AI 抽屉侧栏必须关闭 backdrop-filter，杜绝破坏 #aiAgentPanel 毛玻璃采样区域 */
+  #aiAgentPanel.pinned:not(.sidebar-open) .ai-agent-sidebar.ai-nav-pane,
+  #aiAgentPanel.docked-left:not(.sidebar-open) .ai-agent-sidebar.ai-nav-pane,
+  #aiAgentPanel.docked-right:not(.sidebar-open) .ai-agent-sidebar.ai-nav-pane,
+  #aiAgentPanel.ai-narrow:not(.sidebar-open) .ai-agent-sidebar.ai-nav-pane {
+    visibility: hidden !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* AI 侧边磁贴采用 Apple Sidebar 级高质感厚毛玻璃材质，遮挡滑入其背面的多窗终端时呈现均匀柔和透视 */
+  html[data-theme="light"] #aiAgentPanel.ai-agent-panel.pinned.docked-left:not(.z-panel-morphing),
+  html[data-theme="light"] #aiAgentPanel.ai-agent-panel.pinned.docked-right:not(.z-panel-morphing) {
+    background: color-mix(in srgb, var(--surface, #FFFFFF) 84%, transparent) !important;
+    backdrop-filter: blur(34px) saturate(185%) brightness(1.03) !important;
+    -webkit-backdrop-filter: blur(34px) saturate(185%) brightness(1.03) !important;
+    border: 1px solid rgba(15, 23, 42, 0.12) !important;
+    box-shadow: -10px 0 32px -12px rgba(15, 23, 42, 0.14), 0 14px 36px -16px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.86) !important;
+  }
+  html[data-theme="dark"] #aiAgentPanel.ai-agent-panel.pinned.docked-left:not(.z-panel-morphing),
+  html[data-theme="dark"] #aiAgentPanel.ai-agent-panel.pinned.docked-right:not(.z-panel-morphing) {
+    background: color-mix(in srgb, var(--surface, #161920) 82%, transparent) !important;
+    backdrop-filter: blur(34px) saturate(185%) !important;
+    -webkit-backdrop-filter: blur(34px) saturate(185%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.13) !important;
+    box-shadow: -12px 0 36px -12px rgba(0, 0, 0, 0.45), 0 16px 40px -14px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.09) !important;
+  }
+  html[data-theme="light"] #aiAgentPanel.pinned .ai-title-bar.panel-titlebar {
+    background: color-mix(in srgb, var(--surface, #FFFFFF) 72%, transparent) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  html[data-theme="dark"] #aiAgentPanel.pinned .ai-title-bar.panel-titlebar {
+    background: color-mix(in srgb, var(--surface, #1B1C20) 72%, transparent) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  #aiAgentPanel.pinned > .ai-agent-window,
+  #aiAgentPanel.pinned .ai-agent-main.ai-stage-pane,
+  #aiAgentPanel.pinned .ai-chat-area {
+    background: transparent !important;
+  }
+  html[data-theme="light"] #aiAgentPanel.pinned .ai-composer,
+  html[data-theme="dark"] #aiAgentPanel.pinned .ai-composer {
+    background: transparent !important;
+  }
+  html[data-theme="light"] #aiAgentPanel.pinned .ai-composer-box.ai-input-area {
+    background: color-mix(in srgb, var(--surface, #FFFFFF) 82%, transparent) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  html[data-theme="dark"] #aiAgentPanel.pinned .ai-composer-box.ai-input-area {
+    background: color-mix(in srgb, var(--surface, #1E222B) 82%, transparent) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* #terminalWorkspace 物理横跨 100vw 并以 padding 编码 AI 磁贴避让区：
+   * - 由于 .main-nav 已设置 margin-bottom: calc(-1 * var(--z-shelf-ext))，.app-main 恒定始于 y = 56px + --topbar-collapse-offset
+   * - 不使用底部 18px clip-path 裁切，允许四窗下排非操作窗口完整 82% 高度伸出屏幕底边外！ */
+  body.app-body.terminal-mode #terminalWorkspace:not(.custom-fullscreen) {
+    position: relative !important;
+    z-index: 10 !important;
+    --z-nav-flow-top: calc(56px + var(--topbar-collapse-offset, 0px));
+    --z-terminal-stage-top: calc(72px + var(--topbar-collapse-offset, 0px));
+    margin-top: calc(-1 * var(--z-nav-flow-top)) !important;
+    margin-left: calc(-1 * var(--z-dock-left-w, 0px)) !important;
+    margin-right: calc(-1 * var(--z-dock-right-w, 0px)) !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: calc(100% + var(--z-nav-flow-top)) !important;
+    max-height: calc(100% + var(--z-nav-flow-top)) !important;
+    padding:
+      calc(12px + var(--z-terminal-stage-top, 72px))
+      calc(16px + var(--z-dock-right-w, 0px))
+      18px
+      calc(16px + var(--z-dock-left-w, 0px)) !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    --z-stage-l: calc(16px + var(--z-dock-left-w, 0px));
+    --z-stage-w: calc(100% - var(--z-dock-left-w, 0px) - var(--z-dock-right-w, 0px));
+    --z-pane-w: calc(var(--z-stage-w) * 0.8 - 23px);
+  }
+  body.app-body.terminal-mode.ai-docked-right #terminalWorkspace:not(.custom-fullscreen) {
+    clip-path: polygon(
+      0 0,
+      calc(100% - var(--z-dock-right-w, 394px)) 0,
+      calc(100% - var(--z-dock-right-w, 394px)) calc(var(--z-terminal-stage-top, 72px) + 12px),
+      calc(100% - 16px) calc(var(--z-terminal-stage-top, 72px) + 12px),
+      calc(100% - 16px) 100%,
+      0 100%
+    ) !important;
+  }
+  body.app-body.terminal-mode.ai-docked-left #terminalWorkspace:not(.custom-fullscreen) {
+    clip-path: polygon(
+      var(--z-dock-left-w, 394px) 0,
+      100% 0,
+      100% 100%,
+      16px 100%,
+      16px calc(var(--z-terminal-stage-top, 72px) + 12px),
+      var(--z-dock-left-w, 394px) calc(var(--z-terminal-stage-top, 72px) + 12px)
+    ) !important;
+  }
+
+  /* 双窗滑出态 (layout-2.split-dock-slide-enabled.has-docked-panel)：恒定 80% 宽 (--z-pane-w)，将非操作窗 80% 区域真实推出显示范围外 */
+  .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-1:not(.minimized-keepalive):not(.terminal-window-morphing),
+  .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-2:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    top: calc(12px + var(--z-terminal-stage-top, 72px)) !important;
+    bottom: 18px !important;
+    height: auto !important;
+    width: var(--z-pane-w) !important;
+    right: auto !important;
+  }
+  .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-1:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    left: calc(var(--z-stage-l, 16px) + var(--split-slide-1-x, 0px)) !important;
+  }
+  .terminal-workspace-grid.layout-2.split-dock-slide-enabled.has-docked-panel:not(.broadcast-input-active) > .terminal-window.slot-2:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    left: calc(var(--z-stage-l, 16px) + var(--z-stage-w, 100%) - 32px - var(--z-pane-w) + var(--split-slide-2-x, 0px)) !important;
+  }
+
+  /* 三窗 (layout-3)：恒定 80% 宽 (--z-pane-w)，将非操作窗真实推出显示范围外 */
+  .terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    top: calc(12px + var(--z-terminal-stage-top, 72px)) !important;
+    bottom: 18px !important;
+    height: auto !important;
+    width: var(--z-pane-w) !important;
+    right: auto !important;
+  }
+  .terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-1:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    left: calc(var(--z-stage-l, 16px) + var(--split-cam-x, 0px)) !important;
+  }
+  .terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-2:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    left: calc(var(--z-stage-l, 16px) + var(--z-pane-w) + 14px + var(--split-cam-x, 0px)) !important;
+  }
+  .terminal-workspace-grid.layout-3:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-3:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    left: calc(var(--z-stage-l, 16px) + 2 * (var(--z-pane-w) + 14px) + var(--split-cam-x, 0px)) !important;
+  }
+
+  /* 四窗 (layout-4)：恒定 80% 宽 × 82% 高 (--z-pane-w × --z-pane-h)，且底部窗口严格收口于 bottom: 18px（与 AI 磁贴底边 1:1 齐平） */
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    --z-pane-h: var(--z-pane-full-h, calc((100% - var(--z-terminal-stage-top, 72px) - 30px) * 0.82));
+    width: var(--z-pane-w) !important;
+    height: var(--z-pane-h) !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-1:not(.minimized-keepalive):not(.terminal-window-morphing),
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-3:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    left: calc(var(--z-stage-l, 16px) + var(--split-cam-x, 0px)) !important;
+  }
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-2:not(.minimized-keepalive):not(.terminal-window-morphing),
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-4:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    left: calc(var(--z-stage-l, 16px) + var(--z-pane-w) + 14px + var(--split-cam-x, 0px)) !important;
+  }
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-1:not(.minimized-keepalive):not(.terminal-window-morphing),
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-2:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    top: calc(12px + var(--z-terminal-stage-top, 72px) + var(--split-cam-y, 0px)) !important;
+  }
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-3:not(.minimized-keepalive):not(.terminal-window-morphing),
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window.slot-4:not(.minimized-keepalive):not(.terminal-window-morphing) {
+    top: calc(12px + var(--z-terminal-stage-top, 72px) + var(--z-pane-h) + 14px + var(--split-cam-y, 0px)) !important;
+    bottom: auto !important;
+    height: var(--z-pane-h) !important;
+  }
+  .terminal-workspace-grid.layout-4:not(.compact):not(.broadcast-input-active) > .terminal-window:not(.active):not(.terminal-window-morphing) > .terminal-window-body {
+    min-height: calc(var(--z-pane-full-h, 520px) - 42px) !important;
+  }
+
+  .terminal-window:not(.active) > .split-slide-wake-shield {
+    background: transparent !important;
+    transition: background-color 150ms ease !important;
+  }
+  .terminal-window:not(.active):hover::after {
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent, #0A84FF) 52%, transparent) !important;
+  }
+}
+
+/* 5) 全站页面切换 (Dashboard / Activity / Terminal / Remote / Notes / Settings) 与设置子页切换 Apple 临界阻尼过渡动效（无过冲回弹、无上下跳动） */
+.view.active.z-view-entering,
+body.app-body.terminal-mode #terminalWorkspace.z-view-entering,
+.settings-panel.active.z-view-entering {
+  opacity: var(--z-view-enter-alpha, 1) !important;
+  transform: translate3d(var(--z-view-enter-x, 0px), var(--z-view-enter-y, 0px), 0) !important;
+  will-change: transform, opacity !important;
 }
