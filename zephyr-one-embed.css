@@ -10,8 +10,16 @@ html[data-zephyr-product="one"] .main-nav {
 html[data-zephyr-product="one"] .main-nav .brand,
 html[data-zephyr-product="one"] .main-nav .nav-tabs,
 html[data-zephyr-product="one"] .main-nav .nav-actions,
+html[data-zephyr-product="one"] .main-nav #terminalShelfBar,
+html[data-zephyr-product="one"] .main-nav .terminal-shelf-bar,
+html[data-zephyr-product="one"] .main-nav .terminal-shelf-collapse-btn,
 html[data-zephyr-product="one"] .main-nav button,
-html[data-zephyr-product="one"] .main-nav a {
+html[data-zephyr-product="one"] .main-nav a,
+html[data-zephyr-product="one"] #sessionTabs,
+html[data-zephyr-product="one"] #sessionTabs .smartbar-handle,
+html[data-zephyr-product="one"] #sessionTabs .smartbar-handle span,
+html[data-zephyr-product="one"] #sessionTabs .smartbar-panel,
+html[data-zephyr-product="one"] #sessionTabs .smartbar-picker {
     -webkit-app-region: no-drag;
     app-region: no-drag;
 }
@@ -48,6 +56,15 @@ html[data-zephyr-product="one"][data-zephyr-window-controls="overlay"] .one-wind
 .one-window-btn:hover { background: var(--hover, rgba(255, 255, 255, 0.08)); color: var(--text, #e7eaee); }
 .one-window-btn-close:hover { background: #e5484d; color: #fff; }
 .one-window-controls.is-maximized [data-one-window="maximize"] svg { transform: scale(0.82); }
+html body #view-settings #adminSettingsTab,
+html body #view-settings #settings-admin,
+html body #view-settings .settings-menu .settings-tab[data-settings="admin"],
+html body #view-settings .settings-menu .settings-tab[data-settings="mail"],
+html body #view-settings #settings-mail,
+html body #view-settings .settings-menu .settings-tab[data-settings="beian"],
+html body #view-settings #settings-beian,
+html body #view-settings .settings-menu .settings-tab[data-settings="agent"],
+html body #view-settings #settings-agent,
 #adminSettingsTab,
 #settings-admin,
 .settings-tab[data-settings="admin"],

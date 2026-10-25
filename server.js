@@ -3903,8 +3903,12 @@ function normalizeSettingsInput(body) {
             terminalFontColor,
             terminalFontColors,
             rdp,
+            ipProtection: typeof body.appearance.ipProtection === 'boolean'
+                ? body.appearance.ipProtection
+                : (typeof body.ipProtection === 'boolean' ? body.ipProtection : Boolean(currentAppearance.ipProtection ?? current.ipProtection)),
             autoThemeEnabled: body.appearance.autoThemeEnabled !== false,
         };
+        next.ipProtection = Boolean(next.appearance.ipProtection);
         console.info('[appearance-settings]', 'normalized appearance settings', {
             brandName,
             customIcon: !isDefaultBrandIconValue(next.appearance.brandIcon),
@@ -3933,6 +3937,13 @@ function normalizeSettingsInput(body) {
             autoRun: !!item?.autoRun,
             updatedAt: Number(item?.updatedAt || Date.now()),
         })).filter((item) => item.name && item.command.trim());
+    }
+    if (typeof body.ipProtection === 'boolean') {
+        next.ipProtection = body.ipProtection;
+        next.appearance = {
+            ...(next.appearance || current.appearance || {}),
+            ipProtection: body.ipProtection,
+        };
     }
     return next;
 }

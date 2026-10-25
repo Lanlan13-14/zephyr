@@ -671,7 +671,7 @@ function bindPinToggleButtons(panel, handle) {
 }
 
 export function attachDesktopPanelPin(page, panel, { dragHandle, layoutButton, onClose } = {}) {
-    if (!panel || panel.dataset.desktopPinWired === '1' || !isDesktopPanelPinEnvironment()) return false;
+    if (!panel || panel.classList?.contains('z-unified-panel') || panel.dataset.desktopPinWired === '1' || !isDesktopPanelPinEnvironment()) return false;
     /* 计划 4.2.3 规则 A：二级及以上浮窗永不挂图钉。 */
     if (!isDockablePanel(panel)) {
         panel.classList.remove('pinned', 'docked-left', 'docked-right', 'pin-animating');

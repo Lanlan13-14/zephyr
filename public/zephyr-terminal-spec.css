@@ -6315,7 +6315,16 @@ body.desktop-embed .novnc-stage {
     box-shadow: none !important;
     transition: color 160ms cubic-bezier(0.2, 0, 0, 1), background-color 150ms ease !important;
   }
-  #view-settings .settings-menu .settings-tab.force-hidden {
+  #view-settings .settings-menu .settings-tab.force-hidden,
+  html[data-zephyr-product="one"] #view-settings #adminSettingsTab,
+  html[data-zephyr-product="one"] #view-settings #settings-admin,
+  html[data-zephyr-product="one"] #view-settings .settings-menu .settings-tab[data-settings="admin"],
+  html[data-zephyr-product="one"] #view-settings .settings-menu .settings-tab[data-settings="beian"],
+  html[data-zephyr-product="one"] #view-settings #settings-beian,
+  html[data-zephyr-product="one"] #view-settings .settings-menu .settings-tab[data-settings="mail"],
+  html[data-zephyr-product="one"] #view-settings #settings-mail,
+  html[data-zephyr-product="one"] #view-settings .settings-menu .settings-tab[data-settings="agent"],
+  html[data-zephyr-product="one"] #view-settings #settings-agent {
     display: none !important;
   }
   /* 彻底重置 style.css 中 .settings-tab::after 遗留的 height: 2px / inset: auto 18px 5px 下划线样式 */
@@ -7407,12 +7416,23 @@ html body.app-body #connectionModalActions > .btn:not(.btn-primary):not(.btn-dan
 html body.app-body .modal-backdrop .connection-share-options > .connection-share-option,
 html body.app-body .modal-backdrop .connection-share-option,
 html body.app-body .connection-share-option,
-html body.app-body .modal-backdrop .advanced-route-panel,
 html body.app-body .modal-backdrop .route-type-tabs {
   background: var(--z-glass-subcard-bg) !important;
   backdrop-filter: var(--z-glass-subcard-blur) !important;
   -webkit-backdrop-filter: var(--z-glass-subcard-blur) !important;
   border: 1px solid var(--z-glass-outer-border) !important;
+}
+html body.app-body .modal-backdrop .advanced-route-panel,
+html body.app-body .modal-backdrop .rdp-settings-panel {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+html body.app-body .modal-backdrop .route-type-tabs {
+  margin-bottom: 14px !important;
 }
 
 html body.app-body .modal-backdrop .route-type-tabs > .route-type-tab:not(.active) {
@@ -7556,6 +7576,20 @@ html[data-shelf-transitioning="1"] body.app-body:not(.terminal-mode) #sessionTab
   opacity: 0 !important;
   pointer-events: none !important;
 }
+html body.app-body #sessionTabs.terminal-smartbar {
+  position: fixed !important;
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
+}
+html body.app-body .main-nav #terminalShelfBar,
+html body.app-body .main-nav .terminal-shelf-bar,
+html body.app-body .main-nav .terminal-shelf-collapse-btn,
+html body.app-body #sessionTabs .smartbar-panel,
+html body.app-body #sessionTabs .smartbar-picker,
+html body.app-body #sessionTabs .smartbar-handle span {
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
+}
 html body.app-body #sessionTabs .smartbar-handle,
 html body.app-body.terminal-mode #sessionTabs.terminal-smartbar .smartbar-handle {
   background: transparent !important;
@@ -7564,6 +7598,10 @@ html body.app-body.terminal-mode #sessionTabs.terminal-smartbar .smartbar-handle
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
 }
 
 /* 子终端 iframe (terminal.html / telnet-terminal.html / rdp.html / novnc.html)：

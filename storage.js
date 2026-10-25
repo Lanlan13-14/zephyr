@@ -367,10 +367,12 @@ function defaultSettings(legacySettings = {}) {
             customColors: {},
             customCss: '',
             customJs: '',
+            ipProtection: Boolean(legacySettings.ipProtection),
             globalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.45, blur: 0 },
             terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 },
             terminalFontColor: '',
         },
+        ipProtection: Boolean(legacySettings.ipProtection),
         terminal: {
             maxWindows: 4,
             minimizedKeepAlive: 0,

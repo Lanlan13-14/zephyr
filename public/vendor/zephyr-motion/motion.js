@@ -3868,6 +3868,7 @@ export const Motion = {
     };
 
     this.stop(panel, ['x', 'y', '--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']);
+    this.set(panel, { x: 0, y: 0 });
     panel.style.transform = 'none';
     panel.classList.remove('dragging');
     // Critical: write initial CSS vars synchronously BEFORE adding .z-panel-morphing so frame 0 never flashes at (0,0)
@@ -4058,10 +4059,11 @@ export const Motion = {
       const fromRect = wasVisible ? p.getBoundingClientRect() : null;
       const wasDockedSide = p.classList.contains('docked-left') ? 'left' : (p.classList.contains('docked-right') ? 'right' : null);
       const fromRadius = parseFloat(csBefore?.borderTopLeftRadius) || (wasDockedSide ? 0 : 16);
-      p.classList.remove('z-panel-morphing', 'z-panel-opening', 'z-panel-closing');
+      p.classList.remove('z-panel-morphing', 'z-panel-opening', 'z-panel-closing', 'dragging', 'panel-physics-baking');
       this.stop(p, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity', 'x', 'y', 'scale', 'opacity']);
+      this.set(p, { x: 0, y: 0, scale: 1 });
       clearVars(p);
-      p.style.transform = '';
+      p.style.transform = 'none';
       p.style.transition = 'none';
       snapshots.set(p, { token, fromRect, fromRadius, wasDockedSide });
     }

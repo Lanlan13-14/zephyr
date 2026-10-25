@@ -348,7 +348,7 @@ const floatingPanelMotion = {
         if (this.engine) return Promise.resolve(this.engine);
         if (this.failed && !this._p) return Promise.resolve(null);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui127')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui130')
             .then(async (mod) => {
                 const Motion = mod?.Motion || (typeof window !== 'undefined' ? window.Motion : null);
                 if (!Motion || typeof Motion.drag !== 'function') throw new Error('Motion.drag unavailable');
@@ -458,8 +458,28 @@ export function visualPanelLayoutPosition(panel) {
  */
 export function bakePanelTransform(panel, Motion = null) {
     if (!panel) return;
+    if (panel.classList?.contains('z-panel-morphing') && !panel.classList?.contains('z-panel-closing') && !panel.classList?.contains('docked-left') && !panel.classList?.contains('docked-right')) {
+        const liveRect = visualPanelLayoutPosition(panel);
+        try {
+            Motion?.stop?.(panel, ['x', 'y', '--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity']);
+            Motion?.set?.(panel, { x: 0, y: 0 });
+        } catch {}
+        panel.classList.remove('z-panel-morphing', 'z-panel-opening');
+        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => panel.style.removeProperty(k));
+        if (Number.isFinite(liveRect.left) && Number.isFinite(liveRect.top)) {
+            panel.style.left = `${Math.round(liveRect.left)}px`;
+            panel.style.top = `${Math.round(liveRect.top)}px`;
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+        }
+        panel.style.transform = 'none';
+        return;
+    }
     if (panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('z-panel-closing') || panel.classList?.contains('panel-fullscreen') || panel.classList?.contains('docked-left') || panel.classList?.contains('docked-right')) {
-        try { Motion?.stop?.(panel, ['x', 'y']); } catch {}
+        try {
+            Motion?.stop?.(panel, ['x', 'y']);
+            Motion?.set?.(panel, { x: 0, y: 0 });
+        } catch {}
         panel.style.transform = 'none';
         return;
     }
@@ -467,8 +487,9 @@ export function bakePanelTransform(panel, Motion = null) {
     const painted = visualPanelLayoutPosition(panel);
     if (Motion) {
         try {
-            // Stop only x/y channels so we never clobber concurrent morph/ring channels.
+            // Stop and zero x/y channels so we never leave stale non-zero x/y in elStates.tv.
             Motion.stop?.(panel, ['x', 'y']);
+            Motion.set?.(panel, { x: 0, y: 0 });
         } catch { /* ignore */ }
     } else {
         // No engine: compose from layout + current matrix.
@@ -557,7 +578,10 @@ function softClampPanelEdge(panel) {
 
 function finishFloatingPanelPhysicsDrag(panel, Motion, { onFinish } = {}) {
     if (panel.classList?.contains('z-panel-morphing') || panel.classList?.contains('z-panel-closing') || panel.classList?.contains('panel-fullscreen') || panel.classList?.contains('docked-left') || panel.classList?.contains('docked-right')) {
-        try { Motion?.stop?.(panel, ['x', 'y']); } catch {}
+        try {
+            Motion?.stop?.(panel, ['x', 'y']);
+            Motion?.set?.(panel, { x: 0, y: 0 });
+        } catch {}
         panel.style.transform = 'none';
         panel.classList.remove('dragging', 'panel-physics-baking');
         return;
@@ -566,6 +590,7 @@ function finishFloatingPanelPhysicsDrag(panel, Motion, { onFinish } = {}) {
     const painted = visualPanelLayoutPosition(panel);
     try {
         Motion?.stop?.(panel, ['x', 'y']);
+        Motion?.set?.(panel, { x: 0, y: 0 });
     } catch { /* ignore */ }
     Object.assign(panel.style, {
         left: `${painted.left}px`,
@@ -619,8 +644,13 @@ export function startFloatingPanelHardDrag(panel, e, {
     }).catch(() => {});
     const sx = e.clientX;
     const sy = e.clientY;
-    const sl = panel.offsetLeft;
-    const st = panel.offsetTop;
+    const styleL = parseFloat(panel.style.left);
+    const styleT = parseFloat(panel.style.top);
+    const livePos = (!Number.isNaN(styleL) && !Number.isNaN(styleT))
+        ? { left: styleL, top: styleT }
+        : visualPanelLayoutPosition(panel);
+    const sl = Number.isFinite(livePos.left) ? livePos.left : 0;
+    const st = Number.isFinite(livePos.top) ? livePos.top : 0;
     let dragging = false;
     let raf = 0;
     let lastX = sx;

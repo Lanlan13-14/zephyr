@@ -10,7 +10,6 @@ const PERSONAL_EDITABLE_FIELDS = Object.freeze([
     'appearance.colorScheme',
     'appearance.customThemeMode',
     'appearance.customColors',
-    'appearance.globalBackground',
     'appearance.terminalBackground',
     'appearance.terminalFontColor',
     'appearance.terminalFontColors',
@@ -34,14 +33,25 @@ const PERSONAL_OPAQUE_FIELDS = Object.freeze([
     'mail.notifyLogin',
 ]);
 
+const PERSONAL_WEB_ONLY_FIELDS = Object.freeze([
+    'appearance.globalBackground',
+    'appearance.ipProtection',
+]);
+
 const PERSONAL_SYNC_FIELDS = Object.freeze([
     ...PERSONAL_EDITABLE_FIELDS,
     ...PERSONAL_OPAQUE_FIELDS,
 ]);
 
+const PERSONAL_ALL_FIELDS = Object.freeze([
+    ...PERSONAL_SYNC_FIELDS,
+    ...PERSONAL_WEB_ONLY_FIELDS,
+]);
+
 const EDITABLE_SET = new Set(PERSONAL_EDITABLE_FIELDS);
 const OPAQUE_SET = new Set(PERSONAL_OPAQUE_FIELDS);
 const SYNC_SET = new Set(PERSONAL_SYNC_FIELDS);
+const ALL_SET = new Set(PERSONAL_ALL_FIELDS);
 const SECTION_KEYS = Object.freeze([...new Set(PERSONAL_SYNC_FIELDS.map((field) => field.split('.')[0]))]);
 const CUSTOM_COLOR_KEYS = new Set([
     'bgMain', 'bgCard', 'primary', 'primaryHover', 'text', 'textSecondary',
@@ -298,7 +308,8 @@ class PersonalSettingsSectionService {
         }
         const normalized = {};
         for (const [field, value] of Object.entries(patch)) {
-            if (!SYNC_SET.has(field) || sectionOf(field) !== sectionKey) {
+            const allowedSet = source === 'mobile' ? SYNC_SET : ALL_SET;
+            if (!allowedSet.has(field) || sectionOf(field) !== sectionKey) {
                 throw new HttpError(400, 'invalid_settings', `Unknown personal settings field: ${field}`);
             }
             if (source === 'mobile' && OPAQUE_SET.has(field)) {

@@ -1,4 +1,4 @@
-import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui127';
+import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui130';
 if (typeof window !== 'undefined' && ZephyrWasmMotion) { window.Motion = ZephyrWasmMotion; }
 
 export const IPV4_OR_IPV6_RE = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\[?(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]+\]?(?::\d{1,5})?/g;
@@ -1172,15 +1172,16 @@ export function installTerminalSftpPro(ctx) {
       ? window.frameElement.getBoundingClientRect().top
       : 0;
     if (r.width > 120 && r.height > 120) {
+      const isMorphing = panel.classList.contains('z-panel-morphing');
       const styleL = parseFloat(panel.style.left);
       const styleT = parseFloat(panel.style.top);
       const styleW = parseFloat(panel.style.width);
       const styleH = parseFloat(panel.style.height);
       panel._preDockBox = {
-        left: Number.isFinite(styleL) ? Math.round(styleL) : Math.round(r.left - pr.left),
-        top: Number.isFinite(styleT) ? Math.round(styleT) : Math.round(r.top - pr.top),
-        width: Number.isFinite(styleW) ? Math.round(styleW) : Math.round(r.width),
-        height: Number.isFinite(styleH) ? Math.round(styleH) : Math.round(r.height),
+        left: isMorphing && Number.isFinite(styleL) ? Math.round(styleL) : Math.round(r.left - pr.left),
+        top: isMorphing && Number.isFinite(styleT) ? Math.round(styleT) : Math.round(r.top - pr.top),
+        width: isMorphing && Number.isFinite(styleW) ? Math.round(styleW) : Math.round(r.width),
+        height: isMorphing && Number.isFinite(styleH) ? Math.round(styleH) : Math.round(r.height),
         frameTop,
       };
     }

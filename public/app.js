@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui127';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui130';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -6,7 +6,7 @@ import { createNotesController } from './notes.js?v=20261019-ui118';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
 import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261004-dashboard-fit1';
 import { localizeActivityMessage } from './activity-i18n.js?v=20261004-dashboard-fit1';
-import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20261019-ui130';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui127');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui130');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -1585,8 +1585,10 @@ async function saveAppearance(e) {
             fg: { dark: selFgDark, light: selFgLight || selFgDark },
         }
         : { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } };
+    const ipProtEnabled = Boolean($('#ipProtectionToggle')?.checked);
     const appearance = {
         ...previous,
+        ipProtection: ipProtEnabled,
         brandName: $('#brandNameInput').value.trim() || defaultBrandName(),
         brandIcon: pendingBrandIcon || DEFAULT_BRAND_ICON,
         colorScheme,
@@ -1635,7 +1637,6 @@ async function saveAppearance(e) {
     }
     localStorage.removeItem('zephyr-theme');
     if (!autoThemeEnabled) localStorage.setItem('zephyr-theme', theme);
-    const ipProtEnabled = Boolean($('#ipProtectionToggle')?.checked);
     applyIpProtectionState(ipProtEnabled, settings);
     refreshAllViewsForIpProtection();
     if (myIdentity.isSuperAdmin) {
@@ -6588,8 +6589,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui127`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui127`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui130`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui130`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -15370,14 +15371,20 @@ async function loadSettings() {
     if (generation !== settingsLoadGeneration) return settings;
     personalSettingsOverrides = nextPersonalSettingsOverrides;
     settings = nextSettings;
-    const savedIpProt = (() => {
-        try { return localStorage.getItem('zephyr_ip_protection_saved') === '1'; } catch { return false; }
-    })();
+    const serverIpProt = typeof settings?.appearance?.ipProtection === 'boolean'
+        ? settings.appearance.ipProtection
+        : (typeof settings?.ipProtection === 'boolean' ? settings.ipProtection : null);
+    const savedIpProt = serverIpProt !== null
+        ? serverIpProt
+        : (() => {
+            try { return localStorage.getItem('zephyr_ip_protection_saved') === '1'; } catch { return false; }
+        })();
     settings.ipProtection = savedIpProt;
     if (settings.appearance && typeof settings.appearance === 'object') {
         settings.appearance.ipProtection = savedIpProt;
     }
     applyIpProtectionState(savedIpProt, settings);
+    refreshAllViewsForIpProtection();
     const sec = settings.security || {}, cap = settings.captcha || {}, mail = settings.mail || {}, beian = settings.beian || {};
     $('#versionText').textContent = settings.version || '--';
     applyAgentReleaseLinks(settings.agentRelease);
@@ -16281,7 +16288,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261019-ui127')
+        return import('./vendor/zephyr-motion/index.js?v=20261019-ui130')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -17578,19 +17585,31 @@ function adminIcon(name, size = 16) {
 
 let myIdentity = { userId: '', role: 'user', isSuperAdmin: false };
 
+function isZephyrOneProductMode() {
+    return (typeof window !== 'undefined' && !!window.__zephyrOneUnlock)
+        || (typeof document !== 'undefined' && document.documentElement?.dataset?.zephyrProduct === 'one')
+        || (typeof location !== 'undefined' && new URLSearchParams(location.search).get('zephyrOne') === '1');
+}
+
 function initSettingsVisibility() {
     const isAdmin = myIdentity.role === 'admin';
     const isSuperAdmin = isAdmin && myIdentity.isSuperAdmin;
-    ['mail', 'data'].forEach((key) => {
-        document.querySelector(`.settings-tab[data-settings="${key}"]`)?.classList.toggle('force-hidden', !isSuperAdmin);
-        document.getElementById(`settings-${key}`)?.classList.toggle('force-hidden', !isSuperAdmin);
-    });
-    document.querySelector('.settings-tab[data-settings="beian"]')?.classList.toggle('force-hidden', !isAdmin);
-    document.getElementById('settings-beian')?.classList.toggle('force-hidden', !isAdmin);
+    const isOneMode = isZephyrOneProductMode();
+    document.querySelector('.settings-tab[data-settings="data"]')?.classList.toggle('force-hidden', !isSuperAdmin);
+    document.getElementById('settings-data')?.classList.toggle('force-hidden', !isSuperAdmin);
+    document.querySelector('.settings-tab[data-settings="mail"]')?.classList.toggle('force-hidden', isOneMode || !isSuperAdmin);
+    document.getElementById('settings-mail')?.classList.toggle('force-hidden', isOneMode || !isSuperAdmin);
+    document.querySelector('.settings-tab[data-settings="beian"]')?.classList.toggle('force-hidden', isOneMode || !isAdmin);
+    document.getElementById('settings-beian')?.classList.toggle('force-hidden', isOneMode || !isAdmin);
+    if (isOneMode) {
+        document.getElementById('adminSettingsTab')?.classList.add('force-hidden');
+        document.getElementById('settings-admin')?.classList.add('force-hidden');
+        document.querySelector('.settings-tab[data-settings="agent"]')?.classList.add('force-hidden');
+        document.getElementById('settings-agent')?.classList.add('force-hidden');
+    }
     document.getElementById('platformSecuritySettings')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearLoginEventsBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearActivityBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
-    const isOneMode = typeof window !== 'undefined' && !!window.__zephyrOneUnlock;
     document.getElementById('linkSettingsTab')?.classList.toggle('force-hidden', !isOneMode);
     document.getElementById('settings-link')?.classList.toggle('force-hidden', !isOneMode);
     const title = document.getElementById('loginEventsTitle');
@@ -17605,7 +17624,7 @@ async function loadAdminUsers() {
     const panel = document.getElementById('settings-admin');
     if (!panel) return;
     const adminTab = document.getElementById('adminSettingsTab');
-    if (myIdentity.role !== 'admin') { panel.classList.add('force-hidden'); adminTab?.classList.add('force-hidden'); return; }
+    if (myIdentity.role !== 'admin' || isZephyrOneProductMode()) { panel.classList.add('force-hidden'); adminTab?.classList.add('force-hidden'); return; }
     panel.classList.remove('force-hidden');
     adminTab?.classList.remove('force-hidden');
     // Inject SVG icons into title and add button
@@ -18702,15 +18721,29 @@ function refreshAllViewsForIpProtection() {
 function bindIpProtectionToggle() {
     try { localStorage.removeItem('zephyr_ip_protection'); } catch {}
     const initial = (() => {
+        if (typeof settings?.appearance?.ipProtection === 'boolean') return settings.appearance.ipProtection;
+        if (typeof settings?.ipProtection === 'boolean') return settings.ipProtection;
         try { return localStorage.getItem('zephyr_ip_protection_saved') === '1'; } catch { return false; }
     })();
     applyIpProtectionState(initial, settings);
-    if (myIdentity?.isSuperAdmin && !initial) {
-        api('/api/settings', {
-            method: 'PUT',
-            body: JSON.stringify({ ipProtection: false }),
-        }).catch(() => {});
-    }
+    document.querySelectorAll('#ipProtectionToggle, #ipProtectionToggleSecurity').forEach((toggleEl) => {
+        if (toggleEl.dataset.ipProtChangeBound === '1') return;
+        toggleEl.dataset.ipProtChangeBound = '1';
+        toggleEl.addEventListener('change', async (e) => {
+            const nextFlag = Boolean(e.currentTarget?.checked);
+            applyIpProtectionState(nextFlag, settings);
+            refreshAllViewsForIpProtection();
+            try {
+                await savePersonalSettings({ appearance: { ipProtection: nextFlag } });
+            } catch (_) {}
+            if (myIdentity?.role === 'admin' || myIdentity?.isSuperAdmin) {
+                api('/api/settings', {
+                    method: 'PUT',
+                    body: JSON.stringify({ ipProtection: nextFlag }),
+                }).catch(() => {});
+            }
+        });
+    });
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindIpProtectionToggle);
 else bindIpProtectionToggle();

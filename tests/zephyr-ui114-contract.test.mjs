@@ -222,3 +222,42 @@ test('UI129 Contract: Topbar Settings Pill Exact Bounds, 2x Supersampled Crisp L
   assert.ok(specCss.includes('backdrop-filter: blur(38px) saturate(185%) !important;'), 'terminal container must use 38px Gaussian blur translucency');
   assert.ok(specCss.includes('backdrop-filter: blur(32px) saturate(180%) !important;'), 'terminal input bar must use 32px Gaussian blur translucency');
 });
+
+
+test('UI130 Contract: Smartbar no-drag hit region in Zephyr One, zero-jump floating panel drag/pin/unpin (zero residual Motion x/y & no panel-pin.js conflict), Zephyr One hidden admin/beian/mail/agent settings tabs, SQLite-persisted IP Protection Mode across random-port restarts, and clean borderless Advanced Options section', () => {
+  const embedCss = read('zephyr-one-embed.css');
+  const specCss = read('public/zephyr-terminal-spec.css');
+  const floatingPanelJs = read('public/floating-panel.js');
+  const motionJs = read('public/vendor/zephyr-motion/motion.js');
+  const panelPinJs = read('public/panel-pin.js');
+  const lgNavJs = read('public/liquid-glass-nav.js');
+  const appJs = read('public/app.js');
+  const serverJs = read('server.js');
+  const userSettingsJs = read('user-settings-service.js');
+  const personalSettingsJs = read('personal-settings-section-service.js');
+
+  // 1. Bug 1: Smartbar handle & shelf bar opt out of Electron -webkit-app-region: drag
+  assert.ok(embedCss.includes('html[data-zephyr-product="one"] #sessionTabs .smartbar-handle'), 'zephyr-one-embed.css must mark #sessionTabs .smartbar-handle as no-drag');
+  assert.ok(embedCss.includes('html[data-zephyr-product="one"] .main-nav #terminalShelfBar'), 'zephyr-one-embed.css must mark #terminalShelfBar as no-drag');
+  assert.ok(specCss.includes('html body.app-body #sessionTabs.terminal-smartbar {\n  position: fixed !important;'), '#sessionTabs must enforce position:fixed and no-drag');
+
+  // 2. Bug 2: Floating panel drag/pin/unpin zeroes Motion x/y and prevents panel-pin.js double-binding
+  assert.ok(floatingPanelJs.includes('Motion.set?.(panel, { x: 0, y: 0 });'), 'floating-panel.js must zero Motion x/y channels after baking transform into left/top');
+  assert.ok(motionJs.includes('this.set(p, { x: 0, y: 0, scale: 1 });'), 'Motion.panelDockMorph must zero x/y/scale channels before morphing');
+  assert.ok(panelPinJs.includes("panel.classList?.contains('z-unified-panel')"), 'panel-pin.js must skip .z-unified-panel to prevent conflicting pin/resize listeners');
+
+  // 3. Bug 3: Zephyr One hides admin (多用户管理) and beian (备案信息) with higher specificity & getComputedStyle check
+  assert.ok(embedCss.includes('html body #view-settings .settings-menu .settings-tab[data-settings="admin"]'), 'zephyr-one-embed.css must hide admin tab with higher specificity than #view-settings .settings-menu .settings-tab');
+  assert.ok(embedCss.includes('html body #view-settings .settings-menu .settings-tab[data-settings="beian"]'), 'zephyr-one-embed.css must hide beian tab with higher specificity');
+  assert.ok(lgNavJs.includes("window.getComputedStyle(t).display === 'none'"), 'liquid-glass-nav.js visibleTabs must check getComputedStyle(t).display');
+  assert.ok(appJs.includes('function isZephyrOneProductMode()'), 'app.js must check isZephyrOneProductMode() in initSettingsVisibility and loadAdminUsers');
+
+  // 4. Bug 4: IP Protection Mode persisted in SQLite via appearance.ipProtection / ipProtection
+  assert.ok(userSettingsJs.includes("'appearance.ipProtection'"), 'user-settings-service.js must allow appearance.ipProtection');
+  assert.ok(personalSettingsJs.includes("'appearance.ipProtection'"), 'personal-settings-section-service.js must allow appearance.ipProtection');
+  assert.ok(serverJs.includes('next.ipProtection = Boolean(next.appearance.ipProtection);'), 'server.js must normalize and persist ipProtection');
+  assert.ok(!appJs.includes('body: JSON.stringify({ ipProtection: false })'), 'bindIpProtectionToggle must never overwrite server ipProtection with false on boot');
+
+  // 5. Bug 5: New Connection .advanced-route-panel has no outer border/background rectangle
+  assert.ok(specCss.includes('html body.app-body .modal-backdrop .advanced-route-panel,\nhtml body.app-body .modal-backdrop .rdp-settings-panel {\n  background: transparent !important;'), '.advanced-route-panel must be transparent and borderless');
+});

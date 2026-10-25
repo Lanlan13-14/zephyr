@@ -322,7 +322,11 @@
 
   function visibleTabs(containerEl, selector) {
     return Array.from(containerEl.querySelectorAll(selector)).filter(function (t) {
-      return !t.classList.contains('force-hidden') && !t.hidden && t.style.display !== 'none';
+      if (t.classList.contains('force-hidden') || t.hidden || t.style.display === 'none') return false;
+      if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+        if (window.getComputedStyle(t).display === 'none') return false;
+      }
+      return true;
     });
   }
 

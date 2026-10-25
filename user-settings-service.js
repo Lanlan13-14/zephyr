@@ -24,6 +24,7 @@ const USER_ALLOWED_KEYS = new Set([
     'appearance.customThemeMode',
     'appearance.customColors',
     'appearance.customCss',
+    'appearance.ipProtection',
     'appearance.globalBackground',
     'appearance.terminalBackground',
     'appearance.terminalFontColor',
