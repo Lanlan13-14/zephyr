@@ -6655,3 +6655,292 @@ body.desktop-embed .novnc-stage {
     gap: 10px !important;
   }
 }
+
+
+
+
+/* ── C. UI126：iOS 级全局壁纸与终端壁纸双轨过渡系统 + martin65536/liquid-glass-webgl 无极调节液态玻璃滑块 ── */
+
+/* 1) iOS 风格全局壁纸底层舞台 (#zephyrGlobalWallpaper)：双图层交叉溶解过渡 + 视图景深微缩放 */
+:root[data-wterm-theme^="custom-"] .terminal-overlay {
+  background: rgba(13, 17, 23, 0.28) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+:root[data-theme="light"][data-wterm-theme^="custom-"] .terminal-overlay {
+  background: rgba(246, 248, 250, 0.28) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+#zephyrGlobalWallpaper.zephyr-global-wallpaper {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  transition: opacity 420ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+#zephyrGlobalWallpaper.zephyr-global-wallpaper.is-visible {
+  opacity: 1 !important;
+}
+#zephyrGlobalWallpaper .global-wp-layer {
+  position: absolute !important;
+  inset: -28px !important;
+  background-position: center center !important;
+  background-repeat: no-repeat !important;
+  background-size: var(--z-global-bg-size, cover) !important;
+  opacity: 0 !important;
+  transform: scale(1.035) translateZ(0) !important;
+  filter: saturate(1.06) blur(var(--z-global-bg-blur, 0px)) !important;
+  transition:
+    opacity 540ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 640ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 60ms linear !important;
+  will-change: opacity, transform, filter !important;
+}
+#zephyrGlobalWallpaper .global-wp-layer.is-active {
+  opacity: var(--z-global-bg-opacity, 0.45) !important;
+  transform: scale(1) translateZ(0) !important;
+}
+/* 切入终端工作区时，全局壁纸做 iOS 主屏切入应用式的 1.8% 景深微推进过渡 */
+body.app-body.terminal-mode #zephyrGlobalWallpaper .global-wp-layer.is-active {
+  transform: scale(1.018) translateZ(0) !important;
+}
+html[data-theme="light"] #zephyrGlobalWallpaper .global-wp-scrim {
+  position: absolute !important;
+  inset: 0 !important;
+  background: radial-gradient(circle at 50% 24%, rgba(255, 255, 255, 0.08), rgba(234, 238, 244, 0.24)) !important;
+  pointer-events: none !important;
+}
+html[data-theme="dark"] #zephyrGlobalWallpaper .global-wp-scrim {
+  position: absolute !important;
+  inset: 0 !important;
+  background: radial-gradient(circle at 50% 24%, rgba(10, 14, 20, 0.14), rgba(8, 10, 15, 0.36)) !important;
+  pointer-events: none !important;
+}
+
+/* 当启用全局壁纸 (html[data-global-wallpaper="1"]) 时，页面壳体透明化，各视图卡片平滑过渡为 iOS 毛玻璃材质 */
+html[data-global-wallpaper="1"] body.app-body,
+html[data-global-wallpaper="1"] body.app-body > .app-shell,
+html[data-global-wallpaper="1"] .app-main,
+html[data-global-wallpaper="1"] .view,
+html[data-global-wallpaper="1"] .view.active {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+:root[data-wterm-theme^="custom-"] .terminal-container {
+  position: relative !important;
+  overflow: hidden !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+body.app-body > .app-shell {
+  position: relative !important;
+  z-index: 1 !important;
+}
+html[data-global-wallpaper="1"][data-theme="light"] .connection-card,
+html[data-global-wallpaper="1"][data-theme="light"] .activity-panel,
+html[data-global-wallpaper="1"][data-theme="light"] .empty-card,
+html[data-global-wallpaper="1"][data-theme="light"] .remote-servers,
+html[data-global-wallpaper="1"][data-theme="light"] .remote-command,
+html[data-global-wallpaper="1"][data-theme="light"] .result-card,
+html[data-global-wallpaper="1"][data-theme="light"] #view-settings .settings-menu,
+html[data-global-wallpaper="1"][data-theme="light"] #view-settings .settings-content {
+  background: color-mix(in srgb, var(--surface, #FFFFFF) 76%, transparent) !important;
+  backdrop-filter: blur(20px) saturate(165%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(165%) !important;
+}
+html[data-global-wallpaper="1"][data-theme="dark"] .connection-card,
+html[data-global-wallpaper="1"][data-theme="dark"] .activity-panel,
+html[data-global-wallpaper="1"][data-theme="dark"] .empty-card,
+html[data-global-wallpaper="1"][data-theme="dark"] .remote-servers,
+html[data-global-wallpaper="1"][data-theme="dark"] .remote-command,
+html[data-global-wallpaper="1"][data-theme="dark"] .result-card,
+html[data-global-wallpaper="1"][data-theme="dark"] #view-settings .settings-menu,
+html[data-global-wallpaper="1"][data-theme="dark"] #view-settings .settings-content {
+  background: color-mix(in srgb, var(--surface, #161920) 74%, transparent) !important;
+  backdrop-filter: blur(20px) saturate(165%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(165%) !important;
+}
+html[data-global-wallpaper="1"][data-theme="light"] #view-settings .security-card,
+html[data-global-wallpaper="1"][data-theme="light"] #view-settings .data-settings-section,
+html[data-global-wallpaper="1"][data-theme="light"] #view-settings #settings-appearance > #appearanceForm,
+html[data-global-wallpaper="1"][data-theme="light"] #view-settings #settings-appearance > #terminalLayoutForm {
+  background: color-mix(in srgb, #FFFFFF 84%, transparent) !important;
+  backdrop-filter: blur(16px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(150%) !important;
+}
+html[data-global-wallpaper="1"][data-theme="dark"] #view-settings .security-card,
+html[data-global-wallpaper="1"][data-theme="dark"] #view-settings .data-settings-section,
+html[data-global-wallpaper="1"][data-theme="dark"] #view-settings #settings-appearance > #appearanceForm,
+html[data-global-wallpaper="1"][data-theme="dark"] #view-settings #settings-appearance > #terminalLayoutForm {
+  background: color-mix(in srgb, var(--surface, #161920) 82%, transparent) !important;
+  backdrop-filter: blur(16px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(150%) !important;
+}
+
+/* 2) 全局壁纸与终端壁纸设置区排版重构 + 4 个 Liquid Glass 滑块独立卡片网格（彻底根治旧滑块负边距重叠问题） */
+#view-settings .wallpaper-source-fit-row {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+  align-items: end !important;
+  width: 100% !important;
+  margin: 2px 0 !important;
+}
+#view-settings .wallpaper-source-fit-row > .form-group {
+  position: static !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+}
+#view-settings .wallpaper-source-fit-row > .form-group > label,
+#view-settings .terminal-font-color-row > .form-group > label,
+#view-settings .terminal-solid-bg-row > .form-group > label,
+#view-settings .terminal-selection-row > .form-group > label {
+  position: static !important;
+  top: auto !important;
+  left: auto !important;
+  transform: none !important;
+  transition: none !important;
+  display: block !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  color: var(--text) !important;
+  margin: 0 0 4px 0 !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+/* 壁纸实时预览盒（支持同时展示图像适配、无极透明度与无极模糊度） */
+#view-settings .terminal-bg-preview {
+  position: relative !important;
+  min-height: 80px !important;
+  border-radius: 12px !important;
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, var(--border)) !important;
+  background-color: color-mix(in srgb, var(--bg) 65%, var(--surface)) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+}
+#view-settings .terminal-bg-preview .wp-preview-media {
+  position: absolute !important;
+  inset: -12px !important;
+  background-position: center center !important;
+  background-repeat: no-repeat !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+#view-settings .terminal-bg-preview .wp-preview-label {
+  position: relative !important;
+  z-index: 1 !important;
+  padding: 4px 12px !important;
+  border-radius: 999px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: var(--text-secondary) !important;
+}
+#view-settings .terminal-bg-preview.has-wallpaper .wp-preview-label {
+  background: color-mix(in srgb, var(--surface) 78%, transparent) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  color: var(--text) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14) !important;
+}
+
+/* 四个滑块（全局背景强度、全局模糊强度、终端背景强度、终端模糊强度）重排版：双列独立卡片，零重叠 */
+#view-settings .lg-sliders-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 14px !important;
+  width: 100% !important;
+  margin: 4px 0 10px 0 !important;
+  box-sizing: border-box !important;
+}
+@media (max-width: 640px) {
+  #view-settings .lg-sliders-grid,
+  #view-settings .wallpaper-source-fit-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+#view-settings .lg-sliders-grid > .form-group.lg-slider-group {
+  position: relative !important;
+  box-sizing: border-box !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: 11px 12px 6px 12px !important;
+  border-radius: 14px !important;
+  background: var(--lg-slider-card-bg, color-mix(in srgb, var(--surface) 62%, var(--bg))) !important;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+  overflow: hidden !important;
+}
+#view-settings .lg-sliders-grid > .form-group.lg-slider-group > label {
+  position: static !important;
+  top: auto !important;
+  left: auto !important;
+  transform: none !important;
+  transition: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 4px !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  color: var(--text) !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+#view-settings .lg-sliders-grid > .form-group.lg-slider-group > label > span:last-child {
+  font-family: var(--font-mono) !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  color: var(--accent, #0A84FF) !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 12%, transparent) !important;
+  padding: 2px 8px !important;
+  border-radius: 999px !important;
+  line-height: 1.3 !important;
+}
+#view-settings .zephyr-lg-slider {
+  position: relative !important;
+  width: 100% !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  display: block !important;
+  touch-action: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: pointer !important;
+}
+#view-settings .zephyr-lg-slider .zephyr-lg-slider-canvas {
+  display: block !important;
+  width: 100% !important;
+  height: 44px !important;
+  pointer-events: none !important;
+}
+/* 彻底清除旧版 .terminal-bg-opacity-range.edge-range 的 width: calc(100% + 24px) 与负 margin 重叠样式 */
+#view-settings .zephyr-lg-slider > input.terminal-bg-opacity-range.edge-range {
+  width: 100% !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+#view-settings .zephyr-lg-slider.lg-webgl-ready > input.terminal-bg-opacity-range.edge-range {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}

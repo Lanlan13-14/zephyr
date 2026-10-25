@@ -2618,5 +2618,11 @@
   "浏览器转码未生成媒体文件": "Browser transcode produced no media file",
   "自动重连失败，请手动点击“重连”": "Auto-reconnect failed; please click Reconnect manually",
   "正在重连 ({attempt}/{max})...": "Reconnecting ({attempt}/{max})...",
-  "正在建立 Telnet 连接...": "Establishing Telnet connection..."
+  "正在建立 Telnet 连接...": "Establishing Telnet connection...",
+  "全局壁纸": "Global wallpaper",
+  "全局背景来源": "Global background source",
+  "全局背景已载入，保存外观后生效": "Global wallpaper loaded; save appearance to persist",
+  "全局背景仅支持 PNG/JPEG/GIF/WebP/AVIF/SVG": "Global wallpaper only supports PNG/JPEG/GIF/WebP/AVIF/SVG",
+  "全局背景图片不能超过 12MB": "Global wallpaper image cannot exceed 12MB",
+  "读取全局背景失败": "Failed to read global wallpaper image"
 }

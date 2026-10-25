@@ -8,13 +8,14 @@
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
     <link rel="modulepreload" href="i18n/runtime.js?v=20261018-ui1">
-    <link rel="modulepreload" href="app.js?v=20261019-ui125">
+    <link rel="modulepreload" href="app.js?v=20261019-ui126">
     <link rel="modulepreload" href="floating-panel.js?v=20261018-ui1">
-    <link rel="stylesheet" href="style.css?v=20261019-ui125">
-    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261019-ui125">
+    <link rel="stylesheet" href="style.css?v=20261019-ui126">
+    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261019-ui126">
     <script src="liquid-glass-renderer.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-tab-layout.js?v=20260916-agent-devices1" defer></script>
     <script src="liquid-glass-nav.js?v=20260916-agent-devices1" defer></script>
+    <script src="liquid-glass-slider.js?v=20261019-ui126" defer></script>
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
 </head>
 <body class="app-body">
@@ -477,17 +478,31 @@
                                     <textarea id="customJsInput" rows="5" spellcheck="false" placeholder="// 保存后在前端页面执行；请只填写可信代码" data-i18n-placeholder="// 保存后在前端页面执行；请只填写可信代码"></textarea>
                                     <p class="field-hint" data-i18n="自定义 CSS/JS 只在选择“自定义”配色时生效；JS 会在登录页、后台和远程窗口前端执行，请只保存你信任的代码。">自定义 CSS/JS 只在选择“自定义”配色时生效；JS 会在登录页、后台和远程窗口前端执行，请只保存你信任的代码。</p>
                                 </div>
+                                <h3 data-i18n="全局壁纸">全局壁纸</h3>
+                                <div class="form-row wallpaper-source-fit-row">
+                                    <div class="form-group"><label data-i18n="全局背景来源">全局背景来源</label><select id="globalBgSource"><option value="none" data-i18n="不使用自定义背景">不使用自定义背景</option><option value="upload" data-i18n="上传图片">上传图片</option><option value="url" data-i18n="图片 URL">图片 URL</option></select></div>
+                                    <div class="form-group"><label data-i18n="背景适配">背景适配</label><select id="globalBgFit"><option value="cover" data-i18n="覆盖">覆盖</option><option value="contain" data-i18n="完整显示">完整显示</option><option value="auto" data-i18n="原始尺寸">原始尺寸</option></select></div>
+                                </div>
+                                <input id="globalBgFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/svg+xml">
+                                <input id="globalBgDataUrl" type="hidden">
+                                <input id="globalBgUrl" type="url" placeholder="https://example.com/wallpaper.jpg">
+                                <div class="terminal-bg-preview global-bg-preview" id="globalBgPreview" data-i18n="未设置背景">未设置背景</div>
+                                <div class="form-row lg-sliders-grid" data-lg-slider-section="global">
+                                    <div class="form-group lg-slider-group"><label><span data-i18n="背景强度">背景强度</span> <span id="globalBgOpacityValue">45%</span></label><div class="zephyr-lg-slider" data-lg-slider-for="globalBgOpacity"><input id="globalBgOpacity" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="1" step="any" value="0.45"></div></div>
+                                    <div class="form-group lg-slider-group"><label><span data-i18n="模糊强度">模糊强度</span> <span id="globalBgBlurValue">0px</span></label><div class="zephyr-lg-slider" data-lg-slider-for="globalBgBlur"><input id="globalBgBlur" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="20" step="any" value="0"></div></div>
+                                </div>
                                 <h3 data-i18n="SSH 终端自定义">SSH 终端自定义</h3>
-                                <label data-i18n="终端背景来源">终端背景来源</label>
-                                <select id="terminalBgSource"><option value="none" data-i18n="不使用自定义背景">不使用自定义背景</option><option value="upload" data-i18n="上传图片">上传图片</option><option value="url" data-i18n="图片 URL">图片 URL</option></select>
+                                <div class="form-row wallpaper-source-fit-row">
+                                    <div class="form-group"><label data-i18n="终端背景来源">终端背景来源</label><select id="terminalBgSource"><option value="none" data-i18n="不使用自定义背景">不使用自定义背景</option><option value="upload" data-i18n="上传图片">上传图片</option><option value="url" data-i18n="图片 URL">图片 URL</option></select></div>
+                                    <div class="form-group"><label data-i18n="背景适配">背景适配</label><select id="terminalBgFit"><option value="cover" data-i18n="覆盖">覆盖</option><option value="contain" data-i18n="完整显示">完整显示</option><option value="auto" data-i18n="原始尺寸">原始尺寸</option></select></div>
+                                </div>
                                 <input id="terminalBgFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/svg+xml">
                                 <input id="terminalBgDataUrl" type="hidden">
                                 <input id="terminalBgUrl" type="url" placeholder="https://example.com/background.jpg">
                                 <div class="terminal-bg-preview" id="terminalBgPreview" data-i18n="未设置背景">未设置背景</div>
-                                <div class="form-row">
-                                    <div class="form-group"><label data-i18n="背景适配">背景适配</label><select id="terminalBgFit"><option value="cover" data-i18n="覆盖">覆盖</option><option value="contain" data-i18n="完整显示">完整显示</option><option value="auto" data-i18n="原始尺寸">原始尺寸</option></select></div>
-                                    <div class="form-group"><label><span data-i18n="背景强度">背景强度</span> <span id="terminalBgOpacityValue">35%</span></label><input id="terminalBgOpacity" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="1" step="any" value="0.35"></div>
-                                    <div class="form-group"><label><span data-i18n="模糊强度">模糊强度</span> <span id="terminalBgBlurValue">0px</span></label><input id="terminalBgBlur" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="20" step="any" value="0"></div>
+                                <div class="form-row lg-sliders-grid" data-lg-slider-section="terminal">
+                                    <div class="form-group lg-slider-group"><label><span data-i18n="背景强度">背景强度</span> <span id="terminalBgOpacityValue">35%</span></label><div class="zephyr-lg-slider" data-lg-slider-for="terminalBgOpacity"><input id="terminalBgOpacity" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="1" step="any" value="0.35"></div></div>
+                                    <div class="form-group lg-slider-group"><label><span data-i18n="模糊强度">模糊强度</span> <span id="terminalBgBlurValue">0px</span></label><div class="zephyr-lg-slider" data-lg-slider-for="terminalBgBlur"><input id="terminalBgBlur" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="20" step="any" value="0"></div></div>
                                 </div>
                                 <label class="check-line"><input type="checkbox" id="terminalFontColorEnabled"> <span data-i18n="启用自定义 SSH 终端字体颜色">启用自定义 SSH 终端字体颜色</span></label>
                                 <div class="form-row terminal-font-color-row">
@@ -1701,7 +1716,7 @@
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
 <script src="preview-mock.js?v=20261004-dashboard-fit1" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20261019-ui125" type="module"></script>
+<script src="app.js?v=20261019-ui126" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

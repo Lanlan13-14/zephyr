@@ -1,4 +1,4 @@
-import { installTerminalSftpPro, StreamingCharsetDecoder } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui125';
+import { installTerminalSftpPro, StreamingCharsetDecoder } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui126';
 /* Telnet terminal page — no SFTP / Docker / remote stats. Fork of terminal.js. */
 // terminal-grid-converge1 supersedes terminal-stability1 / kb-xterm-fit2 / aux-bar-fly1.
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
@@ -34,7 +34,7 @@ import {
     ensureFloatingPanelPhysicsDrag,
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
-} from './floating-panel.js?v=20261019-ui125';
+} from './floating-panel.js?v=20261019-ui126';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
@@ -4586,7 +4586,7 @@ const terminalToastMotion = {
     _ensure() {
         if (this.engine) return Promise.resolve(this.engine);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui125')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui126')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');

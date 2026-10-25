@@ -10,6 +10,7 @@ const PERSONAL_EDITABLE_FIELDS = Object.freeze([
     'appearance.colorScheme',
     'appearance.customThemeMode',
     'appearance.customColors',
+    'appearance.globalBackground',
     'appearance.terminalBackground',
     'appearance.terminalFontColor',
     'appearance.terminalFontColors',
@@ -48,6 +49,7 @@ const CUSTOM_COLOR_KEYS = new Set([
 ]);
 const OBJECT_FIELD_KEYS = new Map([
     ['appearance.customColors', CUSTOM_COLOR_KEYS],
+    ['appearance.globalBackground', new Set(['type', 'url', 'fit', 'opacity', 'blur'])],
     ['appearance.terminalBackground', new Set(['type', 'url', 'fit', 'opacity', 'blur'])],
     ['appearance.terminalFontColors', new Set(['dark', 'light'])],
     ['appearance.rdp', new Set(['defaultResolution', 'defaultQuality', 'defaultFps'])],

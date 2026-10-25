@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui125';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui126';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui125');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui126');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -1144,7 +1144,7 @@ function broadcastThemeToTerminals(theme) {
             if (fdoc?.documentElement) {
                 fdoc.documentElement.setAttribute('data-theme', theme);
                 fdoc.documentElement.setAttribute('data-color-scheme', scheme);
-                fdoc.documentElement.setAttribute('data-wterm-theme', theme === 'light' ? 'light' : 'default');
+                const curWterm = fdoc.documentElement.getAttribute('data-wterm-theme') || ''; const hasCustBg = ((appearance?.terminalBackground?.type === 'upload' || appearance?.terminalBackground?.type === 'url') && Boolean(appearance?.terminalBackground?.url)) || curWterm.startsWith('custom-'); fdoc.documentElement.setAttribute('data-wterm-theme', (hasCustBg ? 'custom-' : '') + (theme === 'light' ? 'light' : 'default'));
             }
             frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'theme-change', theme, appearance }, '*');
         } catch (_) {}
@@ -1321,6 +1321,125 @@ function setFavicon(icon = DEFAULT_BRAND_ICON) {
     }
     link.href = faviconHref(icon);
 }
+function formatSteplessPercent(val, fallback = 0.35) {
+    const n = Math.max(0, Math.min(1, Number.isFinite(Number(val)) ? Number(val) : fallback)) * 100;
+    const rounded1 = Math.round(n * 10) / 10;
+    return (Number.isInteger(rounded1) ? String(rounded1) : rounded1.toFixed(1)) + '%';
+}
+function formatSteplessBlurPx(val, fallback = 0) {
+    const n = Math.max(0, Math.min(20, Number.isFinite(Number(val)) ? Number(val) : fallback));
+    const rounded1 = Math.round(n * 10) / 10;
+    return (Number.isInteger(rounded1) ? String(rounded1) : rounded1.toFixed(1)) + 'px';
+}
+function ensureGlobalWallpaperDom() {
+    if (!document.body) return null;
+    let host = document.getElementById('zephyrGlobalWallpaper');
+    if (!host) {
+        host = document.createElement('div');
+        host.id = 'zephyrGlobalWallpaper';
+        host.className = 'zephyr-global-wallpaper';
+        host.setAttribute('aria-hidden', 'true');
+        host.innerHTML = '<div class="global-wp-layer layer-a"></div><div class="global-wp-layer layer-b"></div><div class="global-wp-scrim"></div>';
+        document.body.insertBefore(host, document.body.firstChild);
+    }
+    return host;
+}
+function applyGlobalWallpaper(appearance = getAppearance()) {
+    const root = document.documentElement;
+    const host = ensureGlobalWallpaperDom();
+    if (!root || !host) return;
+    const gbg = appearance?.globalBackground || {};
+    const bgType = gbg.type || 'none';
+    const rawUrl = String(gbg.url || '').trim();
+    const hasBg = (bgType === 'upload' || bgType === 'url') && Boolean(rawUrl);
+    const fit = ['cover', 'contain', 'auto'].includes(gbg.fit) ? gbg.fit : 'cover';
+    const opacity = Math.max(0, Math.min(1, Number(gbg.opacity ?? 0.45)));
+    const blur = Math.max(0, Math.min(20, Number(gbg.blur ?? 0)));
+
+    root.style.setProperty('--z-global-bg-opacity', String(opacity));
+    root.style.setProperty('--z-global-bg-blur', blur + 'px');
+    root.style.setProperty('--z-global-bg-size', fit);
+
+    const layerA = host.querySelector('.layer-a');
+    const layerB = host.querySelector('.layer-b');
+    if (!hasBg) {
+        root.removeAttribute('data-global-wallpaper');
+        host.classList.remove('is-visible');
+        host.dataset.currentUrl = '';
+        layerA?.classList.remove('is-active');
+        layerB?.classList.remove('is-active');
+        return;
+    }
+
+    root.setAttribute('data-global-wallpaper', '1');
+    host.classList.add('is-visible');
+    const safeCssUrl = 'url("' + rawUrl.replace(/"/g, '%22') + '")';
+    const prevUrl = host.dataset.currentUrl || '';
+    const activeSlot = host.dataset.activeSlot === 'b' ? 'b' : 'a';
+
+    if (rawUrl !== prevUrl) {
+        const nextSlot = activeSlot === 'a' ? 'b' : 'a';
+        const nextLayer = nextSlot === 'b' ? layerB : layerA;
+        const prevLayer = nextSlot === 'b' ? layerA : layerB;
+        if (nextLayer) {
+            nextLayer.style.backgroundImage = safeCssUrl;
+            nextLayer.style.backgroundSize = fit;
+            void nextLayer.offsetWidth;
+            nextLayer.classList.add('is-active');
+        }
+        if (prevLayer) {
+            prevLayer.classList.remove('is-active');
+        }
+        host.dataset.activeSlot = nextSlot;
+        host.dataset.currentUrl = rawUrl;
+    } else {
+        const curLayer = activeSlot === 'b' ? layerB : layerA;
+        if (curLayer) {
+            if (!curLayer.style.backgroundImage) curLayer.style.backgroundImage = safeCssUrl;
+            curLayer.style.backgroundSize = fit;
+            curLayer.classList.add('is-active');
+        }
+    }
+}
+function renderWallpaperPreviewBox(previewEl, bg = {}, defaultOpacity = 0.35) {
+    if (!previewEl) return;
+    const bgType = bg.type || 'none';
+    const rawUrl = String(bg.url || '').trim();
+    const hasBg = (bgType === 'upload' || bgType === 'url') && Boolean(rawUrl);
+    const fit = ['cover', 'contain', 'auto'].includes(bg.fit) ? bg.fit : 'cover';
+    const opacity = Math.max(0, Math.min(1, Number(bg.opacity ?? defaultOpacity)));
+    const blur = Math.max(0, Math.min(20, Number(bg.blur ?? 0)));
+    previewEl.style.backgroundImage = '';
+    let mediaEl = previewEl.querySelector('.wp-preview-media');
+    let labelEl = previewEl.querySelector('.wp-preview-label');
+    if (!mediaEl || !labelEl) {
+        previewEl.textContent = '';
+        mediaEl = document.createElement('div');
+        mediaEl.className = 'wp-preview-media';
+        labelEl = document.createElement('span');
+        labelEl.className = 'wp-preview-label';
+        previewEl.appendChild(mediaEl);
+        previewEl.appendChild(labelEl);
+    }
+    if (hasBg) {
+        const safeUrl = rawUrl.replace(/"/g, '%22');
+        mediaEl.style.backgroundImage = 'url("' + safeUrl + '")';
+        mediaEl.style.backgroundSize = fit;
+        mediaEl.style.opacity = String(opacity);
+        mediaEl.style.filter = 'blur(' + blur + 'px)';
+        previewEl.classList.add('has-wallpaper');
+        labelEl.setAttribute('data-i18n', '已选择背景');
+        labelEl.textContent = t('已选择背景');
+    } else {
+        mediaEl.style.backgroundImage = '';
+        mediaEl.style.opacity = '0';
+        mediaEl.style.filter = 'none';
+        previewEl.classList.remove('has-wallpaper');
+        labelEl.setAttribute('data-i18n', '未设置背景');
+        labelEl.textContent = t('未设置背景');
+    }
+}
+
 function applyAppearance(appearance = getAppearance()) {
     /* Resolved rather than defaulted: the stored value is seeded with
      * 'Zephyr' on every fresh install, so `stored || default` never fired and
@@ -1334,6 +1453,7 @@ function applyAppearance(appearance = getAppearance()) {
     $('#brandIconPreview').innerHTML = iconHtml(brandIcon);
     $('#autoThemeEnabled').checked = appearance.autoThemeEnabled !== false;
     syncAppearanceSchemeControls(appearance);
+    applyGlobalWallpaper(appearance);
     document.title = brandName;
     setFavicon(brandIcon);
     console.debug('[appearance-client]', 'appearance applied', { brandName, customIcon: brandIcon !== DEFAULT_BRAND_ICON, autoThemeEnabled: appearance.autoThemeEnabled !== false, theme: appearance.theme || 'auto' });
@@ -1402,6 +1522,7 @@ async function saveAppearance(e) {
     const autoThemeEnabled = $('#autoThemeEnabled').checked;
     const explicitMode = $('#themeModeSelect')?.value || previous.theme || 'auto';
     const theme = autoThemeEnabled || explicitMode === 'auto' ? 'auto' : (explicitMode === 'light' || explicitMode === 'dark' ? explicitMode : (document.documentElement.getAttribute('data-theme') || getSystemTheme()));
+    const globalBgSource = $('#globalBgSource')?.value || 'none';
     const terminalBgSource = $('#terminalBgSource')?.value || 'none';
     const terminalFontEnabled = !!$('#terminalFontColorEnabled')?.checked;
     const terminalFontDark = terminalFontEnabled ? normalizeHexInputClient($('#terminalFontColor')?.value || '', '') : '';
@@ -1435,12 +1556,19 @@ async function saveAppearance(e) {
         customColors: readCustomThemeColors(),
         customCss: $('#customCssInput')?.value || '',
         customJs: $('#customJsInput')?.value || '',
+        globalBackground: {
+            type: globalBgSource,
+            url: globalBgSource === 'upload' ? ($('#globalBgDataUrl')?.value || previous.globalBackground?.url || '') : globalBgSource === 'url' ? ($('#globalBgUrl')?.value.trim() || '') : '',
+            fit: $('#globalBgFit')?.value || 'cover',
+            opacity: Number($('#globalBgOpacity')?.value ?? 0.45),
+            blur: Number($('#globalBgBlur')?.value ?? 0),
+        },
         terminalBackground: {
             type: terminalBgSource,
             url: terminalBgSource === 'upload' ? ($('#terminalBgDataUrl')?.value || previous.terminalBackground?.url || '') : terminalBgSource === 'url' ? ($('#terminalBgUrl')?.value.trim() || '') : '',
             fit: $('#terminalBgFit')?.value || 'cover',
-            opacity: Number($('#terminalBgOpacity')?.value || 0.35),
-            blur: Number($('#terminalBgBlur')?.value || 0),
+            opacity: Number($('#terminalBgOpacity')?.value ?? 0.35),
+            blur: Number($('#terminalBgBlur')?.value ?? 0),
         },
         terminalFontColor: terminalFontColors.dark,
         terminalFontColors,
@@ -1482,7 +1610,7 @@ async function saveAppearance(e) {
     toast(t('个性化设置已保存'));
 }
 async function resetAppearance() {
-    const appearance = { ...getAppearance(), brandName: defaultBrandName(), brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
+    const appearance = { ...getAppearance(), brandName: defaultBrandName(), brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', globalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.45, blur: 0 }, globalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.45, blur: 0 }, globalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.45, blur: 0 }, globalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.45, blur: 0 }, terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
     if (myIdentity.role === 'admin') {
         settings = await savePlatformSettings('appearance', { appearance });
     } else {
@@ -1512,20 +1640,47 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
     });
     if ($('#customCssInput')) $('#customCssInput').value = appearance.customCss || '';
     if ($('#customJsInput')) $('#customJsInput').value = appearance.customJs || '';
+    const gbg = appearance.globalBackground || {};
+    const gbgType = gbg.type || 'none';
+    if ($('#globalBgSource')) {
+        $('#globalBgSource').value = gbgType;
+        syncToggleSelectFace($('#globalBgSource'));
+    }
+    if ($('#globalBgUrl')) {
+        $('#globalBgUrl').value = gbgType === 'url' ? (gbg.url || '') : '';
+        $('#globalBgUrl').disabled = gbgType !== 'url';
+    }
+    if ($('#globalBgFile')) $('#globalBgFile').disabled = gbgType !== 'upload';
+    if ($('#globalBgDataUrl')) $('#globalBgDataUrl').value = gbgType === 'upload' ? (gbg.url || '') : '';
+    if ($('#globalBgFit')) {
+        $('#globalBgFit').value = gbg.fit || 'cover';
+        syncToggleSelectFace($('#globalBgFit'));
+    }
+    if ($('#globalBgOpacity')) $('#globalBgOpacity').value = String(gbg.opacity ?? 0.45);
+    if ($('#globalBgOpacityValue')) $('#globalBgOpacityValue').textContent = formatSteplessPercent(gbg.opacity, 0.45);
+    if ($('#globalBgBlur')) $('#globalBgBlur').value = String(gbg.blur ?? 0);
+    if ($('#globalBgBlurValue')) $('#globalBgBlurValue').textContent = formatSteplessBlurPx(gbg.blur, 0);
+
     const bg = appearance.terminalBackground || {};
     const bgType = bg.type || 'none';
-    if ($('#terminalBgSource')) $('#terminalBgSource').value = bgType;
+    if ($('#terminalBgSource')) {
+        $('#terminalBgSource').value = bgType;
+        syncToggleSelectFace($('#terminalBgSource'));
+    }
     if ($('#terminalBgUrl')) {
         $('#terminalBgUrl').value = bgType === 'url' ? (bg.url || '') : '';
         $('#terminalBgUrl').disabled = bgType !== 'url';
     }
     if ($('#terminalBgFile')) $('#terminalBgFile').disabled = bgType !== 'upload';
     if ($('#terminalBgDataUrl')) $('#terminalBgDataUrl').value = bgType === 'upload' ? (bg.url || '') : '';
-    if ($('#terminalBgFit')) $('#terminalBgFit').value = bg.fit || 'cover';
+    if ($('#terminalBgFit')) {
+        $('#terminalBgFit').value = bg.fit || 'cover';
+        syncToggleSelectFace($('#terminalBgFit'));
+    }
     if ($('#terminalBgOpacity')) $('#terminalBgOpacity').value = String(bg.opacity ?? 0.35);
-    if ($('#terminalBgOpacityValue')) $('#terminalBgOpacityValue').textContent = `${Math.round(Number(bg.opacity ?? 0.35) * 100)}%`;
+    if ($('#terminalBgOpacityValue')) $('#terminalBgOpacityValue').textContent = formatSteplessPercent(bg.opacity, 0.35);
     if ($('#terminalBgBlur')) $('#terminalBgBlur').value = String(bg.blur ?? 0);
-    if ($('#terminalBgBlurValue')) $('#terminalBgBlurValue').textContent = `${Math.round(Number(bg.blur ?? 0))}px`;
+    if ($('#terminalBgBlurValue')) $('#terminalBgBlurValue').textContent = formatSteplessBlurPx(bg.blur, 0);
     const terminalColors = normalizeTerminalFontColors(appearance);
     const terminalFontEnabled = !!terminalColors.dark;
     if ($('#terminalFontColorEnabled')) $('#terminalFontColorEnabled').checked = terminalFontEnabled;
@@ -1575,12 +1730,15 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
     if ($('#rdpDefaultResolution')) $('#rdpDefaultResolution').value = rdp.defaultResolution || '1920x1080';
     if ($('#rdpDefaultQuality')) $('#rdpDefaultQuality').value = normalizeRdpDefaultQuality(rdp.defaultQuality || 'balanced');
     if ($('#rdpDefaultFps')) $('#rdpDefaultFps').value = String(rdp.defaultFps || 60);
+    if ($('#globalBgPreview')) {
+        const gUrl = gbg.type === 'url' ? ($('#globalBgUrl')?.value.trim() || gbg.url || '') : (gbg.url || '');
+        renderWallpaperPreviewBox($('#globalBgPreview'), { ...gbg, type: gbgType, url: gUrl }, 0.45);
+    }
     if ($('#terminalBgPreview')) {
         const url = bg.type === 'url' ? ($('#terminalBgUrl')?.value.trim() || bg.url || '') : (bg.url || '');
-        const hasBg = (bg.type === 'upload' || bg.type === 'url') && url;
-        $('#terminalBgPreview').style.backgroundImage = hasBg ? `linear-gradient(rgba(0,0,0,.16), rgba(0,0,0,.16)), url("${String(url).replace(/"/g, '%22')}")` : '';
-        $('#terminalBgPreview').textContent = hasBg ? t('已选择背景') : t('未设置背景');
+        renderWallpaperPreviewBox($('#terminalBgPreview'), { ...bg, type: bgType, url }, 0.35);
     }
+    window.ZephyrLiquidGlassSliders?.refreshAll(false);
 }
 function readCustomThemeColors() {
     const out = {};
@@ -1804,8 +1962,82 @@ function setupAppearanceControls() {
         setFavicon(pendingBrandIcon || DEFAULT_BRAND_ICON);
         broadcastThemeToTerminals(getPreferredTheme());
     }));
-    $('#terminalBgSource')?.addEventListener('change', () => syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { ...(getAppearance().terminalBackground || {}), type: $('#terminalBgSource').value } }));
-    $('#terminalBgUrl')?.addEventListener('input', () => syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'url', url: $('#terminalBgUrl').value.trim(), fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35), blur: Number($('#terminalBgBlur')?.value || 0) } }));
+    const buildDraftGlobalBg = () => {
+        const src = $('#globalBgSource')?.value || 'none';
+        const url = src === 'upload' ? ($('#globalBgDataUrl')?.value || getAppearance().globalBackground?.url || '') : src === 'url' ? ($('#globalBgUrl')?.value.trim() || '') : '';
+        return {
+            type: src,
+            url,
+            fit: $('#globalBgFit')?.value || 'cover',
+            opacity: Number($('#globalBgOpacity')?.value ?? 0.45),
+            blur: Number($('#globalBgBlur')?.value ?? 0),
+        };
+    };
+    const buildDraftTerminalBg = () => {
+        const src = $('#terminalBgSource')?.value || 'none';
+        const url = src === 'upload' ? ($('#terminalBgDataUrl')?.value || getAppearance().terminalBackground?.url || '') : src === 'url' ? ($('#terminalBgUrl')?.value.trim() || '') : '';
+        return {
+            type: src,
+            url,
+            fit: $('#terminalBgFit')?.value || 'cover',
+            opacity: Number($('#terminalBgOpacity')?.value ?? 0.35),
+            blur: Number($('#terminalBgBlur')?.value ?? 0),
+        };
+    };
+    const syncLiveGlobalBgDraft = () => {
+        const globalBackground = buildDraftGlobalBg();
+        settings.appearance = { ...getAppearance(), globalBackground };
+        syncAppearanceSchemeControls(settings.appearance);
+        applyGlobalWallpaper(settings.appearance);
+    };
+    const syncLiveTerminalBgDraft = () => {
+        const terminalBackground = buildDraftTerminalBg();
+        settings.appearance = { ...getAppearance(), terminalBackground };
+        syncAppearanceSchemeControls(settings.appearance);
+        broadcastThemeToTerminals(getPreferredTheme());
+    };
+    $('#globalBgSource')?.addEventListener('change', syncLiveGlobalBgDraft);
+    $('#globalBgFit')?.addEventListener('change', syncLiveGlobalBgDraft);
+    $('#globalBgUrl')?.addEventListener('input', () => {
+        if ($('#globalBgSource') && $('#globalBgSource').value !== 'url') $('#globalBgSource').value = 'url';
+        syncLiveGlobalBgDraft();
+    });
+    $('#globalBgOpacity')?.addEventListener('input', () => {
+        const val = Number($('#globalBgOpacity').value ?? 0.45);
+        if ($('#globalBgOpacityValue')) $('#globalBgOpacityValue').textContent = formatSteplessPercent(val, 0.45);
+        const globalBackground = buildDraftGlobalBg();
+        settings.appearance = { ...getAppearance(), globalBackground };
+        renderWallpaperPreviewBox($('#globalBgPreview'), globalBackground, 0.45);
+        applyGlobalWallpaper(settings.appearance);
+    });
+    $('#globalBgBlur')?.addEventListener('input', () => {
+        const val = Number($('#globalBgBlur').value ?? 0);
+        if ($('#globalBgBlurValue')) $('#globalBgBlurValue').textContent = formatSteplessBlurPx(val, 0);
+        const globalBackground = buildDraftGlobalBg();
+        settings.appearance = { ...getAppearance(), globalBackground };
+        renderWallpaperPreviewBox($('#globalBgPreview'), globalBackground, 0.45);
+        applyGlobalWallpaper(settings.appearance);
+    });
+    $('#globalBgFile')?.addEventListener('change', async (e) => {
+        try {
+            const dataUrl = await readTerminalBackgroundAsDataUrl(e.target.files?.[0]);
+            if (!dataUrl) return;
+            $('#globalBgDataUrl').value = dataUrl;
+            $('#globalBgSource').value = 'upload';
+            syncLiveGlobalBgDraft();
+            toast(t('全局背景已载入，保存外观后生效'));
+        } catch (err) {
+            e.target.value = '';
+            toast(err.message);
+        }
+    });
+
+    $('#terminalBgSource')?.addEventListener('change', syncLiveTerminalBgDraft);
+    $('#terminalBgFit')?.addEventListener('change', syncLiveTerminalBgDraft);
+    $('#terminalBgUrl')?.addEventListener('input', () => {
+        if ($('#terminalBgSource') && $('#terminalBgSource').value !== 'url') $('#terminalBgSource').value = 'url';
+        syncLiveTerminalBgDraft();
+    });
     $('#terminalFontColorEnabled')?.addEventListener('change', () => {
         const enabled = $('#terminalFontColorEnabled').checked;
         setColorPickerEnabled($('#terminalFontColor'), enabled);
@@ -1823,8 +2055,22 @@ function setupAppearanceControls() {
         'terminalSelectionFgDark', 'terminalSelectionFgLight',
     ]);
 
-    $('#terminalBgOpacity')?.addEventListener('input', () => { if ($('#terminalBgOpacityValue')) $('#terminalBgOpacityValue').textContent = `${Math.round(Number($('#terminalBgOpacity').value || 0.35) * 100)}%`; });
-    $('#terminalBgBlur')?.addEventListener('input', () => { if ($('#terminalBgBlurValue')) $('#terminalBgBlurValue').textContent = `${Math.round(Number($('#terminalBgBlur').value || 0))}px`; });
+    $('#terminalBgOpacity')?.addEventListener('input', () => {
+        const val = Number($('#terminalBgOpacity').value ?? 0.35);
+        if ($('#terminalBgOpacityValue')) $('#terminalBgOpacityValue').textContent = formatSteplessPercent(val, 0.35);
+        const terminalBackground = buildDraftTerminalBg();
+        settings.appearance = { ...getAppearance(), terminalBackground };
+        renderWallpaperPreviewBox($('#terminalBgPreview'), terminalBackground, 0.35);
+        broadcastThemeToTerminals(getPreferredTheme());
+    });
+    $('#terminalBgBlur')?.addEventListener('input', () => {
+        const val = Number($('#terminalBgBlur').value ?? 0);
+        if ($('#terminalBgBlurValue')) $('#terminalBgBlurValue').textContent = formatSteplessBlurPx(val, 0);
+        const terminalBackground = buildDraftTerminalBg();
+        settings.appearance = { ...getAppearance(), terminalBackground };
+        renderWallpaperPreviewBox($('#terminalBgPreview'), terminalBackground, 0.35);
+        broadcastThemeToTerminals(getPreferredTheme());
+    });
     $('#terminalBgFile')?.addEventListener('change', async (e) => { try { const dataUrl = await readTerminalBackgroundAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; $('#terminalBgDataUrl').value = dataUrl; $('#terminalBgSource').value = 'upload'; syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'upload', url: dataUrl, fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35), blur: Number($('#terminalBgBlur')?.value || 0) } }); toast(t('终端背景已载入，保存外观后生效')); } catch (err) { e.target.value = ''; toast(err.message); } });
 }
 function safeJsonParseClient(value, fallback = null) { try { return JSON.parse(String(value || '').trim()); } catch (_) { return fallback; } }
@@ -3660,7 +3906,7 @@ const TOGGLE_SELECT_IDS = [
     'protocolFilter', 'tagFilter', 'sortSelect',
     // Settings / appearance / terminal prefs (same UI pattern)
     'captchaProvider', 'colorSchemeSelect', 'themeModeSelect',
-    'terminalBgSource', 'terminalBgFit', 'terminalMaxWindows',
+    'globalBgSource', 'globalBgFit', 'terminalBgSource', 'terminalBgFit', 'terminalMaxWindows',
     'terminalSmartbarOrder', 'terminalShortcutPlatform',
     // Settings → 语言（与其它设置同源 toggle-select）
     'languageSelect',
@@ -3712,7 +3958,7 @@ const MOTION_FILTER_SELECT_IDS = [
     'linkIntervalSelect', 'linkNetworkPolicySelect',
 ];
 function isMotionFilterShell(shell) {
-    return !!shell && MOTION_FILTER_SELECT_IDS.includes(shell.dataset?.selectId || '');
+    return !!shell && (MOTION_FILTER_SELECT_IDS.includes(shell.dataset?.selectId || '') || shell.dataset?.selectId === 'globalBgSource' || shell.dataset?.selectId === 'globalBgFit');
 }
 
 async function openToggleSelectMenu(shell) {
@@ -6257,11 +6503,17 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui125`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui125`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui126`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui126`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
+                frame.contentWindow?.postMessage({
+                    source: 'zephyr-app',
+                    type: 'theme-change',
+                    theme: document.documentElement.getAttribute('data-theme') || getPreferredTheme(),
+                    appearance: getAppearance(),
+                }, '*');
                 frame.contentWindow?.postMessage({
                     source: 'zephyr-app',
                     type: 'notes-enabled',
@@ -15060,7 +15312,7 @@ async function loadSettings() {
     $('#terminalMinimizedKeepAlive').value = String(getConfiguredMinimizedKeepAlive());
     $('#terminalSmartbarOrder').value = getTerminalSmartbarOrder();
     $('#terminalShortcutPlatform').value = getTerminalShortcutPlatform();
-    settings.appearance = { brandName: defaultBrandName(), brandIcon: DEFAULT_BRAND_ICON, theme: 'auto', autoThemeEnabled: true, colorScheme: 'frost', customThemeMode: 'dark', customColors: normalizeCustomThemeColors(), customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, ...(settings.appearance || {}) };
+    settings.appearance = { brandName: defaultBrandName(), brandIcon: DEFAULT_BRAND_ICON, theme: 'auto', autoThemeEnabled: true, colorScheme: 'frost', customThemeMode: 'dark', customColors: normalizeCustomThemeColors(), customCss: '', customJs: '', globalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.45, blur: 0 }, terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, ...(settings.appearance || {}) };
     settings.ai = normalizeAiSettings(settings.ai || {});
     applyAppearance(settings.appearance);
     applyTheme(getPreferredTheme());
@@ -15944,7 +16196,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261019-ui125')
+        return import('./vendor/zephyr-motion/index.js?v=20261019-ui126')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -16227,6 +16479,10 @@ function bindEvents() {
         $$('.settings-panel').forEach((p) => p.classList.remove('active'));
         const nextPanel = $(`#settings-${btn.dataset.settings}`);
         nextPanel?.classList.add('active');
+        if (btn.dataset.settings === 'appearance') requestAnimationFrame(() => window.ZephyrLiquidGlassSliders?.refreshAll(true));
+        if (btn.dataset.settings === 'appearance') requestAnimationFrame(() => window.ZephyrLiquidGlassSliders?.refreshAll(true));
+        if (btn.dataset.settings === 'appearance') requestAnimationFrame(() => window.ZephyrLiquidGlassSliders?.refreshAll(true));
+        if (btn.dataset.settings === 'appearance') requestAnimationFrame(() => window.ZephyrLiquidGlassSliders?.refreshAll(true));
         if (prevPanel && nextPanel && prevPanel !== nextPanel && window.Motion?.viewSwitch) {
             const dir = (prevIdx >= 0 && nextIdx >= 0 && nextIdx < prevIdx) ? -1 : 1;
             void window.Motion.viewSwitch(prevPanel, nextPanel, { dir, axis: 'y' });

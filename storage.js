@@ -367,6 +367,7 @@ function defaultSettings(legacySettings = {}) {
             customColors: {},
             customCss: '',
             customJs: '',
+            globalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.45, blur: 0 },
             terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 },
             terminalFontColor: '',
         },

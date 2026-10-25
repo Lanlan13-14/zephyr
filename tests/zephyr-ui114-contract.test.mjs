@@ -137,3 +137,32 @@ test("UI124 Contract: Smooth Google M3 / Apple pill & view transitions (zero CSS
   assert.ok(sftpProJs.includes("// UI124: temporarily commented out per user request (hide Port Forwarding UI without deleting code)"));
   assert.ok(appJs.includes("// UI124: temporarily commented out per user request (hide Initiate via Primary UI without deleting code)"));
 });
+
+
+
+test('UI126 Contract: iOS Global Wallpaper + Simultaneous Terminal Wallpaper + 4 martin65536/liquid-glass-webgl Stepless Sliders with Theme-Aware Fill Line', () => {
+  const appHtml = read('public/app.html');
+  const appJs = read('public/app.js');
+  const specCss = read('public/zephyr-terminal-spec.css');
+  const lgSliderJs = read('public/liquid-glass-slider.js');
+  const serverJs = read('server.js');
+
+  for (const id of ['globalBgSource', 'globalBgFit', 'globalBgFile', 'globalBgDataUrl', 'globalBgUrl', 'globalBgPreview', 'globalBgOpacity', 'globalBgBlur', 'terminalBgSource', 'terminalBgFit', 'terminalBgOpacity', 'terminalBgBlur']) {
+    assert.ok(appHtml.includes('id="' + id + '"'), 'app.html must include #' + id);
+  }
+
+  assert.ok(appHtml.includes('data-lg-slider-for="globalBgOpacity"'), 'globalBgOpacity must be wired to zephyr-lg-slider');
+  assert.ok(appHtml.includes('data-lg-slider-for="globalBgBlur"'), 'globalBgBlur must be wired to zephyr-lg-slider');
+  assert.ok(appHtml.includes('data-lg-slider-for="terminalBgOpacity"'), 'terminalBgOpacity must be wired to zephyr-lg-slider');
+  assert.ok(appHtml.includes('data-lg-slider-for="terminalBgBlur"'), 'terminalBgBlur must be wired to zephyr-lg-slider');
+  assert.ok(specCss.includes('#view-settings .lg-sliders-grid'), 'zephyr-terminal-spec.css must define .lg-sliders-grid to prevent overlap');
+
+  assert.ok(lgSliderJs.includes('LiquidGlassRenderer'), 'liquid-glass-slider.js must use LiquidGlassRenderer');
+  assert.ok(lgSliderJs.includes('isSliderFill'), 'liquid-glass-slider.js must use isSliderFill for the bottom fill line');
+  assert.ok(lgSliderJs.includes('isToggleKnob'), 'liquid-glass-slider.js must use isToggleKnob for the 3D refractive glass knob');
+  assert.ok(lgSliderJs.includes('endSliderDrag'), 'liquid-glass-slider.js must use endSliderDrag for stepless release without 0/1 snap');
+  assert.ok(lgSliderJs.includes('resolveThemeAccent01'), 'liquid-glass-slider.js must dynamically resolve theme --accent for the bottom fill line');
+
+  assert.ok(serverJs.includes('globalBackground'), 'server.js must sanitize and persist appearance.globalBackground');
+  assert.ok(appJs.includes('applyGlobalWallpaper'), 'app.js must implement applyGlobalWallpaper with dual-layer crossfade');
+});

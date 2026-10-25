@@ -3839,6 +3839,17 @@ function normalizeSettingsInput(body) {
             const value = String(body.appearance.customColors?.[key] || currentAppearance.customColors?.[key] || fallback).trim();
             return [key, /^#[0-9a-f]{6}$/i.test(value) ? value : fallback];
         }));
+        const globalBg = body.appearance.globalBackground || currentAppearance.globalBackground || {};
+        const globalBgType = ['none', 'upload', 'url'].includes(globalBg.type) ? globalBg.type : 'none';
+        const globalBgUrlRaw = globalBgType === 'none' ? '' : String(globalBg.url || '').trim();
+        const allowedGlobalBgUrl = /^https?:\/\//i.test(globalBgUrlRaw) || /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml|avif);base64,/i.test(globalBgUrlRaw);
+        const globalBackground = {
+            type: allowedGlobalBgUrl ? globalBgType : 'none',
+            url: allowedGlobalBgUrl ? globalBgUrlRaw.slice(0, 20 * 1024 * 1024) : '',
+            fit: ['cover', 'contain', 'auto'].includes(globalBg.fit) ? globalBg.fit : 'cover',
+            opacity: Math.max(0, Math.min(1, Number(globalBg.opacity ?? 0.45))),
+            blur: Math.max(0, Math.min(20, Number(globalBg.blur ?? 0))),
+        };
         const terminalBg = body.appearance.terminalBackground || currentAppearance.terminalBackground || {};
         const terminalBgType = ['none', 'upload', 'url'].includes(terminalBg.type) ? terminalBg.type : 'none';
         const terminalBgUrlRaw = terminalBgType === 'none' ? '' : String(terminalBg.url || '').trim();
@@ -3887,6 +3898,7 @@ function normalizeSettingsInput(body) {
             customColors,
             customCss: String(body.appearance.customCss ?? currentAppearance.customCss ?? '').slice(0, 200000),
             customJs: String(body.appearance.customJs ?? currentAppearance.customJs ?? '').slice(0, 200000),
+            globalBackground,
             terminalBackground,
             terminalFontColor,
             terminalFontColors,
