@@ -4872,32 +4872,38 @@ export const Motion = {
   async settingsTabSlide(menuEl, fromRect, toRect, { preset = { response: 0.22, damping: 1.0 } } = {}) {
     if (!menuEl || !fromRect || !toRect) return false;
     const dy = Math.round(fromRect.top - toRect.top);
-    if (Math.abs(dy) < 2) return false;
+    const dh = Math.abs(Math.round((fromRect.height || 36) - (toRect.height || 36)));
+    if (Math.abs(dy) < 2 && dh < 2) return false;
 
     const token = this._bump(menuEl);
-    const units = { '--settings-pill-dy': 'px' };
-    this.stop(menuEl, ['--settings-pill-dy']);
+    const units = { '--settings-pill-dy': 'px', '--settings-pill-h': 'px' };
+    this.stop(menuEl, ['--settings-pill-dy', '--settings-pill-h']);
     menuEl.classList.add('settings-pill-sliding');
     menuEl.style.setProperty('--settings-pill-dy', dy + 'px');
+    menuEl.style.setProperty('--settings-pill-h', Math.round(fromRect.height || 36) + 'px');
     this.cssVars(menuEl, {
       '--settings-pill-dy': dy,
+      '--settings-pill-h': Math.round(fromRect.height || 36),
     }, { immediate: true, units });
 
     const guard = withSettleSafetyGuard(menuEl, 340, () => {
       if (this._genOf(menuEl) === token) {
         menuEl.classList.remove('settings-pill-sliding');
         menuEl.style.removeProperty('--settings-pill-dy');
+        menuEl.style.removeProperty('--settings-pill-h');
       }
     });
     try {
       await this.cssVars(menuEl, {
         '--settings-pill-dy': 0,
+        '--settings-pill-h': Math.round(toRect.height || 36),
       }, { preset, units });
     } finally {
       guard();
       if (this._genOf(menuEl) === token) {
         menuEl.classList.remove('settings-pill-sliding');
         menuEl.style.removeProperty('--settings-pill-dy');
+        menuEl.style.removeProperty('--settings-pill-h');
       }
     }
     return true;

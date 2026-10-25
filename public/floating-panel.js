@@ -348,7 +348,7 @@ const floatingPanelMotion = {
         if (this.engine) return Promise.resolve(this.engine);
         if (this.failed && !this._p) return Promise.resolve(null);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui123')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui125')
             .then(async (mod) => {
                 const Motion = mod?.Motion || (typeof window !== 'undefined' ? window.Motion : null);
                 if (!Motion || typeof Motion.drag !== 'function') throw new Error('Motion.drag unavailable');

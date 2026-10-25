@@ -1,4 +1,4 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui123';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui125';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui123');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui125');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -6257,8 +6257,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&v=20261018-ui1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui123`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui123`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui125`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui125`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -15944,7 +15944,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261019-ui123')
+        return import('./vendor/zephyr-motion/index.js?v=20261019-ui125')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
