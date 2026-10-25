@@ -220,8 +220,8 @@ test('a markup change that defeats the transform throws instead of degrading', (
 
     // Duplicated fragment -> ambiguous target.
     const duplicated = APP_HTML.replace(
-        '<button class="btn-sm danger" id="logoutBtn" data-i18n="\u767b\u51fa">\u767b\u51fa</button>',
-        '<button class="btn-sm danger" id="logoutBtn" data-i18n="\u767b\u51fa">\u767b\u51fa</button>'.repeat(2),
+        '<button class="btn-sm danger" id="logoutBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span data-i18n="登出">登出</span></button>',
+        '<button class="btn-sm danger" id="logoutBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span data-i18n="登出">登出</span></button>'.repeat(2),
     );
     assert.throws(() => applyEmbeddedSurface(duplicated), /matched 2 times/);
 
